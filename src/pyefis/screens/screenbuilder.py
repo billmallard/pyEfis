@@ -32,6 +32,7 @@ from pyefis.instruments import button
 from pyefis.instruments import misc
 from pyefis.instruments.ai.VirtualVfr import VirtualVfr
 from pyefis.instruments import listbox
+from pyefis.instruments import wind
 
 import pyavtools.fix as fix
 import pyavtools.scheduler as scheduler
@@ -455,13 +456,26 @@ class Screen(QWidget):
         if i['type'] == 'airspeed_box':
             self.instruments[count] = airspeed.Airspeed_Box(self,font_family=font_family)
         if i['type'] == 'airspeed_tape':
-            self.instruments[count] = airspeed.Airspeed_Tape(self,font_percent=font_percent)
+            opts = i.get('options', {})
+            self.instruments[count] = airspeed.Airspeed_Tape(
+                self, font_percent=font_percent,
+                show_tas=opts.get('show_tas', True),
+                show_trend=opts.get('show_trend', True),
+                trend_lookahead=float(opts.get('trend_lookahead', 6.0)),
+                trend_window=float(opts.get('trend_window', 3.0)),
+                trend_min_change=float(opts.get('trend_min_change', 0.5)),
+            )
         if i['type'] == 'airspeed_trend_tape':
             self.instruments[count] = vsi.AS_Trend_Tape(self,font_family=font_family)
         elif i['type'] == 'altimeter_dial':
             self.instruments[count] = altimeter.Altimeter(self,font_family=font_family)
         elif i['type'] == 'atitude_indicator':
-            self.instruments[count] = ai.AI(self,font_percent=font_percent,font_family=font_family)
+            opts = i.get('options', {})
+            show_fpm = opts.get('show_fpm', True)
+            widget = ai.AI(self, font_percent=font_percent, font_family=font_family, show_fpm=show_fpm)
+            if 'svs' in opts:
+                widget.set_svs_config(opts['svs'])
+            self.instruments[count] = widget
         elif i['type'] == 'altimeter_tape':
             dbkey = "ALT"
             if 'options' in i and 'dbkey' in i['options']:
@@ -506,6 +520,9 @@ class Screen(QWidget):
 
         elif i['type'] == 'listbox':
             self.instruments[count] = listbox.ListBox(self, lists=i['options']['lists'], replace=replace,font_family=font_family) #,font_percent=font_percent)
+
+        elif i['type'] == 'wind_display':
+            self.instruments[count] = wind.WindDisplay(self, font_family=font_family)
 
          # Set options
         if 'options' in i:

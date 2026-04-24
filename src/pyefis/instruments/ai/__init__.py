@@ -24,6 +24,7 @@ import logging
 
 import pyavtools.fix as fix
 from pyefis import common
+from pyefis.instruments.ai.svs import SVSRenderer
 
 log = logging.getLogger(__name__)
 
@@ -36,10 +37,11 @@ log = logging.getLogger(__name__)
 #   Add configuration for bank angle tick sizes
 
 class AI(QGraphicsView):
-    def __init__(self, parent=None,font_percent=None, font_family="DejaVu Sans Condensed"):
+    def __init__(self, parent=None, font_percent=None, font_family="DejaVu Sans Condensed", show_fpm=True):
         super(AI, self).__init__(parent)
         self.myparent = parent
         self.font_family = font_family
+        self.show_fpm = show_fpm
         # The following information is meant to be configurable from the screen
         # definition file
         self.font_percent = font_percent
@@ -117,6 +119,32 @@ class AI(QGraphicsView):
         self._AIFail['TAS'] = tas.fail
 
         self._tas = tas.value
+
+        # Flight Path Marker (GPS method): VS, GS, TRACK, HEAD
+        self._fpm_fail = {k: True for k in ('VS', 'GS', 'TRACK', 'HEAD')}
+        self._fpm_bad  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD')}
+        self._fpm_vs    = 0.0
+        self._fpm_gs    = 0.0
+        self._fpm_track = 0.0
+        self._fpm_head  = 0.0
+        for key in ('VS', 'GS', 'TRACK', 'HEAD'):
+            _item = fix.db.get_item(key)
+            _item.valueChanged[float].connect(lambda v, k=key: self._fpmValueChanged(k, v))
+            _item.failChanged[bool].connect(lambda f, k=key: self._fpmFailChanged(k, f))
+            _item.badChanged[bool].connect(lambda b, k=key: self._fpmBadChanged(k, b))
+            self._fpm_fail[key] = _item.fail
+            self._fpm_bad[key]  = _item.bad
+            setattr(self, f'_fpm_{key.lower()}', _item.value)
+
+        # SVS position inputs: LAT, LONG, ALT (disabled by default; renderer set via set_svs_config)
+        self._svs_lat  = 0.0
+        self._svs_lon  = 0.0
+        self._svs_alt  = 0.0
+        self.svs: SVSRenderer | None = None
+        for key, attr in (("LAT", "_svs_lat"), ("LONG", "_svs_lon"), ("ALT", "_svs_alt")):
+            _item = fix.db.get_item(key)
+            _item.valueChanged[float].connect(lambda v, a=attr: (setattr(self, a, v), self.update()))
+            setattr(self, attr, _item.value)
 
         # We store all the pitch tick marks and text in a list so that
         # we can adjust the opacity of the items.
@@ -274,6 +302,71 @@ class AI(QGraphicsView):
 
         self.redraw()
 
+    def set_svs_config(self, config: dict):
+        """Initialise the SVS renderer from a config dict (called by screenbuilder)."""
+        self.svs = SVSRenderer(config)
+
+    def _fpmValueChanged(self, key, value):
+        setattr(self, f'_fpm_{key.lower()}', value)
+        if self.isVisible():
+            self.update()
+
+    def _fpmFailChanged(self, key, fail):
+        self._fpm_fail[key] = fail
+        if self.isVisible():
+            self.update()
+
+    def _fpmBadChanged(self, key, bad):
+        self._fpm_bad[key] = bad
+        if self.isVisible():
+            self.update()
+
+    def _drawFPM(self, p, w, h):
+        """Draw GPS flight path marker if data is valid and show_fpm is set."""
+        if not self.show_fpm:
+            return
+        if any(self._fpm_fail.values()):
+            return
+        fpm_bad = any(self._fpm_bad.values())
+
+        # GPS flight path angle: VS (ft/min) / GS (ft/min)
+        gs_fpm = self._fpm_gs * 101.269  # knots → ft/min
+        if gs_fpm > 10.0:
+            fpa_deg = math.degrees(math.atan2(self._fpm_vs, gs_fpm))
+        else:
+            fpa_deg = 0.0
+        # Drift angle: crab relative to heading, normalised ±180°
+        drift_deg = ((self._fpm_track - self._fpm_head) + 180.0) % 360.0 - 180.0
+
+        ppd = getattr(self, 'pixelsPerDeg', self.height() / self.pitchDegreesShown)
+        sym_r = self.bankMarkSize * 0.65
+        x_roll = drift_deg * ppd
+        y_roll = -fpa_deg * ppd
+
+        # Clamp to widget interior (in rolled frame, conservative)
+        max_x = w / 2.0 - sym_r * 3.0
+        max_y = h / 2.0 - sym_r * 3.0
+        x_roll = max(-max_x, min(max_x, x_roll))
+        y_roll = max(-max_y, min(max_y, y_roll))
+
+        fpm_color = QColor(0, 200, 0) if not fpm_bad else QColor(255, 165, 0)
+        pen = QPen(fpm_color)
+        pen.setWidth(max(1, qRound(self.fontSize * 0.05)))
+
+        p.save()
+        p.resetTransform()
+        p.translate(w / 2.0, h / 2.0)
+        p.rotate(self._rollAngle * -1.0)   # align with pitch ladder
+        p.translate(x_roll, y_roll)         # move to flight-path position
+        p.rotate(self._rollAngle)           # symbol stays upright in display space
+        p.setPen(pen)
+        p.setBrush(Qt.GlobalColor.transparent)
+        p.drawEllipse(QPointF(0.0, 0.0), sym_r, sym_r)
+        p.drawLine(QPointF(-sym_r * 2.4, 0.0), QPointF(-sym_r * 1.1, 0.0))
+        p.drawLine(QPointF( sym_r * 1.1, 0.0), QPointF( sym_r * 2.4, 0.0))
+        p.drawLine(QPointF(0.0, -sym_r * 1.1), QPointF(0.0, -sym_r * 2.0))
+        p.restore()
+
     # the pitchItems list contains a tuple that represents all of the tick marks
     # and text of the Pitch graducations.  The first item of the tuple is the angle
     # and the second is the item reference.  We use this to make the tick marks
@@ -356,6 +449,15 @@ class AI(QGraphicsView):
             p.drawPolygon(diamond)
             p.rotate(-2 * a)
             p.drawPolygon(diamond)
+
+        if self.svs is not None:
+            ppd = getattr(self, 'pixelsPerDeg', self.height() / self.pitchDegreesShown)
+            self.svs.draw(p, w, h,
+                          self._svs_lat, self._svs_lon, self._svs_alt,
+                          self._pitchAngle, self._rollAngle, self._fpm_head,
+                          ppd)
+
+        self._drawFPM(p, w, h)
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
