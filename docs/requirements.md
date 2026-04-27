@@ -110,6 +110,7 @@ Two computation methods are defined. GPS-based FPM (implemented first) uses GPS 
 
 ---
 
+
 ## Notes
 
 - Requirements marked as EFIS-SVS are architectural scope definitions; full SVS implementation requires terrain data pipeline design as a prerequisite.
