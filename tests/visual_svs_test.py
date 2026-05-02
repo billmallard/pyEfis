@@ -60,6 +60,7 @@ HEAD      = float(os.environ.get("SVS_HEAD",  "360"))
 RANGE_NM   = float(os.environ.get("SVS_RANGE", "30"))
 RENDERER   = os.environ.get("SVS_RENDERER", "cpu_sparse")
 AUTO_RANGE = os.environ.get("SVS_AUTO_RANGE", "true").lower() != "false"
+GRID_LINES = os.environ.get("SVS_GRID_LINES", "true").lower() != "false"
 
 # ---------------------------------------------------------------------------
 # Bootstrap fix DB
@@ -116,6 +117,7 @@ widget.set_svs_config({
     "renderer":           RENDERER,
     "range_nm":           RANGE_NM,
     "auto_range":         AUTO_RANGE,
+    "grid_lines":         GRID_LINES,
     "clearance_green_ft": 1000,
     "clearance_yellow_ft": 500,
 })
