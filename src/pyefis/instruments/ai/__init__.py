@@ -24,7 +24,7 @@ import logging
 
 import pyavtools.fix as fix
 from pyefis import common
-from pyefis.instruments.ai.svs import SVSRenderer
+from pyefis.instruments.ai.svs import SVSRenderer, make_svs_item
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +120,10 @@ class AI(QGraphicsView):
 
         self._tas = tas.value
 
-        # Flight Path Marker (GPS method): VS, GS, TRACK, HEAD
+        # Flight Path Marker (GPS method): VS, GS, TRACK, HEAD.
+        # Keys default to fail=True so that if any are missing from the FIX
+        # database (e.g. gateway doesn't publish TRACK), _drawFPM stays
+        # silently disabled rather than crashing.
         self._fpm_fail = {k: True for k in ('VS', 'GS', 'TRACK', 'HEAD')}
         self._fpm_bad  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD')}
         self._fpm_vs    = 0.0
@@ -128,7 +131,12 @@ class AI(QGraphicsView):
         self._fpm_track = 0.0
         self._fpm_head  = 0.0
         for key in ('VS', 'GS', 'TRACK', 'HEAD'):
-            _item = fix.db.get_item(key)
+            try:
+                _item = fix.db.get_item(key)
+            except KeyError:
+                log.warning(
+                    f"AI: FIX key '{key}' not defined — Flight Path Marker disabled")
+                continue
             _item.valueChanged[float].connect(lambda v, k=key: self._fpmValueChanged(k, v))
             _item.failChanged[bool].connect(lambda f, k=key: self._fpmFailChanged(k, f))
             _item.badChanged[bool].connect(lambda b, k=key: self._fpmBadChanged(k, b))
@@ -136,13 +144,20 @@ class AI(QGraphicsView):
             self._fpm_bad[key]  = _item.bad
             setattr(self, f'_fpm_{key.lower()}', _item.value)
 
-        # SVS position inputs: LAT, LONG, ALT (disabled by default; renderer set via set_svs_config)
+        # SVS position inputs: LAT, LONG, ALT (disabled by default; renderer
+        # set via set_svs_config). Missing keys leave the SVS position at 0
+        # and the renderer's ready gate will skip drawing if no tiles match.
         self._svs_lat  = 0.0
         self._svs_lon  = 0.0
         self._svs_alt  = 0.0
         self.svs: SVSRenderer | None = None
         for key, attr in (("LAT", "_svs_lat"), ("LONG", "_svs_lon"), ("ALT", "_svs_alt")):
-            _item = fix.db.get_item(key)
+            try:
+                _item = fix.db.get_item(key)
+            except KeyError:
+                log.warning(
+                    f"AI: FIX key '{key}' not defined — SVS will use 0.0 for {attr}")
+                continue
             _item.valueChanged[float].connect(lambda v, a=attr: (setattr(self, a, v), self.update()))
             setattr(self, attr, _item.value)
 
@@ -300,11 +315,58 @@ class AI(QGraphicsView):
 
         self.overlay = self.map.toImage()
 
+        # resizeEvent builds a new self.scene; re-attach the SVS item so it
+        # tracks the current scene rather than being orphaned on the old one.
+        self._attach_svs_item_if_ready()
+
         self.redraw()
 
     def set_svs_config(self, config: dict):
-        """Initialise the SVS renderer from a config dict (called by screenbuilder)."""
+        """Initialise the SVS renderer from a config dict (called by screenbuilder).
+
+        SVS is added to the QGraphicsScene as a low-Z item so the pitch
+        ladder and other scene items render on top of the terrain. Override
+        the default with ``z_value`` in the SVS config block.
+
+        The scene itself is built in ``resizeEvent``, so if this method runs
+        before the first resize we defer the attachment — ``resizeEvent``
+        re-runs ``_attach_svs_item_if_ready`` after rebuilding the scene.
+        """
+        # If we already had an SVS item, detach it from whatever scene held it
+        # so we can swap in a fresh renderer cleanly.
+        if getattr(self, "_svs_item", None) is not None:
+            old_scene = self._svs_item.scene()
+            if old_scene is not None:
+                old_scene.removeItem(self._svs_item)
+            self._svs_item = None
+
         self.svs = SVSRenderer(config)
+        # Z-order layers inside the AI scene:
+        #   z =  1.0  — pitch ladder lines, numerals  (setZValue(1) in resizeEvent)
+        #   z =  0.5  — SVS terrain (this item, default)
+        #   z =  0.0  — sky_rect, land_rect (the static artificial horizon)
+        # So SVS covers the static blue/brown background but stays behind the
+        # pitch ladder. Configurable via the `z_value` SVS config key.
+        z = float(config.get("z_value", 0.5))
+        self._svs_item = make_svs_item(self.svs, self)
+        self._svs_item.setZValue(z)
+        self._attach_svs_item_if_ready()
+
+    def _attach_svs_item_if_ready(self):
+        """Idempotently add the SVS scene item to the current scene.
+        ``resizeEvent`` rebuilds ``self.scene`` on every resize, so the item
+        has to be re-attached each time the scene changes."""
+        item = getattr(self, "_svs_item", None)
+        if item is None:
+            return
+        # self.scene is the inherited QGraphicsView.scene method until
+        # resizeEvent assigns the instance attribute — guard against that.
+        scene = self.__dict__.get("scene")
+        if scene is None:
+            return
+        if item.scene() is scene:
+            return
+        scene.addItem(item)
 
     def _fpmValueChanged(self, key, value):
         setattr(self, f'_fpm_{key.lower()}', value)
@@ -395,16 +457,10 @@ class AI(QGraphicsView):
         p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # SVS terrain drawn first — overlay, bank marks, and FPM render on top.
-        # Note: the animated pitch ladder lives in the QGraphicsScene (rendered by
-        # super() above), so it remains behind SVS until SVS is refactored into a
-        # low-Z scene item. All overlay symbology is correctly in front.
-        if self.svs is not None:
-            ppd = getattr(self, 'pixelsPerDeg', self.height() / self.pitchDegreesShown)
-            self.svs.draw(p, w, h,
-                          self._svs_lat, self._svs_lon, self._svs_alt,
-                          self._pitchAngle, self._rollAngle, self._fpm_head,
-                          ppd)
+        # SVS terrain is rendered as a QGraphicsItem inside super().paintEvent()
+        # above, at a low z-value (default -10). The pitch ladder (z=1) and any
+        # other scene items render on top. Overlay symbology below is painted
+        # directly onto the viewport, so it always lands in front of SVS.
 
         # Put the static overlay image on the view
         p.drawImage(self.rect(), self.overlay)

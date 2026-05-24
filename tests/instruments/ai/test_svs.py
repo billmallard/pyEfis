@@ -12,13 +12,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PyQt6.QtGui import QPaintEvent
+from PyQt6.QtGui import QPaintEvent, QPainter
 
 from pyefis.instruments.ai.svs import (
     SVSRenderer, TileCache,
     tile_name, load_tile, elevation_at,
     COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
     SRTM3_SAMPLES, SRTM3_VOID,
+    POLAR_DEFAULTS,
 )
 from pyefis.instruments.ai import AI
 
@@ -247,3 +248,121 @@ class TestAISVSIntegration:
         widget.show()
         qtbot.waitExposed(widget)
         widget.paintEvent(QPaintEvent(widget.rect()))
+
+    def test_ai_construction_tolerates_missing_fpm_key(self, fix, qtbot,
+                                                      monkeypatch, caplog):
+        """If a Flight Path Marker FIX key is undefined (e.g. gateway doesn't
+        publish TRACK), the AI widget must still construct — FPM rendering
+        is silently disabled, not a hard crash."""
+        import pyavtools.fix as _fix
+        real_get_item = _fix.db.get_item
+
+        def get_item_no_track(key):
+            if key == "TRACK":
+                raise KeyError(key)
+            return real_get_item(key)
+
+        monkeypatch.setattr(_fix.db, "get_item", get_item_no_track)
+
+        with caplog.at_level("WARNING"):
+            widget = AI()
+        qtbot.addWidget(widget)
+        # FPM key map still includes TRACK and that entry stays in fail-state,
+        # so _drawFPM's `any(self._fpm_fail.values())` gate skips rendering.
+        assert widget._fpm_fail["TRACK"] is True
+        # Paint cycle should still complete without raising.
+        widget.resize(400, 300)
+        widget.show()
+        qtbot.waitExposed(widget)
+        widget.paintEvent(QPaintEvent(widget.rect()))
+        assert any("TRACK" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Polar (range, azimuth) tier
+# ---------------------------------------------------------------------------
+
+class TestPolarTier:
+    """Polar tier samples terrain on a forward fan with radial LOD warp."""
+
+    def test_polar_defaults_loaded(self):
+        r = SVSRenderer({"renderer": "polar"})
+        assert r._is_polar is True
+        assert r._n_range     == POLAR_DEFAULTS["n_range"]
+        assert r._n_az        == POLAR_DEFAULTS["n_az"]
+        assert r._fov_deg     == POLAR_DEFAULTS["fov_deg"]
+        assert r._radial_warp == POLAR_DEFAULTS["radial_warp"]
+        assert r._r_min_nm    == POLAR_DEFAULTS["r_min_nm"]
+
+    def test_polar_config_overrides(self):
+        r = SVSRenderer({
+            "renderer": "polar",
+            "n_range": 32, "n_az": 48,
+            "fov_deg": 120.0, "radial_warp": 1.5, "r_min_nm": 0.1,
+        })
+        assert r._n_range     == 32
+        assert r._n_az        == 48
+        assert r._fov_deg     == 120.0
+        assert r._radial_warp == 1.5
+        assert r._r_min_nm    == 0.1
+
+    def test_non_polar_tier_flagged_false(self):
+        for tier in ("cpu_sparse", "cpu_dense", "cpu_ultra"):
+            r = SVSRenderer({"renderer": tier})
+            assert r._is_polar is False
+
+    def test_radial_warp_concentrates_samples_near_aircraft(self):
+        """Quadratic warp: cell at r=0 must be smaller than cell at r=range."""
+        n_r = 16
+        warp = 2.0
+        range_nm = 30.0
+        r_min = 0.01
+        t = np.linspace(0.0, 1.0, n_r)
+        r_max_eff = range_nm * (1.0 - 1e-6)
+        r_nm = r_min + (r_max_eff - r_min) * (t ** warp)
+        # Cell size = consecutive differences
+        cell_size = np.diff(r_nm)
+        # The first (inner) cell must be strictly smaller than the last (outer).
+        assert cell_size[0] < cell_size[-1]
+        # Outer cell should be at least 3x the inner cell at warp=2.
+        assert cell_size[-1] / cell_size[0] >= 3.0
+
+    def _draw_polar(self, renderer, lat=32.5, lon=-96.5, alt_ft=5000.0,
+                    heading_deg=0.0):
+        """Helper: run SVSRenderer.draw() against an offscreen QImage.
+        Avoids constructing the AI widget (which depends on additional FIX
+        keys outside SVS's concern)."""
+        from PyQt6.QtGui import QImage
+        img = QImage(400, 300, QImage.Format.Format_RGB32)
+        img.fill(0)
+        painter = QPainter(img)
+        try:
+            renderer.draw(painter, 400, 300, lat, lon, alt_ft,
+                          0.0, 0.0, heading_deg, 12.0)
+        finally:
+            painter.end()
+        return img
+
+    def test_polar_draw_on_synthetic_tile(self, tmp_path):
+        """Polar draw() completes without raising on a flat synthetic tile."""
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "polar", "range_nm": 15,
+            # Trimmed sample budget to keep the test fast.
+            "n_range": 16, "n_az": 24,
+        })
+        assert r.ready is True
+        self._draw_polar(r)
+
+    def test_polar_draw_at_varied_headings(self, tmp_path):
+        """Polar grid must work at any heading — covers the heading
+        rotation that gets absorbed into the azimuth axis."""
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "polar", "range_nm": 10,
+            "n_range": 8, "n_az": 12,
+        })
+        for heading in (0.0, 90.0, 180.0, 270.0, 45.0, 359.0):
+            self._draw_polar(r, heading_deg=heading)

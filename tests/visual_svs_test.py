@@ -16,7 +16,10 @@ Optional env vars:
     SVS_ROLL        roll angle deg   (default: 0)
     SVS_HEAD        heading deg      (default: 360)
     SVS_RANGE       range_nm         (default: 30)
-    SVS_RENDERER    cpu_sparse | cpu_dense (default: cpu_sparse)
+    SVS_RENDERER    cpu_sparse | cpu_dense | cpu_ultra | polar
+                    (default: cpu_sparse). polar uses a forward (range,
+                    azimuth) fan with finer cells near the aircraft —
+                    see docs/svs_rendering.md.
 """
 
 import os
@@ -61,6 +64,12 @@ RANGE_NM   = float(os.environ.get("SVS_RANGE", "30"))
 RENDERER   = os.environ.get("SVS_RENDERER", "cpu_sparse")
 AUTO_RANGE = os.environ.get("SVS_AUTO_RANGE", "true").lower() != "false"
 GRID_LINES = os.environ.get("SVS_GRID_LINES", "true").lower() != "false"
+# FAA CIFP path: defaults to the in-repo cifp/ directory if present.
+_DEFAULT_CIFP = str(Path(__file__).parent.parent / "cifp" / "FAACIFP18")
+CIFP_PATH  = os.environ.get("SVS_CIFP_PATH",  _DEFAULT_CIFP if Path(_DEFAULT_CIFP).is_file() else "")
+# FAA NASR SQLite (richer data, preferred): defaults to in-repo nasr/airports.sqlite.
+_DEFAULT_NASR = str(Path(__file__).parent.parent / "nasr" / "airports.sqlite")
+NASR_PATH  = os.environ.get("SVS_NASR_PATH",  _DEFAULT_NASR if Path(_DEFAULT_NASR).is_file() else "")
 
 # ---------------------------------------------------------------------------
 # Bootstrap fix DB
@@ -120,6 +129,8 @@ widget.set_svs_config({
     "grid_lines":         GRID_LINES,
     "clearance_green_ft": 1000,
     "clearance_yellow_ft": 500,
+    "cifp_path":          CIFP_PATH,    # used only if NASR isn't configured
+    "nasr_db_path":       NASR_PATH,    # preferred — Tier C surface markings
 })
 win.setCentralWidget(widget)
 win.show()
