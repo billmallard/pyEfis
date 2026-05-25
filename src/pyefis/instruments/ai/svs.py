@@ -227,6 +227,13 @@ class SVSRenderer:
         # Within this distance, runways render with painted surface markings
         # (FAA AC 150/5340-1L). Beyond it, the symbol-style grey rectangle.
         self.detail_distance_nm = float(config.get("detail_distance_nm", 3.0))
+        # When the aircraft is within this distance of ANY airport in the
+        # database, terrain colouring collapses to a 2-colour scheme:
+        # SAFE (green) for terrain below the aircraft, CONFLICT (magenta)
+        # for terrain above. The 500/1000 ft warning/caution bands are
+        # suppressed — they would otherwise paint the whole pattern area
+        # red on a normal landing approach. Set to 0 to disable.
+        self.airport_proximity_nm = float(config.get("airport_proximity_nm", 5.0))
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         self.terrain_fill  = config.get("terrain_fill", True)
@@ -292,6 +299,19 @@ class SVSRenderer:
             range_nm = self.range_nm
         range_deg = range_nm * NM_TO_DEG
         lat_cos = math.cos(math.radians(ac_lat))
+
+        # Are we close enough to a known airport to switch to the 2-colour
+        # "airport pattern" terrain scheme? We only need to know whether the
+        # database yields ANY airport within proximity range — the same
+        # query the runway renderer will run again below, but cached.
+        near_airport = False
+        if (self.airport_proximity_nm > 0.0
+                and getattr(self, "airport_db", None) is not None
+                and self.airport_db.ready):
+            for _ in self.airport_db.airports_in_range(
+                    ac_lat, ac_lon, self.airport_proximity_nm):
+                near_airport = True
+                break
 
         # ------------------------------------------------------------------
         # Build the sample grid in geographic coordinates.
@@ -516,13 +536,19 @@ class SVSRenderer:
             e0_vis   = visible[:-1, :] & visible[1:, :]
 
         def _keys_from(cmin, inten):
-            """Vectorised shade-key calculation. Mirrors the old
-            _cidx / _shade_key closures: 5-way clearance bucket × 32-step
-            intensity quantisation."""
-            cidx = np.where(cmin <= _WATER_SENTINEL / 2.0, 4,
-                   np.where(cmin < 0,              3,
-                   np.where(cmin < self.yellow_ft, 2,
-                   np.where(cmin < self.green_ft,  1, 0))))
+            """Vectorised shade-key calculation: clearance bucket × 32-step
+            intensity quantisation. When the aircraft is near a known
+            airport, collapse the warning/caution bands so a normal landing
+            approach doesn't paint half the screen red."""
+            if near_airport:
+                # 3 categories only: water / conflict (above ac) / safe (below).
+                cidx = np.where(cmin <= _WATER_SENTINEL / 2.0, 4,
+                       np.where(cmin < 0, 3, 0))
+            else:
+                cidx = np.where(cmin <= _WATER_SENTINEL / 2.0, 4,
+                       np.where(cmin < 0,              3,
+                       np.where(cmin < self.yellow_ft, 2,
+                       np.where(cmin < self.green_ft,  1, 0))))
             si = ((inten - AMBIENT) / DIFFUSE * (N_SHADE - 1) + 0.5).astype(np.int32)
             np.clip(si, 0, N_SHADE - 1, out=si)
             return (cidx * N_SHADE + si).astype(np.int32)
