@@ -81,7 +81,8 @@ docs/_build/
 # Makefile markers
 *.marker
 
-# Bulk FAA data drops (CIFP + NASR). Users download these locally; the
-# build tool turns NASR into airports.sqlite (also kept out of the repo).
+# Bulk FAA data drops (CIFP, NASR, DOF). Users download these locally;
+# build tools turn them into sqlite files (also kept out of the repo).
 cifp/
 nasr/
+dof/

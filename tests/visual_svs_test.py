@@ -70,6 +70,9 @@ CIFP_PATH  = os.environ.get("SVS_CIFP_PATH",  _DEFAULT_CIFP if Path(_DEFAULT_CIF
 # FAA NASR SQLite (richer data, preferred): defaults to in-repo nasr/airports.sqlite.
 _DEFAULT_NASR = str(Path(__file__).parent.parent / "nasr" / "airports.sqlite")
 NASR_PATH  = os.environ.get("SVS_NASR_PATH",  _DEFAULT_NASR if Path(_DEFAULT_NASR).is_file() else "")
+# FAA DOF (obstacles): defaults to in-repo dof/obstacles.sqlite.
+_DEFAULT_DOF = str(Path(__file__).parent.parent / "dof" / "obstacles.sqlite")
+DOF_PATH   = os.environ.get("SVS_DOF_PATH",   _DEFAULT_DOF if Path(_DEFAULT_DOF).is_file() else "")
 
 # ---------------------------------------------------------------------------
 # Bootstrap fix DB
@@ -131,6 +134,7 @@ widget.set_svs_config({
     "clearance_yellow_ft": 500,
     "cifp_path":          CIFP_PATH,    # used only if NASR isn't configured
     "nasr_db_path":       NASR_PATH,    # preferred — Tier C surface markings
+    "dof_db_path":        DOF_PATH,     # FAA DOF obstacles (towers, antennas)
 })
 win.setCentralWidget(widget)
 win.show()

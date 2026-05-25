@@ -234,6 +234,14 @@ class SVSRenderer:
         # suppressed — they would otherwise paint the whole pattern area
         # red on a normal landing approach. Set to 0 to disable.
         self.airport_proximity_nm = float(config.get("airport_proximity_nm", 5.0))
+
+        # Optional FAA DOF obstacle database. Renders towers, antennas,
+        # tall buildings as vertical poles. ``obstacle_min_agl_ft`` filters
+        # the ~636k nationwide records down to charted obstacles worth
+        # showing (default 200 ft, matching the FAA charting threshold).
+        from pyefis.instruments.ai.obstacle_db import ObstacleDB
+        self.obstacle_db = ObstacleDB(config.get("dof_db_path", "") or None)
+        self.obstacle_min_agl_ft = float(config.get("obstacle_min_agl_ft", 200.0))
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         self.terrain_fill  = config.get("terrain_fill", True)
@@ -655,6 +663,10 @@ class SVSRenderer:
         self._draw_runways(p, w, h, ac_lat, ac_lon, ac_alt_ft,
                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
 
+        self._draw_obstacles(p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                             pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                             range_nm)
+
         p.restore()
 
     def _project_point(self, lat, lon, alt_ft,
@@ -720,6 +732,53 @@ class SVSRenderer:
         # Built-in fallback
         for icao, apt in _AIRPORT_DB.items():
             yield apt["label"], apt["ref_lat"], apt["ref_lon"], apt["elev_ft"], apt["runways"]
+
+    def _draw_obstacles(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                        pitch_deg, roll_deg, heading_deg, ppd, range_nm):
+        """Render FAA DOF obstacles (towers, antennas, tall buildings) as
+        vertical poles with a tip marker. Poles taller than the aircraft
+        get a CONFLICT-magenta tint; poles below the aircraft are tinted
+        by their lighting code (red/white) or grey if unlit."""
+        if getattr(self, "obstacle_db", None) is None or not self.obstacle_db.ready:
+            return
+
+        # Reuse the airport range (after auto-range scaling) for obstacles —
+        # they should appear at the same horizon distance the terrain does.
+        POLE_PEN_LIT_RED   = QPen(QColor(220,  60,  60), 2)
+        POLE_PEN_LIT_WHITE = QPen(QColor(230, 230, 230), 2)
+        POLE_PEN_UNLIT     = QPen(QColor(160, 160, 160), 2)
+        POLE_PEN_CONFLICT  = QPen(QColor(200,   0, 200), 2)
+        TIP_RADIUS         = 4
+
+        for obs in self.obstacle_db.obstacles_in_range(
+                ac_lat, ac_lon, range_nm, min_agl_ft=self.obstacle_min_agl_ft):
+            sx_base, sy_base, vis_base = self._project_point(
+                obs.lat, obs.lon, obs.base_amsl_ft,
+                ac_lat, ac_lon, ac_alt_ft,
+                pitch_deg, roll_deg, heading_deg, ppd, w, h)
+            sx_top, sy_top, vis_top = self._project_point(
+                obs.lat, obs.lon, obs.amsl_ft,
+                ac_lat, ac_lon, ac_alt_ft,
+                pitch_deg, roll_deg, heading_deg, ppd, w, h)
+            if not (vis_base and vis_top):
+                continue
+
+            # Conflict colouring overrides lighting when the obstacle tip
+            # is above the aircraft — same convention as terrain.
+            if obs.amsl_ft >= ac_alt_ft:
+                pen = POLE_PEN_CONFLICT
+            else:
+                cat = obs.lighting_category()
+                if cat == "red":
+                    pen = POLE_PEN_LIT_RED
+                elif cat in ("white", "dual"):
+                    pen = POLE_PEN_LIT_WHITE
+                else:
+                    pen = POLE_PEN_UNLIT
+            p.setPen(pen)
+            p.setBrush(QBrush(pen.color()))
+            p.drawLine(QPointF(sx_base, sy_base), QPointF(sx_top, sy_top))
+            p.drawEllipse(QPointF(sx_top, sy_top), TIP_RADIUS, TIP_RADIUS)
 
     def _draw_runways(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
                       pitch_deg, roll_deg, heading_deg, ppd):
