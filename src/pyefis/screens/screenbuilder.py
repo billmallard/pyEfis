@@ -523,7 +523,14 @@ class Screen(QWidget):
         elif i['type'] == 'vertical_bar_gauge':
             self.instruments[count] = gauges.VerticalBar(self,min_size=False,font_family=font_family)
         elif i['type'] == 'virtual_vfr':
-            self.instruments[count] = VirtualVfr(self,font_percent=font_percent,font_family=font_family)
+            opts = i.get('options', {})
+            widget = VirtualVfr(self, font_percent=font_percent, font_family=font_family)
+            # SVS config (when present) is passed through the same way as
+            # for the bare `ai` widget — VirtualVfr inherits set_svs_config
+            # from AI.
+            if 'svs' in opts:
+                widget.set_svs_config(opts['svs'])
+            self.instruments[count] = widget
 
         elif i['type'] == 'listbox':
             self.instruments[count] = listbox.ListBox(self, lists=i['options']['lists'], replace=replace,font_family=font_family) #,font_percent=font_percent)
