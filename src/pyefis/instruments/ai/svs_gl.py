@@ -74,14 +74,20 @@ uniform vec2  u_viewport;          // (width, height) in pixels
 uniform sampler2D u_heightmap;     // R32F, single-channel elevation in metres
 uniform vec4  u_patch_bounds;      // (lat_min, lat_max, lon_min, lon_max)
 
-out float v_t;
-out float v_elev_ft;
+out float v_clearance_ft;
+out float v_intensity;
+out float v_is_water;
 
 const float PI            = 3.14159265358979;
 const float DEG_PER_RAD   = 180.0 / PI;
 const float M_PER_FT      = 0.3048;
 const float FT_PER_M      = 3.28084;
 const float M_PER_DEG_LAT = 111139.0;
+const float SLOPE_EXAG    = 4.0;
+const float AMBIENT       = 0.10;
+const float DIFFUSE       = 0.90;
+const float WATER_THR_M   = -1000.0;   // SRTM water sentinel was -9999
+const float PATCH_TEXELS  = 2402.0;    // 2 tiles × 1201 samples each
 
 void main() {
     float t      = a_t_az.x;
@@ -104,15 +110,49 @@ void main() {
     float vert_lon = u_ac_lon + r_deg * sin_b / max(lat_cos, 1.0e-3);
 
     // Sample the heightmap. Texture u runs west->east; v runs
-    // south->north, but SRTM tiles arrive row-0-at-north, so we flip
-    // v during upload — the shader can use UV (0,0)=SW, (1,1)=NE.
+    // south->north (we flip the SRTM tiles vertically at upload).
+    vec2 patch_size_deg = vec2(
+        u_patch_bounds.w - u_patch_bounds.z,
+        u_patch_bounds.y - u_patch_bounds.x);
     vec2 uv = vec2(
-        (vert_lon - u_patch_bounds.z)
-            / max(u_patch_bounds.w - u_patch_bounds.z, 1.0e-6),
-        (vert_lat - u_patch_bounds.x)
-            / max(u_patch_bounds.y - u_patch_bounds.x, 1.0e-6));
-    float elev_m  = texture(u_heightmap, uv).r;
+        (vert_lon - u_patch_bounds.z) / max(patch_size_deg.x, 1.0e-6),
+        (vert_lat - u_patch_bounds.x) / max(patch_size_deg.y, 1.0e-6));
+
+    float elev_m_raw = texture(u_heightmap, uv).r;
+    float is_water   = step(elev_m_raw, WATER_THR_M);
+    float elev_m     = mix(elev_m_raw, 0.0, is_water);
+
+    // Slope shading: finite differences against immediate neighbour
+    // texels. Sentinel values get clamped first so coastlines don't
+    // produce wild slopes.
+    vec2 texel_uv = vec2(1.0 / PATCH_TEXELS);
+    float elev_e_raw = texture(u_heightmap, uv + vec2(texel_uv.x, 0.0)).r;
+    float elev_n_raw = texture(u_heightmap, uv + vec2(0.0, texel_uv.y)).r;
+    float elev_e_m   = mix(elev_e_raw, 0.0, step(elev_e_raw, WATER_THR_M));
+    float elev_n_m   = mix(elev_n_raw, 0.0, step(elev_n_raw, WATER_THR_M));
+
+    // 1 texel size in metres along each geographic axis.
+    vec2 texel_m = vec2(
+        texel_uv.x * patch_size_deg.x * M_PER_DEG_LAT * lat_cos,
+        texel_uv.y * patch_size_deg.y * M_PER_DEG_LAT);
+
+    // Slope in (E, N) frame, in metres of elevation per metre of
+    // horizontal distance. SLOPE_EXAG is the same factor the CPU
+    // tier uses so the lighting feels comparable.
+    float dE = ((elev_e_m - elev_m) / max(texel_m.x, 1.0)) * SLOPE_EXAG;
+    float dN = ((elev_n_m - elev_m) / max(texel_m.y, 1.0)) * SLOPE_EXAG;
+    float mag = sqrt(dE * dE + dN * dN + 1.0);
+    vec3 normal = vec3(-dE / mag, -dN / mag, 1.0 / mag);
+
+    // Sun in geographic (E, N, Up). Upper-NW — same as CPU code.
+    vec3 sun_dir = normalize(vec3(-1.0, 1.0, 2.0));
+    float diff = clamp(dot(normal, sun_dir), 0.0, 1.0);
+    v_intensity = AMBIENT + DIFFUSE * diff;
+
+    // Clearance for the bucket — positive = aircraft above terrain.
     float elev_ft = elev_m * FT_PER_M;
+    v_clearance_ft = u_ac_alt_ft - elev_ft;
+    v_is_water     = is_water;
 
     // Elevation angle from the aircraft to this vertex.
     float ac_alt_m = u_ac_alt_ft * M_PER_FT;
@@ -120,43 +160,57 @@ void main() {
     float alt_diff_m = elev_m - ac_alt_m;
     float elev_angle_deg = atan(alt_diff_m / max(range_m, 1.0)) * DEG_PER_RAD;
 
-    // Aircraft-frame screen offsets in degrees.
     float x_ang = az_deg;
     float y_ang = elev_angle_deg - u_pitch_deg;
 
     float x_px =  x_ang * u_pixels_per_deg;
     float y_px = -y_ang * u_pixels_per_deg;
 
-    // Roll rotation around the viewport centre.
     float roll_rad = radians(-u_roll_deg);
     float cos_r = cos(roll_rad);
     float sin_r = sin(roll_rad);
     vec2 rotated = vec2(
         x_px * cos_r - y_px * sin_r,
         x_px * sin_r + y_px * cos_r);
-
     vec2 screen_xy = rotated + u_viewport * 0.5;
 
     gl_Position = vec4(
         2.0 * screen_xy.x / u_viewport.x - 1.0,
         1.0 - 2.0 * screen_xy.y / u_viewport.y,
         0.0, 1.0);
-
-    v_t       = t;
-    v_elev_ft = elev_ft;
 }
 """
 
 _FRAG_BODY = """
-in float v_t;
-in float v_elev_ft;
+in float v_clearance_ft;
+in float v_intensity;
+in float v_is_water;
 out vec4 outColor;
 
+uniform float u_green_ft;        // clearance >= u_green_ft => SAFE
+uniform float u_yellow_ft;       // clearance >= u_yellow_ft => CAUTION
+
+// Match the CPU tier's COLOR_* constants in svs.py.
+const vec3 COLOR_SAFE     = vec3(0.0,   0.392, 0.0  );  // (  0, 100,   0)
+const vec3 COLOR_CAUTION  = vec3(0.706, 0.510, 0.0  );  // (180, 130,   0)
+const vec3 COLOR_WARNING  = vec3(0.784, 0.157, 0.0  );  // (200,  40,   0)
+const vec3 COLOR_CONFLICT = vec3(0.706, 0.0,   0.706);  // (180,   0, 180)
+const vec3 COLOR_WATER    = vec3(0.078, 0.314, 0.588);  // ( 20,  80, 150)
+
 void main() {
-    // Greyscale by elevation, 0 - 15000 ft mapped to black - white.
-    // Step 5 replaces this with Lambertian shading + clearance buckets.
-    float g = clamp(v_elev_ft / 15000.0, 0.0, 1.0);
-    outColor = vec4(g, g, g, 1.0);
+    vec3 base;
+    if (v_is_water > 0.5) {
+        base = COLOR_WATER;
+    } else if (v_clearance_ft < 0.0) {
+        base = COLOR_CONFLICT;
+    } else if (v_clearance_ft < u_yellow_ft) {
+        base = COLOR_WARNING;
+    } else if (v_clearance_ft < u_green_ft) {
+        base = COLOR_CAUTION;
+    } else {
+        base = COLOR_SAFE;
+    }
+    outColor = vec4(base * v_intensity, 1.0);
 }
 """
 
@@ -309,6 +363,11 @@ class SVSGLRenderer:
                     float(self._patch_bounds[3]))
                 self._program.setUniformValue(
                     self._u["u_heightmap"], 0)   # sampler -> texture unit 0
+                # Clearance thresholds (same defaults as polar CPU tier).
+                self._program.setUniformValue(
+                    self._u["u_green_ft"], float(p.green_ft))
+                self._program.setUniformValue(
+                    self._u["u_yellow_ft"], float(p.yellow_ft))
 
                 gl.glDrawElements(
                     gl.GL_TRIANGLES, self._index_count,
@@ -367,7 +426,8 @@ class SVSGLRenderer:
         for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft", "u_heading_deg",
                      "u_pitch_deg", "u_roll_deg", "u_range_nm",
                      "u_radial_warp", "u_r_min_nm", "u_pixels_per_deg",
-                     "u_viewport", "u_heightmap", "u_patch_bounds"):
+                     "u_viewport", "u_heightmap", "u_patch_bounds",
+                     "u_green_ft", "u_yellow_ft"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)
