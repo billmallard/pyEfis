@@ -506,13 +506,28 @@ class SVSGLRenderer:
             self._parent._n_range, self._parent._n_az,
             self._parent._fov_deg)
 
+    @staticmethod
+    def _patch_origin_for(ac_lat: float, ac_lon: float) -> tuple[int, int]:
+        """Pick the 2x2-tile patch origin that keeps the aircraft at
+        least 0.5 deg (~30 NM) from every edge. With ``floor(x - 0.5)``
+        the rebuild happens at HALF-integer degree boundaries (..., -0.5,
+        0.5, 1.5, ...); at every boundary the aircraft is 0.5 deg inside
+        the new patch on the side it just crossed from, and 1.5 deg from
+        the far edge.
+
+        With the old ``floor(x - 1.0)`` the aircraft sat at the patch
+        edge just before integer-degree crossings, so the
+        ``GL_CLAMP_TO_EDGE`` heightmap sampler painted fake-flat terrain
+        ahead of the nose."""
+        return (int(math.floor(ac_lat - 0.5)),
+                int(math.floor(ac_lon - 0.5)))
+
     def _ensure_heightmap(self, ac_lat: float, ac_lon: float):
-        """(Re)build the heightmap texture when the aircraft crosses an
-        integer-degree boundary. Patch origin uses math.floor so it
-        works for negative longitudes too."""
-        start_lat = int(math.floor(ac_lat - 1.0))
-        start_lon = int(math.floor(ac_lon - 1.0))
-        origin = (start_lat, start_lon)
+        """(Re)build the heightmap texture when the aircraft crosses
+        into a new 2x2-tile patch. See :meth:`_patch_origin_for` for
+        the centring choice."""
+        origin = self._patch_origin_for(ac_lat, ac_lon)
+        start_lat, start_lon = origin
         if (self._heightmap_tex_id is not None
                 and self._patch_origin == origin):
             return

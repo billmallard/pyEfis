@@ -493,6 +493,67 @@ class TestSVSGLFallback:
         gl_r._parent = _StubParent(db=None)
         assert gl_r._near_airport(32.5, -96.5) is False
 
+    def test_step7_patch_centring_keeps_aircraft_inside(self):
+        """Step 7: the 2x2 patch origin chosen by ``_patch_origin_for``
+        keeps the aircraft at least 0.5 deg from every patch edge so
+        the GL sampler's CLAMP_TO_EDGE never lies about terrain ahead
+        of the nose. Sweeping a representative grid of (lat, lon)
+        positions, the worst-case edge distance must stay >= 0.5 deg."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+        worst = 99.0
+        for ac_lat in np.arange(-2.0, 35.5, 0.1):
+            for ac_lon in np.arange(-122.0, 5.5, 0.5):
+                slat, slon = SVSGLRenderer._patch_origin_for(ac_lat, ac_lon)
+                # Patch covers [slat, slat+2] x [slon, slon+2].
+                dist = min(ac_lat - slat, slat + 2 - ac_lat,
+                           ac_lon - slon, slon + 2 - ac_lon)
+                worst = min(worst, dist)
+                assert dist > 0.0, (
+                    f"aircraft ({ac_lat}, {ac_lon}) fell outside patch "
+                    f"({slat}..{slat+2}, {slon}..{slon+2})")
+        assert worst >= 0.5 - 1e-6, (
+            f"worst-case edge distance {worst:.4f} deg < 0.5 deg buffer; "
+            f"patch centring regressed")
+
+    def test_step7_patch_rebuilds_at_half_integer_crossings(self):
+        """Step 7: as the aircraft flies steadily north across a
+        half-integer-degree boundary, ``_patch_origin_for`` must change
+        at exactly N + 0.5, not at integer N. This is the rebuild
+        trigger."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+        prev = SVSGLRenderer._patch_origin_for(32.0, -97.5)
+        crossings = []
+        # Step in tenths from 32.0 northward across 33.0; the rebuild
+        # should fire when crossing 32.5 (32 -> 33 patch start).
+        for tenth in range(1, 11):
+            ac_lat = 32.0 + tenth * 0.1
+            origin = SVSGLRenderer._patch_origin_for(ac_lat, -97.5)
+            if origin != prev:
+                crossings.append((round(ac_lat, 2), prev, origin))
+                prev = origin
+        assert len(crossings) == 1, (
+            f"expected exactly one boundary crossing between 32.0 and "
+            f"33.0; got {crossings}")
+        crossed_at, before, after = crossings[0]
+        # We step in 0.1 increments, so the crossing is detected at the
+        # first tested lat >= 32.5.
+        assert 32.5 <= crossed_at <= 32.6, (
+            f"rebuild should fire as ac_lat crosses 32.5; got {crossed_at}")
+        assert after[0] == before[0] + 1, (
+            f"patch start_lat should advance by 1 deg at the crossing; "
+            f"got {before} -> {after}")
+
+    def test_step7_negative_longitude_handled(self):
+        """Step 7: negative longitudes (the western hemisphere) must
+        still produce a patch that contains the aircraft. ``floor`` is
+        the right choice — ``int(x)`` would round toward zero and skew
+        the patch east at every western position."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+        # KASE (Aspen) is at lat 39.22, lon -106.87.
+        slat, slon = SVSGLRenderer._patch_origin_for(39.22, -106.87)
+        assert slat <= 39.22 < slat + 2
+        assert slon <= -106.87 < slon + 2
+
     def test_step3_polar_mesh_renders(self, tmp_path):
         """Step 3 verification: with a real GL context the renderer
         draws the polar (t, az) mesh with debug colour bands. We can't
