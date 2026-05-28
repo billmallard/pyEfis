@@ -135,7 +135,9 @@ class VirtualVfr(AI):
                 # if metadata exists dbpath and indepath are not used.
                 # This allows default for non-snap to home directory and for snaps
                 # to have the /usr/share path
-                metadata = yaml.safe_load(open(os.path.expanduser(self.myparent.get_config_item('metadata'))))
+                config_path = os.path.expanduser(self.myparent.get_config_item('metadata'))
+                with open(config_path, 'r') as f:
+                  metadata = yaml.safe_load(f)
                 date_now = datetime.datetime.now()
                 file = 'current'
                 expired = False
@@ -647,7 +649,7 @@ class VirtualVfr(AI):
                     # Initially set to grey
                     # we may have old data while recovering
                     if hasattr(self, 'sky_rect'):
-                        if self.getAIFail():
+                        if self.getAIFail():  # pragma: no cover
                             self.sky_rect.setBrush (self.gray_sky)
                             self.land_rect.setBrush (self.gray_land)
                         else:
@@ -1017,7 +1019,7 @@ def Distance(course, rel_lng=0):
     return distance, relative_lng_length
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     # Unit testing for POV class
     pov = PointOfView()
     pov.initialize (0, 0, 1000, 0, [], 400)

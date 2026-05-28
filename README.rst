@@ -1,10 +1,20 @@
-|Website snapcraft.io| |Coverage Badge|
+|Coverage Badge| |Website snapcraft.io| |candidate| |beta| |edge|
+
+.. |Coverage Badge| image:: https://raw.githubusercontent.com/makerplane/pyEfis/python-coverage-comment-action-data/badge.svg
+   :target: https://htmlpreview.github.io/?https://github.com/makerplane/pyEfis/blob/python-coverage-comment-action-data/htmlcov/index.html
 
 .. |Website snapcraft.io| image:: https://snapcraft.io/pyefis/badge.svg
    :target: https://snapcraft.io/pyefis
 
-.. |Coverage Badge| image:: https://raw.githubusercontent.com/makerplane/pyEfis/python-coverage-comment-action-data/badge.svg
-   :target: https://htmlpreview.github.io/?https://github.com/makerplane/pyEfis/blob/python-coverage-comment-action-data/htmlcov/index.html
+.. |candidate| image:: https://img.shields.io/snapcraft/v/pyefis/latest/candidate?label=candidate&color=d5d90d
+   :target: https://snapcraft.io/pyefis
+
+.. |beta| image:: https://img.shields.io/snapcraft/v/pyefis/latest/beta?label=beta&color=d9870d
+   :target: https://snapcraft.io/pyefis
+
+.. |edge| image:: https://img.shields.io/snapcraft/v/pyefis/latest/edge?label=edge&color=d90d0d
+   :target: https://snapcraft.io/pyefis
+
 
 pyEfis
 ==================
