@@ -17,10 +17,25 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
-from PyQt6.QtCore import QSize
-from PyQt6.QtGui import QOffscreenSurface, QOpenGLContext, QSurfaceFormat
-from PyQt6.QtOpenGL import (
+# PyOpenGL tracks vertex-attribute pointers in per-context storage by
+# default; under Qt's EGL/eglfs context it can't find the "current
+# context" and raises during glVertexAttribPointer. We avoid that call
+# entirely by going through QOpenGLBuffer + setAttributeBuffer for
+# vertex setup — so we only need PyOpenGL for stateless calls (glClear,
+# glDrawArrays, etc.). Disabling the pointer store removes the last
+# trace of context tracking for the calls we do make.
+import OpenGL
+OpenGL.STORE_POINTERS = False
+OpenGL.ERROR_ON_COPY = True   # required when STORE_POINTERS is False
+from OpenGL import GL as gl  # noqa: E402
+
+import numpy as np  # noqa: E402
+from PyQt6.QtCore import QSize  # noqa: E402
+from PyQt6.QtGui import (  # noqa: E402
+    QOffscreenSurface, QOpenGLContext, QSurfaceFormat,
+)
+from PyQt6.QtOpenGL import (  # noqa: E402
+    QOpenGLBuffer,
     QOpenGLFramebufferObject,
     QOpenGLShader,
     QOpenGLShaderProgram,
@@ -106,6 +121,9 @@ class SVSGLRenderer:
         # ES doesn't strictly need it but having one bound is a no-op
         # there. Created on first draw inside makeCurrent.
         self._vao: QOpenGLVertexArrayObject | None = None
+        # Static fullscreen-quad VBO. Built once per context, reused
+        # every frame.
+        self._quad_vbo: QOpenGLBuffer | None = None
 
         actual = self._ctx.format()
         log.info(
@@ -148,15 +166,15 @@ class SVSGLRenderer:
     # Internals
     # ------------------------------------------------------------------
     def _render_to_image(self, w, h):
-        """Bind the FBO, draw the test quad, return the result as QImage."""
-        # PyOpenGL gives us the raw glClear / glDrawArrays etc.; Qt-native
-        # wrappers handle context, FBO, shaders, attribute arrays.
-        from OpenGL import GL as gl
+        """Bind the FBO, draw the test quad, return the result as QImage.
 
-        verts = np.array(
-            [-1.0, -1.0,  1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
-            dtype=np.float32)
-
+        Vertex setup (VBO + attribute pointer) goes through Qt-native
+        wrappers (QOpenGLBuffer + QOpenGLShaderProgram) so we never
+        call ``glVertexAttribPointer`` through PyOpenGL — that's the
+        call that fails on Pi/eglfs because of PyOpenGL's context
+        tracking. The remaining raw calls (glClear, glDrawArrays) are
+        stateless and work fine via PyOpenGL on both Windows and Pi.
+        """
         self._fbo.bind()
         try:
             gl.glViewport(0, 0, w, h)
@@ -165,24 +183,24 @@ class SVSGLRenderer:
 
             self._program.bind()
             self._vao.bind()
+            self._quad_vbo.bind()
             try:
                 self._program.setUniformValue(
                     self._program.uniformLocation("u_color"),
                     float(_STEP2_COLOR[0]),
                     float(_STEP2_COLOR[1]),
                     float(_STEP2_COLOR[2]))
-                vbo = gl.glGenBuffers(1)
-                gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vbo)
-                gl.glBufferData(gl.GL_ARRAY_BUFFER, verts.nbytes,
-                                verts, gl.GL_STATIC_DRAW)
-                gl.glEnableVertexAttribArray(self._a_position)
-                gl.glVertexAttribPointer(self._a_position, 2,
-                                         gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+                # setAttributeBuffer wires the shader attribute to the
+                # currently-bound VBO at byte offset 0, two floats per
+                # vertex. This goes through QOpenGLShaderProgram, not
+                # raw glVertexAttribPointer.
+                self._program.enableAttributeArray(self._a_position)
+                self._program.setAttributeBuffer(
+                    self._a_position, gl.GL_FLOAT, 0, 2, 0)
                 gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-                gl.glDisableVertexAttribArray(self._a_position)
-                gl.glBindBuffer(gl.GL_ARRAY_BUFFER, 0)
-                gl.glDeleteBuffers(1, [vbo])
+                self._program.disableAttributeArray(self._a_position)
             finally:
+                self._quad_vbo.release()
                 self._vao.release()
                 self._program.release()
 
@@ -221,4 +239,21 @@ class SVSGLRenderer:
         vao = QOpenGLVertexArrayObject()
         if not vao.create():
             raise RuntimeError("could not create QOpenGLVertexArrayObject")
+        # Bind it once so the VBO setup below is recorded inside it,
+        # then upload the static fullscreen-quad geometry.
+        vao.bind()
+        try:
+            vbo = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
+            if not vbo.create():
+                raise RuntimeError("could not create vertex buffer")
+            vbo.setUsagePattern(QOpenGLBuffer.UsagePattern.StaticDraw)
+            vbo.bind()
+            verts = np.array(
+                [-1.0, -1.0,  1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
+                dtype=np.float32)
+            vbo.allocate(verts.tobytes(), int(verts.nbytes))
+            vbo.release()
+            self._quad_vbo = vbo
+        finally:
+            vao.release()
         self._vao = vao
