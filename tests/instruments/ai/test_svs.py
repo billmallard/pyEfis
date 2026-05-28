@@ -366,3 +366,92 @@ class TestPolarTier:
         })
         for heading in (0.0, 90.0, 180.0, 270.0, 45.0, 359.0):
             self._draw_polar(r, heading_deg=heading)
+
+
+# ---------------------------------------------------------------------------
+# OpenGL tier — scaffolding + fallback machinery
+# Step 1 of docs/svs_opengl_plan.md. The GL renderer's draw() stub raises
+# NotImplementedError on purpose; these tests verify the fallback path
+# transparently downgrades to polar and never crashes.
+# ---------------------------------------------------------------------------
+
+class TestSVSGLFallback:
+    def _draw(self, r, lat=32.5, lon=-96.5, alt_ft=3000.0, heading_deg=0.0):
+        from PyQt6.QtGui import QImage
+        img = QImage(400, 300, QImage.Format.Format_RGB32)
+        img.fill(0)
+        painter = QPainter(img)
+        try:
+            r.draw(painter, 400, 300, lat, lon, alt_ft,
+                   0.0, 0.0, heading_deg, 12.0)
+        finally:
+            painter.end()
+
+    def test_renderer_initially_opengl(self, tmp_path):
+        """Construction with renderer='opengl' stores the choice — the
+        downgrade happens on first draw, not at config-time."""
+        root = _make_tile_dir(tmp_path, 32, -97)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+        })
+        assert r.renderer == "opengl"
+        assert r._gl_renderer is None
+        assert r._gl_init_attempted is False
+
+    def test_first_draw_falls_back_to_polar(self, tmp_path, caplog):
+        """SVSGLRenderer.draw raises NotImplementedError today, so the first
+        draw call must downgrade the renderer to polar and complete cleanly."""
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+            "n_range": 8, "n_az": 12,        # keep the polar fallback cheap
+        })
+        with caplog.at_level("WARNING"):
+            self._draw(r)
+        assert r.renderer == "polar"
+        assert r._gl_renderer is None
+        assert any("falling back to polar" in rec.getMessage().lower()
+                   for rec in caplog.records)
+
+    def test_subsequent_draws_use_polar_without_retrying_gl(self, tmp_path):
+        """Once GL has failed and been downgraded, repeated draws stay on
+        polar and never re-attempt GL construction."""
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+            "n_range": 8, "n_az": 12,
+        })
+        self._draw(r)
+        assert r.renderer == "polar"
+        before = r._gl_init_attempted
+        # Drawing again must not change anything.
+        for _ in range(3):
+            self._draw(r)
+        assert r.renderer == "polar"
+        assert r._gl_init_attempted == before  # still True; not re-tried
+
+    def test_init_failure_also_falls_back(self, tmp_path, monkeypatch, caplog):
+        """If SVSGLRenderer construction itself raises (e.g. a Qt build
+        without OpenGL bindings), we still downgrade to polar instead of
+        crashing."""
+        import pyefis.instruments.ai.svs_gl as svs_gl
+
+        class BrokenGL:
+            def __init__(self, *a, **kw):
+                raise RuntimeError("simulated missing GL bindings")
+        monkeypatch.setattr(svs_gl, "SVSGLRenderer", BrokenGL)
+
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+            "n_range": 8, "n_az": 12,
+        })
+        with caplog.at_level("WARNING"):
+            self._draw(r)
+        assert r.renderer == "polar"
+        assert any("opengl renderer unavailable" in rec.getMessage().lower()
+                   for rec in caplog.records)
