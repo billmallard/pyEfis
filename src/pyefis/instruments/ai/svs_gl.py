@@ -189,6 +189,7 @@ out vec4 outColor;
 
 uniform float u_green_ft;        // clearance >= u_green_ft => SAFE
 uniform float u_yellow_ft;       // clearance >= u_yellow_ft => CAUTION
+uniform float u_near_airport;    // 1.0 => collapse to 2-colour SAFE/CONFLICT
 
 // Match the CPU tier's COLOR_* constants in svs.py.
 const vec3 COLOR_SAFE     = vec3(0.0,   0.392, 0.0  );  // (  0, 100,   0)
@@ -203,6 +204,11 @@ void main() {
         base = COLOR_WATER;
     } else if (v_clearance_ft < 0.0) {
         base = COLOR_CONFLICT;
+    } else if (u_near_airport > 0.5) {
+        // Airport-proximity 2-colour mode: warning/caution bands suppressed
+        // so a normal landing approach doesn't paint half the screen red.
+        // Matches svs.py near_airport branch in _keys_from().
+        base = COLOR_SAFE;
     } else if (v_clearance_ft < u_yellow_ft) {
         base = COLOR_WARNING;
     } else if (v_clearance_ft < u_green_ft) {
@@ -368,6 +374,9 @@ class SVSGLRenderer:
                     self._u["u_green_ft"], float(p.green_ft))
                 self._program.setUniformValue(
                     self._u["u_yellow_ft"], float(p.yellow_ft))
+                self._program.setUniformValue(
+                    self._u["u_near_airport"],
+                    1.0 if self._near_airport(ac_lat, ac_lon) else 0.0)
 
                 gl.glDrawElements(
                     gl.GL_TRIANGLES, self._index_count,
@@ -379,6 +388,21 @@ class SVSGLRenderer:
             return self._fbo.toImage()
         finally:
             self._fbo.release()
+
+    def _near_airport(self, ac_lat: float, ac_lon: float) -> bool:
+        """Same proximity test the polar CPU tier runs at svs.py:359.
+        Yields True if any airport in the database sits within
+        ``airport_proximity_nm`` of the aircraft."""
+        p = self._parent
+        prox = float(getattr(p, "airport_proximity_nm", 0.0) or 0.0)
+        if prox <= 0.0:
+            return False
+        db = getattr(p, "airport_db", None)
+        if db is None or not getattr(db, "ready", False):
+            return False
+        for _ in db.airports_in_range(ac_lat, ac_lon, prox):
+            return True
+        return False
 
     def _ensure_fbo(self, w, h):
         size = QSize(w, h)
@@ -427,7 +451,7 @@ class SVSGLRenderer:
                      "u_pitch_deg", "u_roll_deg", "u_range_nm",
                      "u_radial_warp", "u_r_min_nm", "u_pixels_per_deg",
                      "u_viewport", "u_heightmap", "u_patch_bounds",
-                     "u_green_ft", "u_yellow_ft"):
+                     "u_green_ft", "u_yellow_ft", "u_near_airport"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)

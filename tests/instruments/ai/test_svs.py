@@ -456,6 +456,43 @@ class TestSVSGLFallback:
         assert any("opengl renderer unavailable" in rec.getMessage().lower()
                    for rec in caplog.records)
 
+    def test_step6_near_airport_helper(self, tmp_path):
+        """Step 6: ``_near_airport`` returns True only when the
+        configured airport_db reports an airport within
+        ``airport_proximity_nm``. Tested against the helper in
+        isolation so it doesn't depend on a live GL context."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+
+        class _StubDB:
+            def __init__(self, hit):
+                self.ready = True
+                self._hit = hit
+            def airports_in_range(self, lat, lon, rng):
+                if self._hit:
+                    yield ("KXYZ", lat, lon)
+
+        class _StubParent:
+            def __init__(self, db, prox=5.0):
+                self.airport_db = db
+                self.airport_proximity_nm = prox
+
+        # Construct a renderer instance but skip __init__ so no Qt GL
+        # context is created — we're only exercising the helper.
+        gl_r = SVSGLRenderer.__new__(SVSGLRenderer)
+
+        gl_r._parent = _StubParent(_StubDB(hit=True))
+        assert gl_r._near_airport(32.5, -96.5) is True
+
+        gl_r._parent = _StubParent(_StubDB(hit=False))
+        assert gl_r._near_airport(32.5, -96.5) is False
+
+        gl_r._parent = _StubParent(_StubDB(hit=True), prox=0.0)
+        assert gl_r._near_airport(32.5, -96.5) is False, (
+            "airport_proximity_nm=0 must disable the 2-colour mode")
+
+        gl_r._parent = _StubParent(db=None)
+        assert gl_r._near_airport(32.5, -96.5) is False
+
     def test_step3_polar_mesh_renders(self, tmp_path):
         """Step 3 verification: with a real GL context the renderer
         draws the polar (t, az) mesh with debug colour bands. We can't
