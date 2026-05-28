@@ -277,6 +277,23 @@ class SVSRenderer:
     def ready(self) -> bool:
         return self.enabled and self.cache is not None and self.cache.tile_root.is_dir()
 
+    def _auto_range_nm(self, ac_lat: float, ac_lon: float,
+                       ac_alt_ft: float) -> float:
+        """Compute the effective rendered range in NM, scaling down from
+        ``range_nm`` based on AGL and MSL when ``auto_range`` is on.
+        Shared by the polar/CPU rasterisation path and the GL overlay
+        path so both honour the same auto-scale rule."""
+        _agl_elev, _ = self._sample_elevations(
+            np.array([[ac_lat]]), np.array([[ac_lon]]))
+        ac_ground_m = float(_agl_elev[0, 0])
+        agl_ft = ac_alt_ft - ac_ground_m * 3.28084
+        if self.auto_range:
+            agl_range = 0.1 * math.sqrt(max(0.0, agl_ft))
+            msl_range = ac_alt_ft * 0.001
+            return min(self.range_nm,
+                       max(self.min_range_nm, agl_range, msl_range))
+        return self.range_nm
+
     def _clearance_color(self, clearance_ft: float) -> QColor:
         if clearance_ft < 0:
             return COLOR_CONFLICT
@@ -322,7 +339,23 @@ class SVSRenderer:
                     self._gl_renderer.draw(
                         p, w, h, ac_lat, ac_lon, ac_alt_ft,
                         pitch_deg, roll_deg, heading_deg, pixels_per_deg)
-                    return  # GL handled the frame
+                    # GL drew the terrain; paint the CPU overlays on top.
+                    # _draw_obstacles needs the auto-ranged range_nm.
+                    range_nm = self._auto_range_nm(ac_lat, ac_lon, ac_alt_ft)
+                    p.save()
+                    p.resetTransform()
+                    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                    try:
+                        self._draw_runways(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
+                        self._draw_obstacles(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                            range_nm)
+                    finally:
+                        p.restore()
+                    return
                 except Exception as e:
                     log.warning(
                         "SVS OpenGL draw failed (%s); falling back to polar "
@@ -333,22 +366,7 @@ class SVSRenderer:
             self.renderer = "polar"
             self._is_polar = True
 
-        # Auto-scale range with AGL so near-ground views stay useful.
-        # Sample terrain under the aircraft (cheap — tile is cached after frame 1).
-        _agl_elev, _ = self._sample_elevations(
-            np.array([[ac_lat]]), np.array([[ac_lon]]))
-        ac_ground_m = float(_agl_elev[0, 0])
-        agl_ft = ac_alt_ft - ac_ground_m * 3.28084
-        # Auto-range: largest of AGL-based, MSL-based, and configured minimum.
-        # MSL term ensures high-altitude plateau flying still sees distant terrain.
-        # Disabled when auto_range=false — config range_nm is used directly.
-        if self.auto_range:
-            agl_range = 0.1 * math.sqrt(max(0.0, agl_ft))   # e.g. 2500 AGL → 5 NM
-            msl_range = ac_alt_ft * 0.001                    # e.g. 14000 MSL → 14 NM
-            range_nm  = min(self.range_nm,
-                            max(self.min_range_nm, agl_range, msl_range))
-        else:
-            range_nm = self.range_nm
+        range_nm = self._auto_range_nm(ac_lat, ac_lon, ac_alt_ft)
         range_deg = range_nm * NM_TO_DEG
         lat_cos = math.cos(math.radians(ac_lat))
 
