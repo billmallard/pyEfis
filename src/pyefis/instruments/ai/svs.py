@@ -7,7 +7,9 @@ using the same pixelsPerDeg coordinate frame as the Flight Path Marker.
 Rendering tiers (selected by config):
   cpu_sparse  — 48×48 NumPy grid, ~15 Hz on Raspberry Pi 4
   cpu_dense   — 128×128 NumPy grid, ~20 Hz on Raspberry Pi 5 / x86
-  opengl      — QOpenGLWidget mesh (future; falls back to cpu_sparse)
+  opengl      — GPU-backed mesh via PyQt6 OpenGL (work in progress —
+                see docs/svs_opengl_plan.md; current stub falls back
+                to polar on first draw)
 
 Tile format: NASA SRTMGL3 V003, 1°×1° HGT tiles, big-endian int16,
 1201×1201 samples. Void values (-32768) are treated as sea level.
@@ -57,7 +59,8 @@ GRID_SIZES = {
     "cpu_dense":  128,
     "cpu_ultra":  192,  # ~2.3× more quads than dense; SRTM3 data supports it
     "polar":      0,    # polar tier uses (n_range, n_az) — see POLAR_DEFAULTS
-    "opengl":     48,   # opengl tier not yet implemented; falls back to cpu_sparse
+    "opengl":     0,    # GPU mesh — dispatched via SVSGLRenderer in svs_gl.py
+                         # (work in progress; current stub falls back to polar)
 }
 
 # Polar (range, azimuth) tier defaults. The polar tier samples terrain on a
@@ -250,6 +253,13 @@ class SVSRenderer:
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
         self._grid_n       = GRID_SIZES.get(self.renderer, 48)
 
+        # OpenGL tier state — see docs/svs_opengl_plan.md. The renderer
+        # is lazy-constructed inside draw(), so we can probe Qt's OpenGL
+        # context capability at a point where a QPainter is available
+        # rather than at SVSRenderer init time.
+        self._gl_renderer        = None
+        self._gl_init_attempted  = False
+
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
         self._n_range      = int(config.get("n_range",
@@ -266,6 +276,23 @@ class SVSRenderer:
     @property
     def ready(self) -> bool:
         return self.enabled and self.cache is not None and self.cache.tile_root.is_dir()
+
+    def _auto_range_nm(self, ac_lat: float, ac_lon: float,
+                       ac_alt_ft: float) -> float:
+        """Compute the effective rendered range in NM, scaling down from
+        ``range_nm`` based on AGL and MSL when ``auto_range`` is on.
+        Shared by the polar/CPU rasterisation path and the GL overlay
+        path so both honour the same auto-scale rule."""
+        _agl_elev, _ = self._sample_elevations(
+            np.array([[ac_lat]]), np.array([[ac_lon]]))
+        ac_ground_m = float(_agl_elev[0, 0])
+        agl_ft = ac_alt_ft - ac_ground_m * 3.28084
+        if self.auto_range:
+            agl_range = 0.1 * math.sqrt(max(0.0, agl_ft))
+            msl_range = ac_alt_ft * 0.001
+            return min(self.range_nm,
+                       max(self.min_range_nm, agl_range, msl_range))
+        return self.range_nm
 
     def _clearance_color(self, clearance_ft: float) -> QColor:
         if clearance_ft < 0:
@@ -289,22 +316,57 @@ class SVSRenderer:
         if not self.ready:
             return
 
-        # Auto-scale range with AGL so near-ground views stay useful.
-        # Sample terrain under the aircraft (cheap — tile is cached after frame 1).
-        _agl_elev, _ = self._sample_elevations(
-            np.array([[ac_lat]]), np.array([[ac_lon]]))
-        ac_ground_m = float(_agl_elev[0, 0])
-        agl_ft = ac_alt_ft - ac_ground_m * 3.28084
-        # Auto-range: largest of AGL-based, MSL-based, and configured minimum.
-        # MSL term ensures high-altitude plateau flying still sees distant terrain.
-        # Disabled when auto_range=false — config range_nm is used directly.
-        if self.auto_range:
-            agl_range = 0.1 * math.sqrt(max(0.0, agl_ft))   # e.g. 2500 AGL → 5 NM
-            msl_range = ac_alt_ft * 0.001                    # e.g. 14000 MSL → 14 NM
-            range_nm  = min(self.range_nm,
-                            max(self.min_range_nm, agl_range, msl_range))
-        else:
-            range_nm = self.range_nm
+        # ------------------------------------------------------------------
+        # OpenGL tier dispatch (work-in-progress per docs/svs_opengl_plan.md).
+        # Lazy-init the GL renderer on first draw — that's the earliest point
+        # at which a Qt OpenGL context can be created. Any exception during
+        # construction OR during the first draw downgrades self.renderer to
+        # "polar" permanently; we never re-attempt GL in this process.
+        # ------------------------------------------------------------------
+        if self.renderer == "opengl":
+            if (self._gl_renderer is None
+                    and not self._gl_init_attempted):
+                self._gl_init_attempted = True
+                try:
+                    from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+                    self._gl_renderer = SVSGLRenderer(self)
+                except Exception as e:
+                    log.warning(
+                        "SVS OpenGL renderer unavailable (%s); "
+                        "falling back to polar tier", e)
+            if self._gl_renderer is not None:
+                try:
+                    self._gl_renderer.draw(
+                        p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                        pitch_deg, roll_deg, heading_deg, pixels_per_deg)
+                    # GL drew the terrain; paint the CPU overlays on top.
+                    # _draw_obstacles needs the auto-ranged range_nm.
+                    range_nm = self._auto_range_nm(ac_lat, ac_lon, ac_alt_ft)
+                    p.save()
+                    p.resetTransform()
+                    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                    try:
+                        self._draw_runways(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
+                        self._draw_obstacles(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                            range_nm)
+                    finally:
+                        p.restore()
+                    return
+                except Exception as e:
+                    log.warning(
+                        "SVS OpenGL draw failed (%s); falling back to polar "
+                        "permanently", e)
+                    self._gl_renderer = None
+            # Either init failed or first draw failed — switch the renderer
+            # type and continue into the polar path below.
+            self.renderer = "polar"
+            self._is_polar = True
+
+        range_nm = self._auto_range_nm(ac_lat, ac_lon, ac_alt_ft)
         range_deg = range_nm * NM_TO_DEG
         lat_cos = math.cos(math.radians(ac_lat))
 

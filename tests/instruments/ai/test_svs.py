@@ -366,3 +366,229 @@ class TestPolarTier:
         })
         for heading in (0.0, 90.0, 180.0, 270.0, 45.0, 359.0):
             self._draw_polar(r, heading_deg=heading)
+
+
+# ---------------------------------------------------------------------------
+# OpenGL tier — scaffolding + fallback machinery
+# Step 1 of docs/svs_opengl_plan.md. The GL renderer's draw() stub raises
+# NotImplementedError on purpose; these tests verify the fallback path
+# transparently downgrades to polar and never crashes.
+# ---------------------------------------------------------------------------
+
+class TestSVSGLFallback:
+    def _draw(self, r, lat=32.5, lon=-96.5, alt_ft=3000.0, heading_deg=0.0):
+        from PyQt6.QtGui import QImage
+        img = QImage(400, 300, QImage.Format.Format_RGB32)
+        img.fill(0)
+        painter = QPainter(img)
+        try:
+            r.draw(painter, 400, 300, lat, lon, alt_ft,
+                   0.0, 0.0, heading_deg, 12.0)
+        finally:
+            painter.end()
+
+    def test_renderer_initially_opengl(self, tmp_path):
+        """Construction with renderer='opengl' stores the choice — the
+        downgrade happens on first draw, not at config-time."""
+        root = _make_tile_dir(tmp_path, 32, -97)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+        })
+        assert r.renderer == "opengl"
+        assert r._gl_renderer is None
+        assert r._gl_init_attempted is False
+
+    def test_first_draw_falls_back_to_polar(self, tmp_path, caplog):
+        """SVSGLRenderer.draw raises NotImplementedError today, so the first
+        draw call must downgrade the renderer to polar and complete cleanly."""
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+            "n_range": 8, "n_az": 12,        # keep the polar fallback cheap
+        })
+        with caplog.at_level("WARNING"):
+            self._draw(r)
+        assert r.renderer == "polar"
+        assert r._gl_renderer is None
+        assert any("falling back to polar" in rec.getMessage().lower()
+                   for rec in caplog.records)
+
+    def test_subsequent_draws_use_polar_without_retrying_gl(self, tmp_path):
+        """Once GL has failed and been downgraded, repeated draws stay on
+        polar and never re-attempt GL construction."""
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+            "n_range": 8, "n_az": 12,
+        })
+        self._draw(r)
+        assert r.renderer == "polar"
+        before = r._gl_init_attempted
+        # Drawing again must not change anything.
+        for _ in range(3):
+            self._draw(r)
+        assert r.renderer == "polar"
+        assert r._gl_init_attempted == before  # still True; not re-tried
+
+    def test_init_failure_also_falls_back(self, tmp_path, monkeypatch, caplog):
+        """If SVSGLRenderer construction itself raises (e.g. a Qt build
+        without OpenGL bindings), we still downgrade to polar instead of
+        crashing."""
+        import pyefis.instruments.ai.svs_gl as svs_gl
+
+        class BrokenGL:
+            def __init__(self, *a, **kw):
+                raise RuntimeError("simulated missing GL bindings")
+        monkeypatch.setattr(svs_gl, "SVSGLRenderer", BrokenGL)
+
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+            "n_range": 8, "n_az": 12,
+        })
+        with caplog.at_level("WARNING"):
+            self._draw(r)
+        assert r.renderer == "polar"
+        assert any("opengl renderer unavailable" in rec.getMessage().lower()
+                   for rec in caplog.records)
+
+    def test_step6_near_airport_helper(self, tmp_path):
+        """Step 6: ``_near_airport`` returns True only when the
+        configured airport_db reports an airport within
+        ``airport_proximity_nm``. Tested against the helper in
+        isolation so it doesn't depend on a live GL context."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+
+        class _StubDB:
+            def __init__(self, hit):
+                self.ready = True
+                self._hit = hit
+            def airports_in_range(self, lat, lon, rng):
+                if self._hit:
+                    yield ("KXYZ", lat, lon)
+
+        class _StubParent:
+            def __init__(self, db, prox=5.0):
+                self.airport_db = db
+                self.airport_proximity_nm = prox
+
+        # Construct a renderer instance but skip __init__ so no Qt GL
+        # context is created — we're only exercising the helper.
+        gl_r = SVSGLRenderer.__new__(SVSGLRenderer)
+
+        gl_r._parent = _StubParent(_StubDB(hit=True))
+        assert gl_r._near_airport(32.5, -96.5) is True
+
+        gl_r._parent = _StubParent(_StubDB(hit=False))
+        assert gl_r._near_airport(32.5, -96.5) is False
+
+        gl_r._parent = _StubParent(_StubDB(hit=True), prox=0.0)
+        assert gl_r._near_airport(32.5, -96.5) is False, (
+            "airport_proximity_nm=0 must disable the 2-colour mode")
+
+        gl_r._parent = _StubParent(db=None)
+        assert gl_r._near_airport(32.5, -96.5) is False
+
+    def test_step7_patch_centring_keeps_aircraft_inside(self):
+        """Step 7: the 2x2 patch origin chosen by ``_patch_origin_for``
+        keeps the aircraft at least 0.5 deg from every patch edge so
+        the GL sampler's CLAMP_TO_EDGE never lies about terrain ahead
+        of the nose. Sweeping a representative grid of (lat, lon)
+        positions, the worst-case edge distance must stay >= 0.5 deg."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+        worst = 99.0
+        for ac_lat in np.arange(-2.0, 35.5, 0.1):
+            for ac_lon in np.arange(-122.0, 5.5, 0.5):
+                slat, slon = SVSGLRenderer._patch_origin_for(ac_lat, ac_lon)
+                # Patch covers [slat, slat+2] x [slon, slon+2].
+                dist = min(ac_lat - slat, slat + 2 - ac_lat,
+                           ac_lon - slon, slon + 2 - ac_lon)
+                worst = min(worst, dist)
+                assert dist > 0.0, (
+                    f"aircraft ({ac_lat}, {ac_lon}) fell outside patch "
+                    f"({slat}..{slat+2}, {slon}..{slon+2})")
+        assert worst >= 0.5 - 1e-6, (
+            f"worst-case edge distance {worst:.4f} deg < 0.5 deg buffer; "
+            f"patch centring regressed")
+
+    def test_step7_patch_rebuilds_at_half_integer_crossings(self):
+        """Step 7: as the aircraft flies steadily north across a
+        half-integer-degree boundary, ``_patch_origin_for`` must change
+        at exactly N + 0.5, not at integer N. This is the rebuild
+        trigger."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+        prev = SVSGLRenderer._patch_origin_for(32.0, -97.5)
+        crossings = []
+        # Step in tenths from 32.0 northward across 33.0; the rebuild
+        # should fire when crossing 32.5 (32 -> 33 patch start).
+        for tenth in range(1, 11):
+            ac_lat = 32.0 + tenth * 0.1
+            origin = SVSGLRenderer._patch_origin_for(ac_lat, -97.5)
+            if origin != prev:
+                crossings.append((round(ac_lat, 2), prev, origin))
+                prev = origin
+        assert len(crossings) == 1, (
+            f"expected exactly one boundary crossing between 32.0 and "
+            f"33.0; got {crossings}")
+        crossed_at, before, after = crossings[0]
+        # We step in 0.1 increments, so the crossing is detected at the
+        # first tested lat >= 32.5.
+        assert 32.5 <= crossed_at <= 32.6, (
+            f"rebuild should fire as ac_lat crosses 32.5; got {crossed_at}")
+        assert after[0] == before[0] + 1, (
+            f"patch start_lat should advance by 1 deg at the crossing; "
+            f"got {before} -> {after}")
+
+    def test_step7_negative_longitude_handled(self):
+        """Step 7: negative longitudes (the western hemisphere) must
+        still produce a patch that contains the aircraft. ``floor`` is
+        the right choice — ``int(x)`` would round toward zero and skew
+        the patch east at every western position."""
+        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+        # KASE (Aspen) is at lat 39.22, lon -106.87.
+        slat, slon = SVSGLRenderer._patch_origin_for(39.22, -106.87)
+        assert slat <= 39.22 < slat + 2
+        assert slon <= -106.87 < slon + 2
+
+    def test_step3_polar_mesh_renders(self, tmp_path):
+        """Step 3 verification: with a real GL context the renderer
+        draws the polar (t, az) mesh with debug colour bands. We can't
+        easily pixel-match without ground-truth, so we just verify:
+        (a) renderer stays in opengl mode (no fallback fired); (b) some
+        non-background pixels appear in the lower half of the screen
+        (where the z=0 mesh projects when looking forward at altitude).
+        Skips cleanly on headless / offscreen test environments."""
+        import pytest
+        from PyQt6.QtGui import QImage
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "renderer": "opengl",
+            "range_nm": 30, "auto_range": False,
+        })
+        img = QImage(400, 300, QImage.Format.Format_RGB32)
+        img.fill(0x000000)
+        painter = QPainter(img)
+        try:
+            r.draw(painter, 400, 300, 32.5, -96.5, 3000.0, 0.0, 0.0, 0.0, 12.0)
+        finally:
+            painter.end()
+        if r.renderer != "opengl":
+            pytest.skip(f"no GL context in this environment (fell back to "
+                        f"{r.renderer})")
+        # At altitude with z=0 mesh, the fan should project into the
+        # lower portion of the screen (just below the horizon line).
+        # Walk a row of pixels there and count anything that isn't the
+        # dark grey background (0x0d 0x0d 0x0d ≈ rgb 13,13,13).
+        non_bg = 0
+        for x in range(50, 350, 5):
+            c = img.pixelColor(x, 180)   # below horizon
+            if c.red() > 30 or c.green() > 30 or c.blue() > 30:
+                non_bg += 1
+        assert non_bg > 5, (
+            f"expected polar mesh pixels below horizon; only {non_bg} "
+            f"non-background samples in scan row")
