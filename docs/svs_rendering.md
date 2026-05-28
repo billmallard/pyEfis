@@ -7,19 +7,29 @@ path to native-resolution rendering.
 
 Defined in `GRID_SIZES` / `POLAR_DEFAULTS` at [src/pyefis/instruments/ai/svs.py](../src/pyefis/instruments/ai/svs.py):
 
-| Tier         | Grid                  | Total quads | x86 ms/frame† | Notes                              |
-|--------------|-----------------------|-------------|---------------|------------------------------------|
-| `cpu_sparse` | 48 × 48 rect          | 2,209       | 23            | ~15 Hz on Raspberry Pi 4           |
-| `cpu_dense`  | 128 × 128 rect        | 16,129      | 108           | ~20 Hz on Raspberry Pi 5 / x86     |
-| `cpu_ultra`  | 192 × 192 rect        | 36,481      | 220           | ~2.3× more quads than dense        |
-| `polar`      | 80 × 120 fan (default)| 9,401       | 106           | Distance-dependent LOD — see below |
-| `opengl`     | (stub)                | —           | —             | Not implemented; falls back to sparse |
+| Tier         | Grid                  | Total quads | x86 ms/frame† | Pi 5 ms/frame‡ | Notes                              |
+|--------------|-----------------------|-------------|---------------|----------------|------------------------------------|
+| `cpu_sparse` | 48 × 48 rect          | 2,209       | 23            | —              | ~15 Hz on Raspberry Pi 4           |
+| `cpu_dense`  | 128 × 128 rect        | 16,129      | 108           | —              | ~20 Hz on x86                      |
+| `cpu_ultra`  | 192 × 192 rect        | 36,481      | 220           | —              | ~2.3× more quads than dense        |
+| `polar`      | 80 × 120 fan          | 9,401       | 106           | 153 (6.5 FPS)  | Distance-dependent LOD — see below |
+| `opengl`     | 64 × 96 polar on V3D  | 6,049       | —             | **5.1 (196 FPS)** | GPU rasteriser — see below; recommended default on Pi 5 |
 
 † Measured at 640×480, range_nm=30, grid_lines=true, Aspen pose (39.20°N
 106.85°W 12,000 ft, head 150°). Frame times reflect the vectorised
 fill/grid_lines path; the per-cell aggregates and shade-key calculation
 run as whole-array NumPy ops, only the unavoidable Qt object construction
 is done per cell.
+
+‡ Measured on Raspberry Pi 5 (eglfs) at 800×600, range_nm=30,
+auto_range=true, warmup-trimmed mean over 100 frames at three poses
+(KSBA offshore, KASE short final, KASE 10k MSL). p95 is within 0.2 ms
+of p50 across all GL samples — jitter is negligible. The `opengl` tier
+is ~30× faster than `polar` on the same hardware because the polar
+mesh is built once, uploaded as a VBO, and the per-vertex
+projection/elevation/Lambertian work runs entirely in the V3D fragment
+and vertex shaders; CPU is idle except for `glReadPixels` (~1 ms at
+this viewport) and `QPainter.drawImage` of the FBO result.
 
 Selected via screen YAML (`renderer: cpu_dense`) or via the
 `SVSRenderer({"renderer": ...})` config dict.
@@ -152,33 +162,108 @@ rotating the radial/tangential gradients via the per-column bearing
 regardless of viewing heading — see the polar branch at
 [svs.py](../src/pyefis/instruments/ai/svs.py) inside the slope-shading block.
 
-## Path to Native: OpenGL Tier
+## OpenGL Tier — GPU Rasteriser
 
-The `opengl` tier is a stub today (`GRID_SIZES["opengl"] = 48` falls back to
-sparse). The implementation path is:
+The `opengl` tier moves terrain rasterisation onto the Pi 5's V3D GPU
+(or any desktop OpenGL stack). On Pi 5 it runs at ~196 FPS — 30× faster
+than the polar CPU tier at the same pose, with p95 frame time within
+0.2 ms of p50. Implementation lives in
+[svs_gl.py](../src/pyefis/instruments/ai/svs_gl.py).
 
-1. Build a `QOpenGLWidget` mesh whose vertices are sampled directly from the
-   tile cache.
-2. Pass elevation as a heightmap texture or as a vertex attribute.
-3. Move slope shading into a fragment shader (Lambertian on the geometric
-   normal, identical math to the current CPU path).
-4. Use the existing tile cache and visibility/clearance logic.
+### Architecture
 
-GPU rasterisation handles 1 M+ triangles trivially, so native resolution
-becomes feasible. Tracked as part of issue #19 (rendering tiers).
+```
+SVSGraphicsItem.paint(painter, opt, widget)
+└── SVSRenderer.draw()
+    └── (renderer == "opengl") SVSGLRenderer.draw():
+        1. makeCurrent(offscreen QOpenGLContext + QOffscreenSurface)
+        2. lazy-build FBO, polar mesh VBO/IBO, heightmap texture
+        3. rebuild heightmap when aircraft crosses a half-integer
+           degree boundary (kept >= 0.5 deg from every patch edge)
+        4. glDrawElements over the 64×96 polar fan
+           - vertex shader: polar (t, az) -> world -> screen, heightmap
+             texture lookup, finite-difference normal
+           - fragment shader: Lambertian shading + clearance buckets
+             (SAFE / CAUTION / WARNING / CONFLICT / WATER) with the
+             airport-proximity 2-colour collapse mirrored from the
+             polar CPU tier
+        5. fbo.toImage() -> QImage
+    -> painter.drawImage(0, 0, image)
+    -> existing CPU overlays (runways, obstacles, markings, flags)
+       paint on top via the same QPainter
+```
+
+The FBO + blit architecture means the `SVSGraphicsItem` scene-graph
+integration, the pitch-ladder z-order, and every CPU overlay path stay
+exactly as they are. The GL context lives entirely inside
+`SVSGLRenderer`; nothing else in pyEfis knows about it.
+
+### Fallback
+
+Any exception during `SVSGLRenderer.__init__` or its first `draw()`
+permanently downgrades `self.renderer` to `polar` and logs a warning.
+Missing GL driver, Qt build without OpenGL, shader compile failure,
+context creation refused — all degrade silently to the CPU path. The
+fallback is one-shot; we never re-attempt GL in the same process.
+
+### Heightmap texture
+
+A 2x2-tile patch (2402×2402 R32F = ~22 MB) is uploaded once per
+half-integer-degree of aircraft movement. The patch origin is
+`floor(ac_lat - 0.5), floor(ac_lon - 0.5)`, which keeps the aircraft
+at least 0.5° (~30 NM) from every patch edge — far enough that
+`GL_CLAMP_TO_EDGE` never paints fake-flat terrain ahead of the nose,
+even at the default 30 NM range. Rebuilds use the same `TileCache`
+the CPU tiers use; once tiles are cached the upload itself is ~4 ms
+of GPU VRAM transfer.
+
+### Config
+
+```yaml
+svs:
+    enabled: true
+    renderer: opengl
+    tile_path: /media/terrain/srtm3
+    range_nm: 30
+    # polar mesh dimensions still tunable via the polar config keys
+    n_range:     64
+    n_az:        96
+    fov_deg:     140
+    radial_warp: 2.0
+```
+
+The polar tuning knobs (`n_range`, `n_az`, `fov_deg`, `radial_warp`,
+`r_min_nm`) apply identically — the GL tier reuses the same polar mesh
+topology, just executes it on the GPU.
+
+### Pi 5 verdict
+
+At 800×600 viewport, default polar grid, range_nm=30, auto_range=true:
+
+- mean 5.1 ms/frame across KSBA offshore, KASE short final, KASE 10k MSL
+- p95 within 0.2 ms of p50 (no jitter)
+- ~196 FPS sustained — leaves enormous headroom for the CPU overlay code
+
+Stage-1 target was 60 FPS. Actual is >3× that. The V3D was the unused
+silicon in the system; freeing the A76 cores from rasterisation also
+makes the CPU available for `_draw_runways`, `_draw_obstacles`, and
+`_draw_runway_markings` to run at their natural cost without frame
+budget pressure.
 
 ## Practical Guidance
 
-- **Default**: `polar`, `range_nm: 30`, `auto_range: true`,
-  `grid_lines: false`. Best near-field clarity per CPU cycle.
-- **Wide-area framing** (50 NM+, distant peaks): `polar` with
+- **Default on Pi 5 or any GL-capable host**: `opengl`, `range_nm: 30`,
+  `auto_range: true`. ~196 FPS measured; falls back to `polar` cleanly
+  if a GL context can't be created.
+- **CPU-only fallback default**: `polar` with the same range/auto-range
+  settings. Best near-field clarity per CPU cycle.
+- **Wide-area framing** (50 NM+, distant peaks): either tier with
   `auto_range: false` and `radial_warp: 1.5` to push more cells outward.
-- **Near-terrain detail**: `polar` already samples at SRTM3 native size
-  near the aircraft. If you specifically want a uniform near/far grid for
-  comparison, fall back to `cpu_dense`.
-- **Legacy tiers** `cpu_sparse` / `cpu_dense` / `cpu_ultra` remain available
-  for A/B comparison and as conservative fallbacks.
-- **Beyond polar**: don't add more CPU tiers. Wait for the OpenGL tier.
+- **Legacy tiers** `cpu_sparse` / `cpu_dense` / `cpu_ultra` remain
+  available for A/B comparison and as conservative fallbacks.
+- **Beyond opengl**: vector overlays (runways/obstacles/markings) still
+  run on CPU. Stage 2 of the GPU work moves those onto instanced quads
+  with marking textures; not implemented today.
 
 ## Related
 

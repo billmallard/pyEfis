@@ -6,6 +6,26 @@ section 4.
 
 Prices and exact SKUs shift; verify everything before ordering.
 
+## Verdict (as of 2026-05): **Pi 5 is enough**
+
+The OpenGL renderer tier (see [svs_rendering.md](svs_rendering.md)) was
+shipped on 2026-05-28. Measured Pi 5 numbers at 800×600, range_nm=30:
+
+- **opengl tier: 5.1 ms/frame mean, ~196 FPS, p95 within 0.2 ms of p50**
+- polar CPU tier: 153 ms/frame (~6.5 FPS) on the same hardware
+
+The V3D GPU sitting next to the A76 cores was the unused silicon
+keeping us at 6-8 FPS. With it carrying the terrain rasteriser, the
+Pi 5 has 5-10× the headroom needed for video-rate SVS *and* leaves
+the CPU available for the runway / obstacle / marking overlays.
+
+This kills the lab-box justification for buying x86 to run SVS. The
+N100 / Compulab / Onlogic ladders below remain valid for builders who
+want them for other reasons (Windows tooling, broader software stack,
+sturdier industrial enclosure), but performance is no longer a
+reason. Pi 5 + DC conditioner is the recommended SVS installation
+target.
+
 ## Two distinct purposes
 
 A **lab box** for benchmarking and a candidate **aircraft-installable** unit
@@ -37,7 +57,7 @@ direct comparison numbers.
 
 Aircraft-electrical-system-friendly. Three tiers; cost climbs steeply.
 
-### Tier 1: DIY — Pi 5 + aviation power conditioning (~$150 total)
+### Tier 1: DIY — Pi 5 + aviation power conditioning (~$150 total) — RECOMMENDED
 
 - **Raspberry Pi 5 8GB**, official active cooler (mandatory in an enclosed
   installation; passive cooling will throttle).
@@ -46,8 +66,10 @@ Aircraft-electrical-system-friendly. Three tiers; cost climbs steeply.
     aircraft systems with brownout tolerance during engine start.
   - **Mean Well DDR-15G-5** — 24-28V → 5V, DIN rail, ~$25.
 - Add an EMI filter if alternator noise is rough.
-- Cheapest and smallest. Compromise: ARM, slower than N100 for
-  `cpu_dense+`, and you're integrating power yourself.
+- Cheapest and smallest. The ARM-vs-x86 gap stopped mattering once
+  the SVS terrain rasteriser moved onto V3D — at 196 FPS the CPU
+  side is no longer the bottleneck for anything in pyEfis. Power
+  integration is the only DIY task left.
 
 ### Tier 2: Compulab Fitlet 3 / 4 (~$400-600)
 
@@ -93,19 +115,21 @@ These are not covered by the box itself.
 
 ## Recommended order of purchase
 
-1. **Beelink Mini S13 (~$170)** for the desk. Run the SVS harness, get hard
-   numbers. This tells you whether x86 unblocks anything you can't do on
-   Pi 5.
-2. **Hold off** on aircraft-grade hardware until lab benchmarking proves
-   you need x86 in flight. The Pi 5 + TracoPower path remains viable until
-   profiling rules it out.
-3. **Escalate to Compulab Fitlet 4** only if (a) profiling proves x86 is
-   required in flight, *and* (b) you've decided to invest in a real
-   installation rather than further experimentation.
-4. **Onlogic** is for after the experimental phase, when the design is
-   stable and you want a hardened box. Don't buy speculatively — the
-   $170 → $500 → $1500 ladder is steep and the Pi 5 may turn out to be
-   enough.
+Updated after 2026-05 Pi 5 measurements (see Verdict above):
+
+1. **Raspberry Pi 5 8GB + TracoPower TEN 8-2411WIN (~$150)** for the
+   installation. SVS runs at ~196 FPS on this stack; the question
+   "is the CPU/GPU enough?" is answered.
+2. **Beelink Mini S13 (~$170)** as an *optional* desk benchmark box —
+   useful if you also want a Windows / x86 dev environment or want to
+   verify pyEfis behaviour on a different driver stack, but no longer
+   required to ship.
+3. **Compulab Fitlet 4** only if you want a hardened fanless x86
+   installation for non-performance reasons (broader software stack,
+   industrial enclosure, native 8-32V DC). Cost is no longer offset
+   by a performance need.
+4. **Onlogic** is for a TSO / PMA path or for unusually harsh
+   installations. Performance is not the deciding factor.
 
 ---
 
@@ -117,9 +141,9 @@ These are not covered by the box itself.
 - **Display already chosen?** Many of these mini-PCs come barebones —
   display is a separate ~$100-300 spend. Resolution and brightness drive
   the choice.
-- **Performance ceiling target**: are you aiming for `cpu_ultra` at
-  >20 Hz, or is `cpu_dense` at 20 Hz enough? The answer changes whether
-  Pi 5 alone is sufficient.
+- **Performance ceiling target**: the `opengl` tier on Pi 5 runs
+  at ~196 FPS, so this question is now resolved unless you're trying
+  to drive a very large display (>1080p). Pi 5 is sufficient.
 - **Certification path**: experimental amateur-built only? Or any
   expectation of a TSO / PMA path later? The latter changes hardware
   selection significantly (Onlogic territory).
