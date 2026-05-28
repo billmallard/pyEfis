@@ -456,18 +456,21 @@ class TestSVSGLFallback:
         assert any("opengl renderer unavailable" in rec.getMessage().lower()
                    for rec in caplog.records)
 
-    def test_step2_paints_teal_via_gpu(self, tmp_path):
-        """Step 2 verification: when a GL context is actually available,
-        SVSGLRenderer.draw should produce a recognisably-teal frame
-        instead of falling back to polar. Skips cleanly on CI / headless
-        machines where the GL context can't be created."""
+    def test_step3_polar_mesh_renders(self, tmp_path):
+        """Step 3 verification: with a real GL context the renderer
+        draws the polar (t, az) mesh with debug colour bands. We can't
+        easily pixel-match without ground-truth, so we just verify:
+        (a) renderer stays in opengl mode (no fallback fired); (b) some
+        non-background pixels appear in the lower half of the screen
+        (where the z=0 mesh projects when looking forward at altitude).
+        Skips cleanly on headless / offscreen test environments."""
         import pytest
         from PyQt6.QtGui import QImage
         root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
         r = SVSRenderer({
             "enabled": True, "tile_path": str(root),
             "renderer": "opengl",
-            "n_range": 8, "n_az": 12,
+            "range_nm": 30, "auto_range": False,
         })
         img = QImage(400, 300, QImage.Format.Format_RGB32)
         img.fill(0x000000)
@@ -479,7 +482,15 @@ class TestSVSGLFallback:
         if r.renderer != "opengl":
             pytest.skip(f"no GL context in this environment (fell back to "
                         f"{r.renderer})")
-        # Sample a pixel near the centre — should be teal ~(46, 140, 140).
-        c = img.pixelColor(200, 150)
-        assert c.red() < 80 and c.green() > 100 and c.blue() > 100, (
-            f"expected teal at centre; got rgb=({c.red()},{c.green()},{c.blue()})")
+        # At altitude with z=0 mesh, the fan should project into the
+        # lower portion of the screen (just below the horizon line).
+        # Walk a row of pixels there and count anything that isn't the
+        # dark grey background (0x0d 0x0d 0x0d ≈ rgb 13,13,13).
+        non_bg = 0
+        for x in range(50, 350, 5):
+            c = img.pixelColor(x, 180)   # below horizon
+            if c.red() > 30 or c.green() > 30 or c.blue() > 30:
+                non_bg += 1
+        assert non_bg > 5, (
+            f"expected polar mesh pixels below horizon; only {non_bg} "
+            f"non-background samples in scan row")
