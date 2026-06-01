@@ -400,7 +400,7 @@ class TestProjectPolygonClipped:
             corners,
             ac_lat=34.420, ac_lon=-119.852, ac_alt_ft=500.0,
             pitch_deg=0.0, roll_deg=0.0, heading_deg=0.0,
-            ppd=12.0, w=800, h=600)
+            ppd=12.0, w=800, h=600, eps=1e-6)
         assert len(pts) == 4
 
     def test_all_behind_returns_empty(self):
@@ -416,7 +416,7 @@ class TestProjectPolygonClipped:
             corners,
             ac_lat=34.440, ac_lon=-119.852, ac_alt_ft=500.0,
             pitch_deg=0.0, roll_deg=0.0, heading_deg=0.0,
-            ppd=12.0, w=800, h=600)
+            ppd=12.0, w=800, h=600, eps=1e-6)
         assert pts == []
 
     def test_aircraft_straddling_runway_keeps_visible_half(self):
@@ -440,7 +440,7 @@ class TestProjectPolygonClipped:
             corners,
             ac_lat=34.429, ac_lon=-119.850, ac_alt_ft=200.0,
             pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
-            ppd=12.0, w=800, h=600)
+            ppd=12.0, w=800, h=600, eps=1e-6)
         # Clipping a 4-vertex polygon against a single plane with two
         # vertices behind produces a 4-vertex output (the two AHEAD
         # corners plus two clipped intersections).
@@ -462,8 +462,41 @@ class TestProjectPolygonClipped:
             corners,
             ac_lat=34.429, ac_lon=-119.851, ac_alt_ft=200.0,
             pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
-            ppd=12.0, w=800, h=600)
+            ppd=12.0, w=800, h=600, eps=1e-6)
         assert len(pts) == 5
+
+    def test_default_near_plane_visibly_inside_viewport(self):
+        """Production default ``eps`` (~0.05 NM) puts clipped vertices
+        at moderate screen azimuths instead of ~+/-90 deg the way a
+        ``eps=1e-6`` value would. Regression for the "markings appear
+        beside the polygon" report — without a sensible near plane the
+        polygon visually bulges way past the actual runway edges."""
+        r = self._renderer()
+        # Aircraft heading east at 230 ft AGL, sitting between the two
+        # thresholds of a 150-ft-wide east-west runway 6400 ft long.
+        # Same KHKY-like pose that produced the visual bug.
+        half_lat = (150.0 / 2.0) / 364491.0   # ~half-width in deg lat
+        corners = [
+            (34.430 + half_lat, -119.860, 1200.0),  # t1 (west) +perp — BEHIND
+            (34.430 - half_lat, -119.860, 1200.0),  # t1 -perp        — BEHIND
+            (34.430 - half_lat, -119.830, 1200.0),  # t2 (east) -perp — AHEAD
+            (34.430 + half_lat, -119.830, 1200.0),  # t2 +perp        — AHEAD
+        ]
+        pts = r._project_polygon_clipped(
+            corners,
+            ac_lat=34.430, ac_lon=-119.850, ac_alt_ft=1400.0,
+            pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
+            ppd=12.0, w=800, h=600)
+        assert len(pts) == 4
+        # Every projected vertex must land within +/- a viewport width
+        # of the centre. With the old eps=1e-6 the clipped vertices
+        # projected to roughly +/-1080 px on an 800 px viewport because
+        # x_ang -> +/-90 deg as x_fwd -> 0.
+        for pt in pts:
+            assert -400 <= pt.x() - 400 <= 400, (
+                f"vertex x={pt.x():.1f} is far outside the viewport — "
+                f"default near-plane is too close, clipped vertices "
+                f"are projecting to extreme azimuths")
 
 
 class TestSVSGLFallback:

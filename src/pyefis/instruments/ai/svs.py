@@ -767,9 +767,16 @@ class SVSRenderer:
         sy = x_px * sin_r + y_px * cos_r + h / 2
         return sx, sy, True
 
+    # Default near-plane distance for polygon clipping, in degrees of
+    # latitude. 0.05 NM (the polar terrain mesh's inner ring) is small
+    # enough that the visible polygon still reaches the foreground, but
+    # large enough that clipped vertices project to reasonable
+    # azimuths instead of ~+/-90 deg the way x_fwd=epsilon would.
+    _NEAR_PLANE_DEG = 0.05 / 60.0   # 0.05 NM in degrees of lat
+
     def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
                                  pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                                 eps=1e-6):
+                                 eps=None):
         """Project a polygon (list of ``(lat, lon, elev_ft)`` corners) to
         screen with a Sutherland-Hodgman clip against the camera near
         plane (``x_fwd > eps``). Polygons that straddle the aircraft —
@@ -777,8 +784,17 @@ class SVSRenderer:
         edges intersected with the near plane so the visible portion
         still draws instead of vanishing.
 
+        ``eps`` is the near-plane distance in degrees of latitude. The
+        default (~0.05 NM, matching the polar mesh's inner ring) puts
+        clipped vertices at reasonable screen azimuths; an arbitrarily
+        small value (e.g. 1e-6) pushes them out to ~+/-90 deg and the
+        polygon visibly bulges to the screen edges even when the
+        runway is straight ahead.
+
         Returns a list of QPointF for the clipped polygon; empty when
-        the polygon is fully behind the aircraft."""
+        the polygon is fully behind the near plane."""
+        if eps is None:
+            eps = self._NEAR_PLANE_DEG
         lat_cos = math.cos(math.radians(ac_lat))
         head_rad = math.radians(heading_deg)
         cos_h, sin_h = math.cos(head_rad), math.sin(head_rad)
