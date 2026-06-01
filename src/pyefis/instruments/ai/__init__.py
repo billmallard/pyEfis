@@ -161,6 +161,27 @@ class AI(QGraphicsView):
             _item.valueChanged[float].connect(lambda v, a=attr: (setattr(self, a, v), self.update()))
             setattr(self, attr, _item.value)
 
+        # Magnetic variation. SVS does its geographic projection in
+        # true-north coordinates, so it needs TRUE heading. HEAD is by
+        # convention magnetic (so the HSI rose reads naturally). The
+        # AI widget converts HEAD to TRUE at SVS call time as
+        # ``HEAD - MAGVAR``. Positive MAGVAR = west variation (FAA
+        # "West is best": MAG = TRUE + W_VAR). When MAGVAR isn't
+        # published the correction is zero and the SVS sits with a
+        # constant rotational offset equal to local variation — small
+        # error in low-variation regions, larger near the magnetic
+        # poles.
+        self._magvar = 0.0
+        try:
+            _item = fix.db.get_item("MAGVAR")
+            _item.valueChanged[float].connect(
+                lambda v: (setattr(self, "_magvar", v), self.update()))
+            self._magvar = _item.value
+        except KeyError:
+            log.warning(
+                "AI: FIX key 'MAGVAR' not defined — SVS heading "
+                "will be treated as true heading (no mag-var correction)")
+
         # We store all the pitch tick marks and text in a list so that
         # we can adjust the opacity of the items.
         self.pitchItems = []

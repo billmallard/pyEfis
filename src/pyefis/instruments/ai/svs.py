@@ -1463,12 +1463,20 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             vp = ai.viewport()
             ppd = getattr(ai, 'pixelsPerDeg',
                           vp.height() / ai.pitchDegreesShown)
+            # SVS does its geographic projection in true-north
+            # coordinates, so subtract local magnetic variation from
+            # the magnetic HEAD before projecting. _magvar defaults to
+            # 0 when the FIX MAGVAR key isn't published — in that case
+            # the SVS picture sits with a constant rotation equal to
+            # local variation, which is small enough not to break the
+            # picture but worth correcting where the data is available.
+            head_true = ai._fpm_head - getattr(ai, "_magvar", 0.0)
             # SVSRenderer.draw does its own save/resetTransform/restore so the
             # outer scene transform is preserved for the next item in z order.
             self._renderer.draw(
                 painter, vp.width(), vp.height(),
                 ai._svs_lat, ai._svs_lon, ai._svs_alt,
-                ai._pitchAngle, ai._rollAngle, ai._fpm_head,
+                ai._pitchAngle, ai._rollAngle, head_true,
                 ppd)
 
     return _SVSGraphicsItem(renderer, ai_widget)
