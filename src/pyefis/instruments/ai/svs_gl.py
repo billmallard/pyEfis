@@ -326,7 +326,15 @@ class SVSGLRenderer:
         self._fbo.bind()
         try:
             gl.glViewport(0, 0, w, h)
-            gl.glClearColor(0.05, 0.05, 0.05, 1.0)
+            # Clear to transparent so areas the polar fan does not cover
+            # (most importantly the bottom-corner wedges below the
+            # innermost ring of the fan, which the mesh just cannot
+            # reach at very low AGL) blit transparent on top of the AI
+            # background and let the AI's "ground" colour show through
+            # instead of replacing it with opaque black. The shader
+            # emits alpha=1 on every drawn vertex so terrain pixels
+            # composite normally.
+            gl.glClearColor(0.0, 0.0, 0.0, 0.0)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
             # Bind the heightmap to texture unit 0; the shader's
