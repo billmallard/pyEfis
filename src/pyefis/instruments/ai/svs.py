@@ -774,6 +774,59 @@ class SVSRenderer:
     # azimuths instead of ~+/-90 deg the way x_fwd=epsilon would.
     _NEAR_PLANE_DEG = 0.05 / 60.0   # 0.05 NM in degrees of lat
 
+    # Number of segments along each long runway edge. The angular
+    # projection in _project_point produces a CURVE on screen from a
+    # straight 3D line — a runway edge offset perpendicular from the
+    # centerline traces a hyperbolic-ish arc, mild in the far field
+    # and sharper near the camera. The runway polygon was drawn from
+    # just four corners (a chord through that curve), which read
+    # visibly different from the markings (each independently
+    # projected and naturally following the curve). Subdividing every
+    # 1/_RUNWAY_LONG_EDGE_SEGMENTS of the runway length gives the
+    # polygon roughly the same shape as the markings cluster.
+    _RUNWAY_LONG_EDGE_SEGMENTS = 16
+
+    def _runway_polygon_corners(self, t1_lat, t1_lon, t1_elev,
+                                t2_lat, t2_lon, t2_elev,
+                                perp_lat, perp_lon, hw,
+                                n_subdiv=None):
+        """Build the runway polygon as a CCW vertex ring with both
+        long edges subdivided into ``n_subdiv`` segments. Each
+        intermediate vertex carries a lat/lon/elev interpolated
+        linearly between the thresholds so the rendered polygon
+        traces the screen-curve of an angular projection rather than
+        cutting a straight chord through it."""
+        if n_subdiv is None:
+            n_subdiv = self._RUNWAY_LONG_EDGE_SEGMENTS
+        corners = []
+        # Short edge at thr1 (06-end): right corner first, then left
+        # corner — keeps the polygon CCW when followed by the long
+        # edge that walks down the "left" side toward thr2.
+        corners.append((t1_lat + perp_lat * hw,
+                        t1_lon + perp_lon * hw, t1_elev))
+        corners.append((t1_lat - perp_lat * hw,
+                        t1_lon - perp_lon * hw, t1_elev))
+        # Long "left" edge thr1-perp -> thr2-perp (n_subdiv-1 inserts).
+        for k in range(1, n_subdiv):
+            f = k / n_subdiv
+            corners.append((
+                t1_lat + f * (t2_lat - t1_lat) - perp_lat * hw,
+                t1_lon + f * (t2_lon - t1_lon) - perp_lon * hw,
+                t1_elev + f * (t2_elev - t1_elev)))
+        # Short edge at thr2 (24-end)
+        corners.append((t2_lat - perp_lat * hw,
+                        t2_lon - perp_lon * hw, t2_elev))
+        corners.append((t2_lat + perp_lat * hw,
+                        t2_lon + perp_lon * hw, t2_elev))
+        # Long "right" edge thr2+perp -> thr1+perp.
+        for k in range(1, n_subdiv):
+            f = k / n_subdiv
+            corners.append((
+                t2_lat + f * (t1_lat - t2_lat) + perp_lat * hw,
+                t2_lon + f * (t1_lon - t2_lon) + perp_lon * hw,
+                t2_elev + f * (t1_elev - t2_elev)))
+        return corners
+
     def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
                                  pitch_deg, roll_deg, heading_deg, ppd, w, h,
                                  eps=None):
@@ -960,12 +1013,10 @@ class SVSRenderer:
                 perp_lon =  dl  / rwy_len / lat_cos
                 hw = (rwy["width_ft"] / 2.0) / 364491.0   # half-width in degrees lat
 
-                corners = [
-                    (t1_lat + perp_lat * hw, t1_lon + perp_lon * hw, t1_elev),
-                    (t1_lat - perp_lat * hw, t1_lon - perp_lon * hw, t1_elev),
-                    (t2_lat - perp_lat * hw, t2_lon - perp_lon * hw, t2_elev),
-                    (t2_lat + perp_lat * hw, t2_lon + perp_lon * hw, t2_elev),
-                ]
+                corners = self._runway_polygon_corners(
+                    t1_lat, t1_lon, t1_elev,
+                    t2_lat, t2_lon, t2_elev,
+                    perp_lat, perp_lon, hw)
 
                 # Camera-plane-clipped projection so a runway straddling
                 # the aircraft (e.g. crossing the threshold on short
@@ -1181,9 +1232,29 @@ class SVSRenderer:
                 font.setPixelSize(200)
                 font.setBold(True)
                 from PyQt6.QtGui import QPainterPath as _QPP
+                from PyQt6.QtCore import QRectF as _QRectF
+
+                # Number of horizontal strips per designator character. A
+                # single quadToQuad across a 60-ft tall character is a
+                # linear chord through the curve produced by the angular
+                # projection; at low AGL that chord visibly diverges from
+                # where the character's outline actually should go. K
+                # strips per character give K independent quadToQuad
+                # transforms, each spanning a much smaller along-distance,
+                # so the assembled glyph follows the same curve the
+                # threshold bars and centerline stripes already trace.
+                # K=6 is enough to make the seam invisible at typical
+                # short-final altitudes; larger K costs ~K paint ops per
+                # character.
+                K_STRIPS = 6
 
                 def _render_row(chars, row_center_along):
-                    """Paint one designator row centered on ``row_center_along``."""
+                    """Paint one designator row centered on
+                    ``row_center_along``, with each character's outline
+                    perspective-mapped through K horizontal strips so
+                    the glyph traces the same curve as the rest of the
+                    runway markings rather than fitting one linear
+                    chord across the full character height."""
                     if not chars:
                         return
                     widths = [_char_w(c) for c in chars]
@@ -1197,38 +1268,63 @@ class SVSRenderer:
                         cw = widths[idx]
                         sL = cur_across
                         sR = cur_across + sign * cw
-                        tl_x, tl_y, vtl = project(top_a, sL)
-                        tr_x, tr_y, vtr = project(top_a, sR)
-                        br_x, br_y, vbr = project(bot_a, sR)
-                        bl_x, bl_y, vbl = project(bot_a, sL)
-                        if vtl and vtr and vbr and vbl:
-                            if ch == '1':
-                                p.drawPolygon(QPolygonF([
-                                    QPointF(tl_x, tl_y), QPointF(tr_x, tr_y),
-                                    QPointF(br_x, br_y), QPointF(bl_x, bl_y)]))
-                            else:
-                                char_path = _QPP()
-                                char_path.addText(0, 0, font, ch)
-                                gb = char_path.boundingRect()
-                                if gb.width() > 0.5 and gb.height() > 0.5:
-                                    src = QPolygonF([
-                                        QPointF(gb.left(),  gb.top()),
-                                        QPointF(gb.right(), gb.top()),
-                                        QPointF(gb.right(), gb.bottom()),
-                                        QPointF(gb.left(),  gb.bottom()),
-                                    ])
-                                    dst = QPolygonF([
-                                        QPointF(tl_x, tl_y), QPointF(tr_x, tr_y),
-                                        QPointF(br_x, br_y), QPointF(bl_x, bl_y),
-                                    ])
-                                    xfm = QTransform()
-                                    if QTransform.quadToQuad(src, dst, xfm):
-                                        p.save()
-                                        p.setTransform(xfm)
-                                        p.setBrush(QBrush(WHITE))
-                                        p.setPen(Qt_NoPen())
-                                        p.drawPath(char_path)
-                                        p.restore()
+
+                        # Build the character outline. FAA "1" is a plain
+                        # vertical bar (no font flag/foot) — render it as
+                        # a filled rectangle in source space so it gets
+                        # the same per-strip perspective treatment as the
+                        # other glyphs.
+                        char_path = _QPP()
+                        if ch == '1':
+                            char_path.addRect(0.0, 0.0, STROKE_FT, CHAR_H_FT)
+                        else:
+                            char_path.addText(0, 0, font, ch)
+                        gb = char_path.boundingRect()
+                        if gb.width() <= 0.5 or gb.height() <= 0.5:
+                            cur_across += sign * (cw + CHAR_GAP_FT)
+                            continue
+
+                        # Project K+1 horizontal slices spanning the
+                        # character along the runway. Each adjacent pair
+                        # of slices defines one perspective strip.
+                        slices = []
+                        for k in range(K_STRIPS + 1):
+                            f = k / K_STRIPS
+                            a = top_a + f * (bot_a - top_a)
+                            Lx, Ly, vL = project(a, sL)
+                            Rx, Ry, vR = project(a, sR)
+                            slices.append((QPointF(Lx, Ly),
+                                           QPointF(Rx, Ry), vL and vR))
+
+                        for k in range(K_STRIPS):
+                            L0, R0, ok0 = slices[k]
+                            L1, R1, ok1 = slices[k + 1]
+                            if not (ok0 and ok1):
+                                continue
+                            y_top = gb.top() + (k / K_STRIPS) * gb.height()
+                            y_bot = gb.top() + ((k + 1) / K_STRIPS) * gb.height()
+                            src = QPolygonF([
+                                QPointF(gb.left(),  y_top),
+                                QPointF(gb.right(), y_top),
+                                QPointF(gb.right(), y_bot),
+                                QPointF(gb.left(),  y_bot),
+                            ])
+                            dst = QPolygonF([L0, R0, R1, L1])
+                            xfm = QTransform()
+                            if not QTransform.quadToQuad(src, dst, xfm):
+                                continue
+                            strip_clip = _QPP()
+                            strip_clip.addRect(_QRectF(
+                                gb.left(), y_top,
+                                gb.width(), y_bot - y_top))
+                            strip_path = char_path.intersected(strip_clip)
+                            p.save()
+                            p.setTransform(xfm)
+                            p.setBrush(QBrush(WHITE))
+                            p.setPen(Qt_NoPen())
+                            p.drawPath(strip_path)
+                            p.restore()
+
                         cur_across += sign * (cw + CHAR_GAP_FT)
 
                 if letter_part:

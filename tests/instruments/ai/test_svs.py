@@ -465,6 +465,58 @@ class TestProjectPolygonClipped:
             ppd=12.0, w=800, h=600, eps=1e-6)
         assert len(pts) == 5
 
+    def test_runway_polygon_corners_subdivides_long_edges(self):
+        """`_runway_polygon_corners` subdivides the two long edges of
+        the runway into ``n_subdiv`` segments each so the projected
+        polygon traces the screen-curve from the angular projection
+        rather than cutting a straight chord through it. With
+        ``n_subdiv=8`` the polygon has 4 + 2*7 = 18 vertices."""
+        r = self._renderer()
+        n = 8
+        corners = r._runway_polygon_corners(
+            t1_lat=35.735, t1_lon=-81.397, t1_elev=1136.0,
+            t2_lat=35.745, t2_lon=-81.380, t2_elev=1190.0,
+            perp_lat=-0.0001, perp_lon=0.0001, hw=2.058e-4,
+            n_subdiv=n)
+        assert len(corners) == 4 + 2 * (n - 1)
+        # Subdivision points along the left edge should interpolate
+        # between t1 and t2 monotonically.
+        # corners[2..n] are the inserts on the left long edge
+        left_lats = [c[0] for c in corners[2:2 + n - 1]]
+        assert all(35.735 < lat < 35.745 for lat in left_lats)
+        # And elevations interpolate too.
+        left_elevs = [c[2] for c in corners[2:2 + n - 1]]
+        assert all(1136.0 < e < 1190.0 for e in left_elevs)
+        assert left_elevs == sorted(left_elevs), \
+            "elevations along the left edge should monotonically increase"
+
+    def test_runway_polygon_clips_correctly_with_subdivision(self):
+        """A subdivided runway polygon still clips cleanly with the
+        camera-near-plane Sutherland-Hodgman implementation. Same
+        KHKY-like pose that uncovered the projection-curve issue."""
+        r = self._renderer()
+        # KHKY 06 thr → 24 thr, aircraft mid-runway-but-off-centerline.
+        corners = r._runway_polygon_corners(
+            t1_lat=35.73499, t1_lon=-81.39730, t1_elev=1136.3,
+            t2_lat=35.74498, t2_lon=-81.37956, t2_elev=1189.6,
+            perp_lat=-0.0001405, perp_lon=0.00009895, hw=2.058e-4,
+            n_subdiv=16)
+        pts = r._project_polygon_clipped(
+            corners,
+            ac_lat=35.74263, ac_lon=-81.38575, ac_alt_ft=1386.0,
+            pitch_deg=10.0, roll_deg=3.0, heading_deg=51.18,
+            ppd=12.0, w=800, h=600)
+        # Polygon should be visible with some clipped vertices.
+        assert len(pts) >= 3
+        # No vertex should be wildly out of plausible viewport range —
+        # the polygon doesn't bulge to +/-1000+ px the way an
+        # un-subdivided chord would have at this pose.
+        for pt in pts:
+            assert -1500 <= pt.x() <= 2300, (
+                f"vertex x={pt.x()} unreasonably far from viewport — "
+                f"subdivision should keep the polygon within sane "
+                f"projection bounds")
+
     def test_default_near_plane_visibly_inside_viewport(self):
         """Production default ``eps`` (~0.05 NM) puts clipped vertices
         at moderate screen azimuths instead of ~+/-90 deg the way a
