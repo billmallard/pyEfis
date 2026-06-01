@@ -375,6 +375,97 @@ class TestPolarTier:
 # transparently downgrades to polar and never crashes.
 # ---------------------------------------------------------------------------
 
+class TestProjectPolygonClipped:
+    """``_project_polygon_clipped`` clips polygons against the camera near
+    plane so polygons that straddle the aircraft (e.g. a runway being
+    crossed) draw their visible portion rather than vanishing the moment
+    one corner falls behind. Regression for the runway-disappears-on-
+    threshold-crossing bug reported during X-Plane testing."""
+
+    def _renderer(self):
+        # No tile_path needed — clipper only uses _project math.
+        return SVSRenderer({"renderer": "polar"})
+
+    def test_all_in_front_returns_four_points(self):
+        r = self._renderer()
+        # KSBA-ish pose, aircraft 1 NM south of the runway looking north.
+        # Runway endpoints are at lat 34.43, ±0.001 lon, all forward.
+        corners = [
+            (34.430, -119.851, 12.0),
+            (34.430, -119.853, 12.0),
+            (34.432, -119.853, 12.0),
+            (34.432, -119.851, 12.0),
+        ]
+        pts = r._project_polygon_clipped(
+            corners,
+            ac_lat=34.420, ac_lon=-119.852, ac_alt_ft=500.0,
+            pitch_deg=0.0, roll_deg=0.0, heading_deg=0.0,
+            ppd=12.0, w=800, h=600)
+        assert len(pts) == 4
+
+    def test_all_behind_returns_empty(self):
+        r = self._renderer()
+        # Aircraft north of all corners looking north — all behind.
+        corners = [
+            (34.420, -119.851, 12.0),
+            (34.420, -119.853, 12.0),
+            (34.422, -119.853, 12.0),
+            (34.422, -119.851, 12.0),
+        ]
+        pts = r._project_polygon_clipped(
+            corners,
+            ac_lat=34.440, ac_lon=-119.852, ac_alt_ft=500.0,
+            pitch_deg=0.0, roll_deg=0.0, heading_deg=0.0,
+            ppd=12.0, w=800, h=600)
+        assert pts == []
+
+    def test_aircraft_straddling_runway_keeps_visible_half(self):
+        """Aircraft is sitting between the two thresholds along the
+        runway centerline, heading 90 deg (east) down the runway.
+        The two corners behind should be replaced by intersections with
+        the camera near plane — total 4 output points (2 originals + 2
+        intersections), and all should have positive forward range from
+        the camera."""
+        r = self._renderer()
+        # Runway runs east-west; aircraft at the midpoint, heading east.
+        # West threshold corners are behind, east threshold corners are
+        # ahead.
+        corners = [
+            (34.430, -119.860, 12.0),  # west, north — BEHIND
+            (34.428, -119.860, 12.0),  # west, south — BEHIND
+            (34.428, -119.840, 12.0),  # east, south — AHEAD
+            (34.430, -119.840, 12.0),  # east, north — AHEAD
+        ]
+        pts = r._project_polygon_clipped(
+            corners,
+            ac_lat=34.429, ac_lon=-119.850, ac_alt_ft=200.0,
+            pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
+            ppd=12.0, w=800, h=600)
+        # Clipping a 4-vertex polygon against a single plane with two
+        # vertices behind produces a 4-vertex output (the two AHEAD
+        # corners plus two clipped intersections).
+        assert len(pts) == 4
+
+    def test_one_behind_three_ahead_returns_five(self):
+        """Sutherland-Hodgman on a quad with one vertex behind the
+        plane produces a pentagon (3 originals + 2 intersections)."""
+        r = self._renderer()
+        # Aircraft at (34.429, -119.851), heading 90 (east). x_fwd
+        # tracks d_lon_scaled with this heading.
+        corners = [
+            (34.430, -119.852, 12.0),  # west of aircraft — BEHIND
+            (34.430, -119.850, 12.0),  # east — ahead
+            (34.428, -119.850, 12.0),  # east — ahead
+            (34.428, -119.840, 12.0),  # well east — ahead
+        ]
+        pts = r._project_polygon_clipped(
+            corners,
+            ac_lat=34.429, ac_lon=-119.851, ac_alt_ft=200.0,
+            pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
+            ppd=12.0, w=800, h=600)
+        assert len(pts) == 5
+
+
 class TestSVSGLFallback:
     def _draw(self, r, lat=32.5, lon=-96.5, alt_ft=3000.0, heading_deg=0.0):
         from PyQt6.QtGui import QImage

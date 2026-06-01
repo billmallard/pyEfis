@@ -767,6 +767,67 @@ class SVSRenderer:
         sy = x_px * sin_r + y_px * cos_r + h / 2
         return sx, sy, True
 
+    def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
+                                 pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                                 eps=1e-6):
+        """Project a polygon (list of ``(lat, lon, elev_ft)`` corners) to
+        screen with a Sutherland-Hodgman clip against the camera near
+        plane (``x_fwd > eps``). Polygons that straddle the aircraft —
+        a runway being crossed on short final, for example — get their
+        edges intersected with the near plane so the visible portion
+        still draws instead of vanishing.
+
+        Returns a list of QPointF for the clipped polygon; empty when
+        the polygon is fully behind the aircraft."""
+        lat_cos = math.cos(math.radians(ac_lat))
+        head_rad = math.radians(heading_deg)
+        cos_h, sin_h = math.cos(head_rad), math.sin(head_rad)
+
+        cam = []
+        for lat, lon, elev_ft in corners:
+            d_lat = lat - ac_lat
+            d_lon = (lon - ac_lon) * lat_cos
+            x_fwd   =  d_lat * cos_h + d_lon * sin_h
+            x_right = -d_lat * sin_h + d_lon * cos_h
+            alt_diff_m = (elev_ft - ac_alt_ft) * 0.3048
+            cam.append((x_fwd, x_right, alt_diff_m))
+
+        clipped = []
+        n = len(cam)
+        for i in range(n):
+            a = cam[i]
+            b = cam[(i + 1) % n]
+            a_in = a[0] > eps
+            b_in = b[0] > eps
+            if a_in:
+                clipped.append(a)
+            if a_in != b_in and abs(b[0] - a[0]) > 1e-12:
+                t = (eps - a[0]) / (b[0] - a[0])
+                clipped.append((
+                    eps,
+                    a[1] + t * (b[1] - a[1]),
+                    a[2] + t * (b[2] - a[2]),
+                ))
+
+        if not clipped:
+            return []
+
+        roll_rad = math.radians(-roll_deg)
+        cos_r, sin_r = math.cos(roll_rad), math.sin(roll_rad)
+        pts = []
+        for x_fwd, x_right, alt_diff_m in clipped:
+            range_m = math.sqrt(x_fwd ** 2 + x_right ** 2) * 111139.0
+            range_m = max(range_m, 1.0)
+            elev_angle_deg = math.degrees(math.atan2(alt_diff_m, range_m))
+            x_ang = math.degrees(math.atan2(x_right, x_fwd))
+            y_ang = elev_angle_deg - pitch_deg
+            x_px = x_ang * ppd
+            y_px = -y_ang * ppd
+            sx = x_px * cos_r - y_px * sin_r + w / 2
+            sy = x_px * sin_r + y_px * cos_r + h / 2
+            pts.append(QPointF(sx, sy))
+        return pts
+
     def _airports_in_range(self, ac_lat, ac_lon):
         """Yield ``(label, ref_lat, ref_lon, elev_ft, runways)`` records from
         whichever data source is configured. Each runway dict carries the
@@ -890,17 +951,15 @@ class SVSRenderer:
                     (t2_lat + perp_lat * hw, t2_lon + perp_lon * hw, t2_elev),
                 ]
 
-                pts = []
-                for lat, lon, elev in corners:
-                    sx, sy, vis = self._project_point(lat, lon, elev,
-                                                      ac_lat, ac_lon, ac_alt_ft,
-                                                      pitch_deg, roll_deg, heading_deg,
-                                                      ppd, w, h)
-                    if not vis:
-                        break
-                    pts.append(QPointF(sx, sy))
+                # Camera-plane-clipped projection so a runway straddling
+                # the aircraft (e.g. crossing the threshold on short
+                # final) still draws its visible portion rather than
+                # vanishing the moment one corner falls behind.
+                pts = self._project_polygon_clipped(
+                    corners, ac_lat, ac_lon, ac_alt_ft,
+                    pitch_deg, roll_deg, heading_deg, ppd, w, h)
 
-                if len(pts) == 4:
+                if len(pts) >= 3:
                     p.setPen(rwy_pen)
                     p.setBrush(QBrush(RWY_FILL))
                     p.drawPolygon(QPolygonF(pts))
