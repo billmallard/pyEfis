@@ -49,8 +49,24 @@ class AI(QGraphicsView):
             self.fontSize = qRound(self.width() * self.font_percent)
         else:
             self.fontSize = 30
-        # Number of degrees shown from top to bottom
-        self.pitchDegreesShown = 60
+        # Number of degrees shown from top to bottom. This sets
+        # pixelsPerDeg = widget_height / pitchDegreesShown, which is
+        # the SAME scale applied to the horizontal axis, so the AI's
+        # effective horizontal FOV = widget_width * pitchDegreesShown
+        # / widget_height. At the original 60 deg on a 5" 800x480
+        # panel the HFOV came out to ~100 deg — about 2x the angular
+        # spread of a typical avionics PFD's synthetic-vision view
+        # (Garmin GI-275: ~50 deg; G1000 PFD: ~50-60 deg; X-Plane
+        # cockpit view: 60-70 deg). Terrain and runways appeared
+        # roughly half their natural size as a result.
+        #
+        # 36 puts HFOV at 60 deg on a 5:3 panel (800x480 -> 60 deg,
+        # 1024x600 -> 61.4 deg) — close to X-Plane's cockpit view
+        # and visually consistent with a typical PFD SVS. The pitch
+        # ladder also spreads out by 60/36 = 1.67x, which gives more
+        # screen-space per degree of pitch (more readable, and
+        # closer to what real PFDs use for the visible pitch range).
+        self.pitchDegreesShown = 36
         # Pitch tick mark configurations
         self.minorDiv = 1   # Degrees between minor divisions
         self.majorDiv = 5  # Degrees between major divisions
