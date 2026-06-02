@@ -1018,13 +1018,21 @@ class SVSRenderer:
                     t2_lat, t2_lon, t2_elev,
                     perp_lat, perp_lon, hw)
 
-                # Camera-plane-clipped projection so a runway straddling
-                # the aircraft (e.g. crossing the threshold on short
-                # final) still draws its visible portion rather than
-                # vanishing the moment one corner falls behind.
+                # Near-plane distance: width-adaptive. The Sutherland-
+                # Hodgman intersection along a long runway edge has
+                # x_right ~ hw (the perpendicular half-width), so the
+                # clipped vertex projects to x_ang = atan2(hw, eps).
+                # Keeping that angle at the polar fan's edge (~70 deg)
+                # makes the polygon visually extend right up to the
+                # aircraft instead of leaving a fixed-distance "no
+                # asphalt" gap directly under the nose — which was
+                # what caused the runway to look like it was
+                # truncating away as the aircraft flew over it.
+                near_plane_deg = hw / math.tan(math.radians(70.0))
                 pts = self._project_polygon_clipped(
                     corners, ac_lat, ac_lon, ac_alt_ft,
-                    pitch_deg, roll_deg, heading_deg, ppd, w, h)
+                    pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                    eps=near_plane_deg)
 
                 if len(pts) >= 3:
                     p.setPen(rwy_pen)
