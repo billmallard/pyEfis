@@ -1431,17 +1431,47 @@ class SVSRenderer:
         usable_a0 = d1
         usable_a1 = length_ft - d2
         # ----- Side stripes (PIR only) -------------------------------------
+        # Each side stripe runs the FULL usable length of the runway. A
+        # 4-corner chord across that length would cut visibly straight
+        # across the curve traced by the (now subdivided) runway polygon
+        # edges — the user-reported "two tight strings connecting the
+        # 06 and 24 ends while the asphalt fill bows underneath" came
+        # from exactly this mismatch. Subdivide the long edges so each
+        # stripe traces the same curve the runway polygon does.
         if "PIR" in (m1, m2) and usable_a1 - usable_a0 > 200.0:
             STRIPE_W = 3.0
-            edge = width_ft * 0.5 - STRIPE_W * 0.5
             for side in (-1.0, +1.0):
                 c_in  = side * (width_ft * 0.5 - STRIPE_W)
                 c_out = side * (width_ft * 0.5)
                 c_lo, c_hi = min(c_in, c_out), max(c_in, c_out)
-                poly = quad(usable_a0, c_lo, usable_a0, c_hi,
-                            usable_a1, c_hi, usable_a1, c_lo)
-                if poly is not None:
-                    p.drawPolygon(poly)
+                n_sub = self._RUNWAY_LONG_EDGE_SEGMENTS
+                strip_corners = []
+                # Short edge at usable_a0 (CCW order: c_lo then c_hi).
+                strip_corners.append(rwy_point(usable_a0, c_lo))
+                strip_corners.append(rwy_point(usable_a0, c_hi))
+                # Long edge at across=c_hi, from usable_a0 -> usable_a1.
+                for k in range(1, n_sub):
+                    f = k / n_sub
+                    strip_corners.append(rwy_point(
+                        usable_a0 + f * (usable_a1 - usable_a0), c_hi))
+                # Short edge at usable_a1.
+                strip_corners.append(rwy_point(usable_a1, c_hi))
+                strip_corners.append(rwy_point(usable_a1, c_lo))
+                # Long edge at across=c_lo, from usable_a1 -> usable_a0.
+                for k in range(1, n_sub):
+                    f = k / n_sub
+                    strip_corners.append(rwy_point(
+                        usable_a1 + f * (usable_a0 - usable_a1), c_lo))
+                # Width-adaptive near plane based on the full runway
+                # half-width — same trade-off as the main polygon.
+                hw_deg = (width_ft / 2.0) / 364491.0
+                eps = hw_deg / math.tan(math.radians(70.0))
+                stripe_pts = self._project_polygon_clipped(
+                    strip_corners, ac_lat, ac_lon, ac_alt_ft,
+                    pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                    eps=eps)
+                if len(stripe_pts) >= 3:
+                    p.drawPolygon(QPolygonF(stripe_pts))
 
         # ----- Centerline stripes (always; cosmetic for BSC) ---------------
         # 120 ft stripe + 80 ft gap, starting 50 ft inboard of threshold bars
