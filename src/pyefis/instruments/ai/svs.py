@@ -245,6 +245,15 @@ class SVSRenderer:
         from pyefis.instruments.ai.obstacle_db import ObstacleDB
         self.obstacle_db = ObstacleDB(config.get("dof_db_path", "") or None)
         self.obstacle_min_agl_ft = float(config.get("obstacle_min_agl_ft", 200.0))
+
+        # Optional water-polygon database (oceans + lakes + rivers as
+        # OSM / Natural Earth vector polygons). When configured, water
+        # bodies are painted on top of the terrain layer with the
+        # standard COLOR_WATER blue, fixing the "sea-level cells look
+        # like SAFE-green terrain" problem the SRTM-only path leaves
+        # at coastlines and over lakes.
+        from pyefis.instruments.ai.water_db import WaterDB
+        self.water_db = WaterDB(config.get("water_db_path", "") or None)
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         self.terrain_fill  = config.get("terrain_fill", True)
@@ -346,6 +355,13 @@ class SVSRenderer:
                     p.resetTransform()
                     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
                     try:
+                        # Water FIRST so runway/obstacle overlays render
+                        # cleanly above it (a runway on a bridge, a
+                        # navaid in a bay, an OSM-mapped pier, etc).
+                        self._draw_water(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                            range_nm)
                         self._draw_runways(
                             p, w, h, ac_lat, ac_lon, ac_alt_ft,
                             pitch_deg, roll_deg, heading_deg, pixels_per_deg)
@@ -722,6 +738,10 @@ class SVSRenderer:
                     p.setPen(pen)
                     p.drawLines(lines)
 
+        self._draw_water(p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                         pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                         range_nm)
+
         self._draw_runways(p, w, h, ac_lat, ac_lon, ac_alt_ft,
                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
 
@@ -924,6 +944,70 @@ class SVSRenderer:
         # Built-in fallback
         for icao, apt in _AIRPORT_DB.items():
             yield apt["label"], apt["ref_lat"], apt["ref_lon"], apt["elev_ft"], apt["runways"]
+
+    def _draw_water(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                    pitch_deg, roll_deg, heading_deg, ppd, range_nm):
+        """Paint OSM / Natural Earth water polygons in COLOR_WATER on
+        top of the terrain layer. Each polygon is projected via
+        ``_project_polygon_clipped`` exactly like a runway — the same
+        camera-near-plane Sutherland-Hodgman clip and width-adaptive
+        eps that the runway code uses.
+
+        Polygon surface elevation:
+          * ``poly.elev_ft`` if the build tool recorded one (e.g.
+            crater-lake-style lakes with a known surface elev).
+          * Otherwise sampled from the SRTM heightmap at the polygon's
+            first vertex. For ocean polygons SRTM returns either 0
+            (open water cells) or the void sentinel (which we treat
+            as 0); for lakes SRTM reports the water surface elevation.
+
+        Drawn BEFORE runways/obstacles in the overlay stack so a
+        runway crossing a lake (or a tower in a lake) renders on top.
+        """
+        if getattr(self, "water_db", None) is None or not self.water_db.ready:
+            return
+
+        from PyQt6.QtGui import QPolygonF as _QPolygonF
+
+        # Same width-adaptive near plane the runway clipper uses; we
+        # don't have a perp half-width here so pick a small constant
+        # that keeps clipped vertices at sensible azimuths for typical
+        # water shapes. ~50 m forward sits comfortably outside the
+        # polar fan's FOV when the polygon edge straddles the camera.
+        eps_default = 50.0 / 111139.0
+
+        # Sentinel value used by the SRTM loader for ocean / void cells.
+        WATER_SENTINEL_M = _WATER_SENTINEL / 3.28084
+
+        p.setPen(Qt_NoPen())
+        p.setBrush(QBrush(COLOR_WATER))
+
+        for poly in self.water_db.polygons_in_range(
+                ac_lat, ac_lon, range_nm):
+            if len(poly.vertices) < 3:
+                continue
+
+            # Pick a surface elevation for the polygon.
+            if poly.elev_ft is not None:
+                surface_ft = float(poly.elev_ft)
+            else:
+                vlat, vlon = poly.vertices[0]
+                elev_m, _ = self._sample_elevations(
+                    np.array([[vlat]]), np.array([[vlon]]))
+                e = float(elev_m[0, 0])
+                if e <= WATER_SENTINEL_M / 2.0:
+                    surface_ft = 0.0
+                else:
+                    surface_ft = e * 3.28084
+
+            corners = [(lat, lon, surface_ft)
+                       for (lat, lon) in poly.vertices]
+            pts = self._project_polygon_clipped(
+                corners, ac_lat, ac_lon, ac_alt_ft,
+                pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                eps=eps_default)
+            if len(pts) >= 3:
+                p.drawPolygon(_QPolygonF(pts))
 
     def _draw_obstacles(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
                         pitch_deg, roll_deg, heading_deg, ppd, range_nm):

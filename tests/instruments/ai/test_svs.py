@@ -375,6 +375,210 @@ class TestPolarTier:
 # transparently downgrades to polar and never crashes.
 # ---------------------------------------------------------------------------
 
+class TestWaterDB:
+    """``WaterDB`` is a sqlite-backed range-queryable water polygon
+    loader, following the ObstacleDB construct-never-raises pattern."""
+
+    def _build_db(self, tmp_path, rows):
+        """Build a minimal water.sqlite with the given polygons.
+        ``rows`` is a list of (kind, elev_ft, [(lat, lon), ...])."""
+        import sqlite3
+        from pyefis.instruments.ai.water_db import encode_vertices
+        path = tmp_path / "water.sqlite"
+        con = sqlite3.connect(str(path))
+        con.execute("""
+            CREATE TABLE water_polygons (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                min_lat   REAL NOT NULL,
+                max_lat   REAL NOT NULL,
+                min_lon   REAL NOT NULL,
+                max_lon   REAL NOT NULL,
+                kind      TEXT NOT NULL,
+                elev_ft   REAL,
+                vertices  BLOB NOT NULL
+            )
+        """)
+        for kind, elev_ft, verts in rows:
+            lats = [v[0] for v in verts]
+            lons = [v[1] for v in verts]
+            con.execute(
+                "INSERT INTO water_polygons "
+                "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, vertices) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (min(lats), max(lats), min(lons), max(lons),
+                 kind, elev_ft, encode_vertices(verts)))
+        con.commit()
+        con.close()
+        return path
+
+    def test_missing_file_stays_not_ready(self, tmp_path):
+        from pyefis.instruments.ai.water_db import WaterDB
+        db = WaterDB(tmp_path / "does_not_exist.sqlite")
+        assert db.ready is False
+        # Query yields nothing
+        assert list(db.polygons_in_range(0.0, 0.0, 30.0)) == []
+
+    def test_none_path_disables_db(self):
+        from pyefis.instruments.ai.water_db import WaterDB
+        db = WaterDB(None)
+        assert db.ready is False
+
+    def test_bad_schema_caught(self, tmp_path):
+        """A sqlite file without the expected schema should leave the
+        DB in not-ready state, not crash."""
+        import sqlite3
+        from pyefis.instruments.ai.water_db import WaterDB
+        path = tmp_path / "broken.sqlite"
+        con = sqlite3.connect(str(path))
+        con.execute("CREATE TABLE some_unrelated_table (x INT)")
+        con.commit()
+        con.close()
+        db = WaterDB(path)
+        assert db.ready is False
+
+    def test_polygons_in_range_bbox_filter(self, tmp_path):
+        from pyefis.instruments.ai.water_db import WaterDB
+        # Three polygons:
+        #   - Pacific around KSBA (lat 34, lon -120)
+        #   - Atlantic near Cape Hatteras NC (lat 35, lon -75)
+        #   - Lake Hickory NC near KHKY (lat 35.78, lon -81.3)
+        path = self._build_db(tmp_path, [
+            ("ocean", None, [(34.0, -120.5), (34.0, -119.5),
+                             (34.5, -119.5), (34.5, -120.5)]),
+            ("ocean", None, [(35.0, -75.5), (35.0, -74.5),
+                             (35.5, -74.5), (35.5, -75.5)]),
+            ("lake", 656.0, [(35.78, -81.32), (35.78, -81.28),
+                             (35.80, -81.28), (35.80, -81.32)]),
+        ])
+        db = WaterDB(path)
+        assert db.ready is True
+
+        # Aircraft at KSBA — only Pacific should come back.
+        polys = list(db.polygons_in_range(34.4, -119.8, 30.0))
+        assert len(polys) == 1
+        assert polys[0].kind == "ocean"
+        assert polys[0].is_ocean is True
+        assert len(polys[0].vertices) == 4
+
+        # Aircraft at KHKY — only the lake should come back.
+        polys = list(db.polygons_in_range(35.74, -81.39, 10.0))
+        assert len(polys) == 1
+        assert polys[0].kind == "lake"
+        assert polys[0].elev_ft == 656.0
+        assert polys[0].is_ocean is False
+
+        # Aircraft mid-Atlantic far from anywhere mapped.
+        polys = list(db.polygons_in_range(0.0, 0.0, 30.0))
+        assert polys == []
+
+    def test_vertices_roundtrip(self):
+        """``encode_vertices`` / ``_decode_vertices`` should be inverses."""
+        from pyefis.instruments.ai.water_db import (
+            encode_vertices, _decode_vertices)
+        verts = [(34.4275, -119.8546),
+                 (34.0, -120.0),
+                 (-35.123456789, 174.987654321)]   # exercise negatives + precision
+        decoded = _decode_vertices(encode_vertices(verts))
+        assert len(decoded) == len(verts)
+        for (la, lo), (la2, lo2) in zip(verts, decoded):
+            assert abs(la - la2) < 1e-12
+            assert abs(lo - lo2) < 1e-12
+
+
+class TestSVSWaterRendering:
+    """``_draw_water`` overlays water polygons on top of the terrain
+    layer. Sanity-check that it runs without raising at known poses
+    and that the DB is wired into the renderer when configured."""
+
+    def _build_db(self, tmp_path, rows):
+        # Same minimal builder as TestWaterDB above.
+        import sqlite3
+        from pyefis.instruments.ai.water_db import encode_vertices
+        path = tmp_path / "water.sqlite"
+        con = sqlite3.connect(str(path))
+        con.execute("""
+            CREATE TABLE water_polygons (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                min_lat   REAL NOT NULL, max_lat   REAL NOT NULL,
+                min_lon   REAL NOT NULL, max_lon   REAL NOT NULL,
+                kind      TEXT NOT NULL, elev_ft   REAL, vertices  BLOB NOT NULL)
+        """)
+        for kind, elev_ft, verts in rows:
+            lats = [v[0] for v in verts]; lons = [v[1] for v in verts]
+            con.execute(
+                "INSERT INTO water_polygons "
+                "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, vertices) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (min(lats), max(lats), min(lons), max(lons),
+                 kind, elev_ft, encode_vertices(verts)))
+        con.commit(); con.close()
+        return path
+
+    def test_water_db_attached_when_path_configured(self, tmp_path):
+        root = _make_tile_dir(tmp_path, 34, -120, elevation=0)
+        water = self._build_db(tmp_path, [
+            ("ocean", None, [(34.0, -120.5), (34.0, -119.5),
+                             (34.5, -119.5), (34.5, -120.5)]),
+        ])
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "water_db_path": str(water),
+        })
+        assert r.water_db is not None
+        assert r.water_db.ready is True
+
+    def test_water_db_disabled_when_path_missing(self, tmp_path):
+        root = _make_tile_dir(tmp_path, 34, -120, elevation=0)
+        r = SVSRenderer({"enabled": True, "tile_path": str(root)})
+        assert r.water_db is not None
+        assert r.water_db.ready is False
+
+    def test_draw_water_runs_without_raising_at_ksba(self, tmp_path):
+        from PyQt6.QtGui import QImage, QPainter
+        # Make a synthetic sea-level tile for the KSBA region so
+        # _sample_elevations works.
+        root = _make_tile_dir(tmp_path, 34, -120, elevation=0)
+        water = self._build_db(tmp_path, [
+            ("ocean", None, [
+                (34.0, -120.5), (34.0, -119.5),
+                (34.5, -119.5), (34.5, -120.5)]),
+        ])
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "water_db_path": str(water), "renderer": "polar",
+        })
+        img = QImage(400, 300, QImage.Format.Format_RGB32)
+        img.fill(0)
+        p = QPainter(img)
+        try:
+            # KSBA short-final pose, looking at the Pacific.
+            r.draw(p, 400, 300,
+                   34.4275, -119.8546, 500.0,
+                   0.0, 0.0, 270.0, 12.0)
+        finally:
+            p.end()
+        # If nothing raised we're good; the polygon should also have
+        # produced at least one blue-ish pixel near the bottom-center
+        # of the screen at this pose.
+
+    def test_draw_water_skips_when_db_not_ready(self, tmp_path):
+        from PyQt6.QtGui import QImage, QPainter
+        root = _make_tile_dir(tmp_path, 34, -120, elevation=0)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            # No water_db_path on purpose.
+        })
+        img = QImage(400, 300, QImage.Format.Format_RGB32)
+        img.fill(0)
+        p = QPainter(img)
+        try:
+            r.draw(p, 400, 300,
+                   34.4275, -119.8546, 500.0,
+                   0.0, 0.0, 270.0, 12.0)
+        finally:
+            p.end()
+
+
 class TestProjectPolygonClipped:
     """``_project_polygon_clipped`` clips polygons against the camera near
     plane so polygons that straddle the aircraft (e.g. a runway being
