@@ -60,13 +60,14 @@ class AI(QGraphicsView):
         # cockpit view: 60-70 deg). Terrain and runways appeared
         # roughly half their natural size as a result.
         #
-        # 36 puts HFOV at 60 deg on a 5:3 panel (800x480 -> 60 deg,
-        # 1024x600 -> 61.4 deg) — close to X-Plane's cockpit view
-        # and visually consistent with a typical PFD SVS. The pitch
-        # ladder also spreads out by 60/36 = 1.67x, which gives more
-        # screen-space per degree of pitch (more readable, and
-        # closer to what real PFDs use for the visible pitch range).
-        self.pitchDegreesShown = 36
+        # 30 puts HFOV at 50 deg on a 5:3 panel (800x480 -> 50 deg,
+        # 1024x600 -> 51.2 deg) — matches the Garmin GI-275 SVS and
+        # most G1000-class PFD synthetic-vision views. The pitch
+        # ladder spreads out by 60/30 = 2x relative to the original,
+        # which gives more screen-space per degree of pitch (more
+        # readable, and matches the visible pitch range real PFDs
+        # use).
+        self.pitchDegreesShown = 30
         # Pitch tick mark configurations
         self.minorDiv = 1   # Degrees between minor divisions
         self.majorDiv = 5  # Degrees between major divisions
