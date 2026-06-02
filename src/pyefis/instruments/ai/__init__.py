@@ -124,13 +124,21 @@ class AI(QGraphicsView):
         # Keys default to fail=True so that if any are missing from the FIX
         # database (e.g. gateway doesn't publish TRACK), _drawFPM stays
         # silently disabled rather than crashing.
-        self._fpm_fail = {k: True for k in ('VS', 'GS', 'TRACK', 'HEAD')}
-        self._fpm_bad  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD')}
+        # VPATH (vertical flight path angle, deg) is preferred when the
+        # data source can produce it directly (X-Plane publishes it via
+        # idx 18 slot 3 as the same value its own FPM symbol uses).
+        # When VPATH isn't published we fall back to atan2(VS, GS),
+        # which is correct in steady state but lags VPATH during
+        # transient descents — the FIX key still wires up cleanly via
+        # the missing-key guard below.
+        self._fpm_fail = {k: True for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
+        self._fpm_bad  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
         self._fpm_vs    = 0.0
         self._fpm_gs    = 0.0
         self._fpm_track = 0.0
         self._fpm_head  = 0.0
-        for key in ('VS', 'GS', 'TRACK', 'HEAD'):
+        self._fpm_vpath = 0.0
+        for key in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH'):
             try:
                 _item = fix.db.get_item(key)
             except KeyError:
@@ -409,16 +417,27 @@ class AI(QGraphicsView):
         """Draw GPS flight path marker if data is valid and show_fpm is set."""
         if not self.show_fpm:
             return
-        if any(self._fpm_fail.values()):
+        # VPATH is optional — if the data source can publish it
+        # directly we use it, but missing/failed VPATH must not
+        # disable the FPM (real-world GPS sources won't have it).
+        required = ('VS', 'GS', 'TRACK', 'HEAD')
+        if any(self._fpm_fail[k] for k in required):
             return
-        fpm_bad = any(self._fpm_bad.values())
+        fpm_bad = any(self._fpm_bad[k] for k in required)
 
-        # GPS flight path angle: VS (ft/min) / GS (ft/min)
-        gs_fpm = self._fpm_gs * 101.269  # knots → ft/min
-        if gs_fpm > 10.0:
-            fpa_deg = math.degrees(math.atan2(self._fpm_vs, gs_fpm))
+        # Vertical flight path angle. Prefer the authoritative VPATH
+        # FIX key when the source publishes it (X-Plane idx 18 slot 3
+        # is the same value X-Plane's own primary-flight-display FPM
+        # uses). Fall back to atan2(VS, GS), which is correct in
+        # steady state but lags VPATH on transient descents.
+        if not self._fpm_fail['VPATH']:
+            fpa_deg = self._fpm_vpath
         else:
-            fpa_deg = 0.0
+            gs_fpm = self._fpm_gs * 101.269  # knots → ft/min
+            if gs_fpm > 10.0:
+                fpa_deg = math.degrees(math.atan2(self._fpm_vs, gs_fpm))
+            else:
+                fpa_deg = 0.0
         # Drift angle: crab relative to heading, normalised ±180°.
         # TRACK (idx 18 slot 2 = hpath) is the TRUE ground track;
         # HEAD is magnetic. Subtract MAGVAR from HEAD so both legs of
