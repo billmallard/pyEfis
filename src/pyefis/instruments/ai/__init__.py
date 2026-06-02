@@ -419,8 +419,14 @@ class AI(QGraphicsView):
             fpa_deg = math.degrees(math.atan2(self._fpm_vs, gs_fpm))
         else:
             fpa_deg = 0.0
-        # Drift angle: crab relative to heading, normalised ±180°
-        drift_deg = ((self._fpm_track - self._fpm_head) + 180.0) % 360.0 - 180.0
+        # Drift angle: crab relative to heading, normalised ±180°.
+        # TRACK (idx 18 slot 2 = hpath) is the TRUE ground track;
+        # HEAD is magnetic. Subtract MAGVAR from HEAD so both legs of
+        # the subtraction are in the true-north frame — otherwise the
+        # FPM sits one local-mag-var off its real screen position
+        # (same bug class as the pre-MAGVAR SVS projection).
+        head_true = self._fpm_head - getattr(self, "_magvar", 0.0)
+        drift_deg = ((self._fpm_track - head_true) + 180.0) % 360.0 - 180.0
 
         ppd = getattr(self, 'pixelsPerDeg', self.height() / self.pitchDegreesShown)
         sym_r = self.bankMarkSize * 0.65
