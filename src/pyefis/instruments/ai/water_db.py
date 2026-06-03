@@ -63,7 +63,7 @@ class WaterDB:
     # a complex coastline. 64 vertices around any polygon is enough
     # to read the shape at typical SVS distances; tunable per-config
     # for users who want denser coastlines on larger displays.
-    DEFAULT_MAX_VERTICES = 64
+    DEFAULT_MAX_VERTICES = 32
 
     def __init__(self, sqlite_path: str | Path | None,
                  max_vertices: int | None = None):

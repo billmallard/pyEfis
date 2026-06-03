@@ -995,7 +995,16 @@ class SVSRenderer:
                 continue
 
             # Pick a surface elevation for the polygon.
-            if poly.elev_ft is not None:
+            # Ocean is sea level by definition — skip the SRTM lookup
+            # entirely. With ~100 ocean polygons in range near any
+            # coast, _sample_elevations was the dominant per-frame
+            # cost in the water overlay (each call constructs numpy
+            # arrays and hits the tile cache); short-circuiting here
+            # is the difference between 2 FPS and a usable frame
+            # rate.
+            if poly.is_ocean:
+                surface_ft = 0.0
+            elif poly.elev_ft is not None:
                 surface_ft = float(poly.elev_ft)
             else:
                 vlat, vlon = poly.vertices[0]
