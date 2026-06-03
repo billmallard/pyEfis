@@ -59,9 +59,30 @@ CREATE INDEX IF NOT EXISTS idx_kind ON water_polygons(kind);
 """
 
 
-def insert_polygon(con, kind, elev_ft, vertices):
+def _decimate(vertices, max_vertices):
+    """Stride-decimate ``vertices`` down to at most ``max_vertices``,
+    always preserving the first and last point so the polygon's
+    bounding extent stays intact. Match WaterDB._decode_vertices."""
+    n = len(vertices)
+    if max_vertices is None or n <= max_vertices:
+        return vertices
+    out = []
+    stride = (n - 1) / (max_vertices - 1)
+    for k in range(max_vertices):
+        i = int(round(k * stride))
+        out.append(vertices[i])
+    return out
+
+
+def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None):
     if len(vertices) < 3:
         return False
+    # Decimate at build time so the BLOBs stored on disk are small.
+    # Reading a 50-100 KB BLOB per polygon at query time was the
+    # dominant cost in the perf log; with a 32-vertex cap each BLOB
+    # is ~512 bytes and the query is bound by index scanning rather
+    # than disk I/O.
+    vertices = _decimate(vertices, max_vertices)
     lats = [v[0] for v in vertices]
     lons = [v[1] for v in vertices]
     con.execute(
@@ -73,7 +94,7 @@ def insert_polygon(con, kind, elev_ft, vertices):
     return True
 
 
-def import_shapefile(con, path, kind, elev_ft=None):
+def import_shapefile(con, path, kind, max_vertices, elev_ft=None):
     """Import every polygon (and every ring of every multi-polygon) from
     a shapefile into the water_polygons table."""
     try:
@@ -94,13 +115,13 @@ def import_shapefile(con, path, kind, elev_ft=None):
             ring = shape.points[parts[k]:parts[k + 1]]
             # Shapefile stores (lon, lat); we want (lat, lon).
             vertices = [(p[1], p[0]) for p in ring]
-            if insert_polygon(con, kind, elev_ft, vertices):
+            if insert_polygon(con, kind, elev_ft, vertices, max_vertices):
                 n += 1
     print(f"  {Path(path).name}: imported {n} ring(s) as kind={kind}")
     return n
 
 
-def import_text(con, path):
+def import_text(con, path, max_vertices):
     """Import polygons from the documented text format."""
     cur_kind = None
     cur_elev = None
@@ -110,7 +131,7 @@ def import_text(con, path):
     def flush():
         nonlocal cur_verts, n
         if cur_kind and len(cur_verts) >= 3:
-            if insert_polygon(con, cur_kind, cur_elev, cur_verts):
+            if insert_polygon(con, cur_kind, cur_elev, cur_verts, max_vertices):
                 n += 1
         cur_verts = []
 
@@ -147,7 +168,14 @@ def main():
                    help="generic OSM water shapefile (kind='water')")
     p.add_argument("--text", action="append", default=[],
                    help="text-format polygon file (see module docstring)")
+    p.add_argument("--max-vertices", type=int, default=32,
+                   help="cap polygons to this many vertices via stride "
+                        "decimation; on-disk BLOBs shrink ~150x for OSM "
+                        "coastlines and per-frame water.query goes from "
+                        "~50ms to under 1ms. Default 32 (matches "
+                        "WaterDB.DEFAULT_MAX_VERTICES). Pass 0 to disable.")
     args = p.parse_args()
+    max_verts = args.max_vertices if args.max_vertices > 0 else None
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -158,18 +186,18 @@ def main():
 
     total = 0
     for path in args.ocean:
-        total += import_shapefile(con, path, "ocean")
+        total += import_shapefile(con, path, "ocean", max_verts)
     for path in args.lake:
-        total += import_shapefile(con, path, "lake")
+        total += import_shapefile(con, path, "lake", max_verts)
     for path in args.river:
-        total += import_shapefile(con, path, "river")
+        total += import_shapefile(con, path, "river", max_verts)
     for path in args.osm_water:
-        total += import_shapefile(con, path, "water")
+        total += import_shapefile(con, path, "water", max_verts)
     for path in args.text:
-        total += import_text(con, path)
+        total += import_text(con, path, max_verts)
     con.commit()
     con.close()
-    print(f"-> {out} ({total} polygons)")
+    print(f"-> {out} ({total} polygons, vertex cap={max_verts})")
 
 
 if __name__ == "__main__":
