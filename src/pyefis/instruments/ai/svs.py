@@ -27,7 +27,85 @@ import os
 import sqlite3
 import struct
 import logging
+import time
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Lightweight per-frame profiler. Each named segment accumulates wall-clock
+# time and a call count; once the report interval elapses we log a single
+# summary line and reset. Enabled via ``svs_perf_log: true`` in the SVS
+# config block; zero overhead when disabled (the methods check a flag
+# before doing any timing math).
+# ---------------------------------------------------------------------------
+class _SVSPerfLog:
+    REPORT_INTERVAL_S = 2.0
+
+    def __init__(self, enabled: bool = False):
+        self.enabled = enabled
+        self._accum: dict[str, int] = {}    # ns total since last report
+        self._count: dict[str, int] = {}
+        self._last_report = time.perf_counter() if enabled else 0.0
+
+    def time(self, name: str):
+        """Context manager that times the with-block and adds it to
+        the accumulator under *name*. No-ops cleanly when disabled."""
+        if not self.enabled:
+            return _NoopTimer()
+        return _PerfTimer(self, name)
+
+    def add_ns(self, name: str, ns: int):
+        if not self.enabled:
+            return
+        self._accum[name] = self._accum.get(name, 0) + ns
+        self._count[name] = self._count.get(name, 0) + 1
+
+    def maybe_report(self):
+        if not self.enabled:
+            return
+        now = time.perf_counter()
+        if now - self._last_report < self.REPORT_INTERVAL_S:
+            return
+        elapsed = now - self._last_report
+        lines = [f"SVS perf (last {elapsed:.1f}s):"]
+        for name in sorted(self._accum, key=lambda k: -self._accum[k]):
+            n = self._count[name]
+            total_ms = self._accum[name] / 1e6
+            per_call_ms = total_ms / n if n else 0
+            pct = 100.0 * (self._accum[name] / 1e9) / elapsed
+            lines.append(
+                f"  {name:<30} {n:>5} calls  "
+                f"{total_ms:>8.1f}ms total  "
+                f"{per_call_ms:>7.2f}ms/call  "
+                f"{pct:>5.1f}%")
+        log.info("\n".join(lines))
+        self._accum.clear()
+        self._count.clear()
+        self._last_report = now
+
+
+class _PerfTimer:
+    """Tiny context manager that records the with-block duration."""
+    __slots__ = ("_p", "_name", "_t0")
+
+    def __init__(self, p, name):
+        self._p = p
+        self._name = name
+
+    def __enter__(self):
+        self._t0 = time.perf_counter_ns()
+        return self
+
+    def __exit__(self, *exc):
+        self._p.add_ns(self._name, time.perf_counter_ns() - self._t0)
+        return False
+
+
+class _NoopTimer:
+    """Returned when profiling is off — zero allocation, zero work."""
+    __slots__ = ()
+    def __enter__(self): return self
+    def __exit__(self, *exc): return False
 
 import numpy as np
 from PyQt6.QtCore import QLineF, QPointF, QRectF
@@ -276,6 +354,15 @@ class SVSRenderer:
         self._gl_renderer        = None
         self._gl_init_attempted  = False
 
+        # Per-frame profiler. ``svs_perf_log: true`` in the SVS config
+        # turns on a lightweight per-segment timing pass that prints a
+        # summary line every couple of seconds. Off by default; zero
+        # overhead when disabled.
+        self._perf = _SVSPerfLog(
+            enabled=bool(config.get("svs_perf_log", False)))
+        if self._perf.enabled:
+            log.info("SVS perf logging enabled")
+
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
         self._n_range      = int(config.get("n_range",
@@ -352,12 +439,15 @@ class SVSRenderer:
                         "falling back to polar tier", e)
             if self._gl_renderer is not None:
                 try:
-                    self._gl_renderer.draw(
-                        p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                        pitch_deg, roll_deg, heading_deg, pixels_per_deg)
+                    with self._perf.time("gl_terrain"):
+                        self._gl_renderer.draw(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
                     # GL drew the terrain; paint the CPU overlays on top.
                     # _draw_obstacles needs the auto-ranged range_nm.
-                    range_nm = self._auto_range_nm(ac_lat, ac_lon, ac_alt_ft)
+                    with self._perf.time("auto_range"):
+                        range_nm = self._auto_range_nm(
+                            ac_lat, ac_lon, ac_alt_ft)
                     p.save()
                     p.resetTransform()
                     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -365,19 +455,24 @@ class SVSRenderer:
                         # Water FIRST so runway/obstacle overlays render
                         # cleanly above it (a runway on a bridge, a
                         # navaid in a bay, an OSM-mapped pier, etc).
-                        self._draw_water(
-                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                            pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-                            range_nm)
-                        self._draw_runways(
-                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
-                        self._draw_obstacles(
-                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                            pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-                            range_nm)
+                        with self._perf.time("water"):
+                            self._draw_water(
+                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                                pitch_deg, roll_deg, heading_deg,
+                                pixels_per_deg, range_nm)
+                        with self._perf.time("runways"):
+                            self._draw_runways(
+                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                                pitch_deg, roll_deg, heading_deg,
+                                pixels_per_deg)
+                        with self._perf.time("obstacles"):
+                            self._draw_obstacles(
+                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                                pitch_deg, roll_deg, heading_deg,
+                                pixels_per_deg, range_nm)
                     finally:
                         p.restore()
+                    self._perf.maybe_report()
                     return
                 except Exception as e:
                     log.warning(
@@ -989,8 +1084,11 @@ class SVSRenderer:
         p.setPen(Qt_NoPen())
         p.setBrush(QBrush(COLOR_WATER))
 
-        for poly in self.water_db.polygons_in_range(
-                ac_lat, ac_lon, range_nm):
+        with self._perf.time("water.query"):
+            polys = list(self.water_db.polygons_in_range(
+                ac_lat, ac_lon, range_nm))
+
+        for poly in polys:
             if len(poly.vertices) < 3:
                 continue
 
@@ -1007,10 +1105,11 @@ class SVSRenderer:
             elif poly.elev_ft is not None:
                 surface_ft = float(poly.elev_ft)
             else:
-                vlat, vlon = poly.vertices[0]
-                elev_m, _ = self._sample_elevations(
-                    np.array([[vlat]]), np.array([[vlon]]))
-                e = float(elev_m[0, 0])
+                with self._perf.time("water.srtm_sample"):
+                    vlat, vlon = poly.vertices[0]
+                    elev_m, _ = self._sample_elevations(
+                        np.array([[vlat]]), np.array([[vlon]]))
+                    e = float(elev_m[0, 0])
                 if e <= WATER_SENTINEL_M / 2.0:
                     surface_ft = 0.0
                 else:
@@ -1018,12 +1117,14 @@ class SVSRenderer:
 
             corners = [(lat, lon, surface_ft)
                        for (lat, lon) in poly.vertices]
-            pts = self._project_polygon_clipped(
-                corners, ac_lat, ac_lon, ac_alt_ft,
-                pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                eps=eps_default)
+            with self._perf.time("water.project"):
+                pts = self._project_polygon_clipped(
+                    corners, ac_lat, ac_lon, ac_alt_ft,
+                    pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                    eps=eps_default)
             if len(pts) >= 3:
-                p.drawPolygon(_QPolygonF(pts))
+                with self._perf.time("water.drawPolygon"):
+                    p.drawPolygon(_QPolygonF(pts))
 
     def _draw_obstacles(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
                         pitch_deg, roll_deg, heading_deg, ppd, range_nm):
