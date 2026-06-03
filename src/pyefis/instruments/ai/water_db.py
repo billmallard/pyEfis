@@ -55,9 +55,23 @@ class WaterPolygon:
 
 
 class WaterDB:
-    def __init__(self, sqlite_path: str | Path | None):
+    # Per-polygon vertex cap applied on load. OSM coastline polygons
+    # routinely carry thousands of vertices at ~30 m spacing — far
+    # finer than any 5" / 7" cockpit display can resolve at 30 NM
+    # range. The CPU projection loop is per-vertex Python work, so
+    # uncapped polygons make pyEfis unusable when the camera is near
+    # a complex coastline. 64 vertices around any polygon is enough
+    # to read the shape at typical SVS distances; tunable per-config
+    # for users who want denser coastlines on larger displays.
+    DEFAULT_MAX_VERTICES = 64
+
+    def __init__(self, sqlite_path: str | Path | None,
+                 max_vertices: int | None = None):
         self._path = Path(sqlite_path) if sqlite_path else None
         self._con: sqlite3.Connection | None = None
+        self._max_vertices = (max_vertices
+                              if max_vertices is not None
+                              else self.DEFAULT_MAX_VERTICES)
         if self._path is None or not self._path.is_file():
             log.info("WaterDB: %s not found — water rendering disabled",
                      self._path)
@@ -103,19 +117,39 @@ class WaterDB:
             "WHERE max_lat > ? AND min_lat < ? "
             "  AND max_lon > ? AND min_lon < ?",
             (lat_lo, lat_hi, lon_lo, lon_hi))
+        cap = self._max_vertices
         for r in cur:
             yield WaterPolygon(
                 id=r["id"],
                 kind=(r["kind"] or "").strip().lower(),
                 elev_ft=r["elev_ft"],
-                vertices=_decode_vertices(r["vertices"]))
+                vertices=_decode_vertices(r["vertices"], cap))
 
 
-def _decode_vertices(blob: bytes) -> list:
-    """Unpack a struct-packed <dd... bytes blob into [(lat, lon), ...]."""
+def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
+    """Unpack a struct-packed <dd... bytes blob into [(lat, lon), ...].
+
+    When ``max_vertices`` is set and the polygon has more vertices than
+    that, stride-decimate uniformly down to the cap (always preserving
+    the first and last points so the polygon's bounding extent is
+    intact). This is the simplest possible cartographic simplification
+    — Douglas-Peucker would preserve curvature better but isn't worth
+    the per-load CPU when the screen can't resolve the difference at
+    typical SVS distances."""
     if not blob:
         return []
     n = len(blob) // 16   # 2 doubles per vertex, 8 bytes each
+    if max_vertices and n > max_vertices:
+        # Walk a fractional stride through the polygon; round each
+        # sample point to an integer index. Always emit indices 0 and
+        # n-1 so the polygon's start/end (which carry its bounding
+        # extent) survive simplification.
+        out = []
+        stride = (n - 1) / (max_vertices - 1)
+        for k in range(max_vertices):
+            i = int(round(k * stride))
+            out.append(struct.unpack_from("<dd", blob, i * 16))
+        return out
     return [struct.unpack_from("<dd", blob, i * 16) for i in range(n)]
 
 

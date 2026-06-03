@@ -253,7 +253,14 @@ class SVSRenderer:
         # like SAFE-green terrain" problem the SRTM-only path leaves
         # at coastlines and over lakes.
         from pyefis.instruments.ai.water_db import WaterDB
-        self.water_db = WaterDB(config.get("water_db_path", "") or None)
+        # water_max_vertices caps the per-polygon vertex count at load
+        # time. OSM coastline polygons can carry thousands of vertices
+        # at 30 m spacing — finer detail than the cockpit display can
+        # resolve at typical SVS ranges, and a real CPU bottleneck on
+        # the Python projection loop. None = use WaterDB's default.
+        self.water_db = WaterDB(
+            config.get("water_db_path", "") or None,
+            max_vertices=config.get("water_max_vertices"))
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         self.terrain_fill  = config.get("terrain_fill", True)
