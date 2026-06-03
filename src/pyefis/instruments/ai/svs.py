@@ -416,6 +416,17 @@ class SVSRenderer:
         Called from AI.paintEvent() when SVS is enabled and data is ready.
         The painter p has NO active transform — SVS builds its own.
         """
+        # Wall-clock gap between consecutive SVS.draw calls. If the
+        # SVS internals add up to (say) 65 ms but the gap is 500 ms,
+        # the missing ~435 ms is happening OUTSIDE SVS — Qt repaint
+        # loop, other instruments on the screen, FPM/pitch ladder
+        # paint passes, etc. Crucial signal when chasing perf.
+        if self._perf.enabled:
+            now = time.perf_counter_ns()
+            last = getattr(self, "_perf_last_draw_ns", 0)
+            if last:
+                self._perf.add_ns("frame.gap_between_svs", now - last)
+            self._perf_last_draw_ns = now
         if not self.ready:
             return
 

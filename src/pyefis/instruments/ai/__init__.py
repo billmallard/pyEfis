@@ -513,6 +513,26 @@ class AI(QGraphicsView):
 
 # We use the paintEvent to draw on the viewport the parts that aren't moving.
     def paintEvent(self, event):
+        # Wall-clock-bound paintEvent timing for perf debugging. When
+        # svs_perf_log is enabled on the SVS renderer we report the
+        # full paintEvent duration AND the gap between consecutive
+        # paintEvents alongside the SVS-internal timings, so we can
+        # see how much of the per-frame budget is consumed inside vs
+        # outside SVS. Cheap to leave compiled in — perf object is
+        # held by the SVS renderer and only does work when its
+        # ``enabled`` flag is set.
+        import time as _time
+        perf = getattr(getattr(self, "svs", None), "_perf", None)
+        if perf is not None and perf.enabled:
+            _pe_t0 = _time.perf_counter_ns()
+            _pe_last = getattr(self, "_perf_last_paint_ns", 0)
+            if _pe_last:
+                perf.add_ns("frame.gap_between_paintEvent",
+                            _pe_t0 - _pe_last)
+            self._perf_last_paint_ns = _pe_t0
+        else:
+            _pe_t0 = 0
+
         super(AI, self).paintEvent(event)
         w = self.width()
         h = self.height()
@@ -583,6 +603,10 @@ class AI(QGraphicsView):
             p.drawPolygon(diamond)
 
         self._drawFPM(p, w, h)
+
+        if _pe_t0:
+            perf.add_ns("frame.ai_paintEvent_total",
+                        _time.perf_counter_ns() - _pe_t0)
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
