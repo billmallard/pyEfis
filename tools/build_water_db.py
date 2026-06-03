@@ -56,6 +56,18 @@ CREATE TABLE IF NOT EXISTS water_polygons (
 CREATE INDEX IF NOT EXISTS idx_bbox
     ON water_polygons(min_lat, max_lat, min_lon, max_lon);
 CREATE INDEX IF NOT EXISTS idx_kind ON water_polygons(kind);
+
+-- R-Tree spatial index for the bbox query that WaterDB.polygons_in_range
+-- does every frame. With the plain B-tree index above, sqlite can only
+-- use one inequality predicate efficiently and the query took ~53 ms
+-- against the 878k-polygon OSM dataset at KSBA. The R-Tree drops it to
+-- sub-millisecond. WaterDB falls back to the B-tree query when this
+-- virtual table is missing (older DBs).
+CREATE VIRTUAL TABLE IF NOT EXISTS water_rtree USING rtree(
+    id,
+    min_lat, max_lat,
+    min_lon, max_lon
+);
 """
 
 
@@ -85,12 +97,18 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None):
     vertices = _decimate(vertices, max_vertices)
     lats = [v[0] for v in vertices]
     lons = [v[1] for v in vertices]
-    con.execute(
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+    cur = con.execute(
         "INSERT INTO water_polygons "
         "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, vertices) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (min(lats), max(lats), min(lons), max(lons),
+        (min_lat, max_lat, min_lon, max_lon,
          kind, elev_ft, encode_vertices(vertices)))
+    con.execute(
+        "INSERT INTO water_rtree (id, min_lat, max_lat, min_lon, max_lon) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (cur.lastrowid, min_lat, max_lat, min_lon, max_lon))
     return True
 
 
