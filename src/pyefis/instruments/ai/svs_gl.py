@@ -83,20 +83,18 @@ const float DEG_PER_RAD   = 180.0 / PI;
 const float M_PER_FT      = 0.3048;
 const float FT_PER_M      = 3.28084;
 const float M_PER_DEG_LAT = 111139.0;
-// Round 1 tune (2026-06-02): SLOPE_EXAG was 4.0, AMBIENT was 0.10.
-// Together they gave a high-drama / high-contrast look that
-// over-amplified SRTM noise on flat terrain (the "splotchy / too
-// active dark features" feedback) and pushed shadow side of slopes
-// down to 10% intensity — much darker than real-atmosphere terrain.
-// 2.0 / 0.25 reads closer to a Garmin G3X / G1000 SVS while still
-// giving mountains useful definition. Kept in sync with the polar
-// CPU tier in svs.py so both renderer paths look the same.
-const float SLOPE_EXAG    = 2.0;
-const float AMBIENT       = 0.25;
-// Scaled down from 0.90 alongside the AMBIENT bump so AMBIENT +
-// DIFFUSE * 1.0 still tops out at 1.0 (otherwise fully-lit slopes
-// clamp at the bright end and we lose shading at the highlight).
-const float DIFFUSE       = 0.75;
+// Round 2 tune (2026-06-02): Round 1 went 4.0/0.10 -> 2.0/0.25 and
+// user confirmed mountains kept enough drama. This pass takes
+// SLOPE_EXAG to 1.0 (no exaggeration, true geometric slopes) and
+// AMBIENT to 0.35. Result: SRTM noise on flat terrain stays at its
+// real 1-2 deg amplitude, shadow side of slopes sits at 35% — only
+// reasonable mountain ridges or hills with real relief show
+// noticeable shading. Closest to a "soft true-Lambertian" look.
+// Kept in sync with the polar CPU tier in svs.py.
+const float SLOPE_EXAG    = 1.0;
+const float AMBIENT       = 0.35;
+// Scaled to AMBIENT so AMBIENT + DIFFUSE * 1.0 = 1.0.
+const float DIFFUSE       = 0.65;
 const float WATER_THR_M   = -1000.0;   // SRTM water sentinel was -9999
 const float PATCH_TEXELS  = 2402.0;    // 2 tiles × 1201 samples each
 

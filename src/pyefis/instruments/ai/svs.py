@@ -634,10 +634,10 @@ class SVSRenderer:
         # Amplify slopes so lighting is dramatic at SVS grid scales —
         # without it, horizontal cell size (~hundreds of metres) dwarfs
         # typical relief (~tens of metres) and normals collapse to "up".
-        # Round 1 tune (2026-06-02): was 4.0. See svs_gl.py for the
-        # rationale; kept in sync so polar and GL renderers look the
-        # same.
-        SLOPE_EXAG = 2.0
+        # Round 2 tune (2026-06-02): 4.0 -> 2.0 -> 1.0. See svs_gl.py
+        # for the rationale; kept in sync so polar and GL renderers
+        # look the same.
+        SLOPE_EXAG = 1.0
         dz_di = np.gradient(elev_m.astype(float), axis=0)  # per row-step
         dz_dj = np.gradient(elev_m.astype(float), axis=1)  # per col-step
         if self._is_polar:
@@ -680,13 +680,11 @@ class SVSRenderer:
         _lx, _ly, _lz = -1.0, 1.0, 2.0
         _lm = math.sqrt(_lx*_lx + _ly*_ly + _lz*_lz)
         _lx, _ly, _lz = _lx/_lm, _ly/_lm, _lz/_lm
-        # Round 1 tune (2026-06-02): was 0.10 / 0.90. The bump to 0.25
-        # softens the shadow side of slopes (avoids the harsh "fully
-        # black" look on north-facing terrain); DIFFUSE drops to 0.75
-        # so peak intensity at full sun stays at 1.0 instead of
-        # clamping at the highlight. Kept in sync with svs_gl.py.
-        AMBIENT = 0.25
-        DIFFUSE = 0.75
+        # Round 2 tune (2026-06-02): 0.10/0.90 -> 0.25/0.75 -> 0.35/0.65.
+        # AMBIENT/DIFFUSE always sum to 1.0 so peak intensity at full
+        # sun stays at 1.0. Kept in sync with svs_gl.py.
+        AMBIENT = 0.35
+        DIFFUSE = 0.65
         diffuse   = np.clip(nx * _lx + ny * _ly + nz * _lz, 0.0, 1.0)
         intensity = AMBIENT + DIFFUSE * diffuse   # (n,n) ∈ [AMBIENT, 1.0]
 
