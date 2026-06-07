@@ -523,6 +523,12 @@ class SVSRenderer:
         self._obstacles_cache = None
         self._obstacles_cache_time = 0.0
         self._obstacles_cache_key = None
+        # Runway-polygon triangle cache (Phase 3). Same TTL/key
+        # strategy as water — polygon vertex data is aircraft-
+        # position-agnostic at the world-space level.
+        self._runway_polys_cache = None
+        self._runway_polys_cache_time = 0.0
+        self._runway_polys_cache_key = None
 
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
@@ -1145,6 +1151,100 @@ class SVSRenderer:
                 t2_elev + f * (t1_elev - t2_elev)))
         return corners
 
+    # Cache TTL/key strategy for the runway-polygon triangle buffer.
+    _RUNWAY_POLYS_CACHE_TTL_S = 1.0
+    _RUNWAY_POLYS_CACHE_POS_STEP_DEG = 0.01
+
+    def _collect_runway_polygons(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+        """Assemble every visible runway's polygon as a flat triangle
+        list ready for GL upload. Returns a single Nx3 float32 array
+        of (lat, lon, elev_ft) vertices — three per triangle, fan-
+        triangulated from the polygon's first corner. Returns None
+        when no runways are visible.
+
+        Each runway picks its long-edge subdivision count the same
+        way the CPU path did (1 / 5 NM thresholds). The cache key
+        is the coarsened aircraft position + range_nm; the airports
+        cache already throttles the per-frame DB hit so this cache
+        layer just amortises the corner / triangulate work."""
+        if (getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready):
+            return None
+
+        now = time.perf_counter()
+        step = self._RUNWAY_POLYS_CACHE_POS_STEP_DEG
+        key = (round(ac_lat / step) * step,
+               round(ac_lon / step) * step,
+               round(range_nm, 1))
+        if (self._runway_polys_cache is not None
+                and self._runway_polys_cache_key == key
+                and now - self._runway_polys_cache_time
+                    < self._RUNWAY_POLYS_CACHE_TTL_S):
+            return self._runway_polys_cache
+
+        lat_cos = math.cos(math.radians(ac_lat))
+        range_m = self.range_nm * 1852.0
+        airports = self._get_airports_cached(ac_lat, ac_lon)
+        all_tris = []
+        for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
+            d_lat_ref = ref_lat - ac_lat
+            d_lon_ref = (ref_lon - ac_lon) * lat_cos
+            if (math.sqrt(d_lat_ref ** 2 + d_lon_ref ** 2)
+                    * 111139.0 > range_m):
+                continue
+            for rwy in runways:
+                t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
+                t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
+                t1_elev = rwy["thr1_elev_ft"]
+                t2_elev = rwy["thr2_elev_ft"]
+                dl = t2_lat - t1_lat
+                dm = (t2_lon - t1_lon) * lat_cos
+                rwy_len = math.sqrt(dl ** 2 + dm ** 2)
+                if rwy_len < 1e-9:
+                    continue
+                perp_lat = -dm / rwy_len
+                perp_lon =  dl / rwy_len / lat_cos
+                hw = (rwy["width_ft"] / 2.0) / 364491.0
+
+                d_lat_r = (0.5 * (t1_lat + t2_lat) - ac_lat)
+                d_lon_r = (0.5 * (t1_lon + t2_lon) - ac_lon) * lat_cos
+                rwy_dist_nm = math.sqrt(
+                    d_lat_r * d_lat_r + d_lon_r * d_lon_r) * 60.0
+                if rwy_dist_nm <= 1.0:
+                    n_subdiv = self._RUNWAY_LONG_EDGE_SEGMENTS
+                elif rwy_dist_nm <= 5.0:
+                    n_subdiv = 8
+                else:
+                    n_subdiv = 4
+
+                corners = self._runway_polygon_corners(
+                    t1_lat, t1_lon, t1_elev,
+                    t2_lat, t2_lon, t2_elev,
+                    perp_lat, perp_lon, hw,
+                    n_subdiv=n_subdiv)
+                n_v = len(corners)
+                if n_v < 3:
+                    continue
+                # Fan-triangulate from corners[0]. Runway polygons
+                # are slender rectangles with extra long-edge
+                # vertices — convex, so fan triangulation is
+                # correct and is the cheapest tessellation we can do.
+                verts_np = np.asarray(corners, dtype=np.float32)
+                idx = np.empty((n_v - 2) * 3, dtype=np.int32)
+                idx[0::3] = 0
+                idx[1::3] = np.arange(1, n_v - 1, dtype=np.int32)
+                idx[2::3] = np.arange(2, n_v,     dtype=np.int32)
+                all_tris.append(verts_np[idx])
+
+        if not all_tris:
+            result = None
+        else:
+            result = np.concatenate(all_tris, axis=0)
+        self._runway_polys_cache = result
+        self._runway_polys_cache_key = key
+        self._runway_polys_cache_time = now
+        return result
+
     def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
                                  pitch_deg, roll_deg, heading_deg, ppd, w, h,
                                  eps=None):
@@ -1518,84 +1618,27 @@ class SVSRenderer:
                 continue
 
             # --- Runway rectangles ---
+            # Polygon itself is drawn in the GL overlay pass (Phase 3
+            # of the overlays-to-GPU migration). The CPU path here
+            # only handles the per-runway distance test (still
+            # required for the marking-budget gate) and the marking
+            # render itself.
             for rwy in runways:
                 t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
                 t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
-                t1_elev = rwy["thr1_elev_ft"]
-                t2_elev = rwy["thr2_elev_ft"]
-
-                # Perpendicular offset for runway width
-                dl = t2_lat - t1_lat
-                dm = (t2_lon - t1_lon) * lat_cos
-                rwy_len = math.sqrt(dl ** 2 + dm ** 2)
-                if rwy_len < 1e-9:
-                    continue
-                # Unit perpendicular in lat / scaled-lon space, then unscale lon
-                perp_lat =  -dm / rwy_len
-                perp_lon =  dl  / rwy_len / lat_cos
-                hw = (rwy["width_ft"] / 2.0) / 364491.0   # half-width in degrees lat
-
-                # Distance-adaptive subdivision. The chord-vs-curve
-                # discrepancy that motivated the 16-segment subdivision
-                # is only visible when the runway subtends meaningful
-                # angular extent on screen. Far-field runways are a
-                # few pixels long and the chord IS the curve at that
-                # scale. At DFW (~15 airports in 30 NM range) keeping
-                # everything at 16 segments cost ~38 ms / frame; this
-                # rule keeps near runways at full quality while
-                # culling the work for distant ones.
                 d_lat_r = (0.5 * (t1_lat + t2_lat) - ac_lat)
                 d_lon_r = (0.5 * (t1_lon + t2_lon) - ac_lon) * lat_cos
                 rwy_dist_nm = math.sqrt(
                     d_lat_r * d_lat_r + d_lon_r * d_lon_r) * 60.0
-                if rwy_dist_nm <= 1.0:
-                    n_subdiv = self._RUNWAY_LONG_EDGE_SEGMENTS
-                elif rwy_dist_nm <= 5.0:
-                    n_subdiv = 8
-                else:
-                    n_subdiv = 4
 
-                corners = self._runway_polygon_corners(
-                    t1_lat, t1_lon, t1_elev,
-                    t2_lat, t2_lon, t2_elev,
-                    perp_lat, perp_lon, hw,
-                    n_subdiv=n_subdiv)
-
-                # Near-plane distance: width-adaptive. The Sutherland-
-                # Hodgman intersection along a long runway edge has
-                # x_right ~ hw (the perpendicular half-width), so the
-                # clipped vertex projects to x_ang = atan2(hw, eps).
-                # Keeping that angle at the polar fan's edge (~70 deg)
-                # makes the polygon visually extend right up to the
-                # aircraft instead of leaving a fixed-distance "no
-                # asphalt" gap directly under the nose — which was
-                # what caused the runway to look like it was
-                # truncating away as the aircraft flew over it.
-                near_plane_deg = hw / math.tan(math.radians(70.0))
-                with self._perf.time("runway.polygon"):
-                    pts = self._project_polygon_clipped(
-                        corners, ac_lat, ac_lon, ac_alt_ft,
-                        pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                        eps=near_plane_deg)
-
-                if len(pts) >= 3:
-                    p.setPen(rwy_pen)
-                    p.setBrush(QBrush(RWY_FILL))
-                    p.drawPolygon(QPolygonF(pts))
-
-                    # Tier C surface markings — only painted when close
-                    # enough to be legible AND while the controller's
-                    # marking budget allows it. Under load the budget
-                    # caps to the N nearest runways across all airports;
-                    # at L0 it's effectively unlimited.
-                    if (rwy_dist_nm <= q_detail_distance_nm
-                            and marking_budget > 0):
-                        marking_budget -= 1
-                        with self._perf.time("runway.markings"):
-                            self._draw_runway_markings(
-                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                                pitch_deg, roll_deg, heading_deg, ppd, rwy,
-                                rwy_dist_nm=rwy_dist_nm)
+                if (rwy_dist_nm <= q_detail_distance_nm
+                        and marking_budget > 0):
+                    marking_budget -= 1
+                    with self._perf.time("runway.markings"):
+                        self._draw_runway_markings(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg, ppd, rwy,
+                            rwy_dist_nm=rwy_dist_nm)
 
             # --- Airport flag marker — pole rising from ground to POLE_HT ---
             with self._perf.time("airports.flag"):

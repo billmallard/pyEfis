@@ -756,6 +756,25 @@ class SVSGLRenderer:
                                     verts, color, gl.GL_LINES)
                             gl.glLineWidth(1.0)
 
+            # Phase 3 — runway polygons (the asphalt-coloured quad).
+            # One big triangle list across every visible runway, one
+            # draw call. Side stripes / threshold bars / designator
+            # text still CPU until Phase 4 lands.
+            if (getattr(p, "airport_db", None) is not None
+                    and p.airport_db.ready
+                    and range_nm is not None):
+                with p._perf.time("runway.polygon"):
+                    with p._perf.time("runway.polygon.collect"):
+                        rwy_tris = p._collect_runway_polygons(
+                            ac_lat, ac_lon, ac_alt_ft, range_nm)
+                    if rwy_tris is not None and rwy_tris.size > 0:
+                        # RWY_FILL = (55, 55, 55) asphalt grey.
+                        with p._perf.time("runway.polygon.gl_draw"):
+                            self._draw_overlay_primitive(
+                                rwy_tris,
+                                (55/255.0, 55/255.0, 55/255.0, 1.0),
+                                gl.GL_TRIANGLES)
+
             # Smoke-test triangle path (kept for diagnostics).
             if getattr(p, "_gl_overlay_smoketest", False):
                 d_deg = 0.1
