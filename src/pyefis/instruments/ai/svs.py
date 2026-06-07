@@ -1162,7 +1162,8 @@ class SVSRenderer:
     _RUNWAY_POLYS_CACHE_TTL_S = 1.0
     _RUNWAY_POLYS_CACHE_POS_STEP_DEG = 0.01
 
-    def _collect_runway_polygons(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _collect_runway_polygons(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                                 heading_deg=None):
         """Assemble every visible runway's polygon as a flat triangle
         list ready for GL upload. Returns a single Nx3 float32 array
         of (lat, lon, elev_ft) vertices — three per triangle, fan-
@@ -1250,6 +1251,13 @@ class SVSRenderer:
         self._runway_polys_cache = result
         self._runway_polys_cache_key = key
         self._runway_polys_cache_time = now
+        # Same behind-camera triangle cull as runway markings. Phase 3
+        # without the filter still showed wedge artifacts when the
+        # camera was over a runway whose far threshold was visible
+        # but the near threshold was behind.
+        if heading_deg is not None and result is not None:
+            return self._filter_behind_camera_triangles(
+                result, ac_lat, ac_lon, lat_cos, heading_deg)
         return result
 
     # ------------------------------------------------------------------
@@ -1396,6 +1404,13 @@ class SVSRenderer:
                     pos += sign * 200.0
 
         # Side stripes (PIR only) — full usable length, subdivided.
+        # Strip-triangulated (not fan-triangulated) so every emitted
+        # triangle is bounded by one stripe-segment in size. A fan
+        # from one corner of a 10000 ft × 3 ft rectangle produces
+        # very long triangles, and when the camera is close to the
+        # runway some of those triangles straddle the near plane —
+        # which under our atan2-based projection paints big wedge
+        # artifacts across the lower viewport.
         usable_a0 = d1
         usable_a1 = length_ft - d2
         if "PIR" in (m1, m2) and usable_a1 - usable_a0 > 200.0:
@@ -1410,24 +1425,21 @@ class SVSRenderer:
                 c_in  = side * (width_ft * 0.5 - STRIPE_W)
                 c_out = side * (width_ft * 0.5)
                 c_lo, c_hi = min(c_in, c_out), max(c_in, c_out)
-                # Subdivide each side stripe as a fan-triangulated
-                # ring (same trick the runway polygon uses).
-                corners = []
-                corners.append(rwy_point(usable_a0, c_lo))
-                corners.append(rwy_point(usable_a0, c_hi))
-                for k in range(1, n_sub):
-                    f = k / n_sub
-                    corners.append(rwy_point(
-                        usable_a0 + f * (usable_a1 - usable_a0), c_hi))
-                corners.append(rwy_point(usable_a1, c_hi))
-                corners.append(rwy_point(usable_a1, c_lo))
-                for k in range(1, n_sub):
-                    f = k / n_sub
-                    corners.append(rwy_point(
-                        usable_a1 + f * (usable_a0 - usable_a1), c_lo))
-                # Fan-triangulate from corners[0].
-                for k in range(1, len(corners) - 1):
-                    out.extend((corners[0], corners[k], corners[k + 1]))
+                # Build the two long edges as separate vertex lists,
+                # then strip-triangulate between them.
+                along = [usable_a0 + (k / n_sub) * (usable_a1 - usable_a0)
+                         for k in range(n_sub + 1)]
+                lo_verts = [rwy_point(a, c_lo) for a in along]
+                hi_verts = [rwy_point(a, c_hi) for a in along]
+                for k in range(n_sub):
+                    p_lo_k  = lo_verts[k]
+                    p_hi_k  = hi_verts[k]
+                    p_lo_k1 = lo_verts[k + 1]
+                    p_hi_k1 = hi_verts[k + 1]
+                    out.extend((
+                        p_lo_k, p_hi_k,  p_hi_k1,
+                        p_lo_k, p_hi_k1, p_lo_k1,
+                    ))
 
         # Centerline stripes (always, LOD-gated)
         if _interior_detail:

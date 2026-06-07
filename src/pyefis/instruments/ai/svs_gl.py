@@ -765,7 +765,8 @@ class SVSGLRenderer:
                 with p._perf.time("runway.polygon"):
                     with p._perf.time("runway.polygon.collect"):
                         rwy_tris = p._collect_runway_polygons(
-                            ac_lat, ac_lon, ac_alt_ft, range_nm)
+                            ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            heading_deg)
                     if rwy_tris is not None and rwy_tris.size > 0:
                         # RWY_FILL = (55, 55, 55) asphalt grey.
                         with p._perf.time("runway.polygon.gl_draw"):
