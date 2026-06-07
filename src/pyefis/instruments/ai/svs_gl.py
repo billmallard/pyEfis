@@ -758,8 +758,7 @@ class SVSGLRenderer:
 
             # Phase 3 — runway polygons (the asphalt-coloured quad).
             # One big triangle list across every visible runway, one
-            # draw call. Side stripes / threshold bars / designator
-            # text still CPU until Phase 4 lands.
+            # draw call. Designator text still CPU until Phase 4b.
             if (getattr(p, "airport_db", None) is not None
                     and p.airport_db.ready
                     and range_nm is not None):
@@ -773,6 +772,22 @@ class SVSGLRenderer:
                             self._draw_overlay_primitive(
                                 rwy_tris,
                                 (55/255.0, 55/255.0, 55/255.0, 1.0),
+                                gl.GL_TRIANGLES)
+
+                # Phase 4a — non-text runway markings (threshold bars,
+                # aiming point, TDZ, centerline stripes, side stripes,
+                # chevrons). One big white triangle list per frame.
+                with p._perf.time("runway.markings"):
+                    with p._perf.time("runway.markings.collect"):
+                        mk_tris = p._collect_runway_markings(
+                            ac_lat, ac_lon, ac_alt_ft, range_nm)
+                    if mk_tris is not None and mk_tris.size > 0:
+                        # WHITE marking colour (245, 245, 245).
+                        with p._perf.time("runway.markings.gl_draw"):
+                            self._draw_overlay_primitive(
+                                mk_tris,
+                                (245/255.0, 245/255.0,
+                                 245/255.0, 1.0),
                                 gl.GL_TRIANGLES)
 
             # Smoke-test triangle path (kept for diagnostics).

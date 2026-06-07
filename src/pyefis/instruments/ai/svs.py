@@ -529,6 +529,13 @@ class SVSRenderer:
         self._runway_polys_cache = None
         self._runway_polys_cache_time = 0.0
         self._runway_polys_cache_key = None
+        # Runway-marking triangle cache (Phase 4a). All the non-text
+        # markings (threshold bars, aiming point, TDZ, centerline,
+        # side stripes, chevrons) batched into one white triangle
+        # list per frame. Designator text stays CPU until Phase 4b.
+        self._runway_markings_cache = None
+        self._runway_markings_cache_time = 0.0
+        self._runway_markings_cache_key = None
 
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
@@ -1245,6 +1252,268 @@ class SVSRenderer:
         self._runway_polys_cache_time = now
         return result
 
+    # ------------------------------------------------------------------
+    # Phase 4a: non-text runway markings (threshold bars, aiming point,
+    # TDZ markers, centerline stripes, side stripes, displaced-
+    # threshold chevrons). All emit white triangles in world space.
+    # Designator text continues to render via QPainter until Phase 4b
+    # adds the bitmap-font atlas.
+    # ------------------------------------------------------------------
+    _RUNWAY_MARKINGS_CACHE_TTL_S = 1.0
+    _RUNWAY_MARKINGS_CACHE_POS_STEP_DEG = 0.01
+
+    def _emit_runway_marking_quads(self, rwy, rwy_dist_nm, out):
+        """Append world-space triangle vertices for every non-text
+        marking on ``rwy`` into ``out`` (a list that grows with
+        ``(lat, lon, elev_ft)`` tuples — 6 per quad). Mirrors the
+        layout decisions of ``_draw_runway_markings`` exactly so the
+        GPU output matches the CPU rendering. Designator text is NOT
+        emitted; that stays on the CPU path until Phase 4b."""
+        t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
+        t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
+        t1_elev = rwy["thr1_elev_ft"]
+        t2_elev = rwy["thr2_elev_ft"]
+        length_ft = float(rwy.get("length_ft") or 0.0)
+        width_ft  = float(rwy.get("width_ft")  or 100.0)
+        d1 = float(rwy.get("thr1_displaced_ft") or 0.0)
+        d2 = float(rwy.get("thr2_displaced_ft") or 0.0)
+        m1 = (rwy.get("thr1_marking") or "").upper()
+        m2 = (rwy.get("thr2_marking") or "").upper()
+
+        lat_cos = math.cos(math.radians(t1_lat))
+        d_lat = (t2_lat - t1_lat)
+        d_lon = (t2_lon - t1_lon) * lat_cos
+        rwy_deg_len = math.sqrt(d_lat * d_lat + d_lon * d_lon)
+        if rwy_deg_len < 1e-9:
+            return
+        if length_ft <= 0:
+            length_ft = rwy_deg_len * 364491.0
+
+        perp_lat = -d_lon / rwy_deg_len
+        perp_lon =  d_lat / rwy_deg_len / lat_cos
+        ft_per_deg_lat = 364491.0
+
+        def rwy_point(along_ft, across_ft, height_ft=0.0):
+            f = max(0.0, min(1.0, along_ft / length_ft))
+            clat = t1_lat + f * (t2_lat - t1_lat)
+            clon = t1_lon + f * (t2_lon - t1_lon)
+            celev = t1_elev + f * (t2_elev - t1_elev)
+            across_deg = across_ft / ft_per_deg_lat
+            return (clat + perp_lat * across_deg,
+                    clon + perp_lon * across_deg,
+                    celev + height_ft)
+
+        def quad(a0, c0, a1, c1, a2, c2, a3, c3, height_ft=0.0):
+            p0 = rwy_point(a0, c0, height_ft)
+            p1 = rwy_point(a1, c1, height_ft)
+            p2 = rwy_point(a2, c2, height_ft)
+            p3 = rwy_point(a3, c3, height_ft)
+            out.extend((p0, p1, p2, p0, p2, p3))
+
+        def tri(a0, c0, a1, c1, a2, c2, height_ft=0.0):
+            p0 = rwy_point(a0, c0, height_ft)
+            p1 = rwy_point(a1, c1, height_ft)
+            p2 = rwy_point(a2, c2, height_ft)
+            out.extend((p0, p1, p2))
+
+        _interior_detail = rwy_dist_nm is None or rwy_dist_nm <= 1.5
+
+        for thr_along, sign, marking, displaced in (
+                (d1,                  +1, m1, d1),
+                (length_ft - d2,      -1, m2, d2)):
+            usable_remaining = (length_ft - d1 - d2)
+            if usable_remaining < 100.0:
+                continue
+
+            # Threshold bars (PIR / NPI)
+            if marking in ("PIR", "NPI"):
+                n_stripes = max(4, min(16, int(round(width_ft / 12.5))))
+                stripe_w_ft = 5.75
+                bar_len_ft  = 150.0
+                span = 0.45 * width_ft * 2.0
+                step = span / max(n_stripes, 1)
+                first = -span / 2.0 + step / 2.0
+                bar_a0 = thr_along
+                bar_a1 = thr_along + sign * bar_len_ft
+                for k in range(n_stripes):
+                    c = first + k * step
+                    quad(bar_a0, c - stripe_w_ft / 2,
+                         bar_a0, c + stripe_w_ft / 2,
+                         bar_a1, c + stripe_w_ft / 2,
+                         bar_a1, c - stripe_w_ft / 2)
+
+            # Aiming point (PIR / NPI)
+            if (_interior_detail and marking in ("PIR", "NPI")
+                    and usable_remaining > 2400.0):
+                aim_a0 = thr_along + sign * 1000.0
+                aim_a1 = aim_a0 + sign * 150.0
+                for c_center in (-36.0, +36.0):
+                    quad(aim_a0, c_center - 15.0,
+                         aim_a0, c_center + 15.0,
+                         aim_a1, c_center + 15.0,
+                         aim_a1, c_center - 15.0)
+
+            # TDZ markers (PIR only)
+            if (_interior_detail and marking == "PIR"
+                    and usable_remaining > 3000.0):
+                STRIPE_LEN = 75.0
+                STRIPE_W   = 6.0
+                STRIPE_GAP = 5.0
+                centerline_offset = 36.0
+                for dist_ft, n_stripes in ((500.0, 3), (1500.0, 2),
+                                           (2500.0, 1)):
+                    if dist_ft + STRIPE_LEN > usable_remaining:
+                        continue
+                    a0 = thr_along + sign * dist_ft
+                    a1 = a0 + sign * STRIPE_LEN
+                    for side in (-1.0, +1.0):
+                        for k in range(n_stripes):
+                            c_inner = side * (
+                                centerline_offset
+                                + k * (STRIPE_W + STRIPE_GAP))
+                            c_outer = c_inner + side * STRIPE_W
+                            c_lo, c_hi = (min(c_inner, c_outer),
+                                          max(c_inner, c_outer))
+                            quad(a0, c_lo, a0, c_hi,
+                                 a1, c_hi, a1, c_lo)
+
+            # Displaced-threshold chevrons (triangles, not quads).
+            if displaced > 50.0:
+                if sign > 0:
+                    chev_start, chev_end = 0.0, displaced
+                else:
+                    chev_start, chev_end = length_ft - displaced, length_ft
+                CHEV_LEN = 90.0
+                CHEV_HW  = 20.0
+                pos = (chev_start + 50.0 if sign > 0
+                       else chev_end - 50.0)
+                while ((sign > 0 and pos + CHEV_LEN < chev_end - 30.0)
+                       or (sign < 0 and pos - CHEV_LEN >
+                           chev_start + 30.0)):
+                    tip_a  = pos + sign * CHEV_LEN
+                    base_a = pos
+                    tri(base_a, -CHEV_HW, tip_a, 0.0, base_a, +CHEV_HW)
+                    pos += sign * 200.0
+
+        # Side stripes (PIR only) — full usable length, subdivided.
+        usable_a0 = d1
+        usable_a1 = length_ft - d2
+        if "PIR" in (m1, m2) and usable_a1 - usable_a0 > 200.0:
+            STRIPE_W = 3.0
+            if rwy_dist_nm is None or rwy_dist_nm <= 0.5:
+                n_sub = self._RUNWAY_LONG_EDGE_SEGMENTS
+            elif rwy_dist_nm <= 1.5:
+                n_sub = 8
+            else:
+                n_sub = 4
+            for side in (-1.0, +1.0):
+                c_in  = side * (width_ft * 0.5 - STRIPE_W)
+                c_out = side * (width_ft * 0.5)
+                c_lo, c_hi = min(c_in, c_out), max(c_in, c_out)
+                # Subdivide each side stripe as a fan-triangulated
+                # ring (same trick the runway polygon uses).
+                corners = []
+                corners.append(rwy_point(usable_a0, c_lo))
+                corners.append(rwy_point(usable_a0, c_hi))
+                for k in range(1, n_sub):
+                    f = k / n_sub
+                    corners.append(rwy_point(
+                        usable_a0 + f * (usable_a1 - usable_a0), c_hi))
+                corners.append(rwy_point(usable_a1, c_hi))
+                corners.append(rwy_point(usable_a1, c_lo))
+                for k in range(1, n_sub):
+                    f = k / n_sub
+                    corners.append(rwy_point(
+                        usable_a1 + f * (usable_a0 - usable_a1), c_lo))
+                # Fan-triangulate from corners[0].
+                for k in range(1, len(corners) - 1):
+                    out.extend((corners[0], corners[k], corners[k + 1]))
+
+        # Centerline stripes (always, LOD-gated)
+        if _interior_detail:
+            STRIPE_LEN = 120.0
+            STRIPE_GAP = 80.0
+            CL_WIDTH   = 3.0
+            cl_a0 = usable_a0 + (200.0 if m1 in ("PIR", "NPI") else 50.0)
+            cl_a1 = usable_a1 - (200.0 if m2 in ("PIR", "NPI") else 50.0)
+            a = cl_a0
+            while a + STRIPE_LEN < cl_a1:
+                quad(a,              -CL_WIDTH / 2.0,
+                     a,              +CL_WIDTH / 2.0,
+                     a + STRIPE_LEN, +CL_WIDTH / 2.0,
+                     a + STRIPE_LEN, -CL_WIDTH / 2.0)
+                a += STRIPE_LEN + STRIPE_GAP
+
+    def _collect_runway_markings(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+        """Assemble every visible runway's non-text marking quads
+        into one big triangle list. Uses the same close-runway gate
+        and marking-budget logic as the CPU ``_draw_runways`` loop
+        (Phase 3 left that in place), and respects the quality-
+        controller's detail-distance + max-markings limits. Cached
+        for 1 s keyed by coarsened aircraft position.
+
+        Returns ``None`` when no marking quads are emitted (no
+        airports in range, every runway over detail_distance_nm,
+        controller budget exhausted)."""
+        if (getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready):
+            return None
+        now = time.perf_counter()
+        step = self._RUNWAY_MARKINGS_CACHE_POS_STEP_DEG
+        key = (round(ac_lat / step) * step,
+               round(ac_lon / step) * step,
+               round(range_nm, 1),
+               # Cache key includes the controller level so a level
+               # transition invalidates the cached marking set.
+               self._quality.level)
+        if (self._runway_markings_cache is not None
+                and self._runway_markings_cache_key == key
+                and now - self._runway_markings_cache_time
+                    < self._RUNWAY_MARKINGS_CACHE_TTL_S):
+            return self._runway_markings_cache
+
+        lat_cos = math.cos(math.radians(ac_lat))
+        range_m = self.range_nm * 1852.0
+        airports = self._get_airports_cached(ac_lat, ac_lon)
+        # Sort by distance so the marking budget goes to the nearest
+        # airports first (matches the CPU loop's behaviour).
+        def _ap_d2(ap):
+            d_lat = ap[1] - ac_lat
+            d_lon = (ap[2] - ac_lon) * lat_cos
+            return d_lat * d_lat + d_lon * d_lon
+        airports = sorted(airports, key=_ap_d2)
+        q_detail_distance_nm = self._quality.detail_distance_nm()
+        marking_budget = self._quality.max_close_markings()
+
+        out = []
+        for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
+            d_lat_ref = ref_lat - ac_lat
+            d_lon_ref = (ref_lon - ac_lon) * lat_cos
+            if (math.sqrt(d_lat_ref ** 2 + d_lon_ref ** 2)
+                    * 111139.0 > range_m):
+                continue
+            for rwy in runways:
+                t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
+                t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
+                d_lat_r = (0.5 * (t1_lat + t2_lat) - ac_lat)
+                d_lon_r = (0.5 * (t1_lon + t2_lon) - ac_lon) * lat_cos
+                rwy_dist_nm = math.sqrt(
+                    d_lat_r * d_lat_r + d_lon_r * d_lon_r) * 60.0
+                if (rwy_dist_nm > q_detail_distance_nm
+                        or marking_budget <= 0):
+                    continue
+                marking_budget -= 1
+                self._emit_runway_marking_quads(rwy, rwy_dist_nm, out)
+
+        if out:
+            result = np.asarray(out, dtype=np.float32)
+        else:
+            result = None
+        self._runway_markings_cache = result
+        self._runway_markings_cache_key = key
+        self._runway_markings_cache_time = now
+        return result
+
     def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
                                  pitch_deg, roll_deg, heading_deg, ppd, w, h,
                                  eps=None):
@@ -1770,29 +2039,12 @@ class SVSRenderer:
             if usable_remaining < 100.0:
                 continue
 
-            # ----- Threshold bars (PIR and NPI) --------------------------
-            if marking in ("PIR", "NPI"):
-                # 8 stripes total, each 5.75 ft wide × 150 ft long, evenly
-                # spaced across the runway width, leaving small gaps. We use
-                # a half-width of 70% width to avoid the very edge.
-                n_stripes = max(4, min(16, int(round(width_ft / 12.5))))
-                stripe_w_ft = 5.75
-                bar_len_ft  = 150.0
-                # Stripes span ±0.45*W around centerline.
-                span = 0.45 * width_ft * 2.0          # total span
-                step = span / max(n_stripes, 1)
-                first = -span / 2.0 + step / 2.0
-                # Bars sit INSIDE the runway, starting at usable threshold.
-                bar_a0 = thr_along
-                bar_a1 = thr_along + sign * bar_len_ft
-                for k in range(n_stripes):
-                    c = first + k * step
-                    poly = quad(bar_a0, c - stripe_w_ft / 2,
-                                bar_a0, c + stripe_w_ft / 2,
-                                bar_a1, c + stripe_w_ft / 2,
-                                bar_a1, c - stripe_w_ft / 2)
-                    if poly is not None:
-                        p.drawPolygon(poly)
+            # Threshold bars, aiming point, TDZ markers, chevrons,
+            # side stripes, centerline stripes — all moved to the GL
+            # overlay pass in Phase 4a of the overlays-to-GPU plan
+            # (see _emit_runway_marking_quads). Designator text below
+            # is the only piece left on the CPU; Phase 4b moves it
+            # via a bitmap-font atlas.
 
             # ----- Designator (always, if we have one) -------------------
             if designator:
@@ -1940,174 +2192,9 @@ class SVSRenderer:
                 else:
                     _render_row(number_part, center_along)
 
-            # Interior markings — aiming point, TDZ, centerline stripes —
-            # are pixel-level detail you can't read past ~1.5 NM. Skip
-            # them for far-range runways. Threshold bars + designator
-            # above are cheap and still communicate "runway here" at
-            # any distance within detail_distance_nm.
-            _interior_detail = rwy_dist_nm is None or rwy_dist_nm <= 1.5
-
-            # ----- Aiming point (PIR and NPI) ----------------------------
-            if (_interior_detail and marking in ("PIR", "NPI")
-                    and usable_remaining > 2400.0):
-                # Two bars 150 ft × 30 ft, 72 ft apart centerline-to-centerline,
-                # starting at 1000 ft from threshold.
-                aim_a0 = thr_along + sign * 1000.0
-                aim_a1 = aim_a0 + sign * 150.0
-                for c_center in (-36.0, +36.0):
-                    poly = quad(aim_a0, c_center - 15.0,
-                                aim_a0, c_center + 15.0,
-                                aim_a1, c_center + 15.0,
-                                aim_a1, c_center - 15.0)
-                    if poly is not None:
-                        p.drawPolygon(poly)
-
-            # ----- Touchdown zone markers (PIR only) ----------------------
-            # Standard 3/2/1 pattern (per side), at 500/1500/2500 ft from
-            # threshold. We skip the 1000 ft set because the aiming point
-            # sits there. Each TDZ stripe is 75 ft long × 6 ft wide.
-            if (_interior_detail and marking == "PIR"
-                    and usable_remaining > 3000.0):
-                STRIPE_LEN = 75.0
-                STRIPE_W   = 6.0
-                STRIPE_GAP = 5.0
-                # Centerline offsets for the stripes (right of centerline;
-                # mirrored to the left automatically).
-                centerline_offset = 36.0
-                for dist_ft, n_stripes in (
-                        (500.0, 3), (1500.0, 2), (2500.0, 1)):
-                    if dist_ft + STRIPE_LEN > usable_remaining:
-                        continue
-                    a0 = thr_along + sign * dist_ft
-                    a1 = a0 + sign * STRIPE_LEN
-                    for side in (-1.0, +1.0):
-                        for k in range(n_stripes):
-                            c_inner = side * (centerline_offset
-                                              + k * (STRIPE_W + STRIPE_GAP))
-                            c_outer = c_inner + side * STRIPE_W
-                            c_lo, c_hi = min(c_inner, c_outer), max(c_inner, c_outer)
-                            poly = quad(a0, c_lo, a0, c_hi,
-                                        a1, c_hi, a1, c_lo)
-                            if poly is not None:
-                                p.drawPolygon(poly)
-
-            # ----- Displaced-threshold chevrons --------------------------
-            if displaced > 50.0:
-                # White arrows in displaced area, pointing toward the usable
-                # threshold. We draw them as elongated triangles down the
-                # centerline, spaced every 200 ft.
-                p.setBrush(QBrush(WHITE))
-                # Displaced area runs from thr1/thr2 OUTWARD from runway
-                # interior. For end-1, displaced area is along=0..d1.
-                # For end-2, it's along=length_ft-d2..length_ft.
-                if sign > 0:                       # end-1
-                    chev_start, chev_end = 0.0, displaced
-                else:                              # end-2
-                    chev_start, chev_end = length_ft - displaced, length_ft
-                # Each chevron is 90 ft long, pointing toward usable threshold.
-                CHEV_LEN = 90.0
-                CHEV_HW  = 20.0
-                pos = chev_start + 50.0 if sign > 0 else chev_end - 50.0
-                while (sign > 0 and pos + CHEV_LEN < chev_end - 30.0) or \
-                      (sign < 0 and pos - CHEV_LEN > chev_start + 30.0):
-                    # Tip points toward usable threshold (direction = +sign).
-                    tip_a  = pos + sign * CHEV_LEN
-                    base_a = pos
-                    # Two filled triangles forming a chevron outline. Drawing
-                    # one elongated triangle is simpler and reads as an arrow.
-                    pts = []
-                    for a, c in ((base_a, -CHEV_HW),
-                                 (tip_a,   0.0),
-                                 (base_a, +CHEV_HW)):
-                        sx, sy, vis = project(a, c)
-                        if not vis:
-                            pts = None
-                            break
-                        pts.append(QPointF(sx, sy))
-                    if pts:
-                        p.drawPolygon(QPolygonF(pts))
-                    pos += sign * 200.0
-
-        # ---------------------------------------------------------------
-        # Whole-runway markings: side stripes (PIR) + centerline (all).
-        # ---------------------------------------------------------------
-        usable_a0 = d1
-        usable_a1 = length_ft - d2
-        # ----- Side stripes (PIR only) -------------------------------------
-        # Each side stripe runs the FULL usable length of the runway. A
-        # 4-corner chord across that length would cut visibly straight
-        # across the curve traced by the (now subdivided) runway polygon
-        # edges — the user-reported "two tight strings connecting the
-        # 06 and 24 ends while the asphalt fill bows underneath" came
-        # from exactly this mismatch. Subdivide the long edges so each
-        # stripe traces the same curve the runway polygon does.
-        if "PIR" in (m1, m2) and usable_a1 - usable_a0 > 200.0:
-            STRIPE_W = 3.0
-            # Distance-adaptive subdivision matches the runway-polygon
-            # rule in _draw_runways. At the inside edge of detail
-            # distance (3 NM by default) a stripe subtends only a few
-            # pixels so 4 segments is plenty.
-            if rwy_dist_nm is None or rwy_dist_nm <= 0.5:
-                n_sub = self._RUNWAY_LONG_EDGE_SEGMENTS
-            elif rwy_dist_nm <= 1.5:
-                n_sub = 8
-            else:
-                n_sub = 4
-            for side in (-1.0, +1.0):
-                c_in  = side * (width_ft * 0.5 - STRIPE_W)
-                c_out = side * (width_ft * 0.5)
-                c_lo, c_hi = min(c_in, c_out), max(c_in, c_out)
-                strip_corners = []
-                # Short edge at usable_a0 (CCW order: c_lo then c_hi).
-                strip_corners.append(rwy_point(usable_a0, c_lo))
-                strip_corners.append(rwy_point(usable_a0, c_hi))
-                # Long edge at across=c_hi, from usable_a0 -> usable_a1.
-                for k in range(1, n_sub):
-                    f = k / n_sub
-                    strip_corners.append(rwy_point(
-                        usable_a0 + f * (usable_a1 - usable_a0), c_hi))
-                # Short edge at usable_a1.
-                strip_corners.append(rwy_point(usable_a1, c_hi))
-                strip_corners.append(rwy_point(usable_a1, c_lo))
-                # Long edge at across=c_lo, from usable_a1 -> usable_a0.
-                for k in range(1, n_sub):
-                    f = k / n_sub
-                    strip_corners.append(rwy_point(
-                        usable_a1 + f * (usable_a0 - usable_a1), c_lo))
-                # Width-adaptive near plane based on the full runway
-                # half-width — same trade-off as the main polygon.
-                hw_deg = (width_ft / 2.0) / 364491.0
-                eps = hw_deg / math.tan(math.radians(70.0))
-                stripe_pts = self._project_polygon_clipped(
-                    strip_corners, ac_lat, ac_lon, ac_alt_ft,
-                    pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                    eps=eps)
-                if len(stripe_pts) >= 3:
-                    p.drawPolygon(QPolygonF(stripe_pts))
-
-        # ----- Centerline stripes (always; cosmetic for BSC) ---------------
-        # 120 ft stripe + 80 ft gap, starting 50 ft inboard of threshold bars
-        # (so 200 ft from threshold on PIR/NPI; 50 ft on BSC).
-        # Same LOD gate as interior markings — at >1.5 NM each 3-ft-wide
-        # stripe is sub-pixel; a 10000 ft runway produces ~50 stripes
-        # per runway, so skipping at distance is a big win at busy
-        # terminal areas.
-        STRIPE_LEN = 120.0
-        STRIPE_GAP = 80.0
-        CL_WIDTH   = 3.0
-        cl_a0 = usable_a0 + (200.0 if m1 in ("PIR", "NPI") else 50.0)
-        cl_a1 = usable_a1 - (200.0 if m2 in ("PIR", "NPI") else 50.0)
-        a = cl_a0
-        if not _interior_detail:
-            a = cl_a1  # skip the loop entirely
-        while a + STRIPE_LEN < cl_a1:
-            poly = quad(a,                -CL_WIDTH / 2.0,
-                        a,                +CL_WIDTH / 2.0,
-                        a + STRIPE_LEN,   +CL_WIDTH / 2.0,
-                        a + STRIPE_LEN,   -CL_WIDTH / 2.0)
-            if poly is not None:
-                p.drawPolygon(poly)
-            a += STRIPE_LEN + STRIPE_GAP
+            # All non-text per-end markings (threshold bars, aiming
+            # point, TDZ, chevrons) are GPU-drawn in Phase 4a — see
+            # _emit_runway_marking_quads.
 
     def _sample_elevations(self, lat_grid: np.ndarray,
                            lon_grid: np.ndarray) -> tuple:
