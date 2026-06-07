@@ -1421,16 +1421,26 @@ class SVSRenderer:
                     pitch_deg, roll_deg, heading_deg, ppd, w, h,
                     eps=eps_default)
             if camera_inside and len(pts) >= 2:
-                # Sutherland-Hodgman emits the clipped polygon with
-                # its first vertex at the near-plane crossing where
-                # the polygon enters the forward half-space, and its
-                # last vertex at where it exits — these project to
-                # opposite screen edges at horizon level. Appending
-                # bottom-left then bottom-right closes the polygon
-                # through the foreground without crossing edges.
+                # Close the projected polygon through the foreground.
+                # The Sutherland-Hodgman output starts at the near-
+                # plane crossing where the polygon enters the forward
+                # half-space and ends at where it exits — both at
+                # opposite screen-edge horizons. We need to walk from
+                # the EXIT corner to the bottom corner on its side,
+                # across the screen bottom, then up to the bottom
+                # corner under the ENTRY side; otherwise the closing
+                # edges cross and Qt's odd-even fill rule turns the
+                # interior into two disjoint wings with the middle
+                # rendering as the polygon's "outside".
+                #
+                # Stored OSM polygons are typically CW outer rings in
+                # the shapefile we ingest, so the LAST vertex of the
+                # Sutherland-Hodgman output is on the RIGHT side of
+                # the screen and the FIRST is on the LEFT — append
+                # (w, h) then (0, h) to walk via bottom-right first.
                 pts = list(pts)
-                pts.append(QPointF(0, h))
                 pts.append(QPointF(w, h))
+                pts.append(QPointF(0, h))
             if len(pts) >= 3:
                 with self._perf.time("water.drawPolygon"):
                     p.drawPolygon(_QPolygonF(pts))
