@@ -20,6 +20,7 @@ from pyefis.instruments.ai.svs import (
     COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
     SRTM3_SAMPLES, SRTM3_VOID,
     POLAR_DEFAULTS,
+    _QualityController,
 )
 from pyefis.instruments.ai import AI
 
@@ -972,3 +973,89 @@ class TestSVSGLFallback:
         assert non_bg > 5, (
             f"expected polar mesh pixels below horizon; only {non_bg} "
             f"non-background samples in scan row")
+
+
+class TestQualityController:
+    def test_default_state_is_level_0(self):
+        q = _QualityController(base_detail_distance_nm=3.0)
+        assert q.level == 0
+        assert q.pressure == 0.0
+        assert q.marking_k_strips() == 6
+        assert q.detail_distance_nm() == pytest.approx(3.0)
+        assert q.max_close_markings() == float("inf")
+
+    def test_pressure_rises_under_slow_frames(self):
+        # floor_fps=30 -> dt > 33.3 ms drives pressure up.
+        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
+        # Seed the EMA at slow to reach steady-state quickly.
+        for _ in range(60):
+            q.update(1.0 / 15.0)   # 15 FPS — well under floor
+        assert q.pressure == pytest.approx(1.0)
+        # At full pressure we should be at the worst level.
+        assert q.level == len(_QualityController.LEVELS) - 1
+        assert q.marking_k_strips() == 2
+        assert q.max_close_markings() == 2
+
+    def test_recovery_is_slower_than_drop(self):
+        # Asymmetric step rates: a controller pinned at L3 must take
+        # *more* frames to recover to L0 than it took to drop.
+        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
+        drops = 0
+        while q.level < len(_QualityController.LEVELS) - 1:
+            q.update(1.0 / 15.0)
+            drops += 1
+            assert drops < 200, "drop should converge well under 200 frames"
+        recoveries = 0
+        while q.level > 0:
+            q.update(1.0 / 60.0)   # 60 FPS — over ceiling
+            recoveries += 1
+            assert recoveries < 2000, (
+                "recovery should converge, but slow")
+        assert recoveries > drops * 5, (
+            f"recovery ({recoveries} frames) should be substantially "
+            f"slower than drop ({drops} frames)")
+
+    def test_dead_band_holds_pressure_steady(self):
+        # At steady FPS inside the dead band (here 35 FPS, between
+        # floor=30 and ceiling=45), pressure must not change. The EMA
+        # converges to dt = 1/35 = 28.5 ms which sits between the
+        # floor's 33.3 ms and the ceiling's 22.2 ms.
+        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
+        for _ in range(1000):
+            q.update(1.0 / 35.0)
+        assert q.pressure == 0.0
+
+    def test_disabled_controller_stays_at_l0(self):
+        q = _QualityController(enabled=False, base_detail_distance_nm=3.0)
+        for _ in range(100):
+            q.update(1.0 / 5.0)
+        assert q.level == 0
+        assert q.pressure == 0.0
+        assert q.detail_distance_nm() == pytest.approx(3.0)
+
+    def test_hysteresis_prevents_flapping_near_threshold(self):
+        # Test the level-selection rule directly, bypassing EMA
+        # dynamics so we exercise just the hysteresis logic. Pressure
+        # in [exit, enter) should hold the current level, not flap.
+        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
+        q._pressure = 0.20
+        q._level = 1
+        q._ema_dt = 1.0 / 35.0   # dead band -> pressure won't move
+        q.update(1.0 / 35.0)
+        assert q.level == 1, (
+            "pressure 0.20 sits between L1 exit (0.15) and L1 entry "
+            "(0.30) — hysteresis must keep the level at L1")
+        # Drop pressure just under the exit threshold and the level
+        # should step back to L0 on the next update.
+        q._pressure = 0.10
+        q.update(1.0 / 35.0)
+        assert q.level == 0
+
+    def test_pathological_dt_is_ignored(self):
+        # A multi-second pause (window minimised, debugger break, etc.)
+        # would otherwise pin the controller at L3 for many seconds.
+        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
+        q.update(5.0)                 # 5-second gap, should clamp
+        assert q.pressure == 0.0
+        q.update(-0.5)                # negative dt, ignored
+        assert q.pressure == 0.0

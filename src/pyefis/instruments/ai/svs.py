@@ -60,12 +60,12 @@ class _SVSPerfLog:
         self._accum[name] = self._accum.get(name, 0) + ns
         self._count[name] = self._count.get(name, 0) + 1
 
-    def maybe_report(self):
+    def maybe_report(self, extra_lines=None):
         if not self.enabled:
-            return
+            return False
         now = time.perf_counter()
         if now - self._last_report < self.REPORT_INTERVAL_S:
-            return
+            return False
         elapsed = now - self._last_report
         lines = [f"SVS perf (last {elapsed:.1f}s):"]
         for name in sorted(self._accum, key=lambda k: -self._accum[k]):
@@ -78,10 +78,117 @@ class _SVSPerfLog:
                 f"{total_ms:>8.1f}ms total  "
                 f"{per_call_ms:>7.2f}ms/call  "
                 f"{pct:>5.1f}%")
+        if extra_lines:
+            lines.extend(extra_lines)
         log.info("\n".join(lines))
         self._accum.clear()
         self._count.clear()
         self._last_report = now
+        return True
+
+
+class _QualityController:
+    """Frame-rate-aware quality controller for SVS rendering.
+
+    Maintains an EMA of measured frame interval and a "pressure" scalar
+    in [0, 1] that rises when FPS falls below ``floor_fps`` and falls
+    when FPS climbs above ``ceiling_fps``. The pressure scalar maps,
+    via hysteresis thresholds, onto a small set of discrete quality
+    levels that the renderer consults for its detail knobs.
+
+    Asymmetric step rates (fast drop, slow recovery) are deliberate.
+    If the controller restored quality every time a quality drop made
+    one frame faster, it would oscillate: drop -> fast -> restore ->
+    slow -> drop. The slow recovery ensures the new workload settles
+    before we raise the bar again.
+
+    Hysteresis bands on the level transitions stop the quality level
+    from flapping when pressure sits near a threshold.
+    """
+
+    LEVELS = (
+        # k = designator strips per character (FAA marking detail)
+        # detail_factor = scales base detail_distance_nm
+        # max_markings = top-N nearest runways that get full Tier C markings
+        {"k": 6, "detail_factor": 1.00, "max_markings": float("inf")},  # L0
+        {"k": 4, "detail_factor": 0.83, "max_markings": 6},             # L1
+        {"k": 3, "detail_factor": 0.67, "max_markings": 4},             # L2
+        {"k": 2, "detail_factor": 0.50, "max_markings": 2},             # L3
+    )
+
+    LEVEL_ENTER = (None, 0.30, 0.60, 0.90)
+    LEVEL_EXIT  = (None, 0.15, 0.45, 0.75)
+
+    EMA_ALPHA       = 0.10
+    DROP_STEP       = 0.05   # per frame when fps < floor (~20 frames to max)
+    RECOVER_STEP    = 0.005  # per frame when fps > ceiling (~200 frames)
+    CLAMP_DT_MAX_S  = 1.0
+
+    def __init__(self, enabled=True, target_fps=35.0, floor_fps=30.0,
+                 ceiling_fps=45.0, base_detail_distance_nm=3.0):
+        self.enabled = bool(enabled)
+        self.target_fps = float(target_fps)
+        self.floor_fps = float(floor_fps)
+        self.ceiling_fps = float(ceiling_fps)
+        self.base_detail_distance_nm = float(base_detail_distance_nm)
+        self._ema_dt = 1.0 / max(self.target_fps, 1.0)
+        self._pressure = 0.0
+        self._level = 0
+
+    def update(self, frame_dt_s):
+        if not self.enabled:
+            return
+        if frame_dt_s <= 0.0 or frame_dt_s > self.CLAMP_DT_MAX_S:
+            return
+        self._ema_dt = (self.EMA_ALPHA * frame_dt_s
+                        + (1.0 - self.EMA_ALPHA) * self._ema_dt)
+        fps = 1.0 / self._ema_dt
+        if fps < self.floor_fps:
+            self._pressure = min(1.0, self._pressure + self.DROP_STEP)
+        elif fps > self.ceiling_fps:
+            self._pressure = max(0.0, self._pressure - self.RECOVER_STEP)
+
+        target = self._level
+        while (target < len(self.LEVELS) - 1
+               and self._pressure >= self.LEVEL_ENTER[target + 1]):
+            target += 1
+        while target > 0 and self._pressure < self.LEVEL_EXIT[target]:
+            target -= 1
+        if target != self._level:
+            direction = "DOWN" if target > self._level else "UP"
+            log.info(
+                "SVS quality level %s: L%d -> L%d "
+                "(pressure=%.2f, fps_ema=%.1f)",
+                direction, self._level, target, self._pressure, fps)
+            self._level = target
+
+    def detail_distance_nm(self):
+        if not self.enabled:
+            return self.base_detail_distance_nm
+        return (self.base_detail_distance_nm
+                * self.LEVELS[self._level]["detail_factor"])
+
+    def marking_k_strips(self):
+        if not self.enabled:
+            return self.LEVELS[0]["k"]
+        return self.LEVELS[self._level]["k"]
+
+    def max_close_markings(self):
+        if not self.enabled:
+            return self.LEVELS[0]["max_markings"]
+        return self.LEVELS[self._level]["max_markings"]
+
+    @property
+    def level(self):
+        return self._level
+
+    @property
+    def pressure(self):
+        return self._pressure
+
+    @property
+    def fps_ema(self):
+        return 1.0 / self._ema_dt if self._ema_dt > 0 else 0.0
 
 
 class _PerfTimer:
@@ -363,6 +470,28 @@ class SVSRenderer:
         if self._perf.enabled:
             log.info("SVS perf logging enabled")
 
+        # Frame-rate-aware quality controller. Watches measured FPS and
+        # sheds visual detail (designator strip count, marking distance,
+        # max number of close-marking runways) when the renderer can't
+        # sustain the configured floor. Defaults are chosen so that an
+        # unloaded Pi 5 runs at L0 (full quality); under load the
+        # controller drops one level at a time to recover headroom.
+        q_cfg = config.get("quality_control", {}) or {}
+        self._quality = _QualityController(
+            enabled=bool(q_cfg.get("enabled", True)),
+            target_fps=float(q_cfg.get("target_fps", 35.0)),
+            floor_fps=float(q_cfg.get("floor_fps", 30.0)),
+            ceiling_fps=float(q_cfg.get("ceiling_fps", 45.0)),
+            base_detail_distance_nm=self.detail_distance_nm,
+        )
+        self._quality_last_level_logged = 0
+        if self._quality.enabled:
+            log.info(
+                "SVS quality controller on: target=%.0f floor=%.0f "
+                "ceiling=%.0f FPS",
+                self._quality.target_fps, self._quality.floor_fps,
+                self._quality.ceiling_fps)
+
         # Cached airport list — the airport_db query (+ runway dict
         # construction) was ~10 ms / frame at DFW with 15-20 airports
         # in range. At typical cruise/approach speeds the airport set
@@ -389,6 +518,20 @@ class SVSRenderer:
     @property
     def ready(self) -> bool:
         return self.enabled and self.cache is not None and self.cache.tile_root.is_dir()
+
+    def _quality_perf_lines(self):
+        """Extra line(s) appended to the periodic perf-log report.
+        Summarises the controller's current FPS estimate, pressure
+        scalar, and active quality level so the log shows whether
+        the renderer is shedding detail."""
+        q = self._quality
+        return [
+            f"  quality: L{q.level} pressure={q.pressure:.2f} "
+            f"fps_ema={q.fps_ema:.1f} "
+            f"(K={q.marking_k_strips()}, "
+            f"detail={q.detail_distance_nm():.2f} NM, "
+            f"max_markings={q.max_close_markings()})"
+        ]
 
     def _auto_range_nm(self, ac_lat: float, ac_lon: float,
                        ac_alt_ft: float) -> float:
@@ -431,12 +574,16 @@ class SVSRenderer:
         # the missing ~435 ms is happening OUTSIDE SVS — Qt repaint
         # loop, other instruments on the screen, FPM/pitch ladder
         # paint passes, etc. Crucial signal when chasing perf.
-        if self._perf.enabled:
-            now = time.perf_counter_ns()
-            last = getattr(self, "_perf_last_draw_ns", 0)
-            if last:
-                self._perf.add_ns("frame.gap_between_svs", now - last)
-            self._perf_last_draw_ns = now
+        # The quality controller also needs this dt every frame (so
+        # we compute it whether or not perf logging is on).
+        now_ns = time.perf_counter_ns()
+        last = getattr(self, "_perf_last_draw_ns", 0)
+        if last:
+            dt_ns = now_ns - last
+            if self._perf.enabled:
+                self._perf.add_ns("frame.gap_between_svs", dt_ns)
+            self._quality.update(dt_ns * 1e-9)
+        self._perf_last_draw_ns = now_ns
         if not self.ready:
             return
 
@@ -493,7 +640,8 @@ class SVSRenderer:
                                 pixels_per_deg, range_nm)
                     finally:
                         p.restore()
-                    self._perf.maybe_report()
+                    self._perf.maybe_report(
+                        extra_lines=self._quality_perf_lines())
                     return
                 except Exception as e:
                     log.warning(
@@ -1238,6 +1386,18 @@ class SVSRenderer:
 
         with self._perf.time("airports.query"):
             airports = self._get_airports_cached(ac_lat, ac_lon)
+        # Sort by reference-point distance so the top-N marking budget
+        # under load goes to the nearest airports first. The cache
+        # returns a fresh list each frame; in-place sort is fine.
+        def _ap_d2(ap):
+            d_lat = ap[1] - ac_lat
+            d_lon = (ap[2] - ac_lon) * lat_cos
+            return d_lat * d_lat + d_lon * d_lon
+        airports = sorted(airports, key=_ap_d2)
+        # Distance threshold for full Tier C markings — sourced from the
+        # quality controller so it shrinks under load.
+        q_detail_distance_nm = self._quality.detail_distance_nm()
+        marking_budget = self._quality.max_close_markings()
         for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
             # Range-check on airport reference point
             d_lat_ref = (ref_lat - ac_lat)
@@ -1311,9 +1471,14 @@ class SVSRenderer:
                     p.setBrush(QBrush(RWY_FILL))
                     p.drawPolygon(QPolygonF(pts))
 
-                    # Tier C surface markings — only painted when close enough
-                    # that they'd actually be legible on screen.
-                    if rwy_dist_nm <= self.detail_distance_nm:
+                    # Tier C surface markings — only painted when close
+                    # enough to be legible AND while the controller's
+                    # marking budget allows it. Under load the budget
+                    # caps to the N nearest runways across all airports;
+                    # at L0 it's effectively unlimited.
+                    if (rwy_dist_nm <= q_detail_distance_nm
+                            and marking_budget > 0):
+                        marking_budget -= 1
                         with self._perf.time("runway.markings"):
                             self._draw_runway_markings(
                                 p, w, h, ac_lat, ac_lon, ac_alt_ft,
@@ -1524,8 +1689,11 @@ class SVSRenderer:
                 # threshold bars and centerline stripes already trace.
                 # K=6 is enough to make the seam invisible at typical
                 # short-final altitudes; larger K costs ~K paint ops per
-                # character.
-                K_STRIPS = 6
+                # character. The quality controller lowers K (down to 2)
+                # under FPS pressure — at distance the glyph is small
+                # enough that the seam visibility is masked by the
+                # underlying pixel quantization.
+                K_STRIPS = self._quality.marking_k_strips()
 
                 def _render_row(chars, row_center_along):
                     """Paint one designator row centered on
