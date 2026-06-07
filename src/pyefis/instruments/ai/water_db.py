@@ -113,11 +113,21 @@ class WaterDB:
         return self._con is not None
 
     def polygons_in_range(self, ac_lat: float, ac_lon: float,
-                          range_nm: float):
+                          range_nm: float,
+                          min_bbox_diag_deg: float | None = None):
         """Yield ``WaterPolygon`` for each polygon whose bounding box
         overlaps the aircraft's ``range_nm`` square. The yielded
         polygons may extend well beyond the range — the SVS clipper
-        handles geometric clipping in screen space."""
+        handles geometric clipping in screen space.
+
+        ``min_bbox_diag_deg`` rejects polygons whose bbox diagonal is
+        below this threshold (in degrees) at the SQL level — useful
+        for dropping sub-pixel ponds before paying the BLOB-decode and
+        per-vertex projection cost. The check is done on the squared
+        diagonal so the SQL stays multiplication-only. Ocean polygons
+        are NEVER filtered by size — a coastline poly's bbox can be
+        tiny (small bay, inlet) yet still cover the visible field.
+        """
         if not self.ready:
             return
         lat_cos = math.cos(math.radians(ac_lat))
@@ -127,26 +137,44 @@ class WaterDB:
         lat_hi = ac_lat + range_deg_lat
         lon_lo = ac_lon - range_deg_lon
         lon_hi = ac_lon + range_deg_lon
+        min_d2 = (min_bbox_diag_deg * min_bbox_diag_deg
+                  if min_bbox_diag_deg else None)
 
         if self._has_rtree:
             # R-Tree virtual-table overlap: sqlite walks the spatial
             # index and returns only the polygons whose bbox actually
             # overlaps the query bbox. Sub-millisecond vs ~50 ms for
             # the B-tree fallback at OSM dataset scale.
-            cur = self._con.execute(
-                "SELECT p.id, p.kind, p.elev_ft, p.vertices "
+            sql = (
+                "SELECT p.id, p.kind, p.elev_ft, p.vertices, "
+                "       p.min_lat, p.max_lat, p.min_lon, p.max_lon "
                 "FROM water_polygons p "
                 "JOIN water_rtree r ON r.id = p.id "
                 "WHERE r.min_lat <= ? AND r.max_lat >= ? "
-                "  AND r.min_lon <= ? AND r.max_lon >= ?",
-                (lat_hi, lat_lo, lon_hi, lon_lo))
+                "  AND r.min_lon <= ? AND r.max_lon >= ?")
+            params = (lat_hi, lat_lo, lon_hi, lon_lo)
+            if min_d2 is not None:
+                sql += (" AND (p.kind = 'ocean' OR "
+                        "((p.max_lat-p.min_lat)*(p.max_lat-p.min_lat) "
+                        "+ (p.max_lon-p.min_lon)*(p.max_lon-p.min_lon)) "
+                        ">= ?)")
+                params = params + (min_d2,)
+            cur = self._con.execute(sql, params)
         else:
-            cur = self._con.execute(
-                "SELECT id, kind, elev_ft, vertices "
+            sql = (
+                "SELECT id, kind, elev_ft, vertices, "
+                "       min_lat, max_lat, min_lon, max_lon "
                 "FROM water_polygons "
                 "WHERE max_lat > ? AND min_lat < ? "
-                "  AND max_lon > ? AND min_lon < ?",
-                (lat_lo, lat_hi, lon_lo, lon_hi))
+                "  AND max_lon > ? AND min_lon < ?")
+            params = (lat_lo, lat_hi, lon_lo, lon_hi)
+            if min_d2 is not None:
+                sql += (" AND (kind = 'ocean' OR "
+                        "((max_lat-min_lat)*(max_lat-min_lat) "
+                        "+ (max_lon-min_lon)*(max_lon-min_lon)) "
+                        ">= ?)")
+                params = params + (min_d2,)
+            cur = self._con.execute(sql, params)
         cap = self._max_vertices
         for r in cur:
             yield WaterPolygon(

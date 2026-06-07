@@ -1291,9 +1291,22 @@ class SVSRenderer:
         p.setPen(Qt_NoPen())
         p.setBrush(QBrush(COLOR_WATER))
 
+        # Distance-adaptive size filter for inland water polygons.
+        # A pond smaller than ~1 pixel on screen at the current range
+        # contributes nothing visible but still pays full per-vertex
+        # projection + SRTM-sample cost — at DFW with OSM density that
+        # was 5950 polygons / frame, all but ~200 of them sub-pixel.
+        # Threshold: ~90 m diagonal at 30 NM range, scaled linearly so
+        # auto_range zoom-in (down to 5 NM AGL) reveals smaller water
+        # bodies as the camera comes closer. Ocean is exempted inside
+        # the DB query — coastline polys can have tiny bboxes but
+        # still cover the foreground.
+        min_diag_m = 90.0 * (range_nm / 30.0)
+        min_diag_deg = min_diag_m / 111139.0
         with self._perf.time("water.query"):
             polys = list(self.water_db.polygons_in_range(
-                ac_lat, ac_lon, range_nm))
+                ac_lat, ac_lon, range_nm,
+                min_bbox_diag_deg=min_diag_deg))
 
         for poly in polys:
             if len(poly.vertices) < 3:
