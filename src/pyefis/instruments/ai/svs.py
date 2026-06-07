@@ -1278,12 +1278,17 @@ class SVSRenderer:
 
         from PyQt6.QtGui import QPolygonF as _QPolygonF
 
-        # Same width-adaptive near plane the runway clipper uses; we
-        # don't have a perp half-width here so pick a small constant
-        # that keeps clipped vertices at sensible azimuths for typical
-        # water shapes. ~50 m forward sits comfortably outside the
-        # polar fan's FOV when the polygon edge straddles the camera.
-        eps_default = 50.0 / 111139.0
+        # Near-plane epsilon for water polygon clipping. When a
+        # polygon extends behind the camera (you're flying over /
+        # next to a lake), the Sutherland-Hodgman clip projects the
+        # near-edge vertex to atan2(perp_extent, eps). At eps=50 m
+        # the polygon stops 50 m forward of the camera and terrain
+        # bleeds through beneath in the lower portion of the screen.
+        # Drop to ~5 m so the polygon visually extends right up to
+        # the aircraft. Runway clipping uses a width-adaptive eps
+        # because runways are narrow; water polygons are wide blobs
+        # and a fixed small value is fine.
+        eps_default = 5.0 / 111139.0
 
         # Sentinel value used by the SRTM loader for ocean / void cells.
         WATER_SENTINEL_M = _WATER_SENTINEL / 3.28084
