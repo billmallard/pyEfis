@@ -1594,7 +1594,20 @@ class SVSRenderer:
         """
         if verts_np is None or verts_np.shape[0] == 0:
             return None
-        NEAR_M = 1.0
+        # NEAR is the camera-frame near plane in degrees of lat. The
+        # atan2-based shader projection breaks down close to the
+        # camera (vertices at x_fwd = 1 m with x_right = 20 m project
+        # to atan2(20, 1) ~ 87 deg azimuth — almost at the screen
+        # edge, so a clipped triangle flares dramatically outward
+        # toward the foreground). Pushing the clip plane further
+        # forward (50 m here) keeps the intersection points at
+        # sensible angles: a 75 ft half-width runway clipped at 50 m
+        # forward has its near edge at atan2(22, 50) ~ 24 deg, which
+        # reads as a normal-looking runway taper. Trade-off is a
+        # ~50 m gap in the immediate foreground for runways the
+        # aircraft is rolling out on — preferable to the steep-flare
+        # visual distortion.
+        NEAR_M = 50.0
         NEAR = np.float32(NEAR_M / 111139.0)
 
         head_rad = math.radians(heading_deg)
