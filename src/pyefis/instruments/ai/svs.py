@@ -363,6 +363,16 @@ class SVSRenderer:
         if self._perf.enabled:
             log.info("SVS perf logging enabled")
 
+        # Cached airport list — the airport_db query (+ runway dict
+        # construction) was ~10 ms / frame at DFW with 15-20 airports
+        # in range. At typical cruise/approach speeds the airport set
+        # changes glacially, so refreshing this once a second is plenty.
+        # The cache key is wall-clock; we don't bother invalidating on
+        # position change because the range query naturally covers a
+        # 60 NM (range_nm * 2) box and we don't move that fast.
+        self._airports_cache = None
+        self._airports_cache_time = 0.0
+
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
         self._n_range      = int(config.get("n_range",
@@ -1036,6 +1046,27 @@ class SVSRenderer:
             pts.append(QPointF(sx, sy))
         return pts
 
+    # Cached snapshot expires after this many seconds. At 100 kt the
+    # aircraft moves 0.028 NM/sec — well under the range_nm threshold
+    # — so the airport set near the edge of range changes only every
+    # few seconds. Re-querying the sqlite-backed airport_db every
+    # frame was ~6-10 ms / frame at DFW; once per second is plenty.
+    _AIRPORTS_CACHE_TTL_S = 1.0
+
+    def _get_airports_cached(self, ac_lat, ac_lon):
+        """Return the airport-list iteration result, refreshed at most
+        once every ``_AIRPORTS_CACHE_TTL_S`` seconds. Returns a list
+        (already materialised from the underlying generator) so it can
+        be re-iterated across cached frames."""
+        now = time.perf_counter()
+        if (self._airports_cache is not None
+                and now - self._airports_cache_time
+                    < self._AIRPORTS_CACHE_TTL_S):
+            return self._airports_cache
+        self._airports_cache = list(self._airports_in_range(ac_lat, ac_lon))
+        self._airports_cache_time = now
+        return self._airports_cache
+
     def _airports_in_range(self, ac_lat, ac_lon):
         """Yield ``(label, ref_lat, ref_lon, elev_ft, runways)`` records from
         whichever data source is configured. Each runway dict carries the
@@ -1205,8 +1236,9 @@ class SVSRenderer:
         flag_pen = QPen(QColor(0, 0, 0), 1)
         font     = QFont("sans-serif", 9, QFont.Weight.Bold)
 
-        for label, ref_lat, ref_lon, ref_elev_ft, runways in \
-                self._airports_in_range(ac_lat, ac_lon):
+        with self._perf.time("airports.query"):
+            airports = self._get_airports_cached(ac_lat, ac_lon)
+        for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
             # Range-check on airport reference point
             d_lat_ref = (ref_lat - ac_lat)
             d_lon_ref = (ref_lon - ac_lon) * lat_cos
@@ -1289,34 +1321,35 @@ class SVSRenderer:
                                 rwy_dist_nm=rwy_dist_nm)
 
             # --- Airport flag marker — pole rising from ground to POLE_HT ---
-            POLE_HT_FT = 2000
-            sx_base, sy_base, vis_base = self._project_point(
-                ref_lat, ref_lon, ref_elev_ft,
-                ac_lat, ac_lon, ac_alt_ft,
-                pitch_deg, roll_deg, heading_deg, ppd, w, h)
-            sx_top, sy_top, vis_top = self._project_point(
-                ref_lat, ref_lon, ref_elev_ft + POLE_HT_FT,
-                ac_lat, ac_lon, ac_alt_ft,
-                pitch_deg, roll_deg, heading_deg, ppd, w, h)
-            if vis_base and vis_top:
-                pole_pen = QPen(FLAG_FILL, 2)
-                p.setPen(pole_pen)
-                p.drawLine(QPointF(sx_base, sy_base), QPointF(sx_top, sy_top))
-                # Flag rectangle to the right of the pole tip
-                fw, fh = 18, 10
-                flag_rect = QPolygonF([
-                    QPointF(sx_top,      sy_top),
-                    QPointF(sx_top + fw, sy_top),
-                    QPointF(sx_top + fw, sy_top + fh),
-                    QPointF(sx_top,      sy_top + fh),
-                ])
-                p.setBrush(QBrush(FLAG_FILL))
-                p.setPen(flag_pen)
-                p.drawPolygon(flag_rect)
-                # Identifier above/right of flag
-                p.setPen(QPen(FLAG_TEXT))
-                p.setFont(font)
-                p.drawText(QPointF(sx_top + fw + 3, sy_top + fh), label)
+            with self._perf.time("airports.flag"):
+                POLE_HT_FT = 2000
+                sx_base, sy_base, vis_base = self._project_point(
+                    ref_lat, ref_lon, ref_elev_ft,
+                    ac_lat, ac_lon, ac_alt_ft,
+                    pitch_deg, roll_deg, heading_deg, ppd, w, h)
+                sx_top, sy_top, vis_top = self._project_point(
+                    ref_lat, ref_lon, ref_elev_ft + POLE_HT_FT,
+                    ac_lat, ac_lon, ac_alt_ft,
+                    pitch_deg, roll_deg, heading_deg, ppd, w, h)
+                if vis_base and vis_top:
+                    pole_pen = QPen(FLAG_FILL, 2)
+                    p.setPen(pole_pen)
+                    p.drawLine(QPointF(sx_base, sy_base), QPointF(sx_top, sy_top))
+                    # Flag rectangle to the right of the pole tip
+                    fw, fh = 18, 10
+                    flag_rect = QPolygonF([
+                        QPointF(sx_top,      sy_top),
+                        QPointF(sx_top + fw, sy_top),
+                        QPointF(sx_top + fw, sy_top + fh),
+                        QPointF(sx_top,      sy_top + fh),
+                    ])
+                    p.setBrush(QBrush(FLAG_FILL))
+                    p.setPen(flag_pen)
+                    p.drawPolygon(flag_rect)
+                    # Identifier above/right of flag
+                    p.setPen(QPen(FLAG_TEXT))
+                    p.setFont(font)
+                    p.drawText(QPointF(sx_top + fw + 3, sy_top + fh), label)
 
     # -----------------------------------------------------------------
     # Tier C surface markings (FAA AC 150/5340-1L)
