@@ -1184,13 +1184,17 @@ class SVSRenderer:
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm, 1))
+        lat_cos = math.cos(math.radians(ac_lat))
+
         if (self._runway_polys_cache is not None
                 and self._runway_polys_cache_key == key
                 and now - self._runway_polys_cache_time
                     < self._RUNWAY_POLYS_CACHE_TTL_S):
-            return self._runway_polys_cache
-
-        lat_cos = math.cos(math.radians(ac_lat))
+            cached = self._runway_polys_cache
+            if heading_deg is not None and cached is not None:
+                return self._filter_behind_camera_triangles(
+                    cached, ac_lat, ac_lon, lat_cos, heading_deg)
+            return cached
         range_m = self.range_nm * 1852.0
         airports = self._get_airports_cached(ac_lat, ac_lon)
         all_tris = []
