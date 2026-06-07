@@ -517,6 +517,12 @@ class SVSRenderer:
         self._water_tris_cache = None
         self._water_tris_cache_time = 0.0
         self._water_tris_cache_key = None  # rounded (lat, lon, range_nm)
+        # Obstacle pole vertex cache (Phase 2). Same TTL strategy as
+        # water; key includes altitude bucket because the
+        # conflict-vs-lit grouping depends on aircraft altitude.
+        self._obstacles_cache = None
+        self._obstacles_cache_time = 0.0
+        self._obstacles_cache_key = None
 
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
@@ -639,19 +645,14 @@ class SVSRenderer:
                     p.resetTransform()
                     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
                     try:
-                        # Water now drawn inside the GL overlay pass
-                        # (Phase 1). Runways / obstacles still CPU
-                        # until Phase 2/3 land.
+                        # Water (Phase 1) and obstacle poles (Phase 2)
+                        # are drawn inside the GL overlay pass.
+                        # Runways still CPU until Phase 3 lands.
                         with self._perf.time("runways"):
                             self._draw_runways(
                                 p, w, h, ac_lat, ac_lon, ac_alt_ft,
                                 pitch_deg, roll_deg, heading_deg,
                                 pixels_per_deg)
-                        with self._perf.time("obstacles"):
-                            self._draw_obstacles(
-                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                                pitch_deg, roll_deg, heading_deg,
-                                pixels_per_deg, range_nm)
                     finally:
                         p.restore()
                     svs_dt_ns = time.perf_counter_ns() - svs_t0_ns
@@ -1043,9 +1044,8 @@ class SVSRenderer:
         self._draw_runways(p, w, h, ac_lat, ac_lon, ac_alt_ft,
                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
 
-        self._draw_obstacles(p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                             pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-                             range_nm)
+        # Obstacles also moved to the GL overlay pass (Phase 2). Polar
+        # tier remains a no-water no-obstacles fallback.
 
         p.restore()
 
@@ -1410,52 +1410,76 @@ class SVSRenderer:
         self._water_tris_cache_time = now
         return result
 
-    def _draw_obstacles(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                        pitch_deg, roll_deg, heading_deg, ppd, range_nm):
-        """Render FAA DOF obstacles (towers, antennas, tall buildings) as
-        vertical poles with a tip marker. Poles taller than the aircraft
-        get a CONFLICT-magenta tint; poles below the aircraft are tinted
-        by their lighting code (red/white) or grey if unlit."""
-        if getattr(self, "obstacle_db", None) is None or not self.obstacle_db.ready:
-            return
+    # Obstacle color groups (RGBA in [0, 1]) — match the QPen colors
+    # the CPU path used in pre-Phase-2 commits.
+    _OBSTACLE_COLOR_GROUPS = (
+        ("conflict",  (200/255,   0/255, 200/255, 1.0)),  # tip above aircraft
+        ("lit_red",   (220/255,  60/255,  60/255, 1.0)),  # red-lit, below aircraft
+        ("lit_white", (230/255, 230/255, 230/255, 1.0)),  # white/dual-lit
+        ("unlit",     (160/255, 160/255, 160/255, 1.0)),  # unlit fallback
+    )
 
-        # Reuse the airport range (after auto-range scaling) for obstacles —
-        # they should appear at the same horizon distance the terrain does.
-        POLE_PEN_LIT_RED   = QPen(QColor(220,  60,  60), 2)
-        POLE_PEN_LIT_WHITE = QPen(QColor(230, 230, 230), 2)
-        POLE_PEN_UNLIT     = QPen(QColor(160, 160, 160), 2)
-        POLE_PEN_CONFLICT  = QPen(QColor(200,   0, 200), 2)
-        TIP_RADIUS         = 4
+    # Cache the obstacle-pole vertex arrays the same way water does —
+    # the polygon set changes glacially compared to the frame rate.
+    _OBSTACLES_CACHE_TTL_S = 1.0
+    _OBSTACLES_CACHE_POS_STEP_DEG = 0.01
 
+    def _collect_obstacles(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+        """Group every visible obstacle by color and return a dict
+        ``{color_rgba: np.ndarray(N*2, 3)}`` of (lat, lon, elev_ft)
+        line-segment vertices, ready for GL_LINES upload. Returns
+        empty dict when the obstacle DB isn't configured.
+
+        Cached for ``_OBSTACLES_CACHE_TTL_S`` seconds keyed by
+        coarsened (lat, lon, alt, range_nm). The cache key includes
+        altitude because the conflict-vs-lit grouping depends on
+        whether each tip is above/below the aircraft."""
+        if (getattr(self, "obstacle_db", None) is None
+                or not self.obstacle_db.ready):
+            return {}
+
+        now = time.perf_counter()
+        step = self._OBSTACLES_CACHE_POS_STEP_DEG
+        key = (round(ac_lat / step) * step,
+               round(ac_lon / step) * step,
+               round(ac_alt_ft / 200.0) * 200.0,  # 200 ft alt bucket
+               round(range_nm, 1))
+        cache = getattr(self, "_obstacles_cache", None)
+        cache_key = getattr(self, "_obstacles_cache_key", None)
+        cache_time = getattr(self, "_obstacles_cache_time", 0.0)
+        if (cache is not None and cache_key == key
+                and now - cache_time < self._OBSTACLES_CACHE_TTL_S):
+            return cache
+
+        # Build per-color-group vertex lists. Two vertices per
+        # obstacle (base + top).
+        by_color = {name: [] for name, _ in self._OBSTACLE_COLOR_GROUPS}
         for obs in self.obstacle_db.obstacles_in_range(
-                ac_lat, ac_lon, range_nm, min_agl_ft=self.obstacle_min_agl_ft):
-            sx_base, sy_base, vis_base = self._project_point(
-                obs.lat, obs.lon, obs.base_amsl_ft,
-                ac_lat, ac_lon, ac_alt_ft,
-                pitch_deg, roll_deg, heading_deg, ppd, w, h)
-            sx_top, sy_top, vis_top = self._project_point(
-                obs.lat, obs.lon, obs.amsl_ft,
-                ac_lat, ac_lon, ac_alt_ft,
-                pitch_deg, roll_deg, heading_deg, ppd, w, h)
-            if not (vis_base and vis_top):
-                continue
-
-            # Conflict colouring overrides lighting when the obstacle tip
-            # is above the aircraft — same convention as terrain.
+                ac_lat, ac_lon, range_nm,
+                min_agl_ft=self.obstacle_min_agl_ft):
             if obs.amsl_ft >= ac_alt_ft:
-                pen = POLE_PEN_CONFLICT
+                group = "conflict"
             else:
                 cat = obs.lighting_category()
                 if cat == "red":
-                    pen = POLE_PEN_LIT_RED
+                    group = "lit_red"
                 elif cat in ("white", "dual"):
-                    pen = POLE_PEN_LIT_WHITE
+                    group = "lit_white"
                 else:
-                    pen = POLE_PEN_UNLIT
-            p.setPen(pen)
-            p.setBrush(QBrush(pen.color()))
-            p.drawLine(QPointF(sx_base, sy_base), QPointF(sx_top, sy_top))
-            p.drawEllipse(QPointF(sx_top, sy_top), TIP_RADIUS, TIP_RADIUS)
+                    group = "unlit"
+            by_color[group].append((obs.lat, obs.lon, obs.base_amsl_ft))
+            by_color[group].append((obs.lat, obs.lon, obs.amsl_ft))
+
+        result = {}
+        for name, rgba in self._OBSTACLE_COLOR_GROUPS:
+            verts = by_color[name]
+            if not verts:
+                continue
+            result[rgba] = np.asarray(verts, dtype=np.float32)
+        self._obstacles_cache = result
+        self._obstacles_cache_key = key
+        self._obstacles_cache_time = now
+        return result
 
     def _draw_runways(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
                       pitch_deg, roll_deg, heading_deg, ppd):

@@ -734,6 +734,28 @@ class SVSGLRenderer:
                             self._draw_overlay_primitive(
                                 tris, color, gl.GL_TRIANGLES)
 
+            # Phase 2 — obstacle poles. Each obstacle = one line
+            # segment from base to top; we group by colour (conflict,
+            # red-lit, white-lit, unlit) and issue one draw per
+            # group. ``glLineWidth`` is honoured by V3D up to ~10 px;
+            # 2.0 matches the QPen width the CPU path used.
+            if (getattr(p, "obstacle_db", None) is not None
+                    and p.obstacle_db.ready
+                    and range_nm is not None):
+                with p._perf.time("obstacles"):
+                    with p._perf.time("obstacles.collect"):
+                        groups = p._collect_obstacles(
+                            ac_lat, ac_lon, ac_alt_ft, range_nm)
+                    if groups:
+                        with p._perf.time("obstacles.gl_draw"):
+                            gl.glLineWidth(2.0)
+                            for color, verts in groups.items():
+                                if verts.size == 0:
+                                    continue
+                                self._draw_overlay_primitive(
+                                    verts, color, gl.GL_LINES)
+                            gl.glLineWidth(1.0)
+
             # Smoke-test triangle path (kept for diagnostics).
             if getattr(p, "_gl_overlay_smoketest", False):
                 d_deg = 0.1
