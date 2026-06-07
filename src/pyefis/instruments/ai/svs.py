@@ -1231,10 +1231,31 @@ class SVSRenderer:
                 perp_lon =  dl  / rwy_len / lat_cos
                 hw = (rwy["width_ft"] / 2.0) / 364491.0   # half-width in degrees lat
 
+                # Distance-adaptive subdivision. The chord-vs-curve
+                # discrepancy that motivated the 16-segment subdivision
+                # is only visible when the runway subtends meaningful
+                # angular extent on screen. Far-field runways are a
+                # few pixels long and the chord IS the curve at that
+                # scale. At DFW (~15 airports in 30 NM range) keeping
+                # everything at 16 segments cost ~38 ms / frame; this
+                # rule keeps near runways at full quality while
+                # culling the work for distant ones.
+                d_lat_r = (0.5 * (t1_lat + t2_lat) - ac_lat)
+                d_lon_r = (0.5 * (t1_lon + t2_lon) - ac_lon) * lat_cos
+                rwy_dist_nm = math.sqrt(
+                    d_lat_r * d_lat_r + d_lon_r * d_lon_r) * 60.0
+                if rwy_dist_nm <= 1.0:
+                    n_subdiv = self._RUNWAY_LONG_EDGE_SEGMENTS
+                elif rwy_dist_nm <= 5.0:
+                    n_subdiv = 8
+                else:
+                    n_subdiv = 4
+
                 corners = self._runway_polygon_corners(
                     t1_lat, t1_lon, t1_elev,
                     t2_lat, t2_lon, t2_elev,
-                    perp_lat, perp_lon, hw)
+                    perp_lat, perp_lon, hw,
+                    n_subdiv=n_subdiv)
 
                 # Near-plane distance: width-adaptive. The Sutherland-
                 # Hodgman intersection along a long runway edge has
