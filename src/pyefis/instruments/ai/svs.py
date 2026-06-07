@@ -1268,10 +1268,11 @@ class SVSRenderer:
                 # what caused the runway to look like it was
                 # truncating away as the aircraft flew over it.
                 near_plane_deg = hw / math.tan(math.radians(70.0))
-                pts = self._project_polygon_clipped(
-                    corners, ac_lat, ac_lon, ac_alt_ft,
-                    pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                    eps=near_plane_deg)
+                with self._perf.time("runway.polygon"):
+                    pts = self._project_polygon_clipped(
+                        corners, ac_lat, ac_lon, ac_alt_ft,
+                        pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                        eps=near_plane_deg)
 
                 if len(pts) >= 3:
                     p.setPen(rwy_pen)
@@ -1280,15 +1281,12 @@ class SVSRenderer:
 
                     # Tier C surface markings — only painted when close enough
                     # that they'd actually be legible on screen.
-                    rwy_center_lat = 0.5 * (rwy["thr1_lat"] + rwy["thr2_lat"])
-                    rwy_center_lon = 0.5 * (rwy["thr1_lon"] + rwy["thr2_lon"])
-                    d_lat_c = (rwy_center_lat - ac_lat) * 60.0
-                    d_lon_c = (rwy_center_lon - ac_lon) * 60.0 * lat_cos
-                    if d_lat_c * d_lat_c + d_lon_c * d_lon_c \
-                            <= self.detail_distance_nm * self.detail_distance_nm:
-                        self._draw_runway_markings(
-                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                            pitch_deg, roll_deg, heading_deg, ppd, rwy)
+                    if rwy_dist_nm <= self.detail_distance_nm:
+                        with self._perf.time("runway.markings"):
+                            self._draw_runway_markings(
+                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                                pitch_deg, roll_deg, heading_deg, ppd, rwy,
+                                rwy_dist_nm=rwy_dist_nm)
 
             # --- Airport flag marker — pole rising from ground to POLE_HT ---
             POLE_HT_FT = 2000
@@ -1324,7 +1322,8 @@ class SVSRenderer:
     # Tier C surface markings (FAA AC 150/5340-1L)
     # -----------------------------------------------------------------
     def _draw_runway_markings(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                              pitch_deg, roll_deg, heading_deg, ppd, rwy):
+                              pitch_deg, roll_deg, heading_deg, ppd, rwy,
+                              rwy_dist_nm=None):
         """Paint AC 150/5340-1L surface markings on top of the runway quad.
 
         Designators, threshold bars, centerline stripes, aiming point, touchdown
@@ -1679,11 +1678,20 @@ class SVSRenderer:
         # stripe traces the same curve the runway polygon does.
         if "PIR" in (m1, m2) and usable_a1 - usable_a0 > 200.0:
             STRIPE_W = 3.0
+            # Distance-adaptive subdivision matches the runway-polygon
+            # rule in _draw_runways. At the inside edge of detail
+            # distance (3 NM by default) a stripe subtends only a few
+            # pixels so 4 segments is plenty.
+            if rwy_dist_nm is None or rwy_dist_nm <= 0.5:
+                n_sub = self._RUNWAY_LONG_EDGE_SEGMENTS
+            elif rwy_dist_nm <= 1.5:
+                n_sub = 8
+            else:
+                n_sub = 4
             for side in (-1.0, +1.0):
                 c_in  = side * (width_ft * 0.5 - STRIPE_W)
                 c_out = side * (width_ft * 0.5)
                 c_lo, c_hi = min(c_in, c_out), max(c_in, c_out)
-                n_sub = self._RUNWAY_LONG_EDGE_SEGMENTS
                 strip_corners = []
                 # Short edge at usable_a0 (CCW order: c_lo then c_hi).
                 strip_corners.append(rwy_point(usable_a0, c_lo))
