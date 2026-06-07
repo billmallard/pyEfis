@@ -135,12 +135,18 @@ class _QualityController:
         self._pressure = 0.0
         self._level = 0
 
-    def update(self, frame_dt_s):
+    def update(self, svs_dt_s):
+        """Feed the controller one frame's worth of SVS-internal render
+        time. NOT the wall-clock gap between paint calls — we want
+        to react only when SVS itself is taking too long, not when
+        Qt happens to be idle or some other widget is slow. Shedding
+        SVS detail in those external-bottleneck cases would degrade
+        visuals for zero FPS benefit."""
         if not self.enabled:
             return
-        if frame_dt_s <= 0.0 or frame_dt_s > self.CLAMP_DT_MAX_S:
+        if svs_dt_s <= 0.0 or svs_dt_s > self.CLAMP_DT_MAX_S:
             return
-        self._ema_dt = (self.EMA_ALPHA * frame_dt_s
+        self._ema_dt = (self.EMA_ALPHA * svs_dt_s
                         + (1.0 - self.EMA_ALPHA) * self._ema_dt)
         fps = 1.0 / self._ema_dt
         if fps < self.floor_fps:
@@ -574,16 +580,17 @@ class SVSRenderer:
         # the missing ~435 ms is happening OUTSIDE SVS — Qt repaint
         # loop, other instruments on the screen, FPM/pitch ladder
         # paint passes, etc. Crucial signal when chasing perf.
-        # The quality controller also needs this dt every frame (so
-        # we compute it whether or not perf logging is on).
         now_ns = time.perf_counter_ns()
         last = getattr(self, "_perf_last_draw_ns", 0)
-        if last:
-            dt_ns = now_ns - last
-            if self._perf.enabled:
-                self._perf.add_ns("frame.gap_between_svs", dt_ns)
-            self._quality.update(dt_ns * 1e-9)
+        if last and self._perf.enabled:
+            self._perf.add_ns("frame.gap_between_svs", now_ns - last)
         self._perf_last_draw_ns = now_ns
+        # Start the SVS-internal work timer. The quality controller
+        # uses this rather than the gap above — if Qt isn't repainting
+        # because nothing else changed on screen, we still want to
+        # paint at L0 instead of pinning at L3 for no reason. SVS
+        # internal time is what the controller can actually push on.
+        svs_t0_ns = now_ns
         if not self.ready:
             return
 
@@ -640,6 +647,10 @@ class SVSRenderer:
                                 pixels_per_deg, range_nm)
                     finally:
                         p.restore()
+                    svs_dt_ns = time.perf_counter_ns() - svs_t0_ns
+                    if self._perf.enabled:
+                        self._perf.add_ns("frame.svs_total", svs_dt_ns)
+                    self._quality.update(svs_dt_ns * 1e-9)
                     self._perf.maybe_report(
                         extra_lines=self._quality_perf_lines())
                     return
