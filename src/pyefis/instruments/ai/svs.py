@@ -1334,8 +1334,10 @@ class SVSRenderer:
         # with non-indexed triangles — simpler than maintaining a
         # separate index buffer, and total vertex volume is small
         # (200 polygons * ~30 triangles * 3 verts * 12 bytes = 216 KB
-        # at worst).
-        all_tris = []  # list of (N_tri_verts, 3) float32 arrays
+        # at worst). All per-polygon work is vectorised — no Python
+        # loop over individual triangles — so the cost is bounded by
+        # the per-polygon numpy overhead, ~50 us per polygon.
+        all_tris = []
         for i, poly in enumerate(polys):
             if poly.is_ocean:
                 surface_ft = 0.0
@@ -1344,27 +1346,27 @@ class SVSRenderer:
             else:
                 surface_ft = sampled_ft.get(i, 0.0)
 
-            verts = poly.vertices
-            n_v = len(verts)
+            n_v = len(poly.vertices)
             tri_idx = poly.triangles
             if tri_idx is None:
                 # Pre-tessellation DB — fall back to a fan from v0.
-                # Correct for convex polygons; an approximation for
-                # concave ones. Re-running tools/build_water_db.py
-                # over the source shapefiles fixes this once.
-                tri_idx = []
-                for j in range(1, n_v - 1):
-                    tri_idx.extend((0, j, j + 1))
-            buf = np.empty((len(tri_idx), 3), dtype=np.float32)
-            for j, idx in enumerate(tri_idx):
-                if idx >= n_v:
-                    # Defensive: skip malformed index.
-                    buf[j, 0] = verts[0][0]
-                    buf[j, 1] = verts[0][1]
-                else:
-                    buf[j, 0] = verts[idx][0]
-                    buf[j, 1] = verts[idx][1]
-                buf[j, 2] = surface_ft
+                # Correct for convex polygons, approximation for
+                # concave ones. Re-run tools/build_water_db.py over
+                # the source shapefiles to get true tessellation.
+                tri_idx = np.empty((n_v - 2) * 3, dtype=np.int32)
+                tri_idx[0::3] = 0
+                tri_idx[1::3] = np.arange(1, n_v - 1, dtype=np.int32)
+                tri_idx[2::3] = np.arange(2, n_v,     dtype=np.int32)
+            else:
+                tri_idx = np.asarray(tri_idx, dtype=np.int32)
+            # Clip indices defensively; the build tool may emit one
+            # malformed entry on a tessellation edge case.
+            np.clip(tri_idx, 0, n_v - 1, out=tri_idx)
+            verts_np = np.asarray(poly.vertices, dtype=np.float32)
+            picked = verts_np[tri_idx]   # (n_idx, 2) — fancy indexing
+            buf = np.empty((picked.shape[0], 3), dtype=np.float32)
+            buf[:, 0:2] = picked
+            buf[:, 2] = surface_ft
             all_tris.append(buf)
 
         if not all_tris:

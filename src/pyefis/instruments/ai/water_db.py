@@ -221,22 +221,25 @@ def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
     intact). This is the simplest possible cartographic simplification
     — Douglas-Peucker would preserve curvature better but isn't worth
     the per-load CPU when the screen can't resolve the difference at
-    typical SVS distances."""
+    typical SVS distances.
+
+    Uses numpy.frombuffer for the bulk decode — at ~200 polygons /
+    frame in the GPU water path each saved millisecond shows up in
+    the visible frame rate, and the Python ``struct.unpack_from``
+    loop was visible in the profile."""
     if not blob:
         return []
-    n = len(blob) // 16   # 2 doubles per vertex, 8 bytes each
+    import numpy as _np
+    pts = _np.frombuffer(blob, dtype="<f8").reshape(-1, 2)
+    n = pts.shape[0]
     if max_vertices and n > max_vertices:
-        # Walk a fractional stride through the polygon; round each
-        # sample point to an integer index. Always emit indices 0 and
-        # n-1 so the polygon's start/end (which carry its bounding
-        # extent) survive simplification.
-        out = []
-        stride = (n - 1) / (max_vertices - 1)
-        for k in range(max_vertices):
-            i = int(round(k * stride))
-            out.append(struct.unpack_from("<dd", blob, i * 16))
-        return out
-    return [struct.unpack_from("<dd", blob, i * 16) for i in range(n)]
+        # Even-stride decimation preserving indices 0 and n-1.
+        idx = _np.round(_np.linspace(0, n - 1, max_vertices)).astype(int)
+        pts = pts[idx]
+    # Return as a list of plain Python tuples — the GPU collector
+    # immediately re-wraps them with np.asarray, but the rest of the
+    # codebase (and tests) treats vertices as a list-of-tuples.
+    return [tuple(row) for row in pts.tolist()]
 
 
 def encode_vertices(vertices) -> bytes:
