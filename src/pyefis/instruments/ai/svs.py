@@ -1229,24 +1229,41 @@ class SVSRenderer:
                 else:
                     n_subdiv = 4
 
-                corners = self._runway_polygon_corners(
-                    t1_lat, t1_lon, t1_elev,
-                    t2_lat, t2_lon, t2_elev,
-                    perp_lat, perp_lon, hw,
-                    n_subdiv=n_subdiv)
-                n_v = len(corners)
-                if n_v < 3:
-                    continue
-                # Fan-triangulate from corners[0]. Runway polygons
-                # are slender rectangles with extra long-edge
-                # vertices — convex, so fan triangulation is
-                # correct and is the cheapest tessellation we can do.
-                verts_np = np.asarray(corners, dtype=np.float32)
-                idx = np.empty((n_v - 2) * 3, dtype=np.int32)
-                idx[0::3] = 0
-                idx[1::3] = np.arange(1, n_v - 1, dtype=np.int32)
-                idx[2::3] = np.arange(2, n_v,     dtype=np.int32)
-                all_tris.append(verts_np[idx])
+                # Strip-triangulate between the two long edges. Each
+                # emitted triangle is bounded by one along-segment
+                # in size — fan triangulation from one corner gave
+                # us some triangles that span the full runway
+                # length, which under our atan2 projection produced
+                # the "grey extending outside the runway" and
+                # "green through the middle" artifacts the user
+                # reported. Strip keeps each triangle small so the
+                # behind-camera filter culls only the ones that
+                # actually straddle the near plane, not whole
+                # sections of the polygon.
+                left_pts  = []
+                right_pts = []
+                for k in range(n_subdiv + 1):
+                    f = k / n_subdiv
+                    base_lat = t1_lat + f * (t2_lat - t1_lat)
+                    base_lon = t1_lon + f * (t2_lon - t1_lon)
+                    base_elev = t1_elev + f * (t2_elev - t1_elev)
+                    right_pts.append((
+                        base_lat + perp_lat * hw,
+                        base_lon + perp_lon * hw,
+                        base_elev))
+                    left_pts.append((
+                        base_lat - perp_lat * hw,
+                        base_lon - perp_lon * hw,
+                        base_elev))
+                tris = []
+                for k in range(n_subdiv):
+                    L0 = left_pts[k]
+                    R0 = right_pts[k]
+                    L1 = left_pts[k + 1]
+                    R1 = right_pts[k + 1]
+                    tris.extend((R0, L0, L1, R0, L1, R1))
+                all_tris.append(
+                    np.asarray(tris, dtype=np.float32))
 
         if not all_tris:
             result = None
@@ -1570,7 +1587,15 @@ class SVSRenderer:
         if n_tris == 0:
             return None
         tri_fwd = x_fwd.reshape(n_tris, 3)
-        keep = (tri_fwd > np.float32(5.0 / 111139.0)).all(axis=1)
+        # Threshold ~1 m forward. The shader's z=2 trick only
+        # produces wedge artifacts when a vertex is actually behind
+        # the camera near plane; anything in front projects fine via
+        # atan2. A 5 m threshold (the previous value) culled
+        # legitimate close-but-in-front vertices and that's what
+        # painted the "green through the middle of the runway"
+        # gaps. 1 m gives floating-point margin without taking out
+        # close-to-camera-but-valid geometry.
+        keep = (tri_fwd > np.float32(1.0 / 111139.0)).all(axis=1)
         if keep.all():
             return verts_np
         if not keep.any():
