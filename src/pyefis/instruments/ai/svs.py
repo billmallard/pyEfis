@@ -507,6 +507,16 @@ class SVSRenderer:
         # 60 NM (range_nm * 2) box and we don't move that fast.
         self._airports_cache = None
         self._airports_cache_time = 0.0
+        # Cached water-vertex triangle array for the GPU overlay path.
+        # The polygons in range don't change per-frame (at 100 kt the
+        # aircraft moves 50 m / s — the visible water-polygon set
+        # turns over on the order of seconds, not frames), so we keep
+        # the float32 vertex array from one collection valid for ~1 s.
+        # Per-frame cost drops from a 13 ms sqlite-walk + triangle-
+        # expansion to a cheap timestamp compare.
+        self._water_tris_cache = None
+        self._water_tris_cache_time = 0.0
+        self._water_tris_cache_key = None  # rounded (lat, lon, range_nm)
 
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
@@ -1261,6 +1271,17 @@ class SVSRenderer:
         for icao, apt in _AIRPORT_DB.items():
             yield apt["label"], apt["ref_lat"], apt["ref_lon"], apt["elev_ft"], apt["runways"]
 
+    # Cache TTL for the assembled water-triangle vertex array. Matches
+    # the airports cache; the visible polygon set turns over slowly
+    # enough that one refresh per second is plenty.
+    _WATER_TRIS_CACHE_TTL_S = 1.0
+    # Position-grid step in degrees that invalidates the cache early.
+    # 0.01 deg ~ 0.6 NM — once the aircraft has moved more than that,
+    # the polygon set near the visible-range edge could be stale and
+    # we refresh regardless of TTL. Cheap defensive check; the actual
+    # threshold for visible churn is closer to range_nm * 0.1.
+    _WATER_TRIS_CACHE_POS_STEP_DEG = 0.01
+
     def _collect_water_triangles(self, ac_lat, ac_lon, range_nm):
         """Collect every visible water polygon, look up its surface
         elevation, and expand its pre-tessellated triangles into a
@@ -1268,19 +1289,28 @@ class SVSRenderer:
         coordinates ready for direct upload to the GPU overlay shader.
         Returns None when nothing is visible.
 
-        This is the entire water-rendering CPU side under the
-        GPU-overlays plan (Phase 1): the GL pass uploads the returned
-        array to a VBO and issues one ``glDrawArrays``. There is no
-        per-frame Sutherland-Hodgman clip, no QPainter polygon fill,
-        and no per-polygon SRTM-sample numpy-construction overhead.
-        Camera-inside-polygon "works for free" because we project
-        filled triangles in the shader; vertices behind the camera
-        get pushed out of clip space by the shader and GL clips the
-        straddling triangles per-pixel.
+        The result is cached for ``_WATER_TRIS_CACHE_TTL_S`` seconds
+        keyed by a coarsened aircraft position so repeat calls within
+        the same frame and across consecutive frames return
+        instantly. The vertex data itself is aircraft-position-
+        independent — the GPU shader handles the projection — so as
+        long as the visible polygon SET hasn't churned the cached
+        array is valid.
         """
         if (getattr(self, "water_db", None) is None
                 or not self.water_db.ready):
             return None
+
+        now = time.perf_counter()
+        step = self._WATER_TRIS_CACHE_POS_STEP_DEG
+        key = (round(ac_lat / step) * step,
+               round(ac_lon / step) * step,
+               round(range_nm, 1))
+        if (self._water_tris_cache is not None
+                and self._water_tris_cache_key == key
+                and now - self._water_tris_cache_time
+                    < self._WATER_TRIS_CACHE_TTL_S):
+            return self._water_tris_cache
 
         # Sentinel mapped to sea level. Same convention the previous
         # CPU path used.
@@ -1370,8 +1400,15 @@ class SVSRenderer:
             all_tris.append(buf)
 
         if not all_tris:
+            self._water_tris_cache = None
+            self._water_tris_cache_key = key
+            self._water_tris_cache_time = now
             return None
-        return np.concatenate(all_tris, axis=0)
+        result = np.concatenate(all_tris, axis=0)
+        self._water_tris_cache = result
+        self._water_tris_cache_key = key
+        self._water_tris_cache_time = now
+        return result
 
     def _draw_obstacles(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
                         pitch_deg, roll_deg, heading_deg, ppd, range_nm):
