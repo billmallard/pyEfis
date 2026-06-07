@@ -125,7 +125,7 @@ class _QualityController:
     CLAMP_DT_MAX_S  = 1.0
 
     def __init__(self, enabled=True, target_fps=35.0, floor_fps=30.0,
-                 ceiling_fps=45.0, base_detail_distance_nm=3.0):
+                 ceiling_fps=38.0, base_detail_distance_nm=3.0):
         self.enabled = bool(enabled)
         self.target_fps = float(target_fps)
         self.floor_fps = float(floor_fps)
@@ -487,7 +487,7 @@ class SVSRenderer:
             enabled=bool(q_cfg.get("enabled", True)),
             target_fps=float(q_cfg.get("target_fps", 35.0)),
             floor_fps=float(q_cfg.get("floor_fps", 30.0)),
-            ceiling_fps=float(q_cfg.get("ceiling_fps", 45.0)),
+            ceiling_fps=float(q_cfg.get("ceiling_fps", 38.0)),
             base_detail_distance_nm=self.detail_distance_nm,
         )
         self._quality_last_level_logged = 0
