@@ -112,14 +112,14 @@ Runway designators ("13L", "31R", aim-point numerals) currently use
 have native text.
 
 **Choice: pre-render a bitmap font atlas** at startup. One 256×256 R8
-texture holds all 38 glyphs we need (`0-9`, `L`, `C`, `R`). Each glyph
+texture holds the glyphs we need (`0-9`, `A-Z`, `-`). Each glyph
 is a textured quad; the perspective math projects four corner UVs. Cheap
 and crisp.
 
-For now, **scope text out of the first migration phase**. Renderers paint
-the threshold bars and side stripes in GL; the designator text stays in
-QPainter for a few more weeks. Designator cost is ~1 ms / frame, low
-priority compared to water at 15 ms.
+All SVS text moves with its overlay phase — runway designators in Phase 4,
+airport-flag identifiers in Phase 5. No interim "text still in QPainter"
+hybrid. The non-SVS text widgets (airspeed/altimeter tapes, compass,
+HSI digits) are separate widget classes and stay on QPainter.
 
 ### 5. Elevation handling for water
 
@@ -159,9 +159,11 @@ recent camera-inside bug class.
   elev_ft) using the same projection math as the terrain shader; fragment
   shader outputs a uniform color. Reused by water, runway polygons, and
   obstacle poles.
-- Wire the AI's screen YAML to leave the existing CPU water/runway paths
-  in place when a `overlays_gpu: false` SVS-config key is set, so we can
-  A/B compare per-overlay.
+- No feature flag: each phase fully replaces its CPU code path in the
+  same commit. Forward-only migration; revert is via git if a phase
+  regresses. The user has explicitly signed off on this — release-quality
+  performance is impossible with the current CPU load, so we ship the
+  rewrite rather than maintain two paths.
 
 **Done when:** the new shader compiles + links on Pi, a synthetic test
 polygon at known lat/lon renders correctly through the new pipeline,
@@ -200,25 +202,30 @@ renders correctly from inside; the X-Plane reference image is matched.
 
 **Done when:** `runways` cost falls below 1 ms.
 
-### Phase 4 — Runway markings (1 day)
+### Phase 4 — Runway markings + designator text (1-1.5 days)
 - Threshold bars, aiming point, TDZ markers: all flat quads in runway-local
   space. Project per-frame via the shared shader.
 - Centerline stripes: same.
-- **Designator text** (the hard one): bitmap-font atlas. ~38 glyphs at
-  64×64 each = 256×256 R8 atlas, generated at startup from a fixed font.
-  Per-character textured quad with U/V from atlas. `quadToQuad`-style
-  perspective handled by the vertex shader since we feed it world-space
-  corners.
+- **Designator text**: bitmap-font atlas, generated at startup from
+  DejaVu Sans Condensed (the existing font). Atlas covers `0-9`, `A-Z`,
+  `-`. ~256×256 R8 single-channel texture. Per-character textured quad
+  with U/V from atlas, perspective handled by feeding world-space corners
+  to the shared vertex shader (the same projection that places the
+  threshold bars on the runway surface). Replaces the existing
+  `quadToQuad` + `drawText` per-character CPU path entirely.
 
 **Done when:** `runway.markings` cost falls below 1 ms; designator text
-visible and legible at typical AGL.
+visible, crisp, and correctly tracking with the runway as the aircraft
+moves.
 
-### Phase 5 — Airport flags (½ day)
-- Pole = line segment.
-- Flag = quad.
-- Identifier text = bitmap font atlas (reusing the runway-marking atlas).
+### Phase 5 — Airport flags + identifier text (½ day)
+- Pole = line segment in the shared GL shader.
+- Flag rectangle = quad.
+- Identifier text = bitmap-font atlas (reusing the Phase 4 atlas — the
+  glyph set is the same).
 
-**Done when:** `airports.flag` cost falls below 0.2 ms.
+**Done when:** `airports.flag` cost falls below 0.2 ms; identifier text
+visible on each flag.
 
 ## Risks and mitigations
 
@@ -228,7 +235,7 @@ visible and legible at typical AGL.
 | Per-vertex uniforms vs interleaved vertex attribs trade-off: small VBOs but many uniform changes per draw | Batch by surface elevation: group polygons with same `elev_ft` into one VBO, one draw call per group. |
 | Pi V3D's GL ES 3.0 limits — no GL_TEXTURE_BUFFER, no compute shaders, limited uniform count | Stick to ES 3.0 features used today. Vertex format and shader complexity matches what's there. |
 | Bitmap font atlas adds asset to the repo | Generate at startup from a system font (DejaVu) rather than ship a baked atlas. Same fidelity, no asset. |
-| Mixed CPU + GPU overlays during phased migration: SVS draws overlay A on GPU, then QPainter draws overlay B on CPU — depth/z-order conflicts | Each migration phase removes the CPU path completely. No mixed state in any single commit. The `overlays_gpu: false` config flag is the only A/B mechanism. |
+| Mixed CPU + GPU overlays during phased migration: SVS draws overlay A on GPU, then QPainter draws overlay B on CPU — depth/z-order conflicts | Each migration phase removes the CPU path completely. No mixed state in any single commit. Render order in the FBO is fixed (terrain → water → runways → obstacles → flags) so a partly-migrated state still composites correctly: the CPU QPainter overlay still on the un-migrated layers draws over the FBO blit, on top of all the GPU-rendered layers. |
 | Onscreen flicker when an overlay's first GL render compiles | Compile + link all programs at `SVSGLRenderer.__init__`, not lazily on first frame. |
 | The screen YAML / config schema needs new keys (overlays_gpu flag, atlas font name) | Additive keys with documented defaults. No backward-incompatible config changes. |
 
@@ -260,12 +267,11 @@ areas with dense obstacles).
 
 ## Rollback plan
 
-Each phase removes a CPU path. The previous git commits stay reachable; if
-a phase introduces a regression we can revert just that phase.
-
-`overlays_gpu: false` SVS-config key (added in Phase 0) lets the user
-disable the new path entirely until Phase 4 lands and the CPU path is
-deleted.
+None by design. Each phase commit fully replaces the CPU path for its
+overlay; we ship the rewrite, not a configurable hybrid. If a phase
+introduces a regression, we revert that commit in git — same as any
+other revert. No feature flag is plumbed through; "go forward, debug
+the new path" is the explicit project stance.
 
 ## Open questions
 
