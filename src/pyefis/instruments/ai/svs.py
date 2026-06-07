@@ -272,6 +272,32 @@ POLAR_DEFAULTS = {
 }
 
 
+def _point_in_polygon_latlon(lat, lon, vertices):
+    """Even-odd-rule point-in-polygon test on a (lat, lon) shoreline.
+    Used by the water renderer to detect "camera is inside this water
+    body" and switch to a foreground-fill path. Treats the polygon as
+    flat in lat/lon space — fine for the SVS view-distance scale; we
+    only need correct results within tens of NM of the camera and
+    great-circle distortion at that scale is sub-pixel."""
+    inside = False
+    n = len(vertices)
+    if n < 3:
+        return False
+    j = n - 1
+    for i in range(n):
+        vi_lat, vi_lon = vertices[i]
+        vj_lat, vj_lon = vertices[j]
+        if (vi_lat > lat) != (vj_lat > lat):
+            denom = (vj_lat - vi_lat)
+            if denom != 0.0:
+                x_int = ((vj_lon - vi_lon) * (lat - vi_lat) / denom
+                         + vi_lon)
+                if lon < x_int:
+                    inside = not inside
+        j = i
+    return inside
+
+
 # ---------------------------------------------------------------------------
 # HGT tile reader
 # ---------------------------------------------------------------------------
@@ -1278,6 +1304,8 @@ class SVSRenderer:
 
         from PyQt6.QtGui import QPolygonF as _QPolygonF
 
+        lat_cos = math.cos(math.radians(ac_lat))
+
         # Near-plane epsilon for water polygon clipping. When a
         # polygon extends behind the camera (you're flying over /
         # next to a lake), the Sutherland-Hodgman clip projects the
@@ -1367,8 +1395,42 @@ class SVSRenderer:
             else:
                 surface_ft = sampled_ft.get(i, 0.0)
 
-            corners = [(lat, lon, surface_ft)
-                       for (lat, lon) in poly.vertices]
+            # If the camera is *inside* the polygon (flying over a
+            # lake), the shoreline vertices all project to a thin
+            # band at the horizon line — the polygon fill ends up as
+            # a narrow strip and the terrain layer shows through
+            # everything below it, which is exactly the "land at the
+            # bottom of the screen that should be water" bug.
+            #
+            # In that case, replace the shoreline polygon with a
+            # large surround at the water's elevation (50 NM square
+            # around the aircraft). Two corners are ahead of the
+            # camera, two are behind; the Sutherland-Hodgman clip
+            # keeps the ahead pair and synthesises near-plane
+            # intersections for the behind pair, yielding a quad
+            # that covers the foreground all the way down to the
+            # screen bottom. Doesn't show the actual far shoreline
+            # — that's a follow-up — but matches the X-Plane / real-
+            # world view of "everything below horizon is water".
+            camera_inside = _point_in_polygon_latlon(
+                ac_lat, ac_lon, poly.vertices)
+            if camera_inside:
+                half_nm = 50.0
+                half_deg_lat = half_nm / 60.0
+                half_deg_lon = half_deg_lat / max(lat_cos, 1e-6)
+                corners = [
+                    (ac_lat + half_deg_lat,
+                     ac_lon + half_deg_lon, surface_ft),
+                    (ac_lat + half_deg_lat,
+                     ac_lon - half_deg_lon, surface_ft),
+                    (ac_lat - half_deg_lat,
+                     ac_lon - half_deg_lon, surface_ft),
+                    (ac_lat - half_deg_lat,
+                     ac_lon + half_deg_lon, surface_ft),
+                ]
+            else:
+                corners = [(lat, lon, surface_ft)
+                           for (lat, lon) in poly.vertices]
             with self._perf.time("water.project"):
                 pts = self._project_polygon_clipped(
                     corners, ac_lat, ac_lon, ac_alt_ft,
