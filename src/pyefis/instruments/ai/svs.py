@@ -1570,42 +1570,105 @@ class SVSRenderer:
     @staticmethod
     def _filter_behind_camera_triangles(verts_np, ac_lat, ac_lon, lat_cos,
                                         heading_deg):
-        """Mask out triangles that have any vertex behind the camera
-        near plane. The overlay shader's z=2 clip puts behind
-        vertices at clip-space z=2, GL then interpolates xy linearly
-        across the near-plane crossing — and for an atan2-based
-        azimuthal projection that interpolation gives big wedge
-        artifacts (front vertex at 0 deg azimuth interpolated with
-        behind vertex at +90 deg gives an XY path through +45 deg).
-        Drop straddling triangles before upload."""
+        """3D-clip triangles against the camera near plane.
+
+        Pure-cull was the previous behaviour and showed up as runways
+        truncating abruptly in the foreground when the aircraft flies
+        low over them — the strip-segments straddling the near plane
+        got dropped entirely, leaving green grass showing through
+        where the runway surface should still be.
+
+        Proper fix: for each triangle, classify its three vertices as
+        front-of-near-plane vs behind, then:
+          * 3 front: pass through unchanged
+          * 0 front: discard
+          * 2 front, 1 behind: replace with a quad (2 fronts + 2
+            edge-near-plane intersections), tessellated into 2
+            forward-only triangles
+          * 1 front, 2 behind: replace with 1 smaller forward-only
+            triangle (front vertex + 2 edge intersections)
+
+        Eliminates the wedge artifacts the atan2 projection produces
+        at near-plane straddling without losing the visible portion
+        of any straddling polygon.
+        """
         if verts_np is None or verts_np.shape[0] == 0:
             return None
+        NEAR_M = 1.0
+        NEAR = np.float32(NEAR_M / 111139.0)
+
         head_rad = math.radians(heading_deg)
-        cos_h = math.cos(head_rad)
-        sin_h = math.sin(head_rad)
+        cos_h = np.float32(math.cos(head_rad))
+        sin_h = np.float32(math.sin(head_rad))
         d_lat = verts_np[:, 0] - np.float32(ac_lat)
         d_lon = ((verts_np[:, 1] - np.float32(ac_lon))
                  * np.float32(lat_cos))
-        x_fwd = (d_lat * np.float32(cos_h)
-                 + d_lon * np.float32(sin_h))
+        x_fwd = d_lat * cos_h + d_lon * sin_h
         n_tris = verts_np.shape[0] // 3
         if n_tris == 0:
             return None
+
+        tri_verts = verts_np.reshape(n_tris, 3, 3)
         tri_fwd = x_fwd.reshape(n_tris, 3)
-        # Threshold ~1 m forward. The shader's z=2 trick only
-        # produces wedge artifacts when a vertex is actually behind
-        # the camera near plane; anything in front projects fine via
-        # atan2. A 5 m threshold (the previous value) culled
-        # legitimate close-but-in-front vertices and that's what
-        # painted the "green through the middle of the runway"
-        # gaps. 1 m gives floating-point margin without taking out
-        # close-to-camera-but-valid geometry.
-        keep = (tri_fwd > np.float32(1.0 / 111139.0)).all(axis=1)
-        if keep.all():
-            return verts_np
-        if not keep.any():
+        is_front = tri_fwd > NEAR
+        n_front = is_front.sum(axis=1)
+
+        all_front_mask = (n_front == 3)
+        two_front_idx = np.where(n_front == 2)[0]
+        one_front_idx = np.where(n_front == 1)[0]
+
+        chunks = []
+        if all_front_mask.any():
+            chunks.append(tri_verts[all_front_mask].reshape(-1, 3))
+
+        # 2 front + 1 behind. Rotate vertex order so behind ends at
+        # position 2, then emit a quad (v0, v1, p12, p02) where
+        # p_ij = vi + t * (vj - vi) at the near plane.
+        for i in two_front_idx:
+            v = tri_verts[i]
+            f = tri_fwd[i]
+            front_flags = is_front[i]
+            if not front_flags[0]:
+                v0, v1, v2 = v[1], v[2], v[0]
+                f0, f1, f2 = f[1], f[2], f[0]
+            elif not front_flags[1]:
+                v0, v1, v2 = v[2], v[0], v[1]
+                f0, f1, f2 = f[2], f[0], f[1]
+            else:
+                v0, v1, v2 = v[0], v[1], v[2]
+                f0, f1, f2 = f[0], f[1], f[2]
+            t02 = (NEAR - f0) / (f2 - f0)
+            t12 = (NEAR - f1) / (f2 - f1)
+            p02 = v0 + t02 * (v2 - v0)
+            p12 = v1 + t12 * (v2 - v1)
+            chunks.append(np.array(
+                [v0, v1, p12, v0, p12, p02], dtype=np.float32))
+
+        # 1 front + 2 behind. Rotate so front is at position 0, emit
+        # a single (v0, p01, p02) triangle.
+        for i in one_front_idx:
+            v = tri_verts[i]
+            f = tri_fwd[i]
+            front_flags = is_front[i]
+            if front_flags[0]:
+                v0, v1, v2 = v[0], v[1], v[2]
+                f0, f1, f2 = f[0], f[1], f[2]
+            elif front_flags[1]:
+                v0, v1, v2 = v[1], v[2], v[0]
+                f0, f1, f2 = f[1], f[2], f[0]
+            else:
+                v0, v1, v2 = v[2], v[0], v[1]
+                f0, f1, f2 = f[2], f[0], f[1]
+            t01 = (NEAR - f0) / (f1 - f0)
+            t02 = (NEAR - f0) / (f2 - f0)
+            p01 = v0 + t01 * (v1 - v0)
+            p02 = v0 + t02 * (v2 - v0)
+            chunks.append(np.array(
+                [v0, p01, p02], dtype=np.float32))
+
+        if not chunks:
             return None
-        return verts_np[np.repeat(keep, 3)]
+        return np.concatenate(chunks, axis=0)
 
     def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
                                  pitch_deg, roll_deg, heading_deg, ppd, w, h,
