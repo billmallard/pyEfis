@@ -41,6 +41,40 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from pyefis.instruments.ai.water_db import encode_vertices
 
+# Tessellation library. Pure-data Python interface around the well-
+# tested earcut C++ port. Used at build time only; the renderer just
+# reads the pre-computed triangle indices from the sqlite BLOB.
+import mapbox_earcut as _earcut
+import numpy as np
+
+
+def tessellate_polygon(vertices):
+    """Triangulate a single-ring polygon via earcut. Returns a numpy
+    array of uint16 indices (3 per triangle) into ``vertices``, or
+    None if the input is degenerate / fails tessellation.
+
+    ``vertices`` is a list of (lat, lon) tuples — earcut sees them
+    as generic 2D points, so lat/lon vs xy doesn't matter at this
+    stage. Each output index is in [0, len(vertices))."""
+    if len(vertices) < 3:
+        return None
+    # earcut wants a flat float64 Nx2 array and a ring-end-index list.
+    # Single ring => one element pointing at the end of the vertex
+    # array. Multi-ring (outer + holes) support comes later if we
+    # need it; current OSM ingest collapses multi-rings into
+    # single-ring polygons.
+    pts = np.asarray(vertices, dtype=np.float64)
+    rings = np.asarray([len(pts)], dtype=np.uint32)
+    try:
+        idx = _earcut.triangulate_float64(pts, rings)
+    except Exception:
+        return None
+    if idx.size == 0 or (idx.size % 3) != 0:
+        return None
+    # uint16 caps us at 65535 vertices per polygon — every polygon we
+    # store is decimated to <=32 vertices so this is comfortably safe.
+    return idx.astype(np.uint16)
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS water_polygons (
@@ -51,7 +85,13 @@ CREATE TABLE IF NOT EXISTS water_polygons (
     max_lon   REAL NOT NULL,
     kind      TEXT NOT NULL,
     elev_ft   REAL,
-    vertices  BLOB NOT NULL
+    vertices  BLOB NOT NULL,
+    -- Pre-tessellated triangle indices into the ``vertices`` array,
+    -- packed as little-endian uint16 (3 indices per triangle). NULL
+    -- only when tessellation failed at build time (logged as a
+    -- warning). The GPU water renderer uploads these directly to a
+    -- GL element-array buffer with one draw call per polygon.
+    triangles BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_bbox
     ON water_polygons(min_lat, max_lat, min_lon, max_lon);
@@ -99,12 +139,18 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None):
     lons = [v[1] for v in vertices]
     min_lat, max_lat = min(lats), max(lats)
     min_lon, max_lon = min(lons), max(lons)
+    # Pre-tessellate. The renderer reads these indices directly into a
+    # GL element-array buffer at draw time — keeps per-frame Python
+    # work down to a buffer upload + glDrawElements call.
+    tri_idx = tessellate_polygon(vertices)
+    tri_blob = tri_idx.tobytes() if tri_idx is not None else None
     cur = con.execute(
         "INSERT INTO water_polygons "
-        "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, vertices) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+        " vertices, triangles) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (min_lat, max_lat, min_lon, max_lon,
-         kind, elev_ft, encode_vertices(vertices)))
+         kind, elev_ft, encode_vertices(vertices), tri_blob))
     con.execute(
         "INSERT INTO water_rtree (id, min_lat, max_lat, min_lon, max_lon) "
         "VALUES (?, ?, ?, ?, ?)",

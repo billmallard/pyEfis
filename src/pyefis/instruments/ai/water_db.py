@@ -48,6 +48,12 @@ class WaterPolygon:
     kind      : str          # 'ocean', 'lake', 'river', ...
     elev_ft   : float | None # known water-surface elev; None = sample SRTM
     vertices  : list = field(default_factory=list)  # [(lat, lon), ...]
+    # Pre-tessellated triangle indices (flat list of ints, 3 per
+    # triangle, into the ``vertices`` list). Bytes blob in storage,
+    # decoded to a Python list at load time so the GPU renderer can
+    # convert to whatever it wants. None when the build tool was
+    # older than the tessellation schema bump.
+    triangles : list | None = None
 
     @property
     def is_ocean(self) -> bool:
@@ -77,6 +83,7 @@ class WaterDB:
         # index on min/max columns. R-Tree is ~50x faster on KSBA-
         # scale queries against the 878k-polygon OSM dataset.
         self._has_rtree = False
+        self._has_triangles = False
         if self._path is None or not self._path.is_file():
             log.info("WaterDB: %s not found — water rendering disabled",
                      self._path)
@@ -104,6 +111,20 @@ class WaterDB:
                     "WaterDB: no R-Tree found, falling back to bbox "
                     "B-tree index (slower; rebuild with current "
                     "build_water_db.py for R-Tree)")
+            # Probe for the triangles column (added in the SVS-overlays-
+            # to-GPU migration). Pre-tessellation DBs work too — the
+            # renderer will fall back to a fan triangulation when the
+            # column is missing.
+            try:
+                self._con.execute(
+                    "SELECT triangles FROM water_polygons LIMIT 0")
+                self._has_triangles = True
+            except sqlite3.OperationalError:
+                log.info(
+                    "WaterDB: no triangles column found; GPU water "
+                    "renderer will fan-tessellate at draw time "
+                    "(slower; rebuild with current build_water_db.py "
+                    "for pre-tessellation)")
         except Exception as e:
             log.warning("WaterDB: cannot open %s: %s", self._path, e)
             self._con = None
@@ -145,8 +166,11 @@ class WaterDB:
             # index and returns only the polygons whose bbox actually
             # overlaps the query bbox. Sub-millisecond vs ~50 ms for
             # the B-tree fallback at OSM dataset scale.
+            tri_expr = ("p.triangles" if self._has_triangles
+                        else "NULL AS triangles")
             sql = (
                 "SELECT p.id, p.kind, p.elev_ft, p.vertices, "
+                f"       {tri_expr}, "
                 "       p.min_lat, p.max_lat, p.min_lon, p.max_lon "
                 "FROM water_polygons p "
                 "JOIN water_rtree r ON r.id = p.id "
@@ -161,8 +185,11 @@ class WaterDB:
                 params = params + (min_d2,)
             cur = self._con.execute(sql, params)
         else:
+            tri_expr = ("triangles" if self._has_triangles
+                        else "NULL AS triangles")
             sql = (
                 "SELECT id, kind, elev_ft, vertices, "
+                f"       {tri_expr}, "
                 "       min_lat, max_lat, min_lon, max_lon "
                 "FROM water_polygons "
                 "WHERE max_lat > ? AND min_lat < ? "
@@ -181,7 +208,8 @@ class WaterDB:
                 id=r["id"],
                 kind=(r["kind"] or "").strip().lower(),
                 elev_ft=r["elev_ft"],
-                vertices=_decode_vertices(r["vertices"], cap))
+                vertices=_decode_vertices(r["vertices"], cap),
+                triangles=_decode_triangles(r["triangles"]))
 
 
 def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
@@ -218,3 +246,14 @@ def encode_vertices(vertices) -> bytes:
     for i, (lat, lon) in enumerate(vertices):
         struct.pack_into("<dd", buf, i * 16, float(lat), float(lon))
     return bytes(buf)
+
+
+def _decode_triangles(blob):
+    """Unpack a uint16 little-endian triangle-index blob into a flat
+    list of ints (3 entries per triangle). Returns None when the
+    polygon was inserted by a pre-tessellation build of the DB and
+    has no triangles stored."""
+    if not blob:
+        return None
+    n = len(blob) // 2
+    return list(struct.unpack(f"<{n}H", blob))

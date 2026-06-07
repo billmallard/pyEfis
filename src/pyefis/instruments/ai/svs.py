@@ -272,32 +272,6 @@ POLAR_DEFAULTS = {
 }
 
 
-def _point_in_polygon_latlon(lat, lon, vertices):
-    """Even-odd-rule point-in-polygon test on a (lat, lon) shoreline.
-    Used by the water renderer to detect "camera is inside this water
-    body" and switch to a foreground-fill path. Treats the polygon as
-    flat in lat/lon space — fine for the SVS view-distance scale; we
-    only need correct results within tens of NM of the camera and
-    great-circle distortion at that scale is sub-pixel."""
-    inside = False
-    n = len(vertices)
-    if n < 3:
-        return False
-    j = n - 1
-    for i in range(n):
-        vi_lat, vi_lon = vertices[i]
-        vj_lat, vj_lon = vertices[j]
-        if (vi_lat > lat) != (vj_lat > lat):
-            denom = (vj_lat - vi_lat)
-            if denom != 0.0:
-                x_int = ((vj_lon - vi_lon) * (lat - vi_lat) / denom
-                         + vi_lon)
-                if lon < x_int:
-                    inside = not inside
-        j = i
-    return inside
-
-
 # ---------------------------------------------------------------------------
 # HGT tile reader
 # ---------------------------------------------------------------------------
@@ -640,27 +614,24 @@ class SVSRenderer:
                         "falling back to polar tier", e)
             if self._gl_renderer is not None:
                 try:
-                    with self._perf.time("gl_terrain"):
-                        self._gl_renderer.draw(
-                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
-                    # GL drew the terrain; paint the CPU overlays on top.
-                    # _draw_obstacles needs the auto-ranged range_nm.
+                    # Compute auto-ranged range_nm BEFORE the GL draw so
+                    # the GL overlay pass can use it for the water-DB
+                    # query (Phase 1 of the overlays-to-GPU migration).
                     with self._perf.time("auto_range"):
                         range_nm = self._auto_range_nm(
                             ac_lat, ac_lon, ac_alt_ft)
+                    with self._perf.time("gl_terrain"):
+                        self._gl_renderer.draw(
+                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                            pitch_deg, roll_deg, heading_deg,
+                            pixels_per_deg, range_nm)
                     p.save()
                     p.resetTransform()
                     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
                     try:
-                        # Water FIRST so runway/obstacle overlays render
-                        # cleanly above it (a runway on a bridge, a
-                        # navaid in a bay, an OSM-mapped pier, etc).
-                        with self._perf.time("water"):
-                            self._draw_water(
-                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                                pitch_deg, roll_deg, heading_deg,
-                                pixels_per_deg, range_nm)
+                        # Water now drawn inside the GL overlay pass
+                        # (Phase 1). Runways / obstacles still CPU
+                        # until Phase 2/3 land.
                         with self._perf.time("runways"):
                             self._draw_runways(
                                 p, w, h, ac_lat, ac_lon, ac_alt_ft,
@@ -1052,9 +1023,12 @@ class SVSRenderer:
                     p.setPen(pen)
                     p.drawLines(lines)
 
-        self._draw_water(p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                         pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-                         range_nm)
+        # Phase 1 of the overlays-to-GPU migration: water is rendered
+        # by the GL overlay pass and no longer has a CPU path. The
+        # polar tier is a legacy fallback for environments without
+        # GL — it shows terrain + runways + obstacles but not water.
+        # Anyone hitting this branch in production should be running
+        # GL anyway.
 
         self._draw_runways(p, w, h, ac_lat, ac_lon, ac_alt_ft,
                            pitch_deg, roll_deg, heading_deg, pixels_per_deg)
@@ -1231,103 +1205,12 @@ class SVSRenderer:
             pts.append(QPointF(sx, sy))
         return pts
 
-    def _project_polygon_inside(self, corners, ac_lat, ac_lon, ac_alt_ft,
-                                pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                                eps=None):
-        """Variant of ``_project_polygon_clipped`` for the case where
-        the camera is INSIDE the polygon (point-in-polygon test on
-        ac_lat/ac_lon vs the shoreline returned True).
-
-        Sutherland-Hodgman emits the clipped polygon as
-        ``[forward_run_A, clip_exit, clip_enter, forward_run_B]`` where
-        the two clip points are the near-plane crossings — they
-        project to opposite screen edges at horizon level. Drawing
-        the polygon directly leaves an implicit edge running across
-        the top of the screen between the two clip points; that's the
-        "thin band at horizon, terrain showing below" rendering.
-
-        Insert screen-bottom corners BETWEEN the two clip points so
-        the polygon boundary walks the projected shoreline, drops off
-        the right edge at clip_exit, runs along the screen bottom,
-        and comes back up at clip_enter. The interior is the lake's
-        actual screen-space extent and Qt fills it as a single
-        simple region.
-        """
-        if eps is None:
-            eps = self._NEAR_PLANE_DEG
-        lat_cos = math.cos(math.radians(ac_lat))
-        head_rad = math.radians(heading_deg)
-        cos_h, sin_h = math.cos(head_rad), math.sin(head_rad)
-
-        cam = []
-        for lat, lon, elev_ft in corners:
-            d_lat = lat - ac_lat
-            d_lon = (lon - ac_lon) * lat_cos
-            x_fwd   =  d_lat * cos_h + d_lon * sin_h
-            x_right = -d_lat * sin_h + d_lon * cos_h
-            alt_diff_m = (elev_ft - ac_alt_ft) * 0.3048
-            cam.append((x_fwd, x_right, alt_diff_m))
-
-        # Sutherland-Hodgman; also remember which output entries are
-        # clip points (so we know where to insert the bottom corners).
-        clipped = []
-        clip_indices = []
-        n = len(cam)
-        for i in range(n):
-            a = cam[i]
-            b = cam[(i + 1) % n]
-            a_in = a[0] > eps
-            b_in = b[0] > eps
-            if a_in:
-                clipped.append(a)
-            if a_in != b_in and abs(b[0] - a[0]) > 1e-12:
-                t = (eps - a[0]) / (b[0] - a[0])
-                clipped.append((
-                    eps,
-                    a[1] + t * (b[1] - a[1]),
-                    a[2] + t * (b[2] - a[2]),
-                ))
-                clip_indices.append(len(clipped) - 1)
-
-        if not clipped:
-            return []
-
-        # Project to screen.
-        roll_rad = math.radians(-roll_deg)
-        cos_r, sin_r = math.cos(roll_rad), math.sin(roll_rad)
-        pts = []
-        for x_fwd, x_right, alt_diff_m in clipped:
-            range_m = math.sqrt(x_fwd ** 2 + x_right ** 2) * 111139.0
-            range_m = max(range_m, 1.0)
-            elev_angle_deg = math.degrees(math.atan2(alt_diff_m, range_m))
-            x_ang = math.degrees(math.atan2(x_right, x_fwd))
-            y_ang = elev_angle_deg - pitch_deg
-            x_px = x_ang * ppd
-            y_px = -y_ang * ppd
-            sx = x_px * cos_r - y_px * sin_r + w / 2
-            sy = x_px * sin_r + y_px * cos_r + h / 2
-            pts.append(QPointF(sx, sy))
-
-        # Insert screen-bottom corners between the two clip points.
-        # For a simple polygon wrapping once around the camera there
-        # are exactly 2 clip points and they're consecutive in the
-        # output (the behind-camera run has no F→F edges, so
-        # Sutherland-Hodgman emits clip_exit then clip_enter back-
-        # to-back). The clip whose camera-frame x_right is POSITIVE
-        # is on the right side of the screen; the negative one is on
-        # the left. Insert (bottom-right, bottom-left) if exit is on
-        # the right, otherwise (bottom-left, bottom-right).
-        if len(clip_indices) == 2:
-            i_a, i_b = clip_indices
-            # i_b should be i_a + 1 for the simple-wrap case.
-            if i_b == i_a + 1:
-                x_right_a = clipped[i_a][1]
-                if x_right_a > 0:
-                    insert = [QPointF(w, h), QPointF(0, h)]
-                else:
-                    insert = [QPointF(0, h), QPointF(w, h)]
-                pts = pts[:i_a + 1] + insert + pts[i_a + 1:]
-        return pts
+    # _project_polygon_inside and _point_in_polygon_latlon (formerly
+    # at top of module) deleted as part of Phase 1 of the overlays-to-
+    # GPU migration. The GL water path projects filled triangles via
+    # the overlay shader and uses per-vertex z-clipping for behind-
+    # camera vertices, so "polygon wraps around the camera" is no
+    # longer a special case the CPU has to handle.
 
     # Cached snapshot expires after this many seconds. At 100 kt the
     # aircraft moves 0.028 NM/sec — well under the range_nm threshold
@@ -1378,71 +1261,36 @@ class SVSRenderer:
         for icao, apt in _AIRPORT_DB.items():
             yield apt["label"], apt["ref_lat"], apt["ref_lon"], apt["elev_ft"], apt["runways"]
 
-    def _draw_water(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                    pitch_deg, roll_deg, heading_deg, ppd, range_nm):
-        """Paint OSM / Natural Earth water polygons in COLOR_WATER on
-        top of the terrain layer. Each polygon is projected via
-        ``_project_polygon_clipped`` exactly like a runway — the same
-        camera-near-plane Sutherland-Hodgman clip and width-adaptive
-        eps that the runway code uses.
+    def _collect_water_triangles(self, ac_lat, ac_lon, range_nm):
+        """Collect every visible water polygon, look up its surface
+        elevation, and expand its pre-tessellated triangles into a
+        single Nx3 float32 numpy array of (lat, lon, elev_ft) vertex
+        coordinates ready for direct upload to the GPU overlay shader.
+        Returns None when nothing is visible.
 
-        Polygon surface elevation:
-          * ``poly.elev_ft`` if the build tool recorded one (e.g.
-            crater-lake-style lakes with a known surface elev).
-          * Otherwise sampled from the SRTM heightmap at the polygon's
-            first vertex. For ocean polygons SRTM returns either 0
-            (open water cells) or the void sentinel (which we treat
-            as 0); for lakes SRTM reports the water surface elevation.
-
-        Drawn BEFORE runways/obstacles in the overlay stack so a
-        runway crossing a lake (or a tower in a lake) renders on top.
+        This is the entire water-rendering CPU side under the
+        GPU-overlays plan (Phase 1): the GL pass uploads the returned
+        array to a VBO and issues one ``glDrawArrays``. There is no
+        per-frame Sutherland-Hodgman clip, no QPainter polygon fill,
+        and no per-polygon SRTM-sample numpy-construction overhead.
+        Camera-inside-polygon "works for free" because we project
+        filled triangles in the shader; vertices behind the camera
+        get pushed out of clip space by the shader and GL clips the
+        straddling triangles per-pixel.
         """
-        if getattr(self, "water_db", None) is None or not self.water_db.ready:
-            return
+        if (getattr(self, "water_db", None) is None
+                or not self.water_db.ready):
+            return None
 
-        from PyQt6.QtGui import QPolygonF as _QPolygonF
-
-        lat_cos = math.cos(math.radians(ac_lat))
-
-        # Near-plane epsilon for water polygon clipping. When a
-        # polygon extends behind the camera (you're flying over /
-        # next to a lake), the Sutherland-Hodgman clip projects the
-        # near-edge vertex to atan2(perp_extent, eps). At eps=50 m
-        # the polygon stops 50 m forward of the camera and terrain
-        # bleeds through beneath in the lower portion of the screen.
-        # Drop to ~5 m so the polygon visually extends right up to
-        # the aircraft. Runway clipping uses a width-adaptive eps
-        # because runways are narrow; water polygons are wide blobs
-        # and a fixed small value is fine.
-        eps_default = 5.0 / 111139.0
-
-        # Sentinel value used by the SRTM loader for ocean / void cells.
+        # Sentinel mapped to sea level. Same convention the previous
+        # CPU path used.
         WATER_SENTINEL_M = _WATER_SENTINEL / 3.28084
 
-        p.setPen(Qt_NoPen())
-        p.setBrush(QBrush(COLOR_WATER))
-
-        # Distance-adaptive size filter for inland water polygons.
-        # OSM density at DFW puts 7000+ polygons in a 30 NM box —
-        # every farm pond, sewage lagoon, drainage feature, wide-river
-        # segment — and each pays full per-vertex projection + SRTM
-        # elevation sample cost (no batched terrain lookup yet). We
-        # filter at SQL level on bbox squared diagonal.
-        #
-        # Coefficient K=50 was tuned empirically against the DFW area:
-        #   range 30 NM (cruise)   K=50 -> 1500 m threshold -> ~120 polys
-        #   range 10 NM (approach) K=50 ->  500 m threshold -> ~200 polys
-        #   range  5 NM (pattern)  K=50 ->  250 m threshold ->  ~80 polys
-        #   range  2 NM (low pass) K=50 ->  100 m threshold -> ~14  polys
-        # The linear-in-range scaling keeps the angular size of the
-        # smallest rendered polygon roughly constant on screen, so
-        # auto_range zoom-in naturally reveals smaller water bodies
-        # as the camera comes close (the "show me ponds when I'm
-        # close, not when I'm at FL250" semantic).
-        #
-        # Ocean is exempted inside the DB query — a coastline polygon
-        # can have a small bbox (narrow inlet) yet still cover most of
-        # the visible foreground.
+        # Distance-adaptive size filter — sub-pixel polygons get
+        # rejected at SQL level before BLOB decode. K=50 keeps the
+        # angular size of the smallest rendered polygon roughly
+        # constant across the auto-range band; see the tuning table
+        # in the Phase 1 commit.
         min_diag_m = 50.0 * range_nm
         min_diag_deg = min_diag_m / 111139.0
         with self._perf.time("water.query"):
@@ -1450,15 +1298,11 @@ class SVSRenderer:
                 ac_lat, ac_lon, range_nm,
                 min_bbox_diag_deg=min_diag_deg)
                 if len(pp.vertices) >= 3]
+        if not polys:
+            return None
 
-        # Batch SRTM elevation lookup for every inland polygon that
-        # needs it. The previous per-polygon path called
-        # _sample_elevations(np.array([[lat]]), np.array([[lon]])) —
-        # the numpy 1x1 construction was ~0.20 ms of overhead per
-        # call, so 120 inland polys = 25 ms of pure numpy setup with
-        # essentially zero actual work. Collecting all sample points
-        # into a single Nx1 array amortises the overhead to one
-        # numpy call per frame.
+        # Batched SRTM lookup for inland polygons that don't carry a
+        # known surface elevation. Sample point per polygon: vertex 0.
         needs_sample_idx = []
         sample_lats = []
         sample_lons = []
@@ -1485,6 +1329,13 @@ class SVSRenderer:
                 else:
                     sampled_ft[i] = e * 3.28084
 
+        # Expand each polygon's pre-tessellated triangle index list
+        # into raw vertex coordinates. The GL path uses glDrawArrays
+        # with non-indexed triangles — simpler than maintaining a
+        # separate index buffer, and total vertex volume is small
+        # (200 polygons * ~30 triangles * 3 verts * 12 bytes = 216 KB
+        # at worst).
+        all_tris = []  # list of (N_tri_verts, 3) float32 arrays
         for i, poly in enumerate(polys):
             if poly.is_ocean:
                 surface_ft = 0.0
@@ -1493,43 +1344,32 @@ class SVSRenderer:
             else:
                 surface_ft = sampled_ft.get(i, 0.0)
 
-            corners = [(lat, lon, surface_ft)
-                       for (lat, lon) in poly.vertices]
-            # When the camera is INSIDE the polygon (e.g. flying over
-            # a lake), the Sutherland-Hodgman clip keeps only the
-            # forward shoreline vertices and emits the output as
-            # [forward_run_A, clip_exit, clip_enter, forward_run_B]
-            # where clip_exit/clip_enter are the two near-plane
-            # crossings. The implicit straight edge between them runs
-            # across the top of the screen near horizon — that's why
-            # closing the whole polygon through screen-bottom corners
-            # at the END gave the two-disjoint-wings render: the
-            # bottom-corner segment crossed the across-the-top edge.
-            #
-            # Correct fix: insert (bottom-right, bottom-left) BETWEEN
-            # clip_exit and clip_enter. The polygon boundary then
-            # walks the projected shoreline, drops off the right edge
-            # at clip_exit, runs along the screen bottom, and comes
-            # back up at clip_enter — a single simple closed region
-            # whose interior is the actual lake's screen-space
-            # extent. Terrain remains visible above the far shore.
-            camera_inside = _point_in_polygon_latlon(
-                ac_lat, ac_lon, poly.vertices)
-            if camera_inside:
-                with self._perf.time("water.project"):
-                    pts = self._project_polygon_inside(
-                        corners, ac_lat, ac_lon, ac_alt_ft,
-                        pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                        eps=eps_default)
-            else:
-                with self._perf.time("water.project"):
-                    pts = self._project_polygon_clipped(
-                        corners, ac_lat, ac_lon, ac_alt_ft,
-                        pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                        eps=eps_default)
-            if len(pts) >= 3:
-                with self._perf.time("water.drawPolygon"):
-                    p.drawPolygon(_QPolygonF(pts))
+            verts = poly.vertices
+            n_v = len(verts)
+            tri_idx = poly.triangles
+            if tri_idx is None:
+                # Pre-tessellation DB — fall back to a fan from v0.
+                # Correct for convex polygons; an approximation for
+                # concave ones. Re-running tools/build_water_db.py
+                # over the source shapefiles fixes this once.
+                tri_idx = []
+                for j in range(1, n_v - 1):
+                    tri_idx.extend((0, j, j + 1))
+            buf = np.empty((len(tri_idx), 3), dtype=np.float32)
+            for j, idx in enumerate(tri_idx):
+                if idx >= n_v:
+                    # Defensive: skip malformed index.
+                    buf[j, 0] = verts[0][0]
+                    buf[j, 1] = verts[0][1]
+                else:
+                    buf[j, 0] = verts[idx][0]
+                    buf[j, 1] = verts[idx][1]
+                buf[j, 2] = surface_ft
+            all_tris.append(buf)
+
+        if not all_tris:
+            return None
+        return np.concatenate(all_tris, axis=0)
 
     def _draw_obstacles(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
                         pitch_deg, roll_deg, heading_deg, ppd, range_nm):

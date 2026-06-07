@@ -439,7 +439,8 @@ class SVSGLRenderer:
     # Drawing
     # ------------------------------------------------------------------
     def draw(self, painter, w, h, ac_lat, ac_lon, ac_alt_ft,
-             pitch_deg, roll_deg, heading_deg, pixels_per_deg):
+             pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+             range_nm=None):
         prev_ctx = QOpenGLContext.currentContext()
         prev_surface = prev_ctx.surface() if prev_ctx is not None else None
 
@@ -453,7 +454,7 @@ class SVSGLRenderer:
             self._ensure_heightmap(ac_lat, ac_lon)
             image = self._render_to_image(
                 w, h, ac_lat, ac_lon, ac_alt_ft, pitch_deg, roll_deg,
-                heading_deg, pixels_per_deg)
+                heading_deg, pixels_per_deg, range_nm)
         finally:
             self._ctx.doneCurrent()
             if prev_ctx is not None and prev_surface is not None:
@@ -468,7 +469,8 @@ class SVSGLRenderer:
     # Internals
     # ------------------------------------------------------------------
     def _render_to_image(self, w, h, ac_lat, ac_lon, ac_alt_ft,
-                         pitch_deg, roll_deg, heading_deg, pixels_per_deg):
+                         pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                         range_nm=None):
         self._fbo.bind()
         try:
             gl.glViewport(0, 0, w, h)
@@ -554,12 +556,12 @@ class SVSGLRenderer:
                 self._program.release()
 
             # Overlay pass (water, runways, obstacles, flags) draws
-            # into the same FBO on top of the terrain. Phase 0 keeps
-            # this empty unless _gl_overlay_smoketest is set on the
-            # parent renderer; Phase 1+ wires up the real overlays.
+            # into the same FBO on top of the terrain. Phase 1 added
+            # water; later phases wire up the rest.
             self._render_overlays(
                 w, h, ac_lat, ac_lon, ac_alt_ft,
-                pitch_deg, roll_deg, heading_deg, pixels_per_deg)
+                pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                range_nm)
 
             return self._fbo.toImage()
         finally:
@@ -684,12 +686,16 @@ class SVSGLRenderer:
             self._overlay_vao.release()
 
     def _render_overlays(self, w, h, ac_lat, ac_lon, ac_alt_ft,
-                         pitch_deg, roll_deg, heading_deg, pixels_per_deg):
-        """Phase-0 stub: bind the overlay program, set per-frame uniforms,
-        draw a smoke-test triangle at a fixed world location to prove the
-        pipeline projects correctly. Phase 1+ replaces the smoke-test
-        body with calls to the real overlay sources (water, runways,
-        obstacles, flags)."""
+                         pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                         range_nm=None):
+        """Run every overlay pass that has been migrated to the GPU
+        pipeline. Bound after the terrain draw inside the FBO so the
+        overlays composite directly with the terrain at full GPU
+        speed.
+
+        Phase 1: water polygons (this commit).
+        Phase 2+: obstacles, runways, markings, airport flags.
+        """
         self._ensure_overlay_program()
         prog = self._overlay_program
         prog.bind()
@@ -710,11 +716,27 @@ class SVSGLRenderer:
                                  float(pixels_per_deg))
             prog.setUniformValue(self._overlay_u["u_viewport"],
                                  float(w), float(h))
-            # Smoke test: a magenta triangle at a fixed lat/lon offset
-            # from the aircraft. Confirms projection math matches the
-            # terrain shader.
-            if getattr(self._parent, "_gl_overlay_smoketest", False):
-                d_deg = 0.1   # ~6 NM
+
+            # Phase 1 — water.
+            p = self._parent
+            if (getattr(p, "water_db", None) is not None
+                    and p.water_db.ready
+                    and range_nm is not None):
+                with p._perf.time("water"):
+                    with p._perf.time("water.collect"):
+                        tris = p._collect_water_triangles(
+                            ac_lat, ac_lon, range_nm)
+                    if tris is not None and tris.size > 0:
+                        # COLOR_WATER from svs.py = (20, 80, 150).
+                        color = (20 / 255.0, 80 / 255.0,
+                                 150 / 255.0, 1.0)
+                        with p._perf.time("water.gl_draw"):
+                            self._draw_overlay_primitive(
+                                tris, color, gl.GL_TRIANGLES)
+
+            # Smoke-test triangle path (kept for diagnostics).
+            if getattr(p, "_gl_overlay_smoketest", False):
+                d_deg = 0.1
                 test_elev = float(ac_alt_ft) - 2000.0
                 tri = np.array([
                     [ac_lat + d_deg, ac_lon,        test_elev],
