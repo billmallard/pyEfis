@@ -537,6 +537,15 @@ class SVSRenderer:
         self._runway_markings_cache_time = 0.0
         self._runway_markings_cache_key = None
 
+        # When True, the GL overlay shader runs the proper hardware
+        # perspective projection (gl_Position.w = x_fwd, GL does the
+        # divide and per-pixel near-plane clipping). When False, the
+        # legacy atan2 projection is used, which requires the CPU
+        # 3D clipper in _filter_behind_camera_triangles to avoid
+        # wedge artifacts. True by default; set False to A/B compare.
+        self._gl_overlay_perspective = bool(
+            config.get("gl_overlay_perspective", True))
+
         # Polar tier parameters — only consulted when renderer == "polar"
         self._is_polar     = (self.renderer == "polar")
         self._n_range      = int(config.get("n_range",

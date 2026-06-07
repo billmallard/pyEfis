@@ -299,6 +299,12 @@ uniform float u_pitch_deg;
 uniform float u_roll_deg;
 uniform float u_pixels_per_deg;
 uniform vec2  u_viewport;
+// 1.0 -> GL hardware perspective projection (proper near-plane
+// clipping; no wedge artifacts at the camera). 0.0 -> legacy atan2
+// projection (kept for A/B comparison and as a fallback if some
+// terrain-vs-overlay alignment edge case shows up at extreme
+// azimuths).
+uniform float u_use_perspective;
 
 const float PI            = 3.14159265358979;
 const float DEG_PER_RAD   = 180.0 / PI;
@@ -315,33 +321,74 @@ void main() {
     float sin_h = sin(head_rad);
     float x_fwd   =  d_lat * cos_h + d_lon * sin_h;
     float x_right = -d_lat * sin_h + d_lon * cos_h;
-
-    float range_deg = sqrt(x_fwd * x_fwd + x_right * x_right);
-    float range_m   = max(range_deg * M_PER_DEG_LAT, 1.0);
     float alt_diff_m = (a_world_pos.z - u_ac_alt_ft) * M_PER_FT;
-    float elev_angle_deg = atan(alt_diff_m, range_m) * DEG_PER_RAD;
-    float x_ang = atan(x_right, x_fwd) * DEG_PER_RAD;
-    float y_ang = elev_angle_deg - u_pitch_deg;
 
-    float x_px =  x_ang * u_pixels_per_deg;
-    float y_px = -y_ang * u_pixels_per_deg;
+    if (u_use_perspective > 0.5) {
+        // ----------------------------------------------------------
+        // Perspective projection. Pitch + roll happen as view-frame
+        // rotations BEFORE the perspective divide; GL then divides
+        // by gl_Position.w = x_fwd_p (the forward depth in the
+        // pitched-camera frame) and per-pixel clips at the near
+        // plane. No more atan2 wraparound, no CPU 3D clipping.
+        // Scale set so the screen layout matches the atan2 path at
+        // small angles (tan(x) ~ x), so terrain and overlays stay
+        // visually aligned through the entire usable view cone.
+        // ----------------------------------------------------------
+        float y_up_deg = alt_diff_m / M_PER_DEG_LAT;
 
-    float roll_rad = radians(-u_roll_deg);
-    float cos_r = cos(roll_rad);
-    float sin_r = sin(roll_rad);
-    vec2 rotated = vec2(
-        x_px * cos_r - y_px * sin_r,
-        x_px * sin_r + y_px * cos_r);
-    vec2 screen_xy = rotated + u_viewport * 0.5;
+        // Pitch: positive pitch = nose up. Ground points appear lower
+        // on screen. Rotation acts on (y_up, x_fwd) leaving x_right
+        // untouched.
+        float pitch_rad = radians(u_pitch_deg);
+        float cos_p = cos(pitch_rad);
+        float sin_p = sin(pitch_rad);
+        float y_up_p  = y_up_deg * cos_p - x_fwd * sin_p;
+        float x_fwd_p = y_up_deg * sin_p + x_fwd * cos_p;
 
-    // GL clip-space xy. The z component is pushed out of [-1, 1] when
-    // the vertex falls behind the camera so GL discards it.
-    float behind = step(x_fwd, 0.0);
-    gl_Position = vec4(
-        2.0 * screen_xy.x / u_viewport.x - 1.0,
-        1.0 - 2.0 * screen_xy.y / u_viewport.y,
-        mix(0.0, 2.0, behind),
-        1.0);
+        // Roll: rotation acts on (x_right, y_up) leaving x_fwd alone.
+        // Sign chosen to match the atan2 path's screen rotation.
+        float roll_rad = radians(u_roll_deg);
+        float cos_r = cos(roll_rad);
+        float sin_r = sin(roll_rad);
+        float x_right_r = x_right * cos_r - y_up_p * sin_r;
+        float y_up_r    = x_right * sin_r + y_up_p * cos_r;
+
+        float scale = DEG_PER_RAD * u_pixels_per_deg;
+        gl_Position = vec4(
+            x_right_r * scale * 2.0 / u_viewport.x,
+            y_up_r    * scale * 2.0 / u_viewport.y,
+            0.0,
+            x_fwd_p);
+    } else {
+        // ----------------------------------------------------------
+        // Legacy atan2 projection. Kept for A/B comparison. Has
+        // wedge artifacts when triangles straddle the near plane;
+        // CPU-side 3D clipping is required to use this path safely.
+        // ----------------------------------------------------------
+        float range_deg = sqrt(x_fwd * x_fwd + x_right * x_right);
+        float range_m   = max(range_deg * M_PER_DEG_LAT, 1.0);
+        float elev_angle_deg = atan(alt_diff_m, range_m) * DEG_PER_RAD;
+        float x_ang = atan(x_right, x_fwd) * DEG_PER_RAD;
+        float y_ang = elev_angle_deg - u_pitch_deg;
+
+        float x_px =  x_ang * u_pixels_per_deg;
+        float y_px = -y_ang * u_pixels_per_deg;
+
+        float roll_rad = radians(-u_roll_deg);
+        float cos_r = cos(roll_rad);
+        float sin_r = sin(roll_rad);
+        vec2 rotated = vec2(
+            x_px * cos_r - y_px * sin_r,
+            x_px * sin_r + y_px * cos_r);
+        vec2 screen_xy = rotated + u_viewport * 0.5;
+
+        float behind = step(x_fwd, 0.0);
+        gl_Position = vec4(
+            2.0 * screen_xy.x / u_viewport.x - 1.0,
+            1.0 - 2.0 * screen_xy.y / u_viewport.y,
+            mix(0.0, 2.0, behind),
+            1.0);
+    }
 }
 """
 
@@ -617,7 +664,8 @@ class SVSGLRenderer:
             raise RuntimeError("overlay shader: a_world_pos not found")
         for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft",
                      "u_heading_deg", "u_pitch_deg", "u_roll_deg",
-                     "u_pixels_per_deg", "u_viewport", "u_color"):
+                     "u_pixels_per_deg", "u_viewport", "u_color",
+                     "u_use_perspective"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 raise RuntimeError(f"overlay shader: {name} not found")
@@ -716,6 +764,14 @@ class SVSGLRenderer:
                                  float(pixels_per_deg))
             prog.setUniformValue(self._overlay_u["u_viewport"],
                                  float(w), float(h))
+            # Pull the perspective vs atan2 switch from the parent
+            # SVS renderer's config (default ON). The atan2 path is
+            # kept for diagnostic A/B comparison.
+            prog.setUniformValue(
+                self._overlay_u["u_use_perspective"],
+                1.0 if getattr(self._parent,
+                               "_gl_overlay_perspective", True)
+                else 0.0)
 
             # Phase 1 — water.
             p = self._parent
