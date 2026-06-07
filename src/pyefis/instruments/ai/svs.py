@@ -1231,6 +1231,104 @@ class SVSRenderer:
             pts.append(QPointF(sx, sy))
         return pts
 
+    def _project_polygon_inside(self, corners, ac_lat, ac_lon, ac_alt_ft,
+                                pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                                eps=None):
+        """Variant of ``_project_polygon_clipped`` for the case where
+        the camera is INSIDE the polygon (point-in-polygon test on
+        ac_lat/ac_lon vs the shoreline returned True).
+
+        Sutherland-Hodgman emits the clipped polygon as
+        ``[forward_run_A, clip_exit, clip_enter, forward_run_B]`` where
+        the two clip points are the near-plane crossings — they
+        project to opposite screen edges at horizon level. Drawing
+        the polygon directly leaves an implicit edge running across
+        the top of the screen between the two clip points; that's the
+        "thin band at horizon, terrain showing below" rendering.
+
+        Insert screen-bottom corners BETWEEN the two clip points so
+        the polygon boundary walks the projected shoreline, drops off
+        the right edge at clip_exit, runs along the screen bottom,
+        and comes back up at clip_enter. The interior is the lake's
+        actual screen-space extent and Qt fills it as a single
+        simple region.
+        """
+        if eps is None:
+            eps = self._NEAR_PLANE_DEG
+        lat_cos = math.cos(math.radians(ac_lat))
+        head_rad = math.radians(heading_deg)
+        cos_h, sin_h = math.cos(head_rad), math.sin(head_rad)
+
+        cam = []
+        for lat, lon, elev_ft in corners:
+            d_lat = lat - ac_lat
+            d_lon = (lon - ac_lon) * lat_cos
+            x_fwd   =  d_lat * cos_h + d_lon * sin_h
+            x_right = -d_lat * sin_h + d_lon * cos_h
+            alt_diff_m = (elev_ft - ac_alt_ft) * 0.3048
+            cam.append((x_fwd, x_right, alt_diff_m))
+
+        # Sutherland-Hodgman; also remember which output entries are
+        # clip points (so we know where to insert the bottom corners).
+        clipped = []
+        clip_indices = []
+        n = len(cam)
+        for i in range(n):
+            a = cam[i]
+            b = cam[(i + 1) % n]
+            a_in = a[0] > eps
+            b_in = b[0] > eps
+            if a_in:
+                clipped.append(a)
+            if a_in != b_in and abs(b[0] - a[0]) > 1e-12:
+                t = (eps - a[0]) / (b[0] - a[0])
+                clipped.append((
+                    eps,
+                    a[1] + t * (b[1] - a[1]),
+                    a[2] + t * (b[2] - a[2]),
+                ))
+                clip_indices.append(len(clipped) - 1)
+
+        if not clipped:
+            return []
+
+        # Project to screen.
+        roll_rad = math.radians(-roll_deg)
+        cos_r, sin_r = math.cos(roll_rad), math.sin(roll_rad)
+        pts = []
+        for x_fwd, x_right, alt_diff_m in clipped:
+            range_m = math.sqrt(x_fwd ** 2 + x_right ** 2) * 111139.0
+            range_m = max(range_m, 1.0)
+            elev_angle_deg = math.degrees(math.atan2(alt_diff_m, range_m))
+            x_ang = math.degrees(math.atan2(x_right, x_fwd))
+            y_ang = elev_angle_deg - pitch_deg
+            x_px = x_ang * ppd
+            y_px = -y_ang * ppd
+            sx = x_px * cos_r - y_px * sin_r + w / 2
+            sy = x_px * sin_r + y_px * cos_r + h / 2
+            pts.append(QPointF(sx, sy))
+
+        # Insert screen-bottom corners between the two clip points.
+        # For a simple polygon wrapping once around the camera there
+        # are exactly 2 clip points and they're consecutive in the
+        # output (the behind-camera run has no F→F edges, so
+        # Sutherland-Hodgman emits clip_exit then clip_enter back-
+        # to-back). The clip whose camera-frame x_right is POSITIVE
+        # is on the right side of the screen; the negative one is on
+        # the left. Insert (bottom-right, bottom-left) if exit is on
+        # the right, otherwise (bottom-left, bottom-right).
+        if len(clip_indices) == 2:
+            i_a, i_b = clip_indices
+            # i_b should be i_a + 1 for the simple-wrap case.
+            if i_b == i_a + 1:
+                x_right_a = clipped[i_a][1]
+                if x_right_a > 0:
+                    insert = [QPointF(w, h), QPointF(0, h)]
+                else:
+                    insert = [QPointF(0, h), QPointF(w, h)]
+                pts = pts[:i_a + 1] + insert + pts[i_a + 1:]
+        return pts
+
     # Cached snapshot expires after this many seconds. At 100 kt the
     # aircraft moves 0.028 NM/sec — well under the range_nm threshold
     # — so the airport set near the edge of range changes only every
@@ -1399,48 +1497,36 @@ class SVSRenderer:
                        for (lat, lon) in poly.vertices]
             # When the camera is INSIDE the polygon (e.g. flying over
             # a lake), the Sutherland-Hodgman clip keeps only the
-            # forward shoreline vertices; the polygon they form is a
-            # curve from one near-plane intersection on the left edge
-            # of the field of view to another on the right. Drawing
-            # that curve as a closed polygon paints a thin sliver of
-            # water along the shoreline and leaves the lake's
-            # foreground (everything between the camera and the
-            # visible shoreline) as terrain underneath — the "brown
-            # band at the bottom of the screen even though I'm over
-            # a lake" bug. Closing the projected polygon through the
-            # two screen-bottom corners makes Qt fill from the
-            # projected shoreline curve down to the bottom of the
-            # screen, giving each lake its actual screen-space
-            # extent: shoreline curve on top, foreground fill below,
-            # the terrain band above the far shore stays visible.
+            # forward shoreline vertices and emits the output as
+            # [forward_run_A, clip_exit, clip_enter, forward_run_B]
+            # where clip_exit/clip_enter are the two near-plane
+            # crossings. The implicit straight edge between them runs
+            # across the top of the screen near horizon — that's why
+            # closing the whole polygon through screen-bottom corners
+            # at the END gave the two-disjoint-wings render: the
+            # bottom-corner segment crossed the across-the-top edge.
+            #
+            # Correct fix: insert (bottom-right, bottom-left) BETWEEN
+            # clip_exit and clip_enter. The polygon boundary then
+            # walks the projected shoreline, drops off the right edge
+            # at clip_exit, runs along the screen bottom, and comes
+            # back up at clip_enter — a single simple closed region
+            # whose interior is the actual lake's screen-space
+            # extent. Terrain remains visible above the far shore.
             camera_inside = _point_in_polygon_latlon(
                 ac_lat, ac_lon, poly.vertices)
-            with self._perf.time("water.project"):
-                pts = self._project_polygon_clipped(
-                    corners, ac_lat, ac_lon, ac_alt_ft,
-                    pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                    eps=eps_default)
-            if camera_inside and len(pts) >= 2:
-                # Close the projected polygon through the foreground.
-                # The Sutherland-Hodgman output starts at the near-
-                # plane crossing where the polygon enters the forward
-                # half-space and ends at where it exits — both at
-                # opposite screen-edge horizons. We need to walk from
-                # the EXIT corner to the bottom corner on its side,
-                # across the screen bottom, then up to the bottom
-                # corner under the ENTRY side; otherwise the closing
-                # edges cross and Qt's odd-even fill rule turns the
-                # interior into two disjoint wings with the middle
-                # rendering as the polygon's "outside".
-                #
-                # Stored OSM polygons are typically CW outer rings in
-                # the shapefile we ingest, so the LAST vertex of the
-                # Sutherland-Hodgman output is on the RIGHT side of
-                # the screen and the FIRST is on the LEFT — append
-                # (w, h) then (0, h) to walk via bottom-right first.
-                pts = list(pts)
-                pts.append(QPointF(w, h))
-                pts.append(QPointF(0, h))
+            if camera_inside:
+                with self._perf.time("water.project"):
+                    pts = self._project_polygon_inside(
+                        corners, ac_lat, ac_lon, ac_alt_ft,
+                        pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                        eps=eps_default)
+            else:
+                with self._perf.time("water.project"):
+                    pts = self._project_polygon_clipped(
+                        corners, ac_lat, ac_lon, ac_alt_ft,
+                        pitch_deg, roll_deg, heading_deg, ppd, w, h,
+                        eps=eps_default)
             if len(pts) >= 3:
                 with self._perf.time("water.drawPolygon"):
                     p.drawPolygon(_QPolygonF(pts))
