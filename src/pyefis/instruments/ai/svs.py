@@ -408,7 +408,12 @@ class SVSRenderer:
     def __init__(self, config: dict):
         self.enabled      = config.get("enabled", False)
         self.renderer     = config.get("renderer", "cpu_sparse")
-        self.range_nm     = float(config.get("range_nm", 30))
+        # range_nm cap. Default 50 NM matches the GL heightmap patch
+        # (2 deg = ~120 NM wide at mid-latitudes; 50 NM cap leaves
+        # comfortable margin against patch-edge sampling). The
+        # previous 30 NM default was from the CPU era when polar
+        # mesh density was the bottleneck.
+        self.range_nm     = float(config.get("range_nm", 50))
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 
@@ -588,10 +593,18 @@ class SVSRenderer:
         ac_ground_m = float(_agl_elev[0, 0])
         agl_ft = ac_alt_ft - ac_ground_m * 3.28084
         if self.auto_range:
-            agl_range = 0.1 * math.sqrt(max(0.0, agl_ft))
-            msl_range = ac_alt_ft * 0.001
+            # Distance to the visual horizon in NM. For an observer
+            # at altitude h above a sphere of radius R, the horizon
+            # is at d ~= 1.22 * sqrt(h_ft) NM. Render up to that
+            # distance so the polar mesh + water polygons + airport
+            # markers extend all the way to where they'd actually be
+            # visible from the cockpit. Previously this was 0.1 *
+            # sqrt(h) — that was tuned for the CPU rendering era
+            # when each polar quad was Python work; with the GPU
+            # path the extra reach is essentially free.
+            horizon_range = 1.22 * math.sqrt(max(0.0, agl_ft))
             return min(self.range_nm,
-                       max(self.min_range_nm, agl_range, msl_range))
+                       max(self.min_range_nm, horizon_range))
         return self.range_nm
 
     def _clearance_color(self, clearance_ft: float) -> QColor:

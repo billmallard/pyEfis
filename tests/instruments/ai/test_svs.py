@@ -177,7 +177,10 @@ class TestSVSRendererConfig:
         assert SVSRenderer({"renderer": "cpu_dense"})._grid_n == 128
 
     def test_range_nm_default(self):
-        assert SVSRenderer({}).range_nm == 30.0
+        # Bumped from 30 NM to 50 NM when the GL renderer landed —
+        # polar-mesh density is no longer the bottleneck so the cap
+        # is set to match the heightmap patch's safe reach.
+        assert SVSRenderer({}).range_nm == 50.0
 
     def test_clearance_colors(self, tmp_path):
         root = _make_tile_dir(tmp_path, 32, -97)
