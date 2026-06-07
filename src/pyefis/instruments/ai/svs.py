@@ -1617,8 +1617,16 @@ class SVSRenderer:
                 else:
                     _render_row(number_part, center_along)
 
+            # Interior markings — aiming point, TDZ, centerline stripes —
+            # are pixel-level detail you can't read past ~1.5 NM. Skip
+            # them for far-range runways. Threshold bars + designator
+            # above are cheap and still communicate "runway here" at
+            # any distance within detail_distance_nm.
+            _interior_detail = rwy_dist_nm is None or rwy_dist_nm <= 1.5
+
             # ----- Aiming point (PIR and NPI) ----------------------------
-            if marking in ("PIR", "NPI") and usable_remaining > 2400.0:
+            if (_interior_detail and marking in ("PIR", "NPI")
+                    and usable_remaining > 2400.0):
                 # Two bars 150 ft × 30 ft, 72 ft apart centerline-to-centerline,
                 # starting at 1000 ft from threshold.
                 aim_a0 = thr_along + sign * 1000.0
@@ -1635,7 +1643,8 @@ class SVSRenderer:
             # Standard 3/2/1 pattern (per side), at 500/1500/2500 ft from
             # threshold. We skip the 1000 ft set because the aiming point
             # sits there. Each TDZ stripe is 75 ft long × 6 ft wide.
-            if marking == "PIR" and usable_remaining > 3000.0:
+            if (_interior_detail and marking == "PIR"
+                    and usable_remaining > 3000.0):
                 STRIPE_LEN = 75.0
                 STRIPE_W   = 6.0
                 STRIPE_GAP = 5.0
