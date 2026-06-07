@@ -1315,36 +1315,52 @@ class SVSRenderer:
         min_diag_m = 50.0 * range_nm
         min_diag_deg = min_diag_m / 111139.0
         with self._perf.time("water.query"):
-            polys = list(self.water_db.polygons_in_range(
+            polys = [pp for pp in self.water_db.polygons_in_range(
                 ac_lat, ac_lon, range_nm,
-                min_bbox_diag_deg=min_diag_deg))
+                min_bbox_diag_deg=min_diag_deg)
+                if len(pp.vertices) >= 3]
 
-        for poly in polys:
-            if len(poly.vertices) < 3:
+        # Batch SRTM elevation lookup for every inland polygon that
+        # needs it. The previous per-polygon path called
+        # _sample_elevations(np.array([[lat]]), np.array([[lon]])) —
+        # the numpy 1x1 construction was ~0.20 ms of overhead per
+        # call, so 120 inland polys = 25 ms of pure numpy setup with
+        # essentially zero actual work. Collecting all sample points
+        # into a single Nx1 array amortises the overhead to one
+        # numpy call per frame.
+        needs_sample_idx = []
+        sample_lats = []
+        sample_lons = []
+        for i, poly in enumerate(polys):
+            if poly.is_ocean or poly.elev_ft is not None:
                 continue
+            needs_sample_idx.append(i)
+            vlat, vlon = poly.vertices[0]
+            sample_lats.append(vlat)
+            sample_lons.append(vlon)
+        sampled_ft = {}
+        if needs_sample_idx:
+            with self._perf.time("water.srtm_sample"):
+                arr_lat = np.asarray(sample_lats,
+                                     dtype=np.float64)[:, None]
+                arr_lon = np.asarray(sample_lons,
+                                     dtype=np.float64)[:, None]
+                elev_m_arr, _ = self._sample_elevations(arr_lat, arr_lon)
+            elev_m_flat = elev_m_arr[:, 0]
+            for k, i in enumerate(needs_sample_idx):
+                e = float(elev_m_flat[k])
+                if e <= WATER_SENTINEL_M / 2.0:
+                    sampled_ft[i] = 0.0
+                else:
+                    sampled_ft[i] = e * 3.28084
 
-            # Pick a surface elevation for the polygon.
-            # Ocean is sea level by definition — skip the SRTM lookup
-            # entirely. With ~100 ocean polygons in range near any
-            # coast, _sample_elevations was the dominant per-frame
-            # cost in the water overlay (each call constructs numpy
-            # arrays and hits the tile cache); short-circuiting here
-            # is the difference between 2 FPS and a usable frame
-            # rate.
+        for i, poly in enumerate(polys):
             if poly.is_ocean:
                 surface_ft = 0.0
             elif poly.elev_ft is not None:
                 surface_ft = float(poly.elev_ft)
             else:
-                with self._perf.time("water.srtm_sample"):
-                    vlat, vlon = poly.vertices[0]
-                    elev_m, _ = self._sample_elevations(
-                        np.array([[vlat]]), np.array([[vlon]]))
-                    e = float(elev_m[0, 0])
-                if e <= WATER_SENTINEL_M / 2.0:
-                    surface_ft = 0.0
-                else:
-                    surface_ft = e * 3.28084
+                surface_ft = sampled_ft.get(i, 0.0)
 
             corners = [(lat, lon, surface_ft)
                        for (lat, lon) in poly.vertices]
