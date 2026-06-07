@@ -1292,16 +1292,27 @@ class SVSRenderer:
         p.setBrush(QBrush(COLOR_WATER))
 
         # Distance-adaptive size filter for inland water polygons.
-        # A pond smaller than ~1 pixel on screen at the current range
-        # contributes nothing visible but still pays full per-vertex
-        # projection + SRTM-sample cost — at DFW with OSM density that
-        # was 5950 polygons / frame, all but ~200 of them sub-pixel.
-        # Threshold: ~90 m diagonal at 30 NM range, scaled linearly so
-        # auto_range zoom-in (down to 5 NM AGL) reveals smaller water
-        # bodies as the camera comes closer. Ocean is exempted inside
-        # the DB query — coastline polys can have tiny bboxes but
-        # still cover the foreground.
-        min_diag_m = 90.0 * (range_nm / 30.0)
+        # OSM density at DFW puts 7000+ polygons in a 30 NM box —
+        # every farm pond, sewage lagoon, drainage feature, wide-river
+        # segment — and each pays full per-vertex projection + SRTM
+        # elevation sample cost (no batched terrain lookup yet). We
+        # filter at SQL level on bbox squared diagonal.
+        #
+        # Coefficient K=50 was tuned empirically against the DFW area:
+        #   range 30 NM (cruise)   K=50 -> 1500 m threshold -> ~120 polys
+        #   range 10 NM (approach) K=50 ->  500 m threshold -> ~200 polys
+        #   range  5 NM (pattern)  K=50 ->  250 m threshold ->  ~80 polys
+        #   range  2 NM (low pass) K=50 ->  100 m threshold -> ~14  polys
+        # The linear-in-range scaling keeps the angular size of the
+        # smallest rendered polygon roughly constant on screen, so
+        # auto_range zoom-in naturally reveals smaller water bodies
+        # as the camera comes close (the "show me ponds when I'm
+        # close, not when I'm at FL250" semantic).
+        #
+        # Ocean is exempted inside the DB query — a coastline polygon
+        # can have a small bbox (narrow inlet) yet still cover most of
+        # the visible foreground.
+        min_diag_m = 50.0 * range_nm
         min_diag_deg = min_diag_m / 111139.0
         with self._perf.time("water.query"):
             polys = list(self.water_db.polygons_in_range(
