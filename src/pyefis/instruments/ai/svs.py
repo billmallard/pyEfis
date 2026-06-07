@@ -1444,7 +1444,8 @@ class SVSRenderer:
                      a + STRIPE_LEN, -CL_WIDTH / 2.0)
                 a += STRIPE_LEN + STRIPE_GAP
 
-    def _collect_runway_markings(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _collect_runway_markings(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                                 heading_deg):
         """Assemble every visible runway's non-text marking quads
         into one big triangle list. Uses the same close-runway gate
         and marking-budget logic as the CPU ``_draw_runways`` loop
@@ -1452,9 +1453,18 @@ class SVSRenderer:
         controller's detail-distance + max-markings limits. Cached
         for 1 s keyed by coarsened aircraft position.
 
-        Returns ``None`` when no marking quads are emitted (no
-        airports in range, every runway over detail_distance_nm,
-        controller budget exhausted)."""
+        Triangles with any vertex behind the camera near-plane are
+        filtered out before return. The overlay shader's z=2 trick
+        clips behind-camera vertices but GL interpolates the xy
+        coordinates linearly across the near-plane crossing, which
+        for atan2-based projection produces big wedge artifacts
+        (vertex at +90 deg azimuth interpolated with front vertex at
+        0 deg gives an XY path through 45 deg). Drop straddling
+        triangles entirely — losing the small portion of markings
+        right under the aircraft is preferable to wedge artifacts
+        across the lower viewport.
+
+        Returns ``None`` when no marking quads are emitted."""
         if (getattr(self, "airport_db", None) is None
                 or not self.airport_db.ready):
             return None
@@ -1505,14 +1515,51 @@ class SVSRenderer:
                 marking_budget -= 1
                 self._emit_runway_marking_quads(rwy, rwy_dist_nm, out)
 
-        if out:
-            result = np.asarray(out, dtype=np.float32)
-        else:
-            result = None
+        result = (np.asarray(out, dtype=np.float32)
+                  if out else None)
         self._runway_markings_cache = result
         self._runway_markings_cache_key = key
         self._runway_markings_cache_time = now
-        return result
+        # Apply the behind-camera filter AFTER caching. The triangle
+        # SET is position-stable (cache key is just lat / lon / range
+        # / quality level) but the BEHIND-vs-FRONT split depends on
+        # the current heading — which would invalidate the cache
+        # every degree of turn if it lived inside the key. The filter
+        # itself is one numpy reshape + bool reduce, very cheap.
+        return self._filter_behind_camera_triangles(
+            result, ac_lat, ac_lon, lat_cos, heading_deg)
+
+    @staticmethod
+    def _filter_behind_camera_triangles(verts_np, ac_lat, ac_lon, lat_cos,
+                                        heading_deg):
+        """Mask out triangles that have any vertex behind the camera
+        near plane. The overlay shader's z=2 clip puts behind
+        vertices at clip-space z=2, GL then interpolates xy linearly
+        across the near-plane crossing — and for an atan2-based
+        azimuthal projection that interpolation gives big wedge
+        artifacts (front vertex at 0 deg azimuth interpolated with
+        behind vertex at +90 deg gives an XY path through +45 deg).
+        Drop straddling triangles before upload."""
+        if verts_np is None or verts_np.shape[0] == 0:
+            return None
+        head_rad = math.radians(heading_deg)
+        cos_h = math.cos(head_rad)
+        sin_h = math.sin(head_rad)
+        d_lat = verts_np[:, 0] - np.float32(ac_lat)
+        d_lon = ((verts_np[:, 1] - np.float32(ac_lon))
+                 * np.float32(lat_cos))
+        x_fwd = (d_lat * np.float32(cos_h)
+                 + d_lon * np.float32(sin_h))
+        n_tris = verts_np.shape[0] // 3
+        if n_tris == 0:
+            return None
+        tri_fwd = x_fwd.reshape(n_tris, 3)
+        keep = (tri_fwd > np.float32(5.0 / 111139.0)).all(axis=1)
+        if keep.all():
+            return verts_np
+        if not keep.any():
+            return None
+        return verts_np[np.repeat(keep, 3)]
 
     def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
                                  pitch_deg, roll_deg, heading_deg, ppd, w, h,

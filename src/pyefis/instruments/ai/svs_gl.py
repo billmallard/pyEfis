@@ -777,10 +777,13 @@ class SVSGLRenderer:
                 # Phase 4a — non-text runway markings (threshold bars,
                 # aiming point, TDZ, centerline stripes, side stripes,
                 # chevrons). One big white triangle list per frame.
+                # heading_deg is passed because the behind-camera
+                # triangle filter depends on it.
                 with p._perf.time("runway.markings"):
                     with p._perf.time("runway.markings.collect"):
                         mk_tris = p._collect_runway_markings(
-                            ac_lat, ac_lon, ac_alt_ft, range_nm)
+                            ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            heading_deg)
                     if mk_tris is not None and mk_tris.size > 0:
                         # WHITE marking colour (245, 245, 245).
                         with p._perf.time("runway.markings.gl_draw"):
