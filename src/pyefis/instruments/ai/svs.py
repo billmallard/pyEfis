@@ -1765,12 +1765,18 @@ class SVSRenderer:
         # ----- Centerline stripes (always; cosmetic for BSC) ---------------
         # 120 ft stripe + 80 ft gap, starting 50 ft inboard of threshold bars
         # (so 200 ft from threshold on PIR/NPI; 50 ft on BSC).
+        # Same LOD gate as interior markings — at >1.5 NM each 3-ft-wide
+        # stripe is sub-pixel; a 10000 ft runway produces ~50 stripes
+        # per runway, so skipping at distance is a big win at busy
+        # terminal areas.
         STRIPE_LEN = 120.0
         STRIPE_GAP = 80.0
         CL_WIDTH   = 3.0
         cl_a0 = usable_a0 + (200.0 if m1 in ("PIR", "NPI") else 50.0)
         cl_a1 = usable_a1 - (200.0 if m2 in ("PIR", "NPI") else 50.0)
         a = cl_a0
+        if not _interior_detail:
+            a = cl_a1  # skip the loop entirely
         while a + STRIPE_LEN < cl_a1:
             poly = quad(a,                -CL_WIDTH / 2.0,
                         a,                +CL_WIDTH / 2.0,
