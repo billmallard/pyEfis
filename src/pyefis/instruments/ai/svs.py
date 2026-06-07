@@ -1397,21 +1397,21 @@ class SVSRenderer:
 
             # If the camera is *inside* the polygon (flying over a
             # lake), the shoreline vertices all project to a thin
-            # band at the horizon line — the polygon fill ends up as
-            # a narrow strip and the terrain layer shows through
-            # everything below it, which is exactly the "land at the
-            # bottom of the screen that should be water" bug.
+            # band at the horizon line — water at infinite range
+            # sits exactly at horizon — and the polygon fill ends
+            # up as a narrow strip with terrain showing through
+            # everything below it. Classic "land at the bottom of
+            # the screen that should be water" bug.
             #
-            # In that case, replace the shoreline polygon with a
-            # large surround at the water's elevation (50 NM square
-            # around the aircraft). Two corners are ahead of the
-            # camera, two are behind; the Sutherland-Hodgman clip
-            # keeps the ahead pair and synthesises near-plane
-            # intersections for the behind pair, yielding a quad
-            # that covers the foreground all the way down to the
-            # screen bottom. Doesn't show the actual far shoreline
-            # — that's a follow-up — but matches the X-Plane / real-
-            # world view of "everything below horizon is water".
+            # Fix: replace the shoreline with a 50 NM surround at
+            # the water's elevation (projects to a thin horizon
+            # line) AND append the two screen-bottom corners after
+            # projection. Qt closes the polygon through those
+            # corners so the fill covers everything from horizon
+            # down to the screen bottom — i.e. the foreground reads
+            # as water. The far shoreline (and any non-water island
+            # inside the bbox) isn't visible while inside the lake,
+            # which is a TODO for later.
             camera_inside = _point_in_polygon_latlon(
                 ac_lat, ac_lon, poly.vertices)
             if camera_inside:
@@ -1436,6 +1436,16 @@ class SVSRenderer:
                     corners, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg, ppd, w, h,
                     eps=eps_default)
+            if camera_inside and len(pts) >= 2:
+                # Append screen-bottom corners. The clipped surround
+                # has its first vertex at the near-plane intersection
+                # on one side of the horizon and its last on the
+                # opposite side, so closing through bottom-left then
+                # bottom-right (in that order) wraps the polygon
+                # through the foreground without crossing edges.
+                pts = list(pts)
+                pts.append(QPointF(0, h))
+                pts.append(QPointF(w, h))
             if len(pts) >= 3:
                 with self._perf.time("water.drawPolygon"):
                     p.drawPolygon(_QPolygonF(pts))
