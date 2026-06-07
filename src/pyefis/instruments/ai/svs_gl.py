@@ -269,6 +269,92 @@ void main() {
 }
 """
 
+# ---------------------------------------------------------------------------
+# Overlay shader (Phase 0 of the SVS-overlays-to-GPU plan).
+# ---------------------------------------------------------------------------
+# A "generic flat-color" vertex/fragment pair reused by every overlay we
+# migrate off the CPU: water polygons (Phase 1), obstacle poles (Phase 2),
+# runway polygon and side stripes (Phase 3), runway markings (Phase 4),
+# airport flag poles (Phase 5).
+#
+# The vertex shader projects a single world-space point (lat, lon, elev_ft)
+# to screen using the same math the terrain shader uses (atan2 azimuth +
+# pitch/roll rotation). Every overlay shares the projection; only the
+# uniform color and per-overlay vertex buffer differ.
+#
+# Vertices that fall behind the camera (x_fwd <= 0) get z=2.0 in clip
+# space, which falls outside the [-w, +w] visible volume so GL clips them
+# automatically. Triangles straddling the near plane get clipped per-pixel
+# by the GL pipeline — much simpler than the Sutherland-Hodgman the CPU
+# path runs.
+
+_OVERLAY_VERT_BODY = """
+in vec3 a_world_pos;   // (lat_deg, lon_deg, elev_ft)
+
+uniform float u_ac_lat;
+uniform float u_ac_lon;
+uniform float u_ac_alt_ft;
+uniform float u_heading_deg;
+uniform float u_pitch_deg;
+uniform float u_roll_deg;
+uniform float u_pixels_per_deg;
+uniform vec2  u_viewport;
+
+const float PI            = 3.14159265358979;
+const float DEG_PER_RAD   = 180.0 / PI;
+const float M_PER_FT      = 0.3048;
+const float M_PER_DEG_LAT = 111139.0;
+
+void main() {
+    float lat_cos = cos(radians(u_ac_lat));
+    float d_lat = a_world_pos.x - u_ac_lat;
+    float d_lon = (a_world_pos.y - u_ac_lon) * lat_cos;
+
+    float head_rad = radians(u_heading_deg);
+    float cos_h = cos(head_rad);
+    float sin_h = sin(head_rad);
+    float x_fwd   =  d_lat * cos_h + d_lon * sin_h;
+    float x_right = -d_lat * sin_h + d_lon * cos_h;
+
+    float range_deg = sqrt(x_fwd * x_fwd + x_right * x_right);
+    float range_m   = max(range_deg * M_PER_DEG_LAT, 1.0);
+    float alt_diff_m = (a_world_pos.z - u_ac_alt_ft) * M_PER_FT;
+    float elev_angle_deg = atan(alt_diff_m, range_m) * DEG_PER_RAD;
+    float x_ang = atan(x_right, x_fwd) * DEG_PER_RAD;
+    float y_ang = elev_angle_deg - u_pitch_deg;
+
+    float x_px =  x_ang * u_pixels_per_deg;
+    float y_px = -y_ang * u_pixels_per_deg;
+
+    float roll_rad = radians(-u_roll_deg);
+    float cos_r = cos(roll_rad);
+    float sin_r = sin(roll_rad);
+    vec2 rotated = vec2(
+        x_px * cos_r - y_px * sin_r,
+        x_px * sin_r + y_px * cos_r);
+    vec2 screen_xy = rotated + u_viewport * 0.5;
+
+    // GL clip-space xy. The z component is pushed out of [-1, 1] when
+    // the vertex falls behind the camera so GL discards it.
+    float behind = step(x_fwd, 0.0);
+    gl_Position = vec4(
+        2.0 * screen_xy.x / u_viewport.x - 1.0,
+        1.0 - 2.0 * screen_xy.y / u_viewport.y,
+        mix(0.0, 2.0, behind),
+        1.0);
+}
+"""
+
+_OVERLAY_FRAG_BODY = """
+uniform vec4 u_color;
+out vec4 outColor;
+
+void main() {
+    outColor = u_color;
+}
+"""
+
+
 # SRTM3 constants — see svs.py
 SRTM3_SAMPLES = 1201
 # 2-by-2 tile patch around the aircraft. The patch starts one degree
@@ -332,6 +418,17 @@ class SVSGLRenderer:
         self._heightmap_tex_id: int | None = None
         self._patch_origin: tuple[int, int] | None = None
         self._patch_bounds = (0.0, 0.0, 0.0, 0.0)  # lat_min, lat_max, lon_min, lon_max
+
+        # Overlay pass state (Phase 0 of the overlays-to-GPU plan).
+        # The overlay shader is generic — every overlay draw call binds
+        # this program, updates one VBO, sets the u_color uniform, and
+        # issues a glDrawArrays. Lazily compiled on first frame.
+        self._overlay_program: QOpenGLShaderProgram | None = None
+        self._overlay_vao: QOpenGLVertexArrayObject | None = None
+        self._overlay_vbo: QOpenGLBuffer | None = None
+        self._overlay_vbo_capacity = 0   # current GL-side buffer size in floats
+        self._overlay_a_world_pos = -1
+        self._overlay_u: dict[str, int] = {}
 
         actual = self._ctx.format()
         log.info(
@@ -456,6 +553,14 @@ class SVSGLRenderer:
                 self._vao.release()
                 self._program.release()
 
+            # Overlay pass (water, runways, obstacles, flags) draws
+            # into the same FBO on top of the terrain. Phase 0 keeps
+            # this empty unless _gl_overlay_smoketest is set on the
+            # parent renderer; Phase 1+ wires up the real overlays.
+            self._render_overlays(
+                w, h, ac_lat, ac_lon, ac_alt_ft,
+                pitch_deg, roll_deg, heading_deg, pixels_per_deg)
+
             return self._fbo.toImage()
         finally:
             self._fbo.release()
@@ -480,6 +585,146 @@ class SVSGLRenderer:
         if self._fbo is None or self._fbo_size != size:
             self._fbo = QOpenGLFramebufferObject(size)
             self._fbo_size = size
+
+    # ------------------------------------------------------------------
+    # Overlay pass (Phase 0 infrastructure for the overlays-to-GPU plan)
+    # ------------------------------------------------------------------
+    def _ensure_overlay_program(self):
+        if self._overlay_program is not None:
+            return
+        header = self._shader_header()
+        vsrc = header + _OVERLAY_VERT_BODY
+        if "es" in header:
+            fheader = "#version 300 es\nprecision mediump float;\n"
+        else:
+            fheader = header
+        fsrc = fheader + _OVERLAY_FRAG_BODY
+        prog = QOpenGLShaderProgram()
+        if not prog.addShaderFromSourceCode(
+                QOpenGLShader.ShaderTypeBit.Vertex, vsrc):
+            raise RuntimeError(
+                f"overlay vertex shader compile failed: {prog.log()}")
+        if not prog.addShaderFromSourceCode(
+                QOpenGLShader.ShaderTypeBit.Fragment, fsrc):
+            raise RuntimeError(
+                f"overlay fragment shader compile failed: {prog.log()}")
+        if not prog.link():
+            raise RuntimeError(f"overlay shader link failed: {prog.log()}")
+        self._overlay_a_world_pos = prog.attributeLocation("a_world_pos")
+        if self._overlay_a_world_pos < 0:
+            raise RuntimeError("overlay shader: a_world_pos not found")
+        for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft",
+                     "u_heading_deg", "u_pitch_deg", "u_roll_deg",
+                     "u_pixels_per_deg", "u_viewport", "u_color"):
+            loc = prog.uniformLocation(name)
+            if loc < 0:
+                raise RuntimeError(f"overlay shader: {name} not found")
+            self._overlay_u[name] = loc
+        self._overlay_program = prog
+
+        self._overlay_vao = QOpenGLVertexArrayObject()
+        self._overlay_vao.create()
+        self._overlay_vbo = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
+        self._overlay_vbo.create()
+        self._overlay_vbo.setUsagePattern(
+            QOpenGLBuffer.UsagePattern.DynamicDraw)
+        # Allocate the attribute binding once; subsequent draws just
+        # re-upload the buffer contents.
+        self._overlay_vao.bind()
+        try:
+            self._overlay_vbo.bind()
+            try:
+                prog.bind()
+                prog.enableAttributeArray(self._overlay_a_world_pos)
+                # vec3 floats interleaved, stride = 3 * 4 bytes.
+                prog.setAttributeBuffer(
+                    self._overlay_a_world_pos, gl.GL_FLOAT, 0, 3, 12)
+                prog.release()
+            finally:
+                self._overlay_vbo.release()
+        finally:
+            self._overlay_vao.release()
+
+    def _draw_overlay_primitive(self, vertices_np, color_rgba, mode):
+        """Upload ``vertices_np`` (Nx3 float32 array of lat, lon, elev_ft)
+        and issue one draw call. ``mode`` is a GL primitive type
+        (GL_TRIANGLES, GL_LINES, etc.). ``color_rgba`` is a 4-tuple of
+        floats in [0, 1].
+
+        Caller must have already bound the overlay program, set its
+        per-frame uniforms (aircraft state, viewport), and have the
+        FBO active. This method handles only the buffer upload + draw.
+        """
+        if vertices_np is None or len(vertices_np) == 0:
+            return
+        if vertices_np.dtype != np.float32:
+            vertices_np = vertices_np.astype(np.float32)
+        n_floats = vertices_np.size
+        n_bytes = n_floats * 4
+        self._overlay_vao.bind()
+        try:
+            self._overlay_vbo.bind()
+            try:
+                if n_bytes > self._overlay_vbo_capacity:
+                    # Allocate a fresh buffer at >= the requested size.
+                    self._overlay_vbo.allocate(
+                        vertices_np.tobytes(), n_bytes)
+                    self._overlay_vbo_capacity = n_bytes
+                else:
+                    self._overlay_vbo.write(0, vertices_np.tobytes(),
+                                            n_bytes)
+            finally:
+                self._overlay_vbo.release()
+            self._overlay_program.setUniformValue(
+                self._overlay_u["u_color"],
+                float(color_rgba[0]), float(color_rgba[1]),
+                float(color_rgba[2]), float(color_rgba[3]))
+            gl.glDrawArrays(mode, 0, vertices_np.shape[0])
+        finally:
+            self._overlay_vao.release()
+
+    def _render_overlays(self, w, h, ac_lat, ac_lon, ac_alt_ft,
+                         pitch_deg, roll_deg, heading_deg, pixels_per_deg):
+        """Phase-0 stub: bind the overlay program, set per-frame uniforms,
+        draw a smoke-test triangle at a fixed world location to prove the
+        pipeline projects correctly. Phase 1+ replaces the smoke-test
+        body with calls to the real overlay sources (water, runways,
+        obstacles, flags)."""
+        self._ensure_overlay_program()
+        prog = self._overlay_program
+        prog.bind()
+        try:
+            prog.setUniformValue(self._overlay_u["u_ac_lat"],
+                                 float(ac_lat))
+            prog.setUniformValue(self._overlay_u["u_ac_lon"],
+                                 float(ac_lon))
+            prog.setUniformValue(self._overlay_u["u_ac_alt_ft"],
+                                 float(ac_alt_ft))
+            prog.setUniformValue(self._overlay_u["u_heading_deg"],
+                                 float(heading_deg))
+            prog.setUniformValue(self._overlay_u["u_pitch_deg"],
+                                 float(pitch_deg))
+            prog.setUniformValue(self._overlay_u["u_roll_deg"],
+                                 float(roll_deg))
+            prog.setUniformValue(self._overlay_u["u_pixels_per_deg"],
+                                 float(pixels_per_deg))
+            prog.setUniformValue(self._overlay_u["u_viewport"],
+                                 float(w), float(h))
+            # Smoke test: a magenta triangle at a fixed lat/lon offset
+            # from the aircraft. Confirms projection math matches the
+            # terrain shader.
+            if getattr(self._parent, "_gl_overlay_smoketest", False):
+                d_deg = 0.1   # ~6 NM
+                test_elev = float(ac_alt_ft) - 2000.0
+                tri = np.array([
+                    [ac_lat + d_deg, ac_lon,        test_elev],
+                    [ac_lat + d_deg, ac_lon + d_deg, test_elev],
+                    [ac_lat,         ac_lon + d_deg, test_elev],
+                ], dtype=np.float32)
+                self._draw_overlay_primitive(
+                    tri, (1.0, 0.0, 1.0, 1.0), gl.GL_TRIANGLES)
+        finally:
+            prog.release()
 
     def _shader_header(self) -> str:
         """Pick the right #version header for the active context."""
