@@ -1345,7 +1345,13 @@ class SVSRenderer:
             p2 = rwy_point(a2, c2, height_ft)
             out.extend((p0, p1, p2))
 
-        _interior_detail = rwy_dist_nm is None or rwy_dist_nm <= 1.5
+        # _interior_detail used to gate the per-pixel-detail markings
+        # (aiming point, TDZ, centerline) past 1.5 NM because the CPU
+        # path couldn't afford the QPainter polygon fills at that
+        # distance. The GPU path doesn't care — emit them at the full
+        # detail_distance_nm range. Leaving the variable here as
+        # always-True so the downstream branch reads naturally.
+        _interior_detail = True
 
         for thr_along, sign, marking, displaced in (
                 (d1,                  +1, m1, d1),
@@ -1506,9 +1512,10 @@ class SVSRenderer:
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm, 1),
-               # Cache key includes the controller level so a level
-               # transition invalidates the cached marking set.
-               self._quality.level)
+               # detail_distance_nm changes with the controller level
+               # (3 / 2.5 / 2 / 1.5 NM by default); keep it in the key
+               # so the marking set re-collects when the gate moves.
+               round(self._quality.detail_distance_nm(), 2))
         if (self._runway_markings_cache is not None
                 and self._runway_markings_cache_key == key
                 and now - self._runway_markings_cache_time
@@ -1518,15 +1525,15 @@ class SVSRenderer:
         lat_cos = math.cos(math.radians(ac_lat))
         range_m = self.range_nm * 1852.0
         airports = self._get_airports_cached(ac_lat, ac_lon)
-        # Sort by distance so the marking budget goes to the nearest
-        # airports first (matches the CPU loop's behaviour).
-        def _ap_d2(ap):
-            d_lat = ap[1] - ac_lat
-            d_lon = (ap[2] - ac_lon) * lat_cos
-            return d_lat * d_lat + d_lon * d_lon
-        airports = sorted(airports, key=_ap_d2)
+        # The CPU path used to sort airports by distance so the
+        # marking-budget cap went to the nearest first, then refused
+        # to emit markings past detail_distance_nm. With the GPU
+        # path that whole budget concept is obsolete (a few thousand
+        # extra triangles cost essentially nothing on V3D) — render
+        # markings for EVERY runway within detail_distance_nm and
+        # let the GPU sort it out. The distance gate stays because
+        # at >3 NM the markings are sub-pixel anyway.
         q_detail_distance_nm = self._quality.detail_distance_nm()
-        marking_budget = self._quality.max_close_markings()
 
         out = []
         for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
@@ -1542,10 +1549,8 @@ class SVSRenderer:
                 d_lon_r = (0.5 * (t1_lon + t2_lon) - ac_lon) * lat_cos
                 rwy_dist_nm = math.sqrt(
                     d_lat_r * d_lat_r + d_lon_r * d_lon_r) * 60.0
-                if (rwy_dist_nm > q_detail_distance_nm
-                        or marking_budget <= 0):
+                if rwy_dist_nm > q_detail_distance_nm:
                     continue
-                marking_budget -= 1
                 self._emit_runway_marking_quads(rwy, rwy_dist_nm, out)
 
         result = (np.asarray(out, dtype=np.float32)
