@@ -1395,53 +1395,38 @@ class SVSRenderer:
             else:
                 surface_ft = sampled_ft.get(i, 0.0)
 
-            # If the camera is *inside* the polygon (flying over a
-            # lake), the shoreline vertices all project to a thin
-            # band at the horizon line — water at infinite range
-            # sits exactly at horizon — and the polygon fill ends
-            # up as a narrow strip with terrain showing through
-            # everything below it. Classic "land at the bottom of
-            # the screen that should be water" bug.
-            #
-            # Fix: replace the shoreline with a 50 NM surround at
-            # the water's elevation (projects to a thin horizon
-            # line) AND append the two screen-bottom corners after
-            # projection. Qt closes the polygon through those
-            # corners so the fill covers everything from horizon
-            # down to the screen bottom — i.e. the foreground reads
-            # as water. The far shoreline (and any non-water island
-            # inside the bbox) isn't visible while inside the lake,
-            # which is a TODO for later.
+            corners = [(lat, lon, surface_ft)
+                       for (lat, lon) in poly.vertices]
+            # When the camera is INSIDE the polygon (e.g. flying over
+            # a lake), the Sutherland-Hodgman clip keeps only the
+            # forward shoreline vertices; the polygon they form is a
+            # curve from one near-plane intersection on the left edge
+            # of the field of view to another on the right. Drawing
+            # that curve as a closed polygon paints a thin sliver of
+            # water along the shoreline and leaves the lake's
+            # foreground (everything between the camera and the
+            # visible shoreline) as terrain underneath — the "brown
+            # band at the bottom of the screen even though I'm over
+            # a lake" bug. Closing the projected polygon through the
+            # two screen-bottom corners makes Qt fill from the
+            # projected shoreline curve down to the bottom of the
+            # screen, giving each lake its actual screen-space
+            # extent: shoreline curve on top, foreground fill below,
+            # the terrain band above the far shore stays visible.
             camera_inside = _point_in_polygon_latlon(
                 ac_lat, ac_lon, poly.vertices)
-            if camera_inside:
-                half_nm = 50.0
-                half_deg_lat = half_nm / 60.0
-                half_deg_lon = half_deg_lat / max(lat_cos, 1e-6)
-                corners = [
-                    (ac_lat + half_deg_lat,
-                     ac_lon + half_deg_lon, surface_ft),
-                    (ac_lat + half_deg_lat,
-                     ac_lon - half_deg_lon, surface_ft),
-                    (ac_lat - half_deg_lat,
-                     ac_lon - half_deg_lon, surface_ft),
-                    (ac_lat - half_deg_lat,
-                     ac_lon + half_deg_lon, surface_ft),
-                ]
-            else:
-                corners = [(lat, lon, surface_ft)
-                           for (lat, lon) in poly.vertices]
             with self._perf.time("water.project"):
                 pts = self._project_polygon_clipped(
                     corners, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg, ppd, w, h,
                     eps=eps_default)
             if camera_inside and len(pts) >= 2:
-                # Append screen-bottom corners. The clipped surround
-                # has its first vertex at the near-plane intersection
-                # on one side of the horizon and its last on the
-                # opposite side, so closing through bottom-left then
-                # bottom-right (in that order) wraps the polygon
+                # Sutherland-Hodgman emits the clipped polygon with
+                # its first vertex at the near-plane crossing where
+                # the polygon enters the forward half-space, and its
+                # last vertex at where it exits — these project to
+                # opposite screen edges at horizon level. Appending
+                # bottom-left then bottom-right closes the polygon
                 # through the foreground without crossing edges.
                 pts = list(pts)
                 pts.append(QPointF(0, h))
