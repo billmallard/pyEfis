@@ -37,9 +37,10 @@ OpenGL.ERROR_ON_COPY = True
 from OpenGL import GL as gl  # noqa: E402
 
 import numpy as np  # noqa: E402
-from PyQt6.QtCore import QRectF  # noqa: E402
+from PyQt6.QtCore import QRectF, QSize  # noqa: E402
 from PyQt6.QtGui import (  # noqa: E402
-    QColor, QFont, QFontMetricsF, QImage, QPainter, QSurfaceFormat,
+    QColor, QFont, QFontMetricsF, QImage, QOffscreenSurface,
+    QOpenGLContext, QPainter, QSurfaceFormat,
 )
 from PyQt6.QtOpenGL import (  # noqa: E402
     QOpenGLBuffer,
