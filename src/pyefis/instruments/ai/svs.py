@@ -107,13 +107,13 @@ class _QualityController:
     """
 
     LEVELS = (
-        # k = designator strips per character (FAA marking detail)
         # detail_factor = scales base detail_distance_nm
         # max_markings = top-N nearest runways that get full Tier C markings
-        {"k": 6, "detail_factor": 1.00, "max_markings": float("inf")},  # L0
-        {"k": 4, "detail_factor": 0.83, "max_markings": 6},             # L1
-        {"k": 3, "detail_factor": 0.67, "max_markings": 4},             # L2
-        {"k": 2, "detail_factor": 0.50, "max_markings": 2},             # L3
+        # (designator-strips knob retired in Phase 4b when text moved to GPU)
+        {"detail_factor": 1.00, "max_markings": float("inf")},  # L0
+        {"detail_factor": 0.83, "max_markings": 6},             # L1
+        {"detail_factor": 0.67, "max_markings": 4},             # L2
+        {"detail_factor": 0.50, "max_markings": 2},             # L3
     )
 
     LEVEL_ENTER = (None, 0.30, 0.60, 0.90)
@@ -173,11 +173,6 @@ class _QualityController:
             return self.base_detail_distance_nm
         return (self.base_detail_distance_nm
                 * self.LEVELS[self._level]["detail_factor"])
-
-    def marking_k_strips(self):
-        if not self.enabled:
-            return self.LEVELS[0]["k"]
-        return self.LEVELS[self._level]["k"]
 
     def max_close_markings(self):
         if not self.enabled:
@@ -577,8 +572,7 @@ class SVSRenderer:
         return [
             f"  quality: L{q.level} pressure={q.pressure:.2f} "
             f"fps_ema={q.fps_ema:.1f} "
-            f"(K={q.marking_k_strips()}, "
-            f"detail={q.detail_distance_nm():.2f} NM, "
+            f"(detail={q.detail_distance_nm():.2f} NM, "
             f"max_markings={q.max_close_markings()})"
         ]
 
@@ -1589,6 +1583,194 @@ class SVSRenderer:
         return self._filter_behind_camera_triangles(
             result, ac_lat, ac_lon, lat_cos, heading_deg)
 
+    # ------------------------------------------------------------------
+    # Phase 4b: runway designator text. Per-glyph (lat, lon, elev_ft,
+    # u, v) quads laid out in runway-local feet according to FAA
+    # AC 150/5340-1L and bound to the glyph-atlas texture. The GL
+    # perspective shader handles the foreshortening — no more
+    # quadToQuad / K-strip CPU work.
+    # ------------------------------------------------------------------
+
+    # Per-character widths in feet (FAA AC 150/5340-1L). "1" gets a
+    # plain vertical stroke; letters L/C/R are wider; everything else
+    # at 20 ft.
+    _DESIG_CHAR_H_FT   = 60.0
+    _DESIG_CHAR_GAP_FT = 5.0
+    _DESIG_ROW_GAP_FT  = 20.0
+    _DESIG_STROKE_FT   = 5.33
+    # Anchor distance from the usable threshold (inward along runway).
+    # Same number the CPU path used so the on-runway position is
+    # unchanged after migration.
+    _DESIG_CENTER_OFFSET_FT = 380.0
+
+    @classmethod
+    def _designator_char_width_ft(cls, ch):
+        if ch == '1':
+            return cls._DESIG_STROKE_FT
+        if ch in ('L', 'C', 'R'):
+            return 24.0
+        return 20.0
+
+    def _collect_runway_designator_quads(self, ac_lat, ac_lon, ac_alt_ft,
+                                         range_nm, heading_deg,
+                                         atlas_uvs):
+        """Emit textured quads for every visible runway designator.
+
+        Returns an Nx5 float32 array of interleaved (lat, lon, elev_ft,
+        u, v) vertices, 6 per character glyph (two triangles). Caller
+        binds the text shader + glyph-atlas texture and issues one
+        glDrawArrays(GL_TRIANGLES) on the whole buffer.
+
+        Mirrors the layout decisions of the retired CPU
+        ``_draw_runway_markings`` designator branch: each end of each
+        runway gets a designator anchored 380 ft inward from the
+        usable threshold; runways with a parallel-runway suffix
+        letter (L/C/R) lay the number row "far" from the threshold
+        and the letter row "near" (closer to the threshold).
+
+        Honours the same detail_distance_nm gate as
+        ``_collect_runway_markings``; past that distance the glyphs
+        are sub-pixel and not worth the upload."""
+        if (getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready):
+            return None
+        if not atlas_uvs:
+            return None
+
+        lat_cos = math.cos(math.radians(ac_lat))
+        range_m = self.range_nm * 1852.0
+        airports = self._get_airports_cached(ac_lat, ac_lon)
+        q_detail_distance_nm = self._quality.detail_distance_nm()
+
+        out = []
+        for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
+            d_lat_ref = ref_lat - ac_lat
+            d_lon_ref = (ref_lon - ac_lon) * lat_cos
+            if (math.sqrt(d_lat_ref ** 2 + d_lon_ref ** 2)
+                    * 111139.0 > range_m):
+                continue
+            for rwy in runways:
+                t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
+                t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
+                d_lat_r = (0.5 * (t1_lat + t2_lat) - ac_lat)
+                d_lon_r = (0.5 * (t1_lon + t2_lon) - ac_lon) * lat_cos
+                rwy_dist_nm = (math.sqrt(
+                    d_lat_r * d_lat_r + d_lon_r * d_lon_r) * 60.0)
+                if rwy_dist_nm > q_detail_distance_nm:
+                    continue
+                self._emit_runway_designator_quads(rwy, atlas_uvs, out)
+
+        if not out:
+            return None
+        return np.asarray(out, dtype=np.float32)
+
+    def _emit_runway_designator_quads(self, rwy, atlas_uvs, out):
+        """Append per-glyph textured-quad vertices for both ends of
+        ``rwy`` into ``out`` (a flat list of (lat, lon, elev_ft, u, v)
+        tuples — 6 per glyph). Matches the FAA AC 150/5340-1L
+        designator layout the CPU path implemented before Phase 4b."""
+        t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
+        t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
+        t1_elev = rwy["thr1_elev_ft"]
+        t2_elev = rwy["thr2_elev_ft"]
+        length_ft = float(rwy.get("length_ft") or 0.0)
+        d1 = float(rwy.get("thr1_displaced_ft") or 0.0)
+        d2 = float(rwy.get("thr2_displaced_ft") or 0.0)
+        des1 = (rwy.get("thr1_designator") or "").strip().upper()
+        des2 = (rwy.get("thr2_designator") or "").strip().upper()
+
+        lat_cos = math.cos(math.radians(t1_lat))
+        d_lat = (t2_lat - t1_lat)
+        d_lon = (t2_lon - t1_lon) * lat_cos
+        rwy_deg_len = math.sqrt(d_lat * d_lat + d_lon * d_lon)
+        if rwy_deg_len < 1e-9:
+            return
+        if length_ft <= 0:
+            length_ft = rwy_deg_len * 364491.0
+
+        perp_lat = -d_lon / rwy_deg_len
+        perp_lon =  d_lat / rwy_deg_len / lat_cos
+        ft_per_deg_lat = 364491.0
+
+        def world_point(along_ft, across_ft):
+            f = max(0.0, min(1.0, along_ft / length_ft))
+            clat = t1_lat + f * (t2_lat - t1_lat)
+            clon = t1_lon + f * (t2_lon - t1_lon)
+            celev = t1_elev + f * (t2_elev - t1_elev)
+            across_deg = across_ft / ft_per_deg_lat
+            return (clat + perp_lat * across_deg,
+                    clon + perp_lon * across_deg,
+                    celev)
+
+        CHAR_H = self._DESIG_CHAR_H_FT
+        CHAR_GAP = self._DESIG_CHAR_GAP_FT
+        ROW_GAP = self._DESIG_ROW_GAP_FT
+        CENTER_OFF = self._DESIG_CENTER_OFFSET_FT
+
+        def emit_row(chars, row_center_along, sign):
+            if not chars:
+                return
+            widths = [self._designator_char_width_ft(c) for c in chars]
+            total_w = sum(widths) + CHAR_GAP * max(0, len(chars) - 1)
+            # Row spans 60 ft along the runway: top edge is "far" from
+            # the threshold (+sign), bottom edge is "near" (-sign).
+            top_a = row_center_along + sign * (CHAR_H / 2.0)
+            bot_a = row_center_along - sign * (CHAR_H / 2.0)
+            # Pilot's left edge of the row.
+            cur_across = -sign * (total_w / 2.0)
+            for ch, cw in zip(chars, widths):
+                uv = atlas_uvs.get(ch)
+                if uv is None:
+                    cur_across += sign * (cw + CHAR_GAP)
+                    continue
+                u0, v0, u1, v1 = uv
+                sL = cur_across
+                sR = cur_across + sign * cw
+                # World-space quad corners. UV box is oriented so that
+                # v0 = TOP of the glyph in the atlas (because QImage's
+                # y axis grows downward, matching atlas top→bottom).
+                # In the world, "top" of the glyph corresponds to the
+                # row's "top_a" (far from threshold). Pilot reads
+                # bottom-up — so we map v0 -> top_a (far from thr),
+                # v1 -> bot_a (near thr), u0 -> sL, u1 -> sR.
+                p_tl = world_point(top_a, sL)
+                p_tr = world_point(top_a, sR)
+                p_br = world_point(bot_a, sR)
+                p_bl = world_point(bot_a, sL)
+                v_tl = (p_tl[0], p_tl[1], p_tl[2], u0, v0)
+                v_tr = (p_tr[0], p_tr[1], p_tr[2], u1, v0)
+                v_br = (p_br[0], p_br[1], p_br[2], u1, v1)
+                v_bl = (p_bl[0], p_bl[1], p_bl[2], u0, v1)
+                out.extend((v_tl, v_tr, v_br, v_tl, v_br, v_bl))
+                cur_across += sign * (cw + CHAR_GAP)
+
+        for thr_along, sign, designator in (
+                (d1,             +1, des1),
+                (length_ft - d2, -1, des2)):
+            if not designator:
+                continue
+            usable_remaining = (length_ft - d1 - d2)
+            if usable_remaining < 100.0:
+                continue
+            # Split into "numbers" row + optional parallel-runway letter.
+            if designator[-1] in ('L', 'C', 'R'):
+                number_part = designator[:-1]
+                letter_part = designator[-1]
+            else:
+                number_part = designator
+                letter_part = ""
+            center_along = thr_along + sign * CENTER_OFF
+            if letter_part:
+                # Two-row layout. Numbers far from threshold (+sign),
+                # letter near threshold (-sign).
+                row_offset = (CHAR_H + ROW_GAP) / 2.0
+                emit_row(number_part,
+                         center_along + sign * row_offset, sign)
+                emit_row(letter_part,
+                         center_along - sign * row_offset, sign)
+            else:
+                emit_row(number_part, center_along, sign)
+
     @staticmethod
     def _filter_behind_camera_triangles(verts_np, ac_lat, ac_lon, lat_cos,
                                         heading_deg):
@@ -2066,10 +2248,6 @@ class SVSRenderer:
             d_lon = (ap[2] - ac_lon) * lat_cos
             return d_lat * d_lat + d_lon * d_lon
         airports = sorted(airports, key=_ap_d2)
-        # Distance threshold for full Tier C markings — sourced from the
-        # quality controller so it shrinks under load.
-        q_detail_distance_nm = self._quality.detail_distance_nm()
-        marking_budget = self._quality.max_close_markings()
         for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
             # Range-check on airport reference point
             d_lat_ref = (ref_lat - ac_lat)
@@ -2077,28 +2255,13 @@ class SVSRenderer:
             if math.sqrt(d_lat_ref ** 2 + d_lon_ref ** 2) * 111139.0 > range_m:
                 continue
 
-            # --- Runway rectangles ---
-            # Polygon itself is drawn in the GL overlay pass (Phase 3
-            # of the overlays-to-GPU migration). The CPU path here
-            # only handles the per-runway distance test (still
-            # required for the marking-budget gate) and the marking
-            # render itself.
-            for rwy in runways:
-                t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
-                t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
-                d_lat_r = (0.5 * (t1_lat + t2_lat) - ac_lat)
-                d_lon_r = (0.5 * (t1_lon + t2_lon) - ac_lon) * lat_cos
-                rwy_dist_nm = math.sqrt(
-                    d_lat_r * d_lat_r + d_lon_r * d_lon_r) * 60.0
-
-                if (rwy_dist_nm <= q_detail_distance_nm
-                        and marking_budget > 0):
-                    marking_budget -= 1
-                    with self._perf.time("runway.markings"):
-                        self._draw_runway_markings(
-                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                            pitch_deg, roll_deg, heading_deg, ppd, rwy,
-                            rwy_dist_nm=rwy_dist_nm)
+            # Runway polygons + every surface marking (threshold bars,
+            # centerline, designators, aiming point, TDZ, side stripes,
+            # chevrons) draw entirely on the GPU now — see
+            # _collect_runway_polygons, _collect_runway_markings, and
+            # _collect_runway_designator_quads. The CPU walk over
+            # airports here exists only to draw the airport flag /
+            # identifier text (Phase 5 will move that as well).
 
             # --- Airport flag marker — pole rising from ground to POLE_HT ---
             with self._perf.time("airports.flag"):
@@ -2130,262 +2293,6 @@ class SVSRenderer:
                     p.setPen(QPen(FLAG_TEXT))
                     p.setFont(font)
                     p.drawText(QPointF(sx_top + fw + 3, sy_top + fh), label)
-
-    # -----------------------------------------------------------------
-    # Tier C surface markings (FAA AC 150/5340-1L)
-    # -----------------------------------------------------------------
-    def _draw_runway_markings(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                              pitch_deg, roll_deg, heading_deg, ppd, rwy,
-                              rwy_dist_nm=None):
-        """Paint AC 150/5340-1L surface markings on top of the runway quad.
-
-        Designators, threshold bars, centerline stripes, aiming point, touchdown
-        zone markers (PIR only), side stripes (PIR only), and displaced-threshold
-        chevrons. The runway base grey rectangle has already been drawn by the
-        caller; we just layer markings on top in viewport pixel coordinates,
-        each polygon projected through ``_project_point``.
-        """
-        t1_lat, t1_lon = rwy["thr1_lat"], rwy["thr1_lon"]
-        t2_lat, t2_lon = rwy["thr2_lat"], rwy["thr2_lon"]
-        t1_elev = rwy["thr1_elev_ft"]
-        t2_elev = rwy["thr2_elev_ft"]
-        length_ft = float(rwy.get("length_ft") or 0.0)
-        width_ft  = float(rwy.get("width_ft")  or 100.0)
-        d1 = float(rwy.get("thr1_displaced_ft") or 0.0)
-        d2 = float(rwy.get("thr2_displaced_ft") or 0.0)
-        m1 = (rwy.get("thr1_marking") or "").upper()
-        m2 = (rwy.get("thr2_marking") or "").upper()
-        des1 = (rwy.get("thr1_designator") or "").strip()
-        des2 = (rwy.get("thr2_designator") or "").strip()
-
-        # If length wasn't supplied, derive it from the threshold delta.
-        lat_cos = math.cos(math.radians(ac_lat))
-        d_lat = (t2_lat - t1_lat)
-        d_lon = (t2_lon - t1_lon) * lat_cos
-        rwy_deg_len = math.sqrt(d_lat * d_lat + d_lon * d_lon)
-        if rwy_deg_len < 1e-9:
-            return
-        if length_ft <= 0:
-            length_ft = rwy_deg_len * 364491.0   # 1 deg lat ≈ 364491 ft
-
-        # Unit perpendicular in (deg-lat, deg-lon-lat-corrected) space.
-        # Same right-hand convention as the runway-quad code in the caller.
-        perp_lat = -d_lon / rwy_deg_len
-        perp_lon =  d_lat / rwy_deg_len / lat_cos
-
-        ft_per_deg_lat = 364491.0
-
-        def rwy_point(along_ft, across_ft, height_ft=0.0):
-            """Return (lat, lon, elev_ft) for a runway-local point.
-            along=0 is thr1, along=length_ft is thr2; across=0 is centerline,
-            across=+width/2 is right of the thr1→thr2 direction."""
-            f = max(0.0, min(1.0, along_ft / length_ft))
-            clat = t1_lat + f * (t2_lat - t1_lat)
-            clon = t1_lon + f * (t2_lon - t1_lon)
-            celev = t1_elev + f * (t2_elev - t1_elev)
-            across_deg = across_ft / ft_per_deg_lat
-            return (clat + perp_lat * across_deg,
-                    clon + perp_lon * across_deg,
-                    celev + height_ft)
-
-        def project(along_ft, across_ft, height_ft=0.0):
-            lat, lon, elev = rwy_point(along_ft, across_ft, height_ft)
-            sx, sy, vis = self._project_point(
-                lat, lon, elev, ac_lat, ac_lon, ac_alt_ft,
-                pitch_deg, roll_deg, heading_deg, ppd, w, h)
-            return sx, sy, vis
-
-        def quad(a0, c0, a1, c1, a2, c2, a3, c3, height_ft=0.0):
-            """Project a 4-corner polygon in runway-local coords. Returns
-            QPolygonF or None if any corner is behind the aircraft."""
-            pts = []
-            for a, c in ((a0, c0), (a1, c1), (a2, c2), (a3, c3)):
-                sx, sy, vis = project(a, c, height_ft)
-                if not vis:
-                    return None
-                pts.append(QPointF(sx, sy))
-            return QPolygonF(pts)
-
-        from PyQt6.QtCore import Qt as _Qt
-        WHITE  = QColor(245, 245, 245)
-        YELLOW = QColor(220, 200, 60)
-
-        p.setPen(Qt_NoPen())
-        p.setBrush(QBrush(WHITE))
-
-        # ---------------------------------------------------------------
-        # Per-end markings
-        # Each end gets: threshold bars, designator, aiming point, TDZ (PIR),
-        # side stripes (PIR), displaced-threshold chevrons (if displaced).
-        # ---------------------------------------------------------------
-        # End-1 (thr1) markings — usable threshold at along = d1.
-        # End-2 (thr2) markings — usable threshold at along = length_ft - d2.
-        # Designators, aiming points, TDZ are all measured FROM the usable
-        # threshold, INWARD along the runway (toward the opposite end).
-        for thr_along, sign, designator, marking, displaced in (
-                (d1,                  +1, des1, m1, d1),
-                (length_ft - d2,      -1, des2, m2, d2)):
-            # Skip if there's no room at this end (very short runway).
-            usable_remaining = (length_ft - d1 - d2)
-            if usable_remaining < 100.0:
-                continue
-
-            # Threshold bars, aiming point, TDZ markers, chevrons,
-            # side stripes, centerline stripes — all moved to the GL
-            # overlay pass in Phase 4a of the overlays-to-GPU plan
-            # (see _emit_runway_marking_quads). Designator text below
-            # is the only piece left on the CPU; Phase 4b moves it
-            # via a bitmap-font atlas.
-
-            # ----- Designator (always, if we have one) -------------------
-            if designator:
-                # FAA AC 150/5340-1L runway designator markings:
-                #   Height: 60 ft for every character
-                #   Width:  "1" = 5.33 ft stroke (no flag/foot), L/C/R = 24 ft,
-                #           all other digits = 20 ft
-                #   Spacing between characters: 5 ft
-                #   Layout: if the designator carries a parallel-runway letter
-                #           (L/C/R), the letter goes on its own row BELOW the
-                #           numbers (closer to the threshold), separated by
-                #           a ~20 ft gap. So pilot reads numbers first, then
-                #           letter.
-                # Each character is rendered in its own FAA-spec slot via
-                # quadToQuad; "1" is hand-drawn (no font) to match the FAA
-                # plain-stroke style.
-                CHAR_H_FT     = 60.0
-                CHAR_GAP_FT   = 5.0
-                ROW_GAP_FT    = 20.0       # gap between numbers and letter row
-                STROKE_FT     = 5.33
-                def _char_w(c):
-                    if c == '1':              return STROKE_FT
-                    if c in ('L', 'C', 'R'):  return 24.0
-                    return 20.0
-
-                # Split designator into "numbers" row and an optional letter row.
-                if designator[-1] in ('L', 'C', 'R'):
-                    number_part = designator[:-1]
-                    letter_part = designator[-1]
-                else:
-                    number_part = designator
-                    letter_part = ""
-
-                center_along = thr_along + sign * 380.0
-                font = QFont("DejaVu Sans", 10)
-                font.setPixelSize(200)
-                font.setBold(True)
-                from PyQt6.QtGui import QPainterPath as _QPP
-                from PyQt6.QtCore import QRectF as _QRectF
-
-                # Number of horizontal strips per designator character. A
-                # single quadToQuad across a 60-ft tall character is a
-                # linear chord through the curve produced by the angular
-                # projection; at low AGL that chord visibly diverges from
-                # where the character's outline actually should go. K
-                # strips per character give K independent quadToQuad
-                # transforms, each spanning a much smaller along-distance,
-                # so the assembled glyph follows the same curve the
-                # threshold bars and centerline stripes already trace.
-                # K=6 is enough to make the seam invisible at typical
-                # short-final altitudes; larger K costs ~K paint ops per
-                # character. The quality controller lowers K (down to 2)
-                # under FPS pressure — at distance the glyph is small
-                # enough that the seam visibility is masked by the
-                # underlying pixel quantization.
-                K_STRIPS = self._quality.marking_k_strips()
-
-                def _render_row(chars, row_center_along):
-                    """Paint one designator row centered on
-                    ``row_center_along``, with each character's outline
-                    perspective-mapped through K horizontal strips so
-                    the glyph traces the same curve as the rest of the
-                    runway markings rather than fitting one linear
-                    chord across the full character height."""
-                    if not chars:
-                        return
-                    widths = [_char_w(c) for c in chars]
-                    total_w = sum(widths) + CHAR_GAP_FT * max(0, len(chars) - 1)
-                    top_a = row_center_along + sign * (CHAR_H_FT / 2.0)
-                    bot_a = row_center_along - sign * (CHAR_H_FT / 2.0)
-                    # Start at pilot's LEFT edge of the row (stepping by +sign
-                    # per char handles both thr1 and thr2 orientations).
-                    cur_across = -sign * (total_w / 2.0)
-                    for idx, ch in enumerate(chars):
-                        cw = widths[idx]
-                        sL = cur_across
-                        sR = cur_across + sign * cw
-
-                        # Build the character outline. FAA "1" is a plain
-                        # vertical bar (no font flag/foot) — render it as
-                        # a filled rectangle in source space so it gets
-                        # the same per-strip perspective treatment as the
-                        # other glyphs.
-                        char_path = _QPP()
-                        if ch == '1':
-                            char_path.addRect(0.0, 0.0, STROKE_FT, CHAR_H_FT)
-                        else:
-                            char_path.addText(0, 0, font, ch)
-                        gb = char_path.boundingRect()
-                        if gb.width() <= 0.5 or gb.height() <= 0.5:
-                            cur_across += sign * (cw + CHAR_GAP_FT)
-                            continue
-
-                        # Project K+1 horizontal slices spanning the
-                        # character along the runway. Each adjacent pair
-                        # of slices defines one perspective strip.
-                        slices = []
-                        for k in range(K_STRIPS + 1):
-                            f = k / K_STRIPS
-                            a = top_a + f * (bot_a - top_a)
-                            Lx, Ly, vL = project(a, sL)
-                            Rx, Ry, vR = project(a, sR)
-                            slices.append((QPointF(Lx, Ly),
-                                           QPointF(Rx, Ry), vL and vR))
-
-                        for k in range(K_STRIPS):
-                            L0, R0, ok0 = slices[k]
-                            L1, R1, ok1 = slices[k + 1]
-                            if not (ok0 and ok1):
-                                continue
-                            y_top = gb.top() + (k / K_STRIPS) * gb.height()
-                            y_bot = gb.top() + ((k + 1) / K_STRIPS) * gb.height()
-                            src = QPolygonF([
-                                QPointF(gb.left(),  y_top),
-                                QPointF(gb.right(), y_top),
-                                QPointF(gb.right(), y_bot),
-                                QPointF(gb.left(),  y_bot),
-                            ])
-                            dst = QPolygonF([L0, R0, R1, L1])
-                            xfm = QTransform()
-                            if not QTransform.quadToQuad(src, dst, xfm):
-                                continue
-                            strip_clip = _QPP()
-                            strip_clip.addRect(_QRectF(
-                                gb.left(), y_top,
-                                gb.width(), y_bot - y_top))
-                            strip_path = char_path.intersected(strip_clip)
-                            p.save()
-                            p.setTransform(xfm)
-                            p.setBrush(QBrush(WHITE))
-                            p.setPen(Qt_NoPen())
-                            p.drawPath(strip_path)
-                            p.restore()
-
-                        cur_across += sign * (cw + CHAR_GAP_FT)
-
-                if letter_part:
-                    # Two-row layout. Numbers go on the "far" row (farther
-                    # from threshold = +sign direction), letter on the "near"
-                    # row (closer to threshold). The 380 ft anchor stays the
-                    # centroid of the whole group.
-                    row_offset = (CHAR_H_FT + ROW_GAP_FT) / 2.0
-                    _render_row(number_part, center_along + sign * row_offset)
-                    _render_row(letter_part, center_along - sign * row_offset)
-                else:
-                    _render_row(number_part, center_along)
-
-            # All non-text per-end markings (threshold bars, aiming
-            # point, TDZ, chevrons) are GPU-drawn in Phase 4a — see
-            # _emit_runway_marking_quads.
 
     def _sample_elevations(self, lat_grid: np.ndarray,
                            lon_grid: np.ndarray) -> tuple:

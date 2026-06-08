@@ -983,7 +983,6 @@ class TestQualityController:
         q = _QualityController(base_detail_distance_nm=3.0)
         assert q.level == 0
         assert q.pressure == 0.0
-        assert q.marking_k_strips() == 6
         assert q.detail_distance_nm() == pytest.approx(3.0)
         assert q.max_close_markings() == float("inf")
 
@@ -996,7 +995,6 @@ class TestQualityController:
         assert q.pressure == pytest.approx(1.0)
         # At full pressure we should be at the worst level.
         assert q.level == len(_QualityController.LEVELS) - 1
-        assert q.marking_k_strips() == 2
         assert q.max_close_markings() == 2
 
     def test_recovery_is_slower_than_drop(self):

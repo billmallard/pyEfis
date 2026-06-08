@@ -37,9 +37,9 @@ OpenGL.ERROR_ON_COPY = True
 from OpenGL import GL as gl  # noqa: E402
 
 import numpy as np  # noqa: E402
-from PyQt6.QtCore import QSize  # noqa: E402
+from PyQt6.QtCore import QRectF  # noqa: E402
 from PyQt6.QtGui import (  # noqa: E402
-    QOffscreenSurface, QOpenGLContext, QSurfaceFormat,
+    QColor, QFont, QFontMetricsF, QImage, QPainter, QSurfaceFormat,
 )
 from PyQt6.QtOpenGL import (  # noqa: E402
     QOpenGLBuffer,
@@ -402,6 +402,191 @@ void main() {
 """
 
 
+# ---------------------------------------------------------------------------
+# Text overlay shader (Phase 4b — runway designators on the GPU).
+# ---------------------------------------------------------------------------
+# Each glyph is one textured quad in runway-local space. The vertex
+# shader runs the same perspective projection as the flat-color
+# overlay shader; the fragment shader samples a single-channel font
+# atlas as alpha and discards transparent fragments so the runway
+# polygon grey shows through outside the glyph strokes.
+
+_TEXT_VERT_BODY = """
+in vec3 a_world_pos;   // (lat_deg, lon_deg, elev_ft)
+in vec2 a_uv;          // atlas UV for this quad corner
+
+uniform float u_ac_lat;
+uniform float u_ac_lon;
+uniform float u_ac_alt_ft;
+uniform float u_heading_deg;
+uniform float u_pitch_deg;
+uniform float u_roll_deg;
+uniform float u_pixels_per_deg;
+uniform vec2  u_viewport;
+
+out vec2 v_uv;
+
+const float PI            = 3.14159265358979;
+const float DEG_PER_RAD   = 180.0 / PI;
+const float M_PER_FT      = 0.3048;
+const float M_PER_DEG_LAT = 111139.0;
+
+void main() {
+    float lat_cos = cos(radians(u_ac_lat));
+    float d_lat = a_world_pos.x - u_ac_lat;
+    float d_lon = (a_world_pos.y - u_ac_lon) * lat_cos;
+
+    float head_rad = radians(u_heading_deg);
+    float cos_h = cos(head_rad);
+    float sin_h = sin(head_rad);
+    float x_fwd   =  d_lat * cos_h + d_lon * sin_h;
+    float x_right = -d_lat * sin_h + d_lon * cos_h;
+    float alt_diff_m = (a_world_pos.z - u_ac_alt_ft) * M_PER_FT;
+    float y_up_deg = alt_diff_m / M_PER_DEG_LAT;
+
+    float pitch_rad = radians(u_pitch_deg);
+    float cos_p = cos(pitch_rad);
+    float sin_p = sin(pitch_rad);
+    float y_up_p  = y_up_deg * cos_p - x_fwd * sin_p;
+    float x_fwd_p = y_up_deg * sin_p + x_fwd * cos_p;
+
+    float roll_rad = radians(u_roll_deg);
+    float cos_r = cos(roll_rad);
+    float sin_r = sin(roll_rad);
+    float x_right_r = x_right * cos_r - y_up_p * sin_r;
+    float y_up_r    = x_right * sin_r + y_up_p * cos_r;
+
+    float scale = DEG_PER_RAD * u_pixels_per_deg;
+    gl_Position = vec4(
+        x_right_r * scale * 2.0 / u_viewport.x,
+        y_up_r    * scale * 2.0 / u_viewport.y,
+        0.0,
+        x_fwd_p);
+
+    v_uv = a_uv;
+}
+"""
+
+_TEXT_FRAG_BODY = """
+in vec2 v_uv;
+uniform vec4 u_color;
+uniform sampler2D u_atlas;
+out vec4 outColor;
+
+void main() {
+    float alpha = texture(u_atlas, v_uv).r;
+    // Discard transparent samples so the underlying runway grey
+    // shows through outside the glyph stroke.
+    if (alpha < 0.4) discard;
+    outColor = vec4(u_color.rgb, 1.0);
+}
+"""
+
+
+# Glyphs covered by the designator-text atlas. Runway designators
+# are 1-2 numeric digits + optional L/C/R; airport identifiers
+# (Phase 5) use the broader A-Z + 0-9 set.
+_TEXT_ATLAS_GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-"
+# Each glyph gets a 64x64 slot in a 512x512 atlas (8x8 grid, 64
+# slots, 37 used). 64 px / glyph is enough resolution that
+# stretching to a 60 ft runway designator on short final is crisp.
+_TEXT_ATLAS_SIZE = 512
+_TEXT_ATLAS_SLOT = 64
+# FAA AC 150/5340-1L "1" is a plain vertical stroke (no flag /
+# foot). Stroke width is 5.33 ft of a 60 ft tall character.
+_FAA_STROKE_RATIO = 5.33 / 60.0
+
+
+def build_text_atlas(font_family="DejaVu Sans Condensed"):
+    """Build a single-channel font atlas of designator glyphs.
+
+    Returns (atlas_np, uvs) where:
+      - atlas_np: uint8 numpy array shape (size, size) with glyph
+        coverage as 0-255 (255 = fully covered glyph pixel).
+      - uvs: dict mapping each character in _TEXT_ATLAS_GLYPHS to a
+        tuple (u0, v0, u1, v1) of the glyph's TIGHT UV bbox in the
+        atlas — i.e. the texture region that contains just the glyph
+        strokes with no slot padding. Callers size their per-glyph
+        quad in runway-local feet according to FAA spec and bind
+        this UV box; the perspective shader handles the stretch.
+
+    Generated lazily at SVSGLRenderer init. Uses the existing
+    DejaVu Sans Condensed font already shipped with the system
+    (the marking-text CPU path used the same font).
+    """
+    atlas_size = _TEXT_ATLAS_SIZE
+    slot = _TEXT_ATLAS_SLOT
+    grid = atlas_size // slot   # 8 slots per row
+    if len(_TEXT_ATLAS_GLYPHS) > grid * grid:
+        raise RuntimeError("text atlas grid too small for glyph set")
+
+    img = QImage(atlas_size, atlas_size,
+                 QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    p = QPainter(img)
+    try:
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        p.setPen(QColor(255, 255, 255, 255))
+
+        font = QFont(font_family, 10)
+        # Pixel size sized so a tall glyph fills ~88% of its slot,
+        # leaving a small margin for antialiasing tail and clean
+        # tight-bbox computation. Bold for FAA marking weight.
+        font.setPixelSize(int(slot * 0.88))
+        font.setBold(True)
+        p.setFont(font)
+        metrics = QFontMetricsF(font)
+        ascent = metrics.ascent()
+
+        uvs = {}
+        for i, ch in enumerate(_TEXT_ATLAS_GLYPHS):
+            row = i // grid
+            col = i % grid
+            sx = col * slot
+            sy = row * slot
+
+            if ch == '1':
+                # FAA-style plain stroke "1" — vertical rectangle.
+                # No font glyph; just fillRect.
+                stroke_w = _FAA_STROKE_RATIO * slot
+                # Center horizontally in the slot for nicer kerning.
+                fx = sx + (slot - stroke_w) * 0.5
+                p.fillRect(QRectF(fx, sy, stroke_w, float(slot)),
+                           QColor(255, 255, 255, 255))
+                u0 = fx / atlas_size
+                u1 = (fx + stroke_w) / atlas_size
+                v0 = sy / atlas_size
+                v1 = (sy + slot) / atlas_size
+            else:
+                # Tight bounding rectangle of the glyph in font units.
+                rect = metrics.tightBoundingRect(ch)
+                # tightBoundingRect's origin is at the baseline, with
+                # y measured upward from baseline (so rect.top() is
+                # negative — top of cap). Position the glyph so its
+                # top edge aligns with the slot top.
+                baseline_y = sy - rect.top()
+                glyph_x = sx - rect.left()
+                p.drawText(int(round(glyph_x)),
+                           int(round(baseline_y)), ch)
+                u0 = sx / atlas_size
+                u1 = (sx + rect.width()) / atlas_size
+                v0 = sy / atlas_size
+                v1 = (sy + rect.height()) / atlas_size
+            uvs[ch] = (u0, v0, u1, v1)
+    finally:
+        p.end()
+
+    # Extract alpha channel. ARGB32 little-endian byte order is BGRA,
+    # so the alpha byte is at index 3 of every pixel.
+    ptr = img.constBits()
+    ptr.setsize(atlas_size * atlas_size * 4)
+    rgba = np.frombuffer(ptr, dtype=np.uint8).reshape(
+        atlas_size, atlas_size, 4)
+    atlas_np = rgba[:, :, 3].copy()
+    return atlas_np, uvs
+
+
 # SRTM3 constants — see svs.py
 SRTM3_SAMPLES = 1201
 # 2-by-2 tile patch around the aircraft. The patch starts one degree
@@ -476,6 +661,20 @@ class SVSGLRenderer:
         self._overlay_vbo_capacity = 0   # current GL-side buffer size in floats
         self._overlay_a_world_pos = -1
         self._overlay_u: dict[str, int] = {}
+
+        # Text overlay state (Phase 4b). Atlas texture + a separate
+        # program with the same projection but textured-quad fragment
+        # shader. Vertex format is (lat, lon, elev_ft, u, v) — 5
+        # floats per vertex.
+        self._text_program: QOpenGLShaderProgram | None = None
+        self._text_vao: QOpenGLVertexArrayObject | None = None
+        self._text_vbo: QOpenGLBuffer | None = None
+        self._text_vbo_capacity = 0
+        self._text_a_world_pos = -1
+        self._text_a_uv = -1
+        self._text_u: dict[str, int] = {}
+        self._text_atlas_tex_id: int | None = None
+        self._text_atlas_uvs: dict[str, tuple] = {}
 
         actual = self._ctx.format()
         log.info(
@@ -733,6 +932,163 @@ class SVSGLRenderer:
         finally:
             self._overlay_vao.release()
 
+    # ------------------------------------------------------------------
+    # Text overlay pass (Phase 4b — designator text on the GPU)
+    # ------------------------------------------------------------------
+    def _ensure_text_program(self):
+        """Compile the text shader, build the glyph atlas, upload it as
+        a GL_R8 texture, and configure the (lat, lon, elev_ft, u, v)
+        vertex attribute layout. Idempotent."""
+        if self._text_program is not None:
+            return
+        header = self._shader_header()
+        vsrc = header + _TEXT_VERT_BODY
+        if "es" in header:
+            fheader = "#version 300 es\nprecision mediump float;\n"
+        else:
+            fheader = header
+        fsrc = fheader + _TEXT_FRAG_BODY
+        prog = QOpenGLShaderProgram()
+        if not prog.addShaderFromSourceCode(
+                QOpenGLShader.ShaderTypeBit.Vertex, vsrc):
+            raise RuntimeError(
+                f"text vertex shader compile failed: {prog.log()}")
+        if not prog.addShaderFromSourceCode(
+                QOpenGLShader.ShaderTypeBit.Fragment, fsrc):
+            raise RuntimeError(
+                f"text fragment shader compile failed: {prog.log()}")
+        if not prog.link():
+            raise RuntimeError(f"text shader link failed: {prog.log()}")
+        self._text_a_world_pos = prog.attributeLocation("a_world_pos")
+        self._text_a_uv = prog.attributeLocation("a_uv")
+        if self._text_a_world_pos < 0 or self._text_a_uv < 0:
+            raise RuntimeError(
+                "text shader: required attribute not found")
+        for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft",
+                     "u_heading_deg", "u_pitch_deg", "u_roll_deg",
+                     "u_pixels_per_deg", "u_viewport",
+                     "u_color", "u_atlas"):
+            loc = prog.uniformLocation(name)
+            if loc < 0:
+                raise RuntimeError(f"text shader: {name} not found")
+            self._text_u[name] = loc
+        self._text_program = prog
+
+        # Build atlas at startup and upload as a single-channel GL_R8
+        # texture. ES 3.0 requires the sized internal format GL_R8;
+        # data is one byte per pixel from QImage's alpha plane.
+        atlas_np, uvs = build_text_atlas()
+        self._text_atlas_uvs = uvs
+        tex_id = int(gl.glGenTextures(1))
+        gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+        gl.glTexImage2D(
+            gl.GL_TEXTURE_2D, 0, gl.GL_R8,
+            _TEXT_ATLAS_SIZE, _TEXT_ATLAS_SIZE, 0,
+            gl.GL_RED, gl.GL_UNSIGNED_BYTE, atlas_np.tobytes())
+        gl.glTexParameteri(gl.GL_TEXTURE_2D,
+                           gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D,
+                           gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D,
+                           gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D,
+                           gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        self._text_atlas_tex_id = tex_id
+
+        self._text_vao = QOpenGLVertexArrayObject()
+        self._text_vao.create()
+        self._text_vbo = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
+        self._text_vbo.create()
+        self._text_vbo.setUsagePattern(
+            QOpenGLBuffer.UsagePattern.DynamicDraw)
+        # Interleaved vec3 + vec2 = 5 floats = 20 bytes per vertex.
+        # a_world_pos: offset 0, 3 floats. a_uv: offset 12, 2 floats.
+        self._text_vao.bind()
+        try:
+            self._text_vbo.bind()
+            try:
+                prog.bind()
+                prog.enableAttributeArray(self._text_a_world_pos)
+                prog.setAttributeBuffer(
+                    self._text_a_world_pos, gl.GL_FLOAT, 0, 3, 20)
+                prog.enableAttributeArray(self._text_a_uv)
+                prog.setAttributeBuffer(
+                    self._text_a_uv, gl.GL_FLOAT, 12, 2, 20)
+                prog.release()
+            finally:
+                self._text_vbo.release()
+        finally:
+            self._text_vao.release()
+
+    def _draw_text_quads(self, verts_np, color_rgba):
+        """Upload ``verts_np`` (Nx5 float32: lat, lon, elev_ft, u, v)
+        and issue one glDrawArrays(GL_TRIANGLES). Caller must have
+        bound the text program, set its per-frame uniforms, bound the
+        atlas texture to TEXTURE0, and have the FBO active."""
+        if verts_np is None or len(verts_np) == 0:
+            return
+        if verts_np.dtype != np.float32:
+            verts_np = verts_np.astype(np.float32)
+        n_bytes = verts_np.size * 4
+        self._text_vao.bind()
+        try:
+            self._text_vbo.bind()
+            try:
+                if n_bytes > self._text_vbo_capacity:
+                    self._text_vbo.allocate(verts_np.tobytes(), n_bytes)
+                    self._text_vbo_capacity = n_bytes
+                else:
+                    self._text_vbo.write(0, verts_np.tobytes(), n_bytes)
+            finally:
+                self._text_vbo.release()
+            self._text_program.setUniformValue(
+                self._text_u["u_color"],
+                float(color_rgba[0]), float(color_rgba[1]),
+                float(color_rgba[2]), float(color_rgba[3]))
+            gl.glDrawArrays(gl.GL_TRIANGLES, 0, verts_np.shape[0])
+        finally:
+            self._text_vao.release()
+
+    def _render_text_overlay(self, verts_np, color_rgba,
+                             w, h, ac_lat, ac_lon, ac_alt_ft,
+                             pitch_deg, roll_deg, heading_deg,
+                             pixels_per_deg):
+        """Compile-on-demand, bind program + atlas, set uniforms,
+        draw, release. The text shader is its own program because
+        the fragment stage differs from the flat-color overlay path."""
+        if verts_np is None or len(verts_np) == 0:
+            return
+        self._ensure_text_program()
+        prog = self._text_program
+        prog.bind()
+        try:
+            prog.setUniformValue(
+                self._text_u["u_ac_lat"], float(ac_lat))
+            prog.setUniformValue(
+                self._text_u["u_ac_lon"], float(ac_lon))
+            prog.setUniformValue(
+                self._text_u["u_ac_alt_ft"], float(ac_alt_ft))
+            prog.setUniformValue(
+                self._text_u["u_heading_deg"], float(heading_deg))
+            prog.setUniformValue(
+                self._text_u["u_pitch_deg"], float(pitch_deg))
+            prog.setUniformValue(
+                self._text_u["u_roll_deg"], float(roll_deg))
+            prog.setUniformValue(
+                self._text_u["u_pixels_per_deg"], float(pixels_per_deg))
+            prog.setUniformValue(
+                self._text_u["u_viewport"], float(w), float(h))
+            prog.setUniformValue(self._text_u["u_atlas"], 0)
+            gl.glActiveTexture(gl.GL_TEXTURE0)
+            gl.glBindTexture(gl.GL_TEXTURE_2D,
+                             int(self._text_atlas_tex_id))
+            self._draw_text_quads(verts_np, color_rgba)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        finally:
+            prog.release()
+
     def _render_overlays(self, w, h, ac_lat, ac_lon, ac_alt_ft,
                          pitch_deg, roll_deg, heading_deg, pixels_per_deg,
                          range_nm=None):
@@ -849,6 +1205,40 @@ class SVSGLRenderer:
                                 (245/255.0, 245/255.0,
                                  245/255.0, 1.0),
                                 gl.GL_TRIANGLES)
+
+            # Phase 4b — runway designator text. Collected as
+            # (lat, lon, elev_ft, u, v) quads per glyph; drawn with
+            # the dedicated text shader + glyph-atlas texture. The
+            # text program is released here so the smoke-test path
+            # below still sees the overlay program bound.
+            if (getattr(p, "airport_db", None) is not None
+                    and p.airport_db.ready
+                    and range_nm is not None):
+                with p._perf.time("runway.designator"):
+                    with p._perf.time("runway.designator.collect"):
+                        # Ensure the atlas exists before the parent can
+                        # use its UVs to lay out per-glyph quads.
+                        self._ensure_text_program()
+                        des_verts = p._collect_runway_designator_quads(
+                            ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            heading_deg, self._text_atlas_uvs)
+                    if des_verts is not None and des_verts.size > 0:
+                        # Release the overlay program around the text
+                        # draw; the text shader needs to be the active
+                        # program. Rebind after so the smoke-test
+                        # diagnostic still has the overlay program.
+                        prog.release()
+                        try:
+                            with p._perf.time("runway.designator.gl_draw"):
+                                self._render_text_overlay(
+                                    des_verts,
+                                    (245/255.0, 245/255.0, 245/255.0,
+                                     1.0),
+                                    w, h, ac_lat, ac_lon, ac_alt_ft,
+                                    pitch_deg, roll_deg, heading_deg,
+                                    pixels_per_deg)
+                        finally:
+                            prog.bind()
 
             # Smoke-test triangle path (kept for diagnostics).
             if getattr(p, "_gl_overlay_smoketest", False):
