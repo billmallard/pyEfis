@@ -69,19 +69,35 @@ When a phase says "golden poses", it means screenshots at these four.
 
 Goal: lock in "known good" before the deletions begin.
 
-- [ ] Capture golden screenshots at the four reference poses with
+- [x] Capture golden screenshots at the four reference poses with
       `SVS_RENDERER=opengl`, store under `tests/golden/` (or document the
-      external location if too large for the repo).
-- [ ] Run the unit suite; record the pass/fail inventory in the commit
-      message so later phases can diff against it.
-- [ ] With `svs_perf_log: true`, record per-segment timings at the DFW
+      external location if too large for the repo). Plus a Pi 5 on-target
+      capture of the DFW pose (`dfw_metro_pi5.png`).
+- [x] Run the unit suite; record the pass/fail inventory in the commit
+      message so later phases can diff against it. (124 pass / 4
+      pre-existing Windows path-separator failures in test_virtualvfr /
+      1 GL-context skip / 1 standing deselect — details in the baseline
+      doc.)
+- [x] With `svs_perf_log: true`, record per-segment timings at the DFW
       pose into `docs/perf_baseline_gpu_required.md` (frame.svs_total,
-      water, runway.*, obstacles, gl_terrain).
-- [ ] Grep for config keys the later phases will remove
+      water, runway.*, obstacles, gl_terrain). Recorded on BOTH Windows
+      and Pi 5 (eglfs, on-target via `ssh pyefis`).
+- [x] Grep for config keys the later phases will remove
       (`renderer:`, `quality_control`, `gl_overlay_perspective`) and note
-      every YAML file in the repo / user config that uses them.
+      every YAML file in the repo / user config that uses them. (Only
+      `renderer:` is used anywhere — the Pi's local virtual_vfr.yaml;
+      the other two appear in no YAML. See baseline doc.)
+
+P0 additionally surfaced and fixed two pre-existing bugs that blocked a
+valid baseline (details in the baseline doc): the desktop-GL
+`glLineWidth(2.0)` failure that silently downgraded every Windows
+"opengl" run to polar, and the eglfs startup crash from the SVS
+QGraphicsItem riding a destroyed scene down. The harness also gained
+`SVS_WATER_PATH` / `SVS_PERF_LOG` / `SVS_ANIMATE` / `SVS_SCREENSHOT`
+support, which later phases should use for their verification steps.
 
 Done when: goldens + perf baseline committed; test inventory recorded.
+**STATUS: COMPLETE (2026-06-10).**
 
 ## Phase 1 — Finish overlays-to-GPU: airport flags + identifier text (½–1 day)
 

@@ -17,6 +17,10 @@ pyEfis is the **Python EFIS** for the MakerPlane open-source aircraft. It's a Py
 
 The user's machine has Python deps installed in `C:\pylib` rather than the default site-packages, so `PYTHONPATH` must include it.
 
+**Pi 5 test hardware:** `ssh pyefis` (key auth already configured) reaches the
+Raspberry Pi 5 test unit. It is Claude's to use freely for on-target testing —
+GL validation, perf baselines, harness runs on eglfs.
+
 **Unit tests:**
 ```bash
 PYTHONPATH="C:/pylib;src" python -m pytest tests/instruments/ai/test_svs.py --no-cov -q
