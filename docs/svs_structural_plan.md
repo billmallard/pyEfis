@@ -105,25 +105,30 @@ This is Phase 5 of [svs_overlays_to_gpu_plan.md](svs_overlays_to_gpu_plan.md),
 unchanged in scope. It must land before the CPU deletion phase because
 `_draw_runways` (the last CPU overlay) only exists to draw the flags.
 
-- [ ] Add `_collect_airport_flags` to `SVSRenderer`: pole = line segment
-      (2 ENU... for now lat/lon/elev) vertices; flag rectangle = quad of
-      triangles; identifier text = glyph quads reusing the Phase 4b atlas
-      and `_TEXT_ATLAS_GLYPHS` (A–Z coverage already present).
-      Follow the existing collect/cache pattern (1 s TTL, coarsened
-      position key) — see `_collect_obstacles` as the template.
-- [ ] The flag rectangle and identifier are screen-aligned billboards in
-      the CPU path (fixed pixel size). Decide: keep billboard behaviour by
-      sizing the quad in world units proportional to distance (compute
-      size at collect time from range), or accept perspective scaling.
-      Billboard-by-distance matches the current look; document the choice.
-- [ ] Draw them in `_render_overlays` after the designator text pass.
-- [ ] Delete the flag-drawing body of `_draw_runways` and the call sites;
-      `airports.flag` perf segment should disappear.
-- [ ] Issue #36 (identifier inside the flag body) is in scope here if
-      cheap — the glyph quads make it a layout change, not new machinery.
+- [x] Add `_collect_airport_flags` to `SVSRenderer`: pole = line segment
+      vertices; flag rectangle = quad of triangles; identifier text =
+      glyph quads reusing the Phase 4b atlas. Follows the collect/cache
+      pattern (1 s TTL, coarsened position key + ppd).
+- [x] Billboard decision: **billboard-by-distance** — world sizes derived
+      from airport distance at collect time so the flag projects to
+      ~constant pixels. Under roll the flags stay world-horizontal (bank
+      with the terrain) instead of the old screen-aligned behaviour;
+      judged more natural for an SVS scene.
+- [x] Draw them in `_render_overlays` after the designator text pass.
+- [x] Delete `_draw_runways` entirely (it only drew flags by this point)
+      and both call sites. `airports.flag` went from ~34 CPU calls/frame
+      to one GL pass at 0.20 ms/frame; Windows frame.svs_total dropped
+      8.45 -> ~6.4 ms at the DFW pose.
+- [x] Issue #36: done — identifier renders in black INSIDE the yellow
+      flag body, flag sized to fit the label.
 
 Done when: flags + identifiers render via GL at all four golden poses;
 no QPainter overlay work remains in the SVS frame path; unit tests pass.
+**STATUS: COMPLETE (2026-06-10).** Goldens refreshed post-P1 (flag
+appearance intentionally changed); test inventory unchanged
+(124 pass / 4 pre-existing). Pi on-target validation deferred to the
+next Pi session — risk is low (text shader and GL_LINES both already
+proven on ES).
 
 ## Phase 2 — GL required: delete the CPU rendering era (1–2 days)
 
