@@ -1168,19 +1168,7 @@ class SVSGLRenderer:
                             ac_lat, ac_lon, ac_alt_ft, range_nm)
                     if groups:
                         with p._perf.time("obstacles.gl_draw"):
-                            if self._max_line_width is None:
-                                # Probe by trying: core-profile desktop
-                                # contexts reject widths > 1.0 with
-                                # GL_INVALID_VALUE even though the
-                                # GL_ALIASED_LINE_WIDTH_RANGE query
-                                # advertises a wide range.
-                                try:
-                                    gl.glLineWidth(2.0)
-                                    self._max_line_width = 2.0
-                                except Exception:
-                                    self._max_line_width = 1.0
-                            pole_w = self._max_line_width
-                            gl.glLineWidth(pole_w)
+                            self._set_pole_line_width()
                             for color, verts in groups.items():
                                 if verts.size == 0:
                                     continue
@@ -1260,6 +1248,42 @@ class SVSGLRenderer:
                         finally:
                             prog.bind()
 
+            # Phase 5 — airport flags + identifier text. Pole =
+            # GL_LINES, flag rectangle = yellow triangles, identifier
+            # = black glyph quads INSIDE the flag body (issue #36)
+            # via the Phase 4b atlas.
+            if (getattr(p, "airport_db", None) is not None
+                    and p.airport_db.ready
+                    and range_nm is not None):
+                with p._perf.time("airports.flag"):
+                    self._ensure_text_program()
+                    flags = p._collect_airport_flags(
+                        ac_lat, ac_lon, range_nm, pixels_per_deg,
+                        self._text_atlas_uvs)
+                    if flags is not None:
+                        FLAG_YELLOW = (1.0, 220 / 255.0, 0.0, 1.0)
+                        poles = flags.get("poles")
+                        if poles is not None and poles.size:
+                            self._set_pole_line_width()
+                            self._draw_overlay_primitive(
+                                poles, FLAG_YELLOW, gl.GL_LINES)
+                            gl.glLineWidth(1.0)
+                        tris = flags.get("flags")
+                        if tris is not None and tris.size:
+                            self._draw_overlay_primitive(
+                                tris, FLAG_YELLOW, gl.GL_TRIANGLES)
+                        text = flags.get("text")
+                        if text is not None and text.size:
+                            prog.release()
+                            try:
+                                self._render_text_overlay(
+                                    text, (0.0, 0.0, 0.0, 1.0),
+                                    w, h, ac_lat, ac_lon, ac_alt_ft,
+                                    pitch_deg, roll_deg, heading_deg,
+                                    pixels_per_deg)
+                            finally:
+                                prog.bind()
+
             # Smoke-test triangle path (kept for diagnostics).
             if getattr(p, "_gl_overlay_smoketest", False):
                 d_deg = 0.1
@@ -1273,6 +1297,19 @@ class SVSGLRenderer:
                     tri, (1.0, 0.0, 1.0, 1.0), gl.GL_TRIANGLES)
         finally:
             prog.release()
+
+    def _set_pole_line_width(self):
+        """Set the 2 px pole line width, clamped to what the driver
+        accepts. Probe by trying: core-profile desktop contexts reject
+        widths > 1.0 with GL_INVALID_VALUE even though the
+        GL_ALIASED_LINE_WIDTH_RANGE query advertises a wide range."""
+        if self._max_line_width is None:
+            try:
+                gl.glLineWidth(2.0)
+                self._max_line_width = 2.0
+            except Exception:
+                self._max_line_width = 1.0
+        gl.glLineWidth(self._max_line_width)
 
     def _shader_header(self) -> str:
         """Pick the right #version header for the active context."""

@@ -536,6 +536,11 @@ class SVSRenderer:
         self._runway_markings_cache = None
         self._runway_markings_cache_time = 0.0
         self._runway_markings_cache_key = None
+        # Airport-flag vertex cache (Phase 5). Key includes ppd
+        # because the billboard sizing depends on it.
+        self._flags_cache = None
+        self._flags_cache_time = 0.0
+        self._flags_cache_key = None
 
         # When True, the GL overlay shader runs the proper hardware
         # perspective projection (gl_Position.w = x_fwd, GL does the
@@ -670,20 +675,9 @@ class SVSRenderer:
                             p, w, h, ac_lat, ac_lon, ac_alt_ft,
                             pitch_deg, roll_deg, heading_deg,
                             pixels_per_deg, range_nm)
-                    p.save()
-                    p.resetTransform()
-                    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-                    try:
-                        # Water (Phase 1) and obstacle poles (Phase 2)
-                        # are drawn inside the GL overlay pass.
-                        # Runways still CPU until Phase 3 lands.
-                        with self._perf.time("runways"):
-                            self._draw_runways(
-                                p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                                pitch_deg, roll_deg, heading_deg,
-                                pixels_per_deg)
-                    finally:
-                        p.restore()
+                    # Every overlay — water, obstacles, runways,
+                    # markings, designators, airport flags — draws
+                    # inside the GL overlay pass (Phase 5 complete).
                     svs_dt_ns = time.perf_counter_ns() - svs_t0_ns
                     if self._perf.enabled:
                         self._perf.add_ns("frame.svs_total", svs_dt_ns)
@@ -1063,18 +1057,11 @@ class SVSRenderer:
                     p.setPen(pen)
                     p.drawLines(lines)
 
-        # Phase 1 of the overlays-to-GPU migration: water is rendered
-        # by the GL overlay pass and no longer has a CPU path. The
-        # polar tier is a legacy fallback for environments without
-        # GL — it shows terrain + runways + obstacles but not water.
-        # Anyone hitting this branch in production should be running
-        # GL anyway.
-
-        self._draw_runways(p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                           pitch_deg, roll_deg, heading_deg, pixels_per_deg)
-
-        # Obstacles also moved to the GL overlay pass (Phase 2). Polar
-        # tier remains a no-water no-obstacles fallback.
+        # Every overlay (water, obstacles, runways, markings, flags)
+        # lives in the GL overlay pass now. The polar tier is a
+        # terrain-only legacy fallback for environments without GL;
+        # its replacement with an explicit SVS-UNAVAIL state is
+        # planned (docs/svs_structural_plan.md P2).
 
         p.restore()
 
@@ -2223,76 +2210,134 @@ class SVSRenderer:
         self._obstacles_cache_time = now
         return result
 
-    def _draw_runways(self, p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                      pitch_deg, roll_deg, heading_deg, ppd):
-        """Draw runways and airport markers for everything in range."""
-        lat_cos   = math.cos(math.radians(ac_lat))
-        range_m   = self.range_nm * 1852.0
+    # ------------------------------------------------------------------
+    # Phase 5: airport flags + identifier text on the GPU. The pole is
+    # a world-space line segment; the flag rectangle and identifier
+    # glyphs are distance-billboarded — sized in world units so they
+    # project to roughly constant pixels (matching the fixed-pixel CPU
+    # flags they replace). The identifier renders INSIDE the flag body
+    # in black (issue #36) rather than beside it.
+    # ------------------------------------------------------------------
+    _FLAGS_CACHE_TTL_S = 1.0
+    _FLAGS_CACHE_POS_STEP_DEG = 0.01
+    _FLAG_POLE_HT_FT = 2000.0
+    _FLAG_CHAR_PX = 9.0     # target on-screen glyph height
+    _FLAG_PAD_PX = 2.0      # flag border around the identifier text
+    _FLAG_GAP_PX = 1.5      # inter-glyph gap
+    _FLAG_MIN_DIST_M = 300.0  # skip the flag when essentially overhead
 
-        RWY_FILL    = QColor( 55,  55,  55)  # asphalt grey — markings on top read crisply
-        RWY_OUTLINE = QColor(180, 180, 180)  # slightly brighter edge so the quad reads at distance
-        FLAG_FILL   = QColor(255, 220,   0)
-        FLAG_TEXT   = QColor(255, 255,   0)
+    def _collect_airport_flags(self, ac_lat, ac_lon, range_nm, ppd,
+                               atlas_uvs):
+        """Build GL vertex arrays for every in-range airport flag.
 
-        rwy_pen  = QPen(RWY_OUTLINE, 1)
-        flag_pen = QPen(QColor(0, 0, 0), 1)
-        font     = QFont("sans-serif", 9, QFont.Weight.Bold)
+        Returns ``{"poles": Nx3, "flags": Nx3, "text": Nx5}`` float32
+        arrays (poles as GL_LINES pairs, flag rectangles and glyph
+        quads as triangles), or None when nothing is in range.
 
-        with self._perf.time("airports.query"):
-            airports = self._get_airports_cached(ac_lat, ac_lon)
-        # Sort by reference-point distance so the top-N marking budget
-        # under load goes to the nearest airports first. The cache
-        # returns a fresh list each frame; in-place sort is fine.
-        def _ap_d2(ap):
-            d_lat = ap[1] - ac_lat
-            d_lon = (ap[2] - ac_lon) * lat_cos
-            return d_lat * d_lat + d_lon * d_lon
-        airports = sorted(airports, key=_ap_d2)
-        for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
-            # Range-check on airport reference point
-            d_lat_ref = (ref_lat - ac_lat)
-            d_lon_ref = (ref_lon - ac_lon) * lat_cos
-            if math.sqrt(d_lat_ref ** 2 + d_lon_ref ** 2) * 111139.0 > range_m:
+        The flag rectangle and glyphs are laid out in a billboard
+        plane at the pole tip: horizontal axis tangential to the
+        sight line (reads as screen-rightward), vertical axis in
+        elevation. World sizes are derived from the airport's current
+        distance so the projected flag stays ~constant-pixel like the
+        old screen-space CPU flags. With the 1 s cache TTL the size
+        lags distance changes by under a second — invisible at
+        aircraft speeds. Under roll the flags stay world-horizontal
+        (they bank with the terrain), which replaces the old
+        screen-aligned behaviour and matches how the rest of the SVS
+        scene moves."""
+        if (getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready
+                or not atlas_uvs or not ppd):
+            return None
+
+        now = time.perf_counter()
+        step = self._FLAGS_CACHE_POS_STEP_DEG
+        key = (round(ac_lat / step) * step,
+               round(ac_lon / step) * step,
+               round(range_nm, 1), round(ppd, 1))
+        if (self._flags_cache is not None
+                and self._flags_cache_key == key
+                and now - self._flags_cache_time < self._FLAGS_CACHE_TTL_S):
+            return self._flags_cache
+
+        lat_cos = math.cos(math.radians(ac_lat))
+        range_m = self.range_nm * 1852.0
+        DEG_PER_RAD = 57.29577951308232
+        FT_PER_DEG = 364491.0
+
+        poles, flag_tris, text_verts = [], [], []
+        for label, ref_lat, ref_lon, ref_elev_ft, _runways in \
+                self._get_airports_cached(ac_lat, ac_lon):
+            d_lat = ref_lat - ac_lat
+            d_lon = (ref_lon - ac_lon) * lat_cos
+            dist_deg = math.sqrt(d_lat * d_lat + d_lon * d_lon)
+            dist_m = dist_deg * 111139.0
+            if dist_m > range_m or dist_m < self._FLAG_MIN_DIST_M:
                 continue
 
-            # Runway polygons + every surface marking (threshold bars,
-            # centerline, designators, aiming point, TDZ, side stripes,
-            # chevrons) draw entirely on the GPU now — see
-            # _collect_runway_polygons, _collect_runway_markings, and
-            # _collect_runway_designator_quads. The CPU walk over
-            # airports here exists only to draw the airport flag /
-            # identifier text (Phase 5 will move that as well).
+            top_elev = ref_elev_ft + self._FLAG_POLE_HT_FT
+            poles.append((ref_lat, ref_lon, ref_elev_ft))
+            poles.append((ref_lat, ref_lon, top_elev))
 
-            # --- Airport flag marker — pole rising from ground to POLE_HT ---
-            with self._perf.time("airports.flag"):
-                POLE_HT_FT = 2000
-                sx_base, sy_base, vis_base = self._project_point(
-                    ref_lat, ref_lon, ref_elev_ft,
-                    ac_lat, ac_lon, ac_alt_ft,
-                    pitch_deg, roll_deg, heading_deg, ppd, w, h)
-                sx_top, sy_top, vis_top = self._project_point(
-                    ref_lat, ref_lon, ref_elev_ft + POLE_HT_FT,
-                    ac_lat, ac_lon, ac_alt_ft,
-                    pitch_deg, roll_deg, heading_deg, ppd, w, h)
-                if vis_base and vis_top:
-                    pole_pen = QPen(FLAG_FILL, 2)
-                    p.setPen(pole_pen)
-                    p.drawLine(QPointF(sx_base, sy_base), QPointF(sx_top, sy_top))
-                    # Flag rectangle to the right of the pole tip
-                    fw, fh = 18, 10
-                    flag_rect = QPolygonF([
-                        QPointF(sx_top,      sy_top),
-                        QPointF(sx_top + fw, sy_top),
-                        QPointF(sx_top + fw, sy_top + fh),
-                        QPointF(sx_top,      sy_top + fh),
-                    ])
-                    p.setBrush(QBrush(FLAG_FILL))
-                    p.setPen(flag_pen)
-                    p.drawPolygon(flag_rect)
-                    # Identifier above/right of flag
-                    p.setPen(QPen(FLAG_TEXT))
-                    p.setFont(font)
-                    p.drawText(QPointF(sx_top + fw + 3, sy_top + fh), label)
+            # Billboard frame at the pole tip. px2deg converts a pixel
+            # target to the degree-unit world offset that projects to
+            # that many pixels at this distance (inverse of the
+            # overlay shader's small-angle scale).
+            brg = math.atan2(d_lon, d_lat)
+            t_lat = -math.sin(brg)                # screen-rightward,
+            t_lon = math.cos(brg) / lat_cos       # in lat/lon degrees
+            px2deg = dist_deg / (DEG_PER_RAD * ppd)
+
+            def bb_point(px_right, px_down):
+                off = px_right * px2deg
+                return (ref_lat + t_lat * off,
+                        ref_lon + t_lon * off,
+                        top_elev - px_down * px2deg * FT_PER_DEG)
+
+            chars = [(ch, atlas_uvs[ch]) for ch in label
+                     if ch in atlas_uvs]
+            ch_px = self._FLAG_CHAR_PX
+            widths = []
+            for _ch, (u0, v0, u1, v1) in chars:
+                aspect = (u1 - u0) / max(v1 - v0, 1e-6)
+                widths.append(ch_px * max(0.2, min(aspect, 1.2)))
+            text_w = (sum(widths)
+                      + self._FLAG_GAP_PX * max(0, len(chars) - 1))
+            fw = text_w + 2.0 * self._FLAG_PAD_PX
+            fh = ch_px + 2.0 * self._FLAG_PAD_PX
+
+            c00 = bb_point(0.0, 0.0)
+            c10 = bb_point(fw, 0.0)
+            c11 = bb_point(fw, fh)
+            c01 = bb_point(0.0, fh)
+            flag_tris.extend((c00, c10, c11, c00, c11, c01))
+
+            x = self._FLAG_PAD_PX
+            for (ch, (u0, v0, u1, v1)), cw in zip(chars, widths):
+                p_tl = bb_point(x, self._FLAG_PAD_PX)
+                p_tr = bb_point(x + cw, self._FLAG_PAD_PX)
+                p_br = bb_point(x + cw, self._FLAG_PAD_PX + ch_px)
+                p_bl = bb_point(x, self._FLAG_PAD_PX + ch_px)
+                v_tl = (*p_tl, u0, v0)
+                v_tr = (*p_tr, u1, v0)
+                v_br = (*p_br, u1, v1)
+                v_bl = (*p_bl, u0, v1)
+                text_verts.extend((v_tl, v_tr, v_br, v_tl, v_br, v_bl))
+                x += cw + self._FLAG_GAP_PX
+
+        if not poles:
+            result = None
+        else:
+            result = {
+                "poles": np.asarray(poles, dtype=np.float32),
+                "flags": np.asarray(flag_tris, dtype=np.float32),
+                "text": (np.asarray(text_verts, dtype=np.float32)
+                         if text_verts else None),
+            }
+        self._flags_cache = result
+        self._flags_cache_key = key
+        self._flags_cache_time = now
+        return result
 
     def _sample_elevations(self, lat_grid: np.ndarray,
                            lon_grid: np.ndarray) -> tuple:
