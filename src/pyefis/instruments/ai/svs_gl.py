@@ -662,6 +662,9 @@ class SVSGLRenderer:
         self._overlay_vbo_capacity = 0   # current GL-side buffer size in floats
         self._overlay_a_world_pos = -1
         self._overlay_u: dict[str, int] = {}
+        # Widest line width the driver supports (queried lazily on the
+        # first obstacle draw; 1.0 on desktop core profiles, ~10 on V3D).
+        self._max_line_width: float | None = None
 
         # Text overlay state (Phase 4b). Atlas texture + a separate
         # program with the same projection but textured-quad fragment
@@ -1151,7 +1154,11 @@ class SVSGLRenderer:
             # segment from base to top; we group by colour (conflict,
             # red-lit, white-lit, unlit) and issue one draw per
             # group. ``glLineWidth`` is honoured by V3D up to ~10 px;
-            # 2.0 matches the QPen width the CPU path used.
+            # 2.0 matches the QPen width the CPU path used. Desktop
+            # core-profile contexts (Windows dev machine) only accept
+            # 1.0 and raise GL_INVALID_VALUE above the aliased range —
+            # clamp to the driver's advertised maximum so an obstacle
+            # draw can never kill the GL renderer.
             if (getattr(p, "obstacle_db", None) is not None
                     and p.obstacle_db.ready
                     and range_nm is not None):
@@ -1161,7 +1168,19 @@ class SVSGLRenderer:
                             ac_lat, ac_lon, ac_alt_ft, range_nm)
                     if groups:
                         with p._perf.time("obstacles.gl_draw"):
-                            gl.glLineWidth(2.0)
+                            if self._max_line_width is None:
+                                # Probe by trying: core-profile desktop
+                                # contexts reject widths > 1.0 with
+                                # GL_INVALID_VALUE even though the
+                                # GL_ALIASED_LINE_WIDTH_RANGE query
+                                # advertises a wide range.
+                                try:
+                                    gl.glLineWidth(2.0)
+                                    self._max_line_width = 2.0
+                                except Exception:
+                                    self._max_line_width = 1.0
+                            pole_w = self._max_line_width
+                            gl.glLineWidth(pole_w)
                             for color, verts in groups.items():
                                 if verts.size == 0:
                                     continue
