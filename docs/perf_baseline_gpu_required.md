@@ -74,6 +74,10 @@ Observations the later phases should be measured against:
   Phase 5's FBO-readback elimination should be measured against this
   number at the same pose.
 
+Post-P1/P2 checkpoint (same DFW pose, Pi 5, 2026-06-10): with all
+overlays GPU-side and the CPU era deleted, frame.svs_total fell to
+10.11 ms (gl_terrain 9.66) and airports.flag to 0.2 ms in one GL pass.
+
 Raw logs: not committed (transient `/tmp` captures); re-run with the
 harness env vars above to regenerate.
 

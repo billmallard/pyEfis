@@ -126,9 +126,10 @@ Done when: flags + identifiers render via GL at all four golden poses;
 no QPainter overlay work remains in the SVS frame path; unit tests pass.
 **STATUS: COMPLETE (2026-06-10).** Goldens refreshed post-P1 (flag
 appearance intentionally changed); test inventory unchanged
-(124 pass / 4 pre-existing). Pi on-target validation deferred to the
-next Pi session — risk is low (text shader and GL_LINES both already
-proven on ES).
+(124 pass / 4 pre-existing). Pi on-target validation: PASSED
+2026-06-10 (eglfs worktree run at DFW after P2 — flags + inline
+identifiers render on ES, frame.svs_total 10.1 ms vs 11.25 ms at P0,
+no UNAVAIL/fallback).
 
 ## Phase 2 — GL required: delete the CPU rendering era (1–2 days)
 
