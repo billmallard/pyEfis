@@ -16,10 +16,20 @@ Optional env vars:
     SVS_ROLL        roll angle deg   (default: 0)
     SVS_HEAD        heading deg      (default: 360)
     SVS_RANGE       range_nm         (default: 30)
-    SVS_RENDERER    cpu_sparse | cpu_dense | cpu_ultra | polar
+    SVS_RENDERER    cpu_sparse | cpu_dense | cpu_ultra | polar | opengl
                     (default: cpu_sparse). polar uses a forward (range,
                     azimuth) fan with finer cells near the aircraft —
                     see docs/svs_rendering.md.
+    SVS_WATER_PATH  path to a water polygons sqlite (default: first
+                    water/water_rtree*.sqlite in the repo, if present)
+    SVS_PERF_LOG    1 to enable the per-segment SVS perf log (implies
+                    INFO logging to stderr)
+    SVS_ANIMATE     heading change rate in deg/s (default 0 = static).
+                    Drives continuous repaints via HEAD updates at
+                    ~30 Hz so perf numbers reflect sustained rendering.
+    SVS_SCREENSHOT  path to save a PNG of the AI widget, then exit.
+                    Captured after SVS_SCREENSHOT_DELAY_MS (default
+                    2000) so tile/db loads settle first.
 """
 
 import os
@@ -73,6 +83,23 @@ NASR_PATH  = os.environ.get("SVS_NASR_PATH",  _DEFAULT_NASR if Path(_DEFAULT_NAS
 # FAA DOF (obstacles): defaults to in-repo dof/obstacles.sqlite.
 _DEFAULT_DOF = str(Path(__file__).parent.parent / "dof" / "obstacles.sqlite")
 DOF_PATH   = os.environ.get("SVS_DOF_PATH",   _DEFAULT_DOF if Path(_DEFAULT_DOF).is_file() else "")
+# Water polygons sqlite: defaults to the first water/water_rtree*.sqlite
+# in the repo (name varies by region extract — water_rtree.sqlite on the
+# Pi, water_rtree_texas.sqlite on the dev machine).
+_water_candidates = sorted(
+    (Path(__file__).parent.parent / "water").glob("water_rtree*.sqlite"))
+WATER_PATH = os.environ.get(
+    "SVS_WATER_PATH",
+    str(_water_candidates[0]) if _water_candidates else "")
+PERF_LOG   = os.environ.get("SVS_PERF_LOG", "").lower() in ("1", "true", "yes")
+ANIMATE_DEG_S = float(os.environ.get("SVS_ANIMATE", "0"))
+SCREENSHOT = os.environ.get("SVS_SCREENSHOT", "")
+SCREENSHOT_DELAY_MS = int(os.environ.get("SVS_SCREENSHOT_DELAY_MS", "2000"))
+
+if PERF_LOG:
+    import logging
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
 
 # ---------------------------------------------------------------------------
 # Bootstrap fix DB
@@ -135,9 +162,51 @@ widget.set_svs_config({
     "cifp_path":          CIFP_PATH,    # used only if NASR isn't configured
     "nasr_db_path":       NASR_PATH,    # preferred — Tier C surface markings
     "dof_db_path":        DOF_PATH,     # FAA DOF obstacles (towers, antennas)
+    "water_db_path":      WATER_PATH,   # OSM/NE water polygons
+    "svs_perf_log":       PERF_LOG,
 })
 win.setCentralWidget(widget)
 win.show()
+
+# ---------------------------------------------------------------------------
+# Optional animation — drives continuous repaints through the normal FIX
+# update path so perf numbers reflect sustained rendering (a static pose
+# only repaints on expose events).
+# ---------------------------------------------------------------------------
+if ANIMATE_DEG_S != 0.0:
+    from PyQt6.QtCore import QTimer
+    _ANIM_INTERVAL_MS = 33
+    _anim_state = {"head": HEAD}
+
+    def _anim_tick():
+        _anim_state["head"] = (
+            _anim_state["head"] + ANIMATE_DEG_S * _ANIM_INTERVAL_MS / 1000.0
+        ) % 360.0
+        fix.db.set_value("HEAD", _anim_state["head"])
+        fix.db.set_value("TRACK", _anim_state["head"])
+        # Force a repaint — production repaints are driven by the FIX
+        # keys the AI subscribes to with update() (LAT/LONG/ALT etc.);
+        # HEAD alone doesn't repaint, and a perf run needs every tick
+        # to render.
+        widget.update()
+
+    _anim_timer = QTimer()
+    _anim_timer.timeout.connect(_anim_tick)
+    _anim_timer.start(_ANIM_INTERVAL_MS)
+
+# ---------------------------------------------------------------------------
+# Optional screenshot-and-exit — used for golden-image captures.
+# ---------------------------------------------------------------------------
+if SCREENSHOT:
+    from PyQt6.QtCore import QTimer
+
+    def _capture():
+        pix = widget.grab()
+        ok = pix.save(SCREENSHOT, "PNG")
+        print(f"Screenshot {'saved to' if ok else 'FAILED:'} {SCREENSHOT}")
+        app.exit(0 if ok else 1)
+
+    QTimer.singleShot(SCREENSHOT_DELAY_MS, _capture)
 
 print(f"SVS visual test window open.")
 print(f"  Tile path : {TILE_PATH}")
