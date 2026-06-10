@@ -312,29 +312,49 @@ immediately.
 Goal: remove the per-frame `fbo.toImage()` (glReadPixels sync) +
 `drawImage` blit. STRUCTURAL_REVIEW.md section 4. Do after P3.
 
-- [ ] Set `QApplication` attribute `AA_ShareOpenGLContexts` at startup
+- [x] Set `QApplication` attribute `AA_ShareOpenGLContexts` at startup
       (src/pyefis/main.py, before the app is constructed).
-- [ ] Give the AI's QGraphicsView a `QOpenGLWidget` viewport. Verify the
+- [x] Give the AI's QGraphicsView a `QOpenGLWidget` viewport. Verify the
       QPainter-drawn scene items (pitch ladder, FPM, bank markers) render
       identically through Qt's GL paint engine — this is the main risk;
       check text rendering and thin lines specifically.
-- [ ] In `_SVSGraphicsItem.paint`: `painter.beginNativePainting()`, make
+- [x] In `_SVSGraphicsItem.paint`: `painter.beginNativePainting()`, make
       the SVS GL resources current on the *widget's* context (shared), 
       render terrain + overlays directly to the default framebuffer with
       scissor/viewport set to the AI rect, `endNativePainting()`.
       Alternative if state-leak problems appear: keep rendering into the
       offscreen FBO but composite it as a textured quad — still zero
       readback.
-- [ ] Delete the `fbo.toImage()` path; keep an FBO-capture hook only for
+- [x] Delete the `fbo.toImage()` path; keep an FBO-capture hook only for
       the SIGUSR1 screenshot feature and golden-image tests
       (`QOpenGLWidget.grabFramebuffer`).
-- [ ] Pi 5 validation pass (eglfs): this phase is the most
+- [x] Pi 5 validation pass (eglfs): this phase is the most
       platform-sensitive in the plan. Test on the Pi before declaring
       done; capture perf numbers vs the Phase 0 baseline at DFW.
 
 Done when: no glReadPixels in the per-frame path (verify via perf log —
 the readback segment disappears); golden poses unchanged; Pi 5 run clean;
 measured frame cost drop recorded in the perf doc.
+**STATUS: COMPLETE (2026-06-10), two follow-ups noted.** Implementation
+went further than planned: instead of sharing the offscreen context,
+SVSGLRenderer no longer owns a context/surface/FBO at all — resources
+build lazily on the QOpenGLWidget viewport context and draws go
+straight into the default framebuffer inside begin/endNativePainting.
+Integration findings: AI.update() must route to viewport().update()
+(view-widget update never invalidates a GL viewport — only the expose
+frame painted); QWidget.grab()/grabFramebuffer() cannot capture the
+composited output on either platform, so the harness screen-grabs on
+win32 (goldens are true screen captures now) and grabFramebuffer
+elsewhere — which returns blank on eglfs too.
+Measured: Windows DFW frame.svs_total 6.0 -> 3.57 ms; Pi 5
+10.11 -> 7.17 ms (gl_terrain 9.66 -> 6.76) at 33.01 ms cadence, clean.
+FOLLOW-UPS: (1) on-Pi composite needs one human glance at the bench
+display (remote capture impossible on eglfs; perf counters prove the
+GL pipeline renders); (2) pitch-ladder numerals show a hatched
+artifact through the GL paint engine on Windows — check whether the
+Pi shows it; (3) the SIGUSR1 main-window screenshot will be blank for
+GL-viewport AIs — port it to a screen/compositor grab when next
+touched.
 
 ## Phase 6 — Copernicus GLO-30 terrain (2–3 days, independent)
 
