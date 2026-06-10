@@ -137,54 +137,51 @@ the phase the branch is named for.
 
 Deletion list (all in `src/pyefis/instruments/ai/svs.py` unless noted):
 
-- [ ] The rectangular CPU tiers: `GRID_SIZES`, the `cpu_sparse/dense/ultra`
+- [x] The rectangular CPU tiers: `GRID_SIZES`, the `cpu_sparse/dense/ultra`
       branches in `draw()`, the shade-table construction, the vectorised
-      cell/edge bucketing and QPainterPath fill/grid-line loops
-      (approx. lines 700–1080).
-- [ ] The polar CPU rasteriser (same `draw()` body — the entire
-      non-GL tail of the method).
-- [ ] `_QualityController` and all `self._quality` consumers. The GL path
-      renders in ~5 ms; detail shedding is dead weight. Keep
-      `detail_distance_nm` as a plain config value where the collectors
-      read it.
-- [ ] `_project_polygon_clipped`, `_runway_polygon_corners`, `Qt_NoPen`,
+      cell/edge bucketing and QPainterPath fill/grid-line loops.
+- [x] The polar CPU rasteriser (the entire non-GL tail of `draw()`).
+- [x] `_QualityController` and all `self._quality` consumers;
+      `detail_distance_nm` is a plain config value now.
+- [x] `_project_polygon_clipped`, `_runway_polygon_corners`, `Qt_NoPen`,
       the `_AIRPORT_DB` hand-coded KASE dict and its fallback branch in
       `_airports_in_range`, the `SVSGraphicsItem` placeholder class.
-- [ ] The `renderer:` config key becomes vestigial: accept and ignore
-      legacy values with a deprecation log line (don't break existing
-      screen YAML), remove from docs/examples.
+- [x] The `renderer:` config key: accepted and ignored with a
+      deprecation log line; removed from docs.
 
 Failure policy (replaces the polar fallback — decide and implement):
 
-- [ ] When GL init or first draw fails, the SVS renders an explicit
-      **"SVS UNAVAIL"** state: AI keeps its classic sky/ground two-tone
-      (which is what z-order already shows when SVS draws nothing) plus an
-      amber `SVS FAIL` annunciation drawn by the AI widget. Rationale in
-      STRUCTURAL_REVIEW.md section 1: a silently degraded picture that
-      omits obstacles is worse than an honest absence. The one-shot
-      "never re-attempt GL" behaviour stays.
+- [x] Implemented: any GL init/draw failure sets
+      `SVSRenderer.gl_failed`, draw() becomes a no-op, and the AI
+      widget annunciates amber **SVS UNAVAIL** centred in the upper
+      viewport. One-shot, never re-attempts GL. Covered by
+      `TestSVSGLFallback` (init failure, draw failure, no-retry).
 
 Restructure while the file is open (pure moves, no behaviour change):
 
-- [ ] Split into a package: `src/pyefis/instruments/ai/svs/`
-      with `__init__.py` (SVSRenderer facade + make_svs_item),
-      `geometry.py` (all `_collect_*` / `_emit_*` functions as
-      module-level pure functions — no Qt imports), `gl.py` (was
-      svs_gl.py), `tiles.py` (TileCache, load_tile, elevation sampling),
-      `perf.py` (_SVSPerfLog). Update imports in `ai/__init__.py` and
-      tests. Keep `from pyefis.instruments.ai.svs import SVSRenderer`
-      working.
-- [ ] Fix the per-frame airport query: `SVSGLRenderer._near_airport`
-      re-queries sqlite every frame — route it through
-      `_get_airports_cached` (or cache the boolean with the same 1 s TTL).
-- [ ] Update `docs/svs_rendering.md`: remove the tier table, document
-      `opengl` as the only renderer and the UNAVAIL failure mode.
+- [ ] **DEFERRED to a later session** (token budget): split into a
+      package `src/pyefis/instruments/ai/svs/` with `__init__.py`
+      (SVSRenderer facade + make_svs_item), `geometry.py` (pure
+      collectors, no Qt), `gl.py`, `tiles.py`, `perf.py`. Keep
+      `from pyefis.instruments.ai.svs import SVSRenderer` working.
+      Nothing else in P3+ depends on this — pick it up any time.
+- [x] Fix the per-frame airport query: `SVSGLRenderer._near_airport`
+      now delegates to `SVSRenderer.near_airport` (1 s TTL cached
+      boolean).
+- [x] Update `docs/svs_rendering.md`: tier table replaced by the
+      GL-required section; fallback section now documents UNAVAIL.
 
 Done when: golden poses unchanged vs Phase 0 (pixel-identical not
 required — GL path was already the default — but no visual regressions);
 `svs.py` equivalent drops to roughly half its size; a forced GL failure
 (e.g. env var or monkeypatched context) shows the UNAVAIL annunciation;
 unit tests updated and passing.
+**STATUS: COMPLETE except the deferred package split (2026-06-10).**
+svs.py 2419 -> 1791 lines (and P1 had added ~120 of flag collector to
+the old count). DFW visual check identical to the post-P1 golden.
+Suite: 104 pass (20 tests deleted with their subjects: TestPolarTier,
+TestProjectPolygonClipped, TestQualityController; GL-fallback tests
+rewritten to UNAVAIL semantics) / same 4 pre-existing failures.
 
 ## Phase 3 — Unified camera: one VP matrix, ENU metres (2–3 days)
 

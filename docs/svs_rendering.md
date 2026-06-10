@@ -3,36 +3,23 @@
 Notes on the SVS terrain renderer's grid resolution, why it matters, and the
 path to native-resolution rendering.
 
-## Tiers
+## GL-required
 
-Defined in `GRID_SIZES` / `POLAR_DEFAULTS` at [src/pyefis/instruments/ai/svs.py](../src/pyefis/instruments/ai/svs.py):
+As of the gpu-required branch (P2 of docs/svs_structural_plan.md) the
+CPU rendering tiers (cpu_sparse / cpu_dense / cpu_ultra / polar) are
+deleted. The only renderer is the GPU pipeline in svs_gl.py — the
+polar-fan heightmap mesh plus every overlay (water, obstacles, runways,
+markings, designators, airport flags). The `renderer:` config key is
+accepted and ignored (deprecation warning) for config compatibility.
 
-| Tier         | Grid                  | Total quads | x86 ms/frame† | Pi 5 ms/frame‡ | Notes                              |
-|--------------|-----------------------|-------------|---------------|----------------|------------------------------------|
-| `cpu_sparse` | 48 × 48 rect          | 2,209       | 23            | —              | ~15 Hz on Raspberry Pi 4           |
-| `cpu_dense`  | 128 × 128 rect        | 16,129      | 108           | —              | ~20 Hz on x86                      |
-| `cpu_ultra`  | 192 × 192 rect        | 36,481      | 220           | —              | ~2.3× more quads than dense        |
-| `polar`      | 80 × 120 fan          | 9,401       | 106           | 153 (6.5 FPS)  | Distance-dependent LOD — see below |
-| `opengl`     | 64 × 96 polar on V3D  | 6,049       | —             | **5.1 (196 FPS)** | GPU rasteriser — see below; recommended default on Pi 5 |
+If a GL context cannot be created, or any GL draw fails, the SVS
+disables itself permanently for the process and the AI widget
+annunciates **SVS UNAVAIL** in amber. There is no CPU fallback: a
+silently degraded terrain picture that omits obstacles is worse than
+an honest absence.
 
-† Measured at 640×480, range_nm=30, grid_lines=true, Aspen pose (39.20°N
-106.85°W 12,000 ft, head 150°). Frame times reflect the vectorised
-fill/grid_lines path; the per-cell aggregates and shade-key calculation
-run as whole-array NumPy ops, only the unavoidable Qt object construction
-is done per cell.
-
-‡ Measured on Raspberry Pi 5 (eglfs) at 800×600, range_nm=30,
-auto_range=true, warmup-trimmed mean over 100 frames at three poses
-(KSBA offshore, KASE short final, KASE 10k MSL). p95 is within 0.2 ms
-of p50 across all GL samples — jitter is negligible. The `opengl` tier
-is ~30× faster than `polar` on the same hardware because the polar
-mesh is built once, uploaded as a VBO, and the per-vertex
-projection/elevation/Lambertian work runs entirely in the V3D fragment
-and vertex shaders; CPU is idle except for `glReadPixels` (~1 ms at
-this viewport) and `QPainter.drawImage` of the FBO result.
-
-Selected via screen YAML (`renderer: cpu_dense`) or via the
-`SVSRenderer({"renderer": ...})` config dict.
+The polar mesh parameters (n_range, n_az, fov_deg, radial_warp,
+r_min_nm) remain tunable and apply to the GL terrain fan.
 
 ## Cell Size and Visible Range
 
@@ -198,13 +185,12 @@ integration, the pitch-ladder z-order, and every CPU overlay path stay
 exactly as they are. The GL context lives entirely inside
 `SVSGLRenderer`; nothing else in pyEfis knows about it.
 
-### Fallback
+### Failure policy
 
-Any exception during `SVSGLRenderer.__init__` or its first `draw()`
-permanently downgrades `self.renderer` to `polar` and logs a warning.
-Missing GL driver, Qt build without OpenGL, shader compile failure,
-context creation refused — all degrade silently to the CPU path. The
-fallback is one-shot; we never re-attempt GL in the same process.
+Any exception during `SVSGLRenderer.__init__` or any `draw()` sets
+`SVSRenderer.gl_failed`, permanently disabling the SVS for the
+process; the AI widget annunciates SVS UNAVAIL. One-shot — GL is
+never re-attempted.
 
 ### Heightmap texture
 
@@ -252,18 +238,9 @@ budget pressure.
 
 ## Practical Guidance
 
-- **Default on Pi 5 or any GL-capable host**: `opengl`, `range_nm: 30`,
-  `auto_range: true`. ~196 FPS measured; falls back to `polar` cleanly
-  if a GL context can't be created.
-- **CPU-only fallback default**: `polar` with the same range/auto-range
-  settings. Best near-field clarity per CPU cycle.
-- **Wide-area framing** (50 NM+, distant peaks): either tier with
-  `auto_range: false` and `radial_warp: 1.5` to push more cells outward.
-- **Legacy tiers** `cpu_sparse` / `cpu_dense` / `cpu_ultra` remain
-  available for A/B comparison and as conservative fallbacks.
-- **Beyond opengl**: vector overlays (runways/obstacles/markings) still
-  run on CPU. Stage 2 of the GPU work moves those onto instanced quads
-  with marking textures; not implemented today.
+- `range_nm: 50` + `auto_range: true` (defaults) render to the true
+  horizon. Polar mesh defaults (n_range=80, n_az=120) are fine on
+  Pi 5; n_range=64, n_az=96 trims GPU cost slightly if needed.
 
 ## Related
 
