@@ -82,33 +82,50 @@ def test_ai_setters_bound_values_and_skip_unchanged_or_failed(fix, qtbot):
     widget.redraw = mock.Mock()
     widget.update = mock.Mock()
 
+    # P4 frame clock: setters STORE state and mark the frame dirty;
+    # the repaint happens on the next frame tick, not in the slot.
+    widget._frame_dirty = False
     widget.rollAngle = 999
     assert widget.rollAngle == 180
-    widget.redraw.assert_called_once_with()
+    assert widget._frame_dirty is True
+    widget.redraw.assert_not_called()
 
-    widget.rollAngle = 180
-    assert widget.redraw.call_count == 1
+    widget._frame_dirty = False
+    widget.rollAngle = 180          # unchanged -> not dirtied
+    assert widget._frame_dirty is False
 
     widget.setLateralAcceleration(9)
     assert widget._latAccel == 0.3
-    widget.update.assert_called_once_with()
+    assert widget._frame_dirty is True
 
+    widget._frame_dirty = False
     widget.setLateralAcceleration(0.3)
-    widget.update.assert_called_once_with()
+    assert widget._frame_dirty is False
 
     widget.setTrueAirspeed(400)
     assert widget._tas == 400
-    assert widget.update.call_count == 2
+    assert widget._frame_dirty is True
 
+    widget._frame_dirty = False
     widget.setTrueAirspeed(400)
-    assert widget.update.call_count == 2
+    assert widget._frame_dirty is False
 
     widget.pitchAngle = -999
     assert widget.pitchAngle == -90
-    assert widget.redraw.call_count == 2
+    assert widget._frame_dirty is True
 
+    widget._frame_dirty = False
     widget.pitchAngle = -90
-    assert widget.redraw.call_count == 2
+    assert widget._frame_dirty is False
+
+    # The frame tick applies pending changes exactly once...
+    widget._frame_dirty = True
+    widget._frame_tick()
+    widget.redraw.assert_called_once_with()
+    widget.update.assert_called_once_with()
+    # ...and a clean tick with nothing changed repaints nothing.
+    widget._frame_tick()
+    assert widget.redraw.call_count == 1
 
     widget.setAIFailRoll(True)
     widget.setRollAngle(0)

@@ -195,6 +195,29 @@ if ANIMATE_DEG_S != 0.0:
     _anim_timer.start(_ANIM_INTERVAL_MS)
 
 # ---------------------------------------------------------------------------
+# Optional GPS motion simulation — 1 Hz position fixes dead-reckoned
+# from GS/TRACK, exercising the P4 frame clock + pose interpolation
+# (the display should glide at the frame rate between the 1 Hz steps).
+# ---------------------------------------------------------------------------
+if os.environ.get("SVS_SIM_MOTION", "").lower() in ("1", "true", "yes"):
+    import math as _math
+    from PyQt6.QtCore import QTimer
+    _sim = {"lat": LAT, "lon": LON}
+
+    def _sim_tick():
+        gs, trk = 120.0, HEAD
+        d_deg = (gs * 1.0 / 3600.0) / 60.0
+        _sim["lat"] += d_deg * _math.cos(_math.radians(trk))
+        _sim["lon"] += (d_deg * _math.sin(_math.radians(trk))
+                        / _math.cos(_math.radians(_sim["lat"])))
+        fix.db.set_value("LAT", _sim["lat"])
+        fix.db.set_value("LONG", _sim["lon"])
+
+    _sim_timer = QTimer()
+    _sim_timer.timeout.connect(_sim_tick)
+    _sim_timer.start(1000)
+
+# ---------------------------------------------------------------------------
 # Optional screenshot-and-exit — used for golden-image captures.
 # ---------------------------------------------------------------------------
 if SCREENSHOT:

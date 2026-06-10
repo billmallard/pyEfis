@@ -25,6 +25,7 @@ import logging
 import pyavtools.fix as fix
 from pyefis import common
 from pyefis.instruments.ai.svs import SVSRenderer, make_svs_item
+from pyefis.instruments.ai.pose import PoseSource
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +91,24 @@ class AI(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        # ------------------------------------------------------------------
+        # Frame clock (plan P4). FIX value slots only STORE state; this
+        # timer samples the interpolated pose at the display rate and
+        # triggers the repaint. Decouples render cadence from gateway
+        # burst patterns and bounds the main-thread CPU. Flag changes
+        # (old/bad/fail) still repaint immediately — they are alerts.
+        # ------------------------------------------------------------------
+        self._pose = PoseSource()
+        self._frame_dirty = True
+        self._frame_last_pose = None
+        self._frame_timer = QTimer(self)
+        # Coarse timers (the default) have 5% slack on top of the
+        # 15.6 ms Windows tick — at 33 ms intervals that reads as
+        # ~47 ms frames. Precise typing keeps the cadence honest.
+        self._frame_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._frame_timer.timeout.connect(self._frame_tick)
+        self.set_frame_rate(30.0)
 
         # Assume True until told otherwise
         self._AIOld = dict()
@@ -168,6 +187,15 @@ class AI(QGraphicsView):
             self._fpm_fail[key] = _item.fail
             self._fpm_bad[key]  = _item.bad
             setattr(self, f'_fpm_{key.lower()}', _item.value)
+            self._pose.set_fail(key, _item.fail)
+
+        # Seed the pose source from the initial FIX values — the
+        # valueChanged signals for anything set before this widget
+        # was constructed have already fired and will not repeat
+        # until the value changes again.
+        self._pose.set_dynamics(gs_kt=self._fpm_gs,
+                                track_deg=self._fpm_track,
+                                vs_fpm=self._fpm_vs)
 
         # SVS position inputs: LAT, LONG, ALT (disabled by default; renderer
         # set via set_svs_config). Missing keys leave the SVS position at 0
@@ -183,8 +211,13 @@ class AI(QGraphicsView):
                 log.warning(
                     f"AI: FIX key '{key}' not defined — SVS will use 0.0 for {attr}")
                 continue
-            _item.valueChanged[float].connect(lambda v, a=attr: (setattr(self, a, v), self.update()))
+            _item.valueChanged[float].connect(
+                lambda v, k=key: self._positionValueChanged(k, v))
             setattr(self, attr, _item.value)
+        if self._svs_lat or self._svs_lon:
+            self._pose.set_position(self._svs_lat, self._svs_lon)
+        if self._svs_alt:
+            self._pose.set_altitude(self._svs_alt)
 
         # Magnetic variation. SVS does its geographic projection in
         # true-north coordinates, so it needs TRUE heading. HEAD is by
@@ -200,7 +233,8 @@ class AI(QGraphicsView):
         try:
             _item = fix.db.get_item("MAGVAR")
             _item.valueChanged[float].connect(
-                lambda v: (setattr(self, "_magvar", v), self.update()))
+                lambda v: (setattr(self, "_magvar", v),
+                           setattr(self, "_frame_dirty", True)))
             self._magvar = _item.value
         except KeyError:
             log.warning(
@@ -411,6 +445,8 @@ class AI(QGraphicsView):
         # So SVS covers the static blue/brown background but stays behind the
         # pitch ladder. Configurable via the `z_value` SVS config key.
         z = float(config.get("z_value", 0.5))
+        # Display frame rate (P4): the AI frame clock's tick rate.
+        self.set_frame_rate(config.get("frame_rate", 30.0))
         self._svs_z = z
         self._svs_item = make_svs_item(self.svs, self)
         self._svs_item.setZValue(z)
@@ -444,11 +480,18 @@ class AI(QGraphicsView):
 
     def _fpmValueChanged(self, key, value):
         setattr(self, f'_fpm_{key.lower()}', value)
-        if self.isVisible():
-            self.update()
+        # Feed the dead-reckoning inputs; the frame clock repaints.
+        if key == "GS":
+            self._pose.set_dynamics(gs_kt=value)
+        elif key == "TRACK":
+            self._pose.set_dynamics(track_deg=value)
+        elif key == "VS":
+            self._pose.set_dynamics(vs_fpm=value)
+        self._frame_dirty = True
 
     def _fpmFailChanged(self, key, fail):
         self._fpm_fail[key] = fail
+        self._pose.set_fail(key, fail)
         if self.isVisible():
             self.update()
 
@@ -456,6 +499,50 @@ class AI(QGraphicsView):
         self._fpm_bad[key] = bad
         if self.isVisible():
             self.update()
+
+    def _positionValueChanged(self, key, value):
+        """GPS/baro position inputs: store raw and timestamp into the
+        pose source. The frame clock samples the interpolated pose."""
+        if key == "LAT":
+            self._svs_lat = value
+            self._pose.set_position(value, self._svs_lon)
+        elif key == "LONG":
+            self._svs_lon = value
+            self._pose.set_position(self._svs_lat, value)
+        elif key == "ALT":
+            self._svs_alt = value
+            self._pose.set_altitude(value)
+        self._frame_dirty = True
+
+    def set_frame_rate(self, fps):
+        """(Re)start the display frame clock at *fps* (clamped 5-60)."""
+        fps = max(5.0, min(60.0, float(fps)))
+        self._frame_rate = fps
+        self._frame_timer.start(int(round(1000.0 / fps)))
+
+    def _frame_tick(self):
+        """Display-rate tick: sample the interpolated pose, apply it,
+        and repaint — but only when something actually changed, so a
+        parked aircraft costs near-zero CPU."""
+        if not self.isVisible() or self.__dict__.get("scene") is None:
+            return
+        sampled = self._pose.sample()
+        if sampled is not None:
+            lat, lon, alt = sampled
+            self._svs_lat = lat
+            self._svs_lon = lon
+            if alt is not None:
+                self._svs_alt = alt
+        pose_key = (round(self._svs_lat, 8), round(self._svs_lon, 8),
+                    round(self._svs_alt, 2), self._pitchAngle,
+                    self._rollAngle, self._fpm_head, self._latAccel,
+                    self._tas)
+        if not self._frame_dirty and pose_key == self._frame_last_pose:
+            return
+        self._frame_last_pose = pose_key
+        self._frame_dirty = False
+        self.redraw()
+        self.update()
 
     def _drawFPM(self, p, w, h):
         """Draw GPS flight path marker if data is valid and show_fpm is set."""
@@ -665,8 +752,7 @@ class AI(QGraphicsView):
     def setRollAngle(self, angle):
         if angle != self._rollAngle and not self.getAIFail():
             self._rollAngle = common.bounds(-180, 180, angle)
-            if self.isVisible():
-                self.redraw()
+            self._frame_dirty = True
 
     def getRollAngle(self):
         return self._rollAngle
@@ -676,14 +762,12 @@ class AI(QGraphicsView):
     def setLateralAcceleration(self, value):
         if value != self._latAccel:
             self._latAccel = common.bounds(-0.3, 0.3, value)
-            if self.isVisible():
-                self.update()
+            self._frame_dirty = True
 
     def setTrueAirspeed(self, value):
         if value != self._tas:
             self._tas = value
-            if self.isVisible():
-                self.update()
+            self._frame_dirty = True
 
     def getPitchAngle(self):
         return self._pitchAngle
@@ -692,8 +776,7 @@ class AI(QGraphicsView):
         if angle != self._pitchAngle and not self.getAIFail():
             self._pitchAngle = common.bounds(-90, 90, angle)
             self.setPitchItems()
-            if self.isVisible():
-                self.redraw()
+            self._frame_dirty = True
 
     pitchAngle = property(getPitchAngle, setPitchAngle)
 
