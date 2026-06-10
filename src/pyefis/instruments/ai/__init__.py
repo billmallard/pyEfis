@@ -445,6 +445,17 @@ class AI(QGraphicsView):
         # So SVS covers the static blue/brown background but stays behind the
         # pitch ladder. Configurable via the `z_value` SVS config key.
         z = float(config.get("z_value", 0.5))
+        # GL viewport (P5): the SVS renders directly into the view's
+        # backing GL surface between begin/endNativePainting — no
+        # offscreen FBO, no glReadPixels. The QPainter scene items
+        # (pitch ladder, symbology) render through Qt's GL paint
+        # engine on the same surface. FullViewportUpdate is required
+        # for GL viewports (partial updates are not supported).
+        from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+        if not isinstance(self.viewport(), QOpenGLWidget):
+            self.setViewport(QOpenGLWidget())
+            self.setViewportUpdateMode(
+                QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         # Display frame rate (P4): the AI frame clock's tick rate.
         self.set_frame_rate(config.get("frame_rate", 30.0))
         self._svs_z = z
@@ -499,6 +510,14 @@ class AI(QGraphicsView):
         self._fpm_bad[key] = bad
         if self.isVisible():
             self.update()
+
+    def update(self):  # noqa: A003 — deliberate QWidget.update override
+        """Route repaint requests to the viewport widget. With the P5
+        QOpenGLWidget viewport, update() on the view widget itself
+        does not invalidate the GL surface — only the initial expose
+        would ever paint. viewport().update() is correct for both GL
+        and raster viewports."""
+        self.viewport().update()
 
     def _positionValueChanged(self, key, value):
         """GPS/baro position inputs: store raw and timestamp into the

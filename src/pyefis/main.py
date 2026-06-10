@@ -124,6 +124,10 @@ def merge_dict(dest,override):
 def main():
     global config_path
     global preferences
+    # Share GL contexts app-wide (P5): the AI's QOpenGLWidget viewport
+    # and any future GL surfaces resolve resources from one share group.
+    QApplication.setAttribute(
+        Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     parser = argparse.ArgumentParser(description='pyEfis')
     parser.add_argument('-m', '--mode', choices=['test', 'normal'],

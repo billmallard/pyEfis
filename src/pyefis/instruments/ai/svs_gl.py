@@ -1,6 +1,11 @@
 """
 GPU-backed SVS terrain renderer.
 
+P5: renders directly into the AI view's QOpenGLWidget surface between
+QPainter.begin/endNativePainting — no offscreen context, no FBO, no
+glReadPixels readback. GL resources are created lazily on the widget's
+context at first draw.
+
 Step 4 of docs/svs_opengl_plan.md: the polar mesh's elevation comes
 from a heightmap texture built from the SRTM3 tiles overlapping the
 aircraft. The vertex shader samples height per vertex; the fragment
@@ -37,14 +42,13 @@ OpenGL.ERROR_ON_COPY = True
 from OpenGL import GL as gl  # noqa: E402
 
 import numpy as np  # noqa: E402
-from PyQt6.QtCore import QRectF, QSize  # noqa: E402
+from PyQt6.QtCore import QRectF  # noqa: E402
 from PyQt6.QtGui import (  # noqa: E402
-    QColor, QFont, QFontMetricsF, QImage, QMatrix4x4, QOffscreenSurface,
+    QColor, QFont, QFontMetricsF, QImage, QMatrix4x4,
     QOpenGLContext, QPainter, QSurfaceFormat,
 )
 from PyQt6.QtOpenGL import (  # noqa: E402
     QOpenGLBuffer,
-    QOpenGLFramebufferObject,
     QOpenGLShader,
     QOpenGLShaderProgram,
     QOpenGLVertexArrayObject,
@@ -469,46 +473,24 @@ _PATCH_PX    = _PATCH_TILES * SRTM3_SAMPLES   # one row of overlap removed below
 
 
 class SVSGLRenderer:
-    """Step 4: polar mesh sampling a heightmap texture.
+    """Direct-to-viewport GL renderer (P5).
 
-    Per frame:
+    Per frame, inside QPainter.begin/endNativePainting on the AI's
+    QOpenGLWidget viewport:
 
-    1. ``makeCurrent`` our context onto the offscreen surface.
-    2. Lazy-create FBO, program, mesh.
-    3. Refresh the heightmap texture if the aircraft has crossed an
-       integer-degree boundary.
-    4. Set per-frame uniforms (aircraft state + viewport + patch bounds).
-    5. Bind heightmap texture to unit 0; ``glDrawElements`` over the
-       polar triangle list.
-    6. ``fbo.toImage()`` to read pixels back as a ``QImage``.
-    7. ``doneCurrent`` and restore the previous context.
-    8. Hand the image off to the parent's ``QPainter``.
+    1. Lazy-create programs, mesh, glyph atlas on the current context.
+    2. Refresh the heightmap texture on half-degree patch crossings.
+    3. Build the unified camera matrix (camera.py).
+    4. Draw the terrain fan, then every overlay pass, straight into
+       the default framebuffer — no offscreen FBO, no glReadPixels.
     """
 
     def __init__(self, parent_renderer):
         self._parent = parent_renderer
 
-        # Build the OpenGL context. Any failure caught by the
-        # SVSRenderer fallback wrapper.
-        fmt = QSurfaceFormat()
-        fmt.setVersion(3, 0)
-        fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.NoProfile)
-        fmt.setDepthBufferSize(0)
-        fmt.setStencilBufferSize(0)
-        self._ctx = QOpenGLContext()
-        self._ctx.setFormat(fmt)
-        if not self._ctx.create():
-            raise RuntimeError("could not create QOpenGLContext")
-
-        self._surface = QOffscreenSurface()
-        self._surface.setFormat(fmt)
-        self._surface.create()
-        if not self._surface.isValid():
-            raise RuntimeError("could not create QOffscreenSurface")
-
-        # Per-context resources — built lazily on first draw.
-        self._fbo: QOpenGLFramebufferObject | None = None
-        self._fbo_size = QSize(0, 0)
+        # GL resources — built lazily on the first draw, on whatever
+        # context is current inside beginNativePainting (the AI's
+        # QOpenGLWidget). No context or FBO of our own (P5).
         self._program: QOpenGLShaderProgram | None = None
         self._a_position = -1
         self._vao: QOpenGLVertexArrayObject | None = None
@@ -550,43 +532,42 @@ class SVSGLRenderer:
         self._text_atlas_tex_id: int | None = None
         self._text_atlas_uvs: dict[str, tuple] = {}
 
-        actual = self._ctx.format()
-        log.info(
-            "SVSGLRenderer Step 4 initialised — GL %s.%s",
-            actual.majorVersion(), actual.minorVersion())
+        log.info("SVSGLRenderer initialised (direct-to-viewport, P5)")
 
     # ------------------------------------------------------------------
     # Drawing
     # ------------------------------------------------------------------
     def draw(self, painter, w, h, ac_lat, ac_lon, ac_alt_ft,
              pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-             range_nm=None):
-        prev_ctx = QOpenGLContext.currentContext()
-        prev_surface = prev_ctx.surface() if prev_ctx is not None else None
-
-        if not self._ctx.makeCurrent(self._surface):
-            raise RuntimeError("QOpenGLContext.makeCurrent failed")
-
+             range_nm=None, device_pixel_ratio=1.0):
+        """Render terrain + overlays directly into the painter's GL
+        surface between begin/endNativePainting. Requires the AI view
+        to carry a QOpenGLWidget viewport; raises when no GL context
+        is current, which SVSRenderer turns into the one-shot
+        SVS UNAVAIL state."""
+        painter.beginNativePainting()
         try:
-            self._ensure_fbo(w, h)
+            if QOpenGLContext.currentContext() is None:
+                raise RuntimeError(
+                    "no current GL context — AI viewport is not a "
+                    "QOpenGLWidget")
             self._ensure_program()
             self._ensure_mesh()
             self._ensure_heightmap(ac_lat, ac_lon)
             self._update_camera(w, h, ac_lat, ac_lon, ac_alt_ft,
                                 pitch_deg, roll_deg, heading_deg,
                                 pixels_per_deg)
-            image = self._render_to_image(
+            # Qt leaves the GL viewport undefined inside native
+            # painting; set it to the full backing store (device
+            # pixels, hence the DPR scale).
+            gl.glViewport(0, 0,
+                          int(round(w * device_pixel_ratio)),
+                          int(round(h * device_pixel_ratio)))
+            self._render_frame(
                 w, h, ac_lat, ac_lon, ac_alt_ft, pitch_deg, roll_deg,
                 heading_deg, pixels_per_deg, range_nm)
         finally:
-            self._ctx.doneCurrent()
-            if prev_ctx is not None and prev_surface is not None:
-                prev_ctx.makeCurrent(prev_surface)
-
-        painter.save()
-        painter.resetTransform()
-        painter.drawImage(0, 0, image)
-        painter.restore()
+            painter.endNativePainting()
 
     # ------------------------------------------------------------------
     # Internals
@@ -629,23 +610,14 @@ class SVSGLRenderer:
             out[:, 3:] = verts[:, 3:]
         return out
 
-    def _render_to_image(self, w, h, ac_lat, ac_lon, ac_alt_ft,
-                         pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-                         range_nm=None):
-        self._fbo.bind()
-        try:
-            gl.glViewport(0, 0, w, h)
-            # Clear to transparent so areas the polar fan does not cover
-            # (most importantly the bottom-corner wedges below the
-            # innermost ring of the fan, which the mesh just cannot
-            # reach at very low AGL) blit transparent on top of the AI
-            # background and let the AI's "ground" colour show through
-            # instead of replacing it with opaque black. The shader
-            # emits alpha=1 on every drawn vertex so terrain pixels
-            # composite normally.
-            gl.glClearColor(0.0, 0.0, 0.0, 0.0)
-            gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-
+    def _render_frame(self, w, h, ac_lat, ac_lon, ac_alt_ft,
+                      pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                      range_nm=None):
+        """Issue the terrain + overlay draws into the currently bound
+        (default) framebuffer. No clear: pixels the polar fan does not
+        cover keep the AI's painted sky/ground background — the same
+        compositing the transparent-FBO blit used to provide."""
+        if True:
             # Bind the heightmap to texture unit 0; the shader's
             # sampler2D uniform points at unit 0.
             gl.glActiveTexture(gl.GL_TEXTURE0)
@@ -716,28 +688,23 @@ class SVSGLRenderer:
                 self._vao.release()
                 self._program.release()
 
-            # Overlay pass (water, runways, obstacles, flags) draws
-            # into the same FBO on top of the terrain. Phase 1 added
-            # water; later phases wire up the rest.
+            # Overlay passes (water, obstacles, runways, markings,
+            # designators, flags) draw on top of the terrain in the
+            # same framebuffer.
             self._render_overlays(
                 w, h, ac_lat, ac_lon, ac_alt_ft,
                 pitch_deg, roll_deg, heading_deg, pixels_per_deg,
                 range_nm)
 
-            return self._fbo.toImage()
-        finally:
-            self._fbo.release()
+            # Leave GL state tidy for Qt's paint engine: unit 0
+            # active, nothing bound.
+            gl.glActiveTexture(gl.GL_TEXTURE0)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
     def _near_airport(self, ac_lat: float, ac_lon: float) -> bool:
         """Cached airport-proximity test — see SVSRenderer.near_airport
         (1 s TTL; replaces the per-frame sqlite query)."""
         return bool(self._parent.near_airport(ac_lat, ac_lon))
-
-    def _ensure_fbo(self, w, h):
-        size = QSize(w, h)
-        if self._fbo is None or self._fbo_size != size:
-            self._fbo = QOpenGLFramebufferObject(size)
-            self._fbo_size = size
 
     # ------------------------------------------------------------------
     # Overlay pass (Phase 0 infrastructure for the overlays-to-GPU plan)
@@ -1183,7 +1150,7 @@ class SVSGLRenderer:
 
     def _shader_header(self) -> str:
         """Pick the right #version header for the active context."""
-        fmt = self._ctx.format()
+        fmt = QOpenGLContext.currentContext().format()
         if fmt.renderableType() == QSurfaceFormat.RenderableType.OpenGLES:
             # Pi 5 V3D supports ES 3.0+. precision required on ES.
             return "#version 300 es\nprecision highp float;\n"

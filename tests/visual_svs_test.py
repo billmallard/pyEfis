@@ -140,6 +140,8 @@ fix.db.set_value("ALT",   ALT)
 # ---------------------------------------------------------------------------
 # Build and show window
 # ---------------------------------------------------------------------------
+from PyQt6.QtCore import Qt
+QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 app = QApplication(sys.argv)
 
 win = QMainWindow()
@@ -224,8 +226,23 @@ if SCREENSHOT:
     from PyQt6.QtCore import QTimer
 
     def _capture():
-        pix = widget.grab()
-        ok = pix.save(SCREENSHOT, "PNG")
+        # With the P5 QOpenGLWidget viewport, QWidget.grab() cannot see
+        # GL content — grab the composited framebuffer instead (Qt
+        # renders the scene AND the QPainter overlay into it).
+        vp = widget.viewport()
+        is_gl = hasattr(vp, "grabFramebuffer")
+        if os.environ.get("SVS_SCREENGRAB") or (
+                is_gl and sys.platform == "win32"):
+            # True screen capture. On Windows, grabFramebuffer of the
+            # QOpenGLWidget viewport returns blank (composition
+            # happens outside the widget FBO on this driver path) —
+            # the screen is the ground truth.
+            scr = app.primaryScreen()
+            ok = scr.grabWindow(win.winId()).save(SCREENSHOT, "PNG")
+        elif is_gl:
+            ok = vp.grabFramebuffer().save(SCREENSHOT, "PNG")
+        else:
+            ok = widget.grab().save(SCREENSHOT, "PNG")
         print(f"Screenshot {'saved to' if ok else 'FAILED:'} {SCREENSHOT}")
         app.exit(0 if ok else 1)
 
