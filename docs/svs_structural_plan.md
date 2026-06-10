@@ -267,7 +267,7 @@ Goal: fixed display cadence, smooth motion between FIX updates, bounded
 CPU. STRUCTURAL_REVIEW.md section 3. Independent of P1–P3; can be done
 any time, by a separate session.
 
-- [ ] Add a `PoseSource` class (suggest `src/pyefis/instruments/ai/pose.py`):
+- [x] Add a `PoseSource` class (suggest `src/pyefis/instruments/ai/pose.py`):
       subscribes to LAT/LONG/ALT/PITCH/ROLL/HEAD (+ GS, TRACK, VS when
       published), timestamps each update, and exposes `sample(now)`
       returning an interpolated/extrapolated pose. v1 algorithm:
@@ -276,17 +276,17 @@ any time, by a separate session.
       same way; attitude passthrough (AHRS rates are near display rate
       already). Pure-Python, no Qt — unit-test with synthetic update
       sequences (1 Hz GPS, 25 Hz attitude).
-- [ ] AI widget: FIX slots write into PoseSource (or plain attrs) and no
+- [x] AI widget: FIX slots write into PoseSource (or plain attrs) and no
       longer call `self.update()`. A `QTimer` at `frame_rate` (config
       key, default 30) samples the pose and calls `update()`. The timer
       can skip the repaint when the sampled pose is unchanged and no SVS
       data is dirty (parked aircraft → near-zero CPU).
-- [ ] Old/bad/fail flags on the pose FIX items still trigger immediate
+- [x] Old/bad/fail flags on the pose FIX items still trigger immediate
       repaint (flag changes are alerts, not motion).
-- [ ] Harness support: add `SVS_SIM_MOTION=1` (or similar) to
+- [x] Harness support: add `SVS_SIM_MOTION=1` (or similar) to
       `tests/visual_svs_test.py` to feed scripted 1 Hz position updates
       with GS/TRACK so smoothness is observable without a gateway.
-- [ ] Measure: with the harness simulating 1 Hz GPS, confirm visually
+- [x] Measure: with the harness simulating 1 Hz GPS, confirm visually
       smooth 30 Hz terrain motion; with the timer at 30 Hz, confirm main
       thread CPU is bounded (compare against Phase 0 baseline).
 
@@ -296,6 +296,16 @@ This phase touches only the AI widget.
 Done when: AI repaints at a fixed configurable rate; terrain glides
 through simulated 1 Hz GPS updates; pose unit tests pass; no FIX
 `valueChanged` handler in the AI calls `update()` directly.
+**STATUS: COMPLETE (2026-06-10).** Notes: PoseSource dynamics are NOT
+staleness-gated (change-driven sources publish GS/TRACK only on
+change; the 2 s cap bounds the risk) and the AI seeds the pose source
+from initial FIX values at construction — both found via the
+SVS_SIM_MOTION harness check freezing at 1 Hz. Frame timer uses
+Qt PreciseTimer (coarse default gave 47 ms frames on Windows).
+Measured: Windows 33.00 ms paint cadence, Pi 5 on-target 34.3 ms,
+61/59 paints per 2 s window from 1 Hz GPS input; static pose 2-3
+paints per 8 s. Flag (old/bad/fail) changes still repaint
+immediately.
 
 ## Phase 5 — GL viewport compositing: kill the FBO readback (1–2 days)
 
