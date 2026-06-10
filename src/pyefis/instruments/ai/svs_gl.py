@@ -546,11 +546,21 @@ class SVSGLRenderer:
         is current, which SVSRenderer turns into the one-shot
         SVS UNAVAIL state."""
         painter.beginNativePainting()
+        _saved = None
         try:
             if QOpenGLContext.currentContext() is None:
                 raise RuntimeError(
                     "no current GL context — AI viewport is not a "
                     "QOpenGLWidget")
+            # Snapshot the GL state Qt's paint engine caches. The
+            # engine tracks its own last-bound textures/program/VAO
+            # and does NOT re-bind them after native painting — if we
+            # leave different bindings, every scene item drawn after
+            # the SVS (pitch ladder text especially) samples whatever
+            # texture we left bound. Restore the exact prior bindings
+            # before endNativePainting so the engine's cache stays
+            # truthful.
+            _saved = self._save_gl_state()
             self._ensure_program()
             self._ensure_mesh()
             self._ensure_heightmap(ac_lat, ac_lon)
@@ -567,7 +577,48 @@ class SVSGLRenderer:
                 w, h, ac_lat, ac_lon, ac_alt_ft, pitch_deg, roll_deg,
                 heading_deg, pixels_per_deg, range_nm)
         finally:
+            if _saved is not None:
+                self._restore_gl_state(_saved)
             painter.endNativePainting()
+
+    _STATE_TEX_UNITS = 4
+
+    @staticmethod
+    def _save_gl_state():
+        state = {
+            "active": int(gl.glGetIntegerv(gl.GL_ACTIVE_TEXTURE)),
+            "program": int(gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM)),
+            "vao": int(gl.glGetIntegerv(gl.GL_VERTEX_ARRAY_BINDING)),
+            "array_buf": int(gl.glGetIntegerv(
+                gl.GL_ARRAY_BUFFER_BINDING)),
+            "unpack_align": int(gl.glGetIntegerv(
+                gl.GL_UNPACK_ALIGNMENT)),
+            "unpack_row_len": int(gl.glGetIntegerv(
+                gl.GL_UNPACK_ROW_LENGTH)),
+            "tex": [],
+        }
+        for u in range(SVSGLRenderer._STATE_TEX_UNITS):
+            gl.glActiveTexture(gl.GL_TEXTURE0 + u)
+            state["tex"].append(int(gl.glGetIntegerv(
+                gl.GL_TEXTURE_BINDING_2D)))
+        gl.glActiveTexture(state["active"])
+        return state
+
+    @staticmethod
+    def _restore_gl_state(state):
+        for u in range(SVSGLRenderer._STATE_TEX_UNITS):
+            gl.glActiveTexture(gl.GL_TEXTURE0 + u)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, state["tex"][u])
+        gl.glActiveTexture(state["active"])
+        gl.glUseProgram(state["program"])
+        gl.glBindVertexArray(state["vao"])
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, state["array_buf"])
+        # Our atlas/heightmap uploads set tight unpack alignment; a
+        # stale value shears Qt's glyph-cache uploads (striped text).
+        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, state["unpack_align"])
+        gl.glPixelStorei(gl.GL_UNPACK_ROW_LENGTH,
+                         state["unpack_row_len"])
+        gl.glLineWidth(1.0)
 
     # ------------------------------------------------------------------
     # Internals
