@@ -22,6 +22,8 @@ __pycache__/
 # Binary stuff
 *.png
 *.jpg
+# ...except the golden regression images (see docs/svs_structural_plan.md P0)
+!tests/golden/*.png
 
 # C extensions
 *.so
