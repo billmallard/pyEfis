@@ -39,7 +39,7 @@ from OpenGL import GL as gl  # noqa: E402
 import numpy as np  # noqa: E402
 from PyQt6.QtCore import QRectF, QSize  # noqa: E402
 from PyQt6.QtGui import (  # noqa: E402
-    QColor, QFont, QFontMetricsF, QImage, QOffscreenSurface,
+    QColor, QFont, QFontMetricsF, QImage, QMatrix4x4, QOffscreenSurface,
     QOpenGLContext, QPainter, QSurfaceFormat,
 )
 from PyQt6.QtOpenGL import (  # noqa: E402
@@ -48,6 +48,10 @@ from PyQt6.QtOpenGL import (  # noqa: E402
     QOpenGLShader,
     QOpenGLShaderProgram,
     QOpenGLVertexArrayObject,
+)
+
+from pyefis.instruments.ai.camera import (  # noqa: E402
+    view_projection, M_PER_DEG_LAT, M_PER_FT, EARTH_CURVATURE,
 )
 
 log = logging.getLogger(__name__)
@@ -65,13 +69,13 @@ uniform float u_ac_lat;
 uniform float u_ac_lon;
 uniform float u_ac_alt_ft;
 uniform float u_heading_deg;
-uniform float u_pitch_deg;
-uniform float u_roll_deg;
 uniform float u_range_nm;
 uniform float u_radial_warp;
 uniform float u_r_min_nm;
-uniform float u_pixels_per_deg;
-uniform vec2  u_viewport;          // (width, height) in pixels
+uniform mat4  u_vp;                // unified camera matrix (camera.py)
+uniform float u_ac_e;              // aircraft ENU east, metres
+uniform float u_ac_n;              // aircraft ENU north, metres
+uniform float u_earth_curv;        // 1/(2R_earth), or 0 when disabled
 uniform sampler2D u_heightmap;     // R32F, single-channel elevation in metres
 uniform vec4  u_patch_bounds;      // (lat_min, lat_max, lon_min, lon_max)
 // Mesh dimensions — used by the fragment shader's grid-line
@@ -182,30 +186,18 @@ void main() {
     v_clearance_ft = u_ac_alt_ft - elev_ft;
     v_is_water     = is_water;
 
-    // Elevation angle from the aircraft to this vertex.
-    float ac_alt_m = u_ac_alt_ft * M_PER_FT;
-    float range_m  = r_deg * M_PER_DEG_LAT;
-    float alt_diff_m = elev_m - ac_alt_m;
-    float elev_angle_deg = atan(alt_diff_m / max(range_m, 1.0)) * DEG_PER_RAD;
-
-    float x_ang = az_deg;
-    float y_ang = elev_angle_deg - u_pitch_deg;
-
-    float x_px =  x_ang * u_pixels_per_deg;
-    float y_px = -y_ang * u_pixels_per_deg;
-
-    float roll_rad = radians(-u_roll_deg);
-    float cos_r = cos(roll_rad);
-    float sin_r = sin(roll_rad);
-    vec2 rotated = vec2(
-        x_px * cos_r - y_px * sin_r,
-        x_px * sin_r + y_px * cos_r);
-    vec2 screen_xy = rotated + u_viewport * 0.5;
-
-    gl_Position = vec4(
-        2.0 * screen_xy.x / u_viewport.x - 1.0,
-        1.0 - 2.0 * screen_xy.y / u_viewport.y,
-        0.0, 1.0);
+    // ENU position (metres; up = MSL metres) through the unified
+    // camera. The fan is generated aircraft-relative at world bearing
+    // (heading + az); the matrix's heading rotation brings it back to
+    // screen azimuth az. Earth-curvature drop is applied to the
+    // projected geometry only — clearance colouring uses true height.
+    float r_m = r_deg * M_PER_DEG_LAT;
+    float drop_m = u_earth_curv * r_m * r_m;
+    vec3 enu = vec3(
+        u_ac_e + r_m * sin_b,
+        u_ac_n + r_m * cos_b,
+        elev_m - drop_m);
+    gl_Position = u_vp * vec4(enu, 1.0);
 }
 """
 
@@ -290,106 +282,19 @@ void main() {
 # path runs.
 
 _OVERLAY_VERT_BODY = """
-in vec3 a_world_pos;   // (lat_deg, lon_deg, elev_ft)
+in vec3 a_world_pos;   // ENU metres (east, north, up-MSL) — see camera.py
 
-uniform float u_ac_lat;
-uniform float u_ac_lon;
-uniform float u_ac_alt_ft;
-uniform float u_heading_deg;
-uniform float u_pitch_deg;
-uniform float u_roll_deg;
-uniform float u_pixels_per_deg;
-uniform vec2  u_viewport;
-// 1.0 -> GL hardware perspective projection (proper near-plane
-// clipping; no wedge artifacts at the camera). 0.0 -> legacy atan2
-// projection (kept for A/B comparison and as a fallback if some
-// terrain-vs-overlay alignment edge case shows up at extreme
-// azimuths).
-uniform float u_use_perspective;
-
-const float PI            = 3.14159265358979;
-const float DEG_PER_RAD   = 180.0 / PI;
-const float M_PER_FT      = 0.3048;
-const float M_PER_DEG_LAT = 111139.0;
+uniform mat4  u_vp;
+uniform float u_ac_e;
+uniform float u_ac_n;
+uniform float u_earth_curv;
 
 void main() {
-    float lat_cos = cos(radians(u_ac_lat));
-    float d_lat = a_world_pos.x - u_ac_lat;
-    float d_lon = (a_world_pos.y - u_ac_lon) * lat_cos;
-
-    float head_rad = radians(u_heading_deg);
-    float cos_h = cos(head_rad);
-    float sin_h = sin(head_rad);
-    float x_fwd   =  d_lat * cos_h + d_lon * sin_h;
-    float x_right = -d_lat * sin_h + d_lon * cos_h;
-    float alt_diff_m = (a_world_pos.z - u_ac_alt_ft) * M_PER_FT;
-
-    if (u_use_perspective > 0.5) {
-        // ----------------------------------------------------------
-        // Perspective projection. Pitch + roll happen as view-frame
-        // rotations BEFORE the perspective divide; GL then divides
-        // by gl_Position.w = x_fwd_p (the forward depth in the
-        // pitched-camera frame) and per-pixel clips at the near
-        // plane. No more atan2 wraparound, no CPU 3D clipping.
-        // Scale set so the screen layout matches the atan2 path at
-        // small angles (tan(x) ~ x), so terrain and overlays stay
-        // visually aligned through the entire usable view cone.
-        // ----------------------------------------------------------
-        float y_up_deg = alt_diff_m / M_PER_DEG_LAT;
-
-        // Pitch: positive pitch = nose up. Ground points appear lower
-        // on screen. Rotation acts on (y_up, x_fwd) leaving x_right
-        // untouched.
-        float pitch_rad = radians(u_pitch_deg);
-        float cos_p = cos(pitch_rad);
-        float sin_p = sin(pitch_rad);
-        float y_up_p  = y_up_deg * cos_p - x_fwd * sin_p;
-        float x_fwd_p = y_up_deg * sin_p + x_fwd * cos_p;
-
-        // Roll: rotation acts on (x_right, y_up) leaving x_fwd alone.
-        // Sign chosen to match the atan2 path's screen rotation.
-        float roll_rad = radians(u_roll_deg);
-        float cos_r = cos(roll_rad);
-        float sin_r = sin(roll_rad);
-        float x_right_r = x_right * cos_r - y_up_p * sin_r;
-        float y_up_r    = x_right * sin_r + y_up_p * cos_r;
-
-        float scale = DEG_PER_RAD * u_pixels_per_deg;
-        gl_Position = vec4(
-            x_right_r * scale * 2.0 / u_viewport.x,
-            y_up_r    * scale * 2.0 / u_viewport.y,
-            0.0,
-            x_fwd_p);
-    } else {
-        // ----------------------------------------------------------
-        // Legacy atan2 projection. Kept for A/B comparison. Has
-        // wedge artifacts when triangles straddle the near plane;
-        // CPU-side 3D clipping is required to use this path safely.
-        // ----------------------------------------------------------
-        float range_deg = sqrt(x_fwd * x_fwd + x_right * x_right);
-        float range_m   = max(range_deg * M_PER_DEG_LAT, 1.0);
-        float elev_angle_deg = atan(alt_diff_m, range_m) * DEG_PER_RAD;
-        float x_ang = atan(x_right, x_fwd) * DEG_PER_RAD;
-        float y_ang = elev_angle_deg - u_pitch_deg;
-
-        float x_px =  x_ang * u_pixels_per_deg;
-        float y_px = -y_ang * u_pixels_per_deg;
-
-        float roll_rad = radians(-u_roll_deg);
-        float cos_r = cos(roll_rad);
-        float sin_r = sin(roll_rad);
-        vec2 rotated = vec2(
-            x_px * cos_r - y_px * sin_r,
-            x_px * sin_r + y_px * cos_r);
-        vec2 screen_xy = rotated + u_viewport * 0.5;
-
-        float behind = step(x_fwd, 0.0);
-        gl_Position = vec4(
-            2.0 * screen_xy.x / u_viewport.x - 1.0,
-            1.0 - 2.0 * screen_xy.y / u_viewport.y,
-            mix(0.0, 2.0, behind),
-            1.0);
-    }
+    float de = a_world_pos.x - u_ac_e;
+    float dn = a_world_pos.y - u_ac_n;
+    float drop = u_earth_curv * (de * de + dn * dn);
+    gl_Position = u_vp * vec4(
+        a_world_pos.x, a_world_pos.y, a_world_pos.z - drop, 1.0);
 }
 """
 
@@ -413,57 +318,22 @@ void main() {
 # polygon grey shows through outside the glyph strokes.
 
 _TEXT_VERT_BODY = """
-in vec3 a_world_pos;   // (lat_deg, lon_deg, elev_ft)
+in vec3 a_world_pos;   // ENU metres (east, north, up-MSL)
 in vec2 a_uv;          // atlas UV for this quad corner
 
-uniform float u_ac_lat;
-uniform float u_ac_lon;
-uniform float u_ac_alt_ft;
-uniform float u_heading_deg;
-uniform float u_pitch_deg;
-uniform float u_roll_deg;
-uniform float u_pixels_per_deg;
-uniform vec2  u_viewport;
+uniform mat4  u_vp;
+uniform float u_ac_e;
+uniform float u_ac_n;
+uniform float u_earth_curv;
 
 out vec2 v_uv;
 
-const float PI            = 3.14159265358979;
-const float DEG_PER_RAD   = 180.0 / PI;
-const float M_PER_FT      = 0.3048;
-const float M_PER_DEG_LAT = 111139.0;
-
 void main() {
-    float lat_cos = cos(radians(u_ac_lat));
-    float d_lat = a_world_pos.x - u_ac_lat;
-    float d_lon = (a_world_pos.y - u_ac_lon) * lat_cos;
-
-    float head_rad = radians(u_heading_deg);
-    float cos_h = cos(head_rad);
-    float sin_h = sin(head_rad);
-    float x_fwd   =  d_lat * cos_h + d_lon * sin_h;
-    float x_right = -d_lat * sin_h + d_lon * cos_h;
-    float alt_diff_m = (a_world_pos.z - u_ac_alt_ft) * M_PER_FT;
-    float y_up_deg = alt_diff_m / M_PER_DEG_LAT;
-
-    float pitch_rad = radians(u_pitch_deg);
-    float cos_p = cos(pitch_rad);
-    float sin_p = sin(pitch_rad);
-    float y_up_p  = y_up_deg * cos_p - x_fwd * sin_p;
-    float x_fwd_p = y_up_deg * sin_p + x_fwd * cos_p;
-
-    float roll_rad = radians(u_roll_deg);
-    float cos_r = cos(roll_rad);
-    float sin_r = sin(roll_rad);
-    float x_right_r = x_right * cos_r - y_up_p * sin_r;
-    float y_up_r    = x_right * sin_r + y_up_p * cos_r;
-
-    float scale = DEG_PER_RAD * u_pixels_per_deg;
-    gl_Position = vec4(
-        x_right_r * scale * 2.0 / u_viewport.x,
-        y_up_r    * scale * 2.0 / u_viewport.y,
-        0.0,
-        x_fwd_p);
-
+    float de = a_world_pos.x - u_ac_e;
+    float dn = a_world_pos.y - u_ac_n;
+    float drop = u_earth_curv * (de * de + dn * dn);
+    gl_Position = u_vp * vec4(
+        a_world_pos.x, a_world_pos.y, a_world_pos.z - drop, 1.0);
     v_uv = a_uv;
 }
 """
@@ -702,6 +572,9 @@ class SVSGLRenderer:
             self._ensure_program()
             self._ensure_mesh()
             self._ensure_heightmap(ac_lat, ac_lon)
+            self._update_camera(w, h, ac_lat, ac_lon, ac_alt_ft,
+                                pitch_deg, roll_deg, heading_deg,
+                                pixels_per_deg)
             image = self._render_to_image(
                 w, h, ac_lat, ac_lon, ac_alt_ft, pitch_deg, roll_deg,
                 heading_deg, pixels_per_deg, range_nm)
@@ -718,6 +591,44 @@ class SVSGLRenderer:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+    def _update_camera(self, w, h, ac_lat, ac_lon, ac_alt_ft,
+                       pitch_deg, roll_deg, heading_deg, pixels_per_deg):
+        """Build the per-frame unified camera (P3): aircraft ENU
+        position relative to the heightmap patch origin, the 4x4
+        view-projection matrix, and the ENU conversion factors used
+        when uploading overlay vertex buffers."""
+        import math as _math
+        o_lat, o_lon = self._patch_origin
+        lat_cos = _math.cos(_math.radians(ac_lat))
+        ac_e = (ac_lon - o_lon) * M_PER_DEG_LAT * lat_cos
+        ac_n = (ac_lat - o_lat) * M_PER_DEG_LAT
+        ac_u = ac_alt_ft * M_PER_FT
+        vp = view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg,
+                             roll_deg, pixels_per_deg, w, h)
+        self._frame_vp = QMatrix4x4(*[float(x) for x in vp.ravel()])
+        self._frame_ac_e = ac_e
+        self._frame_ac_n = ac_n
+        self._frame_lat_cos = lat_cos
+        self._frame_curv = (EARTH_CURVATURE
+                            if getattr(self._parent, "earth_curvature",
+                                       True) else 0.0)
+
+    def _to_enu(self, verts):
+        """Convert an Nx3 (lat, lon, elev_ft) — or Nx5 with trailing
+        UVs — float array to ENU metres in the current patch frame.
+        One conversion point for every overlay buffer; collectors stay
+        in lat/lon, so patch-origin changes need no cache invalidation
+        (the conversion re-runs each upload)."""
+        o_lat, o_lon = self._patch_origin
+        out = np.empty(verts.shape, dtype=np.float32)
+        out[:, 0] = (verts[:, 1] - o_lon) * (M_PER_DEG_LAT
+                                             * self._frame_lat_cos)
+        out[:, 1] = (verts[:, 0] - o_lat) * M_PER_DEG_LAT
+        out[:, 2] = verts[:, 2] * M_PER_FT
+        if verts.shape[1] > 3:
+            out[:, 3:] = verts[:, 3:]
+        return out
+
     def _render_to_image(self, w, h, ac_lat, ac_lon, ac_alt_ft,
                          pitch_deg, roll_deg, heading_deg, pixels_per_deg,
                          range_nm=None):
@@ -753,19 +664,19 @@ class SVSGLRenderer:
                 self._program.setUniformValue(
                     self._u["u_heading_deg"], float(heading_deg))
                 self._program.setUniformValue(
-                    self._u["u_pitch_deg"], float(pitch_deg))
-                self._program.setUniformValue(
-                    self._u["u_roll_deg"], float(roll_deg))
-                self._program.setUniformValue(
                     self._u["u_range_nm"], float(p.range_nm))
                 self._program.setUniformValue(
                     self._u["u_radial_warp"], float(p._radial_warp))
                 self._program.setUniformValue(
                     self._u["u_r_min_nm"], float(p._r_min_nm))
                 self._program.setUniformValue(
-                    self._u["u_pixels_per_deg"], float(pixels_per_deg))
+                    self._u["u_vp"], self._frame_vp)
                 self._program.setUniformValue(
-                    self._u["u_viewport"], float(w), float(h))
+                    self._u["u_ac_e"], float(self._frame_ac_e))
+                self._program.setUniformValue(
+                    self._u["u_ac_n"], float(self._frame_ac_n))
+                self._program.setUniformValue(
+                    self._u["u_earth_curv"], float(self._frame_curv))
                 # patch_bounds: (lat_min, lat_max, lon_min, lon_max)
                 self._program.setUniformValue(
                     self._u["u_patch_bounds"],
@@ -855,10 +766,8 @@ class SVSGLRenderer:
         self._overlay_a_world_pos = prog.attributeLocation("a_world_pos")
         if self._overlay_a_world_pos < 0:
             raise RuntimeError("overlay shader: a_world_pos not found")
-        for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft",
-                     "u_heading_deg", "u_pitch_deg", "u_roll_deg",
-                     "u_pixels_per_deg", "u_viewport", "u_color",
-                     "u_use_perspective"):
+        for name in ("u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
+                     "u_color"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 raise RuntimeError(f"overlay shader: {name} not found")
@@ -900,8 +809,7 @@ class SVSGLRenderer:
         """
         if vertices_np is None or len(vertices_np) == 0:
             return
-        if vertices_np.dtype != np.float32:
-            vertices_np = vertices_np.astype(np.float32)
+        vertices_np = self._to_enu(np.asarray(vertices_np))
         n_floats = vertices_np.size
         n_bytes = n_floats * 4
         self._overlay_vao.bind()
@@ -958,9 +866,7 @@ class SVSGLRenderer:
         if self._text_a_world_pos < 0 or self._text_a_uv < 0:
             raise RuntimeError(
                 "text shader: required attribute not found")
-        for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft",
-                     "u_heading_deg", "u_pitch_deg", "u_roll_deg",
-                     "u_pixels_per_deg", "u_viewport",
+        for name in ("u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
                      "u_color", "u_atlas"):
             loc = prog.uniformLocation(name)
             if loc < 0:
@@ -1023,8 +929,7 @@ class SVSGLRenderer:
         atlas texture to TEXTURE0, and have the FBO active."""
         if verts_np is None or len(verts_np) == 0:
             return
-        if verts_np.dtype != np.float32:
-            verts_np = verts_np.astype(np.float32)
+        verts_np = self._to_enu(np.asarray(verts_np))
         n_bytes = verts_np.size * 4
         self._text_vao.bind()
         try:
@@ -1058,22 +963,13 @@ class SVSGLRenderer:
         prog = self._text_program
         prog.bind()
         try:
+            prog.setUniformValue(self._text_u["u_vp"], self._frame_vp)
             prog.setUniformValue(
-                self._text_u["u_ac_lat"], float(ac_lat))
+                self._text_u["u_ac_e"], float(self._frame_ac_e))
             prog.setUniformValue(
-                self._text_u["u_ac_lon"], float(ac_lon))
+                self._text_u["u_ac_n"], float(self._frame_ac_n))
             prog.setUniformValue(
-                self._text_u["u_ac_alt_ft"], float(ac_alt_ft))
-            prog.setUniformValue(
-                self._text_u["u_heading_deg"], float(heading_deg))
-            prog.setUniformValue(
-                self._text_u["u_pitch_deg"], float(pitch_deg))
-            prog.setUniformValue(
-                self._text_u["u_roll_deg"], float(roll_deg))
-            prog.setUniformValue(
-                self._text_u["u_pixels_per_deg"], float(pixels_per_deg))
-            prog.setUniformValue(
-                self._text_u["u_viewport"], float(w), float(h))
+                self._text_u["u_earth_curv"], float(self._frame_curv))
             prog.setUniformValue(self._text_u["u_atlas"], 0)
             gl.glActiveTexture(gl.GL_TEXTURE0)
             gl.glBindTexture(gl.GL_TEXTURE_2D,
@@ -1098,30 +994,14 @@ class SVSGLRenderer:
         prog = self._overlay_program
         prog.bind()
         try:
-            prog.setUniformValue(self._overlay_u["u_ac_lat"],
-                                 float(ac_lat))
-            prog.setUniformValue(self._overlay_u["u_ac_lon"],
-                                 float(ac_lon))
-            prog.setUniformValue(self._overlay_u["u_ac_alt_ft"],
-                                 float(ac_alt_ft))
-            prog.setUniformValue(self._overlay_u["u_heading_deg"],
-                                 float(heading_deg))
-            prog.setUniformValue(self._overlay_u["u_pitch_deg"],
-                                 float(pitch_deg))
-            prog.setUniformValue(self._overlay_u["u_roll_deg"],
-                                 float(roll_deg))
-            prog.setUniformValue(self._overlay_u["u_pixels_per_deg"],
-                                 float(pixels_per_deg))
-            prog.setUniformValue(self._overlay_u["u_viewport"],
-                                 float(w), float(h))
-            # Pull the perspective vs atan2 switch from the parent
-            # SVS renderer's config (default ON). The atan2 path is
-            # kept for diagnostic A/B comparison.
-            prog.setUniformValue(
-                self._overlay_u["u_use_perspective"],
-                1.0 if getattr(self._parent,
-                               "_gl_overlay_perspective", True)
-                else 0.0)
+            prog.setUniformValue(self._overlay_u["u_vp"],
+                                 self._frame_vp)
+            prog.setUniformValue(self._overlay_u["u_ac_e"],
+                                 float(self._frame_ac_e))
+            prog.setUniformValue(self._overlay_u["u_ac_n"],
+                                 float(self._frame_ac_n))
+            prog.setUniformValue(self._overlay_u["u_earth_curv"],
+                                 float(self._frame_curv))
 
             # Phase 1 — water.
             p = self._parent
@@ -1339,9 +1219,10 @@ class SVSGLRenderer:
         if self._a_position < 0:
             raise RuntimeError("a_t_az attribute missing after link")
         for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft", "u_heading_deg",
-                     "u_pitch_deg", "u_roll_deg", "u_range_nm",
-                     "u_radial_warp", "u_r_min_nm", "u_pixels_per_deg",
-                     "u_viewport", "u_heightmap", "u_patch_bounds",
+                     "u_range_nm",
+                     "u_radial_warp", "u_r_min_nm",
+                     "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
+                     "u_heightmap", "u_patch_bounds",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_n_range", "u_n_az", "u_fov_deg",
                      "u_grid_enabled"):

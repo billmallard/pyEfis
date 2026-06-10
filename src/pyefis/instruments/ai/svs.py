@@ -392,15 +392,13 @@ class SVSRenderer:
         self._flags_cache_time = 0.0
         self._flags_cache_key = None
 
-        # When True, the GL overlay shader runs the proper hardware
-        # perspective projection (gl_Position.w = x_fwd, GL does the
-        # divide and per-pixel near-plane clipping). When False, the
-        # legacy atan2 projection is used, which requires the CPU
-        # 3D clipper in _filter_behind_camera_triangles to avoid
-        # wedge artifacts. True by default; set False to A/B compare.
-        self._gl_overlay_perspective = bool(
-            config.get("gl_overlay_perspective", True))
+        # Earth-curvature drop (d^2 / 2R) applied to projected
+        # geometry in the GL shaders. At the 50 NM horizon range the
+        # drop is ~2,100 ft — without it distant ridges render too
+        # high and the horizon never dips. Config-gated for A/B.
+        self.earth_curvature = bool(config.get("earth_curvature", True))
 
+        # Polar mesh parameters for the GL terrain fan.
         # Polar mesh parameters for the GL terrain fan.
         self._n_range      = int(config.get("n_range",
                                             POLAR_DEFAULTS["n_range"]))
@@ -521,44 +519,8 @@ class SVSRenderer:
             self._perf.add_ns("frame.svs_total", svs_dt_ns)
         self._perf.maybe_report()
 
-    def _project_point(self, lat, lon, alt_ft,
-                       ac_lat, ac_lon, ac_alt_ft,
-                       pitch_deg, roll_deg, heading_deg,
-                       ppd, w, h):
-        """Project a geographic point to AI-viewport screen (x, y).
-        Returns (sx, sy, in_front); in_front=False when point is behind aircraft."""
-        lat_cos = math.cos(math.radians(ac_lat))
-        d_lat = lat - ac_lat
-        d_lon = (lon - ac_lon) * lat_cos          # scaled so 1 unit ≈ 111 km
-
-        head_rad = math.radians(heading_deg)
-        cos_h, sin_h = math.cos(head_rad), math.sin(head_rad)
-        x_fwd   =  d_lat * cos_h + d_lon * sin_h
-        x_right = -d_lat * sin_h + d_lon * cos_h
-
-        if x_fwd <= 1e-6:
-            return 0.0, 0.0, False
-
-        range_m = math.sqrt(d_lat ** 2 + d_lon ** 2) * 111139.0
-        range_m = max(range_m, 1.0)
-
-        alt_diff_m    = (alt_ft - ac_alt_ft) * 0.3048
-        elev_angle_deg = math.degrees(math.atan2(alt_diff_m, range_m))
-
-        x_ang = math.degrees(math.atan2(x_right, x_fwd))
-        y_ang = elev_angle_deg - pitch_deg
-
-        x_px = x_ang * ppd
-        y_px = -y_ang * ppd
-
-        roll_rad = math.radians(roll_deg)
-        cos_r, sin_r = math.cos(-roll_rad), math.sin(-roll_rad)
-        sx = x_px * cos_r - y_px * sin_r + w / 2
-        sy = x_px * sin_r + y_px * cos_r + h / 2
-        return sx, sy, True
-
     # Number of segments along each long runway edge. The angular
-    # projection in _project_point produces a CURVE on screen from a
+    # angular projection of the GL era produced a CURVE on screen from a
     # straight 3D line — a runway edge offset perpendicular from the
     # centerline traces a hyperbolic-ish arc, mild in the far field
     # and sharper near the camera. The runway polygon was drawn from
@@ -601,11 +563,7 @@ class SVSRenderer:
                 and self._runway_polys_cache_key == key
                 and now - self._runway_polys_cache_time
                     < self._RUNWAY_POLYS_CACHE_TTL_S):
-            cached = self._runway_polys_cache
-            if heading_deg is not None and cached is not None:
-                return self._filter_behind_camera_triangles(
-                    cached, ac_lat, ac_lon, lat_cos, heading_deg)
-            return cached
+            return self._runway_polys_cache
         range_m = self.range_nm * 1852.0
         airports = self._get_airports_cached(ac_lat, ac_lon)
         all_tris = []
@@ -683,13 +641,6 @@ class SVSRenderer:
         self._runway_polys_cache = result
         self._runway_polys_cache_key = key
         self._runway_polys_cache_time = now
-        # Same behind-camera triangle cull as runway markings. Phase 3
-        # without the filter still showed wedge artifacts when the
-        # camera was over a runway whose far threshold was visible
-        # but the near threshold was behind.
-        if heading_deg is not None and result is not None:
-            return self._filter_behind_camera_triangles(
-                result, ac_lat, ac_lon, lat_cos, heading_deg)
         return result
 
     # ------------------------------------------------------------------
@@ -901,18 +852,8 @@ class SVSRenderer:
         and marking-budget logic as the CPU ``_draw_runways`` loop
         (Phase 3 left that in place), and respects the quality-
         controller's detail-distance + max-markings limits. Cached
-        for 1 s keyed by coarsened aircraft position.
-
-        Triangles with any vertex behind the camera near-plane are
-        filtered out before return. The overlay shader's z=2 trick
-        clips behind-camera vertices but GL interpolates the xy
-        coordinates linearly across the near-plane crossing, which
-        for atan2-based projection produces big wedge artifacts
-        (vertex at +90 deg azimuth interpolated with front vertex at
-        0 deg gives an XY path through 45 deg). Drop straddling
-        triangles entirely — losing the small portion of markings
-        right under the aircraft is preferable to wedge artifacts
-        across the lower viewport.
+        for 1 s keyed by coarsened aircraft position. Near-plane
+        clipping is the GL pipeline's job (true perspective, P3).
 
         Returns ``None`` when no marking quads are emitted."""
         if (getattr(self, "airport_db", None) is None
@@ -962,14 +903,7 @@ class SVSRenderer:
         self._runway_markings_cache = result
         self._runway_markings_cache_key = key
         self._runway_markings_cache_time = now
-        # Apply the behind-camera filter AFTER caching. The triangle
-        # SET is position-stable (cache key is just lat / lon / range
-        # / quality level) but the BEHIND-vs-FRONT split depends on
-        # the current heading — which would invalidate the cache
-        # every degree of turn if it lived inside the key. The filter
-        # itself is one numpy reshape + bool reduce, very cheap.
-        return self._filter_behind_camera_triangles(
-            result, ac_lat, ac_lon, lat_cos, heading_deg)
+        return result
 
     # ------------------------------------------------------------------
     # Phase 4b: runway designator text. Per-glyph (lat, lon, elev_ft,
@@ -1158,122 +1092,6 @@ class SVSRenderer:
                          center_along - sign * row_offset, sign)
             else:
                 emit_row(number_part, center_along, sign)
-
-    @staticmethod
-    def _filter_behind_camera_triangles(verts_np, ac_lat, ac_lon, lat_cos,
-                                        heading_deg):
-        """3D-clip triangles against the camera near plane.
-
-        Pure-cull was the previous behaviour and showed up as runways
-        truncating abruptly in the foreground when the aircraft flies
-        low over them — the strip-segments straddling the near plane
-        got dropped entirely, leaving green grass showing through
-        where the runway surface should still be.
-
-        Proper fix: for each triangle, classify its three vertices as
-        front-of-near-plane vs behind, then:
-          * 3 front: pass through unchanged
-          * 0 front: discard
-          * 2 front, 1 behind: replace with a quad (2 fronts + 2
-            edge-near-plane intersections), tessellated into 2
-            forward-only triangles
-          * 1 front, 2 behind: replace with 1 smaller forward-only
-            triangle (front vertex + 2 edge intersections)
-
-        Eliminates the wedge artifacts the atan2 projection produces
-        at near-plane straddling without losing the visible portion
-        of any straddling polygon.
-        """
-        if verts_np is None or verts_np.shape[0] == 0:
-            return None
-        # NEAR is the camera-frame near plane in degrees of lat. The
-        # atan2-based shader projection breaks down close to the
-        # camera (vertices at x_fwd = 1 m with x_right = 20 m project
-        # to atan2(20, 1) ~ 87 deg azimuth — almost at the screen
-        # edge, so a clipped triangle flares dramatically outward
-        # toward the foreground). Pushing the clip plane further
-        # forward (50 m here) keeps the intersection points at
-        # sensible angles: a 75 ft half-width runway clipped at 50 m
-        # forward has its near edge at atan2(22, 50) ~ 24 deg, which
-        # reads as a normal-looking runway taper. Trade-off is a
-        # ~50 m gap in the immediate foreground for runways the
-        # aircraft is rolling out on — preferable to the steep-flare
-        # visual distortion.
-        NEAR_M = 50.0
-        NEAR = np.float32(NEAR_M / 111139.0)
-
-        head_rad = math.radians(heading_deg)
-        cos_h = np.float32(math.cos(head_rad))
-        sin_h = np.float32(math.sin(head_rad))
-        d_lat = verts_np[:, 0] - np.float32(ac_lat)
-        d_lon = ((verts_np[:, 1] - np.float32(ac_lon))
-                 * np.float32(lat_cos))
-        x_fwd = d_lat * cos_h + d_lon * sin_h
-        n_tris = verts_np.shape[0] // 3
-        if n_tris == 0:
-            return None
-
-        tri_verts = verts_np.reshape(n_tris, 3, 3)
-        tri_fwd = x_fwd.reshape(n_tris, 3)
-        is_front = tri_fwd > NEAR
-        n_front = is_front.sum(axis=1)
-
-        all_front_mask = (n_front == 3)
-        two_front_idx = np.where(n_front == 2)[0]
-        one_front_idx = np.where(n_front == 1)[0]
-
-        chunks = []
-        if all_front_mask.any():
-            chunks.append(tri_verts[all_front_mask].reshape(-1, 3))
-
-        # 2 front + 1 behind. Rotate vertex order so behind ends at
-        # position 2, then emit a quad (v0, v1, p12, p02) where
-        # p_ij = vi + t * (vj - vi) at the near plane.
-        for i in two_front_idx:
-            v = tri_verts[i]
-            f = tri_fwd[i]
-            front_flags = is_front[i]
-            if not front_flags[0]:
-                v0, v1, v2 = v[1], v[2], v[0]
-                f0, f1, f2 = f[1], f[2], f[0]
-            elif not front_flags[1]:
-                v0, v1, v2 = v[2], v[0], v[1]
-                f0, f1, f2 = f[2], f[0], f[1]
-            else:
-                v0, v1, v2 = v[0], v[1], v[2]
-                f0, f1, f2 = f[0], f[1], f[2]
-            t02 = (NEAR - f0) / (f2 - f0)
-            t12 = (NEAR - f1) / (f2 - f1)
-            p02 = v0 + t02 * (v2 - v0)
-            p12 = v1 + t12 * (v2 - v1)
-            chunks.append(np.array(
-                [v0, v1, p12, v0, p12, p02], dtype=np.float32))
-
-        # 1 front + 2 behind. Rotate so front is at position 0, emit
-        # a single (v0, p01, p02) triangle.
-        for i in one_front_idx:
-            v = tri_verts[i]
-            f = tri_fwd[i]
-            front_flags = is_front[i]
-            if front_flags[0]:
-                v0, v1, v2 = v[0], v[1], v[2]
-                f0, f1, f2 = f[0], f[1], f[2]
-            elif front_flags[1]:
-                v0, v1, v2 = v[1], v[2], v[0]
-                f0, f1, f2 = f[1], f[2], f[0]
-            else:
-                v0, v1, v2 = v[2], v[0], v[1]
-                f0, f1, f2 = f[2], f[0], f[1]
-            t01 = (NEAR - f0) / (f1 - f0)
-            t02 = (NEAR - f0) / (f2 - f0)
-            p01 = v0 + t01 * (v1 - v0)
-            p02 = v0 + t02 * (v2 - v0)
-            chunks.append(np.array(
-                [v0, p01, p02], dtype=np.float32))
-
-        if not chunks:
-            return None
-        return np.concatenate(chunks, axis=0)
 
     # Cached snapshot expires after this many seconds. At 100 kt the
     # aircraft moves 0.028 NM/sec — well under the range_nm threshold
