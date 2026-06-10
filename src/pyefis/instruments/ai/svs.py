@@ -4,12 +4,12 @@ Synthetic Vision System (SVS) terrain renderer for the pyEfis AI widget.
 Reads SRTM3 HGT tiles and projects a terrain grid into the AI viewport
 using the same pixelsPerDeg coordinate frame as the Flight Path Marker.
 
-Rendering tiers (selected by config):
-  cpu_sparse  — 48×48 NumPy grid, ~15 Hz on Raspberry Pi 4
-  cpu_dense   — 128×128 NumPy grid, ~20 Hz on Raspberry Pi 5 / x86
-  opengl      — GPU-backed mesh via PyQt6 OpenGL (work in progress —
-                see docs/svs_opengl_plan.md; current stub falls back
-                to polar on first draw)
+GL-required: the only renderer is the GPU pipeline in svs_gl.py
+(terrain heightmap mesh + every overlay). If a GL context cannot be
+created — or any GL draw fails — the SVS disables itself permanently
+for the process and the AI widget annunciates SVS UNAVAIL. There is
+no CPU fallback (docs/svs_structural_plan.md P2): a silently degraded
+terrain picture that omits obstacles is worse than an honest absence.
 
 Tile format: NASA SRTMGL3 V003, 1°×1° HGT tiles, big-endian int16,
 1201×1201 samples. Void values (-32768) are treated as sea level.
@@ -17,7 +17,6 @@ Tile format: NASA SRTMGL3 V003, 1°×1° HGT tiles, big-endian int16,
 SVS is disabled by default. Enable in screen YAML:
     svs:
         enabled: true
-        renderer: cpu_sparse
         range_nm: 30
         tile_path: /media/terrain/srtm3
 """
@@ -87,111 +86,6 @@ class _SVSPerfLog:
         return True
 
 
-class _QualityController:
-    """Frame-rate-aware quality controller for SVS rendering.
-
-    Maintains an EMA of measured frame interval and a "pressure" scalar
-    in [0, 1] that rises when FPS falls below ``floor_fps`` and falls
-    when FPS climbs above ``ceiling_fps``. The pressure scalar maps,
-    via hysteresis thresholds, onto a small set of discrete quality
-    levels that the renderer consults for its detail knobs.
-
-    Asymmetric step rates (fast drop, slow recovery) are deliberate.
-    If the controller restored quality every time a quality drop made
-    one frame faster, it would oscillate: drop -> fast -> restore ->
-    slow -> drop. The slow recovery ensures the new workload settles
-    before we raise the bar again.
-
-    Hysteresis bands on the level transitions stop the quality level
-    from flapping when pressure sits near a threshold.
-    """
-
-    LEVELS = (
-        # detail_factor = scales base detail_distance_nm
-        # max_markings = top-N nearest runways that get full Tier C markings
-        # (designator-strips knob retired in Phase 4b when text moved to GPU)
-        {"detail_factor": 1.00, "max_markings": float("inf")},  # L0
-        {"detail_factor": 0.83, "max_markings": 6},             # L1
-        {"detail_factor": 0.67, "max_markings": 4},             # L2
-        {"detail_factor": 0.50, "max_markings": 2},             # L3
-    )
-
-    LEVEL_ENTER = (None, 0.30, 0.60, 0.90)
-    LEVEL_EXIT  = (None, 0.15, 0.45, 0.75)
-
-    EMA_ALPHA       = 0.10
-    DROP_STEP       = 0.05   # per frame when fps < floor (~20 frames to max)
-    RECOVER_STEP    = 0.005  # per frame when fps > ceiling (~200 frames)
-    CLAMP_DT_MAX_S  = 1.0
-
-    def __init__(self, enabled=True, target_fps=35.0, floor_fps=30.0,
-                 ceiling_fps=38.0, base_detail_distance_nm=3.0):
-        self.enabled = bool(enabled)
-        self.target_fps = float(target_fps)
-        self.floor_fps = float(floor_fps)
-        self.ceiling_fps = float(ceiling_fps)
-        self.base_detail_distance_nm = float(base_detail_distance_nm)
-        self._ema_dt = 1.0 / max(self.target_fps, 1.0)
-        self._pressure = 0.0
-        self._level = 0
-
-    def update(self, svs_dt_s):
-        """Feed the controller one frame's worth of SVS-internal render
-        time. NOT the wall-clock gap between paint calls — we want
-        to react only when SVS itself is taking too long, not when
-        Qt happens to be idle or some other widget is slow. Shedding
-        SVS detail in those external-bottleneck cases would degrade
-        visuals for zero FPS benefit."""
-        if not self.enabled:
-            return
-        if svs_dt_s <= 0.0 or svs_dt_s > self.CLAMP_DT_MAX_S:
-            return
-        self._ema_dt = (self.EMA_ALPHA * svs_dt_s
-                        + (1.0 - self.EMA_ALPHA) * self._ema_dt)
-        fps = 1.0 / self._ema_dt
-        if fps < self.floor_fps:
-            self._pressure = min(1.0, self._pressure + self.DROP_STEP)
-        elif fps > self.ceiling_fps:
-            self._pressure = max(0.0, self._pressure - self.RECOVER_STEP)
-
-        target = self._level
-        while (target < len(self.LEVELS) - 1
-               and self._pressure >= self.LEVEL_ENTER[target + 1]):
-            target += 1
-        while target > 0 and self._pressure < self.LEVEL_EXIT[target]:
-            target -= 1
-        if target != self._level:
-            direction = "DOWN" if target > self._level else "UP"
-            log.info(
-                "SVS quality level %s: L%d -> L%d "
-                "(pressure=%.2f, fps_ema=%.1f)",
-                direction, self._level, target, self._pressure, fps)
-            self._level = target
-
-    def detail_distance_nm(self):
-        if not self.enabled:
-            return self.base_detail_distance_nm
-        return (self.base_detail_distance_nm
-                * self.LEVELS[self._level]["detail_factor"])
-
-    def max_close_markings(self):
-        if not self.enabled:
-            return self.LEVELS[0]["max_markings"]
-        return self.LEVELS[self._level]["max_markings"]
-
-    @property
-    def level(self):
-        return self._level
-
-    @property
-    def pressure(self):
-        return self._pressure
-
-    @property
-    def fps_ema(self):
-        return 1.0 / self._ema_dt if self._ema_dt > 0 else 0.0
-
-
 class _PerfTimer:
     """Tiny context manager that records the with-block duration."""
     __slots__ = ("_p", "_name", "_t0")
@@ -216,9 +110,7 @@ class _NoopTimer:
     def __exit__(self, *exc): return False
 
 import numpy as np
-from PyQt6.QtCore import QLineF, QPointF, QRectF
-from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QPainter, QPen,
-                         QPolygonF, QTransform)
+from PyQt6.QtGui import QColor, QPainter
 
 log = logging.getLogger(__name__)
 
@@ -238,18 +130,7 @@ COLOR_WATER     = QColor( 20,  80, 150)   # ocean blue  — SRTM void / open wat
 # never mistaken for water.
 _WATER_SENTINEL = -9999.0
 
-# Rendering grid sizes per tier (used by the legacy rectangular tiers).
-# The polar tier reads its parameters from POLAR_DEFAULTS instead.
-GRID_SIZES = {
-    "cpu_sparse": 48,
-    "cpu_dense":  128,
-    "cpu_ultra":  192,  # ~2.3× more quads than dense; SRTM3 data supports it
-    "polar":      0,    # polar tier uses (n_range, n_az) — see POLAR_DEFAULTS
-    "opengl":     0,    # GPU mesh — dispatched via SVSGLRenderer in svs_gl.py
-                         # (work in progress; current stub falls back to polar)
-}
-
-# Polar (range, azimuth) tier defaults. The polar tier samples terrain on a
+# Polar (range, azimuth) mesh defaults for the GL terrain renderer — a
 # forward-facing fan centred on the aircraft, with a radial warp that
 # concentrates samples near the aircraft (finer near, coarser far). See
 # docs/svs_rendering.md for the rationale.
@@ -363,26 +244,6 @@ class TileCache:
 
 
 # ---------------------------------------------------------------------------
-# Embedded airport / runway database
-# Populated with hand-checked FAA data; replaced later by NASR CSV download.
-# Each runway entry: thr1 = first threshold, thr2 = opposite threshold.
-# Coordinates from FAA NASR; elevations in ft MSL; width in ft.
-# ---------------------------------------------------------------------------
-_AIRPORT_DB = {
-    "KASE": {
-        "label": "ASE",
-        "ref_lat": 39.2232, "ref_lon": -106.8688, "elev_ft": 7820,
-        "runways": [
-            {   # Runway 15/33 — Aspen/Pitkin County Airport
-                "thr1_lat": 39.2282, "thr1_lon": -106.8723, "thr1_elev_ft": 7828,
-                "thr2_lat": 39.2075, "thr2_lon": -106.8644, "thr2_elev_ft": 7938,
-                "width_ft": 100,
-            },
-        ],
-    },
-}
-
-# ---------------------------------------------------------------------------
 # SVS renderer
 # ---------------------------------------------------------------------------
 
@@ -402,7 +263,14 @@ class SVSRenderer:
 
     def __init__(self, config: dict):
         self.enabled      = config.get("enabled", False)
-        self.renderer     = config.get("renderer", "cpu_sparse")
+        # GL-required: the legacy tier names (cpu_sparse/dense/ultra,
+        # polar) are accepted for config compatibility but ignored.
+        _renderer_cfg = config.get("renderer", "opengl")
+        if _renderer_cfg != "opengl":
+            log.warning(
+                "SVS: renderer '%s' is deprecated — the SVS is "
+                "GL-required and the key is ignored", _renderer_cfg)
+        self.renderer     = "opengl"
         # range_nm cap. Default 50 NM matches the GL heightmap patch
         # (2 deg = ~120 NM wide at mid-latitudes; 50 NM cap leaves
         # comfortable margin against patch-edge sampling). The
@@ -412,8 +280,7 @@ class SVSRenderer:
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 
-        # Optional airport / runway database. When configured the
-        # hand-coded _AIRPORT_DB fallback is bypassed; NASR gives full
+        # Optional airport / runway database. NASR gives full
         # CONUS coverage with widths/markings/displaced thresholds for
         # Tier C rendering, CIFP gives coarser nationwide coverage.
         from pyefis.instruments.ai.airport_db import make_airport_db
@@ -458,7 +325,6 @@ class SVSRenderer:
         self.grid_lines    = config.get("grid_lines", True)
         self.auto_range    = config.get("auto_range", True)
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
-        self._grid_n       = GRID_SIZES.get(self.renderer, 48)
 
         # OpenGL tier state — see docs/svs_opengl_plan.md. The renderer
         # is lazy-constructed inside draw(), so we can probe Qt's OpenGL
@@ -466,6 +332,12 @@ class SVSRenderer:
         # rather than at SVSRenderer init time.
         self._gl_renderer        = None
         self._gl_init_attempted  = False
+        # Set on any GL init/draw failure: SVS is permanently disabled
+        # for this process and the AI widget annunciates SVS UNAVAIL.
+        self.gl_failed           = False
+        # Cached airport-proximity boolean (see near_airport()).
+        self._near_airport_cache = None
+        self._near_airport_cache_time = 0.0
 
         # Per-frame profiler. ``svs_perf_log: true`` in the SVS config
         # turns on a lightweight per-segment timing pass that prints a
@@ -475,28 +347,6 @@ class SVSRenderer:
             enabled=bool(config.get("svs_perf_log", False)))
         if self._perf.enabled:
             log.info("SVS perf logging enabled")
-
-        # Frame-rate-aware quality controller. Watches measured FPS and
-        # sheds visual detail (designator strip count, marking distance,
-        # max number of close-marking runways) when the renderer can't
-        # sustain the configured floor. Defaults are chosen so that an
-        # unloaded Pi 5 runs at L0 (full quality); under load the
-        # controller drops one level at a time to recover headroom.
-        q_cfg = config.get("quality_control", {}) or {}
-        self._quality = _QualityController(
-            enabled=bool(q_cfg.get("enabled", True)),
-            target_fps=float(q_cfg.get("target_fps", 35.0)),
-            floor_fps=float(q_cfg.get("floor_fps", 30.0)),
-            ceiling_fps=float(q_cfg.get("ceiling_fps", 38.0)),
-            base_detail_distance_nm=self.detail_distance_nm,
-        )
-        self._quality_last_level_logged = 0
-        if self._quality.enabled:
-            log.info(
-                "SVS quality controller on: target=%.0f floor=%.0f "
-                "ceiling=%.0f FPS",
-                self._quality.target_fps, self._quality.floor_fps,
-                self._quality.ceiling_fps)
 
         # Cached airport list — the airport_db query (+ runway dict
         # construction) was ~10 ms / frame at DFW with 15-20 airports
@@ -551,8 +401,7 @@ class SVSRenderer:
         self._gl_overlay_perspective = bool(
             config.get("gl_overlay_perspective", True))
 
-        # Polar tier parameters — only consulted when renderer == "polar"
-        self._is_polar     = (self.renderer == "polar")
+        # Polar mesh parameters for the GL terrain fan.
         self._n_range      = int(config.get("n_range",
                                             POLAR_DEFAULTS["n_range"]))
         self._n_az         = int(config.get("n_az",
@@ -567,19 +416,6 @@ class SVSRenderer:
     @property
     def ready(self) -> bool:
         return self.enabled and self.cache is not None and self.cache.tile_root.is_dir()
-
-    def _quality_perf_lines(self):
-        """Extra line(s) appended to the periodic perf-log report.
-        Summarises the controller's current FPS estimate, pressure
-        scalar, and active quality level so the log shows whether
-        the renderer is shedding detail."""
-        q = self._quality
-        return [
-            f"  quality: L{q.level} pressure={q.pressure:.2f} "
-            f"fps_ema={q.fps_ema:.1f} "
-            f"(detail={q.detail_distance_nm():.2f} NM, "
-            f"max_markings={q.max_close_markings()})"
-        ]
 
     def _auto_range_nm(self, ac_lat: float, ac_lon: float,
                        ac_alt_ft: float) -> float:
@@ -641,429 +477,49 @@ class SVSRenderer:
         # paint at L0 instead of pinning at L3 for no reason. SVS
         # internal time is what the controller can actually push on.
         svs_t0_ns = now_ns
-        if not self.ready:
+        if not self.ready or self.gl_failed:
             return
 
         # ------------------------------------------------------------------
-        # OpenGL tier dispatch (work-in-progress per docs/svs_opengl_plan.md).
-        # Lazy-init the GL renderer on first draw — that's the earliest point
-        # at which a Qt OpenGL context can be created. Any exception during
-        # construction OR during the first draw downgrades self.renderer to
-        # "polar" permanently; we never re-attempt GL in this process.
+        # GL-required dispatch. Lazy-init the GL renderer on first draw —
+        # the earliest point a Qt OpenGL context can be created. Any
+        # failure (init or draw) permanently disables the SVS for this
+        # process; the AI widget annunciates SVS UNAVAIL. No CPU
+        # fallback exists (docs/svs_structural_plan.md P2).
         # ------------------------------------------------------------------
-        if self.renderer == "opengl":
-            if (self._gl_renderer is None
-                    and not self._gl_init_attempted):
-                self._gl_init_attempted = True
-                try:
-                    from pyefis.instruments.ai.svs_gl import SVSGLRenderer
-                    self._gl_renderer = SVSGLRenderer(self)
-                except Exception as e:
-                    log.warning(
-                        "SVS OpenGL renderer unavailable (%s); "
-                        "falling back to polar tier", e)
-            if self._gl_renderer is not None:
-                try:
-                    # Compute auto-ranged range_nm BEFORE the GL draw so
-                    # the GL overlay pass can use it for the water-DB
-                    # query (Phase 1 of the overlays-to-GPU migration).
-                    with self._perf.time("auto_range"):
-                        range_nm = self._auto_range_nm(
-                            ac_lat, ac_lon, ac_alt_ft)
-                    with self._perf.time("gl_terrain"):
-                        self._gl_renderer.draw(
-                            p, w, h, ac_lat, ac_lon, ac_alt_ft,
-                            pitch_deg, roll_deg, heading_deg,
-                            pixels_per_deg, range_nm)
-                    # Every overlay — water, obstacles, runways,
-                    # markings, designators, airport flags — draws
-                    # inside the GL overlay pass (Phase 5 complete).
-                    svs_dt_ns = time.perf_counter_ns() - svs_t0_ns
-                    if self._perf.enabled:
-                        self._perf.add_ns("frame.svs_total", svs_dt_ns)
-                    self._quality.update(svs_dt_ns * 1e-9)
-                    self._perf.maybe_report(
-                        extra_lines=self._quality_perf_lines())
-                    return
-                except Exception as e:
-                    log.warning(
-                        "SVS OpenGL draw failed (%s); falling back to polar "
-                        "permanently", e)
-                    self._gl_renderer = None
-            # Either init failed or first draw failed — switch the renderer
-            # type and continue into the polar path below.
-            self.renderer = "polar"
-            self._is_polar = True
-
-        range_nm = self._auto_range_nm(ac_lat, ac_lon, ac_alt_ft)
-        range_deg = range_nm * NM_TO_DEG
-        lat_cos = math.cos(math.radians(ac_lat))
-
-        # Are we close enough to a known airport to switch to the 2-colour
-        # "airport pattern" terrain scheme? We only need to know whether the
-        # database yields ANY airport within proximity range — the same
-        # query the runway renderer will run again below, but cached.
-        near_airport = False
-        if (self.airport_proximity_nm > 0.0
-                and getattr(self, "airport_db", None) is not None
-                and self.airport_db.ready):
-            for _ in self.airport_db.airports_in_range(
-                    ac_lat, ac_lon, self.airport_proximity_nm):
-                near_airport = True
-                break
-
-        # ------------------------------------------------------------------
-        # Build the sample grid in geographic coordinates.
-        #
-        # Two paths:
-        #   - polar:     (range, azimuth) fan, finer near the aircraft.
-        #                Saves the ~50% of samples wasted behind the aircraft
-        #                on the rectangular path, and concentrates resolution
-        #                where collision geometry matters most.
-        #   - rectangular (legacy cpu_sparse/dense/ultra): uniform lat/lon grid.
-        # ------------------------------------------------------------------
-        head_rad = math.radians(heading_deg)
-        cos_h, sin_h = math.cos(head_rad), math.sin(head_rad)
-        if self._is_polar:
-            n_r  = self._n_range
-            n_az = self._n_az
-            fov  = self._fov_deg
-            warp = self._radial_warp
-            r_min_nm_eff = min(self._r_min_nm, range_nm * 0.01)
-
-            # Radial samples (NM), warped so cells are finer near the aircraft.
-            # The outer endpoint is nudged slightly under range_nm so the
-            # shared visibility test (range_deg_grid < range_deg) keeps the
-            # outermost ring of quads.
-            r_max_eff = range_nm * (1.0 - 1e-6)
-            t = np.linspace(0.0, 1.0, n_r, dtype=np.float64)
-            r_nm  = r_min_nm_eff + (r_max_eff - r_min_nm_eff) * (t ** warp)
-            r_deg = r_nm * NM_TO_DEG                                   # (n_r,)
-
-            # Azimuth samples relative to the nose, in degrees.
-            az_deg = np.linspace(-fov / 2.0, fov / 2.0, n_az, dtype=np.float64)
-            az_rad = np.radians(az_deg)
-            cos_a  = np.cos(az_rad)                                    # (n_az,)
-            sin_a  = np.sin(az_rad)
-
-            # Geographic bearing of each (i, j): heading + azimuth.
-            brg_rad = head_rad + az_rad                                # (n_az,)
-            sin_b   = np.sin(brg_rad)
-            cos_b   = np.cos(brg_rad)
-
-            r_deg_col = r_deg[:, None]                                 # (n_r, 1)
-            # lat/lon grids (n_r, n_az)
-            lat_grid = ac_lat + r_deg_col * cos_b[None, :]
-            lon_grid = ac_lon + r_deg_col * sin_b[None, :] / lat_cos
-
-            # Aircraft-frame coordinates fall straight out of (r, az):
-            #   x_fwd   = r · cos(az),  x_right = r · sin(az).
-            # Heading rotation is already absorbed into the azimuth axis.
-            x_fwd   = r_deg_col * cos_a[None, :]
-            x_right = r_deg_col * sin_a[None, :]
-
-            # Range in degrees — broadcast r_deg across azimuth columns.
-            range_deg_grid = np.broadcast_to(r_deg_col,
-                                             (n_r, n_az)).astype(np.float64).copy()
-            range_deg_grid = np.where(range_deg_grid < 1e-6,
-                                      1e-6, range_deg_grid)
-        else:
-            n = self._grid_n
-            # Build a grid of (lat, lon) points centred on the aircraft.
-            # Grid runs from -range_deg to +range_deg in both lat and lon.
-            lats = np.linspace(ac_lat - range_deg, ac_lat + range_deg, n)
-            lons = np.linspace(ac_lon - range_deg, ac_lon + range_deg, n)
-            lat_grid, lon_grid = np.meshgrid(lats, lons, indexing='ij')  # (n, n)
-
-            # Convert terrain positions to aircraft frame (heading-relative).
-            d_lat = (lat_grid - ac_lat)                  # degrees N/S
-            d_lon = (lon_grid - ac_lon) * lat_cos        # degrees E/W (scaled)
-            # d_lon = east, d_lat = north → aircraft frame
-            x_fwd   =  d_lat * cos_h + d_lon * sin_h    # forward (positive = ahead)
-            x_right = -d_lat * sin_h + d_lon * cos_h    # right of nose
-
-            range_deg_grid = np.sqrt(d_lat ** 2 + d_lon ** 2)
-            range_deg_grid = np.where(range_deg_grid < 1e-6, 1e-6, range_deg_grid)
-
-        # Vectorised terrain elevation lookup (one tile at a time)
-        elev_m, is_water = self._sample_elevations(lat_grid, lon_grid)
-        elev_ft = elev_m * 3.28084
-
-        rows, cols = elev_m.shape
-
-        # Elevation angle of terrain above/below horizon (degrees)
-        ac_alt_m = ac_alt_ft * 0.3048
-        terrain_alt_m = elev_m * 1.0           # already metres
-        alt_diff_m = terrain_alt_m - ac_alt_m  # positive = terrain above aircraft
-        range_m = range_deg_grid * 111139.0    # 1 degree ≈ 111,139 m
-        elev_angle_deg = np.degrees(np.arctan2(alt_diff_m, range_m))
-
-        # Only draw terrain in front of the aircraft (x_fwd > 0) and within
-        # the configured range. The polar grid is forward-only by
-        # construction (|az| ≤ fov/2 < 90°), so x_fwd > 0 is always true and
-        # range_deg_grid ≤ range_deg by construction — but evaluating the
-        # mask uniformly keeps the rest of the drawing code symmetric.
-        visible = (x_fwd > 0) & (range_deg_grid < range_deg)
-
-        # Map to AI viewport pixels using the same coordinate system as FPM
-        # Lateral: x_right degrees → pixels (using pixelsPerDeg)
-        # Vertical: (pitch - elev_angle) → pixels, then apply roll
-        x_ang = np.degrees(np.arctan2(x_right, x_fwd))   # azimuth offset
-        y_ang = elev_angle_deg - pitch_deg                 # elevation relative to pitch
-
-        x_px = x_ang * pixels_per_deg
-        y_px = -y_ang * pixels_per_deg     # negative = up on screen
-
-        # Apply roll rotation to (x_px, y_px)
-        roll_rad = math.radians(roll_deg)
-        cos_r, sin_r = math.cos(-roll_rad), math.sin(-roll_rad)
-        x_rot = x_px * cos_r - y_px * sin_r + w / 2
-        y_rot = x_px * sin_r + y_px * cos_r + h / 2
-
-        # Clearance colours — water points use a sentinel so _cidx routes them
-        # to COLOR_WATER regardless of numeric clearance.
-        clearance_ft = ac_alt_ft - elev_ft
-        clearance_ft = np.where(is_water, _WATER_SENTINEL, clearance_ft)
-
-        # ------------------------------------------------------------------
-        # Slope shading — Lambertian lighting from a fixed sun direction.
-        # Surface normal expressed in geographic (E, N, Up); sun direction
-        # below is also in (E, N, Up), so the dot product is frame-correct.
-        # Sun from upper-NW in geographic frame: (-1, 1, 2) normalised.
-        # ------------------------------------------------------------------
-        # Amplify slopes so lighting is dramatic at SVS grid scales —
-        # without it, horizontal cell size (~hundreds of metres) dwarfs
-        # typical relief (~tens of metres) and normals collapse to "up".
-        # Round 2 tune (2026-06-02): 4.0 -> 2.0 -> 1.0. See svs_gl.py
-        # for the rationale; kept in sync so polar and GL renderers
-        # look the same.
-        SLOPE_EXAG = 1.0
-        dz_di = np.gradient(elev_m.astype(float), axis=0)  # per row-step
-        dz_dj = np.gradient(elev_m.astype(float), axis=1)  # per col-step
-        if self._is_polar:
-            # Polar grid: axis 0 is radial (bearing brg = heading + az),
-            # axis 1 is azimuthal. Convert per-index gradients into per-metre
-            # slopes in geographic (E, N) using:
-            #   dz/dr   = dz_di / dr_step(i)
-            #   dz/darc = dz_dj / arc_step(i)        # arc_step = r · Δaz
-            # then rotate (dz/dr, dz/darc) → (dz/dE, dz/dN) via bearing.
-            r_m_arr        = r_nm * 1852.0                     # (n_r,)
-            dr_m_step      = np.gradient(r_m_arr)              # (n_r,)
-            dr_m_step      = np.where(dr_m_step  < 1e-6, 1e-6, dr_m_step)
-            daz_rad        = (az_rad[-1] - az_rad[0]) / max(n_az - 1, 1)
-            arc_m_step     = r_m_arr * daz_rad                 # (n_r,)
-            arc_m_step     = np.where(arc_m_step < 1e-6, 1e-6, arc_m_step)
-            dz_dr   = dz_di / dr_m_step[:, None]               # (n_r, n_az)
-            dz_darc = dz_dj / arc_m_step[:, None]
-            sin_b_g = sin_b[None, :]
-            cos_b_g = cos_b[None, :]
-            dz_dE = dz_dr * sin_b_g + dz_darc * cos_b_g
-            dz_dN = dz_dr * cos_b_g - dz_darc * sin_b_g
-            # Unnormalised surface normal: (-dz/dE, -dz/dN, 1) in (E, N, Up).
-            mag = np.sqrt((dz_dE * SLOPE_EXAG) ** 2
-                          + (dz_dN * SLOPE_EXAG) ** 2 + 1.0)
-            mag = np.where(mag < 1e-6, 1e-6, mag)
-            nx = -dz_dE * SLOPE_EXAG / mag
-            ny = -dz_dN * SLOPE_EXAG / mag
-            nz =          1.0          / mag
-        else:
-            # Rectangular grid: axis 0 ↔ lat (north), axis 1 ↔ lon (east).
-            # dz_di and dz_dj are per index step of size step_m metres.
-            step_m = (range_deg * 2 / max(rows - 1, 1)) * 111139.0
-            mag = np.sqrt((dz_dj * SLOPE_EXAG) ** 2
-                          + (dz_di * SLOPE_EXAG) ** 2 + step_m ** 2)
-            mag = np.where(mag < 1e-6, 1e-6, mag)
-            nx = -dz_dj * SLOPE_EXAG / mag   # east  component of normal
-            ny = -dz_di * SLOPE_EXAG / mag   # north component of normal
-            nz =  step_m / mag               # up    component of normal
-        # Sun direction (pointing from surface toward sun), geographic (E, N, Up)
-        _lx, _ly, _lz = -1.0, 1.0, 2.0
-        _lm = math.sqrt(_lx*_lx + _ly*_ly + _lz*_lz)
-        _lx, _ly, _lz = _lx/_lm, _ly/_lm, _lz/_lm
-        # Round 2 tune (2026-06-02): 0.10/0.90 -> 0.25/0.75 -> 0.35/0.65.
-        # AMBIENT/DIFFUSE always sum to 1.0 so peak intensity at full
-        # sun stays at 1.0. Kept in sync with svs_gl.py.
-        AMBIENT = 0.35
-        DIFFUSE = 0.65
-        diffuse   = np.clip(nx * _lx + ny * _ly + nz * _lz, 0.0, 1.0)
-        intensity = AMBIENT + DIFFUSE * diffuse   # (n,n) ∈ [AMBIENT, 1.0]
-
-        # Smooth intensity with a 3×3 Gaussian to soften hard colour steps at
-        # quad boundaries where a ridge bisects a grid cell.
-        _g = np.array([[1,2,1],[2,4,2],[1,2,1]], dtype=np.float32) / 16.0
-        _ip = np.pad(intensity, 1, mode='edge')
-        intensity = sum(_g[_di, _dj] * _ip[_di:_di+rows, _dj:_dj+cols]
-                        for _di in range(3) for _dj in range(3))
-
-        # Build shade table: 5 clearance categories × N_SHADE intensity levels
-        # Categories: 0=safe, 1=caution, 2=warning, 3=conflict, 4=water
-        N_SHADE = 32
-        _BASE_COLS = (COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT, COLOR_WATER)
-        shade_table = []
-        for _bc in _BASE_COLS:
-            for _si in range(N_SHADE):
-                _f = AMBIENT + DIFFUSE * (_si / (N_SHADE - 1))
-                shade_table.append(QColor(
-                    min(255, int(_bc.red()   * _f)),
-                    min(255, int(_bc.green() * _f)),
-                    min(255, int(_bc.blue()  * _f)),
-                ))
-
-        p.save()
-        p.resetTransform()
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        # ------------------------------------------------------------------
-        # Vectorised per-cell / per-edge aggregates.
-        #
-        # The Python for-loops we used to walk every (i, j) cell were
-        # dominated by NumPy scalar-indexing overhead, not by the math
-        # itself. Compute everything once as whole-array operations,
-        # then iterate only over the cells/edges we actually draw —
-        # grouped by shade key so each bucket fills one QPainterPath.
-        # ------------------------------------------------------------------
-        # Per-cell aggregates over the 4 corners (rows-1, cols-1)
-        c00 = clearance_ft[:-1, :-1]; c01 = clearance_ft[:-1, 1:]
-        c10 = clearance_ft[ 1:, :-1]; c11 = clearance_ft[ 1:, 1:]
-        cell_cmin  = np.minimum(np.minimum(c00, c01), np.minimum(c10, c11))
-        cell_inten = (intensity[:-1, :-1] + intensity[:-1, 1:]
-                      + intensity[1:, :-1] + intensity[1:, 1:]) * 0.25
-        cell_visible = (visible[:-1, :-1] & visible[:-1, 1:]
-                        & visible[1:, :-1] & visible[1:, 1:])
-
-        # Per-edge aggregates over the 2 endpoints (only computed if needed)
-        if self.grid_lines:
-            e1_cmin  = np.minimum(clearance_ft[:, :-1], clearance_ft[:, 1:])
-            e1_inten = (intensity[:, :-1]   + intensity[:, 1:])   * 0.5
-            e1_vis   = visible[:, :-1] & visible[:, 1:]
-            e0_cmin  = np.minimum(clearance_ft[:-1, :], clearance_ft[1:, :])
-            e0_inten = (intensity[:-1, :]   + intensity[1:, :])   * 0.5
-            e0_vis   = visible[:-1, :] & visible[1:, :]
-
-        def _keys_from(cmin, inten):
-            """Vectorised shade-key calculation: clearance bucket × 32-step
-            intensity quantisation. When the aircraft is near a known
-            airport, collapse the warning/caution bands so a normal landing
-            approach doesn't paint half the screen red."""
-            if near_airport:
-                # 3 categories only: water / conflict (above ac) / safe (below).
-                cidx = np.where(cmin <= _WATER_SENTINEL / 2.0, 4,
-                       np.where(cmin < 0, 3, 0))
-            else:
-                cidx = np.where(cmin <= _WATER_SENTINEL / 2.0, 4,
-                       np.where(cmin < 0,              3,
-                       np.where(cmin < self.yellow_ft, 2,
-                       np.where(cmin < self.green_ft,  1, 0))))
-            si = ((inten - AMBIENT) / DIFFUSE * (N_SHADE - 1) + 0.5).astype(np.int32)
-            np.clip(si, 0, N_SHADE - 1, out=si)
-            return (cidx * N_SHADE + si).astype(np.int32)
-
-        # Vertex coordinates as Python lists — list indexing is ~3× faster
-        # than NumPy scalar indexing for the per-cell QPointF construction.
-        x_list = x_rot.tolist()
-        y_list = y_rot.tolist()
-
-        from PyQt6.QtGui import QPainterPath as _QPP, QPen as _QPen
-
-        # ------------------------------------------------------------------
-        # Filled terrain quads
-        # ------------------------------------------------------------------
-        if self.terrain_fill:
-            cell_keys = _keys_from(cell_cmin, cell_inten)
-            flat_keys = cell_keys.ravel()
-            flat_vis  = cell_visible.ravel()
-            vis_idx   = np.flatnonzero(flat_vis)
-            if vis_idx.size:
-                vis_keys  = flat_keys[vis_idx]
-                # Stable sort so contiguous runs share the same key.
-                order = np.argsort(vis_keys, kind='stable')
-                vis_idx_sorted  = vis_idx[order]
-                vis_keys_sorted = vis_keys[order]
-                # Run boundaries via diff — cheap on int32.
-                boundaries = np.flatnonzero(np.diff(vis_keys_sorted)) + 1
-                starts = np.concatenate(([0], boundaries))
-                ends   = np.concatenate((boundaries, [vis_idx_sorted.size]))
-
-                cell_cols = cols - 1
-                p.setPen(Qt_NoPen())
-                for s, e in zip(starts.tolist(), ends.tolist()):
-                    key = int(vis_keys_sorted[s])
-                    path = _QPP()
-                    for flat_i in vis_idx_sorted[s:e].tolist():
-                        i, j = divmod(flat_i, cell_cols)
-                        path.addPolygon(QPolygonF([
-                            QPointF(x_list[i    ][j    ], y_list[i    ][j    ]),
-                            QPointF(x_list[i    ][j + 1], y_list[i    ][j + 1]),
-                            QPointF(x_list[i + 1][j + 1], y_list[i + 1][j + 1]),
-                            QPointF(x_list[i + 1][j    ], y_list[i + 1][j    ]),
-                        ]))
-                    p.setBrush(QBrush(shade_table[key]))
-                    p.drawPath(path)
-
-        # ------------------------------------------------------------------
-        # Grid-line overlay
-        # ------------------------------------------------------------------
-        if self.grid_lines:
-            # Both edge axes contribute to the same shade-key buckets.
-            # Build (key, x1, y1, x2, y2) tuples then sort+group as above.
-            e1_keys = _keys_from(e1_cmin, e1_inten)
-            e0_keys = _keys_from(e0_cmin, e0_inten)
-
-            # Edge1: (i, j) — (i, j+1) — shape (rows, cols-1)
-            e1_idx = np.flatnonzero(e1_vis.ravel())
-            # Edge0: (i, j) — (i+1, j) — shape (rows-1, cols)
-            e0_idx = np.flatnonzero(e0_vis.ravel())
-
-            if e1_idx.size + e0_idx.size:
-                # Encode axis in the high bit so a single concat+sort works.
-                e1_pack = e1_idx.astype(np.int64)               # axis 1: low bits
-                e0_pack = e0_idx.astype(np.int64) | (1 << 40)   # axis 0: tagged
-
-                all_keys = np.concatenate((
-                    e1_keys.ravel()[e1_idx],
-                    e0_keys.ravel()[e0_idx]))
-                all_pack = np.concatenate((e1_pack, e0_pack))
-
-                order = np.argsort(all_keys, kind='stable')
-                keys_sorted = all_keys[order]
-                pack_sorted = all_pack[order]
-                boundaries = np.flatnonzero(np.diff(keys_sorted)) + 1
-                starts = np.concatenate(([0], boundaries))
-                ends   = np.concatenate((boundaries, [keys_sorted.size]))
-
-                e1_cols = cols - 1   # column count of e1 array
-                e0_cols = cols       # column count of e0 array
-                AXIS_TAG = 1 << 40
-
-                pen = _QPen()
-                pen.setWidth(1)
-                for s, e in zip(starts.tolist(), ends.tolist()):
-                    key = int(keys_sorted[s])
-                    lines = []
-                    for packed in pack_sorted[s:e].tolist():
-                        if packed & AXIS_TAG:
-                            flat_i = packed ^ AXIS_TAG
-                            i, j = divmod(flat_i, e0_cols)
-                            lines.append(QLineF(
-                                x_list[i    ][j], y_list[i    ][j],
-                                x_list[i + 1][j], y_list[i + 1][j]))
-                        else:
-                            flat_i = packed
-                            i, j = divmod(flat_i, e1_cols)
-                            lines.append(QLineF(
-                                x_list[i][j    ], y_list[i][j    ],
-                                x_list[i][j + 1], y_list[i][j + 1]))
-                    pen.setColor(shade_table[key])
-                    p.setPen(pen)
-                    p.drawLines(lines)
-
-        # Every overlay (water, obstacles, runways, markings, flags)
-        # lives in the GL overlay pass now. The polar tier is a
-        # terrain-only legacy fallback for environments without GL;
-        # its replacement with an explicit SVS-UNAVAIL state is
-        # planned (docs/svs_structural_plan.md P2).
-
-        p.restore()
+        if self._gl_renderer is None:
+            if self._gl_init_attempted:
+                self.gl_failed = True
+                return
+            self._gl_init_attempted = True
+            try:
+                from pyefis.instruments.ai.svs_gl import SVSGLRenderer
+                self._gl_renderer = SVSGLRenderer(self)
+            except Exception as e:
+                log.warning(
+                    "SVS: OpenGL renderer unavailable (%s) — SVS is "
+                    "GL-required; disabling (SVS UNAVAIL)", e)
+                self.gl_failed = True
+                return
+        try:
+            with self._perf.time("auto_range"):
+                range_nm = self._auto_range_nm(ac_lat, ac_lon, ac_alt_ft)
+            with self._perf.time("gl_terrain"):
+                self._gl_renderer.draw(
+                    p, w, h, ac_lat, ac_lon, ac_alt_ft,
+                    pitch_deg, roll_deg, heading_deg,
+                    pixels_per_deg, range_nm)
+        except Exception as e:
+            log.warning(
+                "SVS: OpenGL draw failed (%s) — SVS is GL-required; "
+                "disabling (SVS UNAVAIL)", e)
+            self._gl_renderer = None
+            self.gl_failed = True
+            return
+        svs_dt_ns = time.perf_counter_ns() - svs_t0_ns
+        if self._perf.enabled:
+            self._perf.add_ns("frame.svs_total", svs_dt_ns)
+        self._perf.maybe_report()
 
     def _project_point(self, lat, lon, alt_ft,
                        ac_lat, ac_lon, ac_alt_ft,
@@ -1101,13 +557,6 @@ class SVSRenderer:
         sy = x_px * sin_r + y_px * cos_r + h / 2
         return sx, sy, True
 
-    # Default near-plane distance for polygon clipping, in degrees of
-    # latitude. 0.05 NM (the polar terrain mesh's inner ring) is small
-    # enough that the visible polygon still reaches the foreground, but
-    # large enough that clipped vertices project to reasonable
-    # azimuths instead of ~+/-90 deg the way x_fwd=epsilon would.
-    _NEAR_PLANE_DEG = 0.05 / 60.0   # 0.05 NM in degrees of lat
-
     # Number of segments along each long runway edge. The angular
     # projection in _project_point produces a CURVE on screen from a
     # straight 3D line — a runway edge offset perpendicular from the
@@ -1119,47 +568,6 @@ class SVSRenderer:
     # 1/_RUNWAY_LONG_EDGE_SEGMENTS of the runway length gives the
     # polygon roughly the same shape as the markings cluster.
     _RUNWAY_LONG_EDGE_SEGMENTS = 16
-
-    def _runway_polygon_corners(self, t1_lat, t1_lon, t1_elev,
-                                t2_lat, t2_lon, t2_elev,
-                                perp_lat, perp_lon, hw,
-                                n_subdiv=None):
-        """Build the runway polygon as a CCW vertex ring with both
-        long edges subdivided into ``n_subdiv`` segments. Each
-        intermediate vertex carries a lat/lon/elev interpolated
-        linearly between the thresholds so the rendered polygon
-        traces the screen-curve of an angular projection rather than
-        cutting a straight chord through it."""
-        if n_subdiv is None:
-            n_subdiv = self._RUNWAY_LONG_EDGE_SEGMENTS
-        corners = []
-        # Short edge at thr1 (06-end): right corner first, then left
-        # corner — keeps the polygon CCW when followed by the long
-        # edge that walks down the "left" side toward thr2.
-        corners.append((t1_lat + perp_lat * hw,
-                        t1_lon + perp_lon * hw, t1_elev))
-        corners.append((t1_lat - perp_lat * hw,
-                        t1_lon - perp_lon * hw, t1_elev))
-        # Long "left" edge thr1-perp -> thr2-perp (n_subdiv-1 inserts).
-        for k in range(1, n_subdiv):
-            f = k / n_subdiv
-            corners.append((
-                t1_lat + f * (t2_lat - t1_lat) - perp_lat * hw,
-                t1_lon + f * (t2_lon - t1_lon) - perp_lon * hw,
-                t1_elev + f * (t2_elev - t1_elev)))
-        # Short edge at thr2 (24-end)
-        corners.append((t2_lat - perp_lat * hw,
-                        t2_lon - perp_lon * hw, t2_elev))
-        corners.append((t2_lat + perp_lat * hw,
-                        t2_lon + perp_lon * hw, t2_elev))
-        # Long "right" edge thr2+perp -> thr1+perp.
-        for k in range(1, n_subdiv):
-            f = k / n_subdiv
-            corners.append((
-                t2_lat + f * (t1_lat - t2_lat) + perp_lat * hw,
-                t2_lon + f * (t1_lon - t2_lon) + perp_lon * hw,
-                t2_elev + f * (t1_elev - t2_elev)))
-        return corners
 
     # Cache TTL/key strategy for the runway-polygon triangle buffer.
     _RUNWAY_POLYS_CACHE_TTL_S = 1.0
@@ -1515,10 +923,7 @@ class SVSRenderer:
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm, 1),
-               # detail_distance_nm changes with the controller level
-               # (3 / 2.5 / 2 / 1.5 NM by default); keep it in the key
-               # so the marking set re-collects when the gate moves.
-               round(self._quality.detail_distance_nm(), 2))
+               round(self.detail_distance_nm, 2))
         if (self._runway_markings_cache is not None
                 and self._runway_markings_cache_key == key
                 and now - self._runway_markings_cache_time
@@ -1528,15 +933,11 @@ class SVSRenderer:
         lat_cos = math.cos(math.radians(ac_lat))
         range_m = self.range_nm * 1852.0
         airports = self._get_airports_cached(ac_lat, ac_lon)
-        # The CPU path used to sort airports by distance so the
-        # marking-budget cap went to the nearest first, then refused
-        # to emit markings past detail_distance_nm. With the GPU
-        # path that whole budget concept is obsolete (a few thousand
-        # extra triangles cost essentially nothing on V3D) — render
-        # markings for EVERY runway within detail_distance_nm and
-        # let the GPU sort it out. The distance gate stays because
-        # at >3 NM the markings are sub-pixel anyway.
-        q_detail_distance_nm = self._quality.detail_distance_nm()
+        # Render markings for EVERY runway within detail_distance_nm
+        # (a few thousand extra triangles cost essentially nothing on
+        # V3D). The distance gate stays because past ~3 NM the
+        # markings are sub-pixel anyway.
+        q_detail_distance_nm = self.detail_distance_nm
 
         out = []
         for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
@@ -1627,7 +1028,7 @@ class SVSRenderer:
         lat_cos = math.cos(math.radians(ac_lat))
         range_m = self.range_nm * 1852.0
         airports = self._get_airports_cached(ac_lat, ac_lon)
-        q_detail_distance_nm = self._quality.detail_distance_nm()
+        q_detail_distance_nm = self.detail_distance_nm
 
         out = []
         for label, ref_lat, ref_lon, ref_elev_ft, runways in airports:
@@ -1874,83 +1275,6 @@ class SVSRenderer:
             return None
         return np.concatenate(chunks, axis=0)
 
-    def _project_polygon_clipped(self, corners, ac_lat, ac_lon, ac_alt_ft,
-                                 pitch_deg, roll_deg, heading_deg, ppd, w, h,
-                                 eps=None):
-        """Project a polygon (list of ``(lat, lon, elev_ft)`` corners) to
-        screen with a Sutherland-Hodgman clip against the camera near
-        plane (``x_fwd > eps``). Polygons that straddle the aircraft —
-        a runway being crossed on short final, for example — get their
-        edges intersected with the near plane so the visible portion
-        still draws instead of vanishing.
-
-        ``eps`` is the near-plane distance in degrees of latitude. The
-        default (~0.05 NM, matching the polar mesh's inner ring) puts
-        clipped vertices at reasonable screen azimuths; an arbitrarily
-        small value (e.g. 1e-6) pushes them out to ~+/-90 deg and the
-        polygon visibly bulges to the screen edges even when the
-        runway is straight ahead.
-
-        Returns a list of QPointF for the clipped polygon; empty when
-        the polygon is fully behind the near plane."""
-        if eps is None:
-            eps = self._NEAR_PLANE_DEG
-        lat_cos = math.cos(math.radians(ac_lat))
-        head_rad = math.radians(heading_deg)
-        cos_h, sin_h = math.cos(head_rad), math.sin(head_rad)
-
-        cam = []
-        for lat, lon, elev_ft in corners:
-            d_lat = lat - ac_lat
-            d_lon = (lon - ac_lon) * lat_cos
-            x_fwd   =  d_lat * cos_h + d_lon * sin_h
-            x_right = -d_lat * sin_h + d_lon * cos_h
-            alt_diff_m = (elev_ft - ac_alt_ft) * 0.3048
-            cam.append((x_fwd, x_right, alt_diff_m))
-
-        clipped = []
-        n = len(cam)
-        for i in range(n):
-            a = cam[i]
-            b = cam[(i + 1) % n]
-            a_in = a[0] > eps
-            b_in = b[0] > eps
-            if a_in:
-                clipped.append(a)
-            if a_in != b_in and abs(b[0] - a[0]) > 1e-12:
-                t = (eps - a[0]) / (b[0] - a[0])
-                clipped.append((
-                    eps,
-                    a[1] + t * (b[1] - a[1]),
-                    a[2] + t * (b[2] - a[2]),
-                ))
-
-        if not clipped:
-            return []
-
-        roll_rad = math.radians(-roll_deg)
-        cos_r, sin_r = math.cos(roll_rad), math.sin(roll_rad)
-        pts = []
-        for x_fwd, x_right, alt_diff_m in clipped:
-            range_m = math.sqrt(x_fwd ** 2 + x_right ** 2) * 111139.0
-            range_m = max(range_m, 1.0)
-            elev_angle_deg = math.degrees(math.atan2(alt_diff_m, range_m))
-            x_ang = math.degrees(math.atan2(x_right, x_fwd))
-            y_ang = elev_angle_deg - pitch_deg
-            x_px = x_ang * ppd
-            y_px = -y_ang * ppd
-            sx = x_px * cos_r - y_px * sin_r + w / 2
-            sy = x_px * sin_r + y_px * cos_r + h / 2
-            pts.append(QPointF(sx, sy))
-        return pts
-
-    # _project_polygon_inside and _point_in_polygon_latlon (formerly
-    # at top of module) deleted as part of Phase 1 of the overlays-to-
-    # GPU migration. The GL water path projects filled triangles via
-    # the overlay shader and uses per-vertex z-clipping for behind-
-    # camera vertices, so "polygon wraps around the camera" is no
-    # longer a special case the CPU has to handle.
-
     # Cached snapshot expires after this many seconds. At 100 kt the
     # aircraft moves 0.028 NM/sec — well under the range_nm threshold
     # — so the airport set near the edge of range changes only every
@@ -1995,10 +1319,6 @@ class SVSRenderer:
                     "thr2_displaced_ft": r.thr2_displaced_ft,
                 } for r in ap.runways]
                 yield label, ap.ref_lat, ap.ref_lon, ap.elev_ft, runways
-            return
-        # Built-in fallback
-        for icao, apt in _AIRPORT_DB.items():
-            yield apt["label"], apt["ref_lat"], apt["ref_lon"], apt["elev_ft"], apt["runways"]
 
     # Cache TTL for the assembled water-triangle vertex array. Matches
     # the airports cache; the visible polygon set turns over slowly
@@ -2339,6 +1659,33 @@ class SVSRenderer:
         self._flags_cache_time = now
         return result
 
+    # Cached airport-proximity test. The GL terrain shader needs one
+    # boolean per frame (2-colour collapse near airports); re-querying
+    # sqlite every frame cost ~0.3-1 ms for a value that changes on a
+    # seconds timescale.
+    _NEAR_AIRPORT_CACHE_TTL_S = 1.0
+
+    def near_airport(self, ac_lat, ac_lon):
+        """True when any airport in the database lies within
+        ``airport_proximity_nm`` of the aircraft. 1 s TTL cache."""
+        if (self.airport_proximity_nm <= 0.0
+                or getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready):
+            return False
+        now = time.perf_counter()
+        if (self._near_airport_cache is not None
+                and now - self._near_airport_cache_time
+                    < self._NEAR_AIRPORT_CACHE_TTL_S):
+            return self._near_airport_cache
+        hit = False
+        for _ in self.airport_db.airports_in_range(
+                ac_lat, ac_lon, self.airport_proximity_nm):
+            hit = True
+            break
+        self._near_airport_cache = hit
+        self._near_airport_cache_time = now
+        return hit
+
     def _sample_elevations(self, lat_grid: np.ndarray,
                            lon_grid: np.ndarray) -> tuple:
         """
@@ -2393,28 +1740,9 @@ class SVSRenderer:
 
 
 # ---------------------------------------------------------------------------
-# Tiny helper — avoids importing Qt.NoPen at module level before QApp exists
-# ---------------------------------------------------------------------------
-def Qt_NoPen():
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QPen
-    return QPen(Qt.PenStyle.NoPen)
-
-
-# ---------------------------------------------------------------------------
 # Scene-graph wrapper — lets SVS participate in the same z-order system
 # as the pitch ladder, runways, and other items in the AI scene.
 # ---------------------------------------------------------------------------
-class SVSGraphicsItem:
-    """QGraphicsItem that delegates painting to an SVSRenderer.
-
-    Construction is deferred to a factory function so importing this module
-    doesn't require a QApplication. Call ``make_svs_item(renderer, ai_widget)``
-    to instantiate.
-    """
-    pass  # placeholder for documentation; real class created by the factory
-
-
 def make_svs_item(renderer: "SVSRenderer", ai_widget):
     """Build a QGraphicsItem subclass instance that delegates to *renderer*.
 

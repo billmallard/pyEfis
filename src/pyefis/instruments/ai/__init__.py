@@ -576,6 +576,22 @@ class AI(QGraphicsView):
         # Put the static overlay image on the view
         p.drawImage(self.rect(), self.overlay)
 
+        # SVS UNAVAIL annunciation. The SVS is GL-required; if the GL
+        # renderer failed to initialise or draw, it disables itself and
+        # we annunciate rather than silently showing the sky/ground
+        # two-tone as if terrain awareness were available.
+        _svs = getattr(self, "svs", None)
+        if (_svs is not None and _svs.enabled
+                and getattr(_svs, "gl_failed", False)):
+            p.save()
+            _af = QFont(self.font_family, -1, QFont.Weight.Bold)
+            _af.setPixelSize(max(12, qRound(self.fontSize * 0.9)))
+            p.setFont(_af)
+            p.setPen(QPen(QColor(255, 176, 0)))
+            p.drawText(QRectF(0, h * 0.18, w, h * 0.12),
+                       Qt.AlignmentFlag.AlignCenter, "SVS UNAVAIL")
+            p.restore()
+
         pen = QPen(Qt.GlobalColor.white)
         pen.setWidth(qRound(self.fontSize * 0.025))
         p.setPen(pen)

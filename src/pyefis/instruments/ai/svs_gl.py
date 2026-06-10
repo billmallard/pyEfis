@@ -818,19 +818,9 @@ class SVSGLRenderer:
             self._fbo.release()
 
     def _near_airport(self, ac_lat: float, ac_lon: float) -> bool:
-        """Same proximity test the polar CPU tier runs at svs.py:359.
-        Yields True if any airport in the database sits within
-        ``airport_proximity_nm`` of the aircraft."""
-        p = self._parent
-        prox = float(getattr(p, "airport_proximity_nm", 0.0) or 0.0)
-        if prox <= 0.0:
-            return False
-        db = getattr(p, "airport_db", None)
-        if db is None or not getattr(db, "ready", False):
-            return False
-        for _ in db.airports_in_range(ac_lat, ac_lon, prox):
-            return True
-        return False
+        """Cached airport-proximity test — see SVSRenderer.near_airport
+        (1 s TTL; replaces the per-frame sqlite query)."""
+        return bool(self._parent.near_airport(ac_lat, ac_lon))
 
     def _ensure_fbo(self, w, h):
         size = QSize(w, h)

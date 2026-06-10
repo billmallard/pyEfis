@@ -20,7 +20,6 @@ from pyefis.instruments.ai.svs import (
     COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
     SRTM3_SAMPLES, SRTM3_VOID,
     POLAR_DEFAULTS,
-    _QualityController,
 )
 from pyefis.instruments.ai import AI
 
@@ -172,9 +171,11 @@ class TestSVSRendererConfig:
         r = SVSRenderer({"enabled": True, "tile_path": str(root)})
         assert r.ready is True
 
-    def test_renderer_tier_grid_size(self):
-        assert SVSRenderer({"renderer": "cpu_sparse"})._grid_n == 48
-        assert SVSRenderer({"renderer": "cpu_dense"})._grid_n == 128
+    def test_legacy_renderer_values_accepted_and_ignored(self):
+        # GL-required: legacy tier names are accepted for config
+        # compatibility but the renderer is always opengl.
+        for legacy in ("cpu_sparse", "cpu_dense", "cpu_ultra", "polar"):
+            assert SVSRenderer({"renderer": legacy}).renderer == "opengl"
 
     def test_range_nm_default(self):
         # Bumped from 30 NM to 50 NM when the GL renderer landed —
@@ -284,99 +285,6 @@ class TestAISVSIntegration:
 
 # ---------------------------------------------------------------------------
 # Polar (range, azimuth) tier
-# ---------------------------------------------------------------------------
-
-class TestPolarTier:
-    """Polar tier samples terrain on a forward fan with radial LOD warp."""
-
-    def test_polar_defaults_loaded(self):
-        r = SVSRenderer({"renderer": "polar"})
-        assert r._is_polar is True
-        assert r._n_range     == POLAR_DEFAULTS["n_range"]
-        assert r._n_az        == POLAR_DEFAULTS["n_az"]
-        assert r._fov_deg     == POLAR_DEFAULTS["fov_deg"]
-        assert r._radial_warp == POLAR_DEFAULTS["radial_warp"]
-        assert r._r_min_nm    == POLAR_DEFAULTS["r_min_nm"]
-
-    def test_polar_config_overrides(self):
-        r = SVSRenderer({
-            "renderer": "polar",
-            "n_range": 32, "n_az": 48,
-            "fov_deg": 120.0, "radial_warp": 1.5, "r_min_nm": 0.1,
-        })
-        assert r._n_range     == 32
-        assert r._n_az        == 48
-        assert r._fov_deg     == 120.0
-        assert r._radial_warp == 1.5
-        assert r._r_min_nm    == 0.1
-
-    def test_non_polar_tier_flagged_false(self):
-        for tier in ("cpu_sparse", "cpu_dense", "cpu_ultra"):
-            r = SVSRenderer({"renderer": tier})
-            assert r._is_polar is False
-
-    def test_radial_warp_concentrates_samples_near_aircraft(self):
-        """Quadratic warp: cell at r=0 must be smaller than cell at r=range."""
-        n_r = 16
-        warp = 2.0
-        range_nm = 30.0
-        r_min = 0.01
-        t = np.linspace(0.0, 1.0, n_r)
-        r_max_eff = range_nm * (1.0 - 1e-6)
-        r_nm = r_min + (r_max_eff - r_min) * (t ** warp)
-        # Cell size = consecutive differences
-        cell_size = np.diff(r_nm)
-        # The first (inner) cell must be strictly smaller than the last (outer).
-        assert cell_size[0] < cell_size[-1]
-        # Outer cell should be at least 3x the inner cell at warp=2.
-        assert cell_size[-1] / cell_size[0] >= 3.0
-
-    def _draw_polar(self, renderer, lat=32.5, lon=-96.5, alt_ft=5000.0,
-                    heading_deg=0.0):
-        """Helper: run SVSRenderer.draw() against an offscreen QImage.
-        Avoids constructing the AI widget (which depends on additional FIX
-        keys outside SVS's concern)."""
-        from PyQt6.QtGui import QImage
-        img = QImage(400, 300, QImage.Format.Format_RGB32)
-        img.fill(0)
-        painter = QPainter(img)
-        try:
-            renderer.draw(painter, 400, 300, lat, lon, alt_ft,
-                          0.0, 0.0, heading_deg, 12.0)
-        finally:
-            painter.end()
-        return img
-
-    def test_polar_draw_on_synthetic_tile(self, tmp_path):
-        """Polar draw() completes without raising on a flat synthetic tile."""
-        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
-        r = SVSRenderer({
-            "enabled": True, "tile_path": str(root),
-            "renderer": "polar", "range_nm": 15,
-            # Trimmed sample budget to keep the test fast.
-            "n_range": 16, "n_az": 24,
-        })
-        assert r.ready is True
-        self._draw_polar(r)
-
-    def test_polar_draw_at_varied_headings(self, tmp_path):
-        """Polar grid must work at any heading — covers the heading
-        rotation that gets absorbed into the azimuth axis."""
-        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
-        r = SVSRenderer({
-            "enabled": True, "tile_path": str(root),
-            "renderer": "polar", "range_nm": 10,
-            "n_range": 8, "n_az": 12,
-        })
-        for heading in (0.0, 90.0, 180.0, 270.0, 45.0, 359.0):
-            self._draw_polar(r, heading_deg=heading)
-
-
-# ---------------------------------------------------------------------------
-# OpenGL tier — scaffolding + fallback machinery
-# Step 1 of docs/svs_opengl_plan.md. The GL renderer's draw() stub raises
-# NotImplementedError on purpose; these tests verify the fallback path
-# transparently downgrades to polar and never crashes.
 # ---------------------------------------------------------------------------
 
 class TestWaterDB:
@@ -583,182 +491,6 @@ class TestSVSWaterRendering:
             p.end()
 
 
-class TestProjectPolygonClipped:
-    """``_project_polygon_clipped`` clips polygons against the camera near
-    plane so polygons that straddle the aircraft (e.g. a runway being
-    crossed) draw their visible portion rather than vanishing the moment
-    one corner falls behind. Regression for the runway-disappears-on-
-    threshold-crossing bug reported during X-Plane testing."""
-
-    def _renderer(self):
-        # No tile_path needed — clipper only uses _project math.
-        return SVSRenderer({"renderer": "polar"})
-
-    def test_all_in_front_returns_four_points(self):
-        r = self._renderer()
-        # KSBA-ish pose, aircraft 1 NM south of the runway looking north.
-        # Runway endpoints are at lat 34.43, ±0.001 lon, all forward.
-        corners = [
-            (34.430, -119.851, 12.0),
-            (34.430, -119.853, 12.0),
-            (34.432, -119.853, 12.0),
-            (34.432, -119.851, 12.0),
-        ]
-        pts = r._project_polygon_clipped(
-            corners,
-            ac_lat=34.420, ac_lon=-119.852, ac_alt_ft=500.0,
-            pitch_deg=0.0, roll_deg=0.0, heading_deg=0.0,
-            ppd=12.0, w=800, h=600, eps=1e-6)
-        assert len(pts) == 4
-
-    def test_all_behind_returns_empty(self):
-        r = self._renderer()
-        # Aircraft north of all corners looking north — all behind.
-        corners = [
-            (34.420, -119.851, 12.0),
-            (34.420, -119.853, 12.0),
-            (34.422, -119.853, 12.0),
-            (34.422, -119.851, 12.0),
-        ]
-        pts = r._project_polygon_clipped(
-            corners,
-            ac_lat=34.440, ac_lon=-119.852, ac_alt_ft=500.0,
-            pitch_deg=0.0, roll_deg=0.0, heading_deg=0.0,
-            ppd=12.0, w=800, h=600, eps=1e-6)
-        assert pts == []
-
-    def test_aircraft_straddling_runway_keeps_visible_half(self):
-        """Aircraft is sitting between the two thresholds along the
-        runway centerline, heading 90 deg (east) down the runway.
-        The two corners behind should be replaced by intersections with
-        the camera near plane — total 4 output points (2 originals + 2
-        intersections), and all should have positive forward range from
-        the camera."""
-        r = self._renderer()
-        # Runway runs east-west; aircraft at the midpoint, heading east.
-        # West threshold corners are behind, east threshold corners are
-        # ahead.
-        corners = [
-            (34.430, -119.860, 12.0),  # west, north — BEHIND
-            (34.428, -119.860, 12.0),  # west, south — BEHIND
-            (34.428, -119.840, 12.0),  # east, south — AHEAD
-            (34.430, -119.840, 12.0),  # east, north — AHEAD
-        ]
-        pts = r._project_polygon_clipped(
-            corners,
-            ac_lat=34.429, ac_lon=-119.850, ac_alt_ft=200.0,
-            pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
-            ppd=12.0, w=800, h=600, eps=1e-6)
-        # Clipping a 4-vertex polygon against a single plane with two
-        # vertices behind produces a 4-vertex output (the two AHEAD
-        # corners plus two clipped intersections).
-        assert len(pts) == 4
-
-    def test_one_behind_three_ahead_returns_five(self):
-        """Sutherland-Hodgman on a quad with one vertex behind the
-        plane produces a pentagon (3 originals + 2 intersections)."""
-        r = self._renderer()
-        # Aircraft at (34.429, -119.851), heading 90 (east). x_fwd
-        # tracks d_lon_scaled with this heading.
-        corners = [
-            (34.430, -119.852, 12.0),  # west of aircraft — BEHIND
-            (34.430, -119.850, 12.0),  # east — ahead
-            (34.428, -119.850, 12.0),  # east — ahead
-            (34.428, -119.840, 12.0),  # well east — ahead
-        ]
-        pts = r._project_polygon_clipped(
-            corners,
-            ac_lat=34.429, ac_lon=-119.851, ac_alt_ft=200.0,
-            pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
-            ppd=12.0, w=800, h=600, eps=1e-6)
-        assert len(pts) == 5
-
-    def test_runway_polygon_corners_subdivides_long_edges(self):
-        """`_runway_polygon_corners` subdivides the two long edges of
-        the runway into ``n_subdiv`` segments each so the projected
-        polygon traces the screen-curve from the angular projection
-        rather than cutting a straight chord through it. With
-        ``n_subdiv=8`` the polygon has 4 + 2*7 = 18 vertices."""
-        r = self._renderer()
-        n = 8
-        corners = r._runway_polygon_corners(
-            t1_lat=35.735, t1_lon=-81.397, t1_elev=1136.0,
-            t2_lat=35.745, t2_lon=-81.380, t2_elev=1190.0,
-            perp_lat=-0.0001, perp_lon=0.0001, hw=2.058e-4,
-            n_subdiv=n)
-        assert len(corners) == 4 + 2 * (n - 1)
-        # Subdivision points along the left edge should interpolate
-        # between t1 and t2 monotonically.
-        # corners[2..n] are the inserts on the left long edge
-        left_lats = [c[0] for c in corners[2:2 + n - 1]]
-        assert all(35.735 < lat < 35.745 for lat in left_lats)
-        # And elevations interpolate too.
-        left_elevs = [c[2] for c in corners[2:2 + n - 1]]
-        assert all(1136.0 < e < 1190.0 for e in left_elevs)
-        assert left_elevs == sorted(left_elevs), \
-            "elevations along the left edge should monotonically increase"
-
-    def test_runway_polygon_clips_correctly_with_subdivision(self):
-        """A subdivided runway polygon still clips cleanly with the
-        camera-near-plane Sutherland-Hodgman implementation. Same
-        KHKY-like pose that uncovered the projection-curve issue."""
-        r = self._renderer()
-        # KHKY 06 thr → 24 thr, aircraft mid-runway-but-off-centerline.
-        corners = r._runway_polygon_corners(
-            t1_lat=35.73499, t1_lon=-81.39730, t1_elev=1136.3,
-            t2_lat=35.74498, t2_lon=-81.37956, t2_elev=1189.6,
-            perp_lat=-0.0001405, perp_lon=0.00009895, hw=2.058e-4,
-            n_subdiv=16)
-        pts = r._project_polygon_clipped(
-            corners,
-            ac_lat=35.74263, ac_lon=-81.38575, ac_alt_ft=1386.0,
-            pitch_deg=10.0, roll_deg=3.0, heading_deg=51.18,
-            ppd=12.0, w=800, h=600)
-        # Polygon should be visible with some clipped vertices.
-        assert len(pts) >= 3
-        # No vertex should be wildly out of plausible viewport range —
-        # the polygon doesn't bulge to +/-1000+ px the way an
-        # un-subdivided chord would have at this pose.
-        for pt in pts:
-            assert -1500 <= pt.x() <= 2300, (
-                f"vertex x={pt.x()} unreasonably far from viewport — "
-                f"subdivision should keep the polygon within sane "
-                f"projection bounds")
-
-    def test_default_near_plane_visibly_inside_viewport(self):
-        """Production default ``eps`` (~0.05 NM) puts clipped vertices
-        at moderate screen azimuths instead of ~+/-90 deg the way a
-        ``eps=1e-6`` value would. Regression for the "markings appear
-        beside the polygon" report — without a sensible near plane the
-        polygon visually bulges way past the actual runway edges."""
-        r = self._renderer()
-        # Aircraft heading east at 230 ft AGL, sitting between the two
-        # thresholds of a 150-ft-wide east-west runway 6400 ft long.
-        # Same KHKY-like pose that produced the visual bug.
-        half_lat = (150.0 / 2.0) / 364491.0   # ~half-width in deg lat
-        corners = [
-            (34.430 + half_lat, -119.860, 1200.0),  # t1 (west) +perp — BEHIND
-            (34.430 - half_lat, -119.860, 1200.0),  # t1 -perp        — BEHIND
-            (34.430 - half_lat, -119.830, 1200.0),  # t2 (east) -perp — AHEAD
-            (34.430 + half_lat, -119.830, 1200.0),  # t2 +perp        — AHEAD
-        ]
-        pts = r._project_polygon_clipped(
-            corners,
-            ac_lat=34.430, ac_lon=-119.850, ac_alt_ft=1400.0,
-            pitch_deg=0.0, roll_deg=0.0, heading_deg=90.0,
-            ppd=12.0, w=800, h=600)
-        assert len(pts) == 4
-        # Every projected vertex must land within +/- a viewport width
-        # of the centre. With the old eps=1e-6 the clipped vertices
-        # projected to roughly +/-1080 px on an 800 px viewport because
-        # x_ang -> +/-90 deg as x_fwd -> 0.
-        for pt in pts:
-            assert -400 <= pt.x() - 400 <= 400, (
-                f"vertex x={pt.x():.1f} is far outside the viewport — "
-                f"default near-plane is too close, clipped vertices "
-                f"are projecting to extreme azimuths")
-
-
 class TestSVSGLFallback:
     def _draw(self, r, lat=32.5, lon=-96.5, alt_ft=3000.0, heading_deg=0.0):
         from PyQt6.QtGui import QImage
@@ -783,9 +515,16 @@ class TestSVSGLFallback:
         assert r._gl_renderer is None
         assert r._gl_init_attempted is False
 
-    def test_first_draw_falls_back_to_polar(self, tmp_path, caplog):
-        """SVSGLRenderer.draw raises NotImplementedError today, so the first
-        draw call must downgrade the renderer to polar and complete cleanly."""
+    def test_draw_failure_disables_svs(self, tmp_path, monkeypatch, caplog):
+        """A GL draw failure permanently disables the SVS (UNAVAIL) —
+        there is no CPU fallback."""
+        import pyefis.instruments.ai.svs_gl as svs_gl
+        class DrawFailGL:
+            def __init__(self, *a, **kw):
+                pass
+            def draw(self, *a, **kw):
+                raise RuntimeError("simulated GL draw failure")
+        monkeypatch.setattr(svs_gl, "SVSGLRenderer", DrawFailGL)
         root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
         r = SVSRenderer({
             "enabled": True, "tile_path": str(root),
@@ -794,33 +533,35 @@ class TestSVSGLFallback:
         })
         with caplog.at_level("WARNING"):
             self._draw(r)
-        assert r.renderer == "polar"
+        assert r.gl_failed is True
         assert r._gl_renderer is None
-        assert any("falling back to polar" in rec.getMessage().lower()
+        assert any("unavail" in rec.getMessage().lower()
                    for rec in caplog.records)
 
-    def test_subsequent_draws_use_polar_without_retrying_gl(self, tmp_path):
-        """Once GL has failed and been downgraded, repeated draws stay on
-        polar and never re-attempt GL construction."""
+    def test_failed_svs_never_retries_gl(self, tmp_path, monkeypatch):
+        """Once GL has failed, repeated draws are no-ops and never
+        re-attempt GL construction."""
+        import pyefis.instruments.ai.svs_gl as svs_gl
+        calls = {"n": 0}
+        class BrokenGL:
+            def __init__(self, *a, **kw):
+                calls["n"] += 1
+                raise RuntimeError("boom")
+        monkeypatch.setattr(svs_gl, "SVSGLRenderer", BrokenGL)
         root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
         r = SVSRenderer({
             "enabled": True, "tile_path": str(root),
-            "renderer": "opengl",
             "n_range": 8, "n_az": 12,
         })
-        self._draw(r)
-        assert r.renderer == "polar"
-        before = r._gl_init_attempted
-        # Drawing again must not change anything.
-        for _ in range(3):
+        for _ in range(4):
             self._draw(r)
-        assert r.renderer == "polar"
-        assert r._gl_init_attempted == before  # still True; not re-tried
+        assert calls["n"] == 1
+        assert r.gl_failed is True
 
-    def test_init_failure_also_falls_back(self, tmp_path, monkeypatch, caplog):
+    def test_init_failure_disables_svs(self, tmp_path, monkeypatch, caplog):
         """If SVSGLRenderer construction itself raises (e.g. a Qt build
-        without OpenGL bindings), we still downgrade to polar instead of
-        crashing."""
+        without OpenGL bindings), the SVS disables itself (UNAVAIL)
+        instead of crashing."""
         import pyefis.instruments.ai.svs_gl as svs_gl
 
         class BrokenGL:
@@ -836,46 +577,39 @@ class TestSVSGLFallback:
         })
         with caplog.at_level("WARNING"):
             self._draw(r)
-        assert r.renderer == "polar"
-        assert any("opengl renderer unavailable" in rec.getMessage().lower()
+        assert r.gl_failed is True
+        assert any("unavail" in rec.getMessage().lower()
                    for rec in caplog.records)
 
-    def test_step6_near_airport_helper(self, tmp_path):
-        """Step 6: ``_near_airport`` returns True only when the
-        configured airport_db reports an airport within
-        ``airport_proximity_nm``. Tested against the helper in
-        isolation so it doesn't depend on a live GL context."""
-        from pyefis.instruments.ai.svs_gl import SVSGLRenderer
-
+    def test_near_airport_cached_helper(self, tmp_path):
+        """SVSRenderer.near_airport reports proximity from the airport
+        db and caches the boolean for 1 s (the GL shader needs it per
+        frame; sqlite per frame was measurable)."""
         class _StubDB:
             def __init__(self, hit):
                 self.ready = True
                 self._hit = hit
+                self.calls = 0
             def airports_in_range(self, lat, lon, rng):
+                self.calls += 1
                 if self._hit:
                     yield ("KXYZ", lat, lon)
 
-        class _StubParent:
-            def __init__(self, db, prox=5.0):
-                self.airport_db = db
-                self.airport_proximity_nm = prox
+        r = SVSRenderer({"enabled": True, "airport_proximity_nm": 5.0})
+        r.airport_db = _StubDB(True)
+        assert r.near_airport(39.22, -106.87) is True
+        assert r.near_airport(39.22, -106.87) is True
+        assert r.airport_db.calls == 1   # second hit served from cache
 
-        # Construct a renderer instance but skip __init__ so no Qt GL
-        # context is created — we're only exercising the helper.
-        gl_r = SVSGLRenderer.__new__(SVSGLRenderer)
+        r2 = SVSRenderer({"enabled": True, "airport_proximity_nm": 5.0})
+        r2.airport_db = _StubDB(False)
+        assert r2.near_airport(39.22, -106.87) is False
 
-        gl_r._parent = _StubParent(_StubDB(hit=True))
-        assert gl_r._near_airport(32.5, -96.5) is True
-
-        gl_r._parent = _StubParent(_StubDB(hit=False))
-        assert gl_r._near_airport(32.5, -96.5) is False
-
-        gl_r._parent = _StubParent(_StubDB(hit=True), prox=0.0)
-        assert gl_r._near_airport(32.5, -96.5) is False, (
-            "airport_proximity_nm=0 must disable the 2-colour mode")
-
-        gl_r._parent = _StubParent(db=None)
-        assert gl_r._near_airport(32.5, -96.5) is False
+        # Proximity disabled -> always False, no query.
+        r3 = SVSRenderer({"enabled": True, "airport_proximity_nm": 0.0})
+        r3.airport_db = _StubDB(True)
+        assert r3.near_airport(39.22, -106.87) is False
+        assert r3.airport_db.calls == 0
 
     def test_step7_patch_centring_keeps_aircraft_inside(self):
         """Step 7: the 2x2 patch origin chosen by ``_patch_origin_for``
@@ -961,9 +695,8 @@ class TestSVSGLFallback:
             r.draw(painter, 400, 300, 32.5, -96.5, 3000.0, 0.0, 0.0, 0.0, 12.0)
         finally:
             painter.end()
-        if r.renderer != "opengl":
-            pytest.skip(f"no GL context in this environment (fell back to "
-                        f"{r.renderer})")
+        if r.gl_failed:
+            pytest.skip("no GL context in this environment (SVS UNAVAIL)")
         # At altitude with z=0 mesh, the fan should project into the
         # lower portion of the screen (just below the horizon line).
         # Walk a row of pixels there and count anything that isn't the
@@ -976,87 +709,3 @@ class TestSVSGLFallback:
         assert non_bg > 5, (
             f"expected polar mesh pixels below horizon; only {non_bg} "
             f"non-background samples in scan row")
-
-
-class TestQualityController:
-    def test_default_state_is_level_0(self):
-        q = _QualityController(base_detail_distance_nm=3.0)
-        assert q.level == 0
-        assert q.pressure == 0.0
-        assert q.detail_distance_nm() == pytest.approx(3.0)
-        assert q.max_close_markings() == float("inf")
-
-    def test_pressure_rises_under_slow_frames(self):
-        # floor_fps=30 -> dt > 33.3 ms drives pressure up.
-        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
-        # Seed the EMA at slow to reach steady-state quickly.
-        for _ in range(60):
-            q.update(1.0 / 15.0)   # 15 FPS — well under floor
-        assert q.pressure == pytest.approx(1.0)
-        # At full pressure we should be at the worst level.
-        assert q.level == len(_QualityController.LEVELS) - 1
-        assert q.max_close_markings() == 2
-
-    def test_recovery_is_slower_than_drop(self):
-        # Asymmetric step rates: a controller pinned at L3 must take
-        # *more* frames to recover to L0 than it took to drop.
-        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
-        drops = 0
-        while q.level < len(_QualityController.LEVELS) - 1:
-            q.update(1.0 / 15.0)
-            drops += 1
-            assert drops < 200, "drop should converge well under 200 frames"
-        recoveries = 0
-        while q.level > 0:
-            q.update(1.0 / 60.0)   # 60 FPS — over ceiling
-            recoveries += 1
-            assert recoveries < 2000, (
-                "recovery should converge, but slow")
-        assert recoveries > drops * 5, (
-            f"recovery ({recoveries} frames) should be substantially "
-            f"slower than drop ({drops} frames)")
-
-    def test_dead_band_holds_pressure_steady(self):
-        # At steady FPS inside the dead band (here 35 FPS, between
-        # floor=30 and ceiling=45), pressure must not change. The EMA
-        # converges to dt = 1/35 = 28.5 ms which sits between the
-        # floor's 33.3 ms and the ceiling's 22.2 ms.
-        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
-        for _ in range(1000):
-            q.update(1.0 / 35.0)
-        assert q.pressure == 0.0
-
-    def test_disabled_controller_stays_at_l0(self):
-        q = _QualityController(enabled=False, base_detail_distance_nm=3.0)
-        for _ in range(100):
-            q.update(1.0 / 5.0)
-        assert q.level == 0
-        assert q.pressure == 0.0
-        assert q.detail_distance_nm() == pytest.approx(3.0)
-
-    def test_hysteresis_prevents_flapping_near_threshold(self):
-        # Test the level-selection rule directly, bypassing EMA
-        # dynamics so we exercise just the hysteresis logic. Pressure
-        # in [exit, enter) should hold the current level, not flap.
-        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
-        q._pressure = 0.20
-        q._level = 1
-        q._ema_dt = 1.0 / 35.0   # dead band -> pressure won't move
-        q.update(1.0 / 35.0)
-        assert q.level == 1, (
-            "pressure 0.20 sits between L1 exit (0.15) and L1 entry "
-            "(0.30) — hysteresis must keep the level at L1")
-        # Drop pressure just under the exit threshold and the level
-        # should step back to L0 on the next update.
-        q._pressure = 0.10
-        q.update(1.0 / 35.0)
-        assert q.level == 0
-
-    def test_pathological_dt_is_ignored(self):
-        # A multi-second pause (window minimised, debugger break, etc.)
-        # would otherwise pin the controller at L3 for many seconds.
-        q = _QualityController(target_fps=35, floor_fps=30, ceiling_fps=45)
-        q.update(5.0)                 # 5-second gap, should clamp
-        assert q.pressure == 0.0
-        q.update(-0.5)                # negative dt, ignored
-        assert q.pressure == 0.0
