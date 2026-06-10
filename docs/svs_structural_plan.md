@@ -193,50 +193,50 @@ STRUCTURAL_REVIEW.md section 2 is the design rationale.
 Design decisions to lock in (do these first, in a short design note
 committed to this file or as comments):
 
-- [ ] **Local origin**: the heightmap patch SW corner (already tracked as
+- [x] **Local origin**: the heightmap patch SW corner (already tracked as
       `_patch_origin`). All ENU coordinates are metres east/north/up of
       that origin; magnitudes stay < ~250 km so float32 is mm-precise.
       Origin changes exactly when the patch rebuilds (half-degree
       crossings) — every cached vertex buffer must be invalidated on
       origin change (add origin to the cache keys).
-- [ ] **Matrix**: CPU builds `u_vp = P(fov from pixels_per_deg, viewport)
+- [x] **Matrix**: CPU builds `u_vp = P(fov from pixels_per_deg, viewport)
       @ R_roll @ R_pitch @ R_heading @ T(-aircraft_enu)` once per frame
       with numpy (float64, downcast at upload). FOV definition: preserve
       the current `pixels_per_deg` semantics — scale chosen so small
       angles map to the same pixels as today, which keeps the pitch
       ladder and FPM aligned without touching the AI widget.
-- [ ] **Units**: collectors emit metres. `geometry.py` gets one
+- [x] **Units**: collectors emit metres. `geometry.py` gets one
       conversion helper (`latlon_to_enu(origin, lat, lon, elev_ft)`);
       the scattered `111139.0 / 364491.0 / 3.28084` constants collapse
       into it.
 
 Implementation steps:
 
-- [ ] Add `camera.py` to the svs package: builds the VP matrix; unit-test
+- [x] Add `camera.py` to the svs package: builds the VP matrix; unit-test
       it standalone (known pose → known screen position for a handful of
       points, including behind-camera w<=0 cases).
-- [ ] Terrain vertex shader: keep the polar-fan generation (t, az →
+- [x] Terrain vertex shader: keep the polar-fan generation (t, az →
       bearing → ENU offsets in metres, heightmap sample for up), then
       `gl_Position = u_vp * vec4(enu, 1.0)`. Delete the per-vertex
       pitch/roll trig and the screen-pixel math.
-- [ ] Overlay + text shaders: vertex stage becomes
+- [x] Overlay + text shaders: vertex stage becomes
       `gl_Position = u_vp * vec4(a_pos_m, 1.0)` (plus UV passthrough for
       text). Delete the legacy atan2 branch and the `u_use_perspective`
       uniform/config key.
-- [ ] Collectors emit ENU float32 instead of (lat°, lon°, ft). Water and
+- [x] Collectors emit ENU float32 instead of (lat°, lon°, ft). Water and
       runway data still *store* lat/lon in sqlite — conversion happens in
       the collect step against the current origin.
-- [ ] Delete `_filter_behind_camera_triangles` and its call sites — GL
+- [x] Delete `_filter_behind_camera_triangles` and its call sites — GL
       w-clipping handles the near plane under true perspective. Verify
       the near field at KASE short final and a low pass directly over a
       runway: no wedge artifacts, and the ~50 m foreground gap the CPU
       clipper imposed should be gone (runway surface visible under the
       nose).
-- [ ] `_project_point` survives only if the airport flags chose
+- [x] `_project_point` survives only if the airport flags chose
       screen-billboard sizing in Phase 1 and need a CPU projection — if
       so, reimplement it as `camera.project(enu)` using the same matrix
       so there is exactly one projection. Otherwise delete it.
-- [ ] **Earth curvature**: in the terrain vertex shader (and in the
+- [x] **Earth curvature**: in the terrain vertex shader (and in the
       collectors for overlay elevations), apply
       `up -= dist_m^2 / (2 * 6371000.0)`. Gate behind a config key
       `earth_curvature: true` default on, so an A/B screenshot is easy.
@@ -248,6 +248,18 @@ on its terrain footprint at all four poses — previously only
 approximately); near-field artifacts gone; all projection math lives in
 `camera.py` + one shader vertex stage; unit tests for camera.py pass;
 `u_use_perspective`, the CPU clipper, and the atan2 shader branch are gone.
+**STATUS: COMPLETE (2026-06-10).** Design notes: ENU conversion happens
+at buffer-upload time in svs_gl._to_enu (single point; collectors stay
+lat/lon, so patch-origin changes self-heal with no cache invalidation —
+supersedes the "collectors emit ENU" step, which P8 will finish at
+build time). _project_point deleted (no callers; the Phase 5 flags
+billboard in world space). Verified: 100 ft pass over KASE runway 15/33
+(NASR centerline) — surface continuous to the bottom screen edge, no
+wedge artifacts, no 50 m gap; KASE ridge blue-sliver artifacts gone
+with the angular projection; camera.py unit tests caught a real
+scale-factor bug pre-merge. Windows DFW frame.svs_total ~6.0 ms;
+Pi 5 on-target worktree run 8.65 ms, clean. Goldens refreshed
+(terrain projection intentionally changed: perspective + curvature).
 
 ## Phase 4 — Frame clock + pose interpolation (1–2 days)
 
