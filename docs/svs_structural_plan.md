@@ -348,13 +348,14 @@ win32 (goldens are true screen captures now) and grabFramebuffer
 elsewhere — which returns blank on eglfs too.
 Measured: Windows DFW frame.svs_total 6.0 -> 3.57 ms; Pi 5
 10.11 -> 7.17 ms (gl_terrain 9.66 -> 6.76) at 33.01 ms cadence, clean.
-FOLLOW-UPS: (1) on-Pi composite needs one human glance at the bench
-display (remote capture impossible on eglfs; perf counters prove the
-GL pipeline renders); (2) pitch-ladder numerals show a hatched
-artifact through the GL paint engine on Windows — check whether the
-Pi shows it; (3) the SIGUSR1 main-window screenshot will be blank for
-GL-viewport AIs — port it to a screen/compositor grab when next
-touched.
+FOLLOW-UPS — (1) RESOLVED: Bill eyeballed the bench display running
+the branch on eglfs 2026-06-10, glyphs smooth, composite correct.
+(2) RESOLVED: the hatched text was our glyph-atlas upload leaving
+GL_UNPACK_ALIGNMENT=1 set, shearing Qt's glyph-cache uploads — the
+native block now saves/restores the paint engine's cached GL state
+(commit 3d2bf42). (3) OPEN: the SIGUSR1 main-window screenshot will
+be blank for GL-viewport AIs — port it to a screen/compositor grab
+when next touched.
 
 ## Phase 6 — Copernicus GLO-30 terrain (2–3 days, independent)
 
