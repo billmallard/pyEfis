@@ -213,6 +213,22 @@ class AI(QGraphicsView):
 
     def resizeEvent(self, event):
         self.pitchItems = []
+        # Detach the SVS item from the outgoing scene BEFORE we replace
+        # it. QGraphicsScene deletes its items on destruction; if the
+        # item rides the old scene down, the Python wrapper is left
+        # pointing at a deleted C++ object and the next attach crashes.
+        # Seen on eglfs (Pi), where fullscreen startup produces extra
+        # resize events with the old scene destroyed in between.
+        _svs_item = getattr(self, "_svs_item", None)
+        if _svs_item is not None:
+            try:
+                _old_scene = _svs_item.scene()
+                if _old_scene is not None:
+                    _old_scene.removeItem(_svs_item)
+            except RuntimeError:
+                # C++ side already deleted — drop the dead wrapper;
+                # _attach_svs_item_if_ready rebuilds it from self.svs.
+                self._svs_item = None
         if self.font_percent:
             self.fontSize = qRound(self.width() * self.font_percent)
             self.minorDivWidth = qRound(self.fontSize * 0.3)
@@ -395,6 +411,7 @@ class AI(QGraphicsView):
         # So SVS covers the static blue/brown background but stays behind the
         # pitch ladder. Configurable via the `z_value` SVS config key.
         z = float(config.get("z_value", 0.5))
+        self._svs_z = z
         self._svs_item = make_svs_item(self.svs, self)
         self._svs_item.setZValue(z)
         self._attach_svs_item_if_ready()
@@ -402,18 +419,28 @@ class AI(QGraphicsView):
     def _attach_svs_item_if_ready(self):
         """Idempotently add the SVS scene item to the current scene.
         ``resizeEvent`` rebuilds ``self.scene`` on every resize, so the item
-        has to be re-attached each time the scene changes."""
-        item = getattr(self, "_svs_item", None)
-        if item is None:
+        has to be re-attached each time the scene changes. If the item's
+        C++ object was deleted with a destroyed scene, rebuild the thin
+        wrapper around the surviving SVSRenderer."""
+        if getattr(self, "svs", None) is None:
             return
         # self.scene is the inherited QGraphicsView.scene method until
         # resizeEvent assigns the instance attribute — guard against that.
         scene = self.__dict__.get("scene")
         if scene is None:
             return
-        if item.scene() is scene:
-            return
-        scene.addItem(item)
+        item = getattr(self, "_svs_item", None)
+        if item is not None:
+            try:
+                if item.scene() is scene:
+                    return
+                scene.addItem(item)
+                return
+            except RuntimeError:
+                pass  # wrapper points at a deleted C++ object — rebuild
+        self._svs_item = make_svs_item(self.svs, self)
+        self._svs_item.setZValue(getattr(self, "_svs_z", 0.5))
+        scene.addItem(self._svs_item)
 
     def _fpmValueChanged(self, key, value):
         setattr(self, f'_fpm_{key.lower()}', value)
