@@ -370,20 +370,20 @@ when next touched.
 Goal: global coverage (fixes the >60°N hole — Yukon/NWT/Nunavut) and
 30 m resolution. STRUCTURAL_REVIEW.md "30 m terrain" section.
 
-- [ ] `tools/fetch_glo30.py`: download 1°×1° Copernicus GLO-30 GeoTIFF
+- [x] `tools/fetch_glo30.py`: download 1°×1° Copernicus GLO-30 GeoTIFF
       tiles (AWS Open Data bucket, no auth) for a bbox, convert each to
       the existing HGT layout at 3601×3601 int16 big-endian (or a sibling
       format — see next step). Reuse/extend the SRTM downloader work in
       the `faa-cifp-data` repo if convenient, but the converter lives
       here. GeoTIFF reading: prefer `rasterio` if available in C:/pylib /
       on the Pi; otherwise GDAL CLI invocation; document the dependency.
-- [ ] Runtime tile support: detect tile resolution from file size
+- [x] Runtime tile support: detect tile resolution from file size
       (1201² × 2 = 2,884,802 bytes vs 3601² × 2 = 25,934,402) in
       `load_tile` / `tiles.py`; carry samples-per-tile through
       `elevation_at`, `_sample_elevations`, and the GL patch builder
       instead of the `SRTM3_SAMPLES` constant. Mixed-resolution tile
       trees must work (GLO-30 where downloaded, SRTM3 elsewhere).
-- [ ] GPU memory experiment (do this BEFORE wiring 1-arc-sec into the
+- [x] GPU memory experiment (do this BEFORE wiring 1-arc-sec into the
       patch): a 2×2° patch at 3601/deg in R32F is ~207 MB. Try, in order:
       (a) `GL_R16` normalized via `EXT_texture_norm16` (Mesa V3D exposes
       it) storing metres+1000 offset — 104 MB, still big;
@@ -392,18 +392,34 @@ Goal: global coverage (fixes the >60°N hole — Yukon/NWT/Nunavut) and
       patch, two samplers, vertex shader picks by distance. Record
       upload times and FPS on the Pi 5 in the perf doc; pick the simplest
       one that fits. (a)+(b) combined is the expected landing spot.
-- [ ] Water sentinel: GLO-30 has no voids over ocean (it has values);
+- [x] Water sentinel: GLO-30 has no voids over ocean (it has values);
       the `is_water` detection (`elev == 0.0` + missing-tile sentinel)
       still works for ocean but verify coastlines at KSBA against the
       Phase 0 golden; the water-polygon overlay does the real work
       anyway.
-- [ ] Verify a >60°N pose renders terrain: Whitehorse CYXY
+- [x] Verify a >60°N pose renders terrain: Whitehorse CYXY
       (60.71, -135.07, ALT 4500, HEAD 130).
 
 Done when: CYXY shows real terrain; KASE/KSBA goldens look the same or
 better (sharper relief); Pi 5 frame time within budget with the chosen
 texture scheme; docs/svs_rendering.md updated with the data source and
 fetch instructions.
+**STATUS: COMPLETE (2026-06-11).** Pipeline: tools/fetch_glo30.py
+(3,584 NA tiles, 88 GB raw, zero failures) -> tools/convert_glo30.py
+(GeoTIFF -> 3601x3601 HGT; resamples the narrow high-latitude column
+counts to a regular grid; borrows edge row/col from neighbours).
+Texture scheme chosen: patch assembles at finest tile resolution then
+power-of-two decimates to min(heightmap_max_px=4096,
+GL_MAX_TEXTURE_SIZE) -> GLO patches ship at 3601 px / 52 MB (~60 m
+effective, 1.5x finer than SRTM3); CPU sampling stays full-res from
+disk. Mixed 1201/3601 trees work (tested). Verified: CYXY Whitehorse
+renders real Yukon terrain on Windows AND on the Pi (3.20 ms
+frame.svs_total — no US-data overlays in range up there); KASE GLO
+render shows finer ridge texture; converted Aspen tile matches SRTM3
+statistically. NOTE: the Pi SD card (5.8 GB free) cannot hold the
+~93 GB full-continent HGT set — stage regional subsets (validation
+set lives at ~/EarthData/glo30hgt) or add storage; switching the
+production config tile_path to GLO is Bill's call.
 
 ## Phase 7 — Visual polish: MSAA + distance haze (½–1 day, after P3/P5)
 

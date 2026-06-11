@@ -242,6 +242,21 @@ budget pressure.
   horizon. Polar mesh defaults (n_range=80, n_az=120) are fine on
   Pi 5; n_range=64, n_az=96 trims GPU cost slightly if needed.
 
+## Terrain data sources
+
+Tile resolution is per-file: 1201x1201 (SRTM3, 3 arc-sec, 60N-56S) and
+3601x3601 (1 arc-sec) HGT tiles coexist in one tile tree.
+
+**Copernicus GLO-30** is the preferred source — true global coverage
+(fixes the SRTM >60N hole over northern Canada) at 30 m:
+
+    python tools/fetch_glo30.py  --dest <raw-dir>            # ~88 GB for NA
+    python tools/convert_glo30.py --src <raw-dir> --dest <tile-root>
+
+The GL heightmap patch decimates to fit `heightmap_max_px` (default
+4096) and the driver texture limit — GLO patches render at ~60 m
+effective; CPU elevation sampling always uses full native resolution.
+
 ## Related
 
 - Spec: `docs/requirements.md` EFIS-SVS-001 through EFIS-SVS-015
