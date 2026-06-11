@@ -686,8 +686,11 @@ class AI(QGraphicsView):
         # renderer failed to initialise or draw, it disables itself and
         # we annunciate rather than silently showing the sky/ground
         # two-tone as if terrain awareness were available.
+        # NOTE: screenbuilder applies YAML options as raw attributes,
+        # so self.svs can be the config DICT on widgets configured that
+        # way — use getattr with defaults, never attribute access.
         _svs = getattr(self, "svs", None)
-        if (_svs is not None and _svs.enabled
+        if (getattr(_svs, "enabled", False)
                 and getattr(_svs, "gl_failed", False)):
             p.save()
             _af = QFont(self.font_family, -1, QFont.Weight.Bold)
