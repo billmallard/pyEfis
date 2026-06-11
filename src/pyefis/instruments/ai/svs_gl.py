@@ -83,19 +83,9 @@ uniform float u_earth_curv;        // 1/(2R_earth), or 0 when disabled
 uniform float u_patch_texels;      // heightmap texture dimension in px
 uniform sampler2D u_heightmap;     // R32F, single-channel elevation in metres
 uniform vec4  u_patch_bounds;      // (lat_min, lat_max, lon_min, lon_max)
-// Mesh dimensions — used by the fragment shader's grid-line
-// detection so it knows where cell boundaries are in (t, az) space.
-uniform float u_n_range;
-uniform float u_n_az;
-uniform float u_fov_deg;
-
 out float v_clearance_ft;
 out float v_intensity;
 out float v_is_water;
-// Mesh-grid coordinates scaled so that adjacent cell corners are
-// exactly one unit apart. The fragment shader uses fwidth() on
-// this varying to anti-alias the wireframe.
-out vec2  v_grid;
 out float v_dist;                  // metres from aircraft (haze)
 
 const float PI            = 3.14159265358979;
@@ -120,15 +110,6 @@ const float WATER_THR_M   = -1000.0;   // SRTM water sentinel was -9999
 void main() {
     float t      = a_t_az.x;
     float az_deg = a_t_az.y;
-
-    // Mesh-cell coordinates: integer at every vertex row / column,
-    // so fract() over them in the fragment shader marks cell
-    // boundaries. The fragment shader uses fwidth() on these
-    // varyings to anti-alias a one-pixel-wide grid line.
-    v_grid = vec2(
-        t * max(u_n_range - 1.0, 1.0),
-        (az_deg + u_fov_deg * 0.5) / max(u_fov_deg, 1.0) *
-            max(u_n_az - 1.0, 1.0));
 
     // Same effective r_min / r_max as the polar CPU tier.
     float r_max_eff = u_range_nm * (1.0 - 1.0e-6);
@@ -211,14 +192,12 @@ _FRAG_BODY = """
 in float v_clearance_ft;
 in float v_intensity;
 in float v_is_water;
-in vec2  v_grid;
 in float v_dist;
 out vec4 outColor;
 
 uniform float u_green_ft;        // clearance >= u_green_ft => SAFE
 uniform float u_yellow_ft;       // clearance >= u_yellow_ft => CAUTION
 uniform float u_near_airport;    // 1.0 => collapse to 2-colour SAFE/CONFLICT
-uniform float u_grid_enabled;    // 1.0 => draw mesh grid lines
 uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
 
 // Match the CPU tier's COLOR_* constants in svs.py.
@@ -228,10 +207,6 @@ const vec3 COLOR_WARNING  = vec3(0.784, 0.157, 0.0  );  // (200,  40,   0)
 const vec3 COLOR_CONFLICT = vec3(0.706, 0.0,   0.706);  // (180,   0, 180)
 const vec3 COLOR_WATER    = vec3(0.078, 0.314, 0.588);  // ( 20,  80, 150)
 
-// How much to darken at a cell-boundary pixel. 0.35 reads clearly
-// against any of the terrain colour bucket colours without
-// dominating the shading.
-const float GRID_DARKEN   = 0.35;
 // Washed-out horizon tone the haze fades toward — keyed to the AI's
 // sky gradient at the horizon so far terrain melts into the sky.
 const vec3 HAZE_COLOR     = vec3(0.65, 0.77, 0.90);
@@ -255,19 +230,6 @@ void main() {
         base = COLOR_SAFE;
     }
     vec3 shaded = base * v_intensity;
-
-    // Mesh wireframe via fwidth-based edge detection on the (t, az)
-    // grid coordinates. Standard polygon-wireframe technique that
-    // works in pure OpenGL ES 3.0 with no extra geometry — uses the
-    // fragment shader's screen-space derivatives to draw a one-
-    // pixel-wide anti-aliased line at every cell boundary.
-    if (u_grid_enabled > 0.5) {
-        vec2 g_to_edge = abs(fract(v_grid) - 0.5);
-        vec2 g_aa      = fwidth(v_grid) * 0.5;
-        vec2 line_mask = vec2(1.0) - smoothstep(vec2(0.0), g_aa, g_to_edge);
-        float wire = max(line_mask.x, line_mask.y);
-        shaded = mix(shaded, shaded * (1.0 - GRID_DARKEN), wire);
-    }
 
     if (u_haze_inv > 0.0) {
         float fog = 1.0 - exp(-v_dist * u_haze_inv);
@@ -759,21 +721,6 @@ class SVSGLRenderer:
                 self._program.setUniformValue(
                     self._u["u_near_airport"],
                     1.0 if self._near_airport(ac_lat, ac_lon) else 0.0)
-                # Mesh dimensions for fragment-shader grid-line
-                # detection. These are stable across the session
-                # but feeding them as uniforms keeps the vertex
-                # shader free of recompilation when n_range / n_az
-                # change via config.
-                self._program.setUniformValue(
-                    self._u["u_n_range"], float(p._n_range))
-                self._program.setUniformValue(
-                    self._u["u_n_az"], float(p._n_az))
-                self._program.setUniformValue(
-                    self._u["u_fov_deg"], float(p._fov_deg))
-                self._program.setUniformValue(
-                    self._u["u_grid_enabled"],
-                    1.0 if getattr(p, "grid_lines", False) else 0.0)
-
                 gl.glDrawElements(
                     gl.GL_TRIANGLES, self._index_count,
                     gl.GL_UNSIGNED_INT, None)
@@ -1293,9 +1240,7 @@ class SVSGLRenderer:
                      "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
                      "u_patch_texels", "u_haze_inv",
                      "u_heightmap", "u_patch_bounds",
-                     "u_green_ft", "u_yellow_ft", "u_near_airport",
-                     "u_n_range", "u_n_az", "u_fov_deg",
-                     "u_grid_enabled"):
+                     "u_green_ft", "u_yellow_ft", "u_near_airport"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)

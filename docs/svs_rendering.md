@@ -54,14 +54,11 @@ The rendered range is
 This keeps near-ground views useful but can clip distant peaks. Disable with
 `auto_range: false` to render the full configured `range_nm`.
 
-## Grid Lines Overlay
+## Grid Lines Overlay (removed)
 
-Each quad edge is drawn as a 1-pixel `QLineF` on top of the filled terrain
-(see [svs.py:409-439](../src/pyefis/instruments/ai/svs.py)). At long range
-or with finer tiers, perspective foreshortening compresses distant rows so
-the wireframe reads as a dense mesh near the horizon.
-
-Disable with `grid_lines: false` for clean shaded fills only.
+The mesh-wireframe overlay was deleted in P7 — it was a CPU-era
+debugging aid, superseded by MSAA + distance haze. The `grid_lines`
+config key is ignored.
 
 ## Native SRTM3 Resolution
 

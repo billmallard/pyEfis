@@ -73,7 +73,6 @@ HEAD      = float(os.environ.get("SVS_HEAD",  "360"))
 RANGE_NM   = float(os.environ.get("SVS_RANGE", "30"))
 RENDERER   = os.environ.get("SVS_RENDERER", "cpu_sparse")
 AUTO_RANGE = os.environ.get("SVS_AUTO_RANGE", "true").lower() != "false"
-GRID_LINES = os.environ.get("SVS_GRID_LINES", "true").lower() != "false"
 # FAA CIFP path: defaults to the in-repo cifp/ directory if present.
 _DEFAULT_CIFP = str(Path(__file__).parent.parent / "cifp" / "FAACIFP18")
 CIFP_PATH  = os.environ.get("SVS_CIFP_PATH",  _DEFAULT_CIFP if Path(_DEFAULT_CIFP).is_file() else "")
@@ -158,7 +157,6 @@ widget.set_svs_config({
     "renderer":           RENDERER,
     "range_nm":           RANGE_NM,
     "auto_range":         AUTO_RANGE,
-    "grid_lines":         GRID_LINES,
     "clearance_green_ft": 1000,
     "clearance_yellow_ft": 500,
     "cifp_path":          CIFP_PATH,    # used only if NASR isn't configured

@@ -348,7 +348,6 @@ class SVSRenderer:
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         self.terrain_fill  = config.get("terrain_fill", True)
-        self.grid_lines    = config.get("grid_lines", True)
         self.auto_range    = config.get("auto_range", True)
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
 

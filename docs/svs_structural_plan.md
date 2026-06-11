@@ -423,22 +423,32 @@ production config tile_path to GLO is Bill's call.
 
 ## Phase 7 — Visual polish: MSAA + distance haze (½–1 day, after P3/P5)
 
-- [ ] MSAA: 4× samples on the SVS render target (FBO format sample count,
+- [x] MSAA: 4× samples on the SVS render target (FBO format sample count,
       or the QOpenGLWidget surface format after P5). Verify on V3D; fall
       back to no-MSAA silently if unsupported.
-- [ ] Distance haze: fragment-shader fog on terrain + water,
+- [x] Distance haze: fragment-shader fog on terrain + water,
       `mix(color, u_horizon_color, 1.0 - exp(-d / u_haze_dist))` with
       per-fragment distance passed from the vertex stage. Config keys
       `haze: true`, `haze_distance_nm` (default ~40). Horizon colour
       should match the AI sky/ground boundary tones so the terrain fades
       into the existing horizon rather than a foreign colour.
-- [ ] Do NOT fog the runway markings/designators/obstacle poles beyond
+- [x] Do NOT fog the runway markings/designators/obstacle poles beyond
       what terrain gets — they are awareness symbology; fog terrain and
       water only, or fog symbology at half strength. Decide by eye at the
       KASE 10k pose and document the choice.
 
 Done when: A/B screenshots at KASE 10k and KSBA committed to the perf
 doc; jaggies visibly reduced; far terrain fades naturally.
+**STATUS: COMPLETE (2026-06-11).** MSAA via the QOpenGLWidget surface
+format (msaa_samples, default 4; granted count logged). Haze:
+exponential fog toward a sky-keyed horizon tone (haze /
+haze_distance_nm, default 40 NM); by-eye per-layer strengths: terrain
++ water 1.0, obstacles/runway surface/flags 0.4, markings + text 0.
+Pi 5: MSAA 4 granted on V3D; frame.svs_total 7.2 -> 13.5 ms at DFW —
+acceptable headroom at 30 Hz; msaa_samples: 2 is the knob if needed.
+ALSO: the mesh-grid wireframe overlay was REMOVED entirely at Bill's
+request (CPU-era debugging aid, superseded by MSAA + haze; the
+grid_lines config key is now ignored).
 
 ## Phase 8 — Scenery packs: build-time geometry + unified data layer (3–5 days, optional/deferrable)
 
