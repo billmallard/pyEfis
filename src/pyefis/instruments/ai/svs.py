@@ -11,8 +11,11 @@ for the process and the AI widget annunciates SVS UNAVAIL. There is
 no CPU fallback (docs/svs_structural_plan.md P2): a silently degraded
 terrain picture that omits obstacles is worse than an honest absence.
 
-Tile format: NASA SRTMGL3 V003, 1°×1° HGT tiles, big-endian int16,
-1201×1201 samples. Void values (-32768) are treated as sea level.
+Tile format: 1°×1° HGT tiles, big-endian int16, square. Resolution
+is inferred from file size per tile: 1201×1201 (SRTM3, 3 arc-sec) and
+3601×3601 (1 arc-sec — Copernicus GLO-30 via tools/convert_glo30.py)
+coexist in one tile tree. Void values (-32768) are treated as sea
+level; GLO-30 has no voids.
 
 SVS is disabled by default. Enable in screen YAML:
     svs:
@@ -175,16 +178,23 @@ def _hgt_path(tile_root: Path, lat: int, lon: int) -> Path | None:
 
 def load_tile(tile_root: Path, lat: int, lon: int) -> np.ndarray | None:
     """
-    Load an SRTM3 HGT tile and return a (1201, 1201) int16 NumPy array.
+    Load an HGT tile and return a square float32 NumPy array.
     Row 0 = northernmost row; column 0 = westernmost column.
+    Resolution is inferred from the file size (1201 SRTM3 /
+    3601 GLO-30 — any square side is accepted).
     Returns None if the tile file is not found.
     """
     path = _hgt_path(tile_root, lat, lon)
     if path is None:
         return None
     try:
-        data = np.fromfile(path, dtype=">i2").reshape(SRTM3_SAMPLES, SRTM3_SAMPLES)
-        data = data.astype(np.float32)
+        data = np.fromfile(path, dtype=">i2")
+        n = int(round(data.size ** 0.5))
+        if n * n != data.size:
+            log.warning(f"SVS: tile {path} is not square "
+                        f"({data.size} samples); skipped")
+            return None
+        data = data.reshape(n, n).astype(np.float32)
         data[data == SRTM3_VOID] = _WATER_SENTINEL
         return data
     except Exception as e:
@@ -194,12 +204,14 @@ def load_tile(tile_root: Path, lat: int, lon: int) -> np.ndarray | None:
 
 def elevation_at(tile: np.ndarray, tile_lat: int, tile_lon: int,
                  lat: float, lon: float) -> float:
-    """Bilinear interpolation of elevation at (lat, lon) from a loaded tile."""
-    row_f = (tile_lat + 1.0 - lat) * (SRTM3_SAMPLES - 1)
-    col_f = (lon - tile_lon)       * (SRTM3_SAMPLES - 1)
+    """Bilinear interpolation of elevation at (lat, lon) from a loaded
+    tile (resolution taken from the tile's own shape)."""
+    n = tile.shape[0]
+    row_f = (tile_lat + 1.0 - lat) * (n - 1)
+    col_f = (lon - tile_lon)       * (n - 1)
     row = int(row_f); col = int(col_f)
-    row = max(0, min(row, SRTM3_SAMPLES - 2))
-    col = max(0, min(col, SRTM3_SAMPLES - 2))
+    row = max(0, min(row, n - 2))
+    col = max(0, min(col, n - 2))
     dr = row_f - row; dc = col_f - col
     return (tile[row,   col  ] * (1 - dr) * (1 - dc) +
             tile[row,   col+1] * (1 - dr) *      dc  +
@@ -277,6 +289,13 @@ class SVSRenderer:
         # previous 30 NM default was from the CPU era when polar
         # mesh density was the bottleneck.
         self.range_nm     = float(config.get("range_nm", 50))
+        # Cap on the GL heightmap patch texture dimension. A 2x2-deg
+        # patch of 1-arc-sec tiles is natively 7202 px — beyond the
+        # Pi V3D's max texture size and 207 MB of R32F — so the patch
+        # builder decimates by 2 to ~3601 px (~60 m effective, still
+        # finer than SRTM3's 90 m). CPU elevation sampling always uses
+        # full native resolution from disk.
+        self.heightmap_max_px = int(config.get("heightmap_max_px", 4096))
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 
@@ -1535,11 +1554,12 @@ class SVSRenderer:
             lats = lat_grid[mask]
             lons = lon_grid[mask]
 
-            row_f = (tile_lat + 1.0 - lats) * (SRTM3_SAMPLES - 1)
-            col_f = (lons - tile_lon)        * (SRTM3_SAMPLES - 1)
+            n = tile.shape[0]
+            row_f = (tile_lat + 1.0 - lats) * (n - 1)
+            col_f = (lons - tile_lon)        * (n - 1)
 
-            row = np.clip(np.floor(row_f).astype(np.int32), 0, SRTM3_SAMPLES - 2)
-            col = np.clip(np.floor(col_f).astype(np.int32), 0, SRTM3_SAMPLES - 2)
+            row = np.clip(np.floor(row_f).astype(np.int32), 0, n - 2)
+            col = np.clip(np.floor(col_f).astype(np.int32), 0, n - 2)
             dr  = (row_f - row).astype(np.float32)
             dc  = (col_f - col).astype(np.float32)
 

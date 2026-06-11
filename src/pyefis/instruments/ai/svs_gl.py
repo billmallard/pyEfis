@@ -80,6 +80,7 @@ uniform mat4  u_vp;                // unified camera matrix (camera.py)
 uniform float u_ac_e;              // aircraft ENU east, metres
 uniform float u_ac_n;              // aircraft ENU north, metres
 uniform float u_earth_curv;        // 1/(2R_earth), or 0 when disabled
+uniform float u_patch_texels;      // heightmap texture dimension in px
 uniform sampler2D u_heightmap;     // R32F, single-channel elevation in metres
 uniform vec4  u_patch_bounds;      // (lat_min, lat_max, lon_min, lon_max)
 // Mesh dimensions — used by the fragment shader's grid-line
@@ -114,7 +115,6 @@ const float AMBIENT       = 0.35;
 // Scaled to AMBIENT so AMBIENT + DIFFUSE * 1.0 = 1.0.
 const float DIFFUSE       = 0.65;
 const float WATER_THR_M   = -1000.0;   // SRTM water sentinel was -9999
-const float PATCH_TEXELS  = 2402.0;    // 2 tiles × 1201 samples each
 
 void main() {
     float t      = a_t_az.x;
@@ -161,7 +161,7 @@ void main() {
     // Slope shading: finite differences against immediate neighbour
     // texels. Sentinel values get clamped first so coastlines don't
     // produce wild slopes.
-    vec2 texel_uv = vec2(1.0 / PATCH_TEXELS);
+    vec2 texel_uv = vec2(1.0 / u_patch_texels);
     float elev_e_raw = texture(u_heightmap, uv + vec2(texel_uv.x, 0.0)).r;
     float elev_n_raw = texture(u_heightmap, uv + vec2(0.0, texel_uv.y)).r;
     float elev_e_m   = mix(elev_e_raw, 0.0, step(elev_e_raw, WATER_THR_M));
@@ -462,14 +462,12 @@ def build_text_atlas(font_family="DejaVu Sans Condensed"):
     return atlas_np, uvs
 
 
-# SRTM3 constants — see svs.py
-SRTM3_SAMPLES = 1201
-# 2-by-2 tile patch around the aircraft. The patch starts one degree
-# below the aircraft on both axes so the aircraft is always near the
-# centre, and is rebuilt when the aircraft crosses an integer degree
-# boundary.
+# 2-by-2 tile patch around the aircraft, rebuilt on half-degree
+# crossings. Tile resolution is per-file (1201 SRTM3 / 3601 GLO-30);
+# the patch assembles at the finest resolution present, then decimates
+# to fit the GPU texture cap (parent.heightmap_max_px and the driver's
+# GL_MAX_TEXTURE_SIZE).
 _PATCH_TILES = 2
-_PATCH_PX    = _PATCH_TILES * SRTM3_SAMPLES   # one row of overlap removed below
 
 
 class SVSGLRenderer:
@@ -502,6 +500,7 @@ class SVSGLRenderer:
         # in integer degrees; when it changes we rebuild.
         self._heightmap_tex_id: int | None = None
         self._patch_origin: tuple[int, int] | None = None
+        self._patch_texels = 2402.0   # actual texture px, set per build
         self._patch_bounds = (0.0, 0.0, 0.0, 0.0)  # lat_min, lat_max, lon_min, lon_max
 
         # Overlay pass state (Phase 0 of the overlays-to-GPU plan).
@@ -700,6 +699,9 @@ class SVSGLRenderer:
                     self._u["u_ac_n"], float(self._frame_ac_n))
                 self._program.setUniformValue(
                     self._u["u_earth_curv"], float(self._frame_curv))
+                self._program.setUniformValue(
+                    self._u["u_patch_texels"],
+                    float(self._patch_texels))
                 # patch_bounds: (lat_min, lat_max, lon_min, lon_max)
                 self._program.setUniformValue(
                     self._u["u_patch_bounds"],
@@ -1240,6 +1242,7 @@ class SVSGLRenderer:
                      "u_range_nm",
                      "u_radial_warp", "u_r_min_nm",
                      "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
+                     "u_patch_texels",
                      "u_heightmap", "u_patch_bounds",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_n_range", "u_n_az", "u_fov_deg",
@@ -1325,7 +1328,8 @@ class SVSGLRenderer:
             return
 
         patch = self._build_patch(start_lat, start_lon)
-        h, w = patch.shape    # (2402, 2402)
+        h, w = patch.shape
+        self._patch_texels = float(w)
 
         if self._heightmap_tex_id is None:
             tex_id_arr = gl.glGenTextures(1)
@@ -1363,33 +1367,67 @@ class SVSGLRenderer:
             "shape %dx%d",
             start_lat, start_lon, w, h)
 
+    @staticmethod
+    def _resample_tile(tile: np.ndarray, n: int) -> np.ndarray:
+        """Bilinearly resample a square tile to n x n (used to bring a
+        coarser SRTM3 tile up to the patch resolution when the tile
+        tree mixes resolutions)."""
+        src_n = tile.shape[0]
+        if src_n == n:
+            return tile
+        x = np.linspace(0.0, src_n - 1.0, n)
+        idx = np.arange(src_n, dtype=np.float64)
+        rows = np.empty((src_n, n), dtype=np.float32)
+        for i in range(src_n):
+            rows[i] = np.interp(x, idx, tile[i])
+        out = np.empty((n, n), dtype=np.float32)
+        for j in range(n):
+            out[:, j] = np.interp(x, idx, rows[:, j])
+        return out
+
     def _build_patch(self, start_lat: int, start_lon: int) -> np.ndarray:
-        """Assemble four 1201x1201 SRTM tiles into a 2402x2402 float32
-        elevation array with (0, 0) = SW corner."""
+        """Assemble four 1-degree tiles into a square float32 patch
+        with (0, 0) = SW corner. Tiles may be 1201 (SRTM3) or 3601
+        (GLO-30) per file; the patch assembles at the finest
+        resolution present, then decimates by powers of two until it
+        fits within parent.heightmap_max_px and the driver's
+        GL_MAX_TEXTURE_SIZE. CPU elevation sampling is unaffected —
+        it reads native tiles from the cache."""
         cache = self._parent.cache
-        N = SRTM3_SAMPLES
-        patch = np.zeros((_PATCH_PX, _PATCH_PX), dtype=np.float32)
-        # Tiles cover lat [start_lat, start_lat+2] (south to north)
-        # and lon [start_lon, start_lon+2] (west to east).
-        # Each SRTM3 tile has row 0 at the NORTH edge; we flip during
-        # placement so the patch ends up with row 0 = SOUTH edge.
-        for di in range(_PATCH_TILES):       # 0 = south tile, 1 = north tile
-            for dj in range(_PATCH_TILES):   # 0 = west tile,  1 = east tile
-                tile = cache.get(start_lat + di, start_lon + dj)
-                if tile is None:
-                    tile_data = np.zeros((N, N), dtype=np.float32)
-                else:
-                    # Tile in svs.py is float32; sentinel -9999 is
-                    # already replaced with 0 for non-water cells.
-                    tile_data = tile.astype(np.float32, copy=False)
-                # Flip top-to-bottom so row 0 of the placement = south.
-                tile_data = tile_data[::-1, :]
-                # Place: northern tile (di=1) goes in upper half (rows
-                # N..2N), southern tile (di=0) goes in lower half (0..N).
-                # Western tile in left half, eastern in right half.
-                row0 = di * N
-                col0 = dj * N
-                patch[row0:row0 + N, col0:col0 + N] = tile_data
+        tiles = {}
+        max_n = 0
+        for di in range(_PATCH_TILES):
+            for dj in range(_PATCH_TILES):
+                t = cache.get(start_lat + di, start_lon + dj)
+                tiles[(di, dj)] = t
+                if t is not None:
+                    max_n = max(max_n, t.shape[0])
+        N = max_n if max_n else 1201
+        patch = np.zeros((_PATCH_TILES * N, _PATCH_TILES * N),
+                         dtype=np.float32)
+        for (di, dj), tile in tiles.items():
+            if tile is None:
+                tile_data = np.zeros((N, N), dtype=np.float32)
+            else:
+                tile_data = self._resample_tile(
+                    tile.astype(np.float32, copy=False), N)
+            # Flip top-to-bottom so row 0 of the placement = south.
+            tile_data = tile_data[::-1, :]
+            patch[di * N:(di + 1) * N, dj * N:(dj + 1) * N] = tile_data
+
+        cap = int(getattr(self._parent, "heightmap_max_px", 4096))
+        try:
+            cap = min(cap, int(gl.glGetIntegerv(gl.GL_MAX_TEXTURE_SIZE)))
+        except Exception:
+            pass   # no current context (unit tests) — config cap only
+        step = 1
+        while patch.shape[0] // step > cap:
+            step *= 2
+        if step > 1:
+            patch = np.ascontiguousarray(patch[::step, ::step])
+            log.info(
+                "SVSGLRenderer heightmap decimated x%d to %dpx "
+                "(cap %d)", step, patch.shape[0], cap)
         return patch
 
     def _build_polar_mesh(self):
