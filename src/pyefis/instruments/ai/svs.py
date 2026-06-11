@@ -296,6 +296,13 @@ class SVSRenderer:
         # finer than SRTM3's 90 m). CPU elevation sampling always uses
         # full native resolution from disk.
         self.heightmap_max_px = int(config.get("heightmap_max_px", 4096))
+        # Distance haze (P7): exponential fog toward a washed-out
+        # horizon tone. Adds depth perception and hides far-field LOD.
+        # Terrain and water fog fully; awareness symbology (obstacles,
+        # runway surface, flags) at reduced strength; markings and
+        # text not at all.
+        self.haze = bool(config.get("haze", True))
+        self.haze_distance_nm = float(config.get("haze_distance_nm", 40.0))
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 

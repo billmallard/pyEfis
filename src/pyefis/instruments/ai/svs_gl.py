@@ -96,6 +96,7 @@ out float v_is_water;
 // exactly one unit apart. The fragment shader uses fwidth() on
 // this varying to anti-alias the wireframe.
 out vec2  v_grid;
+out float v_dist;                  // metres from aircraft (haze)
 
 const float PI            = 3.14159265358979;
 const float DEG_PER_RAD   = 180.0 / PI;
@@ -196,6 +197,7 @@ void main() {
     // screen azimuth az. Earth-curvature drop is applied to the
     // projected geometry only — clearance colouring uses true height.
     float r_m = r_deg * M_PER_DEG_LAT;
+    v_dist = r_m;
     float drop_m = u_earth_curv * r_m * r_m;
     vec3 enu = vec3(
         u_ac_e + r_m * sin_b,
@@ -210,12 +212,14 @@ in float v_clearance_ft;
 in float v_intensity;
 in float v_is_water;
 in vec2  v_grid;
+in float v_dist;
 out vec4 outColor;
 
 uniform float u_green_ft;        // clearance >= u_green_ft => SAFE
 uniform float u_yellow_ft;       // clearance >= u_yellow_ft => CAUTION
 uniform float u_near_airport;    // 1.0 => collapse to 2-colour SAFE/CONFLICT
 uniform float u_grid_enabled;    // 1.0 => draw mesh grid lines
+uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
 
 // Match the CPU tier's COLOR_* constants in svs.py.
 const vec3 COLOR_SAFE     = vec3(0.0,   0.392, 0.0  );  // (  0, 100,   0)
@@ -228,6 +232,9 @@ const vec3 COLOR_WATER    = vec3(0.078, 0.314, 0.588);  // ( 20,  80, 150)
 // against any of the terrain colour bucket colours without
 // dominating the shading.
 const float GRID_DARKEN   = 0.35;
+// Washed-out horizon tone the haze fades toward — keyed to the AI's
+// sky gradient at the horizon so far terrain melts into the sky.
+const vec3 HAZE_COLOR     = vec3(0.65, 0.77, 0.90);
 
 void main() {
     vec3 base;
@@ -262,6 +269,11 @@ void main() {
         shaded = mix(shaded, shaded * (1.0 - GRID_DARKEN), wire);
     }
 
+    if (u_haze_inv > 0.0) {
+        float fog = 1.0 - exp(-v_dist * u_haze_inv);
+        shaded = mix(shaded, HAZE_COLOR, fog);
+    }
+
     outColor = vec4(shaded, 1.0);
 }
 """
@@ -293,21 +305,35 @@ uniform float u_ac_e;
 uniform float u_ac_n;
 uniform float u_earth_curv;
 
+out float v_dist;
+
 void main() {
     float de = a_world_pos.x - u_ac_e;
     float dn = a_world_pos.y - u_ac_n;
-    float drop = u_earth_curv * (de * de + dn * dn);
+    float d2 = de * de + dn * dn;
+    v_dist = sqrt(d2);
+    float drop = u_earth_curv * d2;
     gl_Position = u_vp * vec4(
         a_world_pos.x, a_world_pos.y, a_world_pos.z - drop, 1.0);
 }
 """
 
 _OVERLAY_FRAG_BODY = """
+in float v_dist;
 uniform vec4 u_color;
+uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
+uniform float u_fog_strength;    // per-layer: water 1.0, symbology less
 out vec4 outColor;
 
+const vec3 HAZE_COLOR = vec3(0.65, 0.77, 0.90);
+
 void main() {
-    outColor = u_color;
+    vec3 c = u_color.rgb;
+    if (u_haze_inv > 0.0 && u_fog_strength > 0.0) {
+        float fog = (1.0 - exp(-v_dist * u_haze_inv)) * u_fog_strength;
+        c = mix(c, HAZE_COLOR, fog);
+    }
+    outColor = vec4(c, u_color.a);
 }
 """
 
@@ -551,6 +577,13 @@ class SVSGLRenderer:
                 raise RuntimeError(
                     "no current GL context — AI viewport is not a "
                     "QOpenGLWidget")
+            if not getattr(self, "_logged_samples", False):
+                self._logged_samples = True
+                try:
+                    log.info("SVS GL surface MSAA samples: %d",
+                             int(gl.glGetIntegerv(gl.GL_SAMPLES)))
+                except Exception:
+                    pass
             # Snapshot the GL state Qt's paint engine caches. The
             # engine tracks its own last-bound textures/program/VAO
             # and does NOT re-bind them after native painting — if we
@@ -643,6 +676,11 @@ class SVSGLRenderer:
         self._frame_curv = (EARTH_CURVATURE
                             if getattr(self._parent, "earth_curvature",
                                        True) else 0.0)
+        haze_nm = float(getattr(self._parent, "haze_distance_nm", 40.0))
+        self._frame_haze_inv = (
+            1.0 / (haze_nm * 1852.0)
+            if getattr(self._parent, "haze", True) and haze_nm > 0
+            else 0.0)
 
     def _to_enu(self, verts):
         """Convert an Nx3 (lat, lon, elev_ft) — or Nx5 with trailing
@@ -702,6 +740,8 @@ class SVSGLRenderer:
                 self._program.setUniformValue(
                     self._u["u_patch_texels"],
                     float(self._patch_texels))
+                self._program.setUniformValue(
+                    self._u["u_haze_inv"], float(self._frame_haze_inv))
                 # patch_bounds: (lat_min, lat_max, lon_min, lon_max)
                 self._program.setUniformValue(
                     self._u["u_patch_bounds"],
@@ -787,7 +827,7 @@ class SVSGLRenderer:
         if self._overlay_a_world_pos < 0:
             raise RuntimeError("overlay shader: a_world_pos not found")
         for name in ("u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
-                     "u_color"):
+                     "u_color", "u_haze_inv", "u_fog_strength"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 raise RuntimeError(f"overlay shader: {name} not found")
@@ -817,7 +857,8 @@ class SVSGLRenderer:
         finally:
             self._overlay_vao.release()
 
-    def _draw_overlay_primitive(self, vertices_np, color_rgba, mode):
+    def _draw_overlay_primitive(self, vertices_np, color_rgba, mode,
+                                fog_strength=0.0):
         """Upload ``vertices_np`` (Nx3 float32 array of lat, lon, elev_ft)
         and issue one draw call. ``mode`` is a GL primitive type
         (GL_TRIANGLES, GL_LINES, etc.). ``color_rgba`` is a 4-tuple of
@@ -850,6 +891,8 @@ class SVSGLRenderer:
                 self._overlay_u["u_color"],
                 float(color_rgba[0]), float(color_rgba[1]),
                 float(color_rgba[2]), float(color_rgba[3]))
+            self._overlay_program.setUniformValue(
+                self._overlay_u["u_fog_strength"], float(fog_strength))
             gl.glDrawArrays(mode, 0, vertices_np.shape[0])
         finally:
             self._overlay_vao.release()
@@ -1022,6 +1065,8 @@ class SVSGLRenderer:
                                  float(self._frame_ac_n))
             prog.setUniformValue(self._overlay_u["u_earth_curv"],
                                  float(self._frame_curv))
+            prog.setUniformValue(self._overlay_u["u_haze_inv"],
+                                 float(self._frame_haze_inv))
 
             # Phase 1 — water.
             p = self._parent
@@ -1038,7 +1083,8 @@ class SVSGLRenderer:
                                  150 / 255.0, 1.0)
                         with p._perf.time("water.gl_draw"):
                             self._draw_overlay_primitive(
-                                tris, color, gl.GL_TRIANGLES)
+                                tris, color, gl.GL_TRIANGLES,
+                                fog_strength=1.0)
 
             # Phase 2 — obstacle poles. Each obstacle = one line
             # segment from base to top; we group by colour (conflict,
@@ -1063,7 +1109,8 @@ class SVSGLRenderer:
                                 if verts.size == 0:
                                     continue
                                 self._draw_overlay_primitive(
-                                    verts, color, gl.GL_LINES)
+                                    verts, color, gl.GL_LINES,
+                                    fog_strength=0.4)
                             gl.glLineWidth(1.0)
 
             # Phase 3 — runway polygons (the asphalt-coloured quad).
@@ -1083,7 +1130,7 @@ class SVSGLRenderer:
                             self._draw_overlay_primitive(
                                 rwy_tris,
                                 (55/255.0, 55/255.0, 55/255.0, 1.0),
-                                gl.GL_TRIANGLES)
+                                gl.GL_TRIANGLES, fog_strength=0.4)
 
                 # Phase 4a — non-text runway markings (threshold bars,
                 # aiming point, TDZ, centerline stripes, side stripes,
@@ -1156,12 +1203,14 @@ class SVSGLRenderer:
                         if poles is not None and poles.size:
                             self._set_pole_line_width()
                             self._draw_overlay_primitive(
-                                poles, FLAG_YELLOW, gl.GL_LINES)
+                                poles, FLAG_YELLOW, gl.GL_LINES,
+                                fog_strength=0.4)
                             gl.glLineWidth(1.0)
                         tris = flags.get("flags")
                         if tris is not None and tris.size:
                             self._draw_overlay_primitive(
-                                tris, FLAG_YELLOW, gl.GL_TRIANGLES)
+                                tris, FLAG_YELLOW, gl.GL_TRIANGLES,
+                                fog_strength=0.4)
                         text = flags.get("text")
                         if text is not None and text.size:
                             prog.release()
@@ -1242,7 +1291,7 @@ class SVSGLRenderer:
                      "u_range_nm",
                      "u_radial_warp", "u_r_min_nm",
                      "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
-                     "u_patch_texels",
+                     "u_patch_texels", "u_haze_inv",
                      "u_heightmap", "u_patch_bounds",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_n_range", "u_n_az", "u_fov_deg",

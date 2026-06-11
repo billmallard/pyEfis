@@ -453,7 +453,17 @@ class AI(QGraphicsView):
         # for GL viewports (partial updates are not supported).
         from PyQt6.QtOpenGLWidgets import QOpenGLWidget
         if not isinstance(self.viewport(), QOpenGLWidget):
-            self.setViewport(QOpenGLWidget())
+            glw = QOpenGLWidget()
+            # MSAA (P7): antialiases the whole AI — terrain silhouettes
+            # and QPainter symbology alike. The driver grants the
+            # closest supported sample count (0 if unsupported), so
+            # this degrades silently.
+            samples = int(config.get("msaa_samples", 4))
+            if samples > 1:
+                fmt = QSurfaceFormat()
+                fmt.setSamples(samples)
+                glw.setFormat(fmt)
+            self.setViewport(glw)
             self.setViewportUpdateMode(
                 QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         # Display frame rate (P4): the AI frame clock's tick rate.
