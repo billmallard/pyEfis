@@ -21,6 +21,7 @@ import sys, os
 import logging
 import logging.config
 import argparse
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import *
 from PyQt6.QtWidgets import *
 
