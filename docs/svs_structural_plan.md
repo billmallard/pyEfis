@@ -24,6 +24,12 @@ Branch: `gpu-required` (forked from `svs-renderer` at the Phase 4b tip).
 - **Verify before and after**: run the unit tests and at least one
   visual-harness pose (poses table below) before starting a phase, so you
   know which breakage is yours.
+- **Harness verification is not app verification.** Launch the real
+  app entry point (`pyEfis.py`) at least once per phase — P5 shipped
+  two bugs the harness could not catch (a main.py import only the full
+  app executes, and screenbuilder setting widget attributes from YAML
+  in ways the harness never does). On-target, that means restarting
+  `pyefis.service` on the branch and watching it stay up.
 - Line numbers cited here are accurate as of the branch point
   (`b160c1c`) and will drift — search for the symbol names instead.
 - Forward-only migration, same policy as the overlays-to-GPU plan: no
@@ -306,6 +312,8 @@ Measured: Windows 33.00 ms paint cadence, Pi 5 on-target 34.3 ms,
 61/59 paints per 2 s window from 1 Hz GPS input; static pose 2-3
 paints per 8 s. Flag (old/bad/fail) changes still repaint
 immediately.
+REAL-FLIGHT VALIDATED 2026-06-10: Bill flew X-Plane against the Pi
+running the branch — "terrain and runway motion is much smoother."
 
 ## Phase 5 — GL viewport compositing: kill the FBO readback (1–2 days)
 
