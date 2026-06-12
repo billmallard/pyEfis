@@ -673,9 +673,7 @@ class SVSRenderer:
         lat_cos = math.cos(math.radians(ac_lat))
 
         if (self._runway_polys_cache is not None
-                and self._runway_polys_cache_key == key
-                and now - self._runway_polys_cache_time
-                    < self._RUNWAY_POLYS_CACHE_TTL_S):
+                and self._runway_polys_cache_key == key):
             return self._runway_polys_cache
         range_m = self.range_nm * 1852.0
         airports = self._get_airports_cached(ac_lat, ac_lon)
@@ -1003,9 +1001,7 @@ class SVSRenderer:
                round(range_nm, 1),
                round(self.detail_distance_nm, 2))
         if (self._runway_markings_cache is not None
-                and self._runway_markings_cache_key == key
-                and now - self._runway_markings_cache_time
-                    < self._RUNWAY_MARKINGS_CACHE_TTL_S):
+                and self._runway_markings_cache_key == key):
             return self._runway_markings_cache
 
         lat_cos = math.cos(math.radians(ac_lat))
@@ -1242,13 +1238,17 @@ class SVSRenderer:
         once every ``_AIRPORTS_CACHE_TTL_S`` seconds. Returns a list
         (already materialised from the underlying generator) so it can
         be re-iterated across cached frames."""
-        now = time.perf_counter()
+        # Key-based (was 1 s TTL): the TTL made every collector with
+        # the same epoch rebuild in the same frame once per second —
+        # the metronome tick Bill heard at DFW. Position fully
+        # determines the result; rebuild only on ~0.6 NM of movement.
+        step = 0.01
+        key = (round(ac_lat / step) * step, round(ac_lon / step) * step)
         if (self._airports_cache is not None
-                and now - self._airports_cache_time
-                    < self._AIRPORTS_CACHE_TTL_S):
+                and getattr(self, "_airports_cache_key", None) == key):
             return self._airports_cache
         self._airports_cache = list(self._airports_in_range(ac_lat, ac_lon))
-        self._airports_cache_time = now
+        self._airports_cache_key = key
         return self._airports_cache
 
     def _airports_in_range(self, ac_lat, ac_lon):
@@ -1591,8 +1591,7 @@ class SVSRenderer:
         cache = getattr(self, "_obstacles_cache", None)
         cache_key = getattr(self, "_obstacles_cache_key", None)
         cache_time = getattr(self, "_obstacles_cache_time", 0.0)
-        if (cache is not None and cache_key == key
-                and now - cache_time < self._OBSTACLES_CACHE_TTL_S):
+        if (cache is not None and cache_key == key):
             return cache
 
         # Build per-color-group billboard quads: world-scaled symbol,
@@ -1698,8 +1697,7 @@ class SVSRenderer:
                round(ac_lon / step) * step,
                round(range_nm, 1), round(ppd, 1))
         if (self._flags_cache is not None
-                and self._flags_cache_key == key
-                and now - self._flags_cache_time < self._FLAGS_CACHE_TTL_S):
+                and self._flags_cache_key == key):
             return self._flags_cache
 
         lat_cos = math.cos(math.radians(ac_lat))
