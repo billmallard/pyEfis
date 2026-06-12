@@ -930,7 +930,30 @@ class SVSGLRenderer:
                 float(color_rgba[2]), float(color_rgba[3]))
             self._overlay_program.setUniformValue(
                 self._overlay_u["u_fog_strength"], float(fog_strength))
-            gl.glDrawArrays(mode, 0, vertices_np.shape[0])
+            try:
+                gl.glDrawArrays(mode, 0, vertices_np.shape[0])
+            except Exception:
+                # Diagnostic context for the production GL_INVALID_
+                # OPERATION hunt: what does the driver think is bound?
+                ctx = QOpenGLContext.currentContext()
+                state = {
+                    "mode": int(mode),
+                    "nverts": int(vertices_np.shape[0]),
+                    "vao_bound": int(gl.glGetIntegerv(
+                        gl.GL_VERTEX_ARRAY_BINDING)),
+                    "our_vao": int(self._overlay_vao.objectId()),
+                    "vao_valid": bool(gl.glIsVertexArray(
+                        self._overlay_vao.objectId())),
+                    "program_bound": int(gl.glGetIntegerv(
+                        gl.GL_CURRENT_PROGRAM)),
+                    "our_program": int(self._overlay_program
+                                       .programId()),
+                    "samples": int(gl.glGetIntegerv(gl.GL_SAMPLES)),
+                    "ctx": hex(id(ctx)) if ctx else None,
+                    "renderer": hex(id(self)),
+                }
+                log.warning("overlay draw diagnostic: %s", state)
+                raise
         finally:
             self._overlay_vao.release()
 
