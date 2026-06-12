@@ -77,9 +77,15 @@ uniform float u_ac_n;              // aircraft ENU north, metres
 uniform float u_earth_curv;        // 1/(2R_earth), or 0 when disabled
 uniform float u_patch_texels;      // heightmap texture dimension in px
 uniform vec2  u_patch_extent_m;    // heightmap patch size in ENU metres
-uniform vec2  u_noise_origin_m;    // patch SW corner in ABSOLUTE world
-                                   // metres (keeps noise/grid coords
-                                   // continuous across patch rebases)
+uniform vec4  u_tex_xform;         // world-fixed texture transform:
+                                   // (x_scale, x_offset, y_scale,
+                                   // y_offset). Anchored to the PATCH
+                                   // latitude — the aircraft's moving
+                                   // lat_cos must never appear here or
+                                   // the pattern slides sideways under
+                                   // fixed ground features (the
+                                   // conveyor-belt drift found in
+                                   // flight against the roads).
 uniform float u_level_spacing;     // this level's cell size, metres
 uniform vec2  u_level_origin;      // this level's SW corner, ENU metres
                                    // (snapped to whole cells — what
@@ -130,8 +136,11 @@ void main() {
     v_clearance_ft = u_ac_alt_ft - elev_m * FT_PER_M;
     v_is_water     = is_water;
 
-    // World-anchored texture coordinate, continuous across patches.
-    v_tex = (exy + u_noise_origin_m) / 150.0;
+    // World-anchored texture coordinate: absolute world position via
+    // a per-frame CPU transform that converts frame-ENU x back to
+    // longitude and rescales by the constant patch lat_cos.
+    v_tex = vec2(exy.x * u_tex_xform.x + u_tex_xform.y,
+                 exy.y * u_tex_xform.z + u_tex_xform.w);
 
     float de = exy.x - u_ac_e;
     float dn = exy.y - u_ac_n;
@@ -810,10 +819,18 @@ class SVSGLRenderer:
                     self._u["u_patch_extent_m"],
                     float(ext_e), float(ext_n))
                 o_lat, o_lon = self._patch_origin
+                # Pattern anchored to the world: x converts frame-ENU
+                # back to longitude (divide by the FRAME lat_cos) and
+                # rescales by the PATCH-CENTRE lat_cos, which is
+                # constant between patch rebases.
+                lc_patch = math.cos(math.radians(o_lat + 1.0))
+                xs = lc_patch / (150.0 * lat_cos)
+                xo = o_lon * M_PER_DEG_LAT * lc_patch / 150.0
                 self._program.setUniformValue(
-                    self._u["u_noise_origin_m"],
-                    float(o_lon * M_PER_DEG_LAT * lat_cos),
-                    float(o_lat * M_PER_DEG_LAT))
+                    self._u["u_tex_xform"],
+                    float(xs), float(xo),
+                    float(1.0 / 150.0),
+                    float(o_lat * M_PER_DEG_LAT / 150.0))
 
                 # Clipmap levels, coarse to fine (painter's algorithm:
                 # finer levels overdraw coarser — no seams, no
@@ -1460,7 +1477,7 @@ class SVSGLRenderer:
         for name in ("u_ac_alt_ft",
                      "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
                      "u_patch_texels", "u_haze_inv",
-                     "u_patch_extent_m", "u_noise_origin_m",
+                     "u_patch_extent_m", "u_tex_xform",
                      "u_level_spacing", "u_level_origin",
                      "u_heightmap",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
