@@ -910,6 +910,16 @@ class SVSGLRenderer:
         vertices_np = self._to_enu(np.asarray(vertices_np))
         n_floats = vertices_np.size
         n_bytes = n_floats * 4
+        # Self-sufficient draw (production multi-widget finding): the
+        # pass-level program binding has been observed to DROP between
+        # consecutive draws (CURRENT_PROGRAM == 0; Qt-internal root
+        # cause unidentified), after which the Qt-side uniform uploads
+        # fail silently with GL_INVALID_OPERATION and PyOpenGL blames
+        # whatever checked call runs next. Drain any stale error flag,
+        # then re-assert our program before touching uniforms.
+        gl.glGetError()
+        if int(gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM)) !=                 int(self._overlay_program.programId()):
+            self._overlay_program.bind()
         self._overlay_vao.bind()
         try:
             self._overlay_vbo.bind()
@@ -930,37 +940,7 @@ class SVSGLRenderer:
                 float(color_rgba[2]), float(color_rgba[3]))
             self._overlay_program.setUniformValue(
                 self._overlay_u["u_fog_strength"], float(fog_strength))
-            # Defensive re-bind: in the multi-widget production app the
-            # program binding can be dropped between the pass-level
-            # bind() and the draw (observed as CURRENT_PROGRAM == 0 ->
-            # GL_INVALID_OPERATION on the Pi). Cheap glGet guard.
-            if int(gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM))                     != int(self._overlay_program.programId()):
-                gl.glUseProgram(
-                    int(self._overlay_program.programId()))
-            try:
-                gl.glDrawArrays(mode, 0, vertices_np.shape[0])
-            except Exception:
-                # Diagnostic context for the production GL_INVALID_
-                # OPERATION hunt: what does the driver think is bound?
-                ctx = QOpenGLContext.currentContext()
-                state = {
-                    "mode": int(mode),
-                    "nverts": int(vertices_np.shape[0]),
-                    "vao_bound": int(gl.glGetIntegerv(
-                        gl.GL_VERTEX_ARRAY_BINDING)),
-                    "our_vao": int(self._overlay_vao.objectId()),
-                    "vao_valid": bool(gl.glIsVertexArray(
-                        self._overlay_vao.objectId())),
-                    "program_bound": int(gl.glGetIntegerv(
-                        gl.GL_CURRENT_PROGRAM)),
-                    "our_program": int(self._overlay_program
-                                       .programId()),
-                    "samples": int(gl.glGetIntegerv(gl.GL_SAMPLES)),
-                    "ctx": hex(id(ctx)) if ctx else None,
-                    "renderer": hex(id(self)),
-                }
-                log.warning("overlay draw diagnostic: %s", state)
-                raise
+            gl.glDrawArrays(mode, 0, vertices_np.shape[0])
         finally:
             self._overlay_vao.release()
 
@@ -1122,9 +1102,7 @@ class SVSGLRenderer:
         """
         self._ensure_overlay_program()
         prog = self._overlay_program
-        if not prog.bind():
-            log.warning("overlay program bind() returned False "
-                        "(program %d)", prog.programId())
+        prog.bind()
         try:
             prog.setUniformValue(self._overlay_u["u_vp"],
                                  self._frame_vp)
@@ -1136,6 +1114,7 @@ class SVSGLRenderer:
                                  float(self._frame_curv))
             prog.setUniformValue(self._overlay_u["u_haze_inv"],
                                  float(self._frame_haze_inv))
+
 
             # Phase 1 — water.
             p = self._parent
