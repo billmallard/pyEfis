@@ -87,6 +87,7 @@ out float v_clearance_ft;
 out float v_intensity;
 out float v_is_water;
 out float v_dist;                  // metres from aircraft (haze)
+out vec2  v_tex;                   // world-anchored noise coords
 
 const float PI            = 3.14159265358979;
 const float DEG_PER_RAD   = 180.0 / PI;
@@ -179,6 +180,12 @@ void main() {
     // projected geometry only — clearance colouring uses true height.
     float r_m = r_deg * M_PER_DEG_LAT;
     v_dist = r_m;
+    // World-anchored texture coordinate (continuous across heightmap
+    // patches — derived from absolute lat/lon, not patch ENU), base
+    // cell ~150 m. Anchoring to the WORLD gives true optic flow:
+    // the pattern streams past as the aircraft moves.
+    v_tex = vec2(vert_lon * lat_cos, vert_lat)
+            * (M_PER_DEG_LAT / 150.0);
     float drop_m = u_earth_curv * r_m * r_m;
     vec3 enu = vec3(
         u_ac_e + r_m * sin_b,
@@ -193,12 +200,15 @@ in float v_clearance_ft;
 in float v_intensity;
 in float v_is_water;
 in float v_dist;
+in vec2  v_tex;
 out vec4 outColor;
 
 uniform float u_green_ft;        // clearance >= u_green_ft => SAFE
 uniform float u_yellow_ft;       // clearance >= u_yellow_ft => CAUTION
 uniform float u_near_airport;    // 1.0 => collapse to 2-colour SAFE/CONFLICT
 uniform float u_apt_gate_ft;     // collapse only below this MSL elevation
+uniform float u_safe_grad;       // 1.0 => clearance-graded SAFE band
+uniform float u_tex_amp;         // ground-texture amplitude, 0 = off
 uniform float u_ac_alt_ft;       // aircraft altitude (shared w/ vertex)
 uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
 
@@ -212,6 +222,28 @@ const vec3 COLOR_WATER    = vec3(0.078, 0.314, 0.588);  // ( 20,  80, 150)
 // Washed-out horizon tone the haze fades toward — keyed to the AI's
 // sky gradient at the horizon so far terrain melts into the sky.
 const vec3 HAZE_COLOR     = vec3(0.65, 0.77, 0.90);
+// Low-clearance end of the graded SAFE band — olive/tan, so rising
+// terrain warms as it approaches the green threshold (shape-from-
+// color, the G1000-style depth cue).
+const vec3 COLOR_SAFE_LOW = vec3(0.50, 0.46, 0.22);
+
+float hash2(vec2 p) {
+    // Sin-free hash (Hoskins-style): the classic sin() lattice hash
+    // collapses at large world coordinates even in highp. Wrapping at
+    // 512 cells repeats the pattern every ~77 km — imperceptible.
+    p = mod(p, 512.0);
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i),               hash2(i + vec2(1, 0)), u.x),
+               mix(hash2(i + vec2(0, 1)),  hash2(i + vec2(1, 1)), u.x),
+               u.y);
+}
 
 void main() {
     vec3 base;
@@ -233,8 +265,28 @@ void main() {
         base = COLOR_CAUTION;
     } else {
         base = COLOR_SAFE;
+        if (u_safe_grad > 0.5) {
+            // Blend olive->green across 2,500 ft of clearance above
+            // the green threshold: ground far below stays deep green,
+            // ground rising toward the aircraft warms continuously.
+            float t = clamp((v_clearance_ft - u_green_ft) / 2500.0,
+                            0.0, 1.0);
+            base = mix(COLOR_SAFE_LOW, COLOR_SAFE, t);
+        }
     }
     vec3 shaded = base * v_intensity;
+
+    // World-anchored ground texture: two octaves of value noise,
+    // strong in the near field and faded out by ~4 NM (the haze owns
+    // the far field). Restores the texture gradient + optic flow the
+    // eye needs to read slope and closure rate up close.
+    if (u_tex_amp > 0.0 && v_is_water < 0.5) {
+        float n = 0.50 * vnoise(v_tex)
+                + 0.30 * vnoise(v_tex * 3.1)
+                + 0.20 * vnoise(v_tex * 9.7);
+        float amp = u_tex_amp * exp(-v_dist / 7408.0);
+        shaded *= 1.0 + amp * (n - 0.5) * 2.0;
+    }
 
     if (u_haze_inv > 0.0) {
         float fog = 1.0 - exp(-v_dist * u_haze_inv);
@@ -733,6 +785,12 @@ class SVSGLRenderer:
                     if (near and _apt_elev is not None) else 1.0e9)
                 self._program.setUniformValue(
                     self._u["u_apt_gate_ft"], float(gate))
+                self._program.setUniformValue(
+                    self._u["u_safe_grad"],
+                    1.0 if getattr(p, "safe_gradient", True) else 0.0)
+                self._program.setUniformValue(
+                    self._u["u_tex_amp"],
+                    float(getattr(p, "terrain_texture", 0.35)))
                 gl.glDrawElements(
                     gl.GL_TRIANGLES, self._index_count,
                     gl.GL_UNSIGNED_INT, None)
@@ -1229,7 +1287,10 @@ class SVSGLRenderer:
         fheader = header
         if "es" in header:
             # ES requires explicit precision in fragment too.
-            fheader = ("#version 300 es\nprecision mediump float;\n"
+            # highp float: the world-anchored noise hash needs it
+            # (mediump falls apart at continental coordinates);
+            # ES 3.0 guarantees fragment highp support.
+            fheader = ("#version 300 es\nprecision highp float;\n"
                        "precision mediump sampler2D;\n")
         fsrc = fheader + _FRAG_BODY
         prog = QOpenGLShaderProgram()
@@ -1253,7 +1314,7 @@ class SVSGLRenderer:
                      "u_patch_texels", "u_haze_inv",
                      "u_heightmap", "u_patch_bounds",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
-                     "u_apt_gate_ft"):
+                     "u_apt_gate_ft", "u_safe_grad", "u_tex_amp"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)

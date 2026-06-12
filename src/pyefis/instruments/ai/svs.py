@@ -303,6 +303,16 @@ class SVSRenderer:
         # text not at all.
         self.haze = bool(config.get("haze", True))
         self.haze_distance_nm = float(config.get("haze_distance_nm", 40.0))
+        # Depth-perception aids (after KRIL flight feedback):
+        # safe_gradient blends the SAFE band by clearance — terrain
+        # approaching the green threshold warms toward olive/tan, so
+        # rising ground visibly ramps long before it trips amber.
+        # terrain_texture is the amplitude of a world-anchored
+        # procedural noise modulation, strong near and faded by ~4 NM
+        # — restores the texture gradient / optic flow the eye uses
+        # to read slope and closure (0 disables).
+        self.safe_gradient = bool(config.get("safe_gradient", True))
+        self.terrain_texture = float(config.get("terrain_texture", 0.35))
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 

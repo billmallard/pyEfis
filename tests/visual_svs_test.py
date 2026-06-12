@@ -168,6 +168,9 @@ widget.set_svs_config({
                           not in ("0", "false", "no"),
     "haze_distance_nm":   float(os.environ.get("SVS_HAZE_NM", "40")),
     "msaa_samples":       int(os.environ.get("SVS_MSAA", "4")),
+    "safe_gradient":      os.environ.get("SVS_SAFE_GRAD", "1").lower()
+                          not in ("0", "false", "no"),
+    "terrain_texture":    float(os.environ.get("SVS_TEX_AMP", "0.35")),
 })
 win.setCentralWidget(widget)
 win.show()
