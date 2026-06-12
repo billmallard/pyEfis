@@ -87,7 +87,12 @@ class NASRAirportDB:
     """SVS airport/runway data source backed by ``airports.sqlite`` —
     built once by ``tools/build_airport_db.py`` from the FAA NASR CSVs."""
 
-    def __init__(self, sqlite_path: str | Path | None):
+    def __init__(self, sqlite_path: str | Path | None, paved_only=True):
+        # Filter to paved runways (ASPH/CONC/PEM
+        # substrings); airports left with no
+        # runways drop entirely — flight-tested
+        # declutter (DFW turf strips).
+        self._paved_only = bool(paved_only)
         self._path = Path(sqlite_path) if sqlite_path else None
         self._con: sqlite3.Connection | None = None
         if self._path is None or not self._path.is_file():
@@ -152,8 +157,12 @@ class NASRAirportDB:
         # Fetch all runways and ends for this site, then pair each end pair
         # into a single RunwayRecord.
         rwys = self._con.execute(
-            "SELECT rwy_id, length_ft, width_ft FROM runways "
+            "SELECT rwy_id, length_ft, width_ft, surface FROM runways "
             "WHERE site_no = ?", (site_no,)).fetchall()
+        if self._paved_only:
+            rwys = [r for r in rwys
+                    if any(t in (r["surface"] or "").upper()
+                           for t in ("ASPH", "CONC", "PEM"))]
         ends_by_rwy: dict[str, list] = {}
         for e in self._con.execute(
             "SELECT * FROM runway_ends WHERE site_no = ?", (site_no,)):
@@ -411,7 +420,9 @@ def make_airport_db(config: dict):
     """
     nasr_path = config.get("nasr_db_path", "")
     if nasr_path:
-        db = NASRAirportDB(nasr_path)
+        db = NASRAirportDB(
+            nasr_path,
+            paved_only=bool(config.get("paved_only", True)))
         if db.ready:
             return db
 
