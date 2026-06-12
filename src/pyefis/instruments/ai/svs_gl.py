@@ -470,6 +470,52 @@ def build_text_atlas(font_family="DejaVu Sans Condensed"):
                 v0 = sy / atlas_size
                 v1 = (sy + rect.height()) / atlas_size
             uvs[ch] = (u0, v0, u1, v1)
+
+        # Obstacle symbol glyphs (FAA VFR-chart shapes), drawn into the
+        # next free atlas slots. Keys are multi-char so they can never
+        # collide with text glyphs.
+        from PyQt6.QtGui import QPolygonF, QPen, QBrush
+        from PyQt6.QtCore import QPointF
+        sym_specs = ("OBST", "OBST_HIGH")
+        base_i = len(_TEXT_ATLAS_GLYPHS)
+        pen = QPen(QColor(255, 255, 255, 255))
+        pen.setWidthF(slot * 0.09)
+        for k, name in enumerate(sym_specs):
+            i = base_i + k
+            row = i // grid
+            col = i % grid
+            sx = col * slot
+            sy = row * slot
+            m = slot * 0.08          # margin inside the slot
+            p.setPen(pen)
+            p.setBrush(QBrush())     # open (outline) shape
+            if name == "OBST":
+                # Open triangle, apex up, with a center dot — the
+                # standard <1000 ft AGL obstacle symbol.
+                tri = QPolygonF([
+                    QPointF(sx + slot * 0.5,  sy + m),
+                    QPointF(sx + m,           sy + slot - m),
+                    QPointF(sx + slot - m,    sy + slot - m)])
+                p.drawPolygon(tri)
+                p.setBrush(QBrush(QColor(255, 255, 255, 255)))
+                p.drawEllipse(QPointF(sx + slot * 0.5,
+                                      sy + slot * 0.62),
+                              slot * 0.08, slot * 0.08)
+            else:
+                # High obstacle (>=1000 ft AGL): tall narrow spire
+                # with the center dot, echoing the chart symbol.
+                tri = QPolygonF([
+                    QPointF(sx + slot * 0.5,   sy + m),
+                    QPointF(sx + slot * 0.30,  sy + slot - m),
+                    QPointF(sx + slot * 0.70,  sy + slot - m)])
+                p.drawPolygon(tri)
+                p.setBrush(QBrush(QColor(255, 255, 255, 255)))
+                p.drawEllipse(QPointF(sx + slot * 0.5,
+                                      sy + slot * 0.70),
+                              slot * 0.07, slot * 0.07)
+            uvs[name] = (sx / atlas_size, sy / atlas_size,
+                         (sx + slot) / atlas_size,
+                         (sy + slot) / atlas_size)
     finally:
         p.end()
 
@@ -1108,32 +1154,36 @@ class SVSGLRenderer:
                                 tris, color, gl.GL_TRIANGLES,
                                 fog_strength=1.0)
 
-            # Phase 2 — obstacle poles. Each obstacle = one line
-            # segment from base to top; we group by colour (conflict,
-            # red-lit, white-lit, unlit) and issue one draw per
-            # group. ``glLineWidth`` is honoured by V3D up to ~10 px;
-            # 2.0 matches the QPen width the CPU path used. Desktop
-            # core-profile contexts (Windows dev machine) only accept
-            # 1.0 and raise GL_INVALID_VALUE above the aliased range —
-            # clamp to the driver's advertised maximum so an obstacle
-            # draw can never kill the GL renderer.
+            # Obstacles: world-scaled FAA-symbol billboards (the
+            # Garmin/ForeFlight SVS convention) — one screen-facing
+            # quad per obstacle, base at the ground, tip at the
+            # obstacle top, so the symbol's size IS the vertical
+            # extent and perspective growth gives the closure cue.
+            # Triangle-with-dot below 1000 ft AGL, spire above.
             if (getattr(p, "obstacle_db", None) is not None
                     and p.obstacle_db.ready
                     and range_nm is not None):
                 with p._perf.time("obstacles"):
                     with p._perf.time("obstacles.collect"):
+                        self._ensure_text_program()
                         groups = p._collect_obstacles(
-                            ac_lat, ac_lon, ac_alt_ft, range_nm)
+                            ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            self._text_atlas_uvs)
                     if groups:
                         with p._perf.time("obstacles.gl_draw"):
-                            self._set_pole_line_width()
-                            for color, verts in groups.items():
-                                if verts.size == 0:
-                                    continue
-                                self._draw_overlay_primitive(
-                                    verts, color, gl.GL_LINES,
-                                    fog_strength=0.4)
-                            gl.glLineWidth(1.0)
+                            prog.release()
+                            try:
+                                for color, verts in groups.items():
+                                    if verts.size == 0:
+                                        continue
+                                    self._render_text_overlay(
+                                        verts, color,
+                                        w, h, ac_lat, ac_lon,
+                                        ac_alt_ft, pitch_deg,
+                                        roll_deg, heading_deg,
+                                        pixels_per_deg)
+                            finally:
+                                prog.bind()
 
             # Phase 3 — runway polygons (the asphalt-coloured quad).
             # One big triangle list across every visible runway, one

@@ -1401,18 +1401,22 @@ class SVSRenderer:
     _OBSTACLES_CACHE_TTL_S = 1.0
     _OBSTACLES_CACHE_POS_STEP_DEG = 0.01
 
-    def _collect_obstacles(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _collect_obstacles(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                           atlas_uvs):
         """Group every visible obstacle by color and return a dict
-        ``{color_rgba: np.ndarray(N*2, 3)}`` of (lat, lon, elev_ft)
-        line-segment vertices, ready for GL_LINES upload. Returns
-        empty dict when the obstacle DB isn't configured.
+        ``{color_rgba: np.ndarray(N*6, 5)}`` of textured billboard
+        quads (lat, lon, elev_ft, u, v) — one world-scaled FAA symbol
+        per obstacle, base at ground level, tip at the obstacle top,
+        facing the aircraft. Returns empty dict when the obstacle DB
+        isn't configured.
 
         Cached for ``_OBSTACLES_CACHE_TTL_S`` seconds keyed by
         coarsened (lat, lon, alt, range_nm). The cache key includes
         altitude because the conflict-vs-lit grouping depends on
         whether each tip is above/below the aircraft."""
         if (getattr(self, "obstacle_db", None) is None
-                or not self.obstacle_db.ready):
+                or not self.obstacle_db.ready
+                or not atlas_uvs):
             return {}
 
         now = time.perf_counter()
@@ -1428,8 +1432,12 @@ class SVSRenderer:
                 and now - cache_time < self._OBSTACLES_CACHE_TTL_S):
             return cache
 
-        # Build per-color-group vertex lists. Two vertices per
-        # obstacle (base + top).
+        # Build per-color-group billboard quads: world-scaled symbol,
+        # base at the ground, tip at the obstacle top, horizontal
+        # extent tangential to the sight line so the quad faces the
+        # aircraft. FAA glyph choice by height AGL.
+        lat_cos = math.cos(math.radians(ac_lat))
+        FT_PER_DEG = 364491.0
         by_color = {name: [] for name, _ in self._OBSTACLE_COLOR_GROUPS}
         for obs in self.obstacle_db.obstacles_in_range(
                 ac_lat, ac_lon, range_nm,
@@ -1444,8 +1452,31 @@ class SVSRenderer:
                     group = "lit_white"
                 else:
                     group = "unlit"
-            by_color[group].append((obs.lat, obs.lon, obs.base_amsl_ft))
-            by_color[group].append((obs.lat, obs.lon, obs.amsl_ft))
+            height_ft = max(obs.amsl_ft - obs.base_amsl_ft, 50.0)
+            glyph = "OBST_HIGH" if height_ft >= 1000.0 else "OBST"
+            uv = atlas_uvs.get(glyph)
+            if uv is None:
+                continue
+            u0, v0, u1, v1 = uv
+            # Tangential (screen-rightward) unit direction at the
+            # obstacle, same billboard frame the airport flags use.
+            d_lat = obs.lat - ac_lat
+            d_lon = (obs.lon - ac_lon) * lat_cos
+            brg = math.atan2(d_lon, d_lat)
+            t_lat = -math.sin(brg)
+            t_lon = math.cos(brg) / lat_cos
+            half_w_deg = (height_ft * 0.45) / FT_PER_DEG
+            base = obs.base_amsl_ft
+            top = base + height_ft
+            bl = (obs.lat - t_lat * half_w_deg,
+                  obs.lon - t_lon * half_w_deg, base, u0, v1)
+            br = (obs.lat + t_lat * half_w_deg,
+                  obs.lon + t_lon * half_w_deg, base, u1, v1)
+            tr = (obs.lat + t_lat * half_w_deg,
+                  obs.lon + t_lon * half_w_deg, top, u1, v0)
+            tl = (obs.lat - t_lat * half_w_deg,
+                  obs.lon - t_lon * half_w_deg, top, u0, v0)
+            by_color[group].extend((tl, tr, br, tl, br, bl))
 
         result = {}
         for name, rgba in self._OBSTACLE_COLOR_GROUPS:
