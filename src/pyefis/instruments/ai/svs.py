@@ -671,7 +671,7 @@ class SVSRenderer:
         step = self._RUNWAY_POLYS_CACHE_POS_STEP_DEG
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
-               round(range_nm, 1))
+               round(range_nm / 5.0) * 5.0)
         lat_cos = math.cos(math.radians(ac_lat))
 
         if (self._runway_polys_cache is not None
@@ -1000,7 +1000,7 @@ class SVSRenderer:
         step = self._RUNWAY_MARKINGS_CACHE_POS_STEP_DEG
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
-               round(range_nm, 1),
+               round(range_nm / 5.0) * 5.0,
                round(self.detail_distance_nm, 2))
         if (self._runway_markings_cache is not None
                 and self._runway_markings_cache_key == key):
@@ -1339,7 +1339,7 @@ class SVSRenderer:
         step = self._WATER_TRIS_CACHE_POS_STEP_DEG
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
-               round(range_nm, 1))
+               round(range_nm / 5.0) * 5.0)
         # Purely key-based: the key encodes coarsened position and
         # range, which fully determine the result — a TTL on top only
         # forced an identical rebuild every second, and the worker's
@@ -1399,6 +1399,10 @@ class SVSRenderer:
         # The K=50 scaling was a CPU-era collect-cost guard; with the
         # GPU pipeline the only cost is a slightly larger 1 Hz
         # collect, well inside budget.
+        # Water collection capped at 100 NM (the only layer that was
+        # uncapped — at the FL300 215 NM range its rebuild area grew
+        # 18x and kept the workers hot).
+        range_nm = min(range_nm, 100.0)
         min_diag_m = 50.0 * min(range_nm, 12.0)
         min_diag_deg = min_diag_m / 111139.0
         with self._perf.time("water.query"):
@@ -1498,7 +1502,7 @@ class SVSRenderer:
         step = self._HWY_CACHE_POS_STEP_DEG
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
-               round(range_nm, 1))
+               round(range_nm / 5.0) * 5.0)
         # Purely key-based — see the water collector note.
         if (self._hwy_cache is not None
                 and self._hwy_cache_key == key):
@@ -1617,7 +1621,7 @@ class SVSRenderer:
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(ac_alt_ft / 200.0) * 200.0,  # 200 ft alt bucket
-               round(range_nm, 1))
+               round(range_nm / 5.0) * 5.0)
         return self._async_cache(
             "obstacles", key,
             lambda: self._build_obstacles(
@@ -1724,7 +1728,7 @@ class SVSRenderer:
         step = self._FLAGS_CACHE_POS_STEP_DEG
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
-               round(range_nm, 1), round(ppd, 1))
+               round(range_nm / 5.0) * 5.0, round(ppd, 1))
         if (self._flags_cache is not None
                 and self._flags_cache_key == key):
             return self._flags_cache
