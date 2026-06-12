@@ -835,9 +835,16 @@ class SVSGLRenderer:
                     self._program.setUniformValue(
                         self._u["u_level_origin"],
                         float(ox), float(oy))
-                    gl.glDrawElements(
-                        gl.GL_TRIANGLES, self._index_count,
-                        gl.GL_UNSIGNED_INT, None)
+                    if k == 0:
+                        self._ibo.bind()
+                        gl.glDrawElements(
+                            gl.GL_TRIANGLES, self._index_count,
+                            gl.GL_UNSIGNED_INT, None)
+                    else:
+                        self._ibo_annulus.bind()
+                        gl.glDrawElements(
+                            gl.GL_TRIANGLES, self._annulus_count,
+                            gl.GL_UNSIGNED_INT, None)
             finally:
                 self._vao.release()
                 self._program.release()
@@ -1473,7 +1480,7 @@ class SVSGLRenderer:
         if not vao.create():
             raise RuntimeError("could not create QOpenGLVertexArrayObject")
 
-        verts, indices = self._build_clipmap_template()
+        verts, indices, annulus_idx = self._build_clipmap_template()
 
         vao.bind()
         try:
@@ -1501,10 +1508,24 @@ class SVSGLRenderer:
         finally:
             vao.release()
 
+        # Annulus IBO for the outer levels (bound in place of the full
+        # IBO per draw — element binding is VAO state, so rebinding
+        # inside the bound VAO swaps it).
+        ibo_a = QOpenGLBuffer(QOpenGLBuffer.Type.IndexBuffer)
+        ibo_a.create()
+        ibo_a.setUsagePattern(QOpenGLBuffer.UsagePattern.StaticDraw)
+        vao.bind()
+        ibo_a.bind()
+        ibo_a.allocate(annulus_idx.tobytes(), int(annulus_idx.nbytes))
+        ibo.bind()   # leave the full IBO as the VAO default
+        vao.release()
+
         self._vao = vao
         self._vbo = vbo
         self._ibo = ibo
+        self._ibo_annulus = ibo_a
         self._index_count = int(indices.size)
+        self._annulus_count = int(annulus_idx.size)
 
         log.info(
             "SVSGLRenderer clipmap template: %d vertices, %d indices "
@@ -1651,15 +1672,31 @@ class SVSGLRenderer:
         verts = np.column_stack([
             j_grid.ravel(), i_grid.ravel()]).astype(np.float32)
         ci, cj = np.mgrid[0:n, 0:n]
-        v00 = (ci       * m + cj      ).ravel()
-        v10 = ((ci + 1) * m + cj      ).ravel()
-        v01 = (ci       * m + cj + 1  ).ravel()
-        v11 = ((ci + 1) * m + cj + 1  ).ravel()
-        indices = np.empty(v00.size * 6, dtype=np.uint32)
-        indices[0::6] = v00
-        indices[1::6] = v10
-        indices[2::6] = v01
-        indices[3::6] = v10
-        indices[4::6] = v11
-        indices[5::6] = v01
-        return verts, indices
+
+        def make_idx(mask):
+            a = ci[mask].ravel()
+            b = cj[mask].ravel()
+            v00 = (a * m + b)
+            v10 = ((a + 1) * m + b)
+            v01 = (a * m + b + 1)
+            v11 = ((a + 1) * m + b + 1)
+            idx = np.empty(v00.size * 6, dtype=np.uint32)
+            idx[0::6] = v00
+            idx[1::6] = v10
+            idx[2::6] = v01
+            idx[3::6] = v10
+            idx[4::6] = v11
+            idx[5::6] = v01
+            return idx
+
+        full = make_idx(np.ones((n, n), dtype=bool))
+        # Annulus: outer levels skip the centre hole that finer levels
+        # cover. Hole half-width = n/4 - 1 cells: one coarse cell of
+        # margin against the independent per-level snapping, so the
+        # finer level always overlaps the hole edge (no gaps), while
+        # the screen-dominant near region stops being drawn twice.
+        h = n // 4 - 1
+        lo, hi = n // 2 - h, n // 2 + h
+        hole = ((ci >= lo) & (ci < hi) & (cj >= lo) & (cj < hi))
+        annulus = make_idx(~hole)
+        return verts, full, annulus
