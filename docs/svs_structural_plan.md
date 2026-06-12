@@ -536,7 +536,9 @@ and the high-obstacle spire (>=1000 ft AGL). Rendered through the
 existing glyph-atlas shader per color group (conflict magenta,
 red-lit, white-lit, unlit gray).
 
-### Major highways (issue #35)
+### Major highways (issue #35) — SHIPPED 2026-06-12
+(109k motorway/trunk polylines from 5.2M CO+TX roads, 13.7 MB sqlite;
+async collector; I-70 verified threading the KRIL valley.)
 
 OSM motorway+trunk polylines from the Geofabrik extracts, mirroring
 the water pipeline: build tool -> R-tree sqlite with decimated
