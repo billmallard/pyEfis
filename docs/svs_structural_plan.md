@@ -522,6 +522,29 @@ flight verdict on the swim before marking complete.
 - [ ] Out-of-cycle DATA annunciation — now owned by the data-manager
       workstream (Phase F there).
 
+## Phase 9-adjacent — flight-test feature requests (2026-06-12)
+
+### FAA obstacle symbology (replaces the line-segment poles)
+
+World-scaled billboards, the Garmin/ForeFlight SVS convention Bill
+specified: one screen-facing textured quad per obstacle, anchored
+base-at-ground / tip-at-obstacle-top, width proportional to height —
+perspective makes them grow on approach, and the symbol size IS the
+vertical extent (no pole). Two atlas glyphs drawn at startup with
+QPainter: the VFR-chart open triangle with center dot (<1000 ft AGL)
+and the high-obstacle spire (>=1000 ft AGL). Rendered through the
+existing glyph-atlas shader per color group (conflict magenta,
+red-lit, white-lit, unlit gray).
+
+### Major highways (issue #35)
+
+OSM motorway+trunk polylines from the Geofabrik extracts, mirroring
+the water pipeline: build tool -> R-tree sqlite with decimated
+polyline BLOBs -> HighwayDB loader -> collector with batched
+per-vertex SRTM elevation -> GL_LINES overlay pass (dark asphalt,
+full haze, after water / before runways). Config highway_db_path;
+later a data-manager pack kind. Verify on the I-70 corridor at KRIL.
+
 ## Phase 9 — ADS-B traffic + highway-in-the-sky (2–4 days, after P3)
 
 Traffic (cross-repo: needs fix-gateway work first):
