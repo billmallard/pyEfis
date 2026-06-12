@@ -764,16 +764,22 @@ class SVSRenderer:
                          bar_a1, c + stripe_w_ft / 2,
                          bar_a1, c - stripe_w_ft / 2)
 
-            # Aiming point (PIR / NPI)
+            # Aiming point (PIR / NPI). The standard 36 ft offset is
+            # for wide runways; on narrow ones (e.g. 100 ft) the outer
+            # edge would hang past the pavement — pull the pair inboard
+            # so it clears the side stripes, or skip when there is no
+            # room between centerline and edge.
             if (_interior_detail and marking in ("PIR", "NPI")
                     and usable_remaining > 2400.0):
                 aim_a0 = thr_along + sign * 1000.0
                 aim_a1 = aim_a0 + sign * 150.0
-                for c_center in (-36.0, +36.0):
-                    quad(aim_a0, c_center - 15.0,
-                         aim_a0, c_center + 15.0,
-                         aim_a1, c_center + 15.0,
-                         aim_a1, c_center - 15.0)
+                aim_c = min(36.0, width_ft * 0.5 - 5.0 - 15.0)
+                if aim_c >= 20.0:
+                    for c_center in (-aim_c, +aim_c):
+                        quad(aim_a0, c_center - 15.0,
+                             aim_a0, c_center + 15.0,
+                             aim_a1, c_center + 15.0,
+                             aim_a1, c_center - 15.0)
 
             # TDZ markers (PIR only)
             if (_interior_detail and marking == "PIR"
@@ -782,6 +788,13 @@ class SVSRenderer:
                 STRIPE_W   = 6.0
                 STRIPE_GAP = 5.0
                 centerline_offset = 36.0
+                # Drop any stripe whose outer edge would hang past
+                # the pavement (narrow runways: a 100 ft PIR runway
+                # only has room for one stripe per side at the 36 ft
+                # offset; the FAA spec reduces the pattern on narrow
+                # runways the same way). Keep 5 ft clear of the edge
+                # so TDZ never touches the side stripes.
+                max_c = width_ft * 0.5 - 5.0
                 for dist_ft, n_stripes in ((500.0, 3), (1500.0, 2),
                                            (2500.0, 1)):
                     if dist_ft + STRIPE_LEN > usable_remaining:
@@ -794,6 +807,8 @@ class SVSRenderer:
                                 centerline_offset
                                 + k * (STRIPE_W + STRIPE_GAP))
                             c_outer = c_inner + side * STRIPE_W
+                            if abs(c_outer) > max_c:
+                                continue
                             c_lo, c_hi = (min(c_inner, c_outer),
                                           max(c_inner, c_outer))
                             quad(a0, c_lo, a0, c_hi,
