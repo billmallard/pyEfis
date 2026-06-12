@@ -668,7 +668,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = self._RUNWAY_POLYS_CACHE_POS_STEP_DEG
+        step = max(0.01, range_nm / 2000.0)
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm / 5.0) * 5.0)
@@ -997,7 +997,7 @@ class SVSRenderer:
                 or not self.airport_db.ready):
             return None
         now = time.perf_counter()
-        step = self._RUNWAY_MARKINGS_CACHE_POS_STEP_DEG
+        step = max(0.01, range_nm / 2000.0)
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm / 5.0) * 5.0,
@@ -1244,7 +1244,10 @@ class SVSRenderer:
         # the same epoch rebuild in the same frame once per second —
         # the metronome tick Bill heard at DFW. Position fully
         # determines the result; rebuild only on ~0.6 NM of movement.
-        step = 0.01
+        # Position step scales with range (jet speeds crossed the old
+        # fixed 0.6 NM step every ~6 s, rebuilding 100 NM datasets
+        # whose content had barely changed).
+        step = max(0.01, self.range_nm / 2000.0)
         key = (round(ac_lat / step) * step, round(ac_lon / step) * step)
         return self._async_cache(
             "airports", key,
@@ -1336,7 +1339,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = self._WATER_TRIS_CACHE_POS_STEP_DEG
+        step = max(0.01, range_nm / 2000.0)
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm / 5.0) * 5.0)
@@ -1499,7 +1502,7 @@ class SVSRenderer:
                 or not self.highway_db.ready):
             return None
         now = time.perf_counter()
-        step = self._HWY_CACHE_POS_STEP_DEG
+        step = max(0.01, range_nm / 2000.0)
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm / 5.0) * 5.0)
@@ -1617,7 +1620,7 @@ class SVSRenderer:
             return {}
 
         now = time.perf_counter()
-        step = self._OBSTACLES_CACHE_POS_STEP_DEG
+        step = max(0.01, range_nm / 2000.0)
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(ac_alt_ft / 200.0) * 200.0,  # 200 ft alt bucket
@@ -1725,7 +1728,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = self._FLAGS_CACHE_POS_STEP_DEG
+        step = max(0.01, range_nm / 2000.0)
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm / 5.0) * 5.0, round(ppd, 1))
