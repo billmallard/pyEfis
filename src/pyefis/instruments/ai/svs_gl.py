@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import math
+import weakref
 
 # PyOpenGL tracks per-context state by default; under Qt's EGL/eglfs
 # context it can't find the "current context" and raises during
@@ -583,6 +584,9 @@ class SVSGLRenderer:
         # Widest line width the driver supports (queried lazily on the
         # first obstacle draw; 1.0 on desktop core profiles, ~10 on V3D).
         self._max_line_width: float | None = None
+        # Persistent per-layer VBOs for the large static overlays
+        # (water, highways): slot -> {vao, vbo, cap, ref, n, frame}.
+        self._layer_buffers = {}
 
         # Text overlay state (Phase 4b). Atlas texture + a separate
         # program with the same projection but textured-quad fragment
@@ -964,6 +968,73 @@ class SVSGLRenderer:
         finally:
             self._overlay_vao.release()
 
+    def _draw_overlay_cached(self, slot, vertices_np, color_rgba, mode,
+                             fog_strength=0.0):
+        """Like _draw_overlay_primitive, but with a persistent
+        per-layer VBO: the ENU conversion and GPU upload run only when
+        the source array (or the ENU frame: patch origin / lat_cos)
+        changes. The big static layers re-uploaded ~1 MB every frame
+        otherwise, felt as small periodic render ticks in flight."""
+        if vertices_np is None or len(vertices_np) == 0:
+            return
+        gl.glGetError()
+        if int(gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM)) !=                 int(self._overlay_program.programId()):
+            self._overlay_program.bind()
+        st = self._layer_buffers.get(slot)
+        if st is None:
+            vao = QOpenGLVertexArrayObject()
+            vao.create()
+            vbo = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
+            vbo.create()
+            vbo.setUsagePattern(QOpenGLBuffer.UsagePattern.DynamicDraw)
+            vao.bind()
+            try:
+                vbo.bind()
+                try:
+                    prog = self._overlay_program
+                    prog.enableAttributeArray(
+                        self._overlay_a_world_pos)
+                    prog.setAttributeBuffer(
+                        self._overlay_a_world_pos, gl.GL_FLOAT,
+                        0, 3, 12)
+                finally:
+                    vbo.release()
+            finally:
+                vao.release()
+            st = {"vao": vao, "vbo": vbo, "cap": 0,
+                  "ref": None, "n": 0, "frame": None}
+            self._layer_buffers[slot] = st
+        frame_key = (self._patch_origin,
+                     round(self._frame_lat_cos, 4))
+        st["vao"].bind()
+        try:
+            cur = st["ref"]() if st["ref"] is not None else None
+            if cur is not vertices_np or st["frame"] != frame_key:
+                enu = self._to_enu(np.asarray(vertices_np))
+                n_bytes = enu.size * 4
+                st["vbo"].bind()
+                try:
+                    if n_bytes > st["cap"]:
+                        st["vbo"].allocate(enu.tobytes(), n_bytes)
+                        st["cap"] = n_bytes
+                    else:
+                        st["vbo"].write(0, enu.tobytes(), n_bytes)
+                finally:
+                    st["vbo"].release()
+                st["ref"] = weakref.ref(vertices_np)
+                st["n"] = int(enu.shape[0])
+                st["frame"] = frame_key
+            self._overlay_program.setUniformValue(
+                self._overlay_u["u_color"],
+                float(color_rgba[0]), float(color_rgba[1]),
+                float(color_rgba[2]), float(color_rgba[3]))
+            self._overlay_program.setUniformValue(
+                self._overlay_u["u_fog_strength"],
+                float(fog_strength))
+            gl.glDrawArrays(mode, 0, st["n"])
+        finally:
+            st["vao"].release()
+
     # ------------------------------------------------------------------
     # Text overlay pass (Phase 4b — designator text on the GPU)
     # ------------------------------------------------------------------
@@ -1150,9 +1221,9 @@ class SVSGLRenderer:
                         color = (20 / 255.0, 80 / 255.0,
                                  150 / 255.0, 1.0)
                         with p._perf.time("water.gl_draw"):
-                            self._draw_overlay_primitive(
-                                tris, color, gl.GL_TRIANGLES,
-                                fog_strength=1.0)
+                            self._draw_overlay_cached(
+                                "water", tris, color,
+                                gl.GL_TRIANGLES, fog_strength=1.0)
 
             # Highways (issue #35): decimated OSM motorway/trunk
             # polylines draped at terrain elevation. Ground features:
@@ -1166,8 +1237,9 @@ class SVSGLRenderer:
                             ac_lat, ac_lon, range_nm)
                     if hwy is not None and hwy.size:
                         with p._perf.time("highways.gl_draw"):
-                            self._draw_overlay_primitive(
-                                hwy, (0.10, 0.10, 0.10, 1.0),
+                            self._draw_overlay_cached(
+                                "highways", hwy,
+                                (0.10, 0.10, 0.10, 1.0),
                                 gl.GL_LINES, fog_strength=1.0)
 
             # Obstacles: world-scaled FAA-symbol billboards (the
