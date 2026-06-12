@@ -416,10 +416,11 @@ disk. Mixed 1201/3601 trees work (tested). Verified: CYXY Whitehorse
 renders real Yukon terrain on Windows AND on the Pi (3.20 ms
 frame.svs_total — no US-data overlays in range up there); KASE GLO
 render shows finer ridge texture; converted Aspen tile matches SRTM3
-statistically. NOTE: the Pi SD card (5.8 GB free) cannot hold the
-~93 GB full-continent HGT set — stage regional subsets (validation
-set lives at ~/EarthData/glo30hgt) or add storage; switching the
-production config tile_path to GLO is Bill's call.
+statistically. RESOLVED 2026-06-11: NVMe HAT + 500 GB
+IronWolf installed; full-continent GLO-30 HGT (87 GB, byte-verified)
+and the water DBs live at /data/EarthData/ on the Pi, and the
+production config tile_path/water_db_path now point there. The Pi
+flies the whole continent at 30 m.
 
 ## Phase 7 — Visual polish: MSAA + distance haze (½–1 day, after P3/P5)
 
