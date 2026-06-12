@@ -870,13 +870,22 @@ class SVSRenderer:
                         p_lo_k, p_hi_k1, p_lo_k1,
                     ))
 
-        # Centerline stripes (always, LOD-gated)
+        # Centerline stripes (always, LOD-gated). Real centerlines
+        # begin beyond the runway numbers: the designator block is
+        # anchored 380 ft from the usable threshold and spans to
+        # ~450 ft in the two-row (parallel-runway letter) layout, so
+        # any end carrying a designator pushes the centerline start
+        # to 500 ft. Unmarked-designator ends keep the old offsets.
         if _interior_detail:
             STRIPE_LEN = 120.0
             STRIPE_GAP = 80.0
             CL_WIDTH   = 3.0
-            cl_a0 = usable_a0 + (200.0 if m1 in ("PIR", "NPI") else 50.0)
-            cl_a1 = usable_a1 - (200.0 if m2 in ("PIR", "NPI") else 50.0)
+            _des1 = (rwy.get("thr1_designator") or "").strip()
+            _des2 = (rwy.get("thr2_designator") or "").strip()
+            cl_a0 = usable_a0 + (500.0 if _des1 else
+                                 (200.0 if m1 in ("PIR", "NPI") else 50.0))
+            cl_a1 = usable_a1 - (500.0 if _des2 else
+                                 (200.0 if m2 in ("PIR", "NPI") else 50.0))
             a = cl_a0
             while a + STRIPE_LEN < cl_a1:
                 quad(a,              -CL_WIDTH / 2.0,
