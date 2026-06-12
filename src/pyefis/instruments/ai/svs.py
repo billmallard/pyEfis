@@ -385,6 +385,10 @@ class SVSRenderer:
         # Set on any GL init/draw failure: SVS is permanently disabled
         # for this process and the AI widget annunciates SVS UNAVAIL.
         self.gl_failed           = False
+        # Draw-time GL failures get a few full re-init attempts before
+        # the permanent UNAVAIL (a transient hiccup must not blank the
+        # SVS for the rest of a flight); init failures stay one-shot.
+        self._gl_draw_failures   = 0
         # Cached airport-proximity boolean (see near_airport()).
         self._near_airport_cache = None
         self._near_airport_cache_time = 0.0
@@ -560,12 +564,32 @@ class SVSRenderer:
                     p, w, h, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg,
                     pixels_per_deg, range_nm, device_pixel_ratio)
-        except Exception as e:
-            log.warning(
-                "SVS: OpenGL draw failed (%s) — SVS is GL-required; "
-                "disabling (SVS UNAVAIL)", e)
+        except Exception:
+            import traceback
+            tb = traceback.format_exc()
+            self._gl_draw_failures += 1
+            # Breadcrumb for post-flight diagnosis — production logging
+            # is not reliably captured, and the exception detail is the
+            # whole ballgame for a mid-air failure.
+            try:
+                with open("/tmp/svs_gl_failure.log", "a") as f:
+                    f.write("=== draw failure %d at %s ===%s%s%s"
+                            % (self._gl_draw_failures, time.ctime(),
+                               "\n", tb, "\n"))
+            except OSError:
+                pass
             self._gl_renderer = None
-            self.gl_failed = True
+            if self._gl_draw_failures >= 3:
+                log.warning(
+                    "SVS: OpenGL draw failed %d times — disabling "
+                    "(SVS UNAVAIL). Last error: %s",
+                    self._gl_draw_failures, tb)
+                self.gl_failed = True
+            else:
+                log.warning(
+                    "SVS: OpenGL draw failed (attempt %d/3), will "
+                    "re-initialise: %s", self._gl_draw_failures, tb)
+                self._gl_init_attempted = False
             return
         svs_dt_ns = time.perf_counter_ns() - svs_t0_ns
         if self._perf.enabled:

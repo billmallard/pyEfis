@@ -532,6 +532,13 @@ class TestSVSGLFallback:
             "n_range": 8, "n_az": 12,        # keep the polar fallback cheap
         })
         with caplog.at_level("WARNING"):
+            # Draw failures get 3 full re-init attempts (a transient
+            # GL hiccup must not blank the SVS for a whole flight)
+            # before the permanent UNAVAIL.
+            self._draw(r)
+            assert r.gl_failed is False
+            assert r._gl_draw_failures == 1
+            self._draw(r)
             self._draw(r)
         assert r.gl_failed is True
         assert r._gl_renderer is None
@@ -695,7 +702,7 @@ class TestSVSGLFallback:
             r.draw(painter, 400, 300, 32.5, -96.5, 3000.0, 0.0, 0.0, 0.0, 12.0)
         finally:
             painter.end()
-        if r.gl_failed:
+        if r.gl_failed or r._gl_draw_failures or r._gl_renderer is None:
             pytest.skip("no GL context in this environment (SVS UNAVAIL)")
         # At altitude with z=0 mesh, the fan should project into the
         # lower portion of the screen (just below the horizon line).
