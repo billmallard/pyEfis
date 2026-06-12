@@ -321,6 +321,14 @@ class SVSRenderer:
         # suppressed — they would otherwise paint the whole pattern area
         # red on a normal landing approach. Set to 0 to disable.
         self.airport_proximity_nm = float(config.get("airport_proximity_nm", 5.0))
+        # Issue #32 Option B: the proximity collapse only applies to
+        # terrain within this height above the nearest airport's field
+        # elevation (the runway environment). Terrain rising above the
+        # gate keeps its full red/amber clearance bands even inside
+        # the proximity radius — a hillside a mile past the runway
+        # must never render benign green.
+        self.airport_gate_agl_ft = float(
+            config.get("airport_gate_agl_ft", 400.0))
 
         # Optional FAA DOF obstacle database. Renders towers, antennas,
         # tall buildings as vertical poles. ``obstacle_min_agl_ft`` filters
@@ -363,6 +371,9 @@ class SVSRenderer:
         # Cached airport-proximity boolean (see near_airport()).
         self._near_airport_cache = None
         self._near_airport_cache_time = 0.0
+        # Field elevation (ft) of the nearest in-proximity airport,
+        # cached alongside the boolean; None when not near one.
+        self._near_airport_elev_ft = None
 
         # Per-frame profiler. ``svs_perf_log: true`` in the SVS config
         # turns on a lightweight per-segment timing pass that prints a
@@ -1545,11 +1556,25 @@ class SVSRenderer:
                     < self._NEAR_AIRPORT_CACHE_TTL_S):
             return self._near_airport_cache
         hit = False
-        for _ in self.airport_db.airports_in_range(
+        best_elev = None
+        best_d2 = None
+        for ap in self.airport_db.airports_in_range(
                 ac_lat, ac_lon, self.airport_proximity_nm):
             hit = True
-            break
+            ap_lat = getattr(ap, "ref_lat", None)
+            ap_lon = getattr(ap, "ref_lon", None)
+            elev = getattr(ap, "elev_ft", None)
+            if elev is None:
+                continue
+            if ap_lat is None or ap_lon is None:
+                d2 = 0.0
+            else:
+                d2 = (ap_lat - ac_lat) ** 2 + (ap_lon - ac_lon) ** 2
+            if best_d2 is None or d2 < best_d2:
+                best_d2 = d2
+                best_elev = float(elev)
         self._near_airport_cache = hit
+        self._near_airport_elev_ft = best_elev if hit else None
         self._near_airport_cache_time = now
         return hit
 

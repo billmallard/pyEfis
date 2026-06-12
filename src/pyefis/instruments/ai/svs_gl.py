@@ -198,6 +198,8 @@ out vec4 outColor;
 uniform float u_green_ft;        // clearance >= u_green_ft => SAFE
 uniform float u_yellow_ft;       // clearance >= u_yellow_ft => CAUTION
 uniform float u_near_airport;    // 1.0 => collapse to 2-colour SAFE/CONFLICT
+uniform float u_apt_gate_ft;     // collapse only below this MSL elevation
+uniform float u_ac_alt_ft;       // aircraft altitude (shared w/ vertex)
 uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
 
 // Match the CPU tier's COLOR_* constants in svs.py.
@@ -217,10 +219,13 @@ void main() {
         base = COLOR_WATER;
     } else if (v_clearance_ft < 0.0) {
         base = COLOR_CONFLICT;
-    } else if (u_near_airport > 0.5) {
-        // Airport-proximity 2-colour mode: warning/caution bands suppressed
-        // so a normal landing approach doesn't paint half the screen red.
-        // Matches svs.py near_airport branch in _keys_from().
+    } else if (u_near_airport > 0.5
+               && (u_ac_alt_ft - v_clearance_ft) < u_apt_gate_ft) {
+        // Airport-proximity collapse, elevation-gated (issue #32
+        // Option B): only the runway environment — terrain below
+        // field elevation + airport_gate_agl_ft — has its warning
+        // bands suppressed. Rising terrain inside the proximity
+        // radius keeps full red/amber treatment.
         base = COLOR_SAFE;
     } else if (v_clearance_ft < u_yellow_ft) {
         base = COLOR_WARNING;
@@ -718,9 +723,16 @@ class SVSGLRenderer:
                     self._u["u_green_ft"], float(p.green_ft))
                 self._program.setUniformValue(
                     self._u["u_yellow_ft"], float(p.yellow_ft))
+                near = self._near_airport(ac_lat, ac_lon)
                 self._program.setUniformValue(
-                    self._u["u_near_airport"],
-                    1.0 if self._near_airport(ac_lat, ac_lon) else 0.0)
+                    self._u["u_near_airport"], 1.0 if near else 0.0)
+                _apt_elev = getattr(self._parent,
+                                    "_near_airport_elev_ft", None)
+                gate = ((_apt_elev + float(getattr(
+                    self._parent, "airport_gate_agl_ft", 400.0)))
+                    if (near and _apt_elev is not None) else 1.0e9)
+                self._program.setUniformValue(
+                    self._u["u_apt_gate_ft"], float(gate))
                 gl.glDrawElements(
                     gl.GL_TRIANGLES, self._index_count,
                     gl.GL_UNSIGNED_INT, None)
@@ -1240,7 +1252,8 @@ class SVSGLRenderer:
                      "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
                      "u_patch_texels", "u_haze_inv",
                      "u_heightmap", "u_patch_bounds",
-                     "u_green_ft", "u_yellow_ft", "u_near_airport"):
+                     "u_green_ft", "u_yellow_ft", "u_near_airport",
+                     "u_apt_gate_ft"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)
