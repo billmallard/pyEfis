@@ -237,6 +237,14 @@ float hash2(vec2 p) {
     p3 += dot(p3, p3.yzx + 33.33);
     return fract((p3.x + p3.y) * p3.z);
 }
+// Procedural mipmapping: fade a noise/grid octave to zero as its
+// cells approach pixel scale. Without this, sub-pixel pattern detail
+// resamples randomly every frame ("shimmer"/"swim", worst in turns).
+float nyquist_fade(vec2 p) {
+    float fw = max(fwidth(p.x), fwidth(p.y));
+    return 1.0 - smoothstep(0.25, 0.75, fw);
+}
+
 float vnoise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -282,11 +290,16 @@ void main() {
     // the far field). Restores the texture gradient + optic flow the
     // eye needs to read slope and closure rate up close.
     if (u_tex_amp > 0.0 && v_is_water < 0.5) {
-        float n = 0.50 * vnoise(v_tex)
-                + 0.30 * vnoise(v_tex * 3.1)
-                + 0.20 * vnoise(v_tex * 9.7);
+        // Each octave attenuated by its own Nyquist fade — coarse
+        // detail survives to mid-range, fine detail only up close.
+        float n = 0.50 * (vnoise(v_tex) - 0.5)
+                      * nyquist_fade(v_tex)
+                + 0.30 * (vnoise(v_tex * 3.1) - 0.5)
+                      * nyquist_fade(v_tex * 3.1)
+                + 0.20 * (vnoise(v_tex * 9.7) - 0.5)
+                      * nyquist_fade(v_tex * 9.7);
         float amp = u_tex_amp * exp(-v_dist / 7408.0);
-        shaded *= 1.0 + amp * (n - 0.5) * 2.0;
+        shaded *= 1.0 + amp * n * 2.0;
     }
 
     // World-anchored surface grid (fishnet): 300 m cells fixed to the
@@ -301,7 +314,7 @@ void main() {
         vec2 lm = vec2(1.0) - smoothstep(vec2(0.0), g_aa, g_to_edge);
         float wire = max(lm.x, lm.y);
         float gd = v_dist / 3704.0;   // 2 NM scale
-        float gamp = u_grid_amp * exp(-gd * gd);
+        float gamp = u_grid_amp * exp(-gd * gd) * nyquist_fade(gp);
         shaded *= 1.0 - wire * gamp;
     }
 
