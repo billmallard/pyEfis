@@ -451,34 +451,73 @@ ALSO: the mesh-grid wireframe overlay was REMOVED entirely at Bill's
 request (CPU-era debugging aid, superseded by MSAA + haze; the
 grid_lines config key is now ignored).
 
-## Phase 8 — Scenery packs: build-time geometry + unified data layer (3–5 days, optional/deferrable)
+## Phase 8 — World-anchored terrain (clipmaps) + scenery packs
 
-Goal: per-frame Python approaches zero; one data pipeline. This is the
-largest lift and the most deferrable — the 1 s collect caches are an
-acceptable interim. STRUCTURAL_REVIEW.md section 5.
+Two tracks. Track 1 (terrain) is now the priority — flight testing
+2026-06-12 identified residual terrain "swim" in turns as the last
+perceptual artifact, and it is architectural: the polar fan's sample
+points are camera-anchored and sweep through the heightmap every
+frame. Track 2 (overlay scenery packs) partially awaits the
+data-manager pack-format decision (docs/data_manager_*.md).
 
-- [ ] Design a pack schema first (commit the design before code): one
-      sqlite per region with layers (water / runways / markings /
-      designator-quads / obstacles / flags), geometry stored as
-      ready-to-upload float32 ENU-metre blobs keyed by 0.25° spatial
-      tile + the tile's own local origin, plus a manifest table
-      (source product, AIRAC/DOF cycle, effective dates, schema version).
-- [ ] Extend the existing build tools (`build_airport_db.py`,
-      `build_obstacle_db.py`, `build_water_db.py` / `fetch_geofabrik_water.py`)
-      to emit the pack format; the marking/designator emission code in
-      `geometry.py` moves into the build tools (it stops being runtime
-      code).
-- [ ] Runtime: a `SceneryCache` that owns resident GPU buffers per tile;
-      per frame = set-difference of in-range tile ids vs resident, async
-      upload of missing tiles (worker thread feeding a main-thread upload
-      queue), draw resident buffers. The five collect/TTL caches in
-      SVSRenderer are deleted.
-- [ ] Out-of-cycle annunciation: if today's date is past the pack's
-      effective-to date, show a small "DATA" amber flag (config-gateable).
+### Track 1a — clipmap mesh (kills the swim)
 
-Done when: frame path contains no sqlite queries and no geometry
-emission; cache-miss frame hitches (visible in the perf log as 1 Hz
-spikes today) are gone; pack rebuild documented end-to-end.
+Replace the camera-anchored polar fan with viewer-centered,
+WORLD-SNAPPED nested grids (geometry clipmaps, Losasso & Hoppe 2004,
+simplified):
+
+- [ ] One static n x n cell grid template VBO (a_cell as vec2,
+      default n=64). L levels (default 7) drawn coarse-to-fine,
+      painter's algorithm: each level draws its FULL square (no
+      annulus holes, no T-junction stitching, no morphing in v1 —
+      finer levels simply overdraw coarser ones; ~2x terrain fill is
+      affordable on V3D and eliminates the entire crack/seam problem
+      class).
+- [ ] Per-level uniforms: u_spacing (60 m * 2^k — inner level matches
+      the patch texel size) and u_origin, snapped to whole cells of
+      that level's spacing (floor(ac_xy / s) * s - half_extent).
+      Snapping is what pins vertices to fixed world positions: turns
+      change NOTHING in the mesh (heading only enters via u_vp), and
+      forward flight only swaps cells at level edges.
+- [ ] Terrain vertex shader simplifies: world ENU = u_origin + a_cell
+      * u_spacing; heightmap UV = enu.xy / u_patch_extent_m (the ENU
+      origin IS the patch SW corner, so no lat/lon round trip);
+      elevation, clearance, water sentinel, noise coords, curvature,
+      haze all as today; gl_Position = u_vp * enu. The fan-specific
+      uniforms (u_heading_deg, u_range_nm, u_radial_warp, u_r_min_nm)
+      retire from the terrain shader. Config keys n_range/n_az stay
+      accepted-and-ignored (the Pi config sets them).
+- [ ] Known v1 limitation, documented: the outermost level can extend
+      past the 2x2-deg heightmap patch near patch edges;
+      CLAMP_TO_EDGE stretches the edge terrain there, mostly hidden
+      by haze at 40+ NM. Properly fixed by Track 1b.
+
+Done when: a steep-turn run over KASE shows no terrain swim (mesh
+vertices provably world-fixed: same pose -> bit-identical terrain
+regardless of approach heading); KRIL/KASE/DFW poses render
+equivalently to the fan; Pi frame time within budget.
+
+### Track 1b — toroidal per-level height textures (streaming)
+
+- [ ] Replace the monolithic 2x2-deg patch with one small toroidal
+      height texture per clipmap level, updated INCREMENTALLY (strip
+      uploads) from the tile cache as the aircraft moves — the
+      classic clipmap texture scheme.
+- [ ] Kills the 52 MB patch re-upload hitch at half-degree crossings;
+      restores NATIVE 30 m GLO-30 in the inner level (P6 decimated to
+      ~60 m to fit one 4096-px texture); memory drops.
+- [ ] Tile reads happen on a worker thread feeding a main-thread
+      upload queue (the async pattern P8 was always about).
+
+### Track 2 — overlay scenery packs (deferrable)
+
+- [ ] Pack schema design — JOINTLY with the data-manager Phase A
+      (docs/data_manager_implementation.md); do not design twice.
+- [ ] Build tools emit ready-to-upload overlay geometry per spatial
+      tile; runtime SceneryCache replaces the five collect/TTL caches;
+      water.query 1 Hz hitch (perf baseline doc) disappears.
+- [ ] Out-of-cycle DATA annunciation — now owned by the data-manager
+      workstream (Phase F there).
 
 ## Phase 9 — ADS-B traffic + highway-in-the-sky (2–4 days, after P3)
 
