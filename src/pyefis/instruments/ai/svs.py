@@ -1298,7 +1298,14 @@ class SVSRenderer:
         # angular size of the smallest rendered polygon roughly
         # constant across the auto-range band; see the tuning table
         # in the Phase 1 commit.
-        min_diag_m = 50.0 * range_nm
+        # Clamp the scaling so climbing never culls river-sized
+        # polygons: auto-range grows with altitude, and an unclamped
+        # filter deleted rivers around pattern altitude (flight
+        # report 2026-06-12 — a river visibly vanished in the climb).
+        # The K=50 scaling was a CPU-era collect-cost guard; with the
+        # GPU pipeline the only cost is a slightly larger 1 Hz
+        # collect, well inside budget.
+        min_diag_m = 50.0 * min(range_nm, 12.0)
         min_diag_deg = min_diag_m / 111139.0
         with self._perf.time("water.query"):
             polys = [pp for pp in self.water_db.polygons_in_range(
