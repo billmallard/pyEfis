@@ -455,7 +455,16 @@ class SVSRenderer:
         # high and the horizon never dips. Config-gated for A/B.
         self.earth_curvature = bool(config.get("earth_curvature", True))
 
-        # Polar mesh parameters for the GL terrain fan.
+        # Clipmap terrain (P8 Track 1a): nested world-snapped grid
+        # levels. cells = grid resolution per level; levels doubles
+        # the spacing each ring out. Defaults cover ~120 km at the
+        # outermost level with the inner level at heightmap-texel
+        # spacing.
+        self._clip_cells  = int(config.get("clipmap_cells", 64))
+        self._clip_levels = int(config.get("clipmap_levels", 7))
+        # Legacy polar-fan parameters — accepted and retained for
+        # config compatibility (the Pi config sets n_range), no
+        # longer consulted by the renderer.
         # Polar mesh parameters for the GL terrain fan.
         self._n_range      = int(config.get("n_range",
                                             POLAR_DEFAULTS["n_range"]))

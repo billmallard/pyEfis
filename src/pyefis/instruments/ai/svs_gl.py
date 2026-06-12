@@ -67,131 +67,77 @@ log = logging.getLogger(__name__)
 # user-defined fragment output.
 
 _VERT_BODY = """
-in vec2 a_t_az;                  // (t in [0,1], az in degrees from nose)
+in vec2 a_cell;                    // cell coords (0..n) in the level grid
 
-uniform float u_ac_lat;
-uniform float u_ac_lon;
 uniform float u_ac_alt_ft;
-uniform float u_heading_deg;
-uniform float u_range_nm;
-uniform float u_radial_warp;
-uniform float u_r_min_nm;
 uniform mat4  u_vp;                // unified camera matrix (camera.py)
 uniform float u_ac_e;              // aircraft ENU east, metres
 uniform float u_ac_n;              // aircraft ENU north, metres
 uniform float u_earth_curv;        // 1/(2R_earth), or 0 when disabled
 uniform float u_patch_texels;      // heightmap texture dimension in px
-uniform sampler2D u_heightmap;     // R32F, single-channel elevation in metres
-uniform vec4  u_patch_bounds;      // (lat_min, lat_max, lon_min, lon_max)
+uniform vec2  u_patch_extent_m;    // heightmap patch size in ENU metres
+uniform vec2  u_noise_origin_m;    // patch SW corner in ABSOLUTE world
+                                   // metres (keeps noise/grid coords
+                                   // continuous across patch rebases)
+uniform float u_level_spacing;     // this level's cell size, metres
+uniform vec2  u_level_origin;      // this level's SW corner, ENU metres
+                                   // (snapped to whole cells — what
+                                   // pins vertices to the WORLD)
+uniform sampler2D u_heightmap;     // R32F, single-channel metres
+
 out float v_clearance_ft;
 out float v_intensity;
 out float v_is_water;
 out float v_dist;                  // metres from aircraft (haze)
 out vec2  v_tex;                   // world-anchored noise coords
 
-const float PI            = 3.14159265358979;
-const float DEG_PER_RAD   = 180.0 / PI;
 const float M_PER_FT      = 0.3048;
 const float FT_PER_M      = 3.28084;
-const float M_PER_DEG_LAT = 111139.0;
-// Round 2 tune (2026-06-02): Round 1 went 4.0/0.10 -> 2.0/0.25 and
-// user confirmed mountains kept enough drama. This pass takes
-// SLOPE_EXAG to 1.0 (no exaggeration, true geometric slopes) and
-// AMBIENT to 0.35. Result: SRTM noise on flat terrain stays at its
-// real 1-2 deg amplitude, shadow side of slopes sits at 35% — only
-// reasonable mountain ridges or hills with real relief show
-// noticeable shading. Closest to a "soft true-Lambertian" look.
-// Kept in sync with the polar CPU tier in svs.py.
 const float SLOPE_EXAG    = 1.0;
 const float AMBIENT       = 0.35;
-// Scaled to AMBIENT so AMBIENT + DIFFUSE * 1.0 = 1.0.
 const float DIFFUSE       = 0.65;
-const float WATER_THR_M   = -1000.0;   // SRTM water sentinel was -9999
+const float WATER_THR_M   = -1000.0;
 
 void main() {
-    float t      = a_t_az.x;
-    float az_deg = a_t_az.y;
+    // World position: fixed for a given (level origin, cell) — the
+    // camera moves through a static mesh, so the terrain surface is
+    // sampled at identical points every frame (no swim).
+    vec2 exy = u_level_origin + a_cell * u_level_spacing;
 
-    // Same effective r_min / r_max as the polar CPU tier.
-    float r_max_eff = u_range_nm * (1.0 - 1.0e-6);
-    float r_min_eff = min(u_r_min_nm, u_range_nm * 0.01);
-    float r_nm  = r_min_eff + (r_max_eff - r_min_eff) * pow(t, u_radial_warp);
-    float r_deg = r_nm / 60.0;
-
-    // Geographic bearing of this vertex from the aircraft.
-    float brg_rad = radians(u_heading_deg + az_deg);
-    float sin_b = sin(brg_rad);
-    float cos_b = cos(brg_rad);
-
-    // World (lat, lon) of the vertex.
-    float lat_cos = cos(radians(u_ac_lat));
-    float vert_lat = u_ac_lat + r_deg * cos_b;
-    float vert_lon = u_ac_lon + r_deg * sin_b / max(lat_cos, 1.0e-3);
-
-    // Sample the heightmap. Texture u runs west->east; v runs
-    // south->north (we flip the SRTM tiles vertically at upload).
-    vec2 patch_size_deg = vec2(
-        u_patch_bounds.w - u_patch_bounds.z,
-        u_patch_bounds.y - u_patch_bounds.x);
-    vec2 uv = vec2(
-        (vert_lon - u_patch_bounds.z) / max(patch_size_deg.x, 1.0e-6),
-        (vert_lat - u_patch_bounds.x) / max(patch_size_deg.y, 1.0e-6));
+    // Heightmap UV: the ENU origin IS the patch SW corner.
+    vec2 uv = exy / u_patch_extent_m;
 
     float elev_m_raw = texture(u_heightmap, uv).r;
     float is_water   = step(elev_m_raw, WATER_THR_M);
     float elev_m     = mix(elev_m_raw, 0.0, is_water);
 
-    // Slope shading: finite differences against immediate neighbour
-    // texels. Sentinel values get clamped first so coastlines don't
-    // produce wild slopes.
+    // Slope shading: finite differences against neighbour texels.
     vec2 texel_uv = vec2(1.0 / u_patch_texels);
     float elev_e_raw = texture(u_heightmap, uv + vec2(texel_uv.x, 0.0)).r;
     float elev_n_raw = texture(u_heightmap, uv + vec2(0.0, texel_uv.y)).r;
     float elev_e_m   = mix(elev_e_raw, 0.0, step(elev_e_raw, WATER_THR_M));
     float elev_n_m   = mix(elev_n_raw, 0.0, step(elev_n_raw, WATER_THR_M));
-
-    // 1 texel size in metres along each geographic axis.
-    vec2 texel_m = vec2(
-        texel_uv.x * patch_size_deg.x * M_PER_DEG_LAT * lat_cos,
-        texel_uv.y * patch_size_deg.y * M_PER_DEG_LAT);
-
-    // Slope in (E, N) frame, in metres of elevation per metre of
-    // horizontal distance. SLOPE_EXAG is the same factor the CPU
-    // tier uses so the lighting feels comparable.
+    vec2 texel_m = texel_uv * u_patch_extent_m;
     float dE = ((elev_e_m - elev_m) / max(texel_m.x, 1.0)) * SLOPE_EXAG;
     float dN = ((elev_n_m - elev_m) / max(texel_m.y, 1.0)) * SLOPE_EXAG;
     float mag = sqrt(dE * dE + dN * dN + 1.0);
     vec3 normal = vec3(-dE / mag, -dN / mag, 1.0 / mag);
-
-    // Sun in geographic (E, N, Up). Upper-NW — same as CPU code.
     vec3 sun_dir = normalize(vec3(-1.0, 1.0, 2.0));
     float diff = clamp(dot(normal, sun_dir), 0.0, 1.0);
     v_intensity = AMBIENT + DIFFUSE * diff;
 
-    // Clearance for the bucket — positive = aircraft above terrain.
-    float elev_ft = elev_m * FT_PER_M;
-    v_clearance_ft = u_ac_alt_ft - elev_ft;
+    v_clearance_ft = u_ac_alt_ft - elev_m * FT_PER_M;
     v_is_water     = is_water;
 
-    // ENU position (metres; up = MSL metres) through the unified
-    // camera. The fan is generated aircraft-relative at world bearing
-    // (heading + az); the matrix's heading rotation brings it back to
-    // screen azimuth az. Earth-curvature drop is applied to the
-    // projected geometry only — clearance colouring uses true height.
-    float r_m = r_deg * M_PER_DEG_LAT;
-    v_dist = r_m;
-    // World-anchored texture coordinate (continuous across heightmap
-    // patches — derived from absolute lat/lon, not patch ENU), base
-    // cell ~150 m. Anchoring to the WORLD gives true optic flow:
-    // the pattern streams past as the aircraft moves.
-    v_tex = vec2(vert_lon * lat_cos, vert_lat)
-            * (M_PER_DEG_LAT / 150.0);
-    float drop_m = u_earth_curv * r_m * r_m;
-    vec3 enu = vec3(
-        u_ac_e + r_m * sin_b,
-        u_ac_n + r_m * cos_b,
-        elev_m - drop_m);
-    gl_Position = u_vp * vec4(enu, 1.0);
+    // World-anchored texture coordinate, continuous across patches.
+    v_tex = (exy + u_noise_origin_m) / 150.0;
+
+    float de = exy.x - u_ac_e;
+    float dn = exy.y - u_ac_n;
+    float d2 = de * de + dn * dn;
+    v_dist = sqrt(d2);
+    float drop_m = u_earth_curv * d2;
+    gl_Position = u_vp * vec4(exy.x, exy.y, elev_m - drop_m, 1.0);
 }
 """
 
@@ -765,19 +711,7 @@ class SVSGLRenderer:
             try:
                 p = self._parent
                 self._program.setUniformValue(
-                    self._u["u_ac_lat"], float(ac_lat))
-                self._program.setUniformValue(
-                    self._u["u_ac_lon"], float(ac_lon))
-                self._program.setUniformValue(
                     self._u["u_ac_alt_ft"], float(ac_alt_ft))
-                self._program.setUniformValue(
-                    self._u["u_heading_deg"], float(heading_deg))
-                self._program.setUniformValue(
-                    self._u["u_range_nm"], float(p.range_nm))
-                self._program.setUniformValue(
-                    self._u["u_radial_warp"], float(p._radial_warp))
-                self._program.setUniformValue(
-                    self._u["u_r_min_nm"], float(p._r_min_nm))
                 self._program.setUniformValue(
                     self._u["u_vp"], self._frame_vp)
                 self._program.setUniformValue(
@@ -791,16 +725,8 @@ class SVSGLRenderer:
                     float(self._patch_texels))
                 self._program.setUniformValue(
                     self._u["u_haze_inv"], float(self._frame_haze_inv))
-                # patch_bounds: (lat_min, lat_max, lon_min, lon_max)
                 self._program.setUniformValue(
-                    self._u["u_patch_bounds"],
-                    float(self._patch_bounds[0]),
-                    float(self._patch_bounds[1]),
-                    float(self._patch_bounds[2]),
-                    float(self._patch_bounds[3]))
-                self._program.setUniformValue(
-                    self._u["u_heightmap"], 0)   # sampler -> texture unit 0
-                # Clearance thresholds (same defaults as polar CPU tier).
+                    self._u["u_heightmap"], 0)
                 self._program.setUniformValue(
                     self._u["u_green_ft"], float(p.green_ft))
                 self._program.setUniformValue(
@@ -824,9 +750,44 @@ class SVSGLRenderer:
                 self._program.setUniformValue(
                     self._u["u_grid_amp"],
                     float(getattr(p, "terrain_grid", 0.35)))
-                gl.glDrawElements(
-                    gl.GL_TRIANGLES, self._index_count,
-                    gl.GL_UNSIGNED_INT, None)
+
+                # Patch geometry in ENU metres (ENU origin = patch SW
+                # corner) and the absolute-world noise offset.
+                lat_cos = self._frame_lat_cos
+                ext_e = 2.0 * M_PER_DEG_LAT * lat_cos
+                ext_n = 2.0 * M_PER_DEG_LAT
+                self._program.setUniformValue(
+                    self._u["u_patch_extent_m"],
+                    float(ext_e), float(ext_n))
+                o_lat, o_lon = self._patch_origin
+                self._program.setUniformValue(
+                    self._u["u_noise_origin_m"],
+                    float(o_lon * M_PER_DEG_LAT * lat_cos),
+                    float(o_lat * M_PER_DEG_LAT))
+
+                # Clipmap levels, coarse to fine (painter's algorithm:
+                # finer levels overdraw coarser — no seams, no
+                # T-junction stitching needed). Each level's origin is
+                # snapped to its own spacing: the mesh is pinned to
+                # the WORLD, turns change nothing, forward flight only
+                # swaps edge cells.
+                n_cells = p._clip_cells
+                base_m = ext_n / max(self._patch_texels - 1.0, 1.0)
+                for k in range(p._clip_levels - 1, -1, -1):
+                    spacing = base_m * (2 ** k)
+                    half = (n_cells / 2.0) * spacing
+                    ox = (math.floor(self._frame_ac_e / spacing)
+                          * spacing - half)
+                    oy = (math.floor(self._frame_ac_n / spacing)
+                          * spacing - half)
+                    self._program.setUniformValue(
+                        self._u["u_level_spacing"], float(spacing))
+                    self._program.setUniformValue(
+                        self._u["u_level_origin"],
+                        float(ox), float(oy))
+                    gl.glDrawElements(
+                        gl.GL_TRIANGLES, self._index_count,
+                        gl.GL_UNSIGNED_INT, None)
             finally:
                 self._vao.release()
                 self._program.release()
@@ -1348,15 +1309,15 @@ class SVSGLRenderer:
                 f"fragment shader compile failed: {prog.log()}")
         if not prog.link():
             raise RuntimeError(f"shader link failed: {prog.log()}")
-        self._a_position = prog.attributeLocation("a_t_az")
+        self._a_position = prog.attributeLocation("a_cell")
         if self._a_position < 0:
-            raise RuntimeError("a_t_az attribute missing after link")
-        for name in ("u_ac_lat", "u_ac_lon", "u_ac_alt_ft", "u_heading_deg",
-                     "u_range_nm",
-                     "u_radial_warp", "u_r_min_nm",
+            raise RuntimeError("a_cell attribute missing after link")
+        for name in ("u_ac_alt_ft",
                      "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
                      "u_patch_texels", "u_haze_inv",
-                     "u_heightmap", "u_patch_bounds",
+                     "u_patch_extent_m", "u_noise_origin_m",
+                     "u_level_spacing", "u_level_origin",
+                     "u_heightmap",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_apt_gate_ft", "u_safe_grad", "u_tex_amp",
                      "u_grid_amp"):
@@ -1374,7 +1335,7 @@ class SVSGLRenderer:
         if not vao.create():
             raise RuntimeError("could not create QOpenGLVertexArrayObject")
 
-        verts, indices = self._build_polar_mesh()
+        verts, indices = self._build_clipmap_template()
 
         vao.bind()
         try:
@@ -1408,11 +1369,10 @@ class SVSGLRenderer:
         self._index_count = int(indices.size)
 
         log.info(
-            "SVSGLRenderer mesh: %d vertices, %d indices (n_range=%d, "
-            "n_az=%d, fov=%s deg)",
+            "SVSGLRenderer clipmap template: %d vertices, %d indices "
+            "(%d cells, %d levels)",
             verts.shape[0], self._index_count,
-            self._parent._n_range, self._parent._n_az,
-            self._parent._fov_deg)
+            self._parent._clip_cells, self._parent._clip_levels)
 
     @staticmethod
     def _patch_origin_for(ac_lat: float, ac_lon: float) -> tuple[int, int]:
@@ -1543,21 +1503,20 @@ class SVSGLRenderer:
                 "(cap %d)", step, patch.shape[0], cap)
         return patch
 
-    def _build_polar_mesh(self):
-        n_r = self._parent._n_range
-        n_az = self._parent._n_az
-        fov = self._parent._fov_deg
-
-        ts = np.linspace(0.0, 1.0, n_r, dtype=np.float32)
-        azs = np.linspace(-fov / 2.0, fov / 2.0, n_az, dtype=np.float32)
-        T, Az = np.meshgrid(ts, azs, indexing='ij')
-        verts = np.column_stack([T.ravel(), Az.ravel()]).astype(np.float32)
-
-        i_grid, j_grid = np.mgrid[0:n_r - 1, 0:n_az - 1]
-        v00 = (i_grid       * n_az + j_grid      ).ravel()
-        v10 = ((i_grid + 1) * n_az + j_grid      ).ravel()
-        v01 = (i_grid       * n_az + j_grid + 1  ).ravel()
-        v11 = ((i_grid + 1) * n_az + j_grid + 1  ).ravel()
+    def _build_clipmap_template(self):
+        """One (n+1) x (n+1) vertex grid of integer cell coordinates,
+        reused for every clipmap level via the u_level_spacing /
+        u_level_origin uniforms."""
+        n = self._parent._clip_cells
+        m = n + 1
+        i_grid, j_grid = np.mgrid[0:m, 0:m]
+        verts = np.column_stack([
+            j_grid.ravel(), i_grid.ravel()]).astype(np.float32)
+        ci, cj = np.mgrid[0:n, 0:n]
+        v00 = (ci       * m + cj      ).ravel()
+        v10 = ((ci + 1) * m + cj      ).ravel()
+        v01 = (ci       * m + cj + 1  ).ravel()
+        v11 = ((ci + 1) * m + cj + 1  ).ravel()
         indices = np.empty(v00.size * 6, dtype=np.uint32)
         indices[0::6] = v00
         indices[1::6] = v10
@@ -1565,5 +1524,4 @@ class SVSGLRenderer:
         indices[3::6] = v10
         indices[4::6] = v11
         indices[5::6] = v01
-
         return verts, indices
