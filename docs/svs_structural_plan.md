@@ -500,6 +500,19 @@ equivalently to the fan; Pi frame time within budget.
 app clean, KASE/KRIL/DFW poses verified). Awaiting Bill's steep-turn
 flight verdict on the swim before marking complete.
 
+### Jet-altitude findings (2026-06-12, FL170/FL300 testing)
+
+Range opened to the horizon (auto-range was already the sliding
+scale; caps + altitude-scaled haze added). At 10k ft/119 NM over DFW
+the Pi rides its soft thermal limit (throttled=0xe0008 observed
+ACTIVE) at ~160% CPU steady: per-frame render work, not worker churn
+(that was fixed twice: range-quantized keys, range-scaled position
+steps). Config retreated to range_nm: 120 pending: (1) ACTIVE COOLER
+— required hardware for jet-config sustained load; (2) cached VBOs
+for the text layers (obstacles/designators/flags re-convert + upload
+every frame); (3) cache the designator collector (uncached, loops
+all airports every frame); (4) Track 1b below.
+
 ### Track 1b — toroidal per-level height textures (streaming)
 
 - [ ] Replace the monolithic 2x2-deg patch with one small toroidal
