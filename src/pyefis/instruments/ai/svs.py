@@ -451,6 +451,8 @@ class SVSRenderer:
         self._hwy_worker = None
         self._hwy_worker_lock = threading.Lock()
         self._hwy_result = None
+        # Generic async cache slots (airports, obstacles, ...).
+        self._async_state = {}
         # Obstacle pole vertex cache (Phase 2). Same TTL strategy as
         # water; key includes altitude bucket because the
         # conflict-vs-lit grouping depends on aircraft altitude.
@@ -1244,12 +1246,39 @@ class SVSRenderer:
         # determines the result; rebuild only on ~0.6 NM of movement.
         step = 0.01
         key = (round(ac_lat / step) * step, round(ac_lon / step) * step)
-        if (self._airports_cache is not None
-                and getattr(self, "_airports_cache_key", None) == key):
-            return self._airports_cache
-        self._airports_cache = list(self._airports_in_range(ac_lat, ac_lon))
-        self._airports_cache_key = key
-        return self._airports_cache
+        return self._async_cache(
+            "airports", key,
+            lambda: list(self._airports_in_range(ac_lat, ac_lon))) or []
+
+    def _async_cache(self, name, key, builder):
+        """Generic key-based cache whose rebuilds run on a daemon
+        worker: the render thread gets the previous value (or None on
+        cold start) instead of paying the rebuild — at metro density
+        the airports query + obstacle quad emission were tens of ms,
+        landing as ticks whenever a position key rolled over."""
+        st = self._async_state.setdefault(name, {
+            "key": None, "val": None, "res": None,
+            "worker": None, "lock": threading.Lock()})
+        with st["lock"]:
+            if st["res"] is not None:
+                r_key, r_val = st["res"]
+                st["res"] = None
+                st["key"], st["val"] = r_key, r_val
+            if st["key"] == key:
+                return st["val"]
+            if st["worker"] is None or not st["worker"].is_alive():
+                def run():
+                    try:
+                        v = builder()
+                    except Exception:
+                        log.warning("%s worker failed", name,
+                                    exc_info=True)
+                        return
+                    with st["lock"]:
+                        st["res"] = (key, v)
+                st["worker"] = threading.Thread(target=run, daemon=True)
+                st["worker"].start()
+            return st["val"]
 
     def _airports_in_range(self, ac_lat, ac_lon):
         """Yield ``(label, ref_lat, ref_lon, elev_ft, runways)`` records from
@@ -1588,11 +1617,13 @@ class SVSRenderer:
                round(ac_lon / step) * step,
                round(ac_alt_ft / 200.0) * 200.0,  # 200 ft alt bucket
                round(range_nm, 1))
-        cache = getattr(self, "_obstacles_cache", None)
-        cache_key = getattr(self, "_obstacles_cache_key", None)
-        cache_time = getattr(self, "_obstacles_cache_time", 0.0)
-        if (cache is not None and cache_key == key):
-            return cache
+        return self._async_cache(
+            "obstacles", key,
+            lambda: self._build_obstacles(
+                ac_lat, ac_lon, ac_alt_ft, range_nm, atlas_uvs)) or {}
+
+    def _build_obstacles(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                         atlas_uvs):
 
         # Build per-color-group billboard quads: world-scaled symbol,
         # base at the ground, tip at the obstacle top, horizontal
@@ -1646,9 +1677,6 @@ class SVSRenderer:
             if not verts:
                 continue
             result[rgba] = np.asarray(verts, dtype=np.float32)
-        self._obstacles_cache = result
-        self._obstacles_cache_key = key
-        self._obstacles_cache_time = now
         return result
 
     # ------------------------------------------------------------------
