@@ -1,0 +1,99 @@
+# Next session — opening moves
+
+State as of 2026-06-12 end of session. Written for a cold start (a
+fresh Claude/Opus session or Bill himself).
+
+## Deployed state (the aircraft Pi) — HEALTHY, do not regress
+
+- Branch `gpu-required` at origin HEAD; Pi pulls from it. Verified:
+  water + highways draw 61/61 frames at the DFW pose.
+- Pi-local config (`src/pyefis/config/includes/ahrs/virtual_vfr.yaml`,
+  uncommitted): `range_nm: 80` (retreated from 215 — at 119 NM the
+  passively-cooled Pi thermal-throttled at ~160% CPU; at 80 NM it runs
+  ~64% and cool), `clipmap_levels: 9`, `svs_perf_log: false`,
+  highways + paved_only on, all data on /data (NVMe).
+- HARDWARE TODO: **active cooler for the Pi 5** (~$5 official
+  fan/heatsink). The SoC hit its soft thermal limit (`vcgencmd
+  get_throttled` showed the ACTIVE bit) during jet-config testing.
+  Required before restoring long range.
+
+## Opening move 1 — fix the parked optimization branch
+
+Local branch **`wip-text-vbo-cache`** (commit 73dcc2c, NOT pushed,
+marked DO NOT DEPLOY) contains two queued render-thread wins:
+
+1. `_draw_text_quads` rewritten with per-slot cached VBOs (slots:
+   "obst:N", "designators", "flagtext"; plus "flagpoles"/"flagquads"
+   moved onto `_draw_overlay_cached`) — the text layers currently
+   re-convert to ENU and re-upload every frame.
+2. `_collect_runway_designator_quads` split into an async
+   `_async_cache("designators", ...)` wrapper + `_build_designator_
+   quads` builder — currently it loops every airport every frame.
+
+**The bug**: under this branch, water + highways render only ~6 of 61
+frames (the water cache returns empty most frames); at HEAD it is
+61/61. Tests all pass — only the harness render shows it.
+
+Repro (Windows, bash):
+
+    git checkout wip-text-vbo-cache
+    SVS_RENDERER=opengl SVS_TILE_PATH=D:/EarthData/glo30hgt \
+    SVS_HIGHWAY_PATH=D:/EarthData/osm_roads/highway_rtree_co_tx.sqlite \
+    SVS_SIM_MOTION=1 SVS_PERF_LOG=1 SVS_LAT=32.90 SVS_LON=-97.04 \
+    SVS_ALT=2500 SVS_HEAD=175 SVS_RANGE=30 SVS_SCREENSHOT=/tmp/x.png \
+    SVS_SCREENSHOT_DELAY_MS=8000 PYTHONPATH="C:/pylib;src" \
+    python tests/visual_svs_test.py 2>&1 | grep water.gl_draw
+    # bug = ~6 calls; fixed = ~61 calls
+
+Bisect plan (the commit has two independent halves):
+
+1. Revert ONLY the svs.py half (designators-async) — leading suspect:
+   it is the first worker-calls-worker pattern (`_build_designator_
+   quads` runs on the designators worker and calls
+   `_get_airports_cached`, which itself goes through
+   `_async_cache("airports", ...)`). Check `_async_cache` for a
+   cross-slot interaction: the airports slot getting its result
+   consumed/clobbered from two threads, starving every downstream
+   collector (water is independent though — if reverting this half
+   fixes water, figure out WHY before trusting the explanation).
+2. If water is still broken, the svs_gl.py half: new text-slot VAO
+   creation inside `_draw_text_quads` (binds prog/vao mid-pass) may
+   corrupt the shared overlay-pass state the water draw depends on.
+   Try creating text-slot VAOs eagerly in `_ensure_text_program`
+   instead of lazily mid-frame.
+3. After the fix: restore `range_nm: 120+` on the Pi (with the cooler
+   installed) and re-measure — target is the full horizon at FL300
+   (215 NM), expected to need these wins + possibly Track 1b.
+
+## Opening move 2 — first real-aircraft test (Bonanza, Garmin)
+
+Bill may bench the Pi in the Bonanza and try connecting the panel
+Garmin. Notes:
+
+- **fix-gateway side**: the gateway (not pyEfis) ingests position
+  sources. For a panel Garmin the practical paths are (a) the unit's
+  RS-232 serial output in NMEA 0183 mode (most GNS/GTN/G-series can
+  emit NMEA on a serial port at 9600 baud — needs a USB-RS232 adapter
+  on the Pi and the right two wires off the Garmin harness), or
+  (b) "Aviation" (MapMX) format, which is richer but needs a format
+  plugin. Check what plugins the installed fixgw has (`fixgw` snap or
+  ~/fix-gateway checkout) — an NMEA/gpsd plugin covers (a):
+  gpsd reads the USB serial, fixgw gpsd plugin publishes
+  LAT/LONG/GS/TRACK/ALT(GPS).
+- **No AHRS from a GPS** — PITCH/ROLL stay absent → the AI keeps the
+  classic two-tone with SVS terrain at zero pitch/roll reference. For
+  attitude, the Stratux path is the plan of record.
+- **Power**: Pi 5 wants 5V/5A USB-C; a quality 12/14V-to-USB-C PD
+  buck converter from the aircraft bus, or a USB-C battery bank that
+  does 25W+, avoids brownouts (watch `vcgencmd get_throttled` bit 0).
+- **Safety/affect**: advisory use only alongside certified equipment;
+  nothing here is panel-mounted or connected to aircraft controls.
+- Useful in-cockpit checks: GPS-only behavior of the P4 pose
+  interpolation (real 1 Hz GPS!), DATA-driven SVS with no AHRS, sun
+  readability of the display, thermal behavior in a closed cockpit.
+
+## Standing queue (unchanged)
+
+P8 Track 1b (streaming heightmap textures — far-range fidelity +
+native 30 m), traffic via Stratux (P9), chart draping (P10),
+data-manager (awaiting MakerPlane reply), svs/ package split.
