@@ -377,6 +377,11 @@ class SVSRenderer:
         self.water_db = WaterDB(
             config.get("water_db_path", "") or None,
             max_vertices=config.get("water_max_vertices"))
+        # Major-highway polylines (issue #35) — OSM motorway/trunk
+        # from tools/build_highway_db.py. Optional like everything.
+        from pyefis.instruments.ai.highway_db import HighwayDB
+        self.highway_db = HighwayDB(
+            config.get("highway_db_path", "") or None)
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         self.terrain_fill  = config.get("terrain_fill", True)
@@ -439,6 +444,13 @@ class SVSRenderer:
         self._water_worker = None
         self._water_worker_lock = threading.Lock()
         self._water_result = None          # (key, array) from worker
+        # Async highway collection — same worker pattern as water.
+        self._hwy_cache = None
+        self._hwy_cache_key = None
+        self._hwy_cache_time = 0.0
+        self._hwy_worker = None
+        self._hwy_worker_lock = threading.Lock()
+        self._hwy_result = None
         # Obstacle pole vertex cache (Phase 2). Same TTL strategy as
         # water; key includes altitude bucket because the
         # conflict-vs-lit grouping depends on aircraft altitude.
@@ -1434,6 +1446,83 @@ class SVSRenderer:
         if not all_tris:
             return None
         return np.concatenate(all_tris, axis=0)
+
+    # ------------------------------------------------------------------
+    # Highways (issue #35): decimated OSM polylines draped on the
+    # terrain — per-vertex SRTM elevation, expanded to GL_LINES pairs.
+    # Collected asynchronously (same pattern as water): the sqlite
+    # walk + elevation sampling never blocks a frame.
+    # ------------------------------------------------------------------
+    _HWY_CACHE_TTL_S = 1.0
+    _HWY_CACHE_POS_STEP_DEG = 0.01
+
+    def _collect_highways(self, ac_lat, ac_lon, range_nm):
+        if (getattr(self, "highway_db", None) is None
+                or not self.highway_db.ready):
+            return None
+        now = time.perf_counter()
+        step = self._HWY_CACHE_POS_STEP_DEG
+        key = (round(ac_lat / step) * step,
+               round(ac_lon / step) * step,
+               round(range_nm, 1))
+        if (self._hwy_cache is not None
+                and self._hwy_cache_key == key
+                and now - self._hwy_cache_time < self._HWY_CACHE_TTL_S):
+            return self._hwy_cache
+        with self._hwy_worker_lock:
+            if self._hwy_result is not None:
+                r_key, r_arr = self._hwy_result
+                self._hwy_result = None
+                self._hwy_cache = r_arr
+                self._hwy_cache_key = r_key
+                self._hwy_cache_time = now
+                if r_key == key:
+                    return r_arr
+            busy = (self._hwy_worker is not None
+                    and self._hwy_worker.is_alive())
+            if not busy:
+                self._hwy_worker = threading.Thread(
+                    target=self._hwy_collect_worker,
+                    args=(key, ac_lat, ac_lon, range_nm),
+                    daemon=True)
+                self._hwy_worker.start()
+        return self._hwy_cache
+
+    def _hwy_collect_worker(self, key, ac_lat, ac_lon, range_nm):
+        try:
+            arr = self._collect_highways_sync(ac_lat, ac_lon, range_nm)
+        except Exception:
+            log.warning("highway collect worker failed", exc_info=True)
+            return
+        with self._hwy_worker_lock:
+            self._hwy_result = (key, arr)
+
+    def _collect_highways_sync(self, ac_lat, ac_lon, range_nm):
+        lines = [hl.vertices for hl in
+                 self.highway_db.polylines_in_range(
+                     ac_lat, ac_lon, range_nm)
+                 if len(hl.vertices) >= 2]
+        if not lines:
+            return None
+        # Batched SRTM elevation for every vertex of every polyline.
+        all_pts = np.concatenate(lines, axis=0)
+        elev_m, _ = self._sample_elevations(
+            all_pts[:, 0][None, :], all_pts[:, 1][None, :])
+        elev_ft = (elev_m[0] * 3.28084).astype(np.float32)
+        out = []
+        i = 0
+        for v in lines:
+            k = len(v)
+            seg = np.empty((k, 3), dtype=np.float32)
+            seg[:, 0:2] = v
+            seg[:, 2] = elev_ft[i:i + k]
+            i += k
+            # Expand the polyline to GL_LINES vertex pairs.
+            pairs = np.empty((2 * (k - 1), 3), dtype=np.float32)
+            pairs[0::2] = seg[:-1]
+            pairs[1::2] = seg[1:]
+            out.append(pairs)
+        return np.concatenate(out, axis=0)
 
     # Obstacle color groups (RGBA in [0, 1]) — match the QPen colors
     # the CPU path used in pre-Phase-2 commits.

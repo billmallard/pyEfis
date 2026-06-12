@@ -1154,6 +1154,22 @@ class SVSGLRenderer:
                                 tris, color, gl.GL_TRIANGLES,
                                 fog_strength=1.0)
 
+            # Highways (issue #35): decimated OSM motorway/trunk
+            # polylines draped at terrain elevation. Ground features:
+            # full haze, drawn between water and the symbology layers.
+            if (getattr(p, "highway_db", None) is not None
+                    and p.highway_db.ready
+                    and range_nm is not None):
+                with p._perf.time("highways"):
+                    with p._perf.time("highways.collect"):
+                        hwy = p._collect_highways(
+                            ac_lat, ac_lon, range_nm)
+                    if hwy is not None and hwy.size:
+                        with p._perf.time("highways.gl_draw"):
+                            self._draw_overlay_primitive(
+                                hwy, (0.10, 0.10, 0.10, 1.0),
+                                gl.GL_LINES, fog_strength=1.0)
+
             # Obstacles: world-scaled FAA-symbol billboards (the
             # Garmin/ForeFlight SVS convention) — one screen-facing
             # quad per obstacle, base at the ground, tip at the

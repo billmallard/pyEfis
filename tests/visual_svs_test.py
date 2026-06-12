@@ -172,6 +172,7 @@ widget.set_svs_config({
                           not in ("0", "false", "no"),
     "terrain_texture":    float(os.environ.get("SVS_TEX_AMP", "0.35")),
     "terrain_grid":       float(os.environ.get("SVS_GRID_AMP", "0.35")),
+    "highway_db_path":    os.environ.get("SVS_HIGHWAY_PATH", ""),
 })
 win.setCentralWidget(widget)
 win.show()
