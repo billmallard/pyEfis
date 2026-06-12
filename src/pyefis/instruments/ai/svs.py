@@ -1501,11 +1501,33 @@ class SVSRenderer:
         with self._hwy_worker_lock:
             self._hwy_result = (key, arr)
 
+    # Highway LOD (flight-tuned at DFW): collection hard-capped at
+    # 20 NM (beyond that the lines are sub-pixel and haze-buried, and
+    # query area scales with r^2); past 8 NM only motorways survive
+    # (no trunks, no ramps) at half vertex density. Cuts the metro
+    # worst-case line-raster load by roughly an order of magnitude.
+    _HWY_MAX_NM = 20.0
+    _HWY_NEAR_NM = 8.0
+
     def _collect_highways_sync(self, ac_lat, ac_lon, range_nm):
-        lines = [hl.vertices for hl in
-                 self.highway_db.polylines_in_range(
-                     ac_lat, ac_lon, range_nm)
-                 if len(hl.vertices) >= 2]
+        rng = min(range_nm, self._HWY_MAX_NM)
+        lat_cos = math.cos(math.radians(ac_lat))
+        near_deg2 = (self._HWY_NEAR_NM / 60.0) ** 2
+        lines = []
+        for hl in self.highway_db.polylines_in_range(
+                ac_lat, ac_lon, rng):
+            v = hl.vertices
+            if len(v) < 2:
+                continue
+            mid = v[len(v) // 2]
+            d2 = ((mid[0] - ac_lat) ** 2
+                  + ((mid[1] - ac_lon) * lat_cos) ** 2)
+            if d2 > near_deg2:
+                if hl.fclass != "motorway":
+                    continue
+                if len(v) > 3:
+                    v = np.vstack([v[::2], v[-1:]])
+            lines.append(v)
         if not lines:
             return None
         # Batched SRTM elevation for every vertex of every polyline.
