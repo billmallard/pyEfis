@@ -28,6 +28,7 @@ import math
 import os
 import sqlite3
 import struct
+import threading
 import logging
 import time
 from pathlib import Path
@@ -229,20 +230,26 @@ class TileCache:
         self.max_tiles = max_tiles
         self._cache: dict[tuple, np.ndarray] = {}
         self._order: list[tuple] = []
+        # The async water collector samples elevations from a worker
+        # thread while the render thread also reads tiles.
+        self._lock = threading.Lock()
 
     def get(self, lat: int, lon: int) -> np.ndarray | None:
         key = (lat, lon)
-        if key in self._cache:
-            self._order.remove(key)
-            self._order.append(key)
-            return self._cache[key]
+        with self._lock:
+            if key in self._cache:
+                self._order.remove(key)
+                self._order.append(key)
+                return self._cache[key]
         tile = load_tile(self.tile_root, lat, lon)
         if tile is not None:
-            self._cache[key] = tile
-            self._order.append(key)
-            if len(self._order) > self.max_tiles:
-                evict = self._order.pop(0)
-                del self._cache[evict]
+            with self._lock:
+                if key not in self._cache:
+                    self._cache[key] = tile
+                    self._order.append(key)
+                    if len(self._order) > self.max_tiles:
+                        evict = self._order.pop(0)
+                        del self._cache[evict]
         return tile
 
     def elevation(self, lat: float, lon: float) -> float:
@@ -424,6 +431,14 @@ class SVSRenderer:
         self._water_tris_cache = None
         self._water_tris_cache_time = 0.0
         self._water_tris_cache_key = None  # rounded (lat, lon, range_nm)
+        # Async water collection (first piece of plan P8 Track 2):
+        # the sqlite walk + triangle expansion for a large water set
+        # costs tens of ms — far over the frame budget — so it runs
+        # on a worker thread and the render thread keeps drawing the
+        # previous array until the new one swaps in.
+        self._water_worker = None
+        self._water_worker_lock = threading.Lock()
+        self._water_result = None          # (key, array) from worker
         # Obstacle pole vertex cache (Phase 2). Same TTL strategy as
         # water; key includes altitude bucket because the
         # conflict-vs-lit grouping depends on aircraft altitude.
@@ -1289,6 +1304,39 @@ class SVSRenderer:
                     < self._WATER_TRIS_CACHE_TTL_S):
             return self._water_tris_cache
 
+        # Promote a finished worker result, or kick the worker and
+        # keep rendering the previous (slightly stale) water set —
+        # never block the frame on the collect.
+        with self._water_worker_lock:
+            if self._water_result is not None:
+                r_key, r_arr = self._water_result
+                self._water_result = None
+                self._water_tris_cache = r_arr
+                self._water_tris_cache_key = r_key
+                self._water_tris_cache_time = now
+                if r_key == key:
+                    return r_arr
+            busy = (self._water_worker is not None
+                    and self._water_worker.is_alive())
+            if not busy:
+                self._water_worker = threading.Thread(
+                    target=self._water_collect_worker,
+                    args=(key, ac_lat, ac_lon, range_nm),
+                    daemon=True)
+                self._water_worker.start()
+        return self._water_tris_cache
+
+    def _water_collect_worker(self, key, ac_lat, ac_lon, range_nm):
+        try:
+            arr = self._collect_water_sync(ac_lat, ac_lon, range_nm)
+        except Exception:
+            log.warning("water collect worker failed", exc_info=True)
+            return
+        with self._water_worker_lock:
+            self._water_result = (key, arr)
+
+    def _collect_water_sync(self, ac_lat, ac_lon, range_nm):
+
         # Sentinel mapped to sea level. Same convention the previous
         # CPU path used.
         WATER_SENTINEL_M = _WATER_SENTINEL / 3.28084
@@ -1384,15 +1432,8 @@ class SVSRenderer:
             all_tris.append(buf)
 
         if not all_tris:
-            self._water_tris_cache = None
-            self._water_tris_cache_key = key
-            self._water_tris_cache_time = now
             return None
-        result = np.concatenate(all_tris, axis=0)
-        self._water_tris_cache = result
-        self._water_tris_cache_key = key
-        self._water_tris_cache_time = now
-        return result
+        return np.concatenate(all_tris, axis=0)
 
     # Obstacle color groups (RGBA in [0, 1]) — match the QPen colors
     # the CPU path used in pre-Phase-2 commits.
