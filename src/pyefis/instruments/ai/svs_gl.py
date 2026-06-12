@@ -930,6 +930,13 @@ class SVSGLRenderer:
                 float(color_rgba[2]), float(color_rgba[3]))
             self._overlay_program.setUniformValue(
                 self._overlay_u["u_fog_strength"], float(fog_strength))
+            # Defensive re-bind: in the multi-widget production app the
+            # program binding can be dropped between the pass-level
+            # bind() and the draw (observed as CURRENT_PROGRAM == 0 ->
+            # GL_INVALID_OPERATION on the Pi). Cheap glGet guard.
+            if int(gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM))                     != int(self._overlay_program.programId()):
+                gl.glUseProgram(
+                    int(self._overlay_program.programId()))
             try:
                 gl.glDrawArrays(mode, 0, vertices_np.shape[0])
             except Exception:
@@ -1115,7 +1122,9 @@ class SVSGLRenderer:
         """
         self._ensure_overlay_program()
         prog = self._overlay_program
-        prog.bind()
+        if not prog.bind():
+            log.warning("overlay program bind() returned False "
+                        "(program %d)", prog.programId())
         try:
             prog.setUniformValue(self._overlay_u["u_vp"],
                                  self._frame_vp)
