@@ -1310,10 +1310,14 @@ class SVSRenderer:
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm, 1))
+        # Purely key-based: the key encodes coarsened position and
+        # range, which fully determine the result — a TTL on top only
+        # forced an identical rebuild every second, and the worker's
+        # GIL bursts stalled render frames (flight report: noticeable
+        # pauses). Rebuilds now happen only on actual movement
+        # (~0.6 NM) or range change.
         if (self._water_tris_cache is not None
-                and self._water_tris_cache_key == key
-                and now - self._water_tris_cache_time
-                    < self._WATER_TRIS_CACHE_TTL_S):
+                and self._water_tris_cache_key == key):
             return self._water_tris_cache
 
         # Promote a finished worker result, or kick the worker and
@@ -1465,9 +1469,9 @@ class SVSRenderer:
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm, 1))
+        # Purely key-based — see the water collector note.
         if (self._hwy_cache is not None
-                and self._hwy_cache_key == key
-                and now - self._hwy_cache_time < self._HWY_CACHE_TTL_S):
+                and self._hwy_cache_key == key):
             return self._hwy_cache
         with self._hwy_worker_lock:
             if self._hwy_result is not None:
