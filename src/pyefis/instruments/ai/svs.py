@@ -1792,10 +1792,14 @@ class SVSRenderer:
                 or getattr(self, "airport_db", None) is None
                 or not self.airport_db.ready):
             return False
-        now = time.perf_counter()
+        # Key-based like every other collector cache (the 1 s TTL
+        # re-ran the sqlite query + runway-object construction on the
+        # render thread every second).
+        step = 0.01
+        key = (round(ac_lat / step) * step, round(ac_lon / step) * step)
         if (self._near_airport_cache is not None
-                and now - self._near_airport_cache_time
-                    < self._NEAR_AIRPORT_CACHE_TTL_S):
+                and getattr(self, "_near_airport_cache_key", None)
+                    == key):
             return self._near_airport_cache
         hit = False
         best_elev = None
@@ -1817,7 +1821,7 @@ class SVSRenderer:
                 best_elev = float(elev)
         self._near_airport_cache = hit
         self._near_airport_elev_ft = best_elev if hit else None
-        self._near_airport_cache_time = now
+        self._near_airport_cache_key = key
         return hit
 
     def _sample_elevations(self, lat_grid: np.ndarray,
