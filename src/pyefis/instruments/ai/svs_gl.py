@@ -731,8 +731,15 @@ class SVSGLRenderer:
                             if getattr(self._parent, "earth_curvature",
                                        True) else 0.0)
         haze_nm = float(getattr(self._parent, "haze_distance_nm", 40.0))
+        # Visibility scales with altitude (jet altitudes see much
+        # farther than the pattern): the config value is the FLOOR,
+        # stretched toward ~90% of the true-horizon distance, capped
+        # at 120 NM. At 17,000 ft this puts the haze knee near 90 NM
+        # instead of fogging out everything past 40.
+        alt_vis = 0.9 * 1.22 * math.sqrt(max(ac_alt_ft, 0.0))
+        haze_eff = min(max(haze_nm, alt_vis), 120.0)
         self._frame_haze_inv = (
-            1.0 / (haze_nm * 1852.0)
+            1.0 / (haze_eff * 1852.0)
             if getattr(self._parent, "haze", True) and haze_nm > 0
             else 0.0)
 

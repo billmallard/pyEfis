@@ -1286,7 +1286,8 @@ class SVSRenderer:
         threshold positions, width, and (for NASR) the Tier C fields:
         marking type, displaced threshold offset, designators, TDZ elev."""
         if getattr(self, "airport_db", None) is not None and self.airport_db.ready:
-            for ap in self.airport_db.airports_in_range(ac_lat, ac_lon, self.range_nm):
+            for ap in self.airport_db.airports_in_range(
+                    ac_lat, ac_lon, min(self.range_nm, 50.0)):
                 # ICAO codes are 4 letters incl. leading K for CONUS. Strip
                 # it so the cockpit label reads "SBA" rather than "KSBA".
                 label = ap.icao[1:] if (len(ap.icao) == 4 and ap.icao[0] == 'K') else ap.icao
@@ -1633,7 +1634,7 @@ class SVSRenderer:
         FT_PER_DEG = 364491.0
         by_color = {name: [] for name, _ in self._OBSTACLE_COLOR_GROUPS}
         for obs in self.obstacle_db.obstacles_in_range(
-                ac_lat, ac_lon, range_nm,
+                ac_lat, ac_lon, min(range_nm, 50.0),
                 min_agl_ft=self.obstacle_min_agl_ft):
             if obs.amsl_ft >= ac_alt_ft:
                 group = "conflict"
@@ -1729,7 +1730,7 @@ class SVSRenderer:
             return self._flags_cache
 
         lat_cos = math.cos(math.radians(ac_lat))
-        range_m = self.range_nm * 1852.0
+        range_m = min(self.range_nm, 50.0) * 1852.0
         DEG_PER_RAD = 57.29577951308232
         FT_PER_DEG = 364491.0
 
