@@ -737,7 +737,7 @@ class SVSGLRenderer:
         # at 120 NM. At 17,000 ft this puts the haze knee near 90 NM
         # instead of fogging out everything past 40.
         alt_vis = 0.9 * 1.22 * math.sqrt(max(ac_alt_ft, 0.0))
-        haze_eff = min(max(haze_nm, alt_vis), 120.0)
+        haze_eff = min(max(haze_nm, alt_vis), 200.0)
         self._frame_haze_inv = (
             1.0 / (haze_eff * 1852.0)
             if getattr(self._parent, "haze", True) and haze_nm > 0
