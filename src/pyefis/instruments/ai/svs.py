@@ -313,6 +313,13 @@ class SVSRenderer:
         # to read slope and closure (0 disables).
         self.safe_gradient = bool(config.get("safe_gradient", True))
         self.terrain_texture = float(config.get("terrain_texture", 0.35))
+        # World-anchored surface grid (NASA-SVS style fishnet), 300 m
+        # cells draped on the terrain and gaussian-faded by ~2 NM.
+        # Unlike the deleted mesh wireframe (camera-relative), this is
+        # glued to the GROUND: cells foreshorten on rising slopes and
+        # stream past with motion — the strongest foreground slope /
+        # closure cue available. Value = darkening amplitude, 0 = off.
+        self.terrain_grid = float(config.get("terrain_grid", 0.35))
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 

@@ -171,6 +171,7 @@ widget.set_svs_config({
     "safe_gradient":      os.environ.get("SVS_SAFE_GRAD", "1").lower()
                           not in ("0", "false", "no"),
     "terrain_texture":    float(os.environ.get("SVS_TEX_AMP", "0.35")),
+    "terrain_grid":       float(os.environ.get("SVS_GRID_AMP", "0.35")),
 })
 win.setCentralWidget(widget)
 win.show()

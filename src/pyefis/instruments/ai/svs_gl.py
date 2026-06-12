@@ -209,6 +209,7 @@ uniform float u_near_airport;    // 1.0 => collapse to 2-colour SAFE/CONFLICT
 uniform float u_apt_gate_ft;     // collapse only below this MSL elevation
 uniform float u_safe_grad;       // 1.0 => clearance-graded SAFE band
 uniform float u_tex_amp;         // ground-texture amplitude, 0 = off
+uniform float u_grid_amp;        // world-grid darkening, 0 = off
 uniform float u_ac_alt_ft;       // aircraft altitude (shared w/ vertex)
 uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
 
@@ -286,6 +287,22 @@ void main() {
                 + 0.20 * vnoise(v_tex * 9.7);
         float amp = u_tex_amp * exp(-v_dist / 7408.0);
         shaded *= 1.0 + amp * (n - 0.5) * 2.0;
+    }
+
+    // World-anchored surface grid (fishnet): 300 m cells fixed to the
+    // ground (v_tex is world metres / 150). Draped cells foreshorten
+    // on rising slopes — the dominant foreground slope cue — and
+    // stream past with motion. Gaussian fade keeps it foreground-only
+    // (~gone past 2 NM); fwidth antialiases to a crisp 1 px line.
+    if (u_grid_amp > 0.0 && v_is_water < 0.5) {
+        vec2 gp = v_tex * 0.5;
+        vec2 g_to_edge = abs(fract(gp) - 0.5);
+        vec2 g_aa = fwidth(gp) * 0.75;
+        vec2 lm = vec2(1.0) - smoothstep(vec2(0.0), g_aa, g_to_edge);
+        float wire = max(lm.x, lm.y);
+        float gd = v_dist / 3704.0;   // 2 NM scale
+        float gamp = u_grid_amp * exp(-gd * gd);
+        shaded *= 1.0 - wire * gamp;
     }
 
     if (u_haze_inv > 0.0) {
@@ -791,6 +808,9 @@ class SVSGLRenderer:
                 self._program.setUniformValue(
                     self._u["u_tex_amp"],
                     float(getattr(p, "terrain_texture", 0.35)))
+                self._program.setUniformValue(
+                    self._u["u_grid_amp"],
+                    float(getattr(p, "terrain_grid", 0.35)))
                 gl.glDrawElements(
                     gl.GL_TRIANGLES, self._index_count,
                     gl.GL_UNSIGNED_INT, None)
@@ -1314,7 +1334,8 @@ class SVSGLRenderer:
                      "u_patch_texels", "u_haze_inv",
                      "u_heightmap", "u_patch_bounds",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
-                     "u_apt_gate_ft", "u_safe_grad", "u_tex_amp"):
+                     "u_apt_gate_ft", "u_safe_grad", "u_tex_amp",
+                     "u_grid_amp"):
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)
