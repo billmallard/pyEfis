@@ -458,7 +458,10 @@ class AI(QGraphicsView):
             # and QPainter symbology alike. The driver grants the
             # closest supported sample count (0 if unsupported), so
             # this degrades silently.
-            samples = int(config.get("msaa_samples", 4))
+            # Default 2x: at panel sizes the visual difference from 4x is
+            # marginal, but terrain fill cost roughly halves — measured
+            # decisive for holding 30 Hz at metro worst-case poses.
+            samples = int(config.get("msaa_samples", 2))
             if samples > 1:
                 fmt = QSurfaceFormat()
                 fmt.setSamples(samples)
