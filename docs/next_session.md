@@ -97,3 +97,29 @@ Garmin. Notes:
 P8 Track 1b (streaming heightmap textures — far-range fidelity +
 native 30 m), traffic via Stratux (P9), chart draping (P10),
 data-manager (awaiting MakerPlane reply), svs/ package split.
+
+## Feature request (Bill, 2026-06-12): GI-275-style autopilot command
+
+Target capability: heading bug + altitude preselect on pyEfis, mode
+switch between heading-hold and GPSS nav mode, with GPSS turn
+compensation computed in the stack — i.e., what the Garmin GI-275
+does as an autopilot commander.
+
+Decomposition onto the existing architecture (audited 2026-06-12;
+pyEfis itself contains NO autopilot — it is a control head over FIX
+keys, see the MAVREQ* button configs):
+
+1. Bug/preselect UI + HEADSEL/ALTSEL-style FIX keys (HSI has COURSE
+   today; the old altsel branch poked at altitude select).
+2. Mode buttons: reuse the declarative button/condition pattern from
+   config/buttons/auto-pilot-*.yaml with new keys.
+3. GPSS computation: fix-gateway plugin (cross-track/course/turn
+   anticipation -> heading-error or roll command). ALTERNATIVE: the
+   GNX 375 has ARINC 429 GPSS output — an ARINC adapter lets the
+   Garmin compute steering and the gateway just mode-switch.
+4. Output: (a) legacy analog autopilots need a heading-error voltage
+   — a small CAN-FIX/I2C DAC hardware node (the genuinely new piece);
+   (b) experimental aircraft: the existing MAVLink/CAN-FIX servo path.
+
+SAFETY: command functionality is for EXPERIMENTAL-category aircraft
+only. The certified Bonanza remains advisory-display-only.
