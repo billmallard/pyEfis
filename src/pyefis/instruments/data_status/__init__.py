@@ -60,6 +60,28 @@ _BTN_STYLE = (
     "QPushButton:disabled { color: #777777; border-color: #333333; }"
 )
 
+_SEV_RANK = {"none": 0, "white": 1, "amber": 2}
+
+
+def load_status(status_path):
+    """Read the updater's status JSON. Returns the parsed dict, or None on any
+    problem (missing/malformed). Never raises — shared by the screen and the
+    annunciation."""
+    try:
+        return json.loads(Path(os.path.expanduser(str(status_path))).read_text("utf-8"))
+    except Exception:
+        return None
+
+
+def worst_severity(status):
+    """The most-severe pack severity. 'none' when there is nothing to show
+    (no status file, or every pack current) so the PFD annunciation can hide
+    rather than clutter a healthy display."""
+    if not status or not status.get("ok"):
+        return "none"
+    return max((p.get("severity", "white") for p in status.get("packs", [])),
+               key=lambda s: _SEV_RANK.get(s, 1), default="none")
+
 
 class DataStatus(QWidget):
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
@@ -92,10 +114,7 @@ class DataStatus(QWidget):
 
     # --- data ---
     def reload(self):
-        try:
-            self.status = json.loads(self.status_path.read_text(encoding="utf-8"))
-        except Exception:
-            self.status = None        # construct-never-raises
+        self.status = load_status(self.status_path)   # construct-never-raises
         self.update()
 
     def showEvent(self, event):
@@ -200,3 +219,62 @@ class DataStatus(QWidget):
             p.setFont(self.font)
             p.setPen(SEVERITY_COLORS["white"])
             p.drawText(QRectF(x, h * 0.74, w * 0.8, self.row_h), self.message)
+
+
+class DataAnnunciation(QWidget):
+    """A small, persistent 'DATA' flag for the flight (PFD) view.
+
+    Subtle by design: amber when any installed navdata is expired, white when
+    expiring soon or missing, and **hidden** when everything is current (or no
+    updater is present) so a healthy display is never cluttered. Tapping it
+    jumps to the Data Status screen.
+    """
+
+    def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
+                 status_path=DEFAULT_STATUS_PATH, target_screen="DataStatus"):
+        super().__init__(parent)
+        self.font_family = font_family
+        self.status_path = os.path.expanduser(status_path)
+        self.target_screen = target_screen
+        self.status = None
+        self.font = QFont(font_family)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.reload)
+        self._timer.start(60_000)
+        self.reload()
+
+    def reload(self):
+        self.status = load_status(self.status_path)
+        self.update()
+
+    def showEvent(self, event):
+        self.reload()
+        super().showEvent(event)
+
+    def mousePressEvent(self, event):
+        from pyefis import hmi
+        if getattr(hmi, "actions", None) is not None:
+            try:
+                hmi.actions.trigger("show screen", self.target_screen)
+            except Exception as e:
+                log.warning("DATA annunciation tap failed: %s", e)
+
+    def resizeEvent(self, event):
+        self.font = QFont(self.font_family)
+        self.font.setPixelSize(max(8, qRound(self.height() * 0.7)))
+
+    def paintEvent(self, event):
+        sev = worst_severity(self.status)
+        if sev == "none":
+            return                      # healthy / no updater -> show nothing
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = SEVERITY_COLORS.get(sev, SEVERITY_COLORS["white"])
+        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        pen = p.pen()
+        pen.setColor(color)
+        p.setPen(pen)
+        p.drawRoundedRect(rect, 3, 3)
+        p.setFont(self.font)
+        p.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "DATA")

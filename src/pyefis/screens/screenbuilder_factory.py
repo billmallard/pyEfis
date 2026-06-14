@@ -132,6 +132,18 @@ def build_data_status(
     return data_status.DataStatus(**kwargs)
 
 
+def build_data_annunciation(
+    screen, config, font_percent=None, font_family=None, replace=None
+):
+    opts = (config or {}).get("options", {}) or {}
+    kwargs = {"parent": screen, "font_family": font_family}
+    if "status_path" in opts:
+        kwargs["status_path"] = opts["status_path"]
+    if "target_screen" in opts:
+        kwargs["target_screen"] = opts["target_screen"]
+    return data_status.DataAnnunciation(**kwargs)
+
+
 def build_listbox(screen, config, font_percent=None, font_family=None, replace=None):
     return listbox.ListBox(
         screen,
@@ -165,6 +177,7 @@ INSTRUMENT_FACTORIES = {
     ),
     "button": build_button,
     "data_status": build_data_status,
+    "data_annunciation": build_data_annunciation,
     "heading_display": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.HeadingDisplay(
         screen, font_family=font_family
     ),

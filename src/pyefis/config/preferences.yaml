@@ -131,6 +131,7 @@ includes:
   SCREEN_RADIO: screens/radio.yaml           # screens/radio-portrait.yaml
   SCREEN_EMS: screens/ems.yaml               # screens/ems-portrait.yaml
   SCREEN_EMS2: screens/ems2.yaml             # screens/ems2-portrait.yaml
+  SCREEN_DATA_STATUS: screens/datastatus.yaml  # navigation-data currency (boot screen)
   # Include file for logging configuration
   LOGGING_CONFIG: logging/stderr-info.yaml
   # File that defines what lists are included in the radio listbox

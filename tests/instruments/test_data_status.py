@@ -82,3 +82,47 @@ def test_continue_without_hmi_does_not_raise(app, tmp_path):
     # _on_continue must be safe even when hmi.actions isn't initialised.
     w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
     w._on_continue()                    # no exception
+
+
+# --- DataAnnunciation (persistent PFD flag) ---
+
+def test_worst_severity():
+    assert data_status.worst_severity(None) == "none"
+    assert data_status.worst_severity({"ok": False}) == "none"
+    assert data_status.worst_severity(SAMPLE) == "amber"   # has an expired pack
+    all_current = {"ok": True, "packs": [{"severity": "none"}, {"severity": "none"}]}
+    assert data_status.worst_severity(all_current) == "none"
+    soon = {"ok": True, "packs": [{"severity": "none"}, {"severity": "white"}]}
+    assert data_status.worst_severity(soon) == "white"
+
+
+def test_annunciation_hidden_when_current(app, tmp_path):
+    doc = {"ok": True, "packs": [{"name": "Airports", "severity": "none"}]}
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, doc)))
+    a.resize(120, 40)
+    assert data_status.worst_severity(a.status) == "none"
+    assert not a.grab().isNull()        # paints nothing, but does not crash
+
+
+def test_annunciation_shows_when_expired(app, tmp_path):
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, SAMPLE)))
+    a.resize(120, 40)
+    assert data_status.worst_severity(a.status) == "amber"
+    assert not a.grab().isNull()
+
+
+def test_annunciation_unavailable_is_hidden(app, tmp_path):
+    a = data_status.DataAnnunciation(status_path=str(tmp_path / "nope.json"))
+    a.resize(120, 40)
+    assert a.status is None
+    assert data_status.worst_severity(a.status) == "none"   # no updater -> no flag
+
+
+def test_annunciation_tap_without_hmi_is_safe(app, tmp_path):
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent, QPointF, Qt
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, SAMPLE)))
+    ev = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(1, 1),
+                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.NoModifier)
+    a.mousePressEvent(ev)               # no exception
