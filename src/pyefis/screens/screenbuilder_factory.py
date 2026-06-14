@@ -76,6 +76,8 @@ def build_atitude_indicator(
         screen, font_percent=font_percent, font_family=font_family,
         show_fpm=show_fpm,
     )
+    widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
+    widget.symbol_color = opts.get("symbol_color", "yellow")
     if "svs" in opts:
         widget.set_svs_config(opts["svs"])
     return widget
@@ -88,6 +90,8 @@ def build_virtual_vfr(
     widget = VirtualVfr(screen, font_percent=font_percent, font_family=font_family)
     # VirtualVfr inherits set_svs_config from AI; SVS config flows through
     # the same way regardless of which widget type the screen uses.
+    widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
+    widget.symbol_color = opts.get("symbol_color", "yellow")
     if "svs" in opts:
         widget.set_svs_config(opts["svs"])
     return widget

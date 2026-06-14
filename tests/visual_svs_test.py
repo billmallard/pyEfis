@@ -151,6 +151,8 @@ win.setWindowTitle(
 win.resize(800, 600)
 
 widget = AI(win, show_fpm=True)
+widget.aircraft_symbol = os.environ.get("SVS_SYMBOL", "classic")
+widget.symbol_color = os.environ.get("SVS_SYMBOL_COLOR", "yellow")
 widget.set_svs_config({
     "enabled":            True,
     "tile_path":          TILE_PATH,

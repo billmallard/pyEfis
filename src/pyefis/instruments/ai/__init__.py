@@ -85,6 +85,13 @@ class AI(QGraphicsView):
         self.drawBankMarkers = True
         self.bankAngleRadius = None # Radius of the bank angle markings
         self.bankAngleMaximum = 25  # Largest bank angle that will be indicated
+        # Fixed aircraft reference symbol (the "wings" the horizon moves
+        # behind). style: "classic" (split wing bars + center dot) or
+        # "garmin"/"gi275" (GI-275-style stepped wing bars + center
+        # chevron). Set from the screen YAML options (aircraft_symbol,
+        # symbol_color); applied by the screenbuilder factory.
+        self.aircraft_symbol = "classic"
+        self.symbol_color = "yellow"
 
         self.setStyleSheet("border: 0px")
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -245,6 +252,43 @@ class AI(QGraphicsView):
         # we can adjust the opacity of the items.
         self.pitchItems = []
 
+    def _draw_aircraft_symbol(self, p, w, h):
+        """Draw the fixed aircraft reference symbol into the static
+        overlay. Style + colour come from self.aircraft_symbol /
+        self.symbol_color (screen YAML options)."""
+        cx, cy = w / 2.0, h / 2.0
+        col = QColor(self.symbol_color)
+        if not col.isValid():
+            col = QColor(Qt.GlobalColor.yellow)
+        p.setPen(QPen(QColor(Qt.GlobalColor.black), 1))
+        p.setBrush(QBrush(col))
+        style = str(getattr(self, "aircraft_symbol", "classic")).lower()
+        if style in ("garmin", "gi275", "gi-275", "g1000"):
+            # GI-275 / G1000-style: two wing bars that step down at the
+            # inner ends, flanking a small upward centre chevron (vs the
+            # classic round centre dot).
+            wing = w / 7.0
+            gap = w * 0.045
+            t = max(3.0, h * 0.007)
+            tab = t * 1.5
+            # left wing bar + downward inner tab
+            p.drawRect(QRectF(cx - gap - wing, cy - t, wing, 2 * t))
+            p.drawRect(QRectF(cx - gap - tab, cy - t, tab, 4 * t))
+            # right wing bar + downward inner tab
+            p.drawRect(QRectF(cx + gap, cy - t, wing, 2 * t))
+            p.drawRect(QRectF(cx + gap, cy - t, tab, 4 * t))
+            # centre upward chevron (filled delta)
+            cw = gap * 0.85
+            p.drawPolygon(QPolygonF([
+                QPointF(cx, cy - 4 * t),
+                QPointF(cx + cw, cy + t),
+                QPointF(cx - cw, cy + t)]))
+        else:
+            # Classic: split wing bars + centre dot.
+            p.drawRect(QRectF(w / 4, cy - 3, w / 6, 6))
+            p.drawRect(QRectF(w - w / 4 - w / 6, cy - 3, w / 6, 6))
+            p.drawEllipse(QRectF(cx - 3, cy - 3, 9, 9))
+
     def resizeEvent(self, event):
         self.pitchItems = []
         # Detach the SVS item from the outgoing scene BEFORE we replace
@@ -393,13 +437,7 @@ class AI(QGraphicsView):
         w = self.width()
         h = self.height()
         r = self.bankAngleRadius
-        p.setPen(QColor(Qt.GlobalColor.black))
-        p.setBrush(QColor(Qt.GlobalColor.yellow))
-        p.drawRect(QRectF(w / 4, h / 2 - 3, w / 6, 6))
-        p.drawRect(QRectF(w - w / 4 - w / 6, h / 2 - 3, w / 6, 6))
-        p.drawEllipse(QRectF(w / 2 - 3, h / 2 - 3, 9, 9))
-        # p.setPen(QColor(Qt.GlobalColor.black))
-        # p.setBrush(QColor(Qt.GlobalColor.white))
+        self._draw_aircraft_symbol(p, w, h)
 
         m = self.bankMarkSize
         p.setBrush(QColor(Qt.GlobalColor.white))
