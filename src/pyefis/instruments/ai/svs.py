@@ -1630,6 +1630,34 @@ class SVSRenderer:
             lambda: self._build_obstacles(
                 ac_lat, ac_lon, ac_alt_ft, range_nm, atlas_uvs)) or {}
 
+    # Line-of-sight terrain masking (KRIL/GJT flight report: a far
+    # airport behind intervening ridges drew its flag over the near
+    # mountain, falsely reading as "on it"). Sample terrain along the
+    # straight line from the aircraft to a marker; if a ridge rises
+    # above that sight line by more than _LOS_CLEAR_FT, the marker is
+    # terrain-masked and gets dimmed (vs the foreground full-colour).
+    _LOS_CLEAR_FT = 75.0
+
+    def _los_masked(self, ac_lat, ac_lon, ac_alt_ft,
+                    t_lat, t_lon, t_alt_ft, lat_cos):
+        if self.cache is None:
+            return False
+        d_lat = t_lat - ac_lat
+        d_lon = (t_lon - ac_lon) * lat_cos
+        dist_nm = math.sqrt(d_lat * d_lat + d_lon * d_lon) * 60.0
+        if dist_nm < 1.0:
+            return False
+        n = int(min(24, max(4, dist_nm)))   # ~1 sample / NM, 4..24
+        for k in range(1, n):
+            f = k / n
+            lat = ac_lat + f * (t_lat - ac_lat)
+            lon = ac_lon + f * (t_lon - ac_lon)
+            sight_ft = ac_alt_ft + f * (t_alt_ft - ac_alt_ft)
+            terr_ft = self.cache.elevation(lat, lon) * 3.28084
+            if terr_ft > sight_ft + self._LOS_CLEAR_FT:
+                return True
+        return False
+
     def _build_obstacles(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
                          atlas_uvs):
 
@@ -1640,6 +1668,7 @@ class SVSRenderer:
         lat_cos = math.cos(math.radians(ac_lat))
         FT_PER_DEG = 364491.0
         by_color = {name: [] for name, _ in self._OBSTACLE_COLOR_GROUPS}
+        by_color_m = {name: [] for name, _ in self._OBSTACLE_COLOR_GROUPS}
         for obs in self.obstacle_db.obstacles_in_range(
                 ac_lat, ac_lon, min(range_nm, 50.0),
                 min_agl_ft=self.obstacle_min_agl_ft):
@@ -1677,14 +1706,23 @@ class SVSRenderer:
                   obs.lon + t_lon * half_w_deg, top, u1, v0)
             tl = (obs.lat - t_lat * half_w_deg,
                   obs.lon - t_lon * half_w_deg, top, u0, v0)
-            by_color[group].extend((tl, tr, br, tl, br, bl))
+            if self._los_masked(ac_lat, ac_lon, ac_alt_ft,
+                                obs.lat, obs.lon, top, lat_cos):
+                by_color_m[group].extend((tl, tr, br, tl, br, bl))
+            else:
+                by_color[group].extend((tl, tr, br, tl, br, bl))
 
         result = {}
+        DIM = 0.4
         for name, rgba in self._OBSTACLE_COLOR_GROUPS:
-            verts = by_color[name]
-            if not verts:
-                continue
-            result[rgba] = np.asarray(verts, dtype=np.float32)
+            if by_color[name]:
+                result[rgba] = np.asarray(by_color[name],
+                                          dtype=np.float32)
+            if by_color_m[name]:
+                drgba = (rgba[0] * DIM, rgba[1] * DIM,
+                         rgba[2] * DIM, rgba[3])
+                result[drgba] = np.asarray(by_color_m[name],
+                                           dtype=np.float32)
         return result
 
     # ------------------------------------------------------------------
@@ -1703,8 +1741,8 @@ class SVSRenderer:
     _FLAG_GAP_PX = 1.5      # inter-glyph gap
     _FLAG_MIN_DIST_M = 300.0  # skip the flag when essentially overhead
 
-    def _collect_airport_flags(self, ac_lat, ac_lon, range_nm, ppd,
-                               atlas_uvs):
+    def _collect_airport_flags(self, ac_lat, ac_lon, ac_alt_ft,
+                               range_nm, ppd, atlas_uvs):
         """Build GL vertex arrays for every in-range airport flag.
 
         Returns ``{"poles": Nx3, "flags": Nx3, "text": Nx5}`` float32
@@ -1742,6 +1780,7 @@ class SVSRenderer:
         FT_PER_DEG = 364491.0
 
         poles, flag_tris, text_verts = [], [], []
+        poles_m, flag_tris_m, text_verts_m = [], [], []
         for label, ref_lat, ref_lon, ref_elev_ft, _runways in \
                 self._get_airports_cached(ac_lat, ac_lon):
             d_lat = ref_lat - ac_lat
@@ -1752,8 +1791,13 @@ class SVSRenderer:
                 continue
 
             top_elev = ref_elev_ft + self._FLAG_POLE_HT_FT
-            poles.append((ref_lat, ref_lon, ref_elev_ft))
-            poles.append((ref_lat, ref_lon, top_elev))
+            if self._los_masked(ac_lat, ac_lon, ac_alt_ft,
+                                ref_lat, ref_lon, ref_elev_ft, lat_cos):
+                tp, tf, tt = poles_m, flag_tris_m, text_verts_m
+            else:
+                tp, tf, tt = poles, flag_tris, text_verts
+            tp.append((ref_lat, ref_lon, ref_elev_ft))
+            tp.append((ref_lat, ref_lon, top_elev))
 
             # Billboard frame at the pole tip. px2deg converts a pixel
             # target to the degree-unit world offset that projects to
@@ -1786,7 +1830,7 @@ class SVSRenderer:
             c10 = bb_point(fw, 0.0)
             c11 = bb_point(fw, fh)
             c01 = bb_point(0.0, fh)
-            flag_tris.extend((c00, c10, c11, c00, c11, c01))
+            tf.extend((c00, c10, c11, c00, c11, c01))
 
             x = self._FLAG_PAD_PX
             for (ch, (u0, v0, u1, v1)), cw in zip(chars, widths):
@@ -1798,17 +1842,20 @@ class SVSRenderer:
                 v_tr = (*p_tr, u1, v0)
                 v_br = (*p_br, u1, v1)
                 v_bl = (*p_bl, u0, v1)
-                text_verts.extend((v_tl, v_tr, v_br, v_tl, v_br, v_bl))
+                tt.extend((v_tl, v_tr, v_br, v_tl, v_br, v_bl))
                 x += cw + self._FLAG_GAP_PX
 
-        if not poles:
+        if not poles and not poles_m:
             result = None
         else:
+            def _arr(x):
+                return (np.asarray(x, dtype=np.float32) if x else None)
             result = {
-                "poles": np.asarray(poles, dtype=np.float32),
-                "flags": np.asarray(flag_tris, dtype=np.float32),
-                "text": (np.asarray(text_verts, dtype=np.float32)
-                         if text_verts else None),
+                "poles": _arr(poles), "flags": _arr(flag_tris),
+                "text": _arr(text_verts),
+                "poles_masked": _arr(poles_m),
+                "flags_masked": _arr(flag_tris_m),
+                "text_masked": _arr(text_verts_m),
             }
         self._flags_cache = result
         self._flags_cache_key = key

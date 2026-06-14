@@ -1386,33 +1386,42 @@ class SVSGLRenderer:
                 with p._perf.time("airports.flag"):
                     self._ensure_text_program()
                     flags = p._collect_airport_flags(
-                        ac_lat, ac_lon, range_nm, pixels_per_deg,
-                        self._text_atlas_uvs)
+                        ac_lat, ac_lon, ac_alt_ft, range_nm,
+                        pixels_per_deg, self._text_atlas_uvs)
                     if flags is not None:
                         FLAG_YELLOW = (1.0, 220 / 255.0, 0.0, 1.0)
-                        poles = flags.get("poles")
-                        if poles is not None and poles.size:
-                            self._set_pole_line_width()
-                            self._draw_overlay_primitive(
-                                poles, FLAG_YELLOW, gl.GL_LINES,
-                                fog_strength=0.4)
-                            gl.glLineWidth(1.0)
-                        tris = flags.get("flags")
-                        if tris is not None and tris.size:
-                            self._draw_overlay_primitive(
-                                tris, FLAG_YELLOW, gl.GL_TRIANGLES,
-                                fog_strength=0.4)
-                        text = flags.get("text")
-                        if text is not None and text.size:
-                            prog.release()
-                            try:
-                                self._render_text_overlay(
-                                    text, (0.0, 0.0, 0.0, 1.0),
-                                    w, h, ac_lat, ac_lon, ac_alt_ft,
-                                    pitch_deg, roll_deg, heading_deg,
-                                    pixels_per_deg)
-                            finally:
-                                prog.bind()
+                        FLAG_DIM = (0.40, 0.345, 0.0, 1.0)
+                        TEXT_N = (0.0, 0.0, 0.0, 1.0)
+                        TEXT_M = (0.45, 0.45, 0.45, 1.0)
+                        # Terrain-masked flags (behind ridges) draw
+                        # dimmed so they read as "behind", not "on" the
+                        # near mountain.
+                        for sfx, pc, qc, tc in (
+                                ("", FLAG_YELLOW, FLAG_YELLOW, TEXT_N),
+                                ("_masked", FLAG_DIM, FLAG_DIM, TEXT_M)):
+                            poles = flags.get("poles" + sfx)
+                            if poles is not None and poles.size:
+                                self._set_pole_line_width()
+                                self._draw_overlay_primitive(
+                                    poles, pc, gl.GL_LINES,
+                                    fog_strength=0.4)
+                                gl.glLineWidth(1.0)
+                            tris = flags.get("flags" + sfx)
+                            if tris is not None and tris.size:
+                                self._draw_overlay_primitive(
+                                    tris, qc, gl.GL_TRIANGLES,
+                                    fog_strength=0.4)
+                            text = flags.get("text" + sfx)
+                            if text is not None and text.size:
+                                prog.release()
+                                try:
+                                    self._render_text_overlay(
+                                        text, tc,
+                                        w, h, ac_lat, ac_lon,
+                                        ac_alt_ft, pitch_deg, roll_deg,
+                                        heading_deg, pixels_per_deg)
+                                finally:
+                                    prog.bind()
 
             # Smoke-test triangle path (kept for diagnostics).
             if getattr(p, "_gl_overlay_smoketest", False):
