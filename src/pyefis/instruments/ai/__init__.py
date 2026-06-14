@@ -264,25 +264,30 @@ class AI(QGraphicsView):
         p.setBrush(QBrush(col))
         style = str(getattr(self, "aircraft_symbol", "classic")).lower()
         if style in ("garmin", "gi275", "gi-275", "g1000"):
-            # GI-275 / G1000-style: two wing bars that step down at the
-            # inner ends, flanking a small upward centre chevron (vs the
-            # classic round centre dot).
-            wing = w / 7.0
-            gap = w * 0.045
-            t = max(3.0, h * 0.007)
-            tab = t * 1.5
-            # left wing bar + downward inner tab
-            p.drawRect(QRectF(cx - gap - wing, cy - t, wing, 2 * t))
-            p.drawRect(QRectF(cx - gap - tab, cy - t, tab, 4 * t))
-            # right wing bar + downward inner tab
-            p.drawRect(QRectF(cx + gap, cy - t, wing, 2 * t))
-            p.drawRect(QRectF(cx + gap, cy - t, tab, 4 * t))
-            # centre upward chevron (filled delta)
-            cw = gap * 0.85
-            p.drawPolygon(QPolygonF([
-                QPointF(cx, cy - 4 * t),
-                QPointF(cx + cw, cy + t),
-                QPointF(cx - cw, cy + t)]))
+            # GI-275 / G1000 style: two tapered wing wedges — thick at
+            # the inboard end by the boresight, tapering to the
+            # outboard tips — flanking a small centre boresight circle.
+            t = max(2.0, h * 0.006)
+            gap = w * 0.03           # inboard tip half-gap from centre
+            wing = w * 0.15          # wing length
+            p.drawPolygon(QPolygonF([              # left wing
+                QPointF(cx - gap, cy - 2.2 * t),
+                QPointF(cx - gap, cy + 2.2 * t),
+                QPointF(cx - gap - wing, cy + 0.8 * t),
+                QPointF(cx - gap - wing, cy - 0.4 * t)]))
+            p.drawPolygon(QPolygonF([              # right wing (mirror)
+                QPointF(cx + gap, cy - 2.2 * t),
+                QPointF(cx + gap, cy + 2.2 * t),
+                QPointF(cx + gap + wing, cy + 0.8 * t),
+                QPointF(cx + gap + wing, cy - 0.4 * t)]))
+            # Centre boresight: open ring + filled dot.
+            br = 1.8 * t
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(col, max(1.0, t * 0.5)))
+            p.drawEllipse(QPointF(cx, cy), br, br)
+            p.setPen(QPen(QColor(Qt.GlobalColor.black), 1))
+            p.setBrush(QBrush(col))
+            p.drawEllipse(QPointF(cx, cy), t * 0.6, t * 0.6)
         else:
             # Classic: split wing bars + centre dot.
             p.drawRect(QRectF(w / 4, cy - 3, w / 6, 6))
