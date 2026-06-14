@@ -123,3 +123,31 @@ keys, see the MAVREQ* button configs):
 
 SAFETY: command functionality is for EXPERIMENTAL-category aircraft
 only. The certified Bonanza remains advisory-display-only.
+
+## GNX-375 connection investigation (2026-06-13)
+
+CORRECTION to the earlier Bonanza notes: the GNX-375 HAS an onboard
+AHRS (it carries GTX 345 lineage; Bill has used its attitude with
+ForeFlight SV on the iPad). So attitude IS available from this box —
+but ONLY over Connext/Bluetooth, NOT over wired NMEA.
+
+Two paths, different payloads:
+- WIRED (`garmin_gnx375` fixgw plugin — Bill's own code, complete,
+  config-enabled GARMIN_GNX375: true): NMEA "Aviation Output 1" over
+  RS-232. Gives LAT/LONG/GS/TRACK/ALT + nav (XTRACK/CDI/COURSE). NO
+  attitude (NMEA aviation format has none). Needs a USB-serial adapter
+  (none attached) + GNX port set to "Aviation Output 1". Ready to fly.
+- CONNEXT/BLUETOOTH: the ONLY path to the GNX's AHRS attitude (+ ADS-B
+  traffic/weather). `gnx_bt_bridge.py` assumed GDL90-over-BT and fails;
+  Bill confirmed planeside it connects but no usable data. Likely cause
+  is a missing Connext SESSION HANDSHAKE (device waits for client hello
+  before streaming) rather than purely a format mismatch.
+
+Next planeside step: run `~/gnx_capture.py` on the Pi (GNX powered +
+paired). Passive 30 s capture -> ~/gnx_capture_<ts>.bin + analysis.
+  * 0 bytes  = handshake required; next capture what ForeFlight sends.
+  * 0x7E-framed bytes = GDL90 (decode via stratux plugin / libGDL90;
+    AHRS = ForeFlight ext msg 0x65, 5 Hz, spec foreflight.com/connect/spec).
+  * other framing = Garmin Connext proprietary; needs a real decoder
+    (prior art: github.com/mjsir911/GarminBLE).
+Then scp the .bin back for decoding.
