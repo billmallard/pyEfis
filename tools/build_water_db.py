@@ -158,9 +158,27 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None):
     return True
 
 
-def import_shapefile(con, path, kind, max_vertices, elev_ft=None):
+def ring_area_km2(vertices):
+    """Approximate area (km^2) of a (lat, lon) ring via the shoelace formula,
+    scaled to km at the ring's mean latitude. Good enough to size-filter."""
+    import math
+    n = len(vertices)
+    if n < 3:
+        return 0.0
+    lat0 = sum(v[0] for v in vertices) / n
+    s = 0.0
+    for i in range(n):
+        lat1, lon1 = vertices[i]
+        lat2, lon2 = vertices[(i + 1) % n]
+        s += lon1 * lat2 - lon2 * lat1
+    area_deg2 = abs(s) / 2.0
+    return area_deg2 * 110.574 * (111.320 * math.cos(math.radians(lat0)))
+
+
+def import_shapefile(con, path, kind, max_vertices, elev_ft=None, min_area_km2=0.0):
     """Import every polygon (and every ring of every multi-polygon) from
-    a shapefile into the water_polygons table."""
+    a shapefile into the water_polygons table. Rings smaller than
+    ``min_area_km2`` are skipped (declutters tiny ponds; 0 disables)."""
     try:
         import shapefile  # pyshp
     except ImportError:
@@ -170,6 +188,7 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None):
 
     sf = shapefile.Reader(str(path))
     n = 0
+    dropped = 0
     for shape in sf.shapes():
         if not shape.points:
             continue
@@ -179,9 +198,13 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None):
             ring = shape.points[parts[k]:parts[k + 1]]
             # Shapefile stores (lon, lat); we want (lat, lon).
             vertices = [(p[1], p[0]) for p in ring]
+            if min_area_km2 > 0 and ring_area_km2(vertices) < min_area_km2:
+                dropped += 1
+                continue
             if insert_polygon(con, kind, elev_ft, vertices, max_vertices):
                 n += 1
-    print(f"  {Path(path).name}: imported {n} ring(s) as kind={kind}")
+    extra = f" ({dropped} below {min_area_km2} km^2 dropped)" if dropped else ""
+    print(f"  {Path(path).name}: imported {n} ring(s) as kind={kind}{extra}")
     return n
 
 
@@ -238,8 +261,15 @@ def main():
                         "coastlines and per-frame water.query goes from "
                         "~50ms to under 1ms. Default 32 (matches "
                         "WaterDB.DEFAULT_MAX_VERTICES). Pass 0 to disable.")
+    p.add_argument("--min-area-km2", type=float, default=0.0,
+                   help="drop inland-water rings smaller than this area "
+                        "(km^2) to declutter tiny ponds. Applies to "
+                        "--lake/--river/--osm-water only; the ocean layer "
+                        "is never filtered (coastline integrity). Default "
+                        "0 disables filtering.")
     args = p.parse_args()
     max_verts = args.max_vertices if args.max_vertices > 0 else None
+    min_area = args.min_area_km2
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -252,16 +282,20 @@ def main():
     for path in args.ocean:
         total += import_shapefile(con, path, "ocean", max_verts)
     for path in args.lake:
-        total += import_shapefile(con, path, "lake", max_verts)
+        total += import_shapefile(con, path, "lake", max_verts,
+                                  min_area_km2=min_area)
     for path in args.river:
-        total += import_shapefile(con, path, "river", max_verts)
+        total += import_shapefile(con, path, "river", max_verts,
+                                  min_area_km2=min_area)
     for path in args.osm_water:
-        total += import_shapefile(con, path, "water", max_verts)
+        total += import_shapefile(con, path, "water", max_verts,
+                                  min_area_km2=min_area)
     for path in args.text:
         total += import_text(con, path, max_verts)
     con.commit()
     con.close()
-    print(f"-> {out} ({total} polygons, vertex cap={max_verts})")
+    filt = f", min-area={min_area} km^2" if min_area > 0 else ""
+    print(f"-> {out} ({total} polygons, vertex cap={max_verts}{filt})")
 
 
 if __name__ == "__main__":
