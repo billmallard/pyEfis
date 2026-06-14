@@ -180,6 +180,10 @@ class DataStatus(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Single-line so a long detail string clips at its column instead of
+        # wrapping down into the next pack's row.
+        flags = int(Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft
+                    | Qt.AlignmentFlag.AlignVCenter)
         w, h = self.width(), self.height()
         x = qRound(w * 0.10)
         col_status = qRound(w * 0.42)
@@ -188,37 +192,37 @@ class DataStatus(QWidget):
 
         p.setFont(self.title_font)
         p.setPen(_TITLE_COLOR)
-        p.drawText(QRectF(x, y, w * 0.8, self.row_h), "NAVIGATION DATA")
+        p.drawText(QRectF(x, y, w * 0.8, self.row_h), flags, "NAVIGATION DATA")
         gen = (self.status or {}).get("generated")
         if gen:
             p.setFont(self.font)
             p.setPen(_DIM)
-            p.drawText(QRectF(col_detail, y, w * 0.35, self.row_h),
+            p.drawText(QRectF(col_detail, y, w - col_detail - x, self.row_h), flags,
                        f"catalog {gen[:10]}")
         y += qRound(self.row_h * 1.8)
 
         p.setFont(self.font)
         if not self.status or not self.status.get("ok"):
             p.setPen(SEVERITY_COLORS["white"])
-            p.drawText(QRectF(x, y, w * 0.8, self.row_h),
+            p.drawText(QRectF(x, y, w - 2 * x, self.row_h), flags,
                        "Data status unavailable — run an update to populate it.")
         else:
             for pk in self.status.get("packs", []):
                 color = SEVERITY_COLORS.get(pk.get("severity", "white"),
                                             SEVERITY_COLORS["white"])
                 p.setPen(color)
-                p.drawText(QRectF(x, y, col_status - x, self.row_h),
+                p.drawText(QRectF(x, y, col_status - x, self.row_h), flags,
                            str(pk.get("name", pk.get("id", ""))))
-                p.drawText(QRectF(col_status, y, col_detail - col_status, self.row_h),
+                p.drawText(QRectF(col_status, y, col_detail - col_status, self.row_h), flags,
                            str(pk.get("status", "")))
-                p.drawText(QRectF(col_detail, y, w - col_detail - x, self.row_h),
+                p.drawText(QRectF(col_detail, y, w - col_detail - x, self.row_h), flags,
                            str(pk.get("detail", "")))
                 y += self.row_h
 
         if self.message:
             p.setFont(self.font)
             p.setPen(SEVERITY_COLORS["white"])
-            p.drawText(QRectF(x, h * 0.74, w * 0.8, self.row_h), self.message)
+            p.drawText(QRectF(x, h * 0.74, w - 2 * x, self.row_h), flags, self.message)
 
 
 class DataAnnunciation(QWidget):
