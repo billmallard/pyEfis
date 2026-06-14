@@ -24,7 +24,8 @@ DataStatus:
         columns: 100
       options:
         continue_screen: PFD
-        # Path to the pyefis-data CLI on the Pi (venv install is symlinked
-        # into ~/.local/bin). Override if installed elsewhere.
-        update_command: pyefis-data
+        # pyefis-data CLI path. An ABSOLUTE (or ~-prefixed) path is required
+        # because pyEfis runs as a systemd service whose minimal PATH excludes
+        # ~/.local/bin. A venv install is symlinked into ~/.local/bin.
+        update_command: ~/.local/bin/pyefis-data
         # status_path defaults to ~/.makerplane/pyefis/status.json

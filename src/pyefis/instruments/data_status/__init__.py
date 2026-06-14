@@ -141,7 +141,10 @@ class DataStatus(QWidget):
         self._proc = QProcess(self)
         self._proc.finished.connect(self._on_update_done)
         self._proc.errorOccurred.connect(self._on_update_error)
-        self._proc.start(self.update_command, ["update"])
+        # Expand ~ so a config can use ~/.local/bin/pyefis-data. An absolute
+        # path is required when pyEfis runs as a systemd service, whose minimal
+        # PATH excludes ~/.local/bin (a bare name would fail to start).
+        self._proc.start(os.path.expanduser(self.update_command), ["update"])
 
     def _on_update_done(self, code, _status):
         self._proc = None

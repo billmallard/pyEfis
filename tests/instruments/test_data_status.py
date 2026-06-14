@@ -84,6 +84,20 @@ def test_continue_without_hmi_does_not_raise(app, tmp_path):
     w._on_continue()                    # no exception
 
 
+def test_update_command_is_expanduser(app, tmp_path, monkeypatch):
+    # The Update button must launch an absolute/~-expanded path (systemd PATH
+    # excludes ~/.local/bin), not a bare name.
+    from PyQt6.QtCore import QProcess
+    captured = {}
+    monkeypatch.setattr(QProcess, "start",
+                        lambda self, prog, args: captured.update(prog=prog, args=args))
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)),
+                               update_command="~/.local/bin/pyefis-data")
+    w._on_update()
+    assert captured["prog"] == os.path.expanduser("~/.local/bin/pyefis-data")
+    assert captured["args"] == ["update"]
+
+
 # --- DataAnnunciation (persistent PFD flag) ---
 
 def test_worst_severity():
