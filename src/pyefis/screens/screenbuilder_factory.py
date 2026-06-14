@@ -22,6 +22,7 @@ from pyefis.instruments import ai
 from pyefis.instruments import airspeed
 from pyefis.instruments import altimeter
 from pyefis.instruments import button
+from pyefis.instruments import data_status
 from pyefis.instruments import gauges
 from pyefis.instruments import hsi
 from pyefis.instruments import listbox
@@ -117,6 +118,20 @@ def build_static_text(
     )
 
 
+def build_data_status(
+    screen, config, font_percent=None, font_family=None, replace=None
+):
+    opts = (config or {}).get("options", {}) or {}
+    kwargs = {"parent": screen, "font_family": font_family}
+    if "status_path" in opts:
+        kwargs["status_path"] = opts["status_path"]
+    if "continue_screen" in opts:
+        kwargs["continue_screen"] = opts["continue_screen"]
+    if "update_command" in opts:
+        kwargs["update_command"] = opts["update_command"]
+    return data_status.DataStatus(**kwargs)
+
+
 def build_listbox(screen, config, font_percent=None, font_family=None, replace=None):
     return listbox.ListBox(
         screen,
@@ -149,6 +164,7 @@ INSTRUMENT_FACTORIES = {
         screen, font_family=font_family
     ),
     "button": build_button,
+    "data_status": build_data_status,
     "heading_display": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.HeadingDisplay(
         screen, font_family=font_family
     ),
