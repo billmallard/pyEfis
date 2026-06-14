@@ -378,7 +378,13 @@ class AI(QGraphicsView):
         #Draw the main horizontal line
         pen = QPen(QColor(Qt.GlobalColor.white))
         pen.setWidth(qRound(self.fontSize * 0.05))
-        self.scene.addLine(0, sceneHeight / 2, sceneWidth, sceneHeight / 2, pen)
+        # z=1 (with the pitch ladder) so the zero-pitch reference line
+        # stays visible OVER the SVS terrain (z=0.5) — otherwise
+        # mountains rising above the horizon hide it, removing the
+        # attitude reference exactly when terrain fills the view.
+        _horizon = self.scene.addLine(
+            0, sceneHeight / 2, sceneWidth, sceneHeight / 2, pen)
+        _horizon.setZValue(1)
         # draw the degree hash marks
         pen.setColor(Qt.GlobalColor.white)
         w = self.scene.width()
