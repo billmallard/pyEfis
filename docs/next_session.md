@@ -151,3 +151,35 @@ paired). Passive 30 s capture -> ~/gnx_capture_<ts>.bin + analysis.
   * other framing = Garmin Connext proprietary; needs a real decoder
     (prior art: github.com/mjsir911/GarminBLE).
 Then scp the .bin back for decoding.
+
+## GNX capture — field procedure (set up 2026-06-13)
+
+AUTO-CAPTURE IS ARMED on the Pi (no planeside shell needed):
+- `gnx-capture.service` ENABLED+active (runs ~/gnx_autocapture.py);
+  `gnx-bt-bridge.service` DISABLED for the capture trip; autopair still
+  enabled. On the next planeside power-up it auto-connects to the GNX and
+  streams raw bytes to ~/gnx_cap/gnx_<ts>.bin (passive — sends nothing).
+- Retrieve at home over Ethernet:
+    scp 'pyefis:~/gnx_cap/*.bin' .
+    ssh pyefis 'journalctl | grep gnx_autocapture | tail'   # byte counts
+  Empty .bin / "0 bytes so far" => GNX needs a Connext handshake (it does
+  not stream unprompted) -> next mission is capturing ForeFlight's hello.
+  Non-empty => the real wire bytes; decode them (GDL90 0x7E framing vs
+  Connext-proprietary).
+- REVERT to normal bridge use after we have data:
+    systemctl --user disable --now gnx-capture.service
+    systemctl --user enable  --now gnx-bt-bridge.service
+
+WIFI AP for planeside SSH (Bill enables shortly before the plane trip;
+needs sudo; held off at the desk for RF reasons):
+    sudo nmcli connection add type wifi ifname wlan0 con-name pyEfis-AP autoconnect yes ssid pyEfis
+    sudo nmcli connection modify pyEfis-AP 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared
+    sudo nmcli connection modify pyEfis-AP wifi-sec.key-mgmt wpa-psk wifi-sec.psk "flymakerplane"
+    sudo nmcli connection up pyEfis-AP        # Pi at 10.42.0.1
+  iPhone joins WiFi "pyEfis" (pw flymakerplane); Terminus -> wpballard@10.42.0.1.
+  Disable at home: sudo nmcli connection down pyEfis-AP
+
+KEYBOARD note: wpballard IS in the input group and /dev/input/event* exist,
+but NO X->quit keybinding is configured on the PFD screen — pressing X was
+never wired to anything. Not needed once SSH (AP) works; a real quit key +
+eglfs key-routing check is a future local-control nicety.
