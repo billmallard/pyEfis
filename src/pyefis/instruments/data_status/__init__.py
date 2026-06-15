@@ -260,7 +260,14 @@ class PackPicker(QWidget):
     def _row(self, p):
         cb = QCheckBox()
         cb.setChecked(bool(p.get("tracked")))
-        cb.setStyleSheet("QCheckBox::indicator{width:26px;height:26px;}")
+        # Fully style the indicator: the native check glyph doesn't render under
+        # the running EFIS's Qt style (a size-only indicator drew nothing on the
+        # device), so paint our own -- outlined box when unchecked, filled green
+        # when checked. Style-independent so it always shows on eglfs.
+        cb.setStyleSheet(
+            "QCheckBox::indicator{width:26px;height:26px;border:2px solid #8FA3B3;"
+            "border-radius:5px;background:#0E141A;}"
+            "QCheckBox::indicator:checked{background:#3FB36B;border:2px solid #79C7A0;}")
         cb.stateChanged.connect(self._update_summary)
         self.checks[p["id"]] = cb
         name = QLabel(_row_label(p))
