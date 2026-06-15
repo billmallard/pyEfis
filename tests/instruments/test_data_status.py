@@ -85,8 +85,9 @@ def test_continue_without_hmi_does_not_raise(app, tmp_path):
 
 
 def test_update_command_is_expanduser(app, tmp_path, monkeypatch):
-    # The Update button must launch an absolute/~-expanded path (systemd PATH
-    # excludes ~/.local/bin), not a bare name.
+    # The updater must launch an absolute/~-expanded path (systemd PATH excludes
+    # ~/.local/bin), not a bare name. The Update button now starts the flow with
+    # a `sources` probe.
     from PyQt6.QtCore import QProcess
     captured = {}
     monkeypatch.setattr(QProcess, "start",
@@ -95,7 +96,126 @@ def test_update_command_is_expanduser(app, tmp_path, monkeypatch):
                                update_command="~/.local/bin/pyefis-data")
     w._on_update()
     assert captured["prog"] == os.path.expanduser("~/.local/bin/pyefis-data")
-    assert captured["args"] == ["update"]
+    assert captured["args"] == ["sources", "--json"]
+
+
+# --- PackPicker + the Update -> sources -> catalog -> install flow ---
+
+CATALOG = {
+    "ok": True, "generated": "2026-06-15T00:00:00Z",
+    "storage": {"root": "/data/makerplane-data",
+                "free_bytes": 350_000_000_000, "total_bytes": 460_000_000_000},
+    "packs": [
+        {"id": "airports-conus", "name": "Airports & Runways", "kind": "navdata",
+         "status": "current", "severity": "none", "bytes": 6_000_000,
+         "regions": ["conus"], "tracked": True, "installed": True},
+        {"id": "terrain-us-west", "name": "Terrain", "kind": "terrain",
+         "status": "MISSING", "severity": "white", "bytes": 9_984_793_161,
+         "regions": ["us-west"], "tracked": False, "installed": False},
+        {"id": "water-na", "name": "Water", "kind": "water",
+         "status": "MISSING", "severity": "white", "bytes": 2_460_000_000,
+         "regions": ["conus", "us-west"], "tracked": False, "installed": False},
+    ],
+}
+
+
+def test_parse_json_skips_leading_lines():
+    out = "  fetch http://x\n  build ...\n" + json.dumps({"ok": True})
+    assert data_status._parse_json(out) == {"ok": True}
+    assert data_status._parse_json("no json here") is None
+
+
+def test_picker_prechecks_tracked_and_renders(app):
+    pk = data_status.PackPicker(doc=CATALOG)
+    pk.resize(800, 480)
+    assert pk.selected_ids() == ["airports-conus"]      # only the tracked pack
+    assert not pk.grab().isNull()                        # paints offscreen
+
+
+def test_picker_install_emits_selection(app):
+    got = {}
+    pk = data_status.PackPicker(doc=CATALOG, on_install=lambda ids: got.update(ids=ids))
+    pk.resize(800, 480)
+    pk.checks["water-na"].setChecked(True)
+    pk._do_install()
+    assert set(got["ids"]) == {"airports-conus", "water-na"}
+
+
+def test_picker_free_space_guard_disables_install(app):
+    tight = {**CATALOG, "storage": {"root": "/x",
+             "free_bytes": 1_000_000_000, "total_bytes": 2_000_000_000}}
+    pk = data_status.PackPicker(doc=tight)
+    pk.resize(800, 480)
+    pk.checks["terrain-us-west"].setChecked(True)        # 9.9 GB > 1 GB free
+    assert pk.btn_install.isEnabled() is False
+
+
+def _stub_run(w):
+    """Replace DataStatus._run with a capture that records (args, on_finish)."""
+    calls = []
+    w._run = lambda args, on_finish: calls.append((list(args), on_finish))
+    return calls
+
+
+def test_update_flow_sources_catalog_picker(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    w._on_update()
+    assert calls[0][0] == ["sources", "--json"]
+    calls[0][1](0, json.dumps({"network": True, "usb": []}))   # sources result
+    assert calls[1][0] == ["catalog", "--json"]                # default: Internet
+    calls[1][1](0, json.dumps(CATALOG))                        # catalog result
+    assert w.mode == "picker" and w.picker is not None
+    assert w.picker.selected_ids() == ["airports-conus"]
+
+
+def test_update_flow_no_sources_is_clean(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    w._on_update()
+    calls[0][1](0, json.dumps({"network": False, "usb": []}))
+    assert w.mode == "status"
+    assert "No internet" in w.message and w.btn_update.isEnabled()
+
+
+def test_update_flow_usb_only_uses_source(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    w._on_update()
+    calls[0][1](0, json.dumps({"network": False, "usb": ["/media/u/stick/makerplane-data"]}))
+    assert calls[1][0] == ["catalog", "--json", "--source",
+                           "/media/u/stick/makerplane-data"]
+
+
+def test_update_flow_install_then_back_to_status(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    w._on_update()
+    calls[0][1](0, json.dumps({"network": True, "usb": []}))
+    calls[1][1](0, json.dumps(CATALOG))
+    w.picker.checks["water-na"].setChecked(True)
+    w._install_selected(w.picker.selected_ids())
+    assert w.mode == "busy"
+    assert calls[2][0] == ["update", "--only", "airports-conus,water-na"]
+    calls[2][1](0, "  airports-conus  installed 2606\n")        # success
+    assert w.mode == "status" and "complete" in w.message.lower()
+    assert w.picker is None
+
+
+def test_update_flow_cancel_returns_to_status(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    w._on_update()
+    calls[0][1](0, json.dumps({"network": True, "usb": []}))
+    calls[1][1](0, json.dumps(CATALOG))
+    assert w.mode == "picker"
+    w._cancel_picker()
+    assert w.mode == "status" and w.picker is None
 
 
 # --- DataAnnunciation (persistent PFD flag) ---
