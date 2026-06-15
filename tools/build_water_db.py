@@ -111,19 +111,66 @@ CREATE VIRTUAL TABLE IF NOT EXISTS water_rtree USING rtree(
 """
 
 
+_M_PER_DEG = 111_320.0
+_BASE_TOL_DEG = 40.0 / _M_PER_DEG       # ~40 m — finer than the SVS can resolve
+
+
+def _rdp(points, tol_deg):
+    """Iterative Douglas-Peucker on an (N, 2) lat/lon array. Shape-preserving:
+    every simplified edge stays within ``tol_deg`` of the original outline, so
+    unlike stride decimation it can never cut a chord across a winding river or
+    a branching reservoir and balloon it into a filled blob. (Same algorithm
+    the roads build uses — see tools/build_highway_db.py.)"""
+    n = len(points)
+    if n < 3:
+        return points
+    keep = np.zeros(n, dtype=bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b <= a + 1:
+            continue
+        seg = points[a:b + 1]
+        d = seg[-1] - seg[0]
+        L = np.hypot(d[0], d[1])
+        if L < 1e-12:
+            dist = np.hypot(seg[:, 0] - seg[0, 0], seg[:, 1] - seg[0, 1])
+        else:
+            dist = np.abs(d[0] * (seg[0, 1] - seg[:, 1])
+                          - d[1] * (seg[0, 0] - seg[:, 0])) / L
+        i = int(np.argmax(dist))
+        if dist[i] > tol_deg:
+            keep[a + i] = True
+            stack.append((a, a + i))
+            stack.append((a + i, b))
+    return points[keep]
+
+
 def _decimate(vertices, max_vertices):
-    """Stride-decimate ``vertices`` down to at most ``max_vertices``,
-    always preserving the first and last point so the polygon's
-    bounding extent stays intact. Match WaterDB._decode_vertices."""
+    """Simplify a polygon ring to <= ``max_vertices`` with Douglas-Peucker,
+    escalating the tolerance until it fits. Replaces the old stride decimation,
+    which connected every Nth perimeter point and, on long/winding/branching
+    water features (rivers, reservoir systems), cut chords across the feature
+    and rendered a huge solid blob over dry land. The render side
+    (WaterDB._decode_vertices) caps at this same 32, so a stored ring already
+    <= the cap is never re-decimated (and re-blobbed) at draw time."""
     n = len(vertices)
     if max_vertices is None or n <= max_vertices:
         return vertices
-    out = []
-    stride = (n - 1) / (max_vertices - 1)
-    for k in range(max_vertices):
-        i = int(round(k * stride))
-        out.append(vertices[i])
-    return out
+    pts = np.asarray(vertices, dtype=np.float64)
+    tol = _BASE_TOL_DEG
+    out = pts
+    for _ in range(24):                 # escalate tolerance until under the cap
+        out = _rdp(pts, tol)
+        if len(out) <= max_vertices:
+            return [(float(p[0]), float(p[1])) for p in out]
+        tol *= 1.6
+    # Pathological ring (near-fractal coastline) — DP still over the cap even at
+    # a large tolerance; stride the DP-simplified result as a last resort.
+    step = (len(out) - 1) / (max_vertices - 1)
+    return [(float(out[int(round(k * step))][0]), float(out[int(round(k * step))][1]))
+            for k in range(max_vertices)]
 
 
 def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None):
