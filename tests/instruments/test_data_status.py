@@ -180,7 +180,7 @@ def test_picker_free_space_guard_disables_install(app):
 def _stub_run(w):
     """Replace DataStatus._run with a capture that records (args, on_finish)."""
     calls = []
-    w._run = lambda args, on_finish: calls.append((list(args), on_finish))
+    w._run = lambda args, on_finish, on_line=None: calls.append((list(args), on_finish))
     return calls
 
 
@@ -227,7 +227,7 @@ def test_update_flow_install_then_back_to_status(app, tmp_path):
     w.picker.checks["water-na"].setChecked(True)
     w._install_selected(w.picker.selected_ids())
     assert w.mode == "busy"
-    assert calls[2][0] == ["update", "--only", "airports-conus,water-na"]
+    assert calls[2][0] == ["update", "--only", "airports-conus,water-na", "--progress"]
     calls[2][1](0, "  airports-conus  installed 2606\n")        # success
     assert w.mode == "status" and "complete" in w.message.lower()
     assert w.picker is None
@@ -269,6 +269,38 @@ def test_update_flow_storage_chooser_passes_root(app, tmp_path):
     w._install_selected(w.picker.selected_ids())
     assert "--root" in calls[3][0]
     assert calls[3][0][calls[3][0].index("--root") + 1] == "/data/makerplane-data"
+
+
+def test_progress_line_parsing_updates_bar(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(900, 560)
+    w.mode = "busy"
+    w._on_progress_line(json.dumps({"event": "begin", "total": 3}))
+    assert w._prog["total"] == 3 and w._prog["pct"] is None
+    w._on_progress_line(json.dumps({"event": "pack", "index": 2, "total": 3,
+                                    "id": "terrain-us-west", "name": "Terrain"}))
+    assert w._prog["index"] == 2 and w._prog["name"] == "Terrain"
+    w._on_progress_line(json.dumps({"event": "progress", "id": "terrain-us-west",
+                                    "done": 5, "total": 10, "pct": 50}))
+    assert w._prog["pct"] == 50
+    w._on_progress_line("  some plain log line, not json")    # ignored, no raise
+    assert w._prog["pct"] == 50
+    assert not w.grab().isNull()                                # busy bar renders
+
+
+def test_install_passes_progress_flag_and_streams(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(900, 560)
+    captured = {}
+    w._run = lambda args, on_finish, on_line=None: captured.update(
+        args=args, on_finish=on_finish, on_line=on_line)
+    w.picker = None
+    w._install_selected(["airports-conus", "water-na"])
+    assert "--progress" in captured["args"]
+    assert captured["on_line"] == w._on_progress_line       # progress is streamed
+    # a progress event flowing through the streamed callback updates the bar
+    captured["on_line"](json.dumps({"event": "begin", "total": 2}))
+    assert w._prog["total"] == 2
 
 
 def test_update_flow_cancel_returns_to_status(app, tmp_path):

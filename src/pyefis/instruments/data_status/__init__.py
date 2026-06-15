@@ -447,6 +447,7 @@ class DataStatus(QWidget):
         self.picker = None
         self._sources = None
         self._source = None
+        self._prog = None             # install progress: {index,total,name,pct}
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
@@ -484,23 +485,34 @@ class DataStatus(QWidget):
         log.info("Continue pressed (no HMI action available)")
 
     # --- subprocess plumbing ---
-    def _run(self, args, on_finish):
+    def _run(self, args, on_finish, on_line=None):
         """Run ``pyefis-data <args>`` asynchronously and call
-        ``on_finish(code, stdout_text)`` exactly once. A failure to even start
-        the updater routes to ``_fail`` (never blocks the screen)."""
+        ``on_finish(code, stdout_text)`` exactly once. If ``on_line`` is given,
+        it's called with each complete stdout line as it arrives (used to stream
+        install-progress events). A failure to even start the updater routes to
+        ``_fail`` (never blocks the screen)."""
         if self._proc is not None:
             return
         proc = QProcess(self)
         self._proc = proc
-        state = {"done": False}
+        state = {"done": False, "out": "", "buf": ""}
+
+        def read_ready():
+            chunk = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+            state["out"] += chunk
+            if on_line:
+                state["buf"] += chunk
+                while "\n" in state["buf"]:
+                    line, state["buf"] = state["buf"].split("\n", 1)
+                    on_line(line)
 
         def finish(code, _status):
             if state["done"]:
                 return
             state["done"] = True
-            out = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+            read_ready()                       # drain anything buffered
             self._proc = None
-            on_finish(code, out)
+            on_finish(code, state["out"])
 
         def errored(_e):
             if state["done"]:
@@ -509,6 +521,7 @@ class DataStatus(QWidget):
             self._proc = None
             self._fail("Updater unavailable on this device.")
 
+        proc.readyReadStandardOutput.connect(read_ready)
         proc.finished.connect(finish)
         proc.errorOccurred.connect(errored)
         # Expand ~ so a config can use ~/.local/bin/pyefis-data. An absolute
@@ -619,19 +632,46 @@ class DataStatus(QWidget):
             return
         chosen_root = getattr(self.picker, "chosen_root", None) if self.picker else None
         self.mode = "busy"
+        self._prog = None
         self.message = "Installing… large packs can take several minutes."
         self._sync_visibility()
         self.update()
-        args = ["update", "--only", ",".join(ids)]
+        args = ["update", "--only", ",".join(ids), "--progress"]
         if self._source:
             args += ["--source", self._source]
         if chosen_root:                          # picker storage chooser changed it
             args += ["--root", chosen_root]
-        self._run(args, self._after_install)
+        self._run(args, self._after_install, on_line=self._on_progress_line)
+
+    def _on_progress_line(self, line):
+        """Parse one JSON progress event from `update --progress` and refresh
+        the busy screen's bar. Non-JSON lines (plain logs) are ignored."""
+        line = line.strip()
+        if not line.startswith("{"):
+            return
+        try:
+            ev = json.loads(line)
+        except Exception:
+            return
+        kind = ev.get("event")
+        if kind == "begin":
+            self._prog = {"total": ev.get("total", 0), "index": 0, "name": "", "pct": None}
+        elif kind == "pack":
+            self._prog = {"total": ev.get("total", 0), "index": ev.get("index", 0),
+                          "name": ev.get("name", ""), "pct": None}
+        elif kind == "progress":
+            if self._prog is None:
+                self._prog = {"total": 0, "index": 0, "name": ""}
+            self._prog["pct"] = ev.get("pct")
+        else:
+            return
+        if self.mode == "busy":
+            self.update()
 
     def _after_install(self, code, out):
         self._close_picker()
         self.mode = "status"
+        self._prog = None
         self.btn_update.setEnabled(True)
         self.message = ("Update complete." if code == 0 else
                         "Update finished with problems — your previous data is "
@@ -684,13 +724,43 @@ class DataStatus(QWidget):
         w, h = self.width(), self.height()
 
         if self.mode == "busy":
-            # Installing: a calm centred message; the picker is hidden and the
-            # buttons are too, so nothing competes with it.
+            # Installing: a calm centred panel with a per-pack progress bar.
             p.fillRect(self.rect(), QColor(11, 16, 21))
+            hc = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             p.setFont(self.title_font)
             p.setPen(_TITLE_COLOR)
-            p.drawText(self.rect(), int(Qt.AlignmentFlag.AlignCenter),
-                       self.message or "Installing…")
+            p.drawText(QRectF(0, h * 0.30, w, self.row_h * 1.4), hc,
+                       "Installing navigation data")
+            prog = self._prog
+            p.setFont(self.font)
+            if prog and prog.get("total"):
+                name = prog.get("name") or "…"
+                sub = f"{name}    ({prog.get('index', 0)} of {prog.get('total', 0)})"
+                p.setPen(SEVERITY_COLORS["white"])
+                p.drawText(QRectF(0, h * 0.30 + self.row_h * 1.7, w, self.row_h), hc, sub)
+                bw = int(w * 0.6)
+                bx = (w - bw) // 2
+                by = qRound(h * 0.30 + self.row_h * 3.1)
+                bh = max(10, qRound(self.row_h * 0.5))
+                pct = prog.get("pct")
+                p.setPen(QColor(70, 84, 96))
+                p.setBrush(QColor(20, 28, 36))
+                p.drawRoundedRect(QRectF(bx, by, bw, bh), 4, 4)
+                if pct is not None:
+                    fillw = int(bw * max(0, min(100, pct)) / 100)
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QColor(63, 179, 107))
+                    if fillw > 0:
+                        p.drawRoundedRect(QRectF(bx, by, fillw, bh), 4, 4)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(SEVERITY_COLORS["white"])
+                p.drawText(QRectF(0, by + bh + 6, w, self.row_h),
+                           int(Qt.AlignmentFlag.AlignHCenter),
+                           f"{pct}%" if pct is not None else "working…")
+            else:
+                p.setPen(SEVERITY_COLORS["white"])
+                p.drawText(QRectF(0, h * 0.30 + self.row_h * 1.7, w, self.row_h),
+                           hc, self.message or "Installing…")
             return
 
         # Single-line so a long detail string clips at its column instead of
