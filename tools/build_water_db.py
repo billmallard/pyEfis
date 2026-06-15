@@ -222,10 +222,17 @@ def ring_area_km2(vertices):
     return area_deg2 * 110.574 * (111.320 * math.cos(math.radians(lat0)))
 
 
-def import_shapefile(con, path, kind, max_vertices, elev_ft=None, min_area_km2=0.0):
+def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
+                     min_area_km2=0.0, keep_fclass=None):
     """Import every polygon (and every ring of every multi-polygon) from
     a shapefile into the water_polygons table. Rings smaller than
-    ``min_area_km2`` are skipped (declutters tiny ponds; 0 disables)."""
+    ``min_area_km2`` are skipped (declutters tiny ponds; 0 disables).
+
+    ``keep_fclass`` (a set of OSM feature classes) keeps only those classes
+    when the shapefile has an ``fclass`` field — used to keep still open water
+    (``water``, ``reservoir``) and drop ``riverbank`` (rivers render as filled
+    lake-blobs, not rivers) and ``wetland*``. Shapefiles without an ``fclass``
+    field (the ocean coastline) are never filtered."""
     try:
         import shapefile  # pyshp
     except ImportError:
@@ -234,9 +241,19 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None, min_area_km2=0
         sys.exit(2)
 
     sf = shapefile.Reader(str(path))
+    fields = [f[0] for f in sf.fields[1:]]
+    fclass_idx = fields.index("fclass") if "fclass" in fields else None
+    use_fclass = bool(keep_fclass) and fclass_idx is not None
     n = 0
     dropped = 0
-    for shape in sf.shapes():
+    fc_dropped = 0
+    records = sf.iterShapeRecords() if use_fclass else (
+        (shape, None) for shape in sf.shapes())
+    for item in records:
+        shape = item.shape if use_fclass else item[0]
+        if use_fclass and item.record[fclass_idx] not in keep_fclass:
+            fc_dropped += 1
+            continue
         if not shape.points:
             continue
         # shape.parts marks the start of each ring; iterate ring by ring.
@@ -250,7 +267,12 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None, min_area_km2=0
                 continue
             if insert_polygon(con, kind, elev_ft, vertices, max_vertices):
                 n += 1
-    extra = f" ({dropped} below {min_area_km2} km^2 dropped)" if dropped else ""
+    notes = []
+    if dropped:
+        notes.append(f"{dropped} below {min_area_km2} km^2")
+    if fc_dropped:
+        notes.append(f"{fc_dropped} off-class")
+    extra = f" ({', '.join(notes)} dropped)" if notes else ""
     print(f"  {Path(path).name}: imported {n} ring(s) as kind={kind}{extra}")
     return n
 
@@ -314,9 +336,15 @@ def main():
                         "--lake/--river/--osm-water only; the ocean layer "
                         "is never filtered (coastline integrity). Default "
                         "0 disables filtering.")
+    p.add_argument("--keep-fclass", nargs="*", default=None,
+                   help="for OSM shapefiles with an 'fclass' field, keep only "
+                        "these classes (e.g. water reservoir). Drops 'riverbank' "
+                        "(rivers fill as lake-blobs) and 'wetland*'. The ocean "
+                        "layer (no fclass) is unaffected. Omit to keep all.")
     args = p.parse_args()
     max_verts = args.max_vertices if args.max_vertices > 0 else None
     min_area = args.min_area_km2
+    keep_fclass = set(args.keep_fclass) if args.keep_fclass else None
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -330,13 +358,13 @@ def main():
         total += import_shapefile(con, path, "ocean", max_verts)
     for path in args.lake:
         total += import_shapefile(con, path, "lake", max_verts,
-                                  min_area_km2=min_area)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass)
     for path in args.river:
         total += import_shapefile(con, path, "river", max_verts,
-                                  min_area_km2=min_area)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass)
     for path in args.osm_water:
         total += import_shapefile(con, path, "water", max_verts,
-                                  min_area_km2=min_area)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass)
     for path in args.text:
         total += import_text(con, path, max_verts)
     con.commit()
