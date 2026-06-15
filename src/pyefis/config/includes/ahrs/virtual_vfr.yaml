@@ -5,8 +5,23 @@ instruments:
     span:
       rows: 110
       columns: 155
-    options: 
+    options:
       font_percent: 0.025
+      # Synthetic Vision (terrain + water/roads overlays + airport/runway and
+      # obstacle symbology) is OFF by default. To turn it on, uncomment the
+      # block below. The SVS only renders when an `svs:` block is present AND
+      # `enabled: true` -- without it the attitude view shows sky/ground only.
+      # Paths assume the makerplane-data updater's standard Pi data root
+      # (/data/makerplane-data); adjust if your data root differs. Install the
+      # data from the on-EFIS Update screen or `pyefis-data update`.
+      # svs:
+      #   enabled: true
+      #   range_nm: 30
+      #   tile_path: /data/makerplane-data/terrain/tiles
+      #   nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
+      #   dof_db_path: /data/makerplane-data/obstacles/current/obstacles.sqlite
+      #   water_db_path: /data/makerplane-data/water/current/water.sqlite
+      #   highway_db_path: /data/makerplane-data/highways/current/highways.sqlite
   - type: horizontal_situation_indicator
     disabled: HSI
     row: 0
