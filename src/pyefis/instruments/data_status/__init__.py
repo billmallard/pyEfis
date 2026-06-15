@@ -128,6 +128,24 @@ def _row_label(p):
     return p.get("name") or p.get("id", "")
 
 
+class _PackRow(QWidget):
+    """A full-width touch target for one pack: tapping anywhere on the row
+    toggles its checkbox. The checkbox (and labels) are made mouse-transparent
+    so every tap lands on the row, not the tiny indicator — essential on the
+    eglfs touchscreen, where a precise tap on a 24px box is unreliable and is
+    easily mistaken for the start of a scroll drag. Toggling on *press* (not
+    release) keeps it responsive and side-steps the tap-vs-drag ambiguity;
+    single-finger taps select, two-finger gestures scroll."""
+
+    def __init__(self, checkbox, parent=None):
+        super().__init__(parent)
+        self._cb = checkbox
+
+    def mousePressEvent(self, event):
+        self._cb.toggle()
+        event.accept()
+
+
 class PackPicker(QWidget):
     """Touch list of every available pack, grouped by kind, pre-checked from
     the device's current selection. Emits the chosen ids to install. Built from
@@ -148,6 +166,7 @@ class PackPicker(QWidget):
         self.packs = doc.get("packs", []) or []
         self.storage = doc.get("storage", {}) or {}
         self.checks = {}                                  # id -> QCheckBox
+        self.rows = {}                                     # id -> _PackRow
         self.bytes_by_id = {p["id"]: p.get("bytes", 0) for p in self.packs}
         self.setStyleSheet("background:#0B1015;")
         self._build(source_label, alt_source_label)
@@ -239,13 +258,9 @@ class PackPicker(QWidget):
         self._update_summary()
 
     def _row(self, p):
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(2, 5, 2, 5)
-        h.setSpacing(10)
         cb = QCheckBox()
         cb.setChecked(bool(p.get("tracked")))
-        cb.setStyleSheet("QCheckBox::indicator{width:24px;height:24px;}")
+        cb.setStyleSheet("QCheckBox::indicator{width:26px;height:26px;}")
         cb.stateChanged.connect(self._update_summary)
         self.checks[p["id"]] = cb
         name = QLabel(_row_label(p))
@@ -256,9 +271,19 @@ class PackPicker(QWidget):
         meta = QLabel(f"{fmt_bytes(p.get('bytes', 0))}    {p.get('status', '')}")
         meta.setStyleSheet(f"color:{col};")
         meta.setFont(self._f(13))
+        # The whole row is the touch target; children must not intercept taps.
+        for child in (cb, name, meta):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        row = _PackRow(cb)
+        row.setMinimumHeight(48)                          # generous touch target
+        row.setStyleSheet("_PackRow:hover{background:#141C24;}")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(4, 6, 4, 6)
+        h.setSpacing(10)
         h.addWidget(cb)
         h.addWidget(name, 1)
         h.addWidget(meta)
+        self.rows[p["id"]] = row
         return row
 
     def selected_ids(self):

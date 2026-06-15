@@ -132,6 +132,25 @@ def test_picker_prechecks_tracked_and_renders(app):
     assert not pk.grab().isNull()                        # paints offscreen
 
 
+def test_picker_row_tap_toggles_checkbox(app):
+    # On the touchscreen the whole row must toggle (tapping the tiny indicator
+    # is unreliable); children are mouse-transparent and the row toggles on tap.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent, QPointF, Qt
+    pk = data_status.PackPicker(doc=CATALOG)
+    pk.resize(800, 480)
+    assert "water-na" not in pk.selected_ids()
+    assert pk.checks["water-na"].testAttribute(
+        Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    ev = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(5, 5),
+                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.NoModifier)
+    pk.rows["water-na"].mousePressEvent(ev)
+    assert "water-na" in pk.selected_ids()               # tap selected it
+    pk.rows["water-na"].mousePressEvent(ev)
+    assert "water-na" not in pk.selected_ids()           # tap again deselects
+
+
 def test_picker_install_emits_selection(app):
     got = {}
     pk = data_status.PackPicker(doc=CATALOG, on_install=lambda ids: got.update(ids=ids))
