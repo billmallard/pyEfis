@@ -156,17 +156,21 @@ class PackPicker(QWidget):
 
     def __init__(self, parent=None, *, doc=None, source_label="Internet",
                  alt_source_label=None, font_family="DejaVu Sans Condensed",
-                 on_install=None, on_cancel=None, on_switch=None):
+                 on_install=None, on_cancel=None, on_switch=None,
+                 on_change_storage=None):
         super().__init__(parent)
         self.font_family = font_family
         self._on_install = on_install or (lambda ids: None)
         self._on_cancel = on_cancel or (lambda: None)
         self._on_switch = on_switch or (lambda: None)
+        self._on_change_storage = on_change_storage      # None -> no Change button
         doc = doc or {}
         self.packs = doc.get("packs", []) or []
         self.storage = doc.get("storage", {}) or {}
+        self.chosen_root = None                            # set if user picks a drive
         self.checks = {}                                  # id -> QCheckBox
         self.rows = {}                                     # id -> _PackRow
+        self._chooser = None                               # drive-chooser overlay
         self.bytes_by_id = {p["id"]: p.get("bytes", 0) for p in self.packs}
         self.setStyleSheet("background:#0B1015;")
         self._build(source_label, alt_source_label)
@@ -201,16 +205,27 @@ class PackPicker(QWidget):
             head.addWidget(sw)
         outer.addLayout(head)
 
-        st = self.storage
-        if st.get("free_bytes") is not None:
-            stxt = (f"Installing to {st.get('root')}  -  "
-                    f"{fmt_bytes(st['free_bytes'])} free of {fmt_bytes(st.get('total_bytes'))}")
-        else:
-            stxt = f"Installing to {st.get('root', '(default location)')}"
-        self.storage_label = QLabel(stxt)
+        srow = QHBoxLayout()
+        self.storage_label = QLabel(self._storage_text())
         self.storage_label.setStyleSheet("color:#8FA0AB;")
         self.storage_label.setFont(self._f(13))
-        outer.addWidget(self.storage_label)
+        srow.addWidget(self.storage_label)
+        srow.addStretch(1)
+        if self._on_change_storage is not None:
+            chg = QPushButton("Change…")
+            chg.setStyleSheet(_BTN_STYLE + "QPushButton{padding:5px 18px;}")
+            chg.setFont(self._f(13))
+            chg.setMinimumHeight(34)
+            chg.setCursor(Qt.CursorShape.PointingHandCursor)
+            chg.clicked.connect(lambda: self._on_change_storage())
+            srow.addWidget(chg)
+        outer.addLayout(srow)
+        self.warn_label = QLabel("")
+        self.warn_label.setStyleSheet("color:#FFB000;")
+        self.warn_label.setFont(self._f(12))
+        self.warn_label.setWordWrap(True)
+        self.warn_label.setVisible(False)
+        outer.addWidget(self.warn_label)
 
         area = QScrollArea(self)
         area.setWidgetResizable(True)
@@ -243,16 +258,19 @@ class PackPicker(QWidget):
         foot.addWidget(self.summary)
         foot.addStretch(1)
         cancel = QPushButton("Cancel")
-        cancel.setStyleSheet(_BTN_STYLE)
         cancel.clicked.connect(lambda: self._on_cancel())
         self.btn_install = QPushButton("Install selected")
-        self.btn_install.setStyleSheet(_BTN_STYLE)
         self.btn_install.clicked.connect(self._do_install)
+        # Extra horizontal padding around the label and a wider gap between the
+        # two buttons (touch comfort / breathing room).
+        padded = _BTN_STYLE + "QPushButton{padding:7px 30px;}"
         for b in (cancel, self.btn_install):
+            b.setStyleSheet(padded)
             b.setFont(self._f(15))
-            b.setMinimumHeight(42)
+            b.setMinimumHeight(44)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         foot.addWidget(cancel)
+        foot.addSpacing(20)
         foot.addWidget(self.btn_install)
         outer.addLayout(foot)
         self._update_summary()
@@ -314,6 +332,99 @@ class PackPicker(QWidget):
     def _do_install(self):
         self.btn_install.setEnabled(False)
         self._on_install(self.selected_ids())
+
+    # --- storage chooser ---
+    def _storage_text(self):
+        st = self.storage
+        if st.get("free_bytes") is not None:
+            return (f"Installing to {st.get('root')}  -  "
+                    f"{fmt_bytes(st['free_bytes'])} free of {fmt_bytes(st.get('total_bytes'))}")
+        return f"Installing to {st.get('root', '(default location)')}"
+
+    def open_drive_chooser(self, drives):
+        """Overlay a list of candidate storage drives (from `drives --json`).
+        Tapping one sets it as the install target (and warns if removable)."""
+        self._close_chooser()
+        self._chooser = QWidget(self)
+        self._chooser.setStyleSheet("background:#0B1015;")
+        v = QVBoxLayout(self._chooser)
+        v.setContentsMargins(20, 16, 20, 16)
+        v.setSpacing(10)
+        title = QLabel("Choose where data is stored")
+        title.setStyleSheet("color:#EEEEEE;")
+        title.setFont(self._f(18, bold=True))
+        v.addWidget(title)
+        hint = QLabel("Pick a drive with room for what you're installing. An "
+                      "internal drive is recommended for the permanent store.")
+        hint.setStyleSheet("color:#8FA0AB;")
+        hint.setFont(self._f(13))
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+        area = QScrollArea(self._chooser)
+        area.setWidgetResizable(True)
+        area.setStyleSheet("QScrollArea{border:1px solid #2B3742;border-radius:8px;"
+                           "background:#0E141A;}")
+        content = QWidget()
+        col = QVBoxLayout(content)
+        col.setContentsMargins(8, 6, 8, 8)
+        col.setSpacing(4)
+        if not drives:
+            none = QLabel("No writable drives found.")
+            none.setStyleSheet("color:#DDDDDD;")
+            none.setFont(self._f(14))
+            col.addWidget(none)
+        for d in drives:
+            col.addWidget(self._drive_row(d))
+        col.addStretch(1)
+        area.setWidget(content)
+        v.addWidget(area, 1)
+        back = QPushButton("Back")
+        back.setStyleSheet(_BTN_STYLE + "QPushButton{padding:7px 30px;}")
+        back.setFont(self._f(15))
+        back.setMinimumHeight(44)
+        back.clicked.connect(self._close_chooser)
+        brow = QHBoxLayout()
+        brow.addStretch(1)
+        brow.addWidget(back)
+        v.addLayout(brow)
+        self._chooser.setGeometry(0, 0, self.width(), self.height())
+        self._chooser.show()
+        self._chooser.raise_()
+
+    def _drive_row(self, d):
+        tag = "USB / removable" if d.get("removable") else "internal"
+        btn = QPushButton(f"  {d['mount']}      [{tag}]      "
+                          f"{fmt_bytes(d.get('free_bytes', 0))} free of "
+                          f"{fmt_bytes(d.get('total_bytes', 0))}")
+        btn.setStyleSheet(_BTN_STYLE + "QPushButton{text-align:left;padding:12px 16px;}")
+        btn.setFont(self._f(14))
+        btn.setMinimumHeight(54)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda: self._apply_storage(d))
+        return btn
+
+    def _apply_storage(self, d):
+        root = d["mount"].rstrip("/") + "/makerplane-data"
+        self.chosen_root = root
+        self.storage = {"root": root, "free_bytes": d.get("free_bytes"),
+                        "total_bytes": d.get("total_bytes")}
+        self.storage_label.setText(self._storage_text())
+        if d.get("removable"):
+            self.warn_label.setText(
+                "Removable drive selected. It may not be mounted on the next "
+                "boot - terrain and other data could be unavailable until it is. "
+                "An internal drive is recommended for the permanent store.")
+            self.warn_label.setVisible(True)
+        else:
+            self.warn_label.setVisible(False)
+        self._close_chooser()
+        self._update_summary()
+
+    def _close_chooser(self):
+        if self._chooser is not None:
+            self._chooser.hide()
+            self._chooser.deleteLater()
+            self._chooser = None
 
 
 class DataStatus(QWidget):
@@ -473,7 +584,8 @@ class DataStatus(QWidget):
             font_family=self.font_family,
             on_install=self._install_selected,
             on_cancel=self._cancel_picker,
-            on_switch=self._switch_source)
+            on_switch=self._switch_source,
+            on_change_storage=self._choose_storage)
         self.mode = "picker"
         self.message = ""
         self._sync_visibility()
@@ -490,9 +602,22 @@ class DataStatus(QWidget):
     def _cancel_picker(self):
         self._fail("")                # back to status, no message
 
+    def _choose_storage(self):
+        """Picker 'Change…' -> enumerate drives, then show the chooser overlay."""
+        if self._proc is not None or self.picker is None:
+            return
+        self._run(["drives", "--json"], self._after_drives)
+
+    def _after_drives(self, code, out):
+        if self.picker is None:
+            return
+        doc = _parse_json(out) or {}
+        self.picker.open_drive_chooser(doc.get("drives", []))
+
     def _install_selected(self, ids):
         if not ids:
             return
+        chosen_root = getattr(self.picker, "chosen_root", None) if self.picker else None
         self.mode = "busy"
         self.message = "Installing… large packs can take several minutes."
         self._sync_visibility()
@@ -500,6 +625,8 @@ class DataStatus(QWidget):
         args = ["update", "--only", ",".join(ids)]
         if self._source:
             args += ["--source", self._source]
+        if chosen_root:                          # picker storage chooser changed it
+            args += ["--root", chosen_root]
         self._run(args, self._after_install)
 
     def _after_install(self, code, out):

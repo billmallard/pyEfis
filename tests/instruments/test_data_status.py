@@ -119,6 +119,14 @@ CATALOG = {
 }
 
 
+DRIVES = {"drives": [
+    {"mount": "/data", "device": "/dev/mmcblk0p1", "fstype": "ext4",
+     "free_bytes": 360_000_000_000, "total_bytes": 460_000_000_000, "removable": False},
+    {"mount": "/media/wpballard/SSD", "device": "/dev/sda1", "fstype": "exfat",
+     "free_bytes": 900_000_000_000, "total_bytes": 1_000_000_000_000, "removable": True},
+]}
+
+
 def test_parse_json_skips_leading_lines():
     out = "  fetch http://x\n  build ...\n" + json.dumps({"ok": True})
     assert data_status._parse_json(out) == {"ok": True}
@@ -223,6 +231,44 @@ def test_update_flow_install_then_back_to_status(app, tmp_path):
     calls[2][1](0, "  airports-conus  installed 2606\n")        # success
     assert w.mode == "status" and "complete" in w.message.lower()
     assert w.picker is None
+
+
+def test_picker_storage_chooser_removable_warns(app):
+    pk = data_status.PackPicker(doc=CATALOG, on_change_storage=lambda: None)
+    pk.resize(900, 560)
+    assert pk.chosen_root is None
+    pk.open_drive_chooser(DRIVES["drives"])
+    assert pk._chooser is not None and not pk.grab().isNull()
+    pk._apply_storage(DRIVES["drives"][1])               # the removable SSD
+    assert pk.chosen_root == "/media/wpballard/SSD/makerplane-data"
+    assert pk._chooser is None                            # overlay closed
+    assert not pk.warn_label.isHidden()                   # removable warning shown
+    assert "/media/wpballard/SSD/makerplane-data" in pk.storage_label.text()
+
+
+def test_picker_storage_internal_no_warning(app):
+    pk = data_status.PackPicker(doc=CATALOG, on_change_storage=lambda: None)
+    pk.resize(900, 560)
+    pk._apply_storage(DRIVES["drives"][0])                # internal /data
+    assert pk.chosen_root == "/data/makerplane-data"
+    assert pk.warn_label.isHidden() is True
+
+
+def test_update_flow_storage_chooser_passes_root(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(900, 560)
+    calls = _stub_run(w)
+    w._on_update()
+    calls[0][1](0, json.dumps({"network": True, "usb": []}))   # sources
+    calls[1][1](0, json.dumps(CATALOG))                        # catalog
+    w._choose_storage()
+    assert calls[2][0] == ["drives", "--json"]
+    calls[2][1](0, json.dumps(DRIVES))                         # drives
+    assert w.picker._chooser is not None
+    w.picker._apply_storage(DRIVES["drives"][0])               # pick /data
+    w._install_selected(w.picker.selected_ids())
+    assert "--root" in calls[3][0]
+    assert calls[3][0][calls[3][0].index("--root") + 1] == "/data/makerplane-data"
 
 
 def test_update_flow_cancel_returns_to_status(app, tmp_path):
