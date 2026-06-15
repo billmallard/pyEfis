@@ -622,8 +622,40 @@ class AI(QGraphicsView):
             return
         self._frame_last_pose = pose_key
         self._frame_dirty = False
+        self._update_land_brush()
         self.redraw()
         self.update()
+
+    def _svs_drawing(self):
+        """True when the SVS is genuinely painting terrain — enabled, ready,
+        not GL-failed, and it actually drew terrain on the last frame. Used to
+        decide whether the artificial brown ground can be replaced by sky."""
+        s = self.svs
+        if s is None or isinstance(s, dict):
+            return False
+        return (getattr(s, "enabled", False)
+                and getattr(s, "ready", False)
+                and not getattr(s, "gl_failed", False)
+                and getattr(s, "drew_terrain", False))
+
+    def _update_land_brush(self):
+        """Set the below-horizon (land) fill. Degraded data stays grey; when
+        the SVS is actively drawing terrain we paint the land area SKY so the
+        synthetic terrain (and the haze that melts it into the sky) is all you
+        see below the horizon — no brown sliver between terrain and horizon.
+        Otherwise the normal brown attitude ground is the fail-safe. Only
+        re-applies on change, so it never thrashes the scene per frame."""
+        if not hasattr(self, "land_rect"):
+            return
+        if self.getAIOld() or self.getAIBad():
+            want = self.gray_land
+        elif self._svs_drawing():
+            want = self.gblue_brush          # sky — SVS terrain is the ground
+        else:
+            want = self.gbrown_brush         # fail-safe brown attitude ground
+        if want is not getattr(self, "_land_brush_cur", None):
+            self.land_rect.setBrush(want)
+            self._land_brush_cur = want
 
     def _drawFPM(self, p, w, h):
         """Draw GPS flight path marker if data is valid and show_fpm is set."""
@@ -896,10 +928,9 @@ class AI(QGraphicsView):
                     if hasattr(self, 'sky_rect'):
                         if self.getAIOld() or self.getAIBad():
                             self.sky_rect.setBrush (self.gray_sky)
-                            self.land_rect.setBrush (self.gray_land)
                         else:
                             self.sky_rect.setBrush (self.gblue_brush)
-                            self.land_rect.setBrush (self.gbrown_brush)
+                        self._update_land_brush()   # land: grey/sky/brown
                     self.redraw()
 
     def getAIOld(self):
@@ -924,12 +955,11 @@ class AI(QGraphicsView):
             if hasattr(self, 'sky_rect'):
                 if self.getAIOld():
                     self.sky_rect.setBrush (self.gray_sky)
-                    self.land_rect.setBrush (self.gray_land)
                     #self.old_text.show()
                 else:
                     self.sky_rect.setBrush (self.gblue_brush)
-                    self.land_rect.setBrush (self.gbrown_brush)
                     #self.old_text.hide()
+                self._update_land_brush()
                 self.redraw()
 
     def getAIBad(self):
@@ -954,12 +984,11 @@ class AI(QGraphicsView):
             if hasattr(self, 'sky_rect'):
                 if self.getAIBad():
                     self.sky_rect.setBrush (self.gray_sky)
-                    self.land_rect.setBrush (self.gray_land)
                     #self.bad_text.show()
                 else:
                     self.sky_rect.setBrush (self.gblue_brush)
-                    self.land_rect.setBrush (self.gbrown_brush)
                     #self.bad_text.hide()
+                self._update_land_brush()
                 self.redraw()
 
 

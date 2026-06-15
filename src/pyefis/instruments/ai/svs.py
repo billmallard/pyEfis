@@ -401,6 +401,11 @@ class SVSRenderer:
         # the permanent UNAVAIL (a transient hiccup must not blank the
         # SVS for the rest of a flight); init failures stay one-shot.
         self._gl_draw_failures   = 0
+        # True only while the SVS actually painted terrain this frame. The AI
+        # reads it to drop its brown fallback ground (showing sky in the gap
+        # above the synthetic terrain) ONLY when SVS is genuinely drawing — so
+        # any failure/empty frame falls back to the brown attitude ground.
+        self.drew_terrain        = False
         # Cached airport-proximity boolean (see near_airport()).
         self._near_airport_cache = None
         self._near_airport_cache_time = 0.0
@@ -554,6 +559,10 @@ class SVSRenderer:
         Called from AI.paintEvent() when SVS is enabled and data is ready.
         The painter p has NO active transform — SVS builds its own.
         """
+        # Reset every frame; set True only once terrain is actually painted
+        # (below). Every early return / failure path leaves it False, so the
+        # AI keeps its brown fallback ground as the fail-safe.
+        self.drew_terrain = False
         # Wall-clock gap between consecutive SVS.draw calls. If the
         # SVS internals add up to (say) 65 ms but the gap is 500 ms,
         # the missing ~435 ms is happening OUTSIDE SVS — Qt repaint
@@ -602,6 +611,9 @@ class SVSRenderer:
                     p, w, h, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg,
                     pixels_per_deg, range_nm, device_pixel_ratio)
+            # Terrain painted successfully — the AI may now show sky (not brown)
+            # above the synthetic terrain.
+            self.drew_terrain = True
         except Exception:
             import traceback
             tb = traceback.format_exc()

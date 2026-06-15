@@ -254,6 +254,42 @@ class TestAISVSIntegration:
         qtbot.waitExposed(widget)
         widget.paintEvent(QPaintEvent(widget.rect()))
 
+    def test_land_brush_sky_only_when_svs_drawing(self, fix, qtbot, tmp_path):
+        """The brown attitude ground is replaced by sky ONLY while the SVS is
+        genuinely drawing terrain; any failure/empty frame falls back to brown,
+        and degraded attitude data stays grey."""
+        root = _make_tile_dir(tmp_path, 32, -97)
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(400, 300)
+        widget.set_svs_config({"enabled": True, "tile_path": str(root)})
+        widget.show()
+        qtbot.waitExposed(widget)
+        assert hasattr(widget, "land_rect")
+
+        # SVS ready but hasn't painted terrain this frame -> brown fail-safe.
+        widget.svs.gl_failed = False
+        widget.svs.drew_terrain = False
+        widget._update_land_brush()
+        assert widget._land_brush_cur is widget.gbrown_brush
+
+        # SVS actually drew terrain -> land becomes sky (no brown sliver).
+        widget.svs.drew_terrain = True
+        widget._update_land_brush()
+        assert widget._land_brush_cur is widget.gblue_brush
+
+        # GL failure mid-flight -> brown attitude ground returns (fail-safe).
+        widget.svs.gl_failed = True
+        widget._update_land_brush()
+        assert widget._land_brush_cur is widget.gbrown_brush
+
+        # Degraded attitude data wins regardless of SVS -> grey.
+        widget.svs.gl_failed = False
+        widget.svs.drew_terrain = True
+        widget.setAIOldPitch(True)
+        widget._update_land_brush()
+        assert widget._land_brush_cur is widget.gray_land
+
     def test_ai_construction_tolerates_missing_fpm_key(self, fix, qtbot,
                                                       monkeypatch, caplog):
         """If a Flight Path Marker FIX key is undefined (e.g. gateway doesn't
