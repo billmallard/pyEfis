@@ -465,7 +465,10 @@ class HeadingDisplay(QWidget):
 
         self.font = QFont(self.font_family)
         self.font.setBold(True)
-        self.font_mask = "999"
+        # Include the degree sign so the font is sized to the actual content
+        # ("030°"), not three bare digits — otherwise the trailing ° pushes the
+        # centred text tight against the box edges.
+        self.font_mask = "999°"
         self.font_percent = 0.80
         self.font_size = helpers.fit_to_mask(self.width()*self.font_percent ,self.height()*self.font_percent,self.font_mask,self.font_family)
         self.font.setPointSizeF(self.font_size)
