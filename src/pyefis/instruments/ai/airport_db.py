@@ -409,22 +409,65 @@ AirportDB = CIFPAirportDB
 # ---------------------------------------------------------------------------
 # Backend selector
 # ---------------------------------------------------------------------------
+class _MultiAirportDB:
+    """Merge several airport providers into one queryable DB.
+
+    Airport data comes from independent provider packs on their own update
+    cadences — the US FAA NASR pack (primary, rich Tier-C data) plus optional
+    supplemental packs (e.g. Canada from OurAirports). Each provider is a
+    ``NASRAirportDB`` over its own sqlite. ``airports_in_range`` chains them and
+    de-dups by ICAO so an airport that two providers both carry appears once
+    (earlier providers — NASR first — win)."""
+
+    def __init__(self, dbs):
+        self._dbs = [d for d in dbs if getattr(d, "ready", False)]
+
+    @property
+    def ready(self) -> bool:
+        return bool(self._dbs)
+
+    def airports_in_range(self, ac_lat, ac_lon, range_nm):
+        seen = set()
+        for db in self._dbs:
+            for ap in db.airports_in_range(ac_lat, ac_lon, range_nm):
+                key = (ap.icao or "").upper() or (round(ap.ref_lat, 4),
+                                                  round(ap.ref_lon, 4))
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield ap
+
+
 def make_airport_db(config: dict):
     """Pick the best available airport DB backend for an SVS config.
 
     Preference order:
-      1. NASR (rich Tier C data) if ``nasr_db_path`` resolves to a real file.
+      1. NASR primary (``nasr_db_path``) + any provider packs discovered under
+         ``airport_provider_dir`` (``<dir>/*/current/airports.sqlite``), merged.
       2. CIFP if ``cifp_path`` and the index resolve.
-      3. A no-op stub (``ready == False``) — caller falls back to its
-         hand-coded _AIRPORT_DB.
+      3. A no-op stub (``ready == False``).
+
+    Provider packs auto-discover: dropping a new airports-<x> pack into the
+    provider dir makes its airports appear with no config change.
     """
+    paved = bool(config.get("paved_only", True))
+    dbs = []
     nasr_path = config.get("nasr_db_path", "")
     if nasr_path:
-        db = NASRAirportDB(
-            nasr_path,
-            paved_only=bool(config.get("paved_only", True)))
-        if db.ready:
-            return db
+        dbs.append(NASRAirportDB(nasr_path, paved_only=paved))
+
+    provider_dir = config.get("airport_provider_dir", "")
+    if provider_dir:
+        import glob
+        pat = str(Path(provider_dir) / "*" / "current" / "airports.sqlite")
+        for p in sorted(glob.glob(pat)):
+            dbs.append(NASRAirportDB(p, paved_only=paved))
+
+    dbs = [d for d in dbs if getattr(d, "ready", False)]
+    if len(dbs) == 1:
+        return dbs[0]
+    if dbs:
+        return _MultiAirportDB(dbs)
 
     cifp_path  = config.get("cifp_path", "")
     index_path = config.get("cifp_index_path", "")

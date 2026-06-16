@@ -19,6 +19,11 @@ instruments:
       #   range_nm: 30
       #   tile_path: /data/makerplane-data/terrain/tiles
       #   nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
+      #   # Supplemental airport providers (e.g. airports-canada from
+      #   # OurAirports) merge with the US NASR primary above. Auto-discovers
+      #   # every <dir>/*/current/airports.sqlite, so a new provider pack needs
+      #   # no config change.
+      #   airport_provider_dir: /data/makerplane-data/airports
       #   dof_db_path: /data/makerplane-data/obstacles/current/obstacles.sqlite
       #   water_db_path: /data/makerplane-data/water/current/water.sqlite
       #   highway_db_path: /data/makerplane-data/highways/current/highways.sqlite
