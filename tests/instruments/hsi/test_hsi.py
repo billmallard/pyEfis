@@ -221,6 +221,18 @@ def test_hsi_disabled_cdi_gsi_setters_do_not_update(fix, qtbot):
     widget.update.assert_not_called()
 
 
+def test_heading_display_format():
+    """The boxed heading readout is always three zero-padded digits with a
+    trailing degree sign; 360 and 0 both read 000."""
+    f = hsi.HeadingDisplay._fmt_heading
+    assert f(3) == "003°"
+    assert f(30) == "030°"
+    assert f(0) == "000°"
+    assert f(360) == "000°"
+    assert f(90) == "090°"
+    assert f(359.7) == "359°"      # truncates, like the old display
+
+
 def test_heading_display_quality_and_heading_paths(fix, qtbot):
     _set_quality(fix.db.get_item("HEAD"))
     widget = hsi.HeadingDisplay(fg_color=Qt.GlobalColor.white)

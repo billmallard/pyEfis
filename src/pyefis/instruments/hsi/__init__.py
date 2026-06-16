@@ -497,9 +497,15 @@ class HeadingDisplay(QWidget):
             c.setBrush(QBrush(QColor(255, 150, 0)))
             c.setPen(QPen(QColor(255, 150, 0)))
         else:
-            heading_text = str(int(self._heading))
+            heading_text = self._fmt_heading(self._heading)
 
         c.drawText(tr, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, heading_text)
+
+    @staticmethod
+    def _fmt_heading(value):
+        """Heading as three zero-padded digits with a trailing degree sign:
+        3 -> "003°", 30 -> "030°", 360/0 -> "000°"."""
+        return f"{int(value) % 360:03d}°"
 
     def getHeading(self):
         return self._heading
