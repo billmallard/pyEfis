@@ -62,10 +62,20 @@ def build_weston(screen, config, font_percent=None, font_family=None, replace=No
 def build_altimeter_tape(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
-    dbkey = "ALT"
-    if "options" in config and "dbkey" in config["options"]:
-        dbkey = config["options"]["dbkey"]
-    return altimeter.Altimeter_Tape(screen, font_family=font_family, dbkey=dbkey)
+    # Forward the supported tape options from the screen config. Previously
+    # only dbkey was passed, so minorDiv/majorDiv/maxalt/total_decimals/
+    # font_mask in the YAML were silently ignored and the tape always used
+    # its hardcoded defaults (e.g. a VS tape kept minorDiv=100 no matter what
+    # the config said). Only keys present in the config are forwarded, so the
+    # constructor defaults still apply to anything unset.
+    opts = config.get("options") or {}
+    kwargs = {}
+    for k in ("dbkey", "maxalt", "majorDiv", "minorDiv",
+              "total_decimals", "font_mask"):
+        if k in opts:
+            kwargs[k] = opts[k]
+    return altimeter.Altimeter_Tape(
+        screen, font_family=font_family, **kwargs)
 
 
 def build_atitude_indicator(

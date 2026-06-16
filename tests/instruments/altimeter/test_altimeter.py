@@ -92,6 +92,47 @@ def test_altimeter_tape(fix,qtbot):
     #widget.paintEvent(None)
 
 
+def test_altimeter_tape_honors_div_options(fix, qtbot):
+    """The tape's tick spacing / decimals / mask are configurable; they used to
+    be hardcoded, so YAML options like minorDiv were silently ignored."""
+    widget = altimeter.Altimeter_Tape(
+        majorDiv=500, minorDiv=200, total_decimals=3, font_mask="000")
+    qtbot.addWidget(widget)
+    assert widget.majorDiv == 500
+    assert widget.minorDiv == 200
+    assert widget.total_decimals == 3
+    assert widget.font_mask == "000"
+    # defaults preserved when not supplied
+    d = altimeter.Altimeter_Tape()
+    qtbot.addWidget(d)
+    assert (d.majorDiv, d.minorDiv, d.total_decimals) == (200, 100, 5)
+
+
+def test_build_altimeter_tape_forwards_options(monkeypatch):
+    """build_altimeter_tape must forward the supported tape options (and only
+    those present) to the widget — the bug was that only dbkey was passed."""
+    from pyefis.screens import screenbuilder_factory as sf
+    captured = {}
+
+    def fake_tape(screen, **kwargs):
+        captured.update(kwargs)
+        return mock.Mock()
+
+    monkeypatch.setattr(sf.altimeter, "Altimeter_Tape", fake_tape)
+    sf.build_altimeter_tape(None, {"options": {
+        "dbkey": "VS", "minorDiv": 50, "majorDiv": 100,
+        "total_decimals": 5, "font_mask": "00000"}}, font_family="DejaVu")
+    assert captured["dbkey"] == "VS"
+    assert captured["minorDiv"] == 50 and captured["majorDiv"] == 100
+    assert captured["total_decimals"] == 5 and captured["font_mask"] == "00000"
+
+    # a config that omits the div keys forwards none of them (defaults apply)
+    captured.clear()
+    sf.build_altimeter_tape(None, {"options": {"dbkey": "ALT"}}, font_family="x")
+    assert captured.get("dbkey") == "ALT"
+    assert "minorDiv" not in captured and "majorDiv" not in captured
+
+
 def test_altimeter_tape_unit_switching(fix,qtbot):
     hmi.initialize({})
     widget = altimeter.Altimeter_Tape()

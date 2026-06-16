@@ -220,11 +220,15 @@ class Altimeter_Tape(QGraphicsView):
         fontsize=15,
         font_percent=None,
         font_family="DejaVu Sans Condensed",
+        majorDiv=200,
+        minorDiv=100,
+        total_decimals=5,
+        font_mask="00000",
     ):
         super(Altimeter_Tape, self).__init__(parent)
         self.setStyleSheet("background: transparent")
         self.font_family = font_family
-        self.font_mask = "00000"
+        self.font_mask = font_mask
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -241,12 +245,12 @@ class Altimeter_Tape(QGraphicsView):
         self._altimeter = self.item.value
         self.backgroundOpacity = 0.3
         self.foregroundOpacity = 0.6
-        self.majorDiv = 200
-        self.minorDiv = 100
+        self.majorDiv = majorDiv
+        self.minorDiv = minorDiv
 
         self.maxalt = maxalt
         self._maxalt = maxalt
-        self.total_decimals = 5
+        self.total_decimals = total_decimals
         self.myparent = parent
 
         self.conversionFunction1 = lambda x: x
