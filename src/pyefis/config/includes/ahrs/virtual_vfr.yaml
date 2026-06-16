@@ -54,6 +54,7 @@ instruments:
       font_percent: 0.24
       #number_font_size: 40
       altitude: true
+      majorDiv: 100
   - type: vsi_pfd
     disabled: VSI_BALL
     row: 0
@@ -84,8 +85,9 @@ instruments:
       font_mask: "00000"
       total_decimals: 5
       altitude: true
-      majorDiv: 100
-      minorDiv: 50
+      majorDiv: 200
+      minorDiv: 200
+      round_to: 50
   - type: static_text
     disabled: VSI_TAPE
     row: 49.4
