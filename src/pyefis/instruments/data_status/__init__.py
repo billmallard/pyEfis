@@ -114,7 +114,8 @@ def fmt_bytes(n):
 # Pack kinds collapsed into display groups for the picker, in display order.
 _KIND_GROUP = {
     "navdata": "Navigation Data", "obstacles": "Navigation Data",
-    "cifp": "Navigation Data", "water": "Water", "highways": "Roads",
+    "cifp": "Navigation Data", "airports": "Navigation Data",
+    "water": "Water", "highways": "Roads",
     "terrain": "Terrain", "charts": "Charts",
 }
 _GROUP_ORDER = ["Navigation Data", "Water", "Roads", "Terrain", "Charts"]
