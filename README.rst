@@ -121,6 +121,41 @@ SVS is **off by default**. Enable it by adding a nested ``svs:`` block with
 terrain tile directory and the sqlite databases. See the commented example in
 ``src/pyefis/config/includes/ahrs/virtual_vfr.yaml``.
 
+Hardware
+-----------------------------
+
+pyEfis runs on a Raspberry Pi or on standard desktop Linux. The reference
+flight unit is a **Raspberry Pi 5 (8 GB)** running Raspberry Pi OS
+(Debian 13 "trixie"), Python 3.13.
+
+Minimum (EFIS without SVS)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A Raspberry Pi 4/5 — or any x86-64 Linux box — that can run Python 3.10+
+  and Qt 6.
+* The core instruments (PFD, gauges, HSI, …) are drawn on the CPU with
+  QPainter, so an accelerated GPU is **not** required when Synthetic Vision is
+  disabled.
+* A microSD card large enough for the OS (32 GB+).
+
+Suggested (full SVS unit)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Raspberry Pi 5, 8 GB** — headroom for the GL terrain renderer and the
+  navigation-data store.
+* **A supported GPU is required for Synthetic Vision.** SVS is GL-rendered
+  (OpenGL ES 3.0+ / desktop GL 3.0); on the Pi 5 the built-in VideoCore VII
+  (Mesa V3D driver, ``eglfs``) provides this out of the box. The recent
+  draw-path optimisations lowered the per-frame cost but did **not** remove the
+  GL requirement — so a capable GPU matters only when SVS is enabled.
+* **Storage — an M.2 HAT + NVMe SSD is strongly preferred.** The
+  navigation-data packs are large: terrain regions run tens of GB and a full
+  North-America terrain set is ~90 GB. Either use a large, high-quality
+  (A2-rated) microSD card, or — better — add an **M.2 HAT with an NVMe SSD**
+  for the data store and keep the OS on the microSD. The reference unit boots
+  from a 64 GB microSD and stores data on a ~500 GB NVMe SSD mounted at
+  ``/data`` (the ``makerplane-data`` default data root).
+
 Testing
 ------------
 To run all of the automated tests and code covreage.
