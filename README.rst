@@ -147,7 +147,12 @@ Suggested (full SVS unit)
   (OpenGL ES 3.0+ / desktop GL 3.0); on the Pi 5 the built-in VideoCore VII
   (Mesa V3D driver, ``eglfs``) provides this out of the box. The recent
   draw-path optimisations lowered the per-frame cost but did **not** remove the
-  GL requirement — so a capable GPU matters only when SVS is enabled.
+  GL requirement — so a capable GPU matters only when SVS is enabled. If SVS is
+  enabled on a machine with no usable GPU/driver, it disables itself after the
+  GL renderer fails to initialise and the attitude display reverts to the
+  normal sky/ground view with an ``SVS UNAVAIL`` annunciation — the EFIS keeps
+  running, just without synthetic vision. (A system with only *software* GL will
+  render SVS correctly but slowly.)
 * **Storage — an M.2 HAT + NVMe SSD is strongly preferred.** The
   navigation-data packs are large: terrain regions run tens of GB and a full
   North-America terrain set is ~90 GB. Either use a large, high-quality

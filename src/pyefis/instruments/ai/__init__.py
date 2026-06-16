@@ -632,18 +632,28 @@ class AI(QGraphicsView):
         self.redraw()
         self.update()
 
+    def _live_svs(self):
+        """The live ``SVSRenderer``, resolved clobber-safe — or None.
+
+        Prefers ``_svs_renderer`` (stashed by set_svs_config under a non-YAML
+        name), falls back to ``self.svs`` for the base-AI case, and never
+        returns the YAML config DICT the screenbuilder commonly overwrites
+        ``self.svs`` with. Every consumer that needs the renderer's live
+        state (``enabled`` / ``gl_failed`` / ``drew_terrain``) must go through
+        here, or it silently reads a dict and sees every flag as False."""
+        s = getattr(self, "_svs_renderer", None)
+        if s is None or isinstance(s, dict):
+            s = getattr(self, "svs", None)   # base-AI case: self.svs is the renderer
+        if s is None or isinstance(s, dict):
+            return None
+        return s
+
     def _svs_drawing(self):
         """True when the SVS is genuinely painting terrain — enabled, ready,
         not GL-failed, and it actually drew terrain on the last frame. Used to
-        decide whether the artificial brown ground can be replaced by sky.
-
-        Reads ``_svs_renderer`` (set by set_svs_config), because the
-        screenbuilder commonly overwrites ``self.svs`` with the config DICT —
-        so ``self.svs`` is NOT a reliable handle to the live renderer."""
-        s = getattr(self, "_svs_renderer", None)
-        if s is None or isinstance(s, dict):
-            s = self.svs                     # base-AI case: self.svs is the renderer
-        if s is None or isinstance(s, dict):
+        decide whether the artificial brown ground can be replaced by sky."""
+        s = self._live_svs()
+        if s is None:
             return False
         return (getattr(s, "enabled", False)
                 and getattr(s, "ready", False)
@@ -796,14 +806,15 @@ class AI(QGraphicsView):
         p.drawImage(self.rect(), self.overlay)
 
         # SVS UNAVAIL annunciation. The SVS is GL-required; if the GL
-        # renderer failed to initialise or draw, it disables itself and
-        # we annunciate rather than silently showing the sky/ground
-        # two-tone as if terrain awareness were available.
-        # NOTE: screenbuilder applies YAML options as raw attributes,
-        # so self.svs can be the config DICT on widgets configured that
-        # way — use getattr with defaults, never attribute access.
-        _svs = getattr(self, "svs", None)
-        if (getattr(_svs, "enabled", False)
+        # renderer failed to initialise or draw (e.g. SVS enabled on a
+        # machine with no usable GPU/driver), it disables itself and we
+        # annunciate rather than silently showing the sky/ground two-tone
+        # as if terrain awareness were available. Resolve the renderer
+        # clobber-safe (self.svs is often the YAML config DICT, on which
+        # every getattr returns False — which would suppress this warning).
+        _svs = self._live_svs()
+        if (_svs is not None
+                and getattr(_svs, "enabled", False)
                 and getattr(_svs, "gl_failed", False)):
             p.save()
             _af = QFont(self.font_family, -1, QFont.Weight.Bold)

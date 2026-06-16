@@ -314,6 +314,34 @@ class TestAISVSIntegration:
         widget._update_land_brush()
         assert widget._land_brush_cur is widget.gblue_brush   # sky, not brown
 
+    def test_svs_unavail_annunciation_survives_clobber(self, fix, qtbot, tmp_path):
+        """SVS enabled but GL failed (e.g. enabled on a machine with no usable
+        GPU): the AI must still annunciate SVS UNAVAIL after the screenbuilder
+        has clobbered self.svs to the config DICT. The gate reads the live
+        renderer via _live_svs; reading self.svs (a dict) would see gl_failed as
+        False and silently suppress the warning — a pilot left thinking terrain
+        awareness is active when it isn't."""
+        root = _make_tile_dir(tmp_path, 32, -97)
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(400, 300)
+        cfg = {"enabled": True, "tile_path": str(root)}
+        widget.set_svs_config(cfg)
+        widget._svs_renderer.gl_failed = True          # GL init/draw failed -> disabled
+
+        widget.svs = cfg                               # the screenbuilder clobber
+        assert isinstance(widget.svs, dict)
+        # the old, buggy direct read saw nothing (dict has no gl_failed):
+        assert getattr(widget.svs, "gl_failed", False) is False
+        # the clobber-safe resolver still finds the failed renderer:
+        live = widget._live_svs()
+        assert live is widget._svs_renderer
+        assert getattr(live, "enabled", False) and getattr(live, "gl_failed", False)
+        # paint completes and exercises the SVS UNAVAIL annunciation branch:
+        widget.show()
+        qtbot.waitExposed(widget)
+        widget.paintEvent(QPaintEvent(widget.rect()))
+
     def test_ai_construction_tolerates_missing_fpm_key(self, fix, qtbot,
                                                       monkeypatch, caplog):
         """If a Flight Path Marker FIX key is undefined (e.g. gateway doesn't
