@@ -341,8 +341,16 @@ def main():
                         "these classes (e.g. water reservoir). Drops 'riverbank' "
                         "(rivers fill as lake-blobs) and 'wetland*'. The ocean "
                         "layer (no fclass) is unaffected. Omit to keep all.")
+    p.add_argument("--ocean-max-vertices", type=int, default=None,
+                   help="vertex cap for the --ocean (coastline) layer only; "
+                        "defaults to --max-vertices. Coastline gets no benefit "
+                        "from the high inland cap and is the bulk of the polygons, "
+                        "so set this lower (e.g. 32) to keep the pack small while "
+                        "inland water (dendritic lakes) uses a high --max-vertices.")
     args = p.parse_args()
     max_verts = args.max_vertices if args.max_vertices > 0 else None
+    ov = args.ocean_max_vertices if args.ocean_max_vertices is not None else args.max_vertices
+    ocean_verts = ov if ov > 0 else None
     min_area = args.min_area_km2
     keep_fclass = set(args.keep_fclass) if args.keep_fclass else None
 
@@ -355,7 +363,7 @@ def main():
 
     total = 0
     for path in args.ocean:
-        total += import_shapefile(con, path, "ocean", max_verts)
+        total += import_shapefile(con, path, "ocean", ocean_verts)
     for path in args.lake:
         total += import_shapefile(con, path, "lake", max_verts,
                                   min_area_km2=min_area, keep_fclass=keep_fclass)
@@ -370,7 +378,8 @@ def main():
     con.commit()
     con.close()
     filt = f", min-area={min_area} km^2" if min_area > 0 else ""
-    print(f"-> {out} ({total} polygons, vertex cap={max_verts}{filt})")
+    ocn = f", ocean cap={ocean_verts}" if ocean_verts != max_verts else ""
+    print(f"-> {out} ({total} polygons, vertex cap={max_verts}{ocn}{filt})")
 
 
 if __name__ == "__main__":
