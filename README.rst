@@ -92,6 +92,35 @@ This creates an index.bin file in CIFP directory
 Update the config file [Screen.PFD] section dbpath and indexpath
 with the path names of the FAACIFP18 and index.bin files respectively.
 
+Synthetic Vision (SVS)
+-----------------------------
+
+The attitude / Virtual-VFR widget can render a GL-accelerated **Synthetic
+Vision** view: a perspective terrain picture with water, major roads,
+obstacles, and airports/runways drawn in 3D over the live attitude.
+
+* **Terrain** — elevation-shaded relief from SRTM / Copernicus GLO-30 tiles,
+  drawn as a forward polar fan with distance-based level of detail.
+* **Water** — coastlines, lakes, and reservoirs (OpenStreetMap, ODbL).
+* **Obstacles** — FAA DOF towers and antennas as vertical poles, colour-coded
+  by lighting and conflict with the aircraft altitude.
+* **Airports & runways** — runway quads with FAA surface markings (threshold
+  bars, centreline, designators, aiming point, TDZ) and identifier flags.
+* **Major roads** — OSM motorway / trunk overlays.
+
+Terrain and the chart databases are supplied by the companion
+`makerplane-data <https://github.com/makerplane/makerplane-data>`_
+navigation-data system — an over-the-air / USB updater that keeps signed
+terrain, airport, obstacle, water, and road packs current — or by
+user-supplied local files. A boot-time **Data Status** screen and a subtle
+**DATA** annunciator on the PFD report navigation-data currency, powered by the
+same updater.
+
+SVS is **off by default**. Enable it by adding a nested ``svs:`` block with
+``enabled: true`` to the ``virtual_vfr`` instrument options, pointing at the
+terrain tile directory and the sqlite databases. See the commented example in
+``src/pyefis/config/includes/ahrs/virtual_vfr.yaml``.
+
 Testing
 ------------
 To run all of the automated tests and code covreage.
