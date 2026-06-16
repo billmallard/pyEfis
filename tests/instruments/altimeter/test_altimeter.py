@@ -96,16 +96,43 @@ def test_altimeter_tape_honors_div_options(fix, qtbot):
     """The tape's tick spacing / decimals / mask are configurable; they used to
     be hardcoded, so YAML options like minorDiv were silently ignored."""
     widget = altimeter.Altimeter_Tape(
-        majorDiv=500, minorDiv=200, total_decimals=3, font_mask="000")
+        majorDiv=500, minorDiv=200, total_decimals=3, font_mask="000",
+        round_to=100)
     qtbot.addWidget(widget)
     assert widget.majorDiv == 500
     assert widget.minorDiv == 200
     assert widget.total_decimals == 3
     assert widget.font_mask == "000"
+    assert widget.round_to == 100
     # defaults preserved when not supplied
     d = altimeter.Altimeter_Tape()
     qtbot.addWidget(d)
-    assert (d.majorDiv, d.minorDiv, d.total_decimals) == (200, 100, 5)
+    assert (d.majorDiv, d.minorDiv, d.total_decimals, d.round_to) == (200, 100, 5, 0)
+
+
+def test_altimeter_tape_rounds_numeric_box(fix, qtbot):
+    """round_to snaps the numeric box value (so a jittery VS reads in steps and
+    the odometer stops scrolling); the tape itself stays on the raw value."""
+    widget = altimeter.Altimeter_Tape(dbkey="VS", round_to=100)
+    qtbot.addWidget(widget)
+    widget.resize(60, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._altimeter = 137
+    widget.redraw()
+    assert widget.numerical_display.value == 100      # snapped to nearest 100
+    widget._altimeter = -260
+    widget.redraw()
+    assert widget.numerical_display.value == -300
+    # round_to=0 leaves the value untouched
+    raw = altimeter.Altimeter_Tape(dbkey="VS")
+    qtbot.addWidget(raw)
+    raw.resize(60, 200)
+    raw.show()
+    qtbot.waitExposed(raw)
+    raw._altimeter = 137
+    raw.redraw()
+    assert raw.numerical_display.value == 137
 
 
 def test_build_altimeter_tape_forwards_options(monkeypatch):
@@ -120,11 +147,12 @@ def test_build_altimeter_tape_forwards_options(monkeypatch):
 
     monkeypatch.setattr(sf.altimeter, "Altimeter_Tape", fake_tape)
     sf.build_altimeter_tape(None, {"options": {
-        "dbkey": "VS", "minorDiv": 50, "majorDiv": 100,
+        "dbkey": "VS", "minorDiv": 50, "majorDiv": 100, "round_to": 100,
         "total_decimals": 5, "font_mask": "00000"}}, font_family="DejaVu")
     assert captured["dbkey"] == "VS"
     assert captured["minorDiv"] == 50 and captured["majorDiv"] == 100
     assert captured["total_decimals"] == 5 and captured["font_mask"] == "00000"
+    assert captured["round_to"] == 100
 
     # a config that omits the div keys forwards none of them (defaults apply)
     captured.clear()

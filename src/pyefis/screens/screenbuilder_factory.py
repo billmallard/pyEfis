@@ -71,7 +71,7 @@ def build_altimeter_tape(
     opts = config.get("options") or {}
     kwargs = {}
     for k in ("dbkey", "maxalt", "majorDiv", "minorDiv",
-              "total_decimals", "font_mask"):
+              "total_decimals", "font_mask", "round_to"):
         if k in opts:
             kwargs[k] = opts[k]
     return altimeter.Altimeter_Tape(

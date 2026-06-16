@@ -224,6 +224,7 @@ class Altimeter_Tape(QGraphicsView):
         minorDiv=100,
         total_decimals=5,
         font_mask="00000",
+        round_to=0,
     ):
         super(Altimeter_Tape, self).__init__(parent)
         self.setStyleSheet("background: transparent")
@@ -251,6 +252,11 @@ class Altimeter_Tape(QGraphicsView):
         self.maxalt = maxalt
         self._maxalt = maxalt
         self.total_decimals = total_decimals
+        # Round the value shown in the numeric box to this step (0 = off). For a
+        # jittery source like VS, rounding to e.g. 100 makes the box snap in
+        # 100-fpm steps instead of the digits scrolling continuously; the tape
+        # scroll itself stays smooth (it uses the unrounded value).
+        self.round_to = round_to
         self.myparent = parent
 
         self.conversionFunction1 = lambda x: x
@@ -346,7 +352,12 @@ class Altimeter_Tape(QGraphicsView):
         self.centerOn(
             self.scene.width() / 2, self.y_offset(self._altimeter + self.maxalt)
         )
-        self.numerical_display.value = self._altimeter
+        if self.round_to:
+            self.numerical_display.value = (
+                round(self._altimeter / self.round_to) * self.round_to
+            )
+        else:
+            self.numerical_display.value = self._altimeter
 
     #  Index Line that doesn't move to make it easy to read the altimeter.
     def paintEvent(self, event):
