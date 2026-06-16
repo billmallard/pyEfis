@@ -290,6 +290,30 @@ class TestAISVSIntegration:
         widget._update_land_brush()
         assert widget._land_brush_cur is widget.gray_land
 
+    def test_land_brush_survives_svs_attr_clobber(self, fix, qtbot, tmp_path):
+        """Reproduces the on-device bug locally (no GL needed): the screenbuilder
+        assigns YAML `options` as raw attributes, so `self.svs` gets overwritten
+        with the `svs:` config DICT after set_svs_config. _svs_drawing must still
+        find the live renderer (via _svs_renderer), or the sky-ground silently
+        reverts to brown on every real screen."""
+        root = _make_tile_dir(tmp_path, 32, -97)
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(400, 300)
+        cfg = {"enabled": True, "tile_path": str(root)}
+        widget.set_svs_config(cfg)
+        widget.show()
+        qtbot.waitExposed(widget)
+        widget._svs_renderer.gl_failed = False
+        widget._svs_renderer.drew_terrain = True
+
+        # The screenbuilder clobber: self.svs becomes the config dict.
+        widget.svs = cfg
+        assert isinstance(widget.svs, dict)
+        assert widget._svs_drawing() is True          # still finds the renderer
+        widget._update_land_brush()
+        assert widget._land_brush_cur is widget.gblue_brush   # sky, not brown
+
     def test_ai_construction_tolerates_missing_fpm_key(self, fix, qtbot,
                                                       monkeypatch, caplog):
         """If a Flight Path Marker FIX key is undefined (e.g. gateway doesn't

@@ -487,6 +487,12 @@ class AI(QGraphicsView):
             self._svs_item = None
 
         self.svs = SVSRenderer(config)
+        # Canonical renderer handle. The screenbuilder assigns YAML `options`
+        # as raw attributes, so `self.svs` is frequently overwritten with the
+        # `svs:` config DICT after this runs (see the note in paintEvent). Keep
+        # a reference under a name that is NOT a YAML option key so code that
+        # needs the live renderer (e.g. _svs_drawing) can always find it.
+        self._svs_renderer = self.svs
         # Z-order layers inside the AI scene:
         #   z =  1.0  — pitch ladder lines, numerals  (setZValue(1) in resizeEvent)
         #   z =  0.5  — SVS terrain (this item, default)
@@ -629,8 +635,14 @@ class AI(QGraphicsView):
     def _svs_drawing(self):
         """True when the SVS is genuinely painting terrain — enabled, ready,
         not GL-failed, and it actually drew terrain on the last frame. Used to
-        decide whether the artificial brown ground can be replaced by sky."""
-        s = self.svs
+        decide whether the artificial brown ground can be replaced by sky.
+
+        Reads ``_svs_renderer`` (set by set_svs_config), because the
+        screenbuilder commonly overwrites ``self.svs`` with the config DICT —
+        so ``self.svs`` is NOT a reliable handle to the live renderer."""
+        s = getattr(self, "_svs_renderer", None)
+        if s is None or isinstance(s, dict):
+            s = self.svs                     # base-AI case: self.svs is the renderer
         if s is None or isinstance(s, dict):
             return False
         return (getattr(s, "enabled", False)
