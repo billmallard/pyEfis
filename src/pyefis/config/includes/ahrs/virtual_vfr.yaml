@@ -22,6 +22,11 @@ instruments:
       #   dof_db_path: /data/makerplane-data/obstacles/current/obstacles.sqlite
       #   water_db_path: /data/makerplane-data/water/current/water.sqlite
       #   highway_db_path: /data/makerplane-data/highways/current/highways.sqlite
+      #   # Render vertex cap per water polygon. MUST match the published
+      #   # pack's build cap or stored triangles won't align -- the current
+      #   # water-na pack is built at 1024 (dendritic reservoirs render as
+      #   # branches, not blobs). Lower values re-decimate and lose detail.
+      #   water_max_vertices: 1024
   - type: horizontal_situation_indicator
     disabled: HSI
     row: 0
