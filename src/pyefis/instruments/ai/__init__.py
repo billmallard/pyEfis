@@ -760,6 +760,13 @@ class AI(QGraphicsView):
         else:
             _pe_t0 = 0
 
+        # Choose the below-horizon fill (grey / sky-while-SVS-draws / brown)
+        # BEFORE the scene renders, so it's correct this frame. paintEvent runs
+        # on every repaint, however it was triggered (FIX callbacks, the frame
+        # clock, runway updates) — unlike _frame_tick, which short-circuits when
+        # the pose key is unchanged. Change-cached, so it only touches the brush
+        # on an actual transition.
+        self._update_land_brush()
         super(AI, self).paintEvent(event)
         w = self.width()
         h = self.height()
