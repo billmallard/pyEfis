@@ -448,10 +448,16 @@ class DataStatus(QWidget):
         self._sources = None
         self._source = None
         self._prog = None             # install progress: {index,total,name,pct}
+        self._canceling = False       # True between Cancel tap and process exit
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
-        for b in (self.btn_continue, self.btn_update):
+        # Cancel button for the install/progress (busy) screen, so a long
+        # transfer never traps the user. Hidden except in busy mode.
+        self.btn_cancel_dl = QPushButton("Cancel", self)
+        self.btn_cancel_dl.clicked.connect(self._cancel_download)
+        self.btn_cancel_dl.setVisible(False)
+        for b in (self.btn_continue, self.btn_update, self.btn_cancel_dl):
             b.setStyleSheet(_BTN_STYLE)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_continue.clicked.connect(self._on_continue)
@@ -519,7 +525,13 @@ class DataStatus(QWidget):
                 return
             state["done"] = True
             self._proc = None
-            self._fail("Updater unavailable on this device.")
+            # A user cancel terminates the process, which Qt may report as a
+            # crash. Route it to the normal finish handler (cancel branch)
+            # rather than the start-failure message.
+            if self._canceling:
+                on_finish(-1, state["out"])
+            else:
+                self._fail("Updater unavailable on this device.")
 
         proc.readyReadStandardOutput.connect(read_ready)
         proc.finished.connect(finish)
@@ -668,7 +680,47 @@ class DataStatus(QWidget):
         if self.mode == "busy":
             self.update()
 
+    def _cancel_download(self):
+        """Tapping Cancel on the progress screen: ask the updater to stop. It
+        gets a SIGTERM, unwinds the (possibly mid-) download, and leaves the
+        installed data untouched (verify-then-atomic-swap). We then return to
+        the pack picker with the selection preserved."""
+        if self._proc is None or self._canceling:
+            return
+        self._canceling = True
+        self.btn_cancel_dl.setEnabled(False)
+        self.message = "Canceling…"
+        self.update()
+        self._proc.terminate()                    # SIGTERM -> graceful unwind
+        # Safety net: if the updater ignores SIGTERM, hard-kill it so the user
+        # is never stuck on a spinner.
+        QTimer.singleShot(5000, self._force_kill_proc)
+
+    def _force_kill_proc(self):
+        if self._proc is not None and self._canceling:
+            self._proc.kill()
+
     def _after_install(self, code, out):
+        if self._canceling:
+            self._canceling = False
+            self.btn_cancel_dl.setEnabled(True)
+            # code == 0 means the install actually finished in the race before
+            # SIGTERM landed — treat it as success and fall through.
+            if code != 0:
+                self._prog = None
+                self.message = ""
+                if self.picker is not None:
+                    # Back to the picker (the previous screen); their selection
+                    # is intact so they can adjust or retry, or Cancel to status.
+                    self.mode = "picker"
+                    self.picker._update_summary()     # re-enable Install button
+                    self._sync_visibility()
+                    self.picker.show()
+                    self.picker.raise_()
+                    self.update()
+                else:
+                    self._fail("Update canceled — your data is unchanged.")
+                return
         self._close_picker()
         self.mode = "status"
         self._prog = None
@@ -692,6 +744,9 @@ class DataStatus(QWidget):
         status_mode = self.mode == "status"
         self.btn_continue.setVisible(status_mode)
         self.btn_update.setVisible(status_mode)
+        self.btn_cancel_dl.setVisible(self.mode == "busy")
+        if self.mode == "busy":
+            self.btn_cancel_dl.raise_()
         if self.picker is not None:
             self.picker.setVisible(self.mode == "picker")
             if self.mode == "picker":
@@ -714,6 +769,9 @@ class DataStatus(QWidget):
         f.setPixelSize(qRound(bh * 0.4))
         self.btn_continue.setFont(f)
         self.btn_update.setFont(f)
+        # Cancel sits centred below the progress bar in the busy screen.
+        self.btn_cancel_dl.setGeometry((w - bw) // 2, qRound(h * 0.62), bw, bh)
+        self.btn_cancel_dl.setFont(f)
         if self.picker is not None:
             self.picker.setGeometry(0, 0, w, h)
 
@@ -730,7 +788,8 @@ class DataStatus(QWidget):
             p.setFont(self.title_font)
             p.setPen(_TITLE_COLOR)
             p.drawText(QRectF(0, h * 0.30, w, self.row_h * 1.4), hc,
-                       "Installing navigation data")
+                       "Canceling…" if self._canceling
+                       else "Installing navigation data")
             prog = self._prog
             p.setFont(self.font)
             if prog and prog.get("total"):

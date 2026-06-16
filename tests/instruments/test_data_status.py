@@ -315,6 +315,76 @@ def test_update_flow_cancel_returns_to_status(app, tmp_path):
     assert w.mode == "status" and w.picker is None
 
 
+class _FakeProc:
+    """Stand-in for the install QProcess so the cancel path is testable without
+    a real subprocess: it just records that terminate()/kill() were called."""
+    def __init__(self):
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+def _drive_to_busy(w, calls):
+    w._on_update()
+    calls[0][1](0, json.dumps({"network": True, "usb": []}))
+    calls[1][1](0, json.dumps(CATALOG))
+    w.picker.checks["water-na"].setChecked(True)
+    w._install_selected(w.picker.selected_ids())
+    assert w.mode == "busy"
+
+
+def test_cancel_download_returns_to_picker(app, tmp_path):
+    """Cancel on the progress screen terminates the updater and drops back to
+    the pack picker with the selection intact (the 'don't feel trapped' path)."""
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    w._proc = _FakeProc()                          # the running updater process
+    w._cancel_download()
+    assert w._canceling is True
+    assert w._proc.terminated is True              # SIGTERM delivered
+    assert "cancel" in w.message.lower()
+    assert not w.grab().isNull()                   # "Canceling…" screen renders
+    # the terminated process now exits non-zero -> back to the picker
+    w._proc = None
+    calls[2][1](-1, "")
+    assert w.mode == "picker"
+    assert w._canceling is False
+    assert "water-na" in w.picker.selected_ids()   # selection preserved
+    assert w.picker.btn_install.isEnabled()        # install re-enabled for retry
+    assert w.btn_cancel_dl.isHidden()              # cancel hidden off the busy screen
+
+
+def test_cancel_race_completion_counts_as_success(app, tmp_path):
+    """If the install actually finishes in the race before SIGTERM lands (exit
+    0), it's treated as a completed update, not a cancel."""
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    w._proc = _FakeProc()
+    w._cancel_download()
+    w._proc = None
+    calls[2][1](0, "  water-na  installed 2026q2r4\n")     # finished cleanly
+    assert w.mode == "status" and "complete" in w.message.lower()
+    assert w._canceling is False
+
+
+def test_cancel_button_only_visible_when_busy(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    assert w.btn_cancel_dl.isHidden()              # status mode: hidden
+    w.mode = "busy"
+    w._sync_visibility()
+    assert not w.btn_cancel_dl.isHidden()          # busy mode: shown
+
+
 # --- DataAnnunciation (persistent PFD flag) ---
 
 def test_worst_severity():
