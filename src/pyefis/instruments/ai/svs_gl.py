@@ -596,6 +596,11 @@ class SVSGLRenderer:
         # Persistent per-layer VBOs for the large static overlays
         # (water, highways): slot -> {vao, vbo, cap, ref, n, frame}.
         self._layer_buffers = {}
+        # Same idea for the textured (atlas) overlays — obstacles,
+        # airport flags, designators. Keeps the _to_enu + GPU upload off
+        # the per-frame path; re-uploads only when the source array
+        # (cached collection) or the ENU frame actually changes.
+        self._text_layer_buffers = {}
 
         # Text overlay state (Phase 4b). Atlas texture + a separate
         # program with the same projection but textured-quad fragment
@@ -1182,6 +1187,107 @@ class SVSGLRenderer:
         finally:
             self._text_vao.release()
 
+    def _draw_text_quads_cached(self, slot, verts_np, color_rgba):
+        """Like _draw_text_quads, but with a persistent per-slot VBO:
+        the ENU conversion and GPU upload run only when the source
+        array (identity) or the ENU frame (patch origin / lat_cos)
+        changes. Obstacle/flag quads come from a TTL-cached collector,
+        so the same array object is handed back frame after frame —
+        re-converting + re-uploading it every frame was the bulk of the
+        obstacle draw cost. Caller must have bound the text program, set
+        its per-frame uniforms, and bound the atlas to TEXTURE0."""
+        if verts_np is None or len(verts_np) == 0:
+            return
+        st = self._text_layer_buffers.get(slot)
+        if st is None:
+            vao = QOpenGLVertexArrayObject()
+            vao.create()
+            vbo = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
+            vbo.create()
+            vbo.setUsagePattern(QOpenGLBuffer.UsagePattern.DynamicDraw)
+            vao.bind()
+            try:
+                vbo.bind()
+                try:
+                    prog = self._text_program
+                    prog.enableAttributeArray(self._text_a_world_pos)
+                    prog.setAttributeBuffer(
+                        self._text_a_world_pos, gl.GL_FLOAT, 0, 3, 20)
+                    prog.enableAttributeArray(self._text_a_uv)
+                    prog.setAttributeBuffer(
+                        self._text_a_uv, gl.GL_FLOAT, 12, 2, 20)
+                finally:
+                    vbo.release()
+            finally:
+                vao.release()
+            st = {"vao": vao, "vbo": vbo, "cap": 0,
+                  "ref": None, "n": 0, "frame": None}
+            self._text_layer_buffers[slot] = st
+        frame_key = (self._patch_origin,
+                     round(self._frame_lat_cos, 4))
+        st["vao"].bind()
+        try:
+            cur = st["ref"]() if st["ref"] is not None else None
+            if cur is not verts_np or st["frame"] != frame_key:
+                enu = self._to_enu(np.asarray(verts_np))
+                n_bytes = enu.size * 4
+                st["vbo"].bind()
+                try:
+                    if n_bytes > st["cap"]:
+                        st["vbo"].allocate(enu.tobytes(), n_bytes)
+                        st["cap"] = n_bytes
+                    else:
+                        st["vbo"].write(0, enu.tobytes(), n_bytes)
+                finally:
+                    st["vbo"].release()
+                st["ref"] = weakref.ref(verts_np)
+                st["n"] = int(enu.shape[0])
+                st["frame"] = frame_key
+            self._text_program.setUniformValue(
+                self._text_u["u_color"],
+                float(color_rgba[0]), float(color_rgba[1]),
+                float(color_rgba[2]), float(color_rgba[3]))
+            gl.glDrawArrays(gl.GL_TRIANGLES, 0, st["n"])
+        finally:
+            st["vao"].release()
+
+    def _render_text_groups_cached(self, groups, slot_prefix,
+                                   w, h, ac_lat, ac_lon, ac_alt_ft,
+                                   pitch_deg, roll_deg, heading_deg,
+                                   pixels_per_deg):
+        """Draw a dict ``{color_rgba: verts_np}`` of textured quads with
+        the shared text-program state bound ONCE, then one cached draw
+        per colour group. Replaces the previous per-group
+        _render_text_overlay loop, which rebound the program, re-set
+        every uniform, re-bound the atlas, and re-uploaded the buffer
+        for each of the (up to eight) obstacle colour groups every
+        frame."""
+        if not groups:
+            return
+        self._ensure_text_program()
+        prog = self._text_program
+        prog.bind()
+        try:
+            prog.setUniformValue(self._text_u["u_vp"], self._frame_vp)
+            prog.setUniformValue(
+                self._text_u["u_ac_e"], float(self._frame_ac_e))
+            prog.setUniformValue(
+                self._text_u["u_ac_n"], float(self._frame_ac_n))
+            prog.setUniformValue(
+                self._text_u["u_earth_curv"], float(self._frame_curv))
+            prog.setUniformValue(self._text_u["u_atlas"], 0)
+            gl.glActiveTexture(gl.GL_TEXTURE0)
+            gl.glBindTexture(gl.GL_TEXTURE_2D,
+                             int(self._text_atlas_tex_id))
+            for color, verts in groups.items():
+                if verts is None or verts.size == 0:
+                    continue
+                self._draw_text_quads_cached(
+                    f"{slot_prefix}:{color}", verts, color)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        finally:
+            prog.release()
+
     def _render_text_overlay(self, verts_np, color_rgba,
                              w, h, ac_lat, ac_lon, ac_alt_ft,
                              pitch_deg, roll_deg, heading_deg,
@@ -1292,15 +1398,12 @@ class SVSGLRenderer:
                         with p._perf.time("obstacles.gl_draw"):
                             prog.release()
                             try:
-                                for color, verts in groups.items():
-                                    if verts.size == 0:
-                                        continue
-                                    self._render_text_overlay(
-                                        verts, color,
-                                        w, h, ac_lat, ac_lon,
-                                        ac_alt_ft, pitch_deg,
-                                        roll_deg, heading_deg,
-                                        pixels_per_deg)
+                                self._render_text_groups_cached(
+                                    groups, "obstacle",
+                                    w, h, ac_lat, ac_lon,
+                                    ac_alt_ft, pitch_deg,
+                                    roll_deg, heading_deg,
+                                    pixels_per_deg)
                             finally:
                                 prog.bind()
 
@@ -1395,33 +1498,48 @@ class SVSGLRenderer:
                         TEXT_M = (0.45, 0.45, 0.45, 1.0)
                         # Terrain-masked flags (behind ridges) draw
                         # dimmed so they read as "behind", not "on" the
-                        # near mountain.
-                        for sfx, pc, qc, tc in (
-                                ("", FLAG_YELLOW, FLAG_YELLOW, TEXT_N),
-                                ("_masked", FLAG_DIM, FLAG_DIM, TEXT_M)):
+                        # near mountain. Poles + flag rectangles go
+                        # through the cached overlay VBOs and the
+                        # identifier text through the cached text VBOs,
+                        # so a static flag field doesn't re-convert +
+                        # re-upload every frame (the same fix obstacles
+                        # got — this was 9 ms/frame at metro density).
+                        for sfx, pc, qc in (
+                                ("", FLAG_YELLOW, FLAG_YELLOW),
+                                ("_masked", FLAG_DIM, FLAG_DIM)):
                             poles = flags.get("poles" + sfx)
                             if poles is not None and poles.size:
                                 self._set_pole_line_width()
-                                self._draw_overlay_primitive(
-                                    poles, pc, gl.GL_LINES,
-                                    fog_strength=0.4)
+                                self._draw_overlay_cached(
+                                    "flag_poles" + sfx, poles, pc,
+                                    gl.GL_LINES, fog_strength=0.4)
                                 gl.glLineWidth(1.0)
                             tris = flags.get("flags" + sfx)
                             if tris is not None and tris.size:
-                                self._draw_overlay_primitive(
-                                    tris, qc, gl.GL_TRIANGLES,
-                                    fog_strength=0.4)
-                            text = flags.get("text" + sfx)
-                            if text is not None and text.size:
-                                prog.release()
-                                try:
-                                    self._render_text_overlay(
-                                        text, tc,
-                                        w, h, ac_lat, ac_lon,
-                                        ac_alt_ft, pitch_deg, roll_deg,
-                                        heading_deg, pixels_per_deg)
-                                finally:
-                                    prog.bind()
+                                self._draw_overlay_cached(
+                                    "flag_tris" + sfx, tris, qc,
+                                    gl.GL_TRIANGLES, fog_strength=0.4)
+                        # Identifier text: both variants under one text-
+                        # program binding, keyed by colour so the normal
+                        # (black) and masked (grey) glyph buffers stay
+                        # distinct cached slots.
+                        text_groups = {}
+                        tn = flags.get("text")
+                        if tn is not None and tn.size:
+                            text_groups[TEXT_N] = tn
+                        tm = flags.get("text_masked")
+                        if tm is not None and tm.size:
+                            text_groups[TEXT_M] = tm
+                        if text_groups:
+                            prog.release()
+                            try:
+                                self._render_text_groups_cached(
+                                    text_groups, "flag",
+                                    w, h, ac_lat, ac_lon, ac_alt_ft,
+                                    pitch_deg, roll_deg, heading_deg,
+                                    pixels_per_deg)
+                            finally:
+                                prog.bind()
 
             # Smoke-test triangle path (kept for diagnostics).
             if getattr(p, "_gl_overlay_smoketest", False):
