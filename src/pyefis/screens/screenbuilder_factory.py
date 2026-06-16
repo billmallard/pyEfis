@@ -70,8 +70,8 @@ def build_altimeter_tape(
     # constructor defaults still apply to anything unset.
     opts = config.get("options") or {}
     kwargs = {}
-    for k in ("dbkey", "maxalt", "majorDiv", "minorDiv",
-              "total_decimals", "font_mask", "round_to", "numeric_box"):
+    for k in ("dbkey", "maxalt", "majorDiv", "minorDiv", "total_decimals",
+              "font_mask", "round_to", "numeric_box", "font_scale"):
         if k in opts:
             kwargs[k] = opts[k]
     return altimeter.Altimeter_Tape(

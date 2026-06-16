@@ -226,6 +226,7 @@ class Altimeter_Tape(QGraphicsView):
         font_mask="00000",
         round_to=0,
         numeric_box=True,
+        font_scale=1.0,
     ):
         super(Altimeter_Tape, self).__init__(parent)
         self.setStyleSheet("background: transparent")
@@ -261,6 +262,8 @@ class Altimeter_Tape(QGraphicsView):
         # When False, the embedded numeric readout box is omitted entirely and
         # only the scrolling tape (with its fixed read pointer) is shown.
         self.numeric_box = numeric_box
+        # Multiplier on the tape's scale-number (tick label) font size.
+        self.font_scale = font_scale
         self.myparent = parent
 
         self.conversionFunction1 = lambda x: x
@@ -282,9 +285,9 @@ class Altimeter_Tape(QGraphicsView):
                 self.font_mask,
                 self.font_family,
             )
-            f.setPointSizeF(self.font_size)
+            f.setPointSizeF(self.font_size * self.font_scale)
         else:
-            f.setPixelSize(self.fontsize)
+            f.setPixelSize(qRound(self.fontsize * self.font_scale))
         self.height_pixel = (
             self.maxalt * 2 * self.pph + h
         )  # + abs(self.minalt*self.pph)

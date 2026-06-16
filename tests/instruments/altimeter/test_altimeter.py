@@ -97,13 +97,17 @@ def test_altimeter_tape_honors_div_options(fix, qtbot):
     be hardcoded, so YAML options like minorDiv were silently ignored."""
     widget = altimeter.Altimeter_Tape(
         majorDiv=500, minorDiv=200, total_decimals=3, font_mask="000",
-        round_to=100)
+        round_to=100, font_scale=1.2)
     qtbot.addWidget(widget)
+    widget.resize(80, 200)
+    widget.show()
+    qtbot.waitExposed(widget)                  # exercise resizeEvent font path
     assert widget.majorDiv == 500
     assert widget.minorDiv == 200
     assert widget.total_decimals == 3
     assert widget.font_mask == "000"
     assert widget.round_to == 100
+    assert widget.font_scale == 1.2
     # defaults preserved when not supplied
     d = altimeter.Altimeter_Tape()
     qtbot.addWidget(d)
@@ -173,11 +177,13 @@ def test_build_altimeter_tape_forwards_options(monkeypatch):
     monkeypatch.setattr(sf.altimeter, "Altimeter_Tape", fake_tape)
     sf.build_altimeter_tape(None, {"options": {
         "dbkey": "VS", "minorDiv": 50, "majorDiv": 100, "round_to": 100,
-        "total_decimals": 5, "font_mask": "00000"}}, font_family="DejaVu")
+        "total_decimals": 5, "font_mask": "00000", "numeric_box": False,
+        "font_scale": 1.2}}, font_family="DejaVu")
     assert captured["dbkey"] == "VS"
     assert captured["minorDiv"] == 50 and captured["majorDiv"] == 100
     assert captured["total_decimals"] == 5 and captured["font_mask"] == "00000"
     assert captured["round_to"] == 100
+    assert captured["numeric_box"] is False and captured["font_scale"] == 1.2
 
     # a config that omits the div keys forwards none of them (defaults apply)
     captured.clear()
