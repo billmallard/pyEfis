@@ -135,6 +135,31 @@ def test_altimeter_tape_rounds_numeric_box(fix, qtbot):
     assert raw.numerical_display.value == 137
 
 
+def test_altimeter_tape_numeric_box_can_be_hidden(fix, qtbot):
+    """numeric_box=False omits the embedded readout and renders just the tape;
+    the old/bad/fail setters and redraw must not choke on the missing box."""
+    widget = altimeter.Altimeter_Tape(dbkey="VS", numeric_box=False)
+    qtbot.addWidget(widget)
+    widget.resize(60, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+    assert widget.numerical_display is None
+    # these all run on data events / construction and must be no-ops, not crashes
+    widget.setAltOld(True)
+    widget.setAltBad(True)
+    widget.setAltFail(True)
+    widget._altimeter = 250
+    widget.redraw()
+    widget.paintEvent(QtGui.QPaintEvent(widget.rect()))   # tape + pointer still paint
+    # default keeps the box
+    shown = altimeter.Altimeter_Tape(dbkey="VS")
+    qtbot.addWidget(shown)
+    shown.resize(60, 200)
+    shown.show()
+    qtbot.waitExposed(shown)
+    assert shown.numerical_display is not None
+
+
 def test_build_altimeter_tape_forwards_options(monkeypatch):
     """build_altimeter_tape must forward the supported tape options (and only
     those present) to the widget — the bug was that only dbkey was passed."""

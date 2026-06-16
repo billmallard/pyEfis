@@ -225,6 +225,7 @@ class Altimeter_Tape(QGraphicsView):
         total_decimals=5,
         font_mask="00000",
         round_to=0,
+        numeric_box=True,
     ):
         super(Altimeter_Tape, self).__init__(parent)
         self.setStyleSheet("background: transparent")
@@ -257,6 +258,9 @@ class Altimeter_Tape(QGraphicsView):
         # 100-fpm steps instead of the digits scrolling continuously; the tape
         # scroll itself stays smooth (it uses the unrounded value).
         self.round_to = round_to
+        # When False, the embedded numeric readout box is omitted entirely and
+        # only the scrolling tape (with its fixed read pointer) is shown.
+        self.numeric_box = numeric_box
         self.myparent = parent
 
         self.conversionFunction1 = lambda x: x
@@ -316,21 +320,25 @@ class Altimeter_Tape(QGraphicsView):
                 l.setOpacity(self.foregroundOpacity)
         self.setScene(self.scene)
 
-        self.numerical_display = NumericalDisplay(
-            self, total_decimals=self.total_decimals, scroll_decimal=2
-        )
         nbh = w / 1.20
-        self.numerical_display.resize(qRound(w / 1.20), qRound(nbh / 1.45))
+        box_w = qRound(w / 1.20)
         self.numeric_box_pos = QPoint(0, qRound(h / 2 - (nbh / 1.45) / 2))
-        self.numerical_display.move(self.numeric_box_pos)
-        self.numeric_box_pos.setX(
-            self.numeric_box_pos.x() + self.numerical_display.width()
-        )
+        if self.numeric_box:
+            self.numerical_display = NumericalDisplay(
+                self, total_decimals=self.total_decimals, scroll_decimal=2
+            )
+            self.numerical_display.resize(box_w, qRound(nbh / 1.45))
+            self.numerical_display.move(self.numeric_box_pos)
+            self.numerical_display.show()
+            self.numerical_display.value = self._altimeter
+        else:
+            self.numerical_display = None
+        # Read-pointer position (drawn in paintEvent) — same spot whether or not
+        # the numeric box is shown, so the tape stays readable.
+        self.numeric_box_pos.setX(self.numeric_box_pos.x() + box_w)
         self.numeric_box_pos.setY(
             qRound(self.numeric_box_pos.y() + (nbh / 1.45) / 2) + 1
         )
-        self.numerical_display.show()
-        self.numerical_display.value = self._altimeter
         self.centerOn(
             self.scene.width() / 2, self.y_offset(self._altimeter + self.maxalt)
         )
@@ -352,12 +360,13 @@ class Altimeter_Tape(QGraphicsView):
         self.centerOn(
             self.scene.width() / 2, self.y_offset(self._altimeter + self.maxalt)
         )
-        if self.round_to:
-            self.numerical_display.value = (
-                round(self._altimeter / self.round_to) * self.round_to
-            )
-        else:
-            self.numerical_display.value = self._altimeter
+        if self.numerical_display is not None:
+            if self.round_to:
+                self.numerical_display.value = (
+                    round(self._altimeter / self.round_to) * self.round_to
+                )
+            else:
+                self.numerical_display.value = self._altimeter
 
     #  Index Line that doesn't move to make it easy to read the altimeter.
     def paintEvent(self, event):
@@ -421,13 +430,16 @@ class Altimeter_Tape(QGraphicsView):
     altimeter = property(getAltimeter, setAltimeter)
 
     def setAltOld(self, b):
-        self.numerical_display.old = b
+        if self.numerical_display is not None:
+            self.numerical_display.old = b
 
     def setAltBad(self, b):
-        self.numerical_display.bad = b
+        if self.numerical_display is not None:
+            self.numerical_display.bad = b
 
     def setAltFail(self, b):
-        self.numerical_display.fail = b
+        if self.numerical_display is not None:
+            self.numerical_display.fail = b
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
