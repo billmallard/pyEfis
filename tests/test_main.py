@@ -251,6 +251,12 @@ def test_main_sets_requested_log_level(
 ):
     config_file, _preferences_file = config_files
     logger = mock.Mock()
+    # pytest's logging plugin iterates logging.getLogger().manager.loggerDict
+    # around each test phase; with getLogger globally mocked, that attribute
+    # must be a real iterable or the plugin raises in teardown ("'Mock' object
+    # is not iterable") on newer pytest, leaking the patch and cascading errors
+    # into every later test. A plain empty dict keeps the plugin happy.
+    logger.manager.loggerDict = {}
     monkeypatch.setattr(
         main_module.sys, "argv", argv + ["--config-file", str(config_file)]
     )
