@@ -13,6 +13,11 @@ import pyefis.main as main_module
 class FakeApp:
     instances = []
 
+    # main() sets AA_ShareOpenGLContexts before constructing the app (it must
+    # be set pre-construction for the SVS QOpenGLWidget share group), so the
+    # stand-in needs a no-op class-level setAttribute.
+    setAttribute = staticmethod(lambda *args, **kwargs: None)
+
     def __init__(self, argv):
         self.argv = argv
         self.exec = mock.Mock(return_value=7)

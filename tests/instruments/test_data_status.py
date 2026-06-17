@@ -143,19 +143,27 @@ def test_picker_prechecks_tracked_and_renders(app):
 def test_picker_row_tap_toggles_checkbox(app):
     # On the touchscreen the whole row must toggle (tapping the tiny indicator
     # is unreliable); children are mouse-transparent and the row toggles on tap.
+    # A tap is press+release on (nearly) the same spot — the row toggles on
+    # release within a small slop so that two-finger scroll drags don't select.
     from PyQt6.QtGui import QMouseEvent
     from PyQt6.QtCore import QEvent, QPointF, Qt
+
+    def tap(row, x=5, y=5):
+        for kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+            ev = QMouseEvent(kind, QPointF(x, y),
+                             Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                             Qt.KeyboardModifier.NoModifier)
+            (row.mousePressEvent if kind == QEvent.Type.MouseButtonPress
+             else row.mouseReleaseEvent)(ev)
+
     pk = data_status.PackPicker(doc=CATALOG)
     pk.resize(800, 480)
     assert "water-na" not in pk.selected_ids()
     assert pk.checks["water-na"].testAttribute(
         Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-    ev = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(5, 5),
-                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
-                     Qt.KeyboardModifier.NoModifier)
-    pk.rows["water-na"].mousePressEvent(ev)
+    tap(pk.rows["water-na"])
     assert "water-na" in pk.selected_ids()               # tap selected it
-    pk.rows["water-na"].mousePressEvent(ev)
+    tap(pk.rows["water-na"])
     assert "water-na" not in pk.selected_ids()           # tap again deselects
 
 
