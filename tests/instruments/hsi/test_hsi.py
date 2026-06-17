@@ -67,6 +67,30 @@ def test_hsi_default_flags_heading_and_bug(fix, qtbot):
     widget.showEvent(None)
 
 
+def test_hsi_resize_does_not_accumulate_rotation(fix, qtbot):
+    """resizeEvent must re-apply the absolute -heading rotation from a clean
+    transform. It fires repeatedly (layout settling / geometry changes); without
+    resetting first, each call stacked another -heading rotation and the card
+    showed heading+offset (e.g. 290 when actually 052)."""
+    import math
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.resize(200, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.setHeading(52)
+
+    widget.resizeEvent(None)
+    t1 = widget.transform()
+    widget.resizeEvent(None)
+    widget.resizeEvent(None)
+    t2 = widget.transform()
+
+    assert t1 == t2                                      # idempotent, no stacking
+    # transform is exactly a -52 rotation, not a multiple of it
+    assert abs(t2.m11() - math.cos(math.radians(52))) < 1e-6
+
+
 def test_hsi_heading_bug_before_resize_and_no_deviation_paint(fix, qtbot):
     widget = hsi.HSI()
     qtbot.addWidget(widget)

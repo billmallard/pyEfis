@@ -204,6 +204,13 @@ class HSI(QGraphicsView):
         self.heading_bug = self.scene.addPolygon(triangle, headingPen, headingBrush)
 
         self.setScene(self.scene)
+        # Clear any prior view rotation before re-applying. resizeEvent can fire
+        # repeatedly (initial layout settling, any geometry change), and the
+        # rotation is a view transform that persists across the scene rebuild --
+        # without this reset each call stacked another -heading rotation, baking
+        # in a permanent offset (the card showed heading+offset, e.g. 290 when
+        # actually 052). setHeading then tracks incrementally from this baseline.
+        self.resetTransform()
         self.rotate(-self._heading)
 
         # Draws the static overlay stuff to a pixmap
