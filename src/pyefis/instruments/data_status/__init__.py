@@ -130,20 +130,49 @@ def _row_label(p):
 
 
 class _PackRow(QWidget):
-    """A full-width touch target for one pack: tapping anywhere on the row
-    toggles its checkbox. The checkbox (and labels) are made mouse-transparent
-    so every tap lands on the row, not the tiny indicator — essential on the
-    eglfs touchscreen, where a precise tap on a 24px box is unreliable and is
-    easily mistaken for the start of a scroll drag. Toggling on *press* (not
-    release) keeps it responsive and side-steps the tap-vs-drag ambiguity;
-    single-finger taps select, two-finger gestures scroll."""
+    """A full-width touch target for one pack: a tap anywhere on the row toggles
+    its checkbox. The checkbox (and labels) are made mouse-transparent so every
+    tap lands on the row, not the tiny 26px indicator — a precise tap on the box
+    is unreliable on the eglfs touchscreen.
+
+    Tap vs. scroll: toggle on *release*, and only when the pointer hasn't moved
+    more than ``_TAP_SLOP`` px since press. Two-finger scrolling drags the
+    synthesized pointer across the row (and scrolls the content under it), so it
+    exceeds the slop and does NOT toggle; a clean tap stays put and selects.
+    (The old code toggled on *press*, which fired before the gesture could be
+    recognised as a scroll — so scrolling kept flipping whatever row a finger
+    first landed on.)"""
+
+    _TAP_SLOP = 12          # px of pointer movement still counted as a tap
 
     def __init__(self, checkbox, parent=None):
         super().__init__(parent)
         self._cb = checkbox
+        self._press_pos = None
+
+    def _moved(self, event):
+        if self._press_pos is None:
+            return None
+        d = event.position() - self._press_pos
+        return abs(d.x()) + abs(d.y())          # manhattan distance
 
     def mousePressEvent(self, event):
-        self._cb.toggle()
+        self._press_pos = event.position()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        # Once the pointer wanders past the slop it's a scroll/drag, not a tap;
+        # drop the press so the upcoming release won't toggle.
+        moved = self._moved(event)
+        if moved is not None and moved > self._TAP_SLOP:
+            self._press_pos = None
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        moved = self._moved(event)
+        if moved is not None and moved <= self._TAP_SLOP:
+            self._cb.toggle()
+        self._press_pos = None
         event.accept()
 
 
@@ -173,6 +202,12 @@ class PackPicker(QWidget):
         self.rows = {}                                     # id -> _PackRow
         self._chooser = None                               # drive-chooser overlay
         self.bytes_by_id = {p["id"]: p.get("bytes", 0) for p in self.packs}
+        # Opaque overlay: the picker is raised over the live data-status screen,
+        # so its background must fully block what's behind it. A plain QWidget
+        # ignores a stylesheet background unless WA_StyledBackground is set —
+        # without it the screen underneath (e.g. the storage/drive text) bled
+        # through the title and footer margins around the scroll list.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("background:#0B1015;")
         self._build(source_label, alt_source_label)
 
@@ -192,6 +227,11 @@ class PackPicker(QWidget):
         title.setStyleSheet("color:#EEEEEE;")
         title.setFont(self._f(19, bold=True))
         head.addWidget(title)
+        hint = QLabel("Tap a row to select  ·  use two fingers to scroll")
+        hint.setStyleSheet("color:#6E828F;")
+        hint.setFont(self._f(13))                          # same small font as source
+        head.addSpacing(14)
+        head.addWidget(hint)
         head.addStretch(1)
         src = QLabel(f"Source: {source_label}")
         src.setStyleSheet("color:#9FBBC9;")
@@ -347,6 +387,8 @@ class PackPicker(QWidget):
         Tapping one sets it as the install target (and warns if removable)."""
         self._close_chooser()
         self._chooser = QWidget(self)
+        # Same opaque-overlay requirement as the picker itself (see __init__).
+        self._chooser.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._chooser.setStyleSheet("background:#0B1015;")
         v = QVBoxLayout(self._chooser)
         v.setContentsMargins(20, 16, 20, 16)
