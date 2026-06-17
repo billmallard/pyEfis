@@ -18,7 +18,7 @@ from pyefis.instruments.ai.svs import (
     SVSRenderer, TileCache,
     tile_name, load_tile, elevation_at,
     COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
-    SRTM3_SAMPLES, SRTM3_VOID,
+    SRTM3_SAMPLES, SRTM3_VOID, _WATER_SENTINEL,
     POLAR_DEFAULTS,
 )
 from pyefis.instruments.ai import AI
@@ -80,7 +80,10 @@ class TestTileLoading:
         tile = load_tile(root, 99, 99)
         assert tile is None
 
-    def test_void_values_replaced_with_zero(self, tmp_path):
+    def test_void_values_replaced_with_water_sentinel(self, tmp_path):
+        # SRTM void cells mark ocean / no-data. They are replaced with the
+        # water sentinel (not 0): coastal interpolation relies on the sentinel
+        # magnitude to detect water, and a plain 0 would read as sea-level land.
         name = tile_name(10, 10)
         ns_dir = "N10"
         tile_dir = tmp_path / "srtm3" / ns_dir
@@ -89,7 +92,7 @@ class TestTileLoading:
         data.tofile(tile_dir / f"{name}.hgt")
         tile = load_tile(tmp_path / "srtm3", 10, 10)
         assert tile is not None
-        assert (tile == 0).all()
+        assert (tile == _WATER_SENTINEL).all()
 
 
 # ---------------------------------------------------------------------------

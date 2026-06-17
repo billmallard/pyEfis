@@ -53,6 +53,14 @@ build = [
 qt = [
     "PyQt6==6.8.0",
 ]
+# Synthetic Vision System (GL terrain renderer). Optional: base pyEfis runs
+# without these — the AI widget imports the SVS/GL modules lazily and
+# annunciates UNAVAIL when they're absent. Required to enable SVS (and to run
+# its test suite).
+svs = [
+    "numpy>=1.24",
+    "PyOpenGL>=3.1.6",
+]
 
 [project.scripts]
 pyefis = "pyefis.main:main"
