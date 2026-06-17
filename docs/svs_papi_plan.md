@@ -113,7 +113,7 @@ Tier 1 is reused, just fed real parameters.*
 - A companion **extended runway centerline** (VirtualVfr also draws one) would
   pair naturally with the PAPI as approach guidance, if wanted.
 - Sequencing: this is an SVS fast-follow, after the stabilize-before-upstream-PR
-  gate, alongside rivers-as-lines and taxiways.
+  gate, alongside rivers-as-lines (tracked in #39) and taxiways.
 
 ## Acceptance
 
