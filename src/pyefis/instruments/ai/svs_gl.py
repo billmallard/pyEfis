@@ -1800,9 +1800,14 @@ class SVSGLRenderer:
 
         cap = int(getattr(self._parent, "heightmap_max_px", 4096))
         try:
-            cap = min(cap, int(gl.glGetIntegerv(gl.GL_MAX_TEXTURE_SIZE)))
+            gl_max = int(gl.glGetIntegerv(gl.GL_MAX_TEXTURE_SIZE))
+            # Only honor a real, positive driver limit. Without a current GL
+            # context (unit tests / headless) glGetIntegerv may RETURN 0 rather
+            # than raising — min(cap, 0) would collapse the heightmap to 1px.
+            if gl_max > 0:
+                cap = min(cap, gl_max)
         except Exception:
-            pass   # no current context (unit tests) — config cap only
+            pass   # no current context — config cap only
         step = 1
         while patch.shape[0] // step > cap:
             step *= 2
