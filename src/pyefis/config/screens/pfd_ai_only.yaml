@@ -16,10 +16,13 @@ PFD_AI_ONLY:
     rows: 110
     columns: 200
   instruments:
-    # The AHRS bundle: virtual_vfr (attitude + SVS), tapes, VSI, HSI,
-    # wind display. Same include the standard PFD uses — stretched to
-    # the full display width since the engine/radio columns are gone.
-    - type: include,includes/ahrs/virtual_vfr.yaml
+    # The AHRS bundle (SVS variant): virtual_vfr with Synthetic Vision enabled,
+    # tapes, VSI, wind display — stretched to the full display width since the
+    # engine/radio columns are gone. HSI, the autopilot status line, and the
+    # time readouts are dropped for a clean synthetic-vision picture. Uses the
+    # dedicated svs.yaml include so the shared virtual_vfr.yaml stays untouched
+    # for the standard PFD.
+    - type: include,includes/ahrs/svs.yaml
       row: 0
       column: 0
       span:
