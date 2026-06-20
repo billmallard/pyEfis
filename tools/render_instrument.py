@@ -93,6 +93,11 @@ _NEEDS_DBKEY = {
     "arc_gauge", "horizontal_bar_gauge", "vertical_bar_gauge", "numeric_display",
 }
 
+# Types whose appearance is driven by an external config file (button actions,
+# listbox lists) and whose conditions/state aren't meaningful as a standalone
+# thumbnail -- always shown as a labelled placeholder in previews.
+_CONFIG_DRIVEN = {"button", "listbox"}
+
 
 def _load_fonts():
     """Register DejaVu under the offscreen platform so text isn't tofu, and
@@ -211,6 +216,8 @@ def _placeholder_reason(instrument_type, options):
         return f"{instrument_type}\n(GL preview on device)"
     if "svs" in options:
         return f"{instrument_type}\n(SVS preview on device)"
+    if instrument_type in _CONFIG_DRIVEN:
+        return f"{instrument_type}\n(config-driven)"
     if instrument_type == "static_text" and "text" not in options:
         options["text"] = "Text"
     missing = [o for o in meta["required_options"] if o not in options]
