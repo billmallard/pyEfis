@@ -37,6 +37,7 @@ def test_curated_metadata_keys_are_real_types():
         ("_CATEGORIES", eschema._CATEGORIES),
         ("_LABELS", eschema._LABELS),
         ("_REQUIRED_OPTIONS", eschema._REQUIRED_OPTIONS),
+        ("_OPTIONS", eschema._OPTIONS),
     ):
         unknown = set(mapping) - real
         assert not unknown, f"{name} references unknown types: {unknown}"
@@ -79,6 +80,21 @@ def test_required_options_present():
     s = eschema.build_schema()
     assert s["instruments"]["button"]["required_options"] == ["config"]
     assert s["instruments"]["static_text"]["required_options"] == ["text"]
+
+
+def test_options_are_well_formed():
+    """The curated per-type options drive the editor properties panel."""
+    s = eschema.build_schema()
+    asi = s["instruments"]["airspeed_tape"]["options"]
+    assert asi["dbkey"]["type"] == "string"
+    align = s["instruments"]["static_text"]["options"]["alignment"]
+    assert align["type"] == "enum" and "AlignLeft" in align["enum"]
+    color = s["instruments"]["heading_display"]["options"]["fg_color"]
+    assert color["type"] == "color"
+    # every option carries a type
+    for inst in s["instruments"].values():
+        for spec in inst["options"].values():
+            assert "type" in spec
 
 
 def test_schema_is_json_serialisable():

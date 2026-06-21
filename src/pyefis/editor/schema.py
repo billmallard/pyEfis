@@ -45,7 +45,7 @@ from pyefis.screens.screenbuilder_factory import (
     INSTRUMENT_FACTORIES,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Curated editor-affordance metadata. Keys MUST be real INSTRUMENT_FACTORIES
@@ -133,8 +133,91 @@ _LAYOUT_FIELDS = {
 
 # Options accepted by (almost) every instrument, forwarded by the factory.
 _COMMON_OPTIONS = {
-    "font_family": {"type": "string", "default": "DejaVu Sans Condensed"},
-    "font_percent": {"type": "number", "default": None},
+    "font_family": {"type": "string", "default": "DejaVu Sans Condensed",
+                    "label": "Font family"},
+    "font_percent": {"type": "number", "default": None, "min": 0, "max": 1,
+                     "step": 0.01, "label": "Font size (fraction of height)"},
+}
+
+
+def _gauge_options():
+    """Shared option set for the arc / bar gauge family."""
+    return {
+        "dbkey": {"type": "string", "default": "", "label": "FIX key"},
+        "name": {"type": "string", "default": "", "label": "Name"},
+        "decimal_places": {"type": "number", "default": 0, "label": "Decimal places"},
+        "show_units": {"type": "boolean", "default": False, "label": "Show units"},
+        "segments": {"type": "number", "default": 0, "label": "Segments"},
+    }
+
+
+# Curated, editor-facing editable options per type (beyond the common font
+# options above). Drives the properties panel. Field metadata:
+#   type: number|string|boolean|color|enum   default:   label:   [enum/min/max]
+# A practical subset of what each widget accepts, kept in sync with the build_*
+# factories + docs/screenbuilder.md. NOTE: V-speeds / gauge warn-alarm bands are
+# NOT here -- those are FIX-database (fix-gateway) values, not layout (see #64).
+_OPTIONS = {
+    "airspeed_tape": {
+        "dbkey": {"type": "string", "default": "IAS", "label": "FIX key"},
+        "show_tas": {"type": "boolean", "default": True, "label": "Show TAS box"},
+        "show_trend": {"type": "boolean", "default": True, "label": "Show trend arrow"},
+        "trend_lookahead": {"type": "number", "default": 6.0, "label": "Trend look-ahead (s)"},
+    },
+    "altimeter_tape": {
+        "dbkey": {"type": "string", "default": "ALT", "label": "FIX key"},
+        "majorDiv": {"type": "number", "default": 100, "label": "Major division"},
+        "minorDiv": {"type": "number", "default": None, "label": "Minor division"},
+        "maxalt": {"type": "number", "default": 50000, "label": "Max altitude"},
+        "font_scale": {"type": "number", "default": 1.0, "label": "Scale-number font scale"},
+        "numeric_box": {"type": "boolean", "default": True, "label": "Show numeric box"},
+        "font_mask": {"type": "string", "default": "00000", "label": "Font mask"},
+    },
+    "numeric_display": {
+        "dbkey": {"type": "string", "default": "", "label": "FIX key"},
+        "decimal_places": {"type": "number", "default": 0, "label": "Decimal places"},
+        "font_mask": {"type": "string", "default": "000", "label": "Font mask"},
+        "show_units": {"type": "boolean", "default": False, "label": "Show units"},
+    },
+    "value_text": {
+        "dbkey": {"type": "string", "default": "", "label": "FIX key"},
+        "font_mask": {"type": "string", "default": "", "label": "Font mask"},
+    },
+    "static_text": {
+        "text": {"type": "string", "default": "Text", "label": "Text"},
+        "alignment": {"type": "enum", "default": "AlignLeft",
+                      "enum": ["AlignLeft", "AlignCenter", "AlignRight"],
+                      "label": "Alignment"},
+        "font_mask": {"type": "string", "default": "", "label": "Font mask"},
+    },
+    "heading_display": {
+        "fg_color": {"type": "color", "default": "#aaaaaa", "label": "Foreground"},
+        "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
+        "font_size": {"type": "number", "default": 17, "label": "Font size (px)"},
+    },
+    "heading_tape": {
+        "dbkey": {"type": "string", "default": "HEAD", "label": "FIX key"},
+    },
+    "horizontal_situation_indicator": {
+        "cdi_enabled": {"type": "boolean", "default": True, "label": "CDI"},
+        "gsi_enabled": {"type": "boolean", "default": True, "label": "Glideslope"},
+        "fg_color": {"type": "color", "default": "#ffffff", "label": "Foreground"},
+        "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
+    },
+    "atitude_indicator": {
+        "aircraft_symbol": {"type": "enum", "default": "classic",
+                            "enum": ["classic", "delta"], "label": "Aircraft symbol"},
+        "symbol_color": {"type": "color", "default": "#ffff00", "label": "Symbol colour"},
+        "show_fpm": {"type": "boolean", "default": True, "label": "Flight-path marker"},
+    },
+    "virtual_vfr": {
+        "aircraft_symbol": {"type": "enum", "default": "classic",
+                            "enum": ["classic", "delta"], "label": "Aircraft symbol"},
+        "symbol_color": {"type": "color", "default": "#ffff00", "label": "Symbol colour"},
+    },
+    "arc_gauge": _gauge_options(),
+    "horizontal_bar_gauge": _gauge_options(),
+    "vertical_bar_gauge": _gauge_options(),
 }
 
 
@@ -183,6 +266,7 @@ def build_schema():
             "dbkeys": list(INSTRUMENT_DEFAULTS.get(instrument_type, []) or []),
             "default_options": _default_options(instrument_type),
             "required_options": list(_REQUIRED_OPTIONS.get(instrument_type, [])),
+            "options": _OPTIONS.get(instrument_type, {}),
             "offscreen_renderable":
                 instrument_type not in _NOT_OFFSCREEN_RENDERABLE,
             "svs_capable": instrument_type in _SVS_CAPABLE,
