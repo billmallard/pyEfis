@@ -120,6 +120,19 @@ _SVS_CAPABLE = {
     "virtual_vfr",
 }
 
+# Fixed-aspect (round / square) instruments: the editor letterboxes these
+# (object-fit: contain) instead of stretching, so a dial stays round. Tapes,
+# bars and text stretch to their box.
+_KEEP_ASPECT = {
+    "airspeed_dial",
+    "altimeter_dial",
+    "vsi_dial",
+    "turn_coordinator",
+    "atitude_indicator",
+    "horizontal_situation_indicator",
+    "arc_gauge",
+}
+
 # Layout fields every instrument accepts at the screen-builder level (not
 # instrument options). Informational, for the editor's inspector.
 _LAYOUT_FIELDS = {
@@ -270,6 +283,7 @@ def build_schema():
             "offscreen_renderable":
                 instrument_type not in _NOT_OFFSCREEN_RENDERABLE,
             "svs_capable": instrument_type in _SVS_CAPABLE,
+            "keep_aspect": instrument_type in _KEEP_ASPECT,
         }
 
     return {

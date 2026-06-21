@@ -287,6 +287,75 @@ def render_instrument(instrument_type, options=None, seed=None,
     return "render", out_path
 
 
+def render_instrument_svg(instrument_type, options=None, seed=None,
+                          width=320, height=240, out_path="instrument.svg"):
+    """Export one instrument to SVG via QSvgGenerator, reusing the widget's real
+    QPainter paint code. Returns ("svg"|"placeholder", out_path). GL widgets,
+    weston, config-driven and missing-required-option cases return
+    ("placeholder", ...) WITHOUT writing an SVG -- the caller falls back to the
+    raster placeholder for those."""
+    options = dict(options or {})
+    app = QApplication.instance() or QApplication(sys.argv[:1])
+    _load_fonts()
+    _setup_fix()
+
+    import pyefis.hmi as hmi
+    if hmi.actions is None:
+        hmi.initialize({})
+
+    reason = _placeholder_reason(instrument_type, options)
+    if reason:
+        return "placeholder", out_path
+    if instrument_type in _NEEDS_DBKEY and "dbkey" not in options:
+        options["dbkey"] = "DEMOGAUGE"
+        options.setdefault("name", "DEMO")
+    for key, value in (seed or {}).items():
+        it = fix.db.get_item(key)
+        fix.db.set_value(key, value)
+        it.bad = it.fail = it.old = False
+
+    instrument = {"type": instrument_type, "row": 0, "column": 0,
+                  "span": {"rows": 10, "columns": 10}}
+    if options:
+        instrument["options"] = options
+    config = {
+        "main": {"screenColor": "(0,0,0)", "screenWidth": width,
+                 "screenHeight": height, "nodeID": 1},
+        "screens": {"TEST": {
+            "module": "pyefis.screens.screenbuilder",
+            "title": "render",
+            "layout": {"rows": 10, "columns": 10},
+            "instruments": [instrument],
+        }},
+    }
+
+    from tests.screenshots import gui
+    from PyQt6.QtCore import QSize
+    from PyQt6.QtSvg import QSvgGenerator
+    try:
+        gui.initialize(config, _REPO_ROOT, {}, fullscreen=False)
+        screen = gui.mainWindow.scr.object
+        screen.resize(width, height)
+        widget = screen.instruments[0]
+        widget.move(0, 0)
+        widget.resize(width, height)
+        for _ in range(40):
+            app.processEvents()
+            time.sleep(0.01)
+        gen = QSvgGenerator()
+        gen.setFileName(out_path)
+        gen.setSize(QSize(width, height))
+        gen.setViewBox(QRect(0, 0, width, height))
+        painter = QPainter(gen)
+        widget.render(painter)
+        painter.end()
+        gui.mainWindow.close()
+    except Exception as exc:
+        print(f"  svg failed ({exc!r})", file=sys.stderr)
+        return "placeholder", out_path
+    return "svg", out_path
+
+
 def _write_fallback_png(out_path, width, height,
                         fill=(32, 36, 43), border=(90, 100, 114)):
     """Write a minimal solid PNG with a border using only the stdlib. Used as
@@ -360,13 +429,20 @@ def main(argv=None):
     parser.add_argument("--safe", action="store_true",
                         help="render in an isolated subprocess; a crash/timeout "
                              "degrades to a placeholder")
+    parser.add_argument("--svg", action="store_true",
+                        help="export an SVG (QSvgGenerator) instead of a PNG")
     args = parser.parse_args(argv)
 
     options = json.loads(args.options) if args.options else {}
     seed = json.loads(args.seed) if args.seed else {}
-    out = args.out or f"render_{args.type}.png"
+    out = args.out or f"render_{args.type}.{'svg' if args.svg else 'png'}"
 
-    renderer = safe_render if args.safe else render_instrument
+    if args.svg:
+        renderer = render_instrument_svg
+    elif args.safe:
+        renderer = safe_render
+    else:
+        renderer = render_instrument
     kind, path = renderer(
         args.type, options=options, seed=seed,
         width=args.width, height=args.height, out_path=out)

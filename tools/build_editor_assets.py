@@ -31,6 +31,7 @@ Usage (from the repo root)::
 
 import argparse
 import os
+import subprocess
 import sys
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,7 +41,22 @@ for _p in (_REPO_ROOT, os.path.join(_REPO_ROOT, "src"),
         sys.path.insert(0, _p)
 
 from pyefis.editor import schema as eschema  # noqa: E402
-import render_instrument as ri  # noqa: E402
+
+_RENDER = os.path.join(_REPO_ROOT, "tools", "render_instrument.py")
+
+
+def _placeholder_svg(out_path, label, w, h):
+    """A small labelled placeholder SVG for GL / config-driven types."""
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
+        f'viewBox="0 0 {w} {h}">'
+        f'<rect x="1" y="1" width="{w - 2}" height="{h - 2}" fill="#20242b" '
+        f'stroke="#5a6472" stroke-width="2"/>'
+        f'<text x="{w // 2}" y="{h // 2}" fill="#c2c9d2" font-family="sans-serif" '
+        f'font-size="13" text-anchor="middle" dominant-baseline="middle">'
+        f'{label}</text></svg>')
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write(svg)
 
 
 def build(out_dir, width, height):
@@ -53,10 +69,21 @@ def build(out_dir, width, height):
 
     types = sorted(eschema.build_schema()["instruments"])
     for instrument_type in types:
-        kind, _path = ri.safe_render(
-            instrument_type, width=width, height=height,
-            out_path=os.path.join(palette_dir, f"{instrument_type}.png"))
-        print(f"  {instrument_type:<34} {kind}")
+        out = os.path.join(palette_dir, f"{instrument_type}.svg")
+        if os.path.exists(out):
+            os.remove(out)
+        # One subprocess per type: the SVG export builds a Qt screen, and a
+        # fresh process avoids cross-instrument state and keeps a hard crash
+        # from taking the whole build down.
+        subprocess.run(
+            [sys.executable, _RENDER, instrument_type, "--svg", "-o", out,
+             "--width", str(width), "--height", str(height)],
+            capture_output=True, text=True, timeout=60)
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            print(f"  {instrument_type:<34} svg")
+        else:
+            _placeholder_svg(out, instrument_type, width, height)
+            print(f"  {instrument_type:<34} placeholder")
     return len(types)
 
 

@@ -44,6 +44,7 @@ def test_curated_metadata_keys_are_real_types():
     for name, members in (
         ("_NOT_OFFSCREEN_RENDERABLE", eschema._NOT_OFFSCREEN_RENDERABLE),
         ("_SVS_CAPABLE", eschema._SVS_CAPABLE),
+        ("_KEEP_ASPECT", eschema._KEEP_ASPECT),
     ):
         unknown = members - real
         assert not unknown, f"{name} references unknown types: {unknown}"
