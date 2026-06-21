@@ -236,6 +236,11 @@ _OPTIONS = {
         "aircraft_symbol": {"type": "enum", "default": "classic",
                             "enum": ["classic", "delta"], "label": "Aircraft symbol"},
         "symbol_color": {"type": "color", "default": "#ffff00", "label": "Symbol colour"},
+        # Editor preview only: the device renders real SVS terrain; this picks
+        # which stylised backdrop the configurator shows for layout.
+        "preview_scene": {"type": "enum", "default": "mountains",
+                          "enum": ["mountains", "approach", "coastal"],
+                          "label": "Preview scene (editor)"},
     },
     "arc_gauge": _gauge_options(),
     "horizontal_bar_gauge": _gauge_options(),
