@@ -151,8 +151,11 @@ _LAYOUT_FIELDS = {
 _COMMON_OPTIONS = {
     "font_family": {
         "type": "enum", "default": "DejaVu Sans Condensed", "label": "Font family",
+        # DejaVu ships on every Pi. The clean sans-serifs (B612 = the Airbus
+        # cockpit font; Inter/Roboto/Open Sans/Noto) are delivered by the font
+        # pack and loaded as web fonts in the editor for live preview.
         "enum": ["DejaVu Sans Condensed", "DejaVu Sans", "DejaVu Sans Mono",
-                 "DejaVu Serif"],
+                 "B612", "Inter", "Roboto", "Open Sans"],
     },
     "font_percent": {"type": "number", "default": None, "min": 0, "max": 1,
                      "step": 0.01, "label": "Font size (fraction of height)"},
