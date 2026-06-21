@@ -32,6 +32,7 @@ Usage (from the repo root)::
 
 import argparse
 import html
+import json
 import os
 import sys
 
@@ -74,6 +75,28 @@ def build_preview(config_root, screen_name, width, out_dir):
     html_path = os.path.join(out_dir, "index.html")
     with open(html_path, "w", encoding="utf-8") as fh:
         fh.write(_render_html(screen_name, layout, canvas_w, canvas_h, tiles))
+
+    # Machine-readable manifest so a browser (the configurator web app) can
+    # render the same grid client-side from static assets.
+    manifest = {
+        "screen": screen_name,
+        "grid": {"rows": layout["rows"], "columns": layout["columns"]},
+        "canvas": {"w": canvas_w, "h": canvas_h},
+        "instruments": [
+            {
+                "type": inst["type"],
+                "row": inst.get("row"),
+                "column": inst.get("column"),
+                "rect": {k: round(v, 1) for k, v in rect.items()},
+                "kind": kind,
+                "thumb": fname,
+            }
+            for (inst, rect, fname, kind) in tiles
+        ],
+    }
+    with open(os.path.join(out_dir, "preview.json"), "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+
     return html_path, len(tiles)
 
 
