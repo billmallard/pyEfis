@@ -40,6 +40,7 @@ for _p in (_REPO_ROOT, os.path.join(_REPO_ROOT, "src"),
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from pyefis.editor import groups as egroups  # noqa: E402
 from pyefis.editor import schema as eschema  # noqa: E402
 
 _RENDER = os.path.join(_REPO_ROOT, "tools", "render_instrument.py")
@@ -63,6 +64,8 @@ def build(out_dir, width, height):
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "schema.json"), "w", encoding="utf-8") as fh:
         fh.write(eschema.to_json() + "\n")
+    with open(os.path.join(out_dir, "groups.json"), "w", encoding="utf-8") as fh:
+        fh.write(egroups.to_json() + "\n")
 
     palette_dir = os.path.join(out_dir, "palette")
     os.makedirs(palette_dir, exist_ok=True)
