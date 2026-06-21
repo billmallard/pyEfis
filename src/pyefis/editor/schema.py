@@ -145,9 +145,15 @@ _LAYOUT_FIELDS = {
 }
 
 # Options accepted by (almost) every instrument, forwarded by the factory.
+# font_family is an enum of fonts reliably present on a stock Raspberry Pi OS
+# (the DejaVu family -- pyEfis bundles no fonts of its own). Instrument-style
+# segmented fonts (DSEG7/DSEG14) would need a delivered font pack first.
 _COMMON_OPTIONS = {
-    "font_family": {"type": "string", "default": "DejaVu Sans Condensed",
-                    "label": "Font family"},
+    "font_family": {
+        "type": "enum", "default": "DejaVu Sans Condensed", "label": "Font family",
+        "enum": ["DejaVu Sans Condensed", "DejaVu Sans", "DejaVu Sans Mono",
+                 "DejaVu Serif"],
+    },
     "font_percent": {"type": "number", "default": None, "min": 0, "max": 1,
                      "step": 0.01, "label": "Font size (fraction of height)"},
 }
