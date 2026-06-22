@@ -754,9 +754,17 @@ class AI(QGraphicsView):
                 each[1].setOpacity(0)
 
     def redraw(self):
+        # self.scene is the inherited QGraphicsView.scene METHOD until
+        # resizeEvent builds the instance attribute (see
+        # _attach_svs_item_if_ready). showEvent can fire before the first
+        # resizeEvent, so guard against drawing before the scene exists --
+        # resizeEvent calls redraw() again once it's built.
+        scene = self.__dict__.get("scene")
+        if scene is None:
+            return
         self.resetTransform()
-        self.centerOn(self.scene.width() / 2,
-                      self.scene.height() / 2 +
+        self.centerOn(scene.width() / 2,
+                      scene.height() / 2 +
                       self._pitchAngle * self.pixelsPerDeg * - 1.0)
         self.rotate(self._rollAngle * -1.0)
 
