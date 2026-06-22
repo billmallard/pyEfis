@@ -148,7 +148,7 @@ win.setWindowTitle(
     f"SVS Visual Test — {RENDERER}  lat={LAT} lon={LON} alt={ALT} ft  "
     f"hdg={HEAD}° range={RANGE_NM} nm"
 )
-win.resize(800, 600)
+win.resize(int(os.environ.get("SVS_W", "800")), int(os.environ.get("SVS_H", "600")))
 
 widget = AI(win, show_fpm=True)
 widget.aircraft_symbol = os.environ.get("SVS_SYMBOL", "classic")
