@@ -1509,14 +1509,18 @@ class SVSRenderer:
     _HWY_CACHE_TTL_S = 1.0
     _HWY_CACHE_POS_STEP_DEG = 0.01
 
-    def _collect_highways(self, ac_lat, ac_lon, range_nm):
+    def _collect_highways(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
         if (getattr(self, "highway_db", None) is None
                 or not self.highway_db.ready):
             return None
         now = time.perf_counter()
         step = max(0.01, range_nm / 2000.0)
+        # Altitude is in the key because the terrain line-of-sight masking
+        # (issue #73) depends on it — climbing/descending changes which road
+        # segments a ridge hides. 200 ft bucket, matching the obstacle cache.
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
+               round(ac_alt_ft / 200.0) * 200.0,
                round(range_nm / 5.0) * 5.0)
         # Purely key-based — see the water collector note.
         if (self._hwy_cache is not None
@@ -1536,14 +1540,14 @@ class SVSRenderer:
             if not busy:
                 self._hwy_worker = threading.Thread(
                     target=self._hwy_collect_worker,
-                    args=(key, ac_lat, ac_lon, range_nm),
+                    args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm),
                     daemon=True)
                 self._hwy_worker.start()
         return self._hwy_cache
 
-    def _hwy_collect_worker(self, key, ac_lat, ac_lon, range_nm):
+    def _hwy_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm):
         try:
-            arr = self._collect_highways_sync(ac_lat, ac_lon, range_nm)
+            arr = self._collect_highways_sync(ac_lat, ac_lon, ac_alt_ft, range_nm)
         except Exception:
             log.warning("highway collect worker failed", exc_info=True)
             return
@@ -1558,7 +1562,7 @@ class SVSRenderer:
     _HWY_MAX_NM = 20.0
     _HWY_NEAR_NM = 8.0
 
-    def _collect_highways_sync(self, ac_lat, ac_lon, range_nm):
+    def _collect_highways_sync(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
         rng = min(range_nm, self._HWY_MAX_NM)
         lat_cos = math.cos(math.radians(ac_lat))
         near_deg2 = (self._HWY_NEAR_NM / 60.0) ** 2
@@ -1592,11 +1596,31 @@ class SVSRenderer:
             seg[:, 0:2] = v
             seg[:, 2] = elev_ft[i:i + k]
             i += k
-            # Expand the polyline to GL_LINES vertex pairs.
-            pairs = np.empty((2 * (k - 1), 3), dtype=np.float32)
-            pairs[0::2] = seg[:-1]
-            pairs[1::2] = seg[1:]
+            # Terrain line-of-sight masking (issue #73). With no depth test, a
+            # road behind a ridge would otherwise draw over the near slope. Use
+            # the same sight-line test as the airport flags / obstacles on each
+            # vertex (the road is draped at terrain elevation, so the vertex's
+            # own elevation is the target), but DROP the occluded portion
+            # entirely — roads aren't dimmed like flags. A GL_LINES pair is
+            # emitted only where BOTH endpoints have a clear line of sight, so
+            # the road disappears behind a ridge and reappears beyond it.
+            vis = np.fromiter(
+                (not self._los_masked(ac_lat, ac_lon, ac_alt_ft,
+                                      float(seg[j, 0]), float(seg[j, 1]),
+                                      float(seg[j, 2]), lat_cos)
+                 for j in range(k)),
+                dtype=bool, count=k)
+            seg_ok = vis[:-1] & vis[1:]      # per-segment: both ends visible
+            if not seg_ok.any():
+                continue
+            starts = seg[:-1][seg_ok]
+            ends = seg[1:][seg_ok]
+            pairs = np.empty((2 * starts.shape[0], 3), dtype=np.float32)
+            pairs[0::2] = starts
+            pairs[1::2] = ends
             out.append(pairs)
+        if not out:
+            return None
         return np.concatenate(out, axis=0)
 
     # Obstacle color groups (RGBA in [0, 1]) — match the QPen colors

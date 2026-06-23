@@ -807,3 +807,67 @@ class TestSVSGLFallback:
         assert non_bg > 5, (
             f"expected polar mesh pixels below horizon; only {non_bg} "
             f"non-background samples in scan row")
+
+
+# ---------------------------------------------------------------------------
+# Highway terrain occlusion (issue #73)
+# ---------------------------------------------------------------------------
+
+class _StubPolyline:
+    def __init__(self, vertices, fclass="motorway"):
+        self.vertices = np.asarray(vertices, dtype=np.float64)
+        self.fclass = fclass
+
+
+class _StubHighwayDB:
+    ready = True
+
+    def __init__(self, polylines):
+        self._polylines = polylines
+
+    def polylines_in_range(self, ac_lat, ac_lon, rng):
+        return list(self._polylines)
+
+
+class TestHighwayOcclusion:
+    """Issue #73: a road behind a ridge (no line of sight) must be DROPPED, not
+    drawn over the near slope (the SVS has no depth test). Verifies the
+    per-vertex LOS filtering in ``_collect_highways_sync`` — a GL_LINES pair is
+    emitted only where both endpoints are visible. The LOS math itself
+    (``_los_masked``) is stubbed so the segment-selection logic is tested
+    deterministically without terrain tiles."""
+
+    AC_LAT, AC_LON, AC_ALT = 39.0, -107.0, 12000.0
+    # five vertices marching north, ~0.6 NM apart, midpoint within HWY_NEAR_NM
+    # so no LOD decimation kicks in.
+    VERTS = [(39.00 + 0.01 * i, -107.0) for i in range(5)]
+
+    def _renderer(self, los_fn):
+        r = SVSRenderer({})
+        r.highway_db = _StubHighwayDB([_StubPolyline(self.VERTS)])
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        r._los_masked = los_fn
+        return r
+
+    def test_occluded_middle_segment_dropped(self):
+        # mask only the middle vertex (lat 39.02) -> a ridge hides it
+        masked = lambda *a: 39.015 < a[3] < 39.025
+        arr = self._renderer(masked)._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert arr is not None
+        # segments (v0,v1) and (v3,v4) survive; both touching v2 are gone
+        assert arr.shape[0] == 4
+        lats = {round(float(x), 2) for x in arr[:, 0]}
+        assert 39.02 not in lats                 # the occluded vertex
+        assert {39.00, 39.01, 39.03, 39.04} <= lats
+
+    def test_all_visible_keeps_every_segment(self):
+        arr = self._renderer(lambda *a: False)._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert arr.shape[0] == 2 * (len(self.VERTS) - 1)   # 4 segments -> 8 verts
+
+    def test_all_occluded_returns_none(self):
+        arr = self._renderer(lambda *a: True)._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert arr is None

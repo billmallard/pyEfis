@@ -1371,7 +1371,7 @@ class SVSGLRenderer:
                 with p._perf.time("highways"):
                     with p._perf.time("highways.collect"):
                         hwy = p._collect_highways(
-                            ac_lat, ac_lon, range_nm)
+                            ac_lat, ac_lon, ac_alt_ft, range_nm)
                     if hwy is not None and hwy.size:
                         with p._perf.time("highways.gl_draw"):
                             self._draw_overlay_cached(
