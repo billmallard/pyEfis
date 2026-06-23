@@ -273,3 +273,44 @@ def test_fd_target_resize_and_update(qtbot):
     assert widget.x() == 60
     assert widget.y() == 85
     assert widget.poly.polygon().count() == 4
+
+
+# --- Flight Path Marker low-speed gating (issue #70) -------------------------
+
+def _fpm_inputs_ok(widget):
+    for k in ('VS', 'GS', 'TRACK', 'HEAD'):
+        widget._fpm_fail[k] = False
+
+
+def test_fpm_hidden_below_min_groundspeed(fix, qtbot):
+    """Stationary/taxiing, the GPS track is noise so the FPM darts around --
+    hide it until groundspeed gives a real solution."""
+    widget = ai.AI()
+    _fpm_inputs_ok(widget)
+    widget._fpm_gs = 0.0
+    assert widget._fpm_solution_valid() is False          # idle on the runway
+    widget._fpm_gs = widget._FPM_MIN_GS_KT - 0.5
+    assert widget._fpm_solution_valid() is False          # slow taxi
+    widget._fpm_gs = widget._FPM_MIN_GS_KT + 5.0
+    assert widget._fpm_solution_valid() is True           # moving -> solution
+
+
+def test_fpm_hidden_when_required_input_failed(fix, qtbot):
+    """A failed GPS input (e.g. no TRACK) also has no solution, regardless of
+    speed."""
+    widget = ai.AI()
+    _fpm_inputs_ok(widget)
+    widget._fpm_gs = 120.0
+    assert widget._fpm_solution_valid() is True
+    widget._fpm_fail['TRACK'] = True
+    assert widget._fpm_solution_valid() is False
+
+
+def test_fpm_solution_independent_of_optional_vpath(fix, qtbot):
+    """VPATH is optional (real GPS won't publish it) -- it must not gate the
+    FPM."""
+    widget = ai.AI()
+    _fpm_inputs_ok(widget)
+    widget._fpm_gs = 120.0
+    widget._fpm_fail['VPATH'] = True
+    assert widget._fpm_solution_valid() is True

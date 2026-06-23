@@ -38,6 +38,13 @@ log = logging.getLogger(__name__)
 #   Add configuration for bank angle tick sizes
 
 class AI(QGraphicsView):
+    # Below this groundspeed the flight-path marker has no usable solution:
+    # GPS track (the FPM's lateral position) is undefined when stationary and
+    # noisy while taxiing, so the marker darts around the screen (issue #70).
+    # Hide it until the aircraft is actually moving -- standard HUD/SVS
+    # behavior, and correct with real sensors too (not just X-Plane).
+    _FPM_MIN_GS_KT = 30.0
+
     def __init__(self, parent=None, font_percent=None, font_family="DejaVu Sans Condensed", show_fpm=True):
         super(AI, self).__init__(parent)
         self.myparent = parent
@@ -679,16 +686,27 @@ class AI(QGraphicsView):
             self.land_rect.setBrush(want)
             self._land_brush_cur = want
 
-    def _drawFPM(self, p, w, h):
-        """Draw GPS flight path marker if data is valid and show_fpm is set."""
-        if not self.show_fpm:
-            return
-        # VPATH is optional — if the data source can publish it
-        # directly we use it, but missing/failed VPATH must not
-        # disable the FPM (real-world GPS sources won't have it).
+    def _fpm_solution_valid(self):
+        """Whether the flight-path marker has a usable solution to draw.
+
+        Needs the GPS inputs present (VPATH is optional -- real GPS sources
+        won't publish it, so it must not gate the FPM) AND a groundspeed above
+        ``_FPM_MIN_GS_KT``. Below that the track is undefined/noisy and the
+        marker would dart around the screen (issue #70); the user's report was
+        rapid horizontal movement while stationary at idle."""
         required = ('VS', 'GS', 'TRACK', 'HEAD')
         if any(self._fpm_fail[k] for k in required):
+            return False
+        if self._fpm_gs < self._FPM_MIN_GS_KT:
+            return False
+        return True
+
+    def _drawFPM(self, p, w, h):
+        """Draw GPS flight path marker if a valid solution exists and show_fpm
+        is set."""
+        if not self.show_fpm or not self._fpm_solution_valid():
             return
+        required = ('VS', 'GS', 'TRACK', 'HEAD')
         fpm_bad = any(self._fpm_bad[k] for k in required)
 
         # Vertical flight path angle. Prefer the authoritative VPATH
