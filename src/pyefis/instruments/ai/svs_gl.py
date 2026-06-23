@@ -1419,9 +1419,13 @@ class SVSGLRenderer:
                             ac_lat, ac_lon, ac_alt_ft, range_nm,
                             heading_deg)
                     if rwy_tris is not None and rwy_tris.size > 0:
-                        # RWY_FILL = (55, 55, 55) asphalt grey.
+                        # RWY_FILL = (55, 55, 55) asphalt grey. Cached-VBO path:
+                        # the polygon collector returns a stable array per TTL,
+                        # so the ENU convert + ~MB upload only re-run when the
+                        # runway set or patch origin changes, not every frame.
                         with p._perf.time("runway.polygon.gl_draw"):
-                            self._draw_overlay_primitive(
+                            self._draw_overlay_cached(
+                                "runway_poly",
                                 rwy_tris,
                                 (55/255.0, 55/255.0, 55/255.0, 1.0),
                                 gl.GL_TRIANGLES, fog_strength=0.4)
@@ -1437,9 +1441,11 @@ class SVSGLRenderer:
                             ac_lat, ac_lon, ac_alt_ft, range_nm,
                             heading_deg)
                     if mk_tris is not None and mk_tris.size > 0:
-                        # WHITE marking colour (245, 245, 245).
+                        # WHITE marking colour (245, 245, 245). Cached-VBO path
+                        # (markings collector is TTL-cached, stable identity).
                         with p._perf.time("runway.markings.gl_draw"):
-                            self._draw_overlay_primitive(
+                            self._draw_overlay_cached(
+                                "runway_markings",
                                 mk_tris,
                                 (245/255.0, 245/255.0,
                                  245/255.0, 1.0),
