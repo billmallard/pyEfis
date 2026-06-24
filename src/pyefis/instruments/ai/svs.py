@@ -1515,12 +1515,14 @@ class SVSRenderer:
             return None
         now = time.perf_counter()
         step = max(0.01, range_nm / 2000.0)
-        # Altitude is in the key because the terrain line-of-sight masking
-        # (issue #73) depends on it — climbing/descending changes which road
-        # segments a ridge hides. 200 ft bucket, matching the obstacle cache.
+        # Position-only key. The LOS masking (#73) uses the CURRENT altitude when
+        # the collection runs, and a moving aircraft already refreshes this on
+        # position change (~1 s), so the occlusion stays current without an
+        # altitude bucket. An altitude bucket here re-ran the costly query on
+        # every 200 ft of descent -- a worker-thread burst that stalled the
+        # render loop on final approach (the #73 perf regression).
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
-               round(ac_alt_ft / 200.0) * 200.0,
                round(range_nm / 5.0) * 5.0)
         # Purely key-based — see the water collector note.
         if (self._hwy_cache is not None
@@ -1705,8 +1707,12 @@ class SVSRenderer:
         FT_PER_DEG = 364491.0
         by_color = {name: [] for name, _ in self._OBSTACLE_COLOR_GROUPS}
         by_color_m = {name: [] for name, _ in self._OBSTACLE_COLOR_GROUPS}
+        # Cap the obstacle query box well in (was 50 nm): beyond ~15 nm
+        # obstacles are sub-pixel and haze-buried, and near a metro a 50 nm box
+        # builds thousands of Python ObstacleRecords on the worker thread each
+        # refresh -- the GIL-held burst that stalled the render loop on approach.
         for obs in self.obstacle_db.obstacles_in_range(
-                ac_lat, ac_lon, min(range_nm, 50.0),
+                ac_lat, ac_lon, min(range_nm, 15.0),
                 min_agl_ft=self.obstacle_min_agl_ft):
             if obs.amsl_ft >= ac_alt_ft:
                 group = "conflict"
