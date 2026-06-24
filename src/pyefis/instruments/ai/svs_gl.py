@@ -1474,11 +1474,16 @@ class SVSGLRenderer:
                         # diagnostic still has the overlay program.
                         prog.release()
                         try:
+                            # Cached-VBO text path: the designator collector is
+                            # async/TTL-cached (stable array identity), so the
+                            # per-glyph quad upload only re-runs when the runway
+                            # set or patch origin changes -- not every frame.
+                            # Single white colour -> a one-entry group dict.
                             with p._perf.time("runway.designator.gl_draw"):
-                                self._render_text_overlay(
-                                    des_verts,
-                                    (245/255.0, 245/255.0, 245/255.0,
-                                     1.0),
+                                self._render_text_groups_cached(
+                                    {(245/255.0, 245/255.0, 245/255.0, 1.0):
+                                     des_verts},
+                                    "runway_designator",
                                     w, h, ac_lat, ac_lon, ac_alt_ft,
                                     pitch_deg, roll_deg, heading_deg,
                                     pixels_per_deg)
