@@ -66,15 +66,14 @@ _CATEGORIES = {
     # horizontal_situation_indicator, heading_tape, vsi_dial, vsi_pfd, arc_gauge,
     # horizontal_bar_gauge, vertical_bar_gauge, numeric_display, value_text,
     # static_text, wind_display.
-    # Still curated (un-migrated): virtual_vfr (pending SVS customisation),
-    # heading_display (deferred). Everything else -> registry records.
-    "virtual_vfr": "attitude",
+    # Only heading_display remains curated (deferred); everything else ->
+    # registry records.
     "heading_display": "navigation",
 }
 
 # Human-friendly labels where the prettified type name isn't good enough.
 _LABELS = {
-    "virtual_vfr": "Virtual VFR / Synthetic Vision",
+    # All migrated -- labels come from registry records.
 }
 
 # Options the factory *requires* -- the screen builder raises (or the widget is
@@ -87,18 +86,16 @@ _REQUIRED_OPTIONS = {
 # Types whose GL surface (or external compositor) does NOT initialise under the
 # offscreen Qt platform, so they can't produce a server-side thumbnail. The
 # render service returns a placeholder image for these.
-_NOT_OFFSCREEN_RENDERABLE = {
-    "virtual_vfr",  # QOpenGLWidget SVS terrain; hangs offscreen (still curated)
-    # "weston" is migrated -- offscreen_renderable=False on its record.
-}
+# All migrated -- offscreen_renderable=False on the virtual_vfr / weston records
+# now carries this. Empty set() not {} (which is a dict).
+_NOT_OFFSCREEN_RENDERABLE = set()
 
 # Types that can host the GL Synthetic Vision overlay via an `svs:` option.
 # (The attitude indicator renders fine offscreen *without* svs; with svs its GL
 # layer won't, so the render service placeholders when `svs` is present.)
-_SVS_CAPABLE = {
-    # "atitude_indicator" is migrated -- svs_capable from its registry record.
-    "virtual_vfr",
-}
+# All migrated -- svs_capable comes from the atitude_indicator / virtual_vfr
+# registry records. Empty set() not {} (which is a dict).
+_SVS_CAPABLE = set()
 
 # Fixed-aspect (round / square) instruments: the editor letterboxes these
 # (object-fit: contain) instead of stretching, so a dial stays round. Tapes,
@@ -154,22 +151,9 @@ _OPTIONS = {
         "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
         "font_size": {"type": "number", "default": 17, "label": "Font size (px)"},
     },
-    # "heading_tape" / "horizontal_situation_indicator" are migrated -- options
-    # come from their registry records.
-    # "atitude_indicator" is migrated -- its options come from the registry
-    # record (with the corrected aircraft_symbol enum: classic/garmin).
-    "virtual_vfr": {
-        "aircraft_symbol": {"type": "enum", "default": "classic",
-                            "enum": ["classic", "delta"], "label": "Aircraft symbol"},
-        "symbol_color": {"type": "color", "default": "#ffff00", "label": "Symbol colour"},
-        # Editor preview only: the device renders real SVS terrain; this picks
-        # which stylised backdrop the configurator shows for layout.
-        "preview_scene": {"type": "enum", "default": "mountains",
-                          "enum": ["mountains", "approach", "coastal"],
-                          "label": "Preview scene (editor)"},
-    },
-    # "arc_gauge" / "horizontal_bar_gauge" / "vertical_bar_gauge" are migrated --
-    # options come from their registry records.
+    # "heading_tape" / "horizontal_situation_indicator" / "atitude_indicator" /
+    # "virtual_vfr" / "arc_gauge" / bar gauges are migrated -- options come from
+    # their registry records. Only heading_display remains curated here.
 }
 
 

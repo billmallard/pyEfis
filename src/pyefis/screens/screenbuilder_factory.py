@@ -165,14 +165,12 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
 
 
 INSTRUMENT_FACTORIES = {
-    # Only un-migrated types remain as literals here; every other type folds in
-    # from REGISTRY below (the single source of truth). Still pending:
-    #   heading_display -- deferred (font_size no-op + fg_color default cleanup)
-    #   virtual_vfr     -- pending its synthetic-vision customisation pass
+    # Only heading_display remains un-migrated (deferred: font_size no-op +
+    # fg_color default cleanup); every other type folds in from REGISTRY below
+    # (the single source of truth).
     "heading_display": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.HeadingDisplay(
         screen, font_family=font_family
     ),
-    "virtual_vfr": build_virtual_vfr,
 }
 
 
@@ -236,8 +234,9 @@ _register(InstrumentSpec(
     svs_capable=True,
     properties=[
         Prop("aircraft_symbol", "enum", default="classic",
-             enum=["classic", "garmin"], label="Aircraft symbol",
-             help="classic split-wing bars, or GI-275/G1000-style wedges"),
+             enum=["classic", "garmin", "brackets"], label="Aircraft symbol",
+             help="classic split-wing bars, GI-275/G1000 wedges, or "
+                  "GRT-style L-brackets"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour"),
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
@@ -644,6 +643,32 @@ _register(InstrumentSpec(
     builder=build_data_annunciation,
     builds_in_isolation=False,
     # Optional status_path / target_screen handled by the builder; not exposed.
+))
+
+_register(InstrumentSpec(
+    type="virtual_vfr",
+    label="Virtual VFR / Synthetic Vision",
+    category="attitude",
+    builder=build_virtual_vfr,
+    # Deduped from the legacy default (which listed PITCH twice).
+    dbkeys=["PITCH", "LAT", "LONG", "HEAD", "ALT", "ROLL", "ALAT", "TAS"],
+    svs_capable=True,
+    offscreen_renderable=False,   # QOpenGLWidget SVS terrain; hangs offscreen
+    builds_in_isolation=False,    # GL widget needs a real screen
+    # Not keep_aspect: the SVS view fills its box (a wide PFD background),
+    # unlike the square attitude dial.
+    properties=[
+        Prop("aircraft_symbol", "enum", default="classic",
+             enum=["classic", "garmin", "brackets"], label="Aircraft symbol",
+             help="classic split-wing bars, GI-275/G1000 wedges, or "
+                  "GRT-style L-brackets"),
+        Prop("symbol_color", "color", default="#ffff00", label="Symbol colour"),
+        # Editor preview only: the device renders real SVS terrain; this picks
+        # which stylised backdrop the configurator twin shows for layout.
+        Prop("preview_scene", "enum", default="mountains",
+             enum=["mountains", "approach", "coastal"],
+             label="Preview scene (editor)", apply="special"),
+    ],
 ))
 
 
