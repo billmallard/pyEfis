@@ -32,6 +32,7 @@ from pyefis.instruments import vsi
 from pyefis.instruments import weston
 from pyefis.instruments import wind
 from pyefis.instruments.ai.VirtualVfr import VirtualVfr
+from pyefis.screens.instrument_spec import InstrumentSpec, Prop, FixValue
 
 
 def build_weston(screen, config, font_percent=None, font_family=None, replace=None):
@@ -180,7 +181,7 @@ INSTRUMENT_FACTORIES = {
     "altimeter_dial": lambda screen, config, font_percent=None, font_family=None, replace=None: altimeter.Altimeter(
         screen, font_family=font_family
     ),
-    "atitude_indicator": build_atitude_indicator,
+    # "atitude_indicator" is migrated -- see REGISTRY below.
     "altimeter_tape": build_altimeter_tape,
     "altimeter_trend_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.Alt_Trend_Tape(
         screen, font_family=font_family
@@ -242,7 +243,7 @@ INSTRUMENT_DEFAULTS = {
     "altimeter_dial": ["ALT"],
     "altimeter_tape": ["ALT"],
     "altimeter_trend_tape": ["ALT"],
-    "atitude_indicator": ["PITCH", "ROLL", "ALAT", "TAS"],
+    # "atitude_indicator" dbkeys are declared in REGISTRY below.
     "heading_display": ["HEAD"],
     "heading_tape": ["HEAD"],
     "horizontal_situation_indicator": ["COURSE", "CDI", "GSI", "HEAD"],
@@ -266,6 +267,60 @@ INSTRUMENT_DEFAULTS = {
 INSTRUMENT_DEFAULT_OPTIONS = {
     "heading_display": {"font_size": 17},
 }
+
+
+# ---------------------------------------------------------------------------
+# Instrument registry -- the single source of truth for migrated instruments.
+#
+# Each InstrumentSpec carries the builder PLUS the full editor contract: the
+# config properties (category 1), the FIX-database values the instrument reads
+# (category 2), twin preview hints (category 3), and the editor flags. The
+# editor schema exporter and (by derivation) the configurator twins read from
+# here -- so the three mirrors can no longer drift. Instruments not yet
+# migrated fall back to the curated metadata in pyefis.editor.schema.
+#
+# Migration pattern (see docs/adding_an_instrument.md): move an instrument's
+# entries out of the curated dicts in editor/schema.py and into a record here.
+# ---------------------------------------------------------------------------
+REGISTRY: dict[str, InstrumentSpec] = {}
+
+
+def _register(spec: InstrumentSpec) -> InstrumentSpec:
+    REGISTRY[spec.type] = spec
+    return spec
+
+
+_register(InstrumentSpec(
+    type="atitude_indicator",
+    label="Attitude Indicator",
+    category="attitude",
+    builder=build_atitude_indicator,
+    dbkeys=["PITCH", "ROLL", "ALAT", "TAS"],
+    keep_aspect=True,
+    svs_capable=True,
+    properties=[
+        Prop("aircraft_symbol", "enum", default="classic",
+             enum=["classic", "garmin"], label="Aircraft symbol",
+             help="classic split-wing bars, or GI-275/G1000-style wedges"),
+        Prop("symbol_color", "color", default="#ffff00", label="Symbol colour"),
+        Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
+             help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
+    ],
+    # Attitude is read directly (PITCH/ROLL); no FIX aux values.
+    fix_values=[],
+    preview={"pitch": 4.0, "roll": -9.0, "slip": 2.0},
+))
+
+
+# Fold the registry back into the legacy lookup tables so existing consumers
+# keep working AND migrated instruments are sourced from the registry (the
+# single source of truth). As instruments migrate, these literal dicts shrink;
+# once everything is migrated they can be removed entirely.
+for _t, _spec in REGISTRY.items():
+    if _spec.builder is not None:
+        INSTRUMENT_FACTORIES[_t] = _spec.builder
+    if _spec.dbkeys:
+        INSTRUMENT_DEFAULTS[_t] = list(_spec.dbkeys)
 
 
 def create_instrument(

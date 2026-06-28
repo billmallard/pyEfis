@@ -43,9 +43,14 @@ from pyefis.screens.screenbuilder_factory import (
     INSTRUMENT_DEFAULT_OPTIONS,
     INSTRUMENT_DEFAULTS,
     INSTRUMENT_FACTORIES,
+    REGISTRY,
 )
 
-SCHEMA_VERSION = 2
+# v3: instruments migrated to screenbuilder_factory.REGISTRY are sourced from
+# their InstrumentSpec record; every instrument entry now also carries a
+# `preview` block (category 3) and a `fix_values` list (category 2). Types not
+# yet migrated still come from the curated metadata in this module.
+SCHEMA_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # Curated editor-affordance metadata. Keys MUST be real INSTRUMENT_FACTORIES
@@ -62,7 +67,7 @@ _CATEGORIES = {
     "altimeter_dial": "altitude",
     "altimeter_tape": "altitude",
     "altimeter_trend_tape": "altitude",
-    "atitude_indicator": "attitude",
+    # "atitude_indicator" is migrated -- category from its registry record.
     "virtual_vfr": "attitude",
     "turn_coordinator": "attitude",
     "horizontal_situation_indicator": "navigation",
@@ -86,7 +91,7 @@ _CATEGORIES = {
 
 # Human-friendly labels where the prettified type name isn't good enough.
 _LABELS = {
-    "atitude_indicator": "Attitude Indicator",
+    # "atitude_indicator" is migrated -- label from its registry record.
     "horizontal_situation_indicator": "Horizontal Situation Indicator (HSI)",
     "virtual_vfr": "Virtual VFR / Synthetic Vision",
     "vsi_pfd": "VSI (PFD)",
@@ -116,7 +121,7 @@ _NOT_OFFSCREEN_RENDERABLE = {
 # (The attitude indicator renders fine offscreen *without* svs; with svs its GL
 # layer won't, so the render service placeholders when `svs` is present.)
 _SVS_CAPABLE = {
-    "atitude_indicator",
+    # "atitude_indicator" is migrated -- svs_capable from its registry record.
     "virtual_vfr",
 }
 
@@ -128,7 +133,7 @@ _KEEP_ASPECT = {
     "altimeter_dial",
     "vsi_dial",
     "turn_coordinator",
-    "atitude_indicator",
+    # "atitude_indicator" is migrated -- keep_aspect from its registry record.
     "horizontal_situation_indicator",
     "arc_gauge",
 }
@@ -226,12 +231,8 @@ _OPTIONS = {
         "fg_color": {"type": "color", "default": "#ffffff", "label": "Foreground"},
         "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
     },
-    "atitude_indicator": {
-        "aircraft_symbol": {"type": "enum", "default": "classic",
-                            "enum": ["classic", "delta"], "label": "Aircraft symbol"},
-        "symbol_color": {"type": "color", "default": "#ffff00", "label": "Symbol colour"},
-        "show_fpm": {"type": "boolean", "default": True, "label": "Flight-path marker"},
-    },
+    # "atitude_indicator" is migrated -- its options come from the registry
+    # record (with the corrected aircraft_symbol enum: classic/garmin).
     "virtual_vfr": {
         "aircraft_symbol": {"type": "enum", "default": "classic",
                             "enum": ["classic", "delta"], "label": "Aircraft symbol"},
@@ -279,27 +280,95 @@ def _default_options(instrument_type):
     }
 
 
+# Map an instrument_spec.Prop.kind to the editor's option-field "type". The
+# editor renders one input per field type; "fixkey" is a FIX-database key,
+# shown as a text input today (a key-picker once the FIX editor lands).
+_KIND_TO_FIELD_TYPE = {
+    "string": "string", "number": "number", "integer": "integer",
+    "boolean": "boolean", "enum": "enum", "color": "color",
+    "fixkey": "string",
+}
+
+
+def _prop_to_field(p):
+    """Render an ``instrument_spec.Prop`` as editor option-field metadata."""
+    field = {"type": _KIND_TO_FIELD_TYPE[p.kind], "default": p.default,
+             "label": p.label}
+    if p.enum is not None:
+        field["enum"] = list(p.enum)
+    if p.minimum is not None:
+        field["min"] = p.minimum
+    if p.maximum is not None:
+        field["max"] = p.maximum
+    if p.step is not None:
+        field["step"] = p.step
+    if p.help:
+        field["help"] = p.help
+    return field
+
+
+def _entry_from_spec(spec):
+    """Schema entry for a migrated instrument, sourced entirely from its
+    registry record (category 1 properties + category 2 fix_values +
+    category 3 preview). This is the single source of truth."""
+    return {
+        "label": spec.label,
+        "category": spec.category,
+        "dbkeys": list(spec.dbkeys),
+        "default_options": {
+            p.name: {"type": _KIND_TO_FIELD_TYPE[p.kind], "default": p.default}
+            for p in spec.properties if p.default is not None},
+        "required_options": [p.name for p in spec.properties if p.required],
+        "options": {p.name: _prop_to_field(p) for p in spec.properties},
+        "offscreen_renderable": spec.offscreen_renderable,
+        "svs_capable": spec.svs_capable,
+        "keep_aspect": spec.keep_aspect,
+        "preview": dict(spec.preview),
+        "fix_values": [
+            {"name": fv.name, "source": fv.source, "label": fv.label,
+             "dbkey": fv.dbkey, "units": fv.units, "help": fv.help}
+            for fv in spec.fix_values],
+    }
+
+
+def _entry_from_curation(instrument_type):
+    """Schema entry for a not-yet-migrated instrument, from the curated
+    metadata in this module. Transitional: shrinks as instruments migrate to
+    ``screenbuilder_factory.REGISTRY``. ``preview``/``fix_values`` are empty
+    here so every entry has a uniform shape for the editor."""
+    return {
+        "label": _LABELS.get(instrument_type, _prettify(instrument_type)),
+        "category": _CATEGORIES.get(instrument_type, "other"),
+        "dbkeys": list(INSTRUMENT_DEFAULTS.get(instrument_type, []) or []),
+        "default_options": _default_options(instrument_type),
+        "required_options": list(_REQUIRED_OPTIONS.get(instrument_type, [])),
+        "options": _OPTIONS.get(instrument_type, {}),
+        "offscreen_renderable":
+            instrument_type not in _NOT_OFFSCREEN_RENDERABLE,
+        "svs_capable": instrument_type in _SVS_CAPABLE,
+        "keep_aspect": instrument_type in _KEEP_ASPECT,
+        "preview": {},
+        "fix_values": [],
+    }
+
+
 def build_schema():
     """Return the full instrument schema as a JSON-serialisable dict.
 
     The type list is exactly the keys of ``INSTRUMENT_FACTORIES`` so the schema
-    always matches what the screen builder can create.
+    always matches what the screen builder can create. Migrated instruments are
+    sourced from ``screenbuilder_factory.REGISTRY`` (the single source of
+    truth); the rest fall back to the curated metadata in this module.
     """
     instruments = {}
     for instrument_type in sorted(INSTRUMENT_FACTORIES):
-        instruments[instrument_type] = {
-            "label": _LABELS.get(instrument_type, _prettify(instrument_type)),
-            "category": _CATEGORIES.get(instrument_type, "other"),
-            "dbkeys": list(INSTRUMENT_DEFAULTS.get(instrument_type, []) or []),
-            "default_options": _default_options(instrument_type),
-            "required_options": list(_REQUIRED_OPTIONS.get(instrument_type, [])),
-            "options": _OPTIONS.get(instrument_type, {}),
-            "offscreen_renderable":
-                instrument_type not in _NOT_OFFSCREEN_RENDERABLE,
-            "svs_capable": instrument_type in _SVS_CAPABLE,
-            "keep_aspect": instrument_type in _KEEP_ASPECT,
-        }
+        spec = REGISTRY.get(instrument_type)
+        instruments[instrument_type] = (
+            _entry_from_spec(spec) if spec is not None
+            else _entry_from_curation(instrument_type))
 
+    categories = set(_CATEGORIES.values()) | {
+        spec.category for spec in REGISTRY.values()}
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_from": "pyefis.screens.screenbuilder_factory",
@@ -311,7 +380,7 @@ def build_schema():
         },
         "layout_fields": _LAYOUT_FIELDS,
         "common_options": _COMMON_OPTIONS,
-        "categories": sorted(set(_CATEGORIES.values())),
+        "categories": sorted(categories),
         "instruments": instruments,
     }
 
