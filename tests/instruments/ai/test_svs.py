@@ -848,6 +848,15 @@ class TestHighwayOcclusion:
         r._sample_elevations = lambda lat_g, lon_g: (
             np.zeros_like(lat_g, dtype=np.float32), None)
         r._los_masked = los_fn
+
+        # The collector now masks via the vectorised _los_masked_batch
+        # (issue #74); adapt the per-vertex stub so these cases still drive it.
+        def _batch(ac_lat, ac_lon, ac_alt, t_lats, t_lons, t_alts, lat_cos):
+            return np.array(
+                [bool(los_fn(ac_lat, ac_lon, ac_alt, float(la), float(lo),
+                             float(al), lat_cos))
+                 for la, lo, al in zip(t_lats, t_lons, t_alts)], dtype=bool)
+        r._los_masked_batch = _batch
         return r
 
     def test_occluded_middle_segment_dropped(self):
@@ -871,3 +880,23 @@ class TestHighwayOcclusion:
         arr = self._renderer(lambda *a: True)._collect_highways_sync(
             self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
         assert arr is None
+
+    def test_los_batch_masks_behind_ridge(self):
+        """_los_masked_batch (issue #74) — the vectorised LOS that replaced
+        the per-vertex loop — masks a target a ridge hides and keeps clear
+        ones, matching _los_masked's intent."""
+        r = SVSRenderer({})
+        r.cache = object()              # non-None so the batch proceeds
+
+        def _sample(lat_g, lon_g):      # tall ridge spanning lat 39.04..39.06
+            out = np.where((lat_g >= 39.04) & (lat_g <= 39.06), 3000.0, 0.0)
+            return out.astype(np.float32), None
+        r._sample_elevations = _sample
+
+        lat_cos = float(np.cos(np.radians(39.0)))
+        t_lats = np.array([39.02, 39.10, 39.03])   # front, behind ridge, front
+        t_lons = np.full(3, -107.0)
+        t_alts = np.zeros(3)
+        masked = r._los_masked_batch(39.0, -107.0, 500.0,
+                                     t_lats, t_lons, t_alts, lat_cos)
+        assert list(map(bool, masked)) == [False, True, False]

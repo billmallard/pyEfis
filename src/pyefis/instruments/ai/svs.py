@@ -456,6 +456,15 @@ class SVSRenderer:
         self._hwy_worker = None
         self._hwy_worker_lock = threading.Lock()
         self._hwy_result = None
+        # Shared "one collector refreshes at a time" slot (issue #74).
+        # The water, highway, and obstacle workers used to fire together
+        # when a position key rolled over, stacking their GIL-held Python
+        # bursts into a single render-stalling spike on a low-level
+        # approach (~42% of samples combined). A collector claims this
+        # non-blocking before spawning; if another holds it the collector
+        # serves its stale cache this round and tries again next frame, so
+        # at most one worker's burst (~14%) overlaps the render thread.
+        self._collect_slot = threading.Lock()
         # Generic async cache slots (airports, obstacles, ...).
         self._async_state = {}
         # Obstacle pole vertex cache (Phase 2). Same TTL strategy as
@@ -1281,16 +1290,18 @@ class SVSRenderer:
                 st["key"], st["val"] = r_key, r_val
             if st["key"] == key:
                 return st["val"]
-            if st["worker"] is None or not st["worker"].is_alive():
+            if (st["worker"] is None or not st["worker"].is_alive()) \
+                    and self._collect_slot.acquire(blocking=False):
                 def run():
                     try:
                         v = builder()
+                        with st["lock"]:
+                            st["res"] = (key, v)
                     except Exception:
                         log.warning("%s worker failed", name,
                                     exc_info=True)
-                        return
-                    with st["lock"]:
-                        st["res"] = (key, v)
+                    finally:
+                        self._collect_slot.release()
                 st["worker"] = threading.Thread(target=run, daemon=True)
                 st["worker"].start()
             return st["val"]
@@ -1379,7 +1390,7 @@ class SVSRenderer:
                     return r_arr
             busy = (self._water_worker is not None
                     and self._water_worker.is_alive())
-            if not busy:
+            if not busy and self._collect_slot.acquire(blocking=False):
                 self._water_worker = threading.Thread(
                     target=self._water_collect_worker,
                     args=(key, ac_lat, ac_lon, range_nm),
@@ -1390,11 +1401,12 @@ class SVSRenderer:
     def _water_collect_worker(self, key, ac_lat, ac_lon, range_nm):
         try:
             arr = self._collect_water_sync(ac_lat, ac_lon, range_nm)
+            with self._water_worker_lock:
+                self._water_result = (key, arr)
         except Exception:
             log.warning("water collect worker failed", exc_info=True)
-            return
-        with self._water_worker_lock:
-            self._water_result = (key, arr)
+        finally:
+            self._collect_slot.release()
 
     def _collect_water_sync(self, ac_lat, ac_lon, range_nm):
 
@@ -1539,7 +1551,7 @@ class SVSRenderer:
                     return r_arr
             busy = (self._hwy_worker is not None
                     and self._hwy_worker.is_alive())
-            if not busy:
+            if not busy and self._collect_slot.acquire(blocking=False):
                 self._hwy_worker = threading.Thread(
                     target=self._hwy_collect_worker,
                     args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm),
@@ -1550,11 +1562,12 @@ class SVSRenderer:
     def _hwy_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm):
         try:
             arr = self._collect_highways_sync(ac_lat, ac_lon, ac_alt_ft, range_nm)
+            with self._hwy_worker_lock:
+                self._hwy_result = (key, arr)
         except Exception:
             log.warning("highway collect worker failed", exc_info=True)
-            return
-        with self._hwy_worker_lock:
-            self._hwy_result = (key, arr)
+        finally:
+            self._collect_slot.release()
 
     # Highway LOD (flight-tuned at DFW): collection hard-capped at
     # 20 NM (beyond that the lines are sub-pixel and haze-buried, and
@@ -1590,6 +1603,16 @@ class SVSRenderer:
         elev_m, _ = self._sample_elevations(
             all_pts[:, 0][None, :], all_pts[:, 1][None, :])
         elev_ft = (elev_m[0] * 3.28084).astype(np.float32)
+        # Terrain line-of-sight masking (issue #73), vectorised over every
+        # vertex at once (issue #74): the per-vertex sight-line loop was the
+        # biggest GIL-held burst on the highway worker at low altitude. With no
+        # depth test a road behind a ridge would draw over the near slope, so a
+        # GL_LINES pair is emitted only where BOTH endpoints have a clear line
+        # of sight -- the road disappears behind a ridge and reappears beyond.
+        masked_all = self._los_masked_batch(
+            ac_lat, ac_lon, ac_alt_ft,
+            all_pts[:, 0], all_pts[:, 1], elev_ft, lat_cos)
+        vis_all = ~masked_all
         out = []
         i = 0
         for v in lines:
@@ -1597,21 +1620,8 @@ class SVSRenderer:
             seg = np.empty((k, 3), dtype=np.float32)
             seg[:, 0:2] = v
             seg[:, 2] = elev_ft[i:i + k]
+            vis = vis_all[i:i + k]
             i += k
-            # Terrain line-of-sight masking (issue #73). With no depth test, a
-            # road behind a ridge would otherwise draw over the near slope. Use
-            # the same sight-line test as the airport flags / obstacles on each
-            # vertex (the road is draped at terrain elevation, so the vertex's
-            # own elevation is the target), but DROP the occluded portion
-            # entirely — roads aren't dimmed like flags. A GL_LINES pair is
-            # emitted only where BOTH endpoints have a clear line of sight, so
-            # the road disappears behind a ridge and reappears beyond it.
-            vis = np.fromiter(
-                (not self._los_masked(ac_lat, ac_lon, ac_alt_ft,
-                                      float(seg[j, 0]), float(seg[j, 1]),
-                                      float(seg[j, 2]), lat_cos)
-                 for j in range(k)),
-                dtype=bool, count=k)
             seg_ok = vis[:-1] & vis[1:]      # per-segment: both ends visible
             if not seg_ok.any():
                 continue
@@ -1695,6 +1705,41 @@ class SVSRenderer:
             if terr_ft > sight_ft + self._LOS_CLEAR_FT:
                 return True
         return False
+
+    def _los_masked_batch(self, ac_lat, ac_lon, ac_alt_ft,
+                          t_lats, t_lons, t_alts_ft, lat_cos):
+        """Vectorised :meth:`_los_masked` over many targets at once.
+
+        Returns a bool array (True = terrain-masked) for the ``(n,)``
+        target arrays. Replaces the per-vertex Python sight-line loop on
+        the highway collect worker -- the biggest GIL-held burst at low
+        altitude (issue #74): a single batched terrain sample over an
+        ``(n, steps)`` grid instead of ``n * steps`` scalar
+        ``cache.elevation`` calls. Uses ``_sample_elevations`` (the same
+        batched sampler the draped vertex elevations come from), so the
+        sight-line terrain is consistent with the road altitude."""
+        n = int(np.asarray(t_lats).shape[0])
+        masked = np.zeros(n, dtype=bool)
+        if self.cache is None or n == 0:
+            return masked
+        t_lats = np.asarray(t_lats, dtype=np.float64)
+        t_lons = np.asarray(t_lons, dtype=np.float64)
+        t_alts_ft = np.asarray(t_alts_ft, dtype=np.float64)
+        d_lat = t_lats - ac_lat
+        d_lon = (t_lons - ac_lon) * lat_cos
+        dist_nm = np.sqrt(d_lat * d_lat + d_lon * d_lon) * 60.0
+        far = dist_nm >= 1.0          # near targets are never masked
+        if not far.any():
+            return masked
+        NS = 23                       # interior samples (~1/NM, capped like the scalar)
+        fr = np.arange(1, NS + 1, dtype=np.float64) / (NS + 1)
+        lat_s = ac_lat + fr[None, :] * (t_lats[:, None] - ac_lat)
+        lon_s = ac_lon + fr[None, :] * (t_lons[:, None] - ac_lon)
+        sight_ft = ac_alt_ft + fr[None, :] * (t_alts_ft[:, None] - ac_alt_ft)
+        terr_m, _ = self._sample_elevations(lat_s, lon_s)
+        terr_ft = terr_m * 3.28084
+        occluded = terr_ft > (sight_ft + self._LOS_CLEAR_FT)
+        return far & occluded.any(axis=1)
 
     def _build_obstacles(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
                          atlas_uvs):
