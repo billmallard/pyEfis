@@ -224,6 +224,42 @@ def _register(spec: InstrumentSpec) -> InstrumentSpec:
     return spec
 
 
+def _ai_overlay_props():
+    """Full-granular pitch-ladder + bank-arc properties shared by the attitude
+    indicator and the synthetic-vision view (both subclass AI). Prop names match
+    the widget attributes (apply='attr'), so the gate verifies each exists and
+    its default matches the widget. The tick-width / bank-size knobs only take
+    effect when tick_autoscale is off (otherwise they scale with the font)."""
+    return [
+        Prop("pitchDegreesShown", "number", default=30,
+             label="Pitch field of view (deg)",
+             help="total vertical pitch span shown"),
+        Prop("minorDiv", "integer", default=1, label="Minor division (deg)"),
+        Prop("majorDiv", "integer", default=5, label="Major division (deg)"),
+        Prop("numberedDiv", "integer", default=10,
+             label="Numbered division (deg)"),
+        Prop("visiblePitchAngle", "integer", default=15,
+             label="Pitch label range (deg)",
+             help="ladder marks fade out beyond this from current pitch"),
+        Prop("pitchOpacity", "number", default=0.6, minimum=0.0, maximum=1.0,
+             label="Pitch ladder opacity"),
+        Prop("tick_autoscale", "boolean", default=True,
+             label="Auto-scale tick widths to font",
+             help="off = use the explicit tick-width / bank-size pixels below"),
+        Prop("minorDivWidth", "integer", default=10,
+             label="Minor tick width (px)"),
+        Prop("majorDivWidth", "integer", default=40,
+             label="Major tick width (px)"),
+        Prop("numberedDivWidth", "integer", default=50,
+             label="Numbered tick width (px)"),
+        Prop("drawBankMarkers", "boolean", default=True,
+             label="Standard-rate bank markers"),
+        Prop("bankAngleMaximum", "integer", default=25,
+             label="Max indicated bank (deg)"),
+        Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)"),
+    ]
+
+
 _register(InstrumentSpec(
     type="atitude_indicator",
     label="Attitude Indicator",
@@ -240,6 +276,7 @@ _register(InstrumentSpec(
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour"),
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
+        *_ai_overlay_props(),
     ],
     # Attitude is read directly (PITCH/ROLL); no FIX aux values.
     fix_values=[],
@@ -668,6 +705,9 @@ _register(InstrumentSpec(
         Prop("preview_scene", "enum", default="mountains",
              enum=["mountains", "approach", "coastal"],
              label="Preview scene (editor)", apply="special"),
+        Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
+             help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
+        *_ai_overlay_props(),
     ],
 ))
 

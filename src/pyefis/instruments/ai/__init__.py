@@ -84,6 +84,10 @@ class AI(QGraphicsView):
         self.minorDivWidth = 10
         self.majorDivWidth = 40
         self.numberedDivWidth = 50
+        # When True (default) the tick widths + bank-mark size scale with the
+        # font on resize; set False to honour the explicit pixel sizes above
+        # (so they can be exposed as independent editor options).
+        self.tick_autoscale = True
         self.visiblePitchAngle = 15 # Amount of visible pitch angle marks
         self.pitchOpacity = 0.6
         # Bank angle tick indicators
@@ -328,10 +332,11 @@ class AI(QGraphicsView):
                 self._svs_item = None
         if self.font_percent:
             self.fontSize = qRound(self.width() * self.font_percent)
-            self.minorDivWidth = qRound(self.fontSize * 0.3)
-            self.majorDivWidth = self.minorDivWidth * 4
-            self.numberedDivWidth = self.minorDivWidth * 5
-            self.bankMarkSize = qRound(self.fontSize * 0.3 )
+            if self.tick_autoscale:
+                self.minorDivWidth = qRound(self.fontSize * 0.3)
+                self.majorDivWidth = self.minorDivWidth * 4
+                self.numberedDivWidth = self.minorDivWidth * 5
+                self.bankMarkSize = qRound(self.fontSize * 0.3 )
         #Setup the scene that we use for the background of the AI
         sceneHeight = self.height() * 4.5
         sceneWidth = math.sqrt(self.width() * self.width() +
