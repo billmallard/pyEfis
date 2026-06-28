@@ -231,6 +231,7 @@ def _entry_from_spec(spec):
         "offscreen_renderable": spec.offscreen_renderable,
         "svs_capable": spec.svs_capable,
         "keep_aspect": spec.keep_aspect,
+        "hidden": spec.hidden,
         "preview": dict(spec.preview),
         "fix_values": [
             {"name": fv.name, "source": fv.source, "label": fv.label,
@@ -255,6 +256,7 @@ def _entry_from_curation(instrument_type):
             instrument_type not in _NOT_OFFSCREEN_RENDERABLE,
         "svs_capable": instrument_type in _SVS_CAPABLE,
         "keep_aspect": instrument_type in _KEEP_ASPECT,
+        "hidden": False,
         "preview": {},
         "fix_values": [],
     }

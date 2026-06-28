@@ -728,6 +728,9 @@ _register(InstrumentSpec(
     category="system",
     builder=build_data_status,
     builds_in_isolation=False,
+    # The data-management boot screen is built-in (gui forces it on boot); it is
+    # not a user-placed instrument, so hide it from the configurator palette.
+    hidden=True,
     # The builder also accepts optional status_path / continue_screen /
     # update_command; left out of the panel (they default sensibly) until there
     # is a reason to expose host-path plumbing in the editor.

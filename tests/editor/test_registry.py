@@ -105,6 +105,7 @@ def test_schema_entry_matches_record():
         assert entry["keep_aspect"] == spec.keep_aspect
         assert entry["svs_capable"] == spec.svs_capable
         assert entry["offscreen_renderable"] == spec.offscreen_renderable
+        assert entry["hidden"] == spec.hidden
         assert entry["preview"] == spec.preview
         # Options are exactly the declared properties, in order.
         assert list(entry["options"]) == [p.name for p in spec.properties]
@@ -184,3 +185,16 @@ def test_attr_property_defaults_match_widget(fix, qtbot, hmi_actions):
                 assert actual == p.default, (
                     f"{t}.{p.name}: widget default {actual!r} != spec "
                     f"default {p.default!r}")
+
+
+def test_data_status_is_hidden_from_the_palette():
+    """The data-management boot screen is system-managed (gui forces it on
+    boot), so data_status is hidden from the configurator palette; the
+    data-currency annunciator placed on flight screens stays visible, and no
+    other instrument is hidden."""
+    s = eschema.build_schema()
+    assert factory.REGISTRY["data_status"].hidden is True
+    assert s["instruments"]["data_status"]["hidden"] is True
+    assert s["instruments"]["data_annunciation"]["hidden"] is False
+    hidden = sorted(t for t, e in s["instruments"].items() if e.get("hidden"))
+    assert hidden == ["data_status"], hidden

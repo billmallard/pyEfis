@@ -163,6 +163,11 @@ class InstrumentSpec:
     # can still validate their metadata + schema); the running screen builder is
     # unaffected, since it always passes a real screen.
     builds_in_isolation: bool = True
+    # Hidden from the configurator's instrument palette: a real, buildable type
+    # that is system-managed rather than user-placed (e.g. the data-management
+    # boot screen). It stays in the exported schema -- so the editor can still
+    # understand a config that uses it -- but is filtered out of the palette.
+    hidden: bool = False
 
     def __post_init__(self):
         names = [p.name for p in self.properties]
