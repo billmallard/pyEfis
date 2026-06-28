@@ -3,6 +3,7 @@
 *.log
 .DS_Store
 *.pyc
+pyEfisSudo.txt
 *~
 doc/_*
 .ropeproject/*
@@ -33,6 +34,7 @@ env/
 venv/
 .venv/
 ENV/
+.env
 
 # Distribution / packaging
 .Python
@@ -89,6 +91,5 @@ cifp/
 nasr/
 dof/
 
-# Local Claude/agent orientation doc (dev-environment specifics: ssh, paths).
-# Kept out of the repo / upstream PRs; lives only on disk.
-CLAUDE.md
+# Reproducible screenshot-harness output (regenerate with GENERATE_SCREENSHOTS=1)
+docs/images/generated/
