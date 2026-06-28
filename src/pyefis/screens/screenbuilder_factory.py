@@ -172,9 +172,7 @@ INSTRUMENT_FACTORIES = {
     "airspeed_box": lambda screen, config, font_percent=None, font_family=None, replace=None: airspeed.Airspeed_Box(
         screen, font_family=font_family
     ),
-    "airspeed_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: airspeed.Airspeed_Tape(
-        screen, font_percent=font_percent
-    ),
+    # "airspeed_tape" is migrated -- see REGISTRY below.
     "airspeed_trend_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.AS_Trend_Tape(
         screen, font_family=font_family
     ),
@@ -212,15 +210,11 @@ INSTRUMENT_FACTORIES = {
     "turn_coordinator": lambda screen, config, font_percent=None, font_family=None, replace=None: tc.TurnCoordinator(
         screen, font_family=font_family
     ),
-    "vsi_dial": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.VSI_Dial(
-        screen, font_family=font_family
-    ),
+    # "vsi_dial" is migrated -- see REGISTRY below.
     "vsi_pfd": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.VSI_PFD(
         screen, font_family=font_family
     ),
-    "arc_gauge": lambda screen, config, font_percent=None, font_family=None, replace=None: gauges.ArcGauge(
-        screen, min_size=False, font_family=font_family
-    ),
+    # "arc_gauge" is migrated -- see REGISTRY below.
     "horizontal_bar_gauge": lambda screen, config, font_percent=None, font_family=None, replace=None: gauges.HorizontalBar(
         screen, min_size=False, font_family=font_family
     ),
@@ -237,7 +231,7 @@ INSTRUMENT_FACTORIES = {
 
 INSTRUMENT_DEFAULTS = {
     "airspeed_dial": ["IAS"],
-    "airspeed_tape": ["IAS"],
+    # "airspeed_tape" dbkeys are declared in REGISTRY below.
     "airspeed_trend_tape": ["IAS"],
     "airspeed_box": ["IAS", "GS", "TAS"],
     "altimeter_dial": ["ALT"],
@@ -248,7 +242,7 @@ INSTRUMENT_DEFAULTS = {
     "heading_tape": ["HEAD"],
     "horizontal_situation_indicator": ["COURSE", "CDI", "GSI", "HEAD"],
     "turn_coordinator": ["ROT", "ALAT"],
-    "vsi_dial": ["VS"],
+    # "vsi_dial" dbkeys are declared in REGISTRY below.
     "vsi_pfd": ["VS"],
     "virtual_vfr": [
         "PITCH",
@@ -309,6 +303,87 @@ _register(InstrumentSpec(
     # Attitude is read directly (PITCH/ROLL); no FIX aux values.
     fix_values=[],
     preview={"pitch": 4.0, "roll": -9.0, "slip": 2.0},
+))
+
+_register(InstrumentSpec(
+    type="arc_gauge",
+    label="Arc Gauge",
+    category="gauge",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: gauges.ArcGauge(
+                 screen, min_size=False, font_family=font_family)),
+    keep_aspect=True,
+    properties=[
+        Prop("dbkey", "fixkey", default="", label="FIX key",
+             apply="setter:setDbkey"),
+        Prop("name", "string", default="", label="Name"),
+        Prop("decimal_places", "integer", default=1, label="Decimal places"),
+        Prop("show_units", "boolean", default=False, label="Show units"),
+        Prop("segments", "integer", default=0, label="Segments",
+             help="0 = solid band; >0 draws a segmented (LED-style) band"),
+        Prop("name_location", "enum", default="top", enum=["top", "right"],
+             label="Name location"),
+    ],
+    # The colour-band thresholds and the value range are FIX-database values
+    # (item min/max + aux), set in fix-gateway, not in the panel editor (#64).
+    fix_values=[
+        FixValue("Min", source="min", label="Range minimum"),
+        FixValue("Max", source="max", label="Range maximum"),
+        FixValue("lowAlarm", source="aux", label="Low alarm (red)"),
+        FixValue("lowWarn", source="aux", label="Low warning (yellow)"),
+        FixValue("highWarn", source="aux", label="High warning (yellow)"),
+        FixValue("highAlarm", source="aux", label="High alarm (red)"),
+    ],
+    # Representative bands + needle fill so the twin can draw a realistic gauge
+    # with no live FIX (fractions of range; the device uses real aux values).
+    preview={"value": "2350", "fill": 0.72, "green_to": 0.62, "yellow_to": 0.83},
+))
+
+_register(InstrumentSpec(
+    type="airspeed_tape",
+    label="Airspeed Tape",
+    category="airspeed",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: airspeed.Airspeed_Tape(
+                 screen, font_percent=font_percent)),
+    dbkeys=["IAS"],
+    properties=[
+        # NOTE: no editable dbkey -- Airspeed_Tape is hard-wired to IAS (it has
+        # no setDbkey and reads the V-speed aux off that item). The old curated
+        # schema offered a dbkey option that did nothing; dropped.
+        Prop("show_tas", "boolean", default=True, label="Show TAS box"),
+        Prop("show_trend", "boolean", default=True, label="Show trend arrow"),
+        Prop("trend_lookahead", "number", default=6.0,
+             label="Trend look-ahead (s)"),
+    ],
+    # V-speeds come from the IAS item's aux (fix-gateway), not the panel editor.
+    fix_values=[
+        FixValue("Vs", source="aux", label="Stall, clean (Vs)", units="kt"),
+        FixValue("Vs0", source="aux", label="Stall, landing (Vs0)", units="kt"),
+        FixValue("Vno", source="aux", label="Max cruise (Vno)", units="kt"),
+        FixValue("Vne", source="aux", label="Never-exceed (Vne)", units="kt"),
+        FixValue("Vfe", source="aux", label="Flaps-extended (Vfe)", units="kt"),
+    ],
+    preview={"value": 110, "vs0": 40, "vs": 45, "vno": 125, "vne": 140,
+             "vfe": 70},
+))
+
+_register(InstrumentSpec(
+    type="vsi_dial",
+    label="VSI Dial",
+    category="vertical_speed",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: vsi.VSI_Dial(screen, font_family=font_family)),
+    dbkeys=["VS"],
+    keep_aspect=True,
+    # VSI_Dial is hard-wired to VS and exposes no editor options today; this
+    # record migrates it for catalog completeness. Range is the FIX item's.
+    properties=[],
+    fix_values=[
+        FixValue("Min", source="min", label="Range minimum", units="ft/min"),
+        FixValue("Max", source="max", label="Range maximum", units="ft/min"),
+    ],
+    preview={"value": 800},
 ))
 
 

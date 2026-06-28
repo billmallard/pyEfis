@@ -33,6 +33,8 @@ See docs/instrument_spec.md and docs/adding_an_instrument.md.
 
 import pytest
 
+from PyQt6.QtGui import QColor
+
 from pyefis.editor import schema as eschema
 from pyefis.screens import instrument_spec as ispec
 from pyefis.screens import screenbuilder_factory as factory
@@ -127,3 +129,34 @@ def test_widget_exposes_declared_attr_properties(fix, qtbot):
             assert hasattr(widget, p.name), (
                 f"{t}: widget has no attribute '{p.name}' declared by its "
                 f"InstrumentSpec -- the property would silently do nothing")
+
+
+def test_attr_property_defaults_match_widget(fix, qtbot):
+    """Defaults rule: every apply='attr' property's default matches the widget's
+    own constructor default, so the editor seeds exactly what the widget uses
+    when an option is absent. Colours are compared by value (the editor uses hex,
+    widgets sometimes use named colours); a widget default of None (free-text
+    keys / names) is exempt."""
+    for t, spec in factory.REGISTRY.items():
+        widget = spec.builder(
+            None, {"type": t, "options": {}}, font_percent=0.05,
+            font_family="DejaVu Sans Condensed", replace=None)
+        qtbot.addWidget(widget)
+        for p in spec.properties:
+            if p.apply != ispec.APPLY_ATTR or p.default is None:
+                continue
+            actual = getattr(widget, p.name)
+            if actual is None:
+                continue  # widget carries no default for this knob -- exempt
+            if p.kind == "color":
+                assert QColor(actual) == QColor(p.default), (
+                    f"{t}.{p.name}: widget default {actual!r} != spec "
+                    f"default {p.default!r}")
+            elif p.kind in ("number", "integer"):
+                assert float(actual) == float(p.default), (
+                    f"{t}.{p.name}: widget default {actual!r} != spec "
+                    f"default {p.default!r}")
+            else:
+                assert actual == p.default, (
+                    f"{t}.{p.name}: widget default {actual!r} != spec "
+                    f"default {p.default!r}")

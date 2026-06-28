@@ -62,7 +62,7 @@ SCHEMA_VERSION = 3
 _CATEGORIES = {
     "airspeed_dial": "airspeed",
     "airspeed_box": "airspeed",
-    "airspeed_tape": "airspeed",
+    # "airspeed_tape" is migrated -- category from its registry record.
     "airspeed_trend_tape": "airspeed",
     "altimeter_dial": "altitude",
     "altimeter_tape": "altitude",
@@ -73,9 +73,9 @@ _CATEGORIES = {
     "horizontal_situation_indicator": "navigation",
     "heading_display": "navigation",
     "heading_tape": "navigation",
-    "vsi_dial": "vertical_speed",
+    # "vsi_dial" is migrated -- category from its registry record.
     "vsi_pfd": "vertical_speed",
-    "arc_gauge": "gauge",
+    # "arc_gauge" is migrated -- category from its registry record.
     "horizontal_bar_gauge": "gauge",
     "vertical_bar_gauge": "gauge",
     "numeric_display": "text",
@@ -95,7 +95,7 @@ _LABELS = {
     "horizontal_situation_indicator": "Horizontal Situation Indicator (HSI)",
     "virtual_vfr": "Virtual VFR / Synthetic Vision",
     "vsi_pfd": "VSI (PFD)",
-    "vsi_dial": "VSI Dial",
+    # "vsi_dial" is migrated -- label from its registry record.
     "data_status": "Data Status",
     "data_annunciation": "Data Annunciation",
 }
@@ -131,11 +131,10 @@ _SVS_CAPABLE = {
 _KEEP_ASPECT = {
     "airspeed_dial",
     "altimeter_dial",
-    "vsi_dial",
     "turn_coordinator",
-    # "atitude_indicator" is migrated -- keep_aspect from its registry record.
     "horizontal_situation_indicator",
-    "arc_gauge",
+    # "vsi_dial", "arc_gauge", "atitude_indicator" are migrated -- keep_aspect
+    # comes from their registry records.
 }
 
 # Layout fields every instrument accepts at the screen-builder level (not
@@ -185,12 +184,8 @@ def _gauge_options():
 # factories + docs/screenbuilder.md. NOTE: V-speeds / gauge warn-alarm bands are
 # NOT here -- those are FIX-database (fix-gateway) values, not layout (see #64).
 _OPTIONS = {
-    "airspeed_tape": {
-        "dbkey": {"type": "string", "default": "IAS", "label": "FIX key"},
-        "show_tas": {"type": "boolean", "default": True, "label": "Show TAS box"},
-        "show_trend": {"type": "boolean", "default": True, "label": "Show trend arrow"},
-        "trend_lookahead": {"type": "number", "default": 6.0, "label": "Trend look-ahead (s)"},
-    },
+    # "airspeed_tape" is migrated -- its options come from the registry record
+    # (and it no longer exposes a no-op dbkey; it is hard-wired to IAS).
     "altimeter_tape": {
         "dbkey": {"type": "string", "default": "ALT", "label": "FIX key"},
         "majorDiv": {"type": "number", "default": 100, "label": "Major division"},
@@ -243,7 +238,7 @@ _OPTIONS = {
                           "enum": ["mountains", "approach", "coastal"],
                           "label": "Preview scene (editor)"},
     },
-    "arc_gauge": _gauge_options(),
+    # "arc_gauge" is migrated -- its options come from the registry record.
     "horizontal_bar_gauge": _gauge_options(),
     "vertical_bar_gauge": _gauge_options(),
 }

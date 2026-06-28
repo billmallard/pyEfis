@@ -86,7 +86,9 @@ def test_required_options_present():
 def test_options_are_well_formed():
     """The curated per-type options drive the editor properties panel."""
     s = eschema.build_schema()
-    asi = s["instruments"]["airspeed_tape"]["options"]
+    # numeric_display keeps an editable dbkey (curated); airspeed_tape no longer
+    # exposes one (it is hard-wired to IAS), so assert dbkey typing here.
+    asi = s["instruments"]["numeric_display"]["options"]
     assert asi["dbkey"]["type"] == "string"
     align = s["instruments"]["static_text"]["options"]["alignment"]
     assert align["type"] == "enum" and "AlignLeft" in align["enum"]
