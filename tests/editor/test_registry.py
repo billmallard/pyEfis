@@ -60,6 +60,19 @@ def _ctor_options(spec):
             if p.required and p.default is not None}
 
 
+@pytest.fixture
+def hmi_actions(qtbot):
+    """Some widgets (e.g. Airspeed_Box) connect to the global hmi.actions signal
+    hub in their constructor. Initialise it the way pyEfis does at startup (via
+    hmi.initialize) so those widgets can be built in isolation."""
+    from pyefis import hmi
+    from pyefis.hmi import actionclass
+    if hmi.actions is None:
+        hmi.actions = actionclass.ActionClass()
+        qtbot.addWidget(hmi.actions)
+    return hmi.actions
+
+
 def test_registry_types_are_real_factory_types():
     """A record can only describe an instrument the screen builder can build."""
     unknown = set(factory.REGISTRY) - set(factory.INSTRUMENT_FACTORIES)
@@ -119,7 +132,7 @@ def test_records_are_well_formed():
                 f"{t}.{fv.name}: bad fix source {fv.source}")
 
 
-def test_widget_exposes_declared_attr_properties(fix, qtbot):
+def test_widget_exposes_declared_attr_properties(fix, qtbot, hmi_actions):
     """The keystone anti-drift check: build the real widget and assert it
     exposes every ``apply='attr'`` property the record declares. A renamed or
     misspelt property fails here instead of silently doing nothing in the
@@ -138,7 +151,7 @@ def test_widget_exposes_declared_attr_properties(fix, qtbot):
                 f"InstrumentSpec -- the property would silently do nothing")
 
 
-def test_attr_property_defaults_match_widget(fix, qtbot):
+def test_attr_property_defaults_match_widget(fix, qtbot, hmi_actions):
     """Defaults rule: every apply='attr' property's default matches the widget's
     own constructor default, so the editor seeds exactly what the widget uses
     when an option is absent. Colours are compared by value (the editor uses hex,

@@ -166,20 +166,10 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
 
 INSTRUMENT_FACTORIES = {
     "weston": build_weston,
-    # "airspeed_dial" is migrated -- see REGISTRY below.
-    "airspeed_box": lambda screen, config, font_percent=None, font_family=None, replace=None: airspeed.Airspeed_Box(
-        screen, font_family=font_family
-    ),
-    # "airspeed_tape" is migrated -- see REGISTRY below.
-    "airspeed_trend_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.AS_Trend_Tape(
-        screen, font_family=font_family
-    ),
-    # "altimeter_dial" is migrated -- see REGISTRY below.
-    # "atitude_indicator" is migrated -- see REGISTRY below.
-    # "altimeter_tape" is migrated -- see REGISTRY below.
-    "altimeter_trend_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.Alt_Trend_Tape(
-        screen, font_family=font_family
-    ),
+    # "airspeed_dial" / "airspeed_box" / "airspeed_tape" / "airspeed_trend_tape"
+    # are migrated -- see REGISTRY below.
+    # "altimeter_dial" / "atitude_indicator" / "altimeter_tape" /
+    # "altimeter_trend_tape" are migrated -- see REGISTRY below.
     "button": build_button,
     "data_status": build_data_status,
     "data_annunciation": build_data_annunciation,
@@ -196,18 +186,15 @@ INSTRUMENT_FACTORIES = {
     # "horizontal_bar_gauge" / "vertical_bar_gauge" are migrated -- see REGISTRY.
     "virtual_vfr": build_virtual_vfr,
     "listbox": build_listbox,
-    "wind_display": lambda screen, config, font_percent=None, font_family=None, replace=None: wind.WindDisplay(
-        screen, font_family=font_family
-    ),
+    # "wind_display" is migrated -- see REGISTRY below.
 }
 
 
 INSTRUMENT_DEFAULTS = {
-    # "airspeed_dial" / "airspeed_tape" dbkeys are declared in REGISTRY below.
-    "airspeed_trend_tape": ["IAS"],
-    "airspeed_box": ["IAS", "GS", "TAS"],
-    # "altimeter_dial" / "altimeter_tape" dbkeys are declared in REGISTRY below.
-    "altimeter_trend_tape": ["ALT"],
+    # "airspeed_dial" / "airspeed_tape" / "airspeed_trend_tape" / "airspeed_box"
+    # dbkeys are declared in REGISTRY below.
+    # "altimeter_dial" / "altimeter_tape" / "altimeter_trend_tape" dbkeys are
+    # declared in REGISTRY below.
     # "atitude_indicator" dbkeys are declared in REGISTRY below.
     "heading_display": ["HEAD"],
     # "heading_tape" / "horizontal_situation_indicator" dbkeys -> REGISTRY below.
@@ -558,6 +545,44 @@ _register(InstrumentSpec(
              enum=["AlignLeft", "AlignCenter", "AlignRight"], label="Alignment"),
         Prop("font_mask", "string", default="", label="Font mask"),
     ],
+))
+
+_register(InstrumentSpec(
+    type="airspeed_box",
+    label="Airspeed Box",
+    category="airspeed",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: airspeed.Airspeed_Box(screen, font_family=font_family)),
+    dbkeys=["IAS", "GS", "TAS"],
+))
+
+_register(InstrumentSpec(
+    type="airspeed_trend_tape",
+    label="Airspeed Trend Tape",
+    category="airspeed",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: vsi.AS_Trend_Tape(screen, font_family=font_family)),
+    dbkeys=["IAS"],
+))
+
+_register(InstrumentSpec(
+    type="altimeter_trend_tape",
+    label="Altimeter Trend Tape",
+    category="altitude",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: vsi.Alt_Trend_Tape(screen, font_family=font_family)),
+    # The widget reads VS (vertical speed) directly; the legacy curated default
+    # was "ALT", a key it never consumes.
+    dbkeys=["VS"],
+))
+
+_register(InstrumentSpec(
+    type="wind_display",
+    label="Wind Display",
+    category="wind",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: wind.WindDisplay(screen, font_family=font_family)),
+    dbkeys=["HWIND", "XWIND"],
 ))
 
 

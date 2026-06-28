@@ -60,22 +60,15 @@ SCHEMA_VERSION = 3
 
 # Palette grouping for the editor's instrument picker.
 _CATEGORIES = {
-    # "airspeed_dial" is migrated -- category from its registry record.
-    "airspeed_box": "airspeed",
-    # "airspeed_tape" is migrated -- category from its registry record.
-    "airspeed_trend_tape": "airspeed",
-    # "altimeter_dial" / "altimeter_tape" are migrated -- see registry records.
-    "altimeter_trend_tape": "altitude",
-    # "atitude_indicator" is migrated -- category from its registry record.
-    "virtual_vfr": "attitude",
-    # "turn_coordinator" is migrated -- category from its registry record.
-    "heading_display": "navigation",
-    # "horizontal_situation_indicator" / "heading_tape" -> registry records.
-    # Migrated -- categories from registry records: vsi_dial, vsi_pfd, arc_gauge,
+    # Migrated -- categories from registry records: airspeed_dial, airspeed_box,
+    # airspeed_tape, airspeed_trend_tape, altimeter_dial, altimeter_tape,
+    # altimeter_trend_tape, atitude_indicator, turn_coordinator,
+    # horizontal_situation_indicator, heading_tape, vsi_dial, vsi_pfd, arc_gauge,
     # horizontal_bar_gauge, vertical_bar_gauge, numeric_display, value_text,
-    # static_text.
+    # static_text, wind_display.
+    "virtual_vfr": "attitude",
+    "heading_display": "navigation",
     "listbox": "list",
-    "wind_display": "wind",
     "data_status": "system",
     "data_annunciation": "system",
     "button": "control",
