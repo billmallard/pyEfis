@@ -156,6 +156,13 @@ class InstrumentSpec:
     keep_aspect: bool = False
     offscreen_renderable: bool = True
     svs_capable: bool = False
+    # Can the widget be constructed standalone -- ``builder(None, {...})`` with
+    # no live screen? False for widgets that dereference ``screen.parent`` (e.g.
+    # for config_path), embed an external process, or whose GL surface hangs
+    # under the offscreen platform. The registry gate skips building these (it
+    # can still validate their metadata + schema); the running screen builder is
+    # unaffected, since it always passes a real screen.
+    builds_in_isolation: bool = True
 
     def __post_init__(self):
         names = [p.name for p in self.properties]

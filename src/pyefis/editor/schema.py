@@ -66,39 +66,30 @@ _CATEGORIES = {
     # horizontal_situation_indicator, heading_tape, vsi_dial, vsi_pfd, arc_gauge,
     # horizontal_bar_gauge, vertical_bar_gauge, numeric_display, value_text,
     # static_text, wind_display.
+    # Still curated (un-migrated): virtual_vfr (pending SVS customisation),
+    # heading_display (deferred). Everything else -> registry records.
     "virtual_vfr": "attitude",
     "heading_display": "navigation",
-    "listbox": "list",
-    "data_status": "system",
-    "data_annunciation": "system",
-    "button": "control",
-    "weston": "system",
 }
 
 # Human-friendly labels where the prettified type name isn't good enough.
 _LABELS = {
-    # "atitude_indicator" is migrated -- label from its registry record.
     "virtual_vfr": "Virtual VFR / Synthetic Vision",
-    # "vsi_dial" is migrated -- label from its registry record.
-    "data_status": "Data Status",
-    "data_annunciation": "Data Annunciation",
 }
 
 # Options the factory *requires* -- the screen builder raises (or the widget is
 # meaningless) without them. Derived by reading the build_* factories.
 _REQUIRED_OPTIONS = {
-    "button": ["config"],
-    # "static_text" required-options come from its registry record.
-    "listbox": ["lists"],
-    "weston": ["socket", "ini", "command", "args"],
+    # All types with required options are migrated; required_options now come
+    # from each record's required Props.
 }
 
 # Types whose GL surface (or external compositor) does NOT initialise under the
 # offscreen Qt platform, so they can't produce a server-side thumbnail. The
 # render service returns a placeholder image for these.
 _NOT_OFFSCREEN_RENDERABLE = {
-    "virtual_vfr",  # QOpenGLWidget SVS terrain; hangs offscreen
-    "weston",       # launches the weston compositor / waydroid
+    "virtual_vfr",  # QOpenGLWidget SVS terrain; hangs offscreen (still curated)
+    # "weston" is migrated -- offscreen_renderable=False on its record.
 }
 
 # Types that can host the GL Synthetic Vision overlay via an `svs:` option.

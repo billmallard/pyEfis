@@ -138,6 +138,8 @@ def test_widget_exposes_declared_attr_properties(fix, qtbot, hmi_actions):
     misspelt property fails here instead of silently doing nothing in the
     cockpit. (``fix`` defines the FIX db; ``qtbot`` provides the QApplication.)"""
     for t, spec in factory.REGISTRY.items():
+        if not spec.builds_in_isolation:
+            continue  # needs a real screen / external process / GL; see the flag
         config = {"type": t, "options": _ctor_options(spec)}
         widget = spec.builder(
             None, config, font_percent=0.05,
@@ -158,6 +160,8 @@ def test_attr_property_defaults_match_widget(fix, qtbot, hmi_actions):
     widgets sometimes use named colours); a widget default of None (free-text
     keys / names) is exempt."""
     for t, spec in factory.REGISTRY.items():
+        if not spec.builds_in_isolation:
+            continue  # needs a real screen / external process / GL; see the flag
         widget = spec.builder(
             None, {"type": t, "options": _ctor_options(spec)}, font_percent=0.05,
             font_family="DejaVu Sans Condensed", replace=None)

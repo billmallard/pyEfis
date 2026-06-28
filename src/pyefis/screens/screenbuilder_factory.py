@@ -165,28 +165,14 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
 
 
 INSTRUMENT_FACTORIES = {
-    "weston": build_weston,
-    # "airspeed_dial" / "airspeed_box" / "airspeed_tape" / "airspeed_trend_tape"
-    # are migrated -- see REGISTRY below.
-    # "altimeter_dial" / "atitude_indicator" / "altimeter_tape" /
-    # "altimeter_trend_tape" are migrated -- see REGISTRY below.
-    "button": build_button,
-    "data_status": build_data_status,
-    "data_annunciation": build_data_annunciation,
+    # Only un-migrated types remain as literals here; every other type folds in
+    # from REGISTRY below (the single source of truth). Still pending:
+    #   heading_display -- deferred (font_size no-op + fg_color default cleanup)
+    #   virtual_vfr     -- pending its synthetic-vision customisation pass
     "heading_display": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.HeadingDisplay(
         screen, font_family=font_family
     ),
-    # "heading_tape" is migrated -- see REGISTRY below.
-    # "horizontal_situation_indicator" is migrated -- see REGISTRY below.
-    # "numeric_display" / "value_text" / "static_text" / "turn_coordinator"
-    # are migrated -- see REGISTRY below.
-    # "vsi_dial" is migrated -- see REGISTRY below.
-    # "vsi_pfd" is migrated -- see REGISTRY below.
-    # "arc_gauge" is migrated -- see REGISTRY below.
-    # "horizontal_bar_gauge" / "vertical_bar_gauge" are migrated -- see REGISTRY.
     "virtual_vfr": build_virtual_vfr,
-    "listbox": build_listbox,
-    # "wind_display" is migrated -- see REGISTRY below.
 }
 
 
@@ -583,6 +569,81 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: wind.WindDisplay(screen, font_family=font_family)),
     dbkeys=["HWIND", "XWIND"],
+))
+
+# --- Special / non-instrument types --------------------------------------
+# These are migrated for catalog completeness but, unlike the gauges/dials,
+# cannot be built in isolation (they need a live screen for config_path, embed
+# an external process, or read host files), so builds_in_isolation=False keeps
+# them out of the gate's construction probe. Their config is consumed inside the
+# builder (apply="special"), not setattr'd onto the widget.
+
+_register(InstrumentSpec(
+    type="weston",
+    label="Weston",
+    category="system",
+    builder=build_weston,
+    # Upstream feature (Eric Blevins, 2023): embeds a weston/waydroid surface
+    # under X11. Linux/X11 only -- inert on other platforms.
+    offscreen_renderable=False,
+    builds_in_isolation=False,
+    properties=[
+        Prop("socket", "string", required=True, apply="special",
+             label="Wayland socket", help="weston -S socket name"),
+        Prop("ini", "string", required=True, apply="special",
+             label="weston.ini", help="path (under the config dir) to weston.ini"),
+        Prop("command", "string", required=True, apply="special",
+             label="Command", help="program to launch inside the compositor"),
+        Prop("args", "string", required=True, apply="special",
+             label="Arguments", help="arguments passed to the command"),
+    ],
+))
+
+_register(InstrumentSpec(
+    type="button",
+    label="Button",
+    category="control",
+    builder=build_button,
+    builds_in_isolation=False,
+    properties=[
+        Prop("config", "string", required=True, apply="special",
+             label="Config file",
+             help="path (under the config dir) to the button's YAML definition"),
+    ],
+))
+
+_register(InstrumentSpec(
+    type="listbox",
+    label="Listbox",
+    category="list",
+    builder=build_listbox,
+    builds_in_isolation=False,
+    properties=[
+        # Structured option (list of {name, file}); represented as a single
+        # config value until the Prop model grows an explicit list/object kind.
+        Prop("lists", "string", required=True, apply="special",
+             label="Lists", help="selectable lists -- list of {name, file} entries"),
+    ],
+))
+
+_register(InstrumentSpec(
+    type="data_status",
+    label="Data Status",
+    category="system",
+    builder=build_data_status,
+    builds_in_isolation=False,
+    # The builder also accepts optional status_path / continue_screen /
+    # update_command; left out of the panel (they default sensibly) until there
+    # is a reason to expose host-path plumbing in the editor.
+))
+
+_register(InstrumentSpec(
+    type="data_annunciation",
+    label="Data Annunciation",
+    category="system",
+    builder=build_data_annunciation,
+    builds_in_isolation=False,
+    # Optional status_path / target_screen handled by the builder; not exposed.
 ))
 
 
