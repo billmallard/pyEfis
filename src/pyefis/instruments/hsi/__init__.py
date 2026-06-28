@@ -48,6 +48,10 @@ class HSI(QGraphicsView):
         self.tickSize = self.fontSize * 0.7
         self.fg_color = fg_color
         self.bg_color = bg_color
+        # Compass-disc fill opacity: 1.0 = solid face (default), 0.0 =
+        # transparent so the SVS/PFD behind shows through the circle. This fills
+        # the round compass disc, not the rectangular widget box.
+        self.bg_opacity = 1.0
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
         # List for tick mark visibility, Top, Bottom, Right, Left
@@ -146,10 +150,23 @@ class HSI(QGraphicsView):
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
+        # Compass-disc background fill, behind the rose (z=-1), honouring
+        # bg_opacity: a solid face by default (1.0), or transparent (0.0) so the
+        # SVS/PFD behind the round instrument shows through. Drawn as a scene
+        # item (not drawBackground) so it is rendered fresh and isn't subject to
+        # the view's background caching.
+        _op = max(0.0, min(1.0, float(getattr(self, "bg_opacity", 1.0))))
+        if _op > 0.0:
+            _disc = QColor(self.bg_color)
+            _disc.setAlphaF(_op)
+            _bgitem = self.scene.addEllipse(
+                self.cx - self.r, self.cy - self.r, self.r * 2.0, self.r * 2.0,
+                QPen(Qt.PenStyle.NoPen), QBrush(_disc))
+            _bgitem.setZValue(-1)
+
         # Setup Pens
         compassPen = QPen(QColor(self.fg_color), self.fontSize * 0.02)
         textBrush = QBrush(QColor(self.fg_color))
-        compassBrush = QBrush(QColor(self.bg_color))
         nobrush = QBrush()
 
         headingPen = QPen(QColor(Qt.GlobalColor.magenta))
@@ -274,7 +291,6 @@ class HSI(QGraphicsView):
 
 
         compassPen = QPen(QColor(self.fg_color))
-        compassBrush = QBrush(QColor(self.bg_color))
         cdiPen = QPen(QColor(Qt.GlobalColor.yellow))
         cdiPen.setWidth(3)
         c.setRenderHint(QPainter.RenderHint.Antialiasing)

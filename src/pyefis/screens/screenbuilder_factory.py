@@ -492,6 +492,8 @@ _register(InstrumentSpec(
         Prop("gsi_enabled", "boolean", default=True, label="Glideslope"),
         Prop("fg_color", "color", default="#ffffff", label="Foreground"),
         Prop("bg_color", "color", default="#000000", label="Background"),
+        # Fills the compass disc (not the box); 0 = transparent over the SVS/PFD.
+        _bg_opacity_prop(),
     ],
     preview={"heading": 87, "course": 110},
 ))
