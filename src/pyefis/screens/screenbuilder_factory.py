@@ -104,8 +104,14 @@ def build_virtual_vfr(
     # the same way regardless of which widget type the screen uses.
     widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
     widget.symbol_color = opts.get("symbol_color", "yellow")
-    if "svs" in opts:
-        widget.set_svs_config(opts["svs"])
+    # SVS config: the legacy nested `svs:` dict, overlaid with the flat svs_*
+    # editor options (svs_<key> -> <key>). Only configure SVS when it is
+    # actually enabled (or a legacy block is present), so panels that don't use
+    # synthetic vision are untouched.
+    svs_cfg = dict(opts.get("svs") or {})
+    svs_cfg.update({k[4:]: v for k, v in opts.items() if k.startswith("svs_")})
+    if opts.get("svs") or svs_cfg.get("enabled"):
+        widget.set_svs_config(svs_cfg)
     return widget
 
 
@@ -257,6 +263,60 @@ def _ai_overlay_props():
         Prop("bankAngleMaximum", "integer", default=25,
              label="Max indicated bank (deg)"),
         Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)"),
+    ]
+
+
+def _svs_props():
+    """Synthetic-vision (terrain) options for virtual_vfr. apply='special':
+    build_virtual_vfr strips the ``svs_`` prefix and assembles these into the
+    dict handed to ``set_svs_config``. They render on the device's GL terrain and
+    are NOT shown in the editor twin preview (config-only; makerplane-data#7)."""
+    dev = " (rendered on the device; not shown in the editor preview)"
+    return [
+        Prop("svs_enabled", "boolean", default=False, apply="special",
+             label="Synthetic vision enabled", help="master on/off" + dev),
+        Prop("svs_tile_path", "string", default="", apply="special",
+             label="Terrain tile path",
+             help="SRTM3 HGT tile directory on the device"),
+        Prop("svs_range_nm", "number", default=50, apply="special",
+             label="Range (NM)", help=dev.strip()),
+        Prop("svs_auto_range", "boolean", default=True, apply="special",
+             label="Auto range by altitude", help=dev.strip()),
+        Prop("svs_min_range_nm", "number", default=8, apply="special",
+             label="Min auto range (NM)", help=dev.strip()),
+        Prop("svs_palette", "enum", default="clearance",
+             enum=["clearance", "subdued", "high_contrast"], apply="special",
+             label="Terrain palette",
+             help="clearance-band colour scheme" + dev),
+        Prop("svs_clearance_green_ft", "number", default=1000, apply="special",
+             label="Safe clearance (ft)",
+             help="green at/above this height over terrain"),
+        Prop("svs_clearance_yellow_ft", "number", default=500, apply="special",
+             label="Caution clearance (ft)", help="amber above this; red below"),
+        Prop("svs_terrain_fill", "boolean", default=True, apply="special",
+             label="Fill terrain", help="off = wireframe" + dev),
+        Prop("svs_terrain_grid", "number", default=0.35, minimum=0.0, maximum=1.0,
+             apply="special", label="Terrain grid", help=dev.strip()),
+        Prop("svs_terrain_texture", "number", default=0.35, minimum=0.0,
+             maximum=1.0, apply="special", label="Terrain texture",
+             help=dev.strip()),
+        Prop("svs_safe_gradient", "boolean", default=True, apply="special",
+             label="Safe-band gradient", help=dev.strip()),
+        Prop("svs_earth_curvature", "boolean", default=True, apply="special",
+             label="Earth curvature", help=dev.strip()),
+        Prop("svs_haze", "boolean", default=True, apply="special",
+             label="Distance haze", help=dev.strip()),
+        Prop("svs_haze_distance_nm", "number", default=40, apply="special",
+             label="Haze distance (NM)", help=dev.strip()),
+        Prop("svs_dof_db_path", "string", default="", apply="special",
+             label="Obstacle DB path",
+             help="FAA DOF database on the device (optional)"),
+        Prop("svs_water_db_path", "string", default="", apply="special",
+             label="Water DB path",
+             help="water-polygon database on the device (optional)"),
+        Prop("svs_highway_db_path", "string", default="", apply="special",
+             label="Highway DB path",
+             help="highway database on the device (optional)"),
     ]
 
 
@@ -708,6 +768,7 @@ _register(InstrumentSpec(
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
+        *_svs_props(),
     ],
 ))
 

@@ -129,6 +129,21 @@ COLOR_WARNING   = QColor(200,  40,  0)    # dark red    — 0 to yellow threshol
 COLOR_CONFLICT  = QColor(180,   0, 180)   # magenta     — aircraft at or below terrain
 COLOR_WATER     = QColor( 20,  80, 150)   # ocean blue  — SRTM void / open water
 
+# Named terrain palettes selectable via the `palette` SVS config key. Each maps
+# the five clearance bands (safe, caution, warning, conflict, water).
+# "clearance" is the stock scheme (the module COLOR_* constants); the others
+# tune saturation / contrast. set_svs_config copies the chosen set onto the
+# instance (self.c_*); _clearance_color falls back to the module constants when
+# no palette was selected, so behaviour is identical unless a palette is named.
+_PALETTES = {
+    "clearance": (COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
+                  COLOR_WATER),
+    "subdued": (QColor(20, 70, 25), QColor(120, 95, 15), QColor(140, 45, 15),
+                QColor(150, 0, 150), QColor(25, 60, 105)),
+    "high_contrast": (QColor(0, 170, 0), QColor(245, 190, 0), QColor(235, 35, 0),
+                      QColor(230, 0, 230), QColor(0, 120, 215)),
+}
+
 # Sentinel written into elevation arrays where the source tile was void (ocean).
 # Must be far enough negative that real below-sea-level terrain (≥ −430 m) is
 # never mistaken for water.
@@ -384,6 +399,12 @@ class SVSRenderer:
             config.get("highway_db_path", "") or None)
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
+        # Terrain colour palette: copy the named band colours onto the instance
+        # (default "clearance" == the stock COLOR_* constants -> no change).
+        _pal = _PALETTES.get(str(config.get("palette", "clearance")).lower(),
+                             _PALETTES["clearance"])
+        (self.c_safe, self.c_caution, self.c_warning,
+         self.c_conflict, self.c_water) = _pal
         self.terrain_fill  = config.get("terrain_fill", True)
         self.auto_range    = config.get("auto_range", True)
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
@@ -550,13 +571,15 @@ class SVSRenderer:
         return self.range_nm
 
     def _clearance_color(self, clearance_ft: float) -> QColor:
+        # Use the selected palette's band colours; fall back to the module
+        # constants if set_svs_config has not run (palette unset == stock).
         if clearance_ft < 0:
-            return COLOR_CONFLICT
+            return getattr(self, "c_conflict", COLOR_CONFLICT)
         elif clearance_ft < self.yellow_ft:
-            return COLOR_WARNING
+            return getattr(self, "c_warning", COLOR_WARNING)
         elif clearance_ft < self.green_ft:
-            return COLOR_CAUTION
-        return COLOR_SAFE
+            return getattr(self, "c_caution", COLOR_CAUTION)
+        return getattr(self, "c_safe", COLOR_SAFE)
 
     def draw(self, p: QPainter, w: int, h: int,
              ac_lat: float, ac_lon: float, ac_alt_ft: float,
