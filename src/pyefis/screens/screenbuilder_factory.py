@@ -203,6 +203,15 @@ def _register(spec: InstrumentSpec) -> InstrumentSpec:
     return spec
 
 
+def _bg_opacity_prop():
+    """Shared background-opacity control for instruments that paint an opaque
+    background box: 1.0 = solid (the default, unchanged), 0.0 = transparent so
+    what's behind shows through. apply='attr' -> the widget's bg_opacity."""
+    return Prop("bg_opacity", "number", default=1.0, minimum=0.0, maximum=1.0,
+                label="Background opacity",
+                help="0 = transparent (show what's behind), 1 = solid")
+
+
 def _ai_overlay_props():
     """Full-granular pitch-ladder + bank-arc properties shared by the attitude
     indicator and the synthetic-vision view (both subclass AI). Prop names match
@@ -409,6 +418,7 @@ _register(InstrumentSpec(
              replace=None: airspeed.Airspeed(screen, font_family=font_family)),
     dbkeys=["IAS"],
     keep_aspect=True,
+    properties=[_bg_opacity_prop()],
     # Fixed steam-gauge face; IAS hard-wired. V-speed arcs come from IAS aux.
     fix_values=[
         FixValue("Vs", source="aux", label="Stall, clean (Vs)", units="kt"),
@@ -428,6 +438,7 @@ _register(InstrumentSpec(
              replace=None: altimeter.Altimeter(screen, font_family=font_family)),
     dbkeys=["ALT"],
     keep_aspect=True,
+    properties=[_bg_opacity_prop()],
     preview={"value": 3500},
 ))
 

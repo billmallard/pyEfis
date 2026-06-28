@@ -34,11 +34,13 @@ class Altimeter(QWidget):
         self, parent=None, bg_color=Qt.GlobalColor.black, font_family="DejaVu Sans Condensed"
     ):
         super(Altimeter, self).__init__(parent)
-        self.setStyleSheet("border: 0px")
+        # Transparent widget background so bg_opacity < 1 reveals what's behind.
+        self.setStyleSheet("background: transparent; border: 0px")
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._altimeter = 0
         self.bg_color = bg_color
+        self.bg_opacity = 1.0
         self.item = fix.db.get_item("ALT")
         self.item.valueChanged[float].connect(self.setAltimeter)
         self.item.oldChanged[bool].connect(self.repaint)
@@ -65,8 +67,10 @@ class Altimeter(QWidget):
         center_x = w / 2
         center_y = h / 2
 
-        # Draw the Black Background
-        dial.fillRect(0, 0, w, h, QColor(self.bg_color))
+        # Draw the background (bg_opacity < 1 lets what's behind show through)
+        _bg = QColor(self.bg_color)
+        _bg.setAlphaF(max(0.0, min(1.0, float(getattr(self, "bg_opacity", 1.0)))))
+        dial.fillRect(0, 0, w, h, _bg)
         dialPen = QPen()
         # Setup Pens
         if self.item.old or self.item.bad:

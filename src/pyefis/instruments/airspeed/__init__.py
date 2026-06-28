@@ -38,11 +38,13 @@ class Airspeed(QWidget):
         font_family="DejaVu Sans Condensed",
     ):
         super(Airspeed, self).__init__(parent)
-        self.setStyleSheet("border: 0px")
+        # Transparent widget background so bg_opacity < 1 reveals what's behind.
+        self.setStyleSheet("background: transparent; border: 0px")
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.font_percent = font_percent
         self.bg_color = bg_color
+        self.bg_opacity = 1.0
         self._airspeed = 0
         self.item = fix.db.get_item("IAS")
         self._airspeed = self.item.value
@@ -81,8 +83,10 @@ class Airspeed(QWidget):
         dial = QPainter(self)
         dial.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw the Black Background
-        dial.fillRect(0, 0, w, h, QColor(self.bg_color))
+        # Draw the background (bg_opacity < 1 lets what's behind show through)
+        _bg = QColor(self.bg_color)
+        _bg.setAlphaF(max(0.0, min(1.0, float(getattr(self, "bg_opacity", 1.0)))))
+        dial.fillRect(0, 0, w, h, _bg)
 
         # Setup Pens
         f = QFont(self.font_family)
