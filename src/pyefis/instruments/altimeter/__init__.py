@@ -40,7 +40,7 @@ class Altimeter(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._altimeter = 0
         self.bg_color = bg_color
-        self.bg_opacity = 1.0
+        self.bg_opacity = 100  # percent (100 = solid, the default)
         self.item = fix.db.get_item("ALT")
         self.item.valueChanged[float].connect(self.setAltimeter)
         self.item.oldChanged[bool].connect(self.repaint)
@@ -67,9 +67,9 @@ class Altimeter(QWidget):
         center_x = w / 2
         center_y = h / 2
 
-        # Draw the background (bg_opacity < 1 lets what's behind show through)
+        # Draw the background (bg_opacity percent < 100 lets what's behind show)
         _bg = QColor(self.bg_color)
-        _bg.setAlphaF(max(0.0, min(1.0, float(getattr(self, "bg_opacity", 1.0)))))
+        _bg.setAlphaF(max(0.0, min(1.0, float(getattr(self, "bg_opacity", 100)) / 100.0)))
         dial.fillRect(0, 0, w, h, _bg)
         dialPen = QPen()
         # Setup Pens

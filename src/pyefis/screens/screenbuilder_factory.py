@@ -205,11 +205,12 @@ def _register(spec: InstrumentSpec) -> InstrumentSpec:
 
 def _bg_opacity_prop():
     """Shared background-opacity control for instruments that paint an opaque
-    background box: 1.0 = solid (the default, unchanged), 0.0 = transparent so
-    what's behind shows through. apply='attr' -> the widget's bg_opacity."""
-    return Prop("bg_opacity", "number", default=1.0, minimum=0.0, maximum=1.0,
-                label="Background opacity",
-                help="0 = transparent (show what's behind), 1 = solid")
+    background box. Percent (0-100): 100 = solid (the default, unchanged), 0 =
+    transparent so what's behind shows through. Percent (whole numbers) avoids
+    the editor's decimal-input limitation. apply='attr' -> widget.bg_opacity."""
+    return Prop("bg_opacity", "integer", default=100, minimum=0, maximum=100,
+                step=1, label="Background opacity (%)",
+                help="0 = transparent (show what's behind), 100 = solid")
 
 
 def _ai_overlay_props():
@@ -776,9 +777,7 @@ _register(InstrumentSpec(
         # no-op option. Use the common font_percent to scale instead.
         Prop("fg_color", "color", default="#aaaaaa", label="Foreground"),
         Prop("bg_color", "color", default="#000000", label="Background"),
-        Prop("bg_opacity", "number", default=1.0, minimum=0.0, maximum=1.0,
-             label="Background opacity",
-             help="0 = transparent (show what's behind the box), 1 = solid"),
+        _bg_opacity_prop(),
     ],
 ))
 

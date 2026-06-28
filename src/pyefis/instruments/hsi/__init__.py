@@ -48,10 +48,10 @@ class HSI(QGraphicsView):
         self.tickSize = self.fontSize * 0.7
         self.fg_color = fg_color
         self.bg_color = bg_color
-        # Compass-disc fill opacity: 1.0 = solid face (default), 0.0 =
+        # Compass-disc fill opacity, percent: 100 = solid face (default), 0 =
         # transparent so the SVS/PFD behind shows through the circle. This fills
         # the round compass disc, not the rectangular widget box.
-        self.bg_opacity = 1.0
+        self.bg_opacity = 100
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
         # List for tick mark visibility, Top, Bottom, Right, Left
@@ -155,7 +155,7 @@ class HSI(QGraphicsView):
         # SVS/PFD behind the round instrument shows through. Drawn as a scene
         # item (not drawBackground) so it is rendered fresh and isn't subject to
         # the view's background caching.
-        _op = max(0.0, min(1.0, float(getattr(self, "bg_opacity", 1.0))))
+        _op = max(0.0, min(1.0, float(getattr(self, "bg_opacity", 100)) / 100.0))
         if _op > 0.0:
             _disc = QColor(self.bg_color)
             _disc.setAlphaF(_op)
@@ -464,13 +464,13 @@ class HSI(QGraphicsView):
 
 
 class HeadingDisplay(QWidget):
-    def __init__(self, parent=None, fg_color="#aaaaaa", bg_color="#000000", bg_opacity=1.0, font_family="DejaVu Sans Condensed" ):
+    def __init__(self, parent=None, fg_color="#aaaaaa", bg_color="#000000", bg_opacity=100, font_family="DejaVu Sans Condensed" ):
         super(HeadingDisplay, self).__init__(parent)
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.fg_color = fg_color
         self.bg_color = bg_color
-        # Background-fill opacity: 1.0 = solid box (default), 0.0 = fully
+        # Background-fill opacity, percent: 100 = solid box (default), 0 = fully
         # transparent so whatever is behind the box (e.g. the SVS/PFD) shows
         # through. The widget area itself is made transparent so the paintEvent
         # fill alpha is what controls the look.
@@ -512,7 +512,7 @@ class HeadingDisplay(QWidget):
         compassPen = QPen(QColor(self.fg_color))
         bg = QColor(self.bg_color)
         try:
-            bg.setAlphaF(max(0.0, min(1.0, float(self.bg_opacity))))
+            bg.setAlphaF(max(0.0, min(1.0, float(self.bg_opacity) / 100.0)))
         except (TypeError, ValueError):
             pass
         compassBrush = QBrush(bg)

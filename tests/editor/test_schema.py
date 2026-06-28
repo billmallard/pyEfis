@@ -69,7 +69,7 @@ def test_default_options_are_typed():
     assert opt == {
         "fg_color": {"type": "color", "default": "#aaaaaa"},
         "bg_color": {"type": "color", "default": "#000000"},
-        "bg_opacity": {"type": "number", "default": 1.0},
+        "bg_opacity": {"type": "integer", "default": 100},
     }
     assert "font_size" not in opt
 
