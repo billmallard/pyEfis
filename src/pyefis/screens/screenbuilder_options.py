@@ -14,7 +14,34 @@
 #  along with this program; if not, write to the Free Software
 #  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
+import logging
+
 import pyefis.hmi as hmi
+
+log = logging.getLogger(__name__)
+
+
+def _warn_undeclared_option(inst_type, option):
+    """Warn when a screen sets an option a *migrated* instrument doesn't declare
+    in its InstrumentSpec -- catches typos and renamed attributes (the option is
+    still applied via setattr, but it likely does nothing). Unmigrated types have
+    no declared contract, so they're left alone. Never raises."""
+    try:
+        if option in ("font_family", "font_percent"):
+            return  # common options, applied to every instrument
+        from pyefis.screens import screenbuilder_factory as _factory
+        spec = _factory.REGISTRY.get(inst_type)
+        if spec is None:
+            return  # not migrated -- no declared contract to check against
+        if any(p.name == option for p in spec.properties):
+            return
+        log.warning(
+            "instrument '%s': option '%s' is not declared in its "
+            "InstrumentSpec; it is applied but may have no effect",
+            inst_type, option)
+    except Exception:
+        pass
+
 
 funcTempF = lambda x: x * (9.0 / 5.0) + 32.0
 funcTempC = lambda x: x
@@ -114,4 +141,5 @@ def apply_options(screen, index, config, state=False):
             continue
 
         else:
+            _warn_undeclared_option(config["type"], option)
             setattr(instrument, option, value)
