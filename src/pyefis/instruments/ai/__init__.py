@@ -271,30 +271,37 @@ class AI(QGraphicsView):
         p.setBrush(QBrush(col))
         style = str(getattr(self, "aircraft_symbol", "classic")).lower()
         if style in ("garmin", "gi275", "gi-275", "g1000"):
-            # GI-275 / G1000 style: two tapered wing wedges — thick at
-            # the inboard end by the boresight, tapering to the
-            # outboard tips — flanking a small centre boresight circle.
-            t = max(2.0, h * 0.006)
-            gap = w * 0.03           # inboard tip half-gap from centre
-            wing = w * 0.15          # wing length
-            p.drawPolygon(QPolygonF([              # left wing
-                QPointF(cx - gap, cy - 2.2 * t),
-                QPointF(cx - gap, cy + 2.2 * t),
-                QPointF(cx - gap - wing, cy + 0.8 * t),
-                QPointF(cx - gap - wing, cy - 0.4 * t)]))
-            p.drawPolygon(QPolygonF([              # right wing (mirror)
-                QPointF(cx + gap, cy - 2.2 * t),
-                QPointF(cx + gap, cy + 2.2 * t),
-                QPointF(cx + gap + wing, cy + 0.8 * t),
-                QPointF(cx + gap + wing, cy - 0.4 * t)]))
-            # Centre boresight: open ring + filled dot.
-            br = 1.8 * t
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(col, max(1.0, t * 0.5)))
-            p.drawEllipse(QPointF(cx, cy), br, br)
-            p.setPen(QPen(QColor(Qt.GlobalColor.black), 1))
-            p.setBrush(QBrush(col))
-            p.drawEllipse(QPointF(cx, cy), t * 0.6, t * 0.6)
+            # GI-275 / G1000 style: a bold flat-topped trapezoid wing each side
+            # -- tall by the boresight, tapering down to a blunt outboard tip --
+            # whose inboard ends step down to a chevron point at the centre.
+            th = max(4.0, h * 0.055)    # inboard wing height (bold)
+            tt = max(1.5, h * 0.014)    # blunt outboard tip height
+            gap = w * 0.05              # half-gap from centre to the inboard edge
+            wing = w * 0.16             # wing length
+            p.drawPolygon(QPolygonF([                 # left wing: flat top, blunt tip
+                QPointF(cx - gap, cy - th * 0.5),          # inboard top
+                QPointF(cx - gap - wing, cy - tt * 0.5),   # outboard top
+                QPointF(cx - gap - wing, cy + tt * 0.5),   # outboard bottom
+                QPointF(cx - gap, cy + th * 0.5)]))        # inboard bottom
+            p.drawPolygon(QPolygonF([                 # right wing (mirror)
+                QPointF(cx + gap, cy - th * 0.5),
+                QPointF(cx + gap + wing, cy - tt * 0.5),
+                QPointF(cx + gap + wing, cy + tt * 0.5),
+                QPointF(cx + gap, cy + th * 0.5)]))
+            # Centre boresight dot.
+            p.drawEllipse(QPointF(cx, cy), th * 0.22, th * 0.22)
+        elif style in ("brackets", "grt", "l", "l-bracket", "l_bracket"):
+            # GRT-style L-brackets: a wing bar each side with an inboard
+            # down-tick (forming an "L"), flanking a small centre dot.
+            bt = max(3.0, h * 0.012)     # bar thickness
+            inner = w * 0.07             # half-gap from centre to the inboard tip
+            wing = w * 0.14              # wing-bar length
+            tick = bt * 2.6              # inboard down-tick length
+            p.drawRect(QRectF(cx - inner - wing, cy - bt / 2, wing, bt))  # left bar
+            p.drawRect(QRectF(cx - inner - bt, cy - bt / 2, bt, tick))    # left tick
+            p.drawRect(QRectF(cx + inner, cy - bt / 2, wing, bt))         # right bar
+            p.drawRect(QRectF(cx + inner, cy - bt / 2, bt, tick))         # right tick
+            p.drawEllipse(QPointF(cx, cy), bt * 0.7, bt * 0.7)            # centre dot
         else:
             # Classic: split wing bars + centre dot.
             p.drawRect(QRectF(w / 4, cy - 3, w / 6, 6))
