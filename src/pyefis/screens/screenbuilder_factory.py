@@ -302,7 +302,9 @@ _register(InstrumentSpec(
     ],
     # Attitude is read directly (PITCH/ROLL); no FIX aux values.
     fix_values=[],
-    preview={"pitch": 4.0, "roll": -9.0, "slip": 2.0},
+    # Representative pose for the twin (matches the render-tool demo so the
+    # editor preview reads like a real panel).
+    preview={"pitch": -2.0, "roll": 4.0, "slip": 1.0},
 ))
 
 _register(InstrumentSpec(
@@ -334,9 +336,11 @@ _register(InstrumentSpec(
         FixValue("highWarn", source="aux", label="High warning (yellow)"),
         FixValue("highAlarm", source="aux", label="High alarm (red)"),
     ],
-    # Representative bands + needle fill so the twin can draw a realistic gauge
-    # with no live FIX (fractions of range; the device uses real aux values).
-    preview={"value": "2350", "fill": 0.72, "green_to": 0.62, "yellow_to": 0.83},
+    # Representative 5-zone bands + needle fill so the twin draws a realistic
+    # red-yellow-green-yellow-red gauge with no live FIX (fractions of range;
+    # the device uses the real min/max + warn/alarm aux).
+    preview={"value": "72.0", "fill": 0.72, "low_alarm": 0.10,
+             "low_warn": 0.20, "high_warn": 0.80, "high_alarm": 0.90},
 ))
 
 _register(InstrumentSpec(
@@ -383,7 +387,7 @@ _register(InstrumentSpec(
         FixValue("Min", source="min", label="Range minimum", units="ft/min"),
         FixValue("Max", source="max", label="Range maximum", units="ft/min"),
     ],
-    preview={"value": 800},
+    preview={"value": -350},
 ))
 
 
