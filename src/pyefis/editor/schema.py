@@ -59,17 +59,10 @@ SCHEMA_VERSION = 3
 # ---------------------------------------------------------------------------
 
 # Palette grouping for the editor's instrument picker.
-_CATEGORIES = {
-    # Migrated -- categories from registry records: airspeed_dial, airspeed_box,
-    # airspeed_tape, airspeed_trend_tape, altimeter_dial, altimeter_tape,
-    # altimeter_trend_tape, atitude_indicator, turn_coordinator,
-    # horizontal_situation_indicator, heading_tape, vsi_dial, vsi_pfd, arc_gauge,
-    # horizontal_bar_gauge, vertical_bar_gauge, numeric_display, value_text,
-    # static_text, wind_display.
-    # Only heading_display remains curated (deferred); everything else ->
-    # registry records.
-    "heading_display": "navigation",
-}
+# Every instrument is migrated -- category, label, options, flags etc. all come
+# from the registry records (_entry_from_spec). These curated tables are empty
+# and retained only as the transitional fallback for any future un-migrated type.
+_CATEGORIES = {}
 
 # Human-friendly labels where the prettified type name isn't good enough.
 _LABELS = {
@@ -140,21 +133,9 @@ _COMMON_OPTIONS = {
 # A practical subset of what each widget accepts, kept in sync with the build_*
 # factories + docs/screenbuilder.md. NOTE: V-speeds / gauge warn-alarm bands are
 # NOT here -- those are FIX-database (fix-gateway) values, not layout (see #64).
-_OPTIONS = {
-    # "airspeed_tape" is migrated -- its options come from the registry record
-    # (and it no longer exposes a no-op dbkey; it is hard-wired to IAS).
-    # "altimeter_tape" is migrated -- its options come from the registry record.
-    # "numeric_display" / "value_text" / "static_text" are migrated -- options
-    # come from their registry records.
-    "heading_display": {
-        "fg_color": {"type": "color", "default": "#aaaaaa", "label": "Foreground"},
-        "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
-        "font_size": {"type": "number", "default": 17, "label": "Font size (px)"},
-    },
-    # "heading_tape" / "horizontal_situation_indicator" / "atitude_indicator" /
-    # "virtual_vfr" / "arc_gauge" / bar gauges are migrated -- options come from
-    # their registry records. Only heading_display remains curated here.
-}
+# Every instrument is migrated -- options come from each registry record's
+# Props. Empty, retained as the transitional fallback for future types.
+_OPTIONS = {}
 
 
 def _prettify(instrument_type):

@@ -448,12 +448,18 @@ class HSI(QGraphicsView):
 
 
 class HeadingDisplay(QWidget):
-    def __init__(self, parent=None, fg_color=Qt.GlobalColor.gray, bg_color=Qt.GlobalColor.black, font_family="DejaVu Sans Condensed" ):
+    def __init__(self, parent=None, fg_color="#aaaaaa", bg_color="#000000", bg_opacity=1.0, font_family="DejaVu Sans Condensed" ):
         super(HeadingDisplay, self).__init__(parent)
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.fg_color = fg_color
         self.bg_color = bg_color
+        # Background-fill opacity: 1.0 = solid box (default), 0.0 = fully
+        # transparent so whatever is behind the box (e.g. the SVS/PFD) shows
+        # through. The widget area itself is made transparent so the paintEvent
+        # fill alpha is what controls the look.
+        self.bg_opacity = bg_opacity
+        self.setStyleSheet("background: transparent")
 
         self._Old = True
         self._Bad = True
@@ -488,7 +494,12 @@ class HeadingDisplay(QWidget):
         self.font.setPointSizeF(self.font_size)
         c = QPainter(self)
         compassPen = QPen(QColor(self.fg_color))
-        compassBrush = QBrush(QColor(self.bg_color))
+        bg = QColor(self.bg_color)
+        try:
+            bg.setAlphaF(max(0.0, min(1.0, float(self.bg_opacity))))
+        except (TypeError, ValueError):
+            pass
+        compassBrush = QBrush(bg)
         c.setPen(compassPen)
         c.setBrush(compassBrush)
         c.setFont(self.font)

@@ -61,10 +61,17 @@ def test_dbkeys_come_from_registry():
 
 
 def test_default_options_are_typed():
-    """INSTRUMENT_DEFAULT_OPTIONS values are exposed with an inferred type."""
+    """Migrated instruments expose typed default options sourced from their
+    record. heading_display moved off the legacy INSTRUMENT_DEFAULT_OPTIONS: its
+    no-op font_size option is gone, replaced by a background-opacity control."""
     s = eschema.build_schema()
     opt = s["instruments"]["heading_display"]["default_options"]
-    assert opt == {"font_size": {"type": "integer", "default": 17}}
+    assert opt == {
+        "fg_color": {"type": "color", "default": "#aaaaaa"},
+        "bg_color": {"type": "color", "default": "#000000"},
+        "bg_opacity": {"type": "number", "default": 1.0},
+    }
+    assert "font_size" not in opt
 
 
 def test_gl_types_flagged_not_offscreen_renderable():

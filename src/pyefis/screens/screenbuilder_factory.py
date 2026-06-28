@@ -170,43 +170,16 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
     )
 
 
-INSTRUMENT_FACTORIES = {
-    # Only heading_display remains un-migrated (deferred: font_size no-op +
-    # fg_color default cleanup); every other type folds in from REGISTRY below
-    # (the single source of truth).
-    "heading_display": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.HeadingDisplay(
-        screen, font_family=font_family
-    ),
-}
+# Every instrument type is migrated -- these legacy lookup tables are populated
+# entirely from REGISTRY by the fold-back below. They remain (empty here) for
+# existing consumers that import them.
+INSTRUMENT_FACTORIES = {}
 
+INSTRUMENT_DEFAULTS = {}
 
-INSTRUMENT_DEFAULTS = {
-    # "airspeed_dial" / "airspeed_tape" / "airspeed_trend_tape" / "airspeed_box"
-    # dbkeys are declared in REGISTRY below.
-    # "altimeter_dial" / "altimeter_tape" / "altimeter_trend_tape" dbkeys are
-    # declared in REGISTRY below.
-    # "atitude_indicator" dbkeys are declared in REGISTRY below.
-    "heading_display": ["HEAD"],
-    # "heading_tape" / "horizontal_situation_indicator" dbkeys -> REGISTRY below.
-    # "turn_coordinator" dbkeys are declared in REGISTRY below.
-    # "vsi_dial" / "vsi_pfd" dbkeys are declared in REGISTRY below.
-    "virtual_vfr": [
-        "PITCH",
-        "LAT",
-        "LONG",
-        "HEAD",
-        "ALT",
-        "PITCH",
-        "ROLL",
-        "ALAT",
-        "TAS",
-    ],
-}
-
-
-INSTRUMENT_DEFAULT_OPTIONS = {
-    "heading_display": {"font_size": 17},
-}
+# Legacy per-type default options (curated). Empty now that every type is
+# migrated; defaults come from each record's Prop defaults.
+INSTRUMENT_DEFAULT_OPTIONS = {}
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +745,27 @@ _register(InstrumentSpec(
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
         *_svs_props(),
+    ],
+))
+
+_register(InstrumentSpec(
+    type="heading_display",
+    label="Heading Display",
+    category="navigation",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: hsi.HeadingDisplay(screen, font_family=font_family)),
+    dbkeys=["HEAD"],
+    properties=[
+        # Default fg is light grey (#aaaaaa) -- the widget default was the
+        # darker Qt "gray" (#808080); aligned for readability + a matching
+        # editor default. font_size is intentionally NOT exposed: the widget
+        # recomputes it from the box size on resize (fit_to_mask), so it was a
+        # no-op option. Use the common font_percent to scale instead.
+        Prop("fg_color", "color", default="#aaaaaa", label="Foreground"),
+        Prop("bg_color", "color", default="#000000", label="Background"),
+        Prop("bg_opacity", "number", default=1.0, minimum=0.0, maximum=1.0,
+             label="Background opacity",
+             help="0 = transparent (show what's behind the box), 1 = solid"),
     ],
 ))
 
