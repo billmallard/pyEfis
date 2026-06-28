@@ -53,6 +53,13 @@ _CURATED = {
 }
 
 
+def _ctor_options(spec):
+    """Minimal options a widget needs to construct -- its required props seeded
+    with their declared defaults (e.g. static_text needs `text`)."""
+    return {p.name: p.default for p in spec.properties
+            if p.required and p.default is not None}
+
+
 def test_registry_types_are_real_factory_types():
     """A record can only describe an instrument the screen builder can build."""
     unknown = set(factory.REGISTRY) - set(factory.INSTRUMENT_FACTORIES)
@@ -118,7 +125,7 @@ def test_widget_exposes_declared_attr_properties(fix, qtbot):
     misspelt property fails here instead of silently doing nothing in the
     cockpit. (``fix`` defines the FIX db; ``qtbot`` provides the QApplication.)"""
     for t, spec in factory.REGISTRY.items():
-        config = {"type": t, "options": {}}
+        config = {"type": t, "options": _ctor_options(spec)}
         widget = spec.builder(
             None, config, font_percent=0.05,
             font_family="DejaVu Sans Condensed", replace=None)
@@ -139,7 +146,7 @@ def test_attr_property_defaults_match_widget(fix, qtbot):
     keys / names) is exempt."""
     for t, spec in factory.REGISTRY.items():
         widget = spec.builder(
-            None, {"type": t, "options": {}}, font_percent=0.05,
+            None, {"type": t, "options": _ctor_options(spec)}, font_percent=0.05,
             font_family="DejaVu Sans Condensed", replace=None)
         qtbot.addWidget(widget)
         for p in spec.properties:

@@ -188,25 +188,12 @@ INSTRUMENT_FACTORIES = {
     ),
     # "heading_tape" is migrated -- see REGISTRY below.
     # "horizontal_situation_indicator" is migrated -- see REGISTRY below.
-    "numeric_display": lambda screen, config, font_percent=None, font_family=None, replace=None: gauges.NumericDisplay(
-        screen, font_family=font_family
-    ),
-    "value_text": lambda screen, config, font_percent=None, font_family=None, replace=None: misc.ValueDisplay(
-        screen, font_family=font_family
-    ),
-    "static_text": build_static_text,
-    "turn_coordinator": lambda screen, config, font_percent=None, font_family=None, replace=None: tc.TurnCoordinator(
-        screen, font_family=font_family
-    ),
+    # "numeric_display" / "value_text" / "static_text" / "turn_coordinator"
+    # are migrated -- see REGISTRY below.
     # "vsi_dial" is migrated -- see REGISTRY below.
     # "vsi_pfd" is migrated -- see REGISTRY below.
     # "arc_gauge" is migrated -- see REGISTRY below.
-    "horizontal_bar_gauge": lambda screen, config, font_percent=None, font_family=None, replace=None: gauges.HorizontalBar(
-        screen, min_size=False, font_family=font_family
-    ),
-    "vertical_bar_gauge": lambda screen, config, font_percent=None, font_family=None, replace=None: gauges.VerticalBar(
-        screen, min_size=False, font_family=font_family
-    ),
+    # "horizontal_bar_gauge" / "vertical_bar_gauge" are migrated -- see REGISTRY.
     "virtual_vfr": build_virtual_vfr,
     "listbox": build_listbox,
     "wind_display": lambda screen, config, font_percent=None, font_family=None, replace=None: wind.WindDisplay(
@@ -224,7 +211,7 @@ INSTRUMENT_DEFAULTS = {
     # "atitude_indicator" dbkeys are declared in REGISTRY below.
     "heading_display": ["HEAD"],
     # "heading_tape" / "horizontal_situation_indicator" dbkeys -> REGISTRY below.
-    "turn_coordinator": ["ROT", "ALAT"],
+    # "turn_coordinator" dbkeys are declared in REGISTRY below.
     # "vsi_dial" / "vsi_pfd" dbkeys are declared in REGISTRY below.
     "virtual_vfr": [
         "PITCH",
@@ -466,6 +453,111 @@ _register(InstrumentSpec(
     # DG_Tape is hard-wired to HEAD (no setDbkey); the old curated dbkey option
     # was a no-op and is dropped.
     preview={"heading": 87},
+))
+
+
+# Shared option set + FIX values for the AbstractGauge family (arc / bar /
+# numeric). Colour bands + range are FIX-database values (item min/max + aux),
+# set in fix-gateway, not the panel editor (#64).
+def _gauge_fix_values():
+    return [
+        FixValue("Min", source="min", label="Range minimum"),
+        FixValue("Max", source="max", label="Range maximum"),
+        FixValue("lowAlarm", source="aux", label="Low alarm (red)"),
+        FixValue("lowWarn", source="aux", label="Low warning (yellow)"),
+        FixValue("highWarn", source="aux", label="High warning (yellow)"),
+        FixValue("highAlarm", source="aux", label="High alarm (red)"),
+    ]
+
+
+def _bar_gauge_props():
+    return [
+        Prop("dbkey", "fixkey", default="", label="FIX key",
+             apply="setter:setDbkey"),
+        Prop("name", "string", default="", label="Name"),
+        Prop("decimal_places", "integer", default=1, label="Decimal places"),
+        Prop("show_units", "boolean", default=True, label="Show units"),
+        Prop("segments", "integer", default=0, label="Segments"),
+    ]
+
+
+_register(InstrumentSpec(
+    type="horizontal_bar_gauge",
+    label="Horizontal Bar Gauge",
+    category="gauge",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: gauges.HorizontalBar(
+                 screen, min_size=False, font_family=font_family)),
+    properties=_bar_gauge_props(),
+    fix_values=_gauge_fix_values(),
+    preview={"value": "72", "fill": 0.72},
+))
+
+_register(InstrumentSpec(
+    type="vertical_bar_gauge",
+    label="Vertical Bar Gauge",
+    category="gauge",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: gauges.VerticalBar(
+                 screen, min_size=False, font_family=font_family)),
+    properties=_bar_gauge_props(),
+    fix_values=_gauge_fix_values(),
+    preview={"value": "72", "fill": 0.72},
+))
+
+_register(InstrumentSpec(
+    type="turn_coordinator",
+    label="Turn Coordinator",
+    category="attitude",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: tc.TurnCoordinator(screen, font_family=font_family)),
+    dbkeys=["ROT", "ALAT"],
+    keep_aspect=True,
+    preview={"rate": 8, "ball": 2},
+))
+
+_register(InstrumentSpec(
+    type="numeric_display",
+    label="Numeric Display",
+    category="text",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: gauges.NumericDisplay(
+                 screen, font_family=font_family)),
+    properties=[
+        Prop("dbkey", "fixkey", default="", label="FIX key",
+             apply="setter:setDbkey"),
+        Prop("decimal_places", "integer", default=1, label="Decimal places"),
+        Prop("font_mask", "string", default="000", label="Font mask"),
+        Prop("show_units", "boolean", default=False, label="Show units"),
+    ],
+    fix_values=_gauge_fix_values(),
+))
+
+_register(InstrumentSpec(
+    type="value_text",
+    label="Value Text",
+    category="text",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: misc.ValueDisplay(screen, font_family=font_family)),
+    properties=[
+        Prop("dbkey", "fixkey", default="", label="FIX key",
+             apply="setter:setDbkey"),
+        Prop("font_mask", "string", default="", label="Font mask"),
+    ],
+))
+
+_register(InstrumentSpec(
+    type="static_text",
+    label="Static Text",
+    category="text",
+    builder=build_static_text,
+    properties=[
+        Prop("text", "string", default="Text", label="Text", required=True,
+             apply="special"),
+        Prop("alignment", "enum", default="AlignLeft",
+             enum=["AlignLeft", "AlignCenter", "AlignRight"], label="Alignment"),
+        Prop("font_mask", "string", default="", label="Font mask"),
+    ],
 ))
 
 

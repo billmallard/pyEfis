@@ -68,15 +68,12 @@ _CATEGORIES = {
     "altimeter_trend_tape": "altitude",
     # "atitude_indicator" is migrated -- category from its registry record.
     "virtual_vfr": "attitude",
-    "turn_coordinator": "attitude",
+    # "turn_coordinator" is migrated -- category from its registry record.
     "heading_display": "navigation",
     # "horizontal_situation_indicator" / "heading_tape" -> registry records.
-    # "vsi_dial" / "vsi_pfd" / "arc_gauge" are migrated -- see registry records.
-    "horizontal_bar_gauge": "gauge",
-    "vertical_bar_gauge": "gauge",
-    "numeric_display": "text",
-    "value_text": "text",
-    "static_text": "text",
+    # Migrated -- categories from registry records: vsi_dial, vsi_pfd, arc_gauge,
+    # horizontal_bar_gauge, vertical_bar_gauge, numeric_display, value_text,
+    # static_text.
     "listbox": "list",
     "wind_display": "wind",
     "data_status": "system",
@@ -98,7 +95,7 @@ _LABELS = {
 # meaningless) without them. Derived by reading the build_* factories.
 _REQUIRED_OPTIONS = {
     "button": ["config"],
-    "static_text": ["text"],
+    # "static_text" required-options come from its registry record.
     "listbox": ["lists"],
     "weston": ["socket", "ini", "command", "args"],
 }
@@ -122,11 +119,10 @@ _SVS_CAPABLE = {
 # Fixed-aspect (round / square) instruments: the editor letterboxes these
 # (object-fit: contain) instead of stretching, so a dial stays round. Tapes,
 # bars and text stretch to their box.
-_KEEP_ASPECT = {
-    "turn_coordinator",
-    # "vsi_dial", "arc_gauge", "atitude_indicator" are migrated -- keep_aspect
-    # comes from their registry records.
-}
+# All keep-aspect instruments are migrated -- keep_aspect comes from their
+# registry records (turn_coordinator, vsi_dial, arc_gauge, atitude_indicator,
+# airspeed_dial, altimeter_dial, HSI). Empty set() not {} (which is a dict).
+_KEEP_ASPECT = set()
 
 # Layout fields every instrument accepts at the screen-builder level (not
 # instrument options). Informational, for the editor's inspector.
@@ -157,17 +153,6 @@ _COMMON_OPTIONS = {
 }
 
 
-def _gauge_options():
-    """Shared option set for the arc / bar gauge family."""
-    return {
-        "dbkey": {"type": "string", "default": "", "label": "FIX key"},
-        "name": {"type": "string", "default": "", "label": "Name"},
-        "decimal_places": {"type": "number", "default": 0, "label": "Decimal places"},
-        "show_units": {"type": "boolean", "default": False, "label": "Show units"},
-        "segments": {"type": "number", "default": 0, "label": "Segments"},
-    }
-
-
 # Curated, editor-facing editable options per type (beyond the common font
 # options above). Drives the properties panel. Field metadata:
 #   type: number|string|boolean|color|enum   default:   label:   [enum/min/max]
@@ -178,23 +163,8 @@ _OPTIONS = {
     # "airspeed_tape" is migrated -- its options come from the registry record
     # (and it no longer exposes a no-op dbkey; it is hard-wired to IAS).
     # "altimeter_tape" is migrated -- its options come from the registry record.
-    "numeric_display": {
-        "dbkey": {"type": "string", "default": "", "label": "FIX key"},
-        "decimal_places": {"type": "number", "default": 0, "label": "Decimal places"},
-        "font_mask": {"type": "string", "default": "000", "label": "Font mask"},
-        "show_units": {"type": "boolean", "default": False, "label": "Show units"},
-    },
-    "value_text": {
-        "dbkey": {"type": "string", "default": "", "label": "FIX key"},
-        "font_mask": {"type": "string", "default": "", "label": "Font mask"},
-    },
-    "static_text": {
-        "text": {"type": "string", "default": "Text", "label": "Text"},
-        "alignment": {"type": "enum", "default": "AlignLeft",
-                      "enum": ["AlignLeft", "AlignCenter", "AlignRight"],
-                      "label": "Alignment"},
-        "font_mask": {"type": "string", "default": "", "label": "Font mask"},
-    },
+    # "numeric_display" / "value_text" / "static_text" are migrated -- options
+    # come from their registry records.
     "heading_display": {
         "fg_color": {"type": "color", "default": "#aaaaaa", "label": "Foreground"},
         "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
@@ -214,9 +184,8 @@ _OPTIONS = {
                           "enum": ["mountains", "approach", "coastal"],
                           "label": "Preview scene (editor)"},
     },
-    # "arc_gauge" is migrated -- its options come from the registry record.
-    "horizontal_bar_gauge": _gauge_options(),
-    "vertical_bar_gauge": _gauge_options(),
+    # "arc_gauge" / "horizontal_bar_gauge" / "vertical_bar_gauge" are migrated --
+    # options come from their registry records.
 }
 
 
