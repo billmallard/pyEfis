@@ -60,22 +60,18 @@ SCHEMA_VERSION = 3
 
 # Palette grouping for the editor's instrument picker.
 _CATEGORIES = {
-    "airspeed_dial": "airspeed",
+    # "airspeed_dial" is migrated -- category from its registry record.
     "airspeed_box": "airspeed",
     # "airspeed_tape" is migrated -- category from its registry record.
     "airspeed_trend_tape": "airspeed",
-    "altimeter_dial": "altitude",
-    "altimeter_tape": "altitude",
+    # "altimeter_dial" / "altimeter_tape" are migrated -- see registry records.
     "altimeter_trend_tape": "altitude",
     # "atitude_indicator" is migrated -- category from its registry record.
     "virtual_vfr": "attitude",
     "turn_coordinator": "attitude",
-    "horizontal_situation_indicator": "navigation",
     "heading_display": "navigation",
-    "heading_tape": "navigation",
-    # "vsi_dial" is migrated -- category from its registry record.
-    "vsi_pfd": "vertical_speed",
-    # "arc_gauge" is migrated -- category from its registry record.
+    # "horizontal_situation_indicator" / "heading_tape" -> registry records.
+    # "vsi_dial" / "vsi_pfd" / "arc_gauge" are migrated -- see registry records.
     "horizontal_bar_gauge": "gauge",
     "vertical_bar_gauge": "gauge",
     "numeric_display": "text",
@@ -92,9 +88,7 @@ _CATEGORIES = {
 # Human-friendly labels where the prettified type name isn't good enough.
 _LABELS = {
     # "atitude_indicator" is migrated -- label from its registry record.
-    "horizontal_situation_indicator": "Horizontal Situation Indicator (HSI)",
     "virtual_vfr": "Virtual VFR / Synthetic Vision",
-    "vsi_pfd": "VSI (PFD)",
     # "vsi_dial" is migrated -- label from its registry record.
     "data_status": "Data Status",
     "data_annunciation": "Data Annunciation",
@@ -129,10 +123,7 @@ _SVS_CAPABLE = {
 # (object-fit: contain) instead of stretching, so a dial stays round. Tapes,
 # bars and text stretch to their box.
 _KEEP_ASPECT = {
-    "airspeed_dial",
-    "altimeter_dial",
     "turn_coordinator",
-    "horizontal_situation_indicator",
     # "vsi_dial", "arc_gauge", "atitude_indicator" are migrated -- keep_aspect
     # comes from their registry records.
 }
@@ -186,15 +177,7 @@ def _gauge_options():
 _OPTIONS = {
     # "airspeed_tape" is migrated -- its options come from the registry record
     # (and it no longer exposes a no-op dbkey; it is hard-wired to IAS).
-    "altimeter_tape": {
-        "dbkey": {"type": "string", "default": "ALT", "label": "FIX key"},
-        "majorDiv": {"type": "number", "default": 100, "label": "Major division"},
-        "minorDiv": {"type": "number", "default": None, "label": "Minor division"},
-        "maxalt": {"type": "number", "default": 50000, "label": "Max altitude"},
-        "font_scale": {"type": "number", "default": 1.0, "label": "Scale-number font scale"},
-        "numeric_box": {"type": "boolean", "default": True, "label": "Show numeric box"},
-        "font_mask": {"type": "string", "default": "00000", "label": "Font mask"},
-    },
+    # "altimeter_tape" is migrated -- its options come from the registry record.
     "numeric_display": {
         "dbkey": {"type": "string", "default": "", "label": "FIX key"},
         "decimal_places": {"type": "number", "default": 0, "label": "Decimal places"},
@@ -217,15 +200,8 @@ _OPTIONS = {
         "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
         "font_size": {"type": "number", "default": 17, "label": "Font size (px)"},
     },
-    "heading_tape": {
-        "dbkey": {"type": "string", "default": "HEAD", "label": "FIX key"},
-    },
-    "horizontal_situation_indicator": {
-        "cdi_enabled": {"type": "boolean", "default": True, "label": "CDI"},
-        "gsi_enabled": {"type": "boolean", "default": True, "label": "Glideslope"},
-        "fg_color": {"type": "color", "default": "#ffffff", "label": "Foreground"},
-        "bg_color": {"type": "color", "default": "#000000", "label": "Background"},
-    },
+    # "heading_tape" / "horizontal_situation_indicator" are migrated -- options
+    # come from their registry records.
     # "atitude_indicator" is migrated -- its options come from the registry
     # record (with the corrected aircraft_symbol enum: classic/garmin).
     "virtual_vfr": {

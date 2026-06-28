@@ -166,9 +166,7 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
 
 INSTRUMENT_FACTORIES = {
     "weston": build_weston,
-    "airspeed_dial": lambda screen, config, font_percent=None, font_family=None, replace=None: airspeed.Airspeed(
-        screen, font_family=font_family
-    ),
+    # "airspeed_dial" is migrated -- see REGISTRY below.
     "airspeed_box": lambda screen, config, font_percent=None, font_family=None, replace=None: airspeed.Airspeed_Box(
         screen, font_family=font_family
     ),
@@ -176,11 +174,9 @@ INSTRUMENT_FACTORIES = {
     "airspeed_trend_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.AS_Trend_Tape(
         screen, font_family=font_family
     ),
-    "altimeter_dial": lambda screen, config, font_percent=None, font_family=None, replace=None: altimeter.Altimeter(
-        screen, font_family=font_family
-    ),
+    # "altimeter_dial" is migrated -- see REGISTRY below.
     # "atitude_indicator" is migrated -- see REGISTRY below.
-    "altimeter_tape": build_altimeter_tape,
+    # "altimeter_tape" is migrated -- see REGISTRY below.
     "altimeter_trend_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.Alt_Trend_Tape(
         screen, font_family=font_family
     ),
@@ -190,16 +186,8 @@ INSTRUMENT_FACTORIES = {
     "heading_display": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.HeadingDisplay(
         screen, font_family=font_family
     ),
-    "heading_tape": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.DG_Tape(
-        screen, font_family=font_family
-    ),
-    "horizontal_situation_indicator": lambda screen, config, font_percent=None, font_family=None, replace=None: hsi.HSI(
-        screen,
-        font_percent=font_percent,
-        cdi_enabled=True,
-        gsi_enabled=True,
-        font_family=font_family,
-    ),
+    # "heading_tape" is migrated -- see REGISTRY below.
+    # "horizontal_situation_indicator" is migrated -- see REGISTRY below.
     "numeric_display": lambda screen, config, font_percent=None, font_family=None, replace=None: gauges.NumericDisplay(
         screen, font_family=font_family
     ),
@@ -211,9 +199,7 @@ INSTRUMENT_FACTORIES = {
         screen, font_family=font_family
     ),
     # "vsi_dial" is migrated -- see REGISTRY below.
-    "vsi_pfd": lambda screen, config, font_percent=None, font_family=None, replace=None: vsi.VSI_PFD(
-        screen, font_family=font_family
-    ),
+    # "vsi_pfd" is migrated -- see REGISTRY below.
     # "arc_gauge" is migrated -- see REGISTRY below.
     "horizontal_bar_gauge": lambda screen, config, font_percent=None, font_family=None, replace=None: gauges.HorizontalBar(
         screen, min_size=False, font_family=font_family
@@ -230,20 +216,16 @@ INSTRUMENT_FACTORIES = {
 
 
 INSTRUMENT_DEFAULTS = {
-    "airspeed_dial": ["IAS"],
-    # "airspeed_tape" dbkeys are declared in REGISTRY below.
+    # "airspeed_dial" / "airspeed_tape" dbkeys are declared in REGISTRY below.
     "airspeed_trend_tape": ["IAS"],
     "airspeed_box": ["IAS", "GS", "TAS"],
-    "altimeter_dial": ["ALT"],
-    "altimeter_tape": ["ALT"],
+    # "altimeter_dial" / "altimeter_tape" dbkeys are declared in REGISTRY below.
     "altimeter_trend_tape": ["ALT"],
     # "atitude_indicator" dbkeys are declared in REGISTRY below.
     "heading_display": ["HEAD"],
-    "heading_tape": ["HEAD"],
-    "horizontal_situation_indicator": ["COURSE", "CDI", "GSI", "HEAD"],
+    # "heading_tape" / "horizontal_situation_indicator" dbkeys -> REGISTRY below.
     "turn_coordinator": ["ROT", "ALAT"],
-    # "vsi_dial" dbkeys are declared in REGISTRY below.
-    "vsi_pfd": ["VS"],
+    # "vsi_dial" / "vsi_pfd" dbkeys are declared in REGISTRY below.
     "virtual_vfr": [
         "PITCH",
         "LAT",
@@ -388,6 +370,102 @@ _register(InstrumentSpec(
         FixValue("Max", source="max", label="Range maximum", units="ft/min"),
     ],
     preview={"value": -350},
+))
+
+_register(InstrumentSpec(
+    type="airspeed_dial",
+    label="Airspeed Dial",
+    category="airspeed",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: airspeed.Airspeed(screen, font_family=font_family)),
+    dbkeys=["IAS"],
+    keep_aspect=True,
+    # Fixed steam-gauge face; IAS hard-wired. V-speed arcs come from IAS aux.
+    fix_values=[
+        FixValue("Vs", source="aux", label="Stall, clean (Vs)", units="kt"),
+        FixValue("Vs0", source="aux", label="Stall, landing (Vs0)", units="kt"),
+        FixValue("Vno", source="aux", label="Max cruise (Vno)", units="kt"),
+        FixValue("Vne", source="aux", label="Never-exceed (Vne)", units="kt"),
+        FixValue("Vfe", source="aux", label="Flaps-extended (Vfe)", units="kt"),
+    ],
+    preview={"value": 110},
+))
+
+_register(InstrumentSpec(
+    type="altimeter_dial",
+    label="Altimeter Dial",
+    category="altitude",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: altimeter.Altimeter(screen, font_family=font_family)),
+    dbkeys=["ALT"],
+    keep_aspect=True,
+    preview={"value": 3500},
+))
+
+_register(InstrumentSpec(
+    type="altimeter_tape",
+    label="Altimeter Tape",
+    category="altitude",
+    builder=build_altimeter_tape,
+    dbkeys=["ALT"],
+    # All options are consumed by build_altimeter_tape at construction
+    # (apply="special"); defaults are the Altimeter_Tape constructor defaults.
+    properties=[
+        Prop("dbkey", "fixkey", default="ALT", label="FIX key", apply="special"),
+        Prop("maxalt", "integer", default=50000, label="Max altitude", apply="special"),
+        Prop("majorDiv", "integer", default=200, label="Major division", apply="special"),
+        Prop("minorDiv", "integer", default=100, label="Minor division", apply="special"),
+        Prop("total_decimals", "integer", default=5, label="Total digits", apply="special"),
+        Prop("font_mask", "string", default="00000", label="Font mask", apply="special"),
+        Prop("round_to", "number", default=0, label="Round readout to", apply="special"),
+        Prop("numeric_box", "boolean", default=True, label="Show numeric box", apply="special"),
+        Prop("font_scale", "number", default=1.0, label="Scale-number font scale", apply="special"),
+    ],
+    preview={"value": 3500},
+))
+
+_register(InstrumentSpec(
+    type="vsi_pfd",
+    label="VSI (PFD)",
+    category="vertical_speed",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: vsi.VSI_PFD(screen, font_family=font_family)),
+    dbkeys=["VS"],
+    preview={"value": -350},
+))
+
+_register(InstrumentSpec(
+    type="horizontal_situation_indicator",
+    label="Horizontal Situation Indicator (HSI)",
+    category="navigation",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: hsi.HSI(screen, font_percent=font_percent,
+                                    cdi_enabled=True, gsi_enabled=True,
+                                    font_family=font_family)),
+    dbkeys=["COURSE", "CDI", "GSI", "HEAD"],
+    keep_aspect=True,
+    # The factory enables CDI+GSI at construction; the editor toggles honour
+    # self.cdi_enabled / self.gsi_enabled at paint time. COURSE/CDI/GSI/HEAD are
+    # direct FIX keys (no aux), so no fix_values.
+    properties=[
+        Prop("cdi_enabled", "boolean", default=True, label="CDI"),
+        Prop("gsi_enabled", "boolean", default=True, label="Glideslope"),
+        Prop("fg_color", "color", default="#ffffff", label="Foreground"),
+        Prop("bg_color", "color", default="#000000", label="Background"),
+    ],
+    preview={"heading": 87, "course": 110},
+))
+
+_register(InstrumentSpec(
+    type="heading_tape",
+    label="Heading Tape",
+    category="navigation",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: hsi.DG_Tape(screen, font_family=font_family)),
+    dbkeys=["HEAD"],
+    # DG_Tape is hard-wired to HEAD (no setDbkey); the old curated dbkey option
+    # was a no-op and is dropped.
+    preview={"heading": 87},
 ))
 
 
