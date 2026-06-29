@@ -64,6 +64,15 @@ class HSI(QGraphicsView):
         # none), so enable it in the editor once a source exists.
         self.heading_bug_enabled = False
         self.heading_bug_color = "#00ffff"
+        # GPS ground-track diamond (magenta): a marker on the rose at the current
+        # GPS ground track (TRACK). Garmin shows it whenever there is a valid
+        # track. Gated on ground speed (GPS track is meaningless near zero
+        # groundspeed) -- shown only at or above track_min_speed kt. On by
+        # default; it self-hides when TRACK/GS are absent, stale, or below the
+        # speed gate, so it is safe on panels without a GPS track source.
+        self.track_indicator_enabled = True
+        self.track_color = "#ff00ff"
+        self.track_min_speed = 5.0
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
         # List for tick mark visibility, Top, Bottom, Right, Left
@@ -150,6 +159,36 @@ class HSI(QGraphicsView):
             self.hdgbugdb.valueChanged[float].connect(self.setHdgBug)
         except Exception:
             self.hdgbugdb = None
+
+        # GPS ground track (TRACK) + ground speed (GS) for the track diamond.
+        # Subscribe always (the marker is drawn only when enabled); guarded so a
+        # database without these keys can't break construction -- the diamond
+        # then simply never shows. GS gates the marker by speed; if there is no
+        # GS source the gate is skipped (track shown whenever valid).
+        self._track = 0.0
+        self._gs = 0.0
+        self._TrackOld = True
+        self._TrackBad = True
+        self._TrackFail = True
+        self.track_item = None
+        try:
+            self.trackdb = fix.db.get_item("TRACK")
+            self._track = self.trackdb.value or 0.0
+            self.trackdb.valueChanged[float].connect(self.setTrack)
+            self.trackdb.oldChanged[bool].connect(self.setTrackOld)
+            self.trackdb.badChanged[bool].connect(self.setTrackBad)
+            self.trackdb.failChanged[bool].connect(self.setTrackFail)
+            self._TrackOld = self.trackdb.old
+            self._TrackBad = self.trackdb.bad
+            self._TrackFail = self.trackdb.fail
+        except Exception:
+            self.trackdb = None
+        try:
+            self.gsdb = fix.db.get_item("GS")
+            self._gs = self.gsdb.value or 0.0
+            self.gsdb.valueChanged[float].connect(self.setGs)
+        except Exception:
+            self.gsdb = None
 
         self._courseSelect = 1
         self._showCDI = not self.isOld()
@@ -253,6 +292,15 @@ class HSI(QGraphicsView):
             self.hdg_bug_item = self.scene.addPolygon(
                 self._hdg_bug_polygon(), QPen(_hbc), QBrush(_hbc))
 
+        # GPS ground-track diamond (magenta). Created when enabled; its
+        # visibility is gated on speed/quality by _update_track().
+        self.track_item = None
+        if getattr(self, "track_indicator_enabled", False):
+            _tc = QColor(self.track_color)
+            self.track_item = self.scene.addPolygon(
+                self._track_diamond_polygon(), QPen(_tc), QBrush(_tc))
+            self._update_track()
+
         self.setScene(self.scene)
         # Clear any prior view rotation before re-applying. resizeEvent can fire
         # repeatedly (initial layout settling, any geometry change), and the
@@ -338,6 +386,63 @@ class HSI(QGraphicsView):
             self._hdgBug = common.bounds(0, 360, value)
             if self.hdg_bug_item is not None:
                 self.hdg_bug_item.setPolygon(self._hdg_bug_polygon())
+
+    def _track_diamond_polygon(self):
+        # Small diamond on the rose face near the outer edge, rotated to the GPS
+        # ground track (_track). Scene-space like the other markers, so the view
+        # rotation places it at (track - heading) from the lubber line.
+        s = self.tickSize * 0.55
+        yc = -self.r + self.tickSize * 1.3
+        points = [(0, yc - s), (s, yc), (0, yc + s), (-s, yc)]
+        angle = self._track * math.pi / 180.0
+        cosa = math.cos(angle)
+        sina = math.sin(angle)
+        points = [((ix * cosa - iy * sina), (iy * cosa + ix * sina))
+                  for ix, iy in points]
+        points = [QPointF((ix + self.cx), (iy + self.cy)) for ix, iy in points]
+        return QPolygonF(points)
+
+    def _track_visible(self):
+        # Only with a valid track and, when a GS source exists, at or above the
+        # speed gate (GPS track is noise near zero groundspeed).
+        if not getattr(self, "track_indicator_enabled", False):
+            return False
+        if self._TrackOld or self._TrackBad or self._TrackFail:
+            return False
+        if self.gsdb is not None and self._gs < self.track_min_speed:
+            return False
+        return True
+
+    def _update_track(self):
+        if self.track_item is None:
+            return
+        vis = self._track_visible()
+        self.track_item.setVisible(vis)
+        if vis:
+            self.track_item.setPolygon(self._track_diamond_polygon())
+
+    def setTrack(self, value):
+        v = common.bounds(0, 360, value)
+        if v != self._track:
+            self._track = v
+            self._update_track()
+
+    def setGs(self, value):
+        if value != self._gs:
+            self._gs = value
+            self._update_track()
+
+    def setTrackOld(self, old):
+        self._TrackOld = old
+        self._update_track()
+
+    def setTrackBad(self, bad):
+        self._TrackBad = bad
+        self._update_track()
+
+    def setTrackFail(self, fail):
+        self._TrackFail = fail
+        self._update_track()
 
     def paintEvent(self, event):
         super(HSI, self).paintEvent(event)

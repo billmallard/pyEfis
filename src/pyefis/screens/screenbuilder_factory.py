@@ -510,8 +510,17 @@ _register(InstrumentSpec(
              label="Heading bug"),
         Prop("heading_bug_color", "color", default="#00ffff",
              label="Heading bug color"),
+        # GPS ground-track diamond (magenta), driven by TRACK. On by default; it
+        # self-hides without a valid TRACK and (when GS exists) below the speed
+        # gate, so GPS panels get it for free and others are unaffected.
+        Prop("track_indicator_enabled", "boolean", default=True,
+             label="Track diamond"),
+        Prop("track_color", "color", default="#ff00ff",
+             label="Track diamond color"),
+        Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
+             step=1, label="Track min speed (kt)"),
     ],
-    preview={"heading": 87, "course": 110},
+    preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
 ))
 
 _register(InstrumentSpec(
