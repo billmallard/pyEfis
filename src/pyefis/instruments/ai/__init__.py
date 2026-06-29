@@ -755,7 +755,12 @@ class AI(QGraphicsView):
         ppd = getattr(self, 'pixelsPerDeg', self.height() / self.pitchDegreesShown)
         sym_r = self.bankMarkSize * 0.65
         x_roll = drift_deg * ppd
-        y_roll = -fpa_deg * ppd
+        # The flight path is measured from the HORIZON, not the boresight. The
+        # aircraft symbol sits `pitch` above the horizon, so the FPM belongs
+        # (pitch - fpa) below the symbol -- i.e. fpa above the horizon. In
+        # nose-high level flight (high AoA, fpa ~ 0) that drops the marker from
+        # the boresight onto the horizon line, where it belongs.
+        y_roll = (self._pitchAngle - fpa_deg) * ppd
 
         # Clamp to widget interior (in rolled frame, conservative)
         max_x = w / 2.0 - sym_r * 3.0
@@ -769,7 +774,9 @@ class AI(QGraphicsView):
 
         p.save()
         p.resetTransform()
-        p.translate(w / 2.0, h / 2.0)
+        # Raise the FPM base with the rest of the attitude reference so it
+        # tracks the (possibly raised) horizon; 0 offset by default = centred.
+        p.translate(w / 2.0, h / 2.0 - self._horizon_offset_px())
         p.rotate(self._rollAngle * -1.0)   # align with pitch ladder
         p.translate(x_roll, y_roll)         # move to flight-path position
         p.rotate(self._rollAngle)           # symbol stays upright in display space
