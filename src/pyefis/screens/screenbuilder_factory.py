@@ -615,6 +615,9 @@ _register(InstrumentSpec(
         Prop("dbkey", "fixkey", default="", label="FIX key",
              apply="setter:setDbkey"),
         Prop("font_mask", "string", default="", label="Font mask"),
+        Prop("number_format", "string", default="", label="Number format",
+             help="Digit mask: blank = as-is; 000 = 089 (rounded, "
+                  "zero-padded); 000.0 = 089.0 (with decimals)"),
     ],
 ))
 

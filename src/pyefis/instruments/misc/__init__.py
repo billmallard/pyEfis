@@ -91,6 +91,10 @@ class ValueDisplay(QWidget):
         # Font height as a fraction of the widget height (used when no font_mask
         # is set). Defaults to 0.9; an explicit font_percent overrides it.
         self.font_percent = 0.9 if font_percent is None else font_percent
+        # Display format for the value, a digit mask: "" = as-is (str), "000" =
+        # rounded + zero-padded to 3 integer digits (089), "000.0" = 3 integer
+        # digits + 1 decimal (089.0).
+        self.number_format = ""
         self.name = None
         self._dbkey = None
         self._value = 0.0
@@ -180,8 +184,26 @@ class ValueDisplay(QWidget):
     def getValueText(self):
         if self.fail:
             return "xxx"
-        else:
-            return str(self.value)
+        return self._format_value(self.value)
+
+    def _format_value(self, value):
+        # number_format is a digit mask: "" = as-is, "000" = rounded +
+        # zero-padded to 3 integer digits (089), "000.0" = 3 integer digits +
+        # 1 decimal (089.0). The width passed to format() includes the decimal
+        # point so the integer part keeps the requested number of digits.
+        fmt = getattr(self, "number_format", "") or ""
+        if not fmt:
+            return str(value)
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if "." in fmt:
+            intpart, decpart = fmt.split(".", 1)
+            decimals = len(decpart)
+            width = len(intpart) + 1 + decimals
+            return f"{v:0{width}.{decimals}f}"
+        return f"{v:0{len(fmt)}.0f}"
 
     valueText = property(getValueText)
 
