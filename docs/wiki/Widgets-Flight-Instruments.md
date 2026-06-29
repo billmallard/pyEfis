@@ -38,7 +38,7 @@ tables but not belabored.
 | `vsi_pfd` | `vsi.VSI_PFD` | `VS` | Compact PFD vertical-speed scale with a moving dot |
 | `heading_display` | `hsi.HeadingDisplay` | `HEAD` | Boxed three-digit digital heading (e.g. `030°`) |
 | `heading_tape` | `hsi.DG_Tape` | `HEAD` | Horizontal scrolling heading/compass tape |
-| `horizontal_situation_indicator` | `hsi.HSI` | `COURSE`, `CDI`, `GSI`, `HEAD` | Rotating compass card with heading bug, CDI and glideslope |
+| `horizontal_situation_indicator` | `hsi.HSI` | `COURSE`, `CDI`, `GSI`, `HEAD`, `HEADBUG`, `TRACK`, `GS` | Rotating compass card with course pointer, heading + GPS-track bugs, CDI and glideslope |
 | `turn_coordinator` | `tc.TurnCoordinator` | `ROT`, `ALAT` | Rate-of-turn aircraft + inclinometer (slip/skid) ball |
 | `wind_display` | `wind.WindDisplay` | `HWIND`, `XWIND` | Two-row headwind/tailwind + crosswind readout |
 
@@ -319,31 +319,47 @@ cyan and numeric headings in white.
 
 ## `horizontal_situation_indicator`
 
-A rotating compass card with a magenta heading bug, four yellow pointer marks,
-and — because the factory enables them — a course-deviation indicator (CDI) and
-glideslope indicator (GSI). The card rotates so the current `HEAD` is at the top.
+A rotating compass card that turns so the current `HEAD` is at the top, with a
+magenta selected-course pointer, four yellow lubber marks, a course-deviation
+indicator (CDI), a glideslope indicator (GSI), an optional cyan heading bug, and
+a magenta GPS ground-track diamond.
 
 ![Horizontal situation indicator](../images/horizontal_situation_indicator.png)
 
 - **FIX keys:**
   - `HEAD` — drives card rotation.
-  - `COURSE` — positions the heading bug (the selected course/heading).
+  - `COURSE` — positions the magenta course pointer (the selected course).
   - `CDI` — horizontal course-deviation needle (enabled by the factory).
   - `GSI` — vertical glideslope needle (enabled by the factory).
-- The CDI/GSI needles are hidden while their data is old or bad
-  (`isOld()`), and the cardinal labels are hidden on failure (`isFail()`).
+  - `HEADBUG` — the cyan heading bug (only when `heading_bug_enabled`).
+  - `TRACK` / `GS` — the magenta GPS ground-track diamond and its speed gate
+    (only when `track_indicator_enabled`).
+- The CDI/GSI needles are hidden while their data is old or bad (`isOld()`), and
+  the cardinal labels are hidden on failure (`isFail()`).
+- The **track diamond** marks the current GPS ground track on the card (like a
+  G1000). GPS track is meaningless near zero groundspeed, so it shows only when
+  `GS` is at or above `track_min_speed` kt, and self-hides when `TRACK`/`GS` are
+  absent or stale — so it is safe to leave on for panels without a GPS source.
 
 The factory constructs the HSI with **`cdi_enabled=True, gsi_enabled=True`** and
-forwards `font_percent`. The constructor flags below are therefore already on for
-the `horizontal_situation_indicator` type.
+forwards `font_percent`.
 
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `cdi_enabled` | **true** (set by factory) | subscribe to `CDI` and draw the course needle |
 | `gsi_enabled` | **true** (set by factory) | subscribe to `GSI` and draw the glideslope needle |
+| `needle_color` | `#ffff00` | CDI/GSI deviation-needle colour |
+| `needle_width` | **3** | CDI/GSI needle width (1–10) |
+| `course_color` | `#ff00ff` | selected-course pointer (the magenta CRS triangle) |
+| `heading_bug_enabled` | **false** | draw the cyan heading bug at `HEADBUG` |
+| `heading_bug_color` | `#00ffff` | heading-bug colour |
+| `track_indicator_enabled` | **true** | draw the GPS ground-track diamond at `TRACK` |
+| `track_color` | `#ff00ff` | track-diamond colour |
+| `track_min_speed` | **5** | hide the track diamond below this groundspeed (kt) |
 | `visiblePointers` | `[True, True, True, True]` | show the top / bottom / right / left fixed yellow pointers |
 | `fg_color` | `white` | compass card, ring and text |
-| `bg_color` | `black` | card fill |
+| `bg_color` | `black` | card (disc) fill |
+| `bg_opacity` | **100** | compass-disc fill opacity %; 0 = transparent over the SVS/PFD |
 | `font_size` | **15** | scale-number font size |
 | `font_family`, `font_percent` | from preferences | |
 
