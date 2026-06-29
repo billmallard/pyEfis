@@ -93,10 +93,11 @@ def test_required_options_present():
 def test_options_are_well_formed():
     """The curated per-type options drive the editor properties panel."""
     s = eschema.build_schema()
-    # numeric_display keeps an editable dbkey (curated); airspeed_tape no longer
-    # exposes one (it is hard-wired to IAS), so assert dbkey typing here.
+    # numeric_display keeps an editable dbkey (airspeed_tape no longer exposes
+    # one -- hard-wired to IAS). The dbkey is a FIX key, exported as the
+    # "fixkey" field type so the editor renders its type-ahead key picker.
     asi = s["instruments"]["numeric_display"]["options"]
-    assert asi["dbkey"]["type"] == "string"
+    assert asi["dbkey"]["type"] == "fixkey"
     align = s["instruments"]["static_text"]["options"]["alignment"]
     assert align["type"] == "enum" and "AlignLeft" in align["enum"]
     color = s["instruments"]["heading_display"]["options"]["fg_color"]

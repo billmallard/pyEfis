@@ -171,11 +171,12 @@ def _default_options(instrument_type):
 
 # Map an instrument_spec.Prop.kind to the editor's option-field "type". The
 # editor renders one input per field type; "fixkey" is a FIX-database key,
-# shown as a text input today (a key-picker once the FIX editor lands).
+# rendered as a type-ahead over the FIX key catalog (datalist#fixkeys), so it is
+# carried through rather than flattened to a plain text input.
 _KIND_TO_FIELD_TYPE = {
     "string": "string", "number": "number", "integer": "integer",
     "boolean": "boolean", "enum": "enum", "color": "color",
-    "fixkey": "string",
+    "fixkey": "fixkey",
 }
 
 
