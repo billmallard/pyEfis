@@ -83,12 +83,14 @@ class StaticText(QWidget):
 
 
 class ValueDisplay(QWidget):
-    def __init__(self, parent=None, font_family="Open Sans"):
+    def __init__(self, parent=None, font_family="Open Sans", font_percent=None):
         super(ValueDisplay, self).__init__(parent)
         self.font_family = font_family
         self.font_ghost_mask = None
         self.font_ghost_alpha = 50
-        self.font_percent = 0.9
+        # Font height as a fraction of the widget height (used when no font_mask
+        # is set). Defaults to 0.9; an explicit font_percent overrides it.
+        self.font_percent = 0.9 if font_percent is None else font_percent
         self.name = None
         self._dbkey = None
         self._value = 0.0

@@ -131,7 +131,8 @@ def build_static_text(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     return misc.StaticText(
-        text=config["options"]["text"], parent=screen, font_family=font_family
+        text=config["options"]["text"], parent=screen, font_family=font_family,
+        fontsize=(1.0 if font_percent is None else font_percent),
     )
 
 
@@ -608,7 +609,8 @@ _register(InstrumentSpec(
     label="Value Text",
     category="text",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: misc.ValueDisplay(screen, font_family=font_family)),
+             replace=None: misc.ValueDisplay(
+                 screen, font_family=font_family, font_percent=font_percent)),
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
              apply="setter:setDbkey"),

@@ -17,6 +17,7 @@
 import logging
 
 import pyefis.hmi as hmi
+from pyefis.screens import screenbuilder_preferences
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +91,14 @@ def apply_options(screen, index, config, state=False):
                 instrument.setDbkey(value)
             else:
                 setattr(instrument, option, value)
+            continue
+
+        if "font_percent" == option:
+            # Accept a whole-number percent (40) or legacy fraction (0.40); the
+            # widget uses it as a fraction of height. Same rule as the
+            # constructor path (screenbuilder_preferences.apply_preferences).
+            setattr(instrument, option,
+                    screenbuilder_preferences.normalize_font_percent(value))
             continue
 
         if (
