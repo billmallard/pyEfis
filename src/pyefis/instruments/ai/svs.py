@@ -2115,10 +2115,15 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             head_true = ai._fpm_head - getattr(ai, "_magvar", 0.0)
             # SVSRenderer.draw does its own save/resetTransform/restore so the
             # outer scene transform is preserved for the next item in z order.
+            # Depress the terrain camera by horizon_position's look-down angle
+            # so the terrain horizon rises to match the AI's raised reference
+            # (no-op when horizon_position == 50). Sign verified on the Pi --
+            # if the terrain horizon moves the wrong way, flip the subtraction.
+            pitch_for_svs = ai._pitchAngle - ai._horizon_offset_deg()
             self._renderer.draw(
                 painter, vp.width(), vp.height(),
                 ai._svs_lat, ai._svs_lon, ai._svs_alt,
-                ai._pitchAngle, ai._rollAngle, head_true,
+                pitch_for_svs, ai._rollAngle, head_true,
                 ppd, vp.devicePixelRatioF())
 
     return _SVSGraphicsItem(renderer, ai_widget)

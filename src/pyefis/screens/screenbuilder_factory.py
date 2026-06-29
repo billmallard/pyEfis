@@ -769,6 +769,14 @@ _register(InstrumentSpec(
              help="classic split-wing bars, GI-275/G1000 wedges, or "
                   "GRT-style L-brackets"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour"),
+        # SVS-only: raise the level-flight horizon so the ground area expands
+        # (more room for instruments like the HSI in the lower third). The whole
+        # attitude reference -- horizon, ladder, symbol, terrain -- shifts up
+        # together, so level flight still reads correctly. 50 = centred default,
+        # which leaves the plain Attitude Indicator unchanged.
+        Prop("horizon_position", "integer", default=50, minimum=40, maximum=80,
+             step=1, label="Horizon position (% up)",
+             help="50 = centred (default); ~67 = two-thirds up the screen"),
         # Editor preview only: the device renders real SVS terrain; this picks
         # which stylised backdrop the configurator twin shows for layout.
         Prop("preview_scene", "enum", default="mountains",

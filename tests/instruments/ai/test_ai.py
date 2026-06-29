@@ -32,6 +32,27 @@ def _show_ai(qtbot, widget, width=240, height=220):
     return QPaintEvent(widget.viewport().rect())
 
 
+def test_ai_horizon_position(fix, qtbot):
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    _show_ai(qtbot, widget, width=300, height=300)
+
+    # Default: centred -> zero offset, so the plain AI is unchanged.
+    assert widget.horizon_position == 50
+    assert widget._horizon_offset_px() == 0.0
+    assert widget._horizon_offset_deg() == 0.0
+
+    # Raised to two-thirds up: a positive screen offset (fraction of height)
+    # and a height-independent look-down angle (fraction of the pitch FOV).
+    widget.horizon_position = 67
+    assert round(widget._horizon_offset_px(), 3) == round(0.17 * widget.height(), 3)
+    assert round(widget._horizon_offset_deg(), 3) == round(0.17 * widget.pitchDegreesShown, 3)
+    # redraw applies it without error at a banked, raised attitude.
+    widget._rollAngle = 25
+    widget._pitchAngle = 5
+    widget.redraw()
+
+
 def test_ai_resize_paint_and_input_events(fix, qtbot):
     _reset_ai_items(fix)
     widget = ai.AI(font_percent=0.2)

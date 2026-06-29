@@ -103,6 +103,13 @@ class AI(QGraphicsView):
         # symbol_color); applied by the screenbuilder factory.
         self.aircraft_symbol = "classic"
         self.symbol_color = "yellow"
+        # Vertical position of the pitch=0 horizon, as a percent of widget
+        # height measured UP from the bottom. 50 = centred (the default; the
+        # plain AI never changes this). The SVS widget can raise it (e.g. ~67 =
+        # two-thirds up) to expand the ground area; the WHOLE attitude reference
+        # -- horizon, pitch ladder, aircraft symbol and SVS terrain -- shifts
+        # together so level flight still shows the wings on the horizon.
+        self.horizon_position = 50
 
         self.setStyleSheet("border: 0px")
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -267,7 +274,9 @@ class AI(QGraphicsView):
         """Draw the fixed aircraft reference symbol into the static
         overlay. Style + colour come from self.aircraft_symbol /
         self.symbol_color (screen YAML options)."""
-        cx, cy = w / 2.0, h / 2.0
+        # The symbol rides the horizon, so it shifts up with horizon_position
+        # (0 offset by default = centred).
+        cx, cy = w / 2.0, h / 2.0 - self._horizon_offset_px()
         col = QColor(self.symbol_color)
         if not col.isValid():
             col = QColor(Qt.GlobalColor.yellow)
@@ -783,6 +792,21 @@ class AI(QGraphicsView):
             else:
                 each[1].setOpacity(0)
 
+    def _horizon_offset_px(self):
+        # Pixels to shift the pitch=0 horizon UP from the viewport centre,
+        # derived from horizon_position (percent up the screen; 50 = centred,
+        # which yields 0). Positive = horizon higher on the screen.
+        return (float(getattr(self, "horizon_position", 50)) / 100.0
+                - 0.5) * self.height()
+
+    def _horizon_offset_deg(self):
+        # The same shift expressed as a look-down angle (offset_px /
+        # pixelsPerDeg, which reduces to height-independent form). The SVS
+        # terrain projects pitch=0 to the viewport centre, so depressing its
+        # camera by this angle raises the terrain horizon to match the AI's.
+        return (float(getattr(self, "horizon_position", 50)) / 100.0
+                - 0.5) * self.pitchDegreesShown
+
     def redraw(self):
         # self.scene is the inherited QGraphicsView.scene METHOD until
         # resizeEvent builds the instance attribute (see
@@ -793,9 +817,20 @@ class AI(QGraphicsView):
         if scene is None:
             return
         self.resetTransform()
-        self.centerOn(scene.width() / 2,
-                      scene.height() / 2 +
-                      self._pitchAngle * self.pixelsPerDeg * - 1.0)
+        # Raise the whole attitude reference per horizon_position. The view
+        # rotates roll about the viewport CENTRE, so a plain vertical centre
+        # offset would make the raised horizon swing around the centre (the
+        # symbol would drift off the horizon at bank). Injecting the "up by
+        # _off" shift rotated by the bank angle makes it a pure SCREEN-space
+        # vertical shift after the -roll view rotation, so the horizon keeps
+        # pivoting on the (raised) aircraft symbol at any bank. _off = 0 (the
+        # default) leaves everything centred and unchanged.
+        _off = self._horizon_offset_px()
+        _rr = math.radians(self._rollAngle)
+        self.centerOn(
+            scene.width() / 2 + _off * math.sin(_rr),
+            scene.height() / 2 + _off * math.cos(_rr)
+            + self._pitchAngle * self.pixelsPerDeg * -1.0)
         self.rotate(self._rollAngle * -1.0)
 
 # We use the paintEvent to draw on the viewport the parts that aren't moving.
