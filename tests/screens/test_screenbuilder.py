@@ -1538,7 +1538,7 @@ class TestScreenBuilderPreferencesAndOptions:
         assert screen.lookup_mapping("ALT", {"IAS": "Airspeed"}) == "ALT"
         assert screen.get_instrument_defaults("airspeed_box") == ["IAS", "GS", "TAS"]
         assert screen.get_instrument_defaults("airspeed_dial") == ["IAS"]
-        assert screen.get_instrument_defaults("altimeter_trend_tape") == ["ALT"]
+        assert screen.get_instrument_defaults("altimeter_trend_tape") == ["VS"]
         assert screen.get_instrument_defaults("atitude_indicator") == ["PITCH", "ROLL", "ALAT", "TAS"]
         assert screen.get_instrument_defaults("horizontal_situation_indicator") == ["COURSE", "CDI", "GSI", "HEAD"]
         assert screen.get_instrument_defaults("heading_tape") == ["HEAD"]
@@ -1550,13 +1550,14 @@ class TestScreenBuilderPreferencesAndOptions:
             "LONG",
             "HEAD",
             "ALT",
-            "PITCH",
             "ROLL",
             "ALAT",
             "TAS",
         ]
         assert screen.get_instrument_defaults("unknown") is None
-        assert screen.get_instrument_default_options("heading_display") == {"font_size": 17}
+        # heading_display migrated to the registry; its legacy default-options
+        # entry (a no-op font_size) is gone, so the legacy accessor returns False.
+        assert screen.get_instrument_default_options("heading_display") is False
         assert screen.get_instrument_default_options("static_text") is False
 
 
