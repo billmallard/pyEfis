@@ -8,7 +8,10 @@ pyEfisSudo.txt
 doc/_*
 .ropeproject/*
 .directory
-config/
+# Anchored to the repo root: ignore a runtime ./config/, NOT the tracked
+# package config under src/pyefis/config/ (so new button/screen yaml is tracked
+# normally without git add -f).
+/config/
 
 # IDE artifacts
 .vscode/
@@ -93,3 +96,4 @@ dof/
 
 # Reproducible screenshot-harness output (regenerate with GENERATE_SCREENSHOTS=1)
 docs/images/generated/
+.gstack/
