@@ -495,6 +495,20 @@ _register(InstrumentSpec(
         Prop("bg_color", "color", default="#000000", label="Background"),
         # Fills the compass disc (not the box); 0 = transparent over the SVS/PFD.
         _bg_opacity_prop(),
+        # CDI/GSI deviation needle (yellow by default).
+        Prop("needle_color", "color", default="#ffff00", label="Needle color"),
+        Prop("needle_width", "integer", default=3, minimum=1, maximum=10,
+             step=1, label="Needle width"),
+        # Selected-course pointer (the magenta CRS triangle, driven by COURSE).
+        Prop("course_color", "color", default="#ff00ff",
+             label="Course pointer color"),
+        # Garmin-style heading bug: a cyan marker that scrolls to the selected
+        # heading (HEADBUG key). Off by default -- needs a selected-heading
+        # source on the bus.
+        Prop("heading_bug_enabled", "boolean", default=False,
+             label="Heading bug"),
+        Prop("heading_bug_color", "color", default="#00ffff",
+             label="Heading bug color"),
     ],
     preview={"heading": 87, "course": 110},
 ))

@@ -52,6 +52,18 @@ class HSI(QGraphicsView):
         # transparent so the SVS/PFD behind shows through the circle. This fills
         # the round compass disc, not the rectangular widget box.
         self.bg_opacity = 100
+        # Selected-course pointer colour (the triangle driven by COURSE);
+        # magenta matches the Garmin CRS convention.
+        self.course_color = "#ff00ff"
+        # CDI/GSI deviation-needle colour + width.
+        self.needle_color = "#ffff00"
+        self.needle_width = 3
+        # Garmin-style heading bug (cyan): a marker that scrolls to the selected
+        # heading from the HEADBUG FIX key. Off by default -- not every panel
+        # publishes a selected heading (a MAVLink trim/cruise autopilot has
+        # none), so enable it in the editor once a source exists.
+        self.heading_bug_enabled = False
+        self.heading_bug_color = "#00ffff"
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
         # List for tick mark visibility, Top, Bottom, Right, Left
@@ -127,6 +139,18 @@ class HSI(QGraphicsView):
         self.setHeadBad(self.head.bad)
         self.setHeadFail(self.head.fail)
 
+        # Heading-bug source (HEADBUG). Subscribe always (like CDI/GSI); the
+        # marker is only drawn when heading_bug_enabled. Guarded so a database
+        # without the key can't break construction.
+        self._hdgBug = 0.0
+        self.hdg_bug_item = None
+        try:
+            self.hdgbugdb = fix.db.get_item("HEADBUG")
+            self._hdgBug = self.hdgbugdb.value or 0.0
+            self.hdgbugdb.valueChanged[float].connect(self.setHdgBug)
+        except Exception:
+            self.hdgbugdb = None
+
         self._courseSelect = 1
         self._showCDI = not self.isOld()
         self._showGSI = not self.isOld()
@@ -169,8 +193,8 @@ class HSI(QGraphicsView):
         textBrush = QBrush(QColor(self.fg_color))
         nobrush = QBrush()
 
-        headingPen = QPen(QColor(Qt.GlobalColor.magenta))
-        headingBrush = QBrush(QColor(Qt.GlobalColor.magenta))
+        headingPen = QPen(QColor(self.course_color))
+        headingBrush = QBrush(QColor(self.course_color))
         headingPen.setWidth(1)
 
 
@@ -216,9 +240,18 @@ class HSI(QGraphicsView):
                 t.setPos(x3, y3)
                 self.labels.append(t)
 
-        #Draw Heading Bug
+        # Course pointer (driven by COURSE -- the magenta CRS triangle). Named
+        # heading_bug for historical reasons; it is the selected-course pointer.
         triangle = self.heading_bug_polygon()
         self.heading_bug = self.scene.addPolygon(triangle, headingPen, headingBrush)
+
+        # Garmin-style heading bug (cyan): scrolls to the HEADBUG selected
+        # heading on the inside of the ring. Drawn only when enabled.
+        self.hdg_bug_item = None
+        if getattr(self, "heading_bug_enabled", False):
+            _hbc = QColor(self.heading_bug_color)
+            self.hdg_bug_item = self.scene.addPolygon(
+                self._hdg_bug_polygon(), QPen(_hbc), QBrush(_hbc))
 
         self.setScene(self.scene)
         # Clear any prior view rotation before re-applying. resizeEvent can fire
@@ -281,6 +314,31 @@ class HSI(QGraphicsView):
         triangle = QPolygonF(points)
         return triangle
 
+    def _hdg_bug_polygon(self):
+        # Classic notched heading-bug shape on the inside of the ring, rotated
+        # to the selected heading (_hdgBug).
+        inc = int(self.tickSize)
+        w = inc
+        h = inc * 1.3
+        yo = -self.r            # outer edge (at the ring)
+        yi = -self.r + h        # inner base
+        yn = -self.r + h * 0.5  # notch depth
+        points = [(-w, yi), (-w, yo), (-w * 0.35, yo), (-w * 0.35, yn),
+                  (w * 0.35, yn), (w * 0.35, yo), (w, yo), (w, yi)]
+        angle = (self._hdgBug) * math.pi / 180.0
+        cosa = math.cos(angle)
+        sina = math.sin(angle)
+        points = [((ix * cosa - iy * sina), (iy * cosa + ix * sina))
+                  for ix, iy in points]
+        points = [QPointF((ix + self.cx), (iy + self.cy)) for ix, iy in points]
+        return QPolygonF(points)
+
+    def setHdgBug(self, value):
+        if value != self._hdgBug:
+            self._hdgBug = common.bounds(0, 360, value)
+            if self.hdg_bug_item is not None:
+                self.hdg_bug_item.setPolygon(self._hdg_bug_polygon())
+
     def paintEvent(self, event):
         super(HSI, self).paintEvent(event)
 
@@ -291,8 +349,8 @@ class HSI(QGraphicsView):
 
 
         compassPen = QPen(QColor(self.fg_color))
-        cdiPen = QPen(QColor(Qt.GlobalColor.yellow))
-        cdiPen.setWidth(3)
+        cdiPen = QPen(QColor(self.needle_color))
+        cdiPen.setWidth(int(getattr(self, "needle_width", 3)))
         c.setRenderHint(QPainter.RenderHint.Antialiasing)
 
 
