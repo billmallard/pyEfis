@@ -700,6 +700,20 @@ _register(InstrumentSpec(
              help="colour of the prefix label"),
         Prop("value_color", "color", default="#ffffff", label="Value colour",
              help="colour of the data value (good/normal state)"),
+        # Optional visual box at the widget bounds (border + background); the box
+        # size is the widget rect itself. border_width 0 + bg_opacity 0 = no box.
+        Prop("border_color", "color", default="#ffffff", label="Border colour",
+             help="colour of the box border"),
+        Prop("border_width", "integer", default=0, minimum=0, maximum=20, step=1,
+             label="Border width (px)",
+             help="box border thickness in pixels; 0 = no border"),
+        Prop("border_opacity", "integer", default=100, minimum=0, maximum=100,
+             step=1, label="Border opacity (%)", help="box border opacity"),
+        Prop("bg_color", "color", default="#000000", label="Background colour",
+             help="box background fill colour"),
+        Prop("bg_opacity", "integer", default=0, minimum=0, maximum=100, step=1,
+             label="Background opacity (%)",
+             help="box background opacity; 0 = transparent (no fill)"),
     ],
 ))
 

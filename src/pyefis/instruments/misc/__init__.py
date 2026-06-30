@@ -115,6 +115,15 @@ class ValueDisplay(QWidget):
         # Colour of the data value in the good/normal state (bad/old still go
         # grey, annunciate still goes red). Default white matches textGoodColor.
         self.value_color = "#ffffff"
+        # Optional visual box at the widget bounds: a background fill and a
+        # border, each with its own colour + opacity. border_width 0 and
+        # bg_opacity 0 (the defaults) = no box, so a plain value_text is
+        # unchanged. The box size IS the widget rect (dragged/resized on screen).
+        self.border_color = "#ffffff"
+        self.border_width = 0       # px (0 = no border)
+        self.border_opacity = 100   # percent
+        self.bg_color = "#000000"
+        self.bg_opacity = 0         # percent (0 = transparent, no background)
 
         # These properties can be modified by the parent
         self.outlineColor = QColor(Qt.GlobalColor.darkGray)
@@ -164,9 +173,42 @@ class ValueDisplay(QWidget):
             self.prefix_font.setPixelSize(
                 max(1, qRound(self.height() * (float(pfp) if pfp else 0.5))))
 
+    def _paint_box(self, p):
+        # Optional visual box at the widget bounds: background fill + border,
+        # each with its own colour and opacity. No-op unless a border or a
+        # non-transparent background is configured (default = no box).
+        bw = int(getattr(self, "border_width", 0) or 0)
+        bgo = int(getattr(self, "bg_opacity", 0) or 0)
+        if bw <= 0 and bgo <= 0:
+            return
+        w = float(self.width())
+        h = float(self.height())
+        p.save()
+        if bgo > 0:
+            bg = QColor(self.bg_color)
+            bg.setAlpha(max(0, min(255, round(255 * bgo / 100.0))))
+            p.setBrush(bg)
+        else:
+            p.setBrush(Qt.BrushStyle.NoBrush)
+        if bw > 0:
+            bc = QColor(self.border_color)
+            bo = int(getattr(self, "border_opacity", 100) or 0)
+            bc.setAlpha(max(0, min(255, round(255 * bo / 100.0))))
+            pen = QPen(bc)
+            pen.setWidth(bw)
+            p.setPen(pen)
+            inset = bw / 2.0
+            p.drawRect(QRectF(inset, inset, w - bw, h - bw))
+        else:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRect(QRectF(0.0, 0.0, w, h))
+        p.restore()
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        self._paint_box(p)
 
         pen = QPen()
         pen.setWidth(int(self.height() * 0.01))
