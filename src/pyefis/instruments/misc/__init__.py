@@ -105,6 +105,17 @@ class ValueDisplay(QWidget):
         self.alignment = "AlignLeft"
         self.conversionFunction = lambda x: x
 
+        # Prefix label drawn before the value (e.g. "HDG", "CRS") with its own
+        # font family / size / colour. Empty prefix_text (the default) = no
+        # prefix, so a plain value_text is unchanged.
+        self.prefix_text = ""
+        self.prefix_font_family = "Open Sans"
+        self.prefix_font_percent = 50     # percent of widget height
+        self.prefix_color = "#ffffff"
+        # Colour of the data value in the good/normal state (bad/old still go
+        # grey, annunciate still goes red). Default white matches textGoodColor.
+        self.value_color = "#ffffff"
+
         # These properties can be modified by the parent
         self.outlineColor = QColor(Qt.GlobalColor.darkGray)
         # These are the colors that are used when the value's
@@ -140,6 +151,18 @@ class ValueDisplay(QWidget):
         else:
             self.font.setPixelSize(qRound(self.height() * self.font_percent))
         self.valueRect = QRectF(0, 0, self.width(), self.height())
+        # Prefix font: its own family + size. prefix_font_percent is a percent of
+        # widget height, accepted as a whole number (50) or a fraction (0.5);
+        # falls back to the value's font_percent, then 0.5.
+        if self.prefix_text:
+            self.prefix_font = QFont(self.prefix_font_family or self.font_family)
+            pfp = self.prefix_font_percent
+            if pfp is None:
+                pfp = self.font_percent
+            if pfp and float(pfp) > 1:
+                pfp = float(pfp) / 100.0
+            self.prefix_font.setPixelSize(
+                max(1, qRound(self.height() * (float(pfp) if pfp else 0.5))))
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -150,9 +173,13 @@ class ValueDisplay(QWidget):
         pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         p.setPen(pen)
 
+        self.align = getattr(Qt.AlignmentFlag, self.alignment)
+        if self.prefix_text:
+            self._paint_with_prefix(p, pen)
+            return
+
         # Draw Value
         p.setFont(self.font)
-        self.align = getattr(Qt.AlignmentFlag, self.alignment)
         opt = QTextOption(self.align)
         if self.font_ghost_mask:
             alpha = self.textColor.alpha()
@@ -165,6 +192,39 @@ class ValueDisplay(QWidget):
         pen.setColor(self.textColor)
         p.setPen(pen)
         p.drawText(self.valueRect, self.valueText, opt)
+
+    def _paint_with_prefix(self, p, pen):
+        # Inline [prefix][space][value] on a shared baseline, the whole block
+        # positioned by self.alignment. The prefix uses its own font/colour; the
+        # value keeps the quality-driven self.textColor.
+        pf = getattr(self, "prefix_font", None) or self.font
+        vfm = QFontMetricsF(self.font)
+        pfm = QFontMetricsF(pf)
+        pre = self.prefix_text
+        val = self.valueText
+        pre_w = pfm.horizontalAdvance(pre)
+        val_w = vfm.horizontalAdvance(val)
+        gap = pfm.horizontalAdvance(" ")
+        total = pre_w + gap + val_w
+        w = float(self.width())
+        h = float(self.height())
+        if self.alignment == "AlignRight":
+            x = w - total
+        elif self.alignment == "AlignCenter":
+            x = (w - total) / 2.0
+        else:
+            x = 0.0
+        x = max(0.0, x)
+        baseline = (h + vfm.ascent() - vfm.descent()) / 2.0
+        p.setFont(pf)
+        pc = QColor(self.prefix_color) if self.prefix_color else self.textColor
+        pen.setColor(pc)
+        p.setPen(pen)
+        p.drawText(QPointF(x, baseline), pre)
+        p.setFont(self.font)
+        pen.setColor(self.textColor)
+        p.setPen(pen)
+        p.drawText(QPointF(x + pre_w + gap, baseline), val)
 
     def getValue(self):
         return self._value
@@ -247,13 +307,18 @@ class ValueDisplay(QWidget):
         self.item.valueChanged[self.item.dtype].connect(self.setValue)
 
     def setColors(self):
+        # Configurable value colour overrides the good-state default; bad/old
+        # (grey) and annunciate (red) still apply below.
+        good = self.textGoodColor
+        if getattr(self, "value_color", None):
+            good = QColor(self.value_color)
         if self.bad or self.fail or self.old:
             self.bgColor = self.bgBadColor
             self.textColor = self.textBadColor
             self.highlightColor = self.highlightBadColor
         else:
             self.bgColor = self.bgGoodColor
-            self.textColor = self.textGoodColor
+            self.textColor = good
             self.highlightColor = self.highlightGoodColor
         if self.annunciate and not self.fail:
             self.textColor = self.textAnnunciateColor

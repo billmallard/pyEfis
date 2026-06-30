@@ -685,6 +685,21 @@ _register(InstrumentSpec(
         Prop("number_format", "string", default="", label="Number format",
              help="Digit mask: blank = as-is; 000 = 089 (rounded, "
                   "zero-padded); 000.0 = 089.0 (with decimals)"),
+        # Prefix label (e.g. HDG, CRS) before the value, with its own font /
+        # size / colour. Empty prefix_text = no prefix.
+        Prop("prefix_text", "string", default="", label="Prefix text",
+             help="static label drawn before the value (e.g. HDG, CRS)"),
+        Prop("prefix_font_family", "enum", default="Open Sans",
+             enum=["DejaVu Sans Condensed", "DejaVu Sans", "DejaVu Sans Mono",
+                   "B612", "Inter", "Roboto", "Open Sans"],
+             label="Prefix font", help="font family for the prefix label"),
+        Prop("prefix_font_percent", "integer", default=50, minimum=1,
+             maximum=100, step=1, label="Prefix font size (%)",
+             help="prefix height as a percent of the widget height"),
+        Prop("prefix_color", "color", default="#ffffff", label="Prefix colour",
+             help="colour of the prefix label"),
+        Prop("value_color", "color", default="#ffffff", label="Value colour",
+             help="colour of the data value (good/normal state)"),
     ],
 ))
 
