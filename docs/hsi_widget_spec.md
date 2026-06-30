@@ -1,6 +1,6 @@
 # HSI Widget Specification
 
-**Status:** Draft v0.2 (working specification)
+**Status:** Draft v0.3 (working specification)
 **Widget type:** `horizontal_situation_indicator`
 **Source:** [`src/pyefis/instruments/hsi/__init__.py`](../src/pyefis/instruments/hsi/__init__.py)
 **Registry:** [`src/pyefis/screens/screenbuilder_factory.py`](../src/pyefis/screens/screenbuilder_factory.py) (`type="horizontal_situation_indicator"`)
@@ -92,21 +92,67 @@ already fits; only add where there is a genuine gap.
 `GPSCRS/GPSCDI/GPSGSI`, `NAV1CRS/NAV1CDI/NAV1GSI`, `NAV2CRS/NAV2CDI/NAV2GSI`,
 `XPHSISRC`.
 
-### 4.2 Proposed additions
+### 4.2 Audit: mapping HSI needs to existing CAN-FiX parameters
 
-| Key | Type | Meaning | Drives |
-|---|---|---|---|
-| `NAVTYPE` **PROPOSED** | enum/int | active source *kind*: `0=GPS, 1=VOR, 2=LOC, 3=LOC-BC` (NAVSRC gives the slot; this gives whether the active radio is a VOR or a localizer) | course/CDI **colour** (magenta GPS / green VLOC); whether TO/FROM applies (VOR yes, LOC/GPS no) |
-| `NAVPHASE` **PROPOSED** *(optional)* | enum/string | navigator phase-of-flight annunciation (`ENR/TERM/APR/...`) — **display-only text** | mode label (the widget never uses it to scale CDI) |
-| `TOFROM` **PROPOSED** | enum/int | `0=OFF/flag, 1=TO, 2=FROM` | TO/FROM indicator |
-| `OBSMODE` **PROPOSED** | bool | GPS OBS (suspend sequencing) active | "OBS" annunciation |
-| `SUSP` **PROPOSED** | bool | waypoint sequencing suspended | "SUSP" annunciation |
-| `BRG1` / `BRG2` **PROPOSED** | float (deg) | bearing to station for pointer 1 / 2 | bearing pointers |
-| `BRG1SRC` / `BRG2SRC` **PROPOSED** | enum | source feeding each bearing pointer (GPS/NAV) | pointer symbol/label |
-| `DME` / `DIS` **PROPOSED** | float (nm) | distance to active station/waypoint | data field |
-| `DTK` **PROPOSED** | float (deg) | desired track | data field |
-| `ETE` **PROPOSED** | float (s) | estimated time enroute to waypoint | data field |
-| `WPID` **PROPOSED** | string | active waypoint identifier | data field |
+A parameter audit (against `canfix.json` v0.7) confirms the working assumption:
+**almost everything a competitive HSI needs already exists in the CAN-FiX spec.**
+The richest single parameter is **OBI Flags (id 450)** — a WORD that already
+bundles TO/FROM, the active nav input, the glideslope flag, and the LOC-vs-VOR
+type:
+
+```
+id 450  OBI Flags:  b0    = To/From (To = 1)
+                    b1:b2 = Input (00=NAV1, 01=NAV2, 10=GPS1, 11=GPS2)
+                    b3    = GS (glideslope present)
+                    b4    = LOC/NAV (localizer vs VOR)
+```
+
+So `NAVTYPE` and `TOFROM` are **not new parameters** — they are bit fields of an
+existing one.
+
+| HSI need | CAN-FiX parameter (id) | Status |
+|---|---|---|
+| TO/FROM | OBI Flags (450) b0 | EXISTS (bit) |
+| Active source / input | OBI Flags (450) b1:b2 | EXISTS (bit) |
+| LOC vs VOR (`NAVTYPE`) | OBI Flags (450) b4 | EXISTS (bit) |
+| Glideslope present | OBI Flags (450) b3 | EXISTS (bit) |
+| Lateral deviation (`CDI`) | VOR/LOC Deviation (448); Cross Track Error (456, nm) | EXISTS |
+| Glideslope deviation (`GSI`) | Glideslope Deviation (449) | EXISTS |
+| Selected course (`COURSE`) | Selected Course (457) | EXISTS |
+| Desired track (`DTK`) | Selected Course (457) is the active-leg DTK; Track Error Angle (1179) | EXISTS |
+| Distance (`DME/DIS`) | Waypoint, Distance To (1164, nm) | EXISTS |
+| ETE | Next Waypoint ETE (1157); Waypoint ETE (1163); Destination ETE (1178) | EXISTS |
+| Active waypoint id (`WPID`) | Next Waypoint Identifier (1152); Waypoint Identifier (1158) | EXISTS |
+| Station ident | VOR/ILS Identifier (1224) | EXISTS |
+| VOR radial (bearing) | Actual VOR Radial (1228); Selected VOR Radial (1232) | EXISTS |
+| Selected glidepath | Selected Glidepath Angle (458) | EXISTS |
+| Ground track (diamond) | True / Magnetic Ground Track (454 / 455) | EXISTS |
+
+**Genuine gaps (small — all GPS-navigator mode state):**
+
+| HSI need | Status | Cheapest fill |
+|---|---|---|
+| OBS mode active | GAP | spare bit of OBI Flags (b5) — minimal `.ods` touch |
+| SUSP (sequencing suspended) | GAP | spare bit of OBI Flags (b6) |
+| Flight-phase annunciation (ENR/TERM/APR) | GAP (optional) | new nav param, or omit |
+| Bearing TO active GPS waypoint | PARTIAL | compute in fix-gateway from aircraft (451/452) + waypoint (1153/1154) lat/lon — no schema change |
+
+**Source-numbering reconciliation (action item).** Three schemes are already in
+play and must be mapped explicitly so a real CAN-FiX nav radio and the X-Plane
+feed produce identical HSI behavior:
+- CAN-FiX OBI Flags (450): `00=NAV1, 01=NAV2, 10=GPS1, 11=GPS2`
+- fix-gateway `NAVSRC`: `0=GPS, 1=NAV1, 2=NAV2`
+- X-Plane `XPHSISRC`: `0=NAV1, 1=NAV2, 2=GPS`
+
+The bus-native canonical is OBI Flags; document the mapping (or migrate `NAVSRC`
+to match).
+
+**Where the work lands.** The **CAN-FiX schema barely changes** (only the optional
+OBS/SUSP bits). The real work is in the **fix-gateway key layer** — expose
+`TOFROM`/`NAVTYPE` (decode OBI Flags on real hardware, or set from X-Plane) and
+add keys for DME/ETE/WPID/radials that map to the existing CAN-FiX parameters —
+plus the **widget** that reads them. This is exactly the layering this spec
+assumed: build the data (mostly already there), then the pixels.
 
 > **Decision (CDI scaling).** `CDI`/`GSI` stay **strictly normalized** (−1..+1 =
 > full-scale deflection / the standard dots). Full-scale is owned by the
@@ -257,10 +303,12 @@ source, and expected appearance:
    navigation source owns full-scale per FAA standards (§4.2 decision,
    FAA-H-8083-15B). `CDISCALE` dropped — the existing normalized convention is
    correct.
-3. **Map to existing CAN-FiX parameters (remaining).** Audit the existing CAN-FiX
-   navigation parameters and map the proposed keys onto them before proposing any
-   new parameter IDs — the working assumption is that most or all already exist.
-   Any genuine addition goes through the careful `.ods` process.
+3. **Map to existing CAN-FiX parameters (done — see §4.2).** Audit complete:
+   almost everything already exists (OBI Flags 450 alone covers TO/FROM, source,
+   GS, LOC/NAV). Only OBS/SUSP mode bits are genuine gaps, fillable as spare bits
+   of OBI Flags via the careful `.ods` process; the GPS bearing pointer is
+   fix-gateway-computable from existing lat/lon. Source-numbering schemes need
+   reconciling.
 4. **Control and interaction (scoped — see §11).** Both physical knob controllers
    and on-screen touch-select are needed; this is a panel-wide interaction model,
    not an HSI-only concern.
