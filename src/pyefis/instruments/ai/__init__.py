@@ -111,6 +111,16 @@ class AI(QGraphicsView):
         # together so level flight still shows the wings on the horizon.
         self.horizon_position = 50
 
+        # Compass heading scale on the white horizon line (off by default):
+        # short vertical ticks every `interval` degrees with an upright numeric
+        # label every `label_interval` degrees. Driven by magnetic HEAD, so it
+        # scrolls as the aircraft turns and tilts with the horizon.
+        self.horizon_heading_marks = False
+        self.horizon_heading_interval = 10
+        self.horizon_heading_label_interval = 20
+        self.horizon_heading_tick_length = 5
+        self.horizon_heading_color = "#ffffff"
+
         self.setStyleSheet("border: 0px")
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -799,6 +809,68 @@ class AI(QGraphicsView):
             else:
                 each[1].setOpacity(0)
 
+    def _draw_horizon_heading(self, p, w, h):
+        # Compass heading scale on the white horizon line: short vertical ticks
+        # every horizon_heading_interval degrees and an upright numeric label
+        # every horizon_heading_label_interval degrees. Drawn in the rolled
+        # frame (the FPM's transform) so the ticks sit on -- and tilt with --
+        # the horizon and scroll as the aircraft turns. Magnetic HEAD drives the
+        # positions; the marks and the aircraft heading are both magnetic, so
+        # the relative offset equals the true-bearing offset and the ticks line
+        # up with the SVS terrain (the magnetic variation cancels out).
+        if not getattr(self, "horizon_heading_marks", False):
+            return
+        if self._fpm_bad.get("HEAD") or self._fpm_fail.get("HEAD"):
+            return
+        ppd = getattr(self, "pixelsPerDeg",
+                      self.height() / self.pitchDegreesShown)
+        head = self._fpm_head
+        interval = max(1, int(getattr(self, "horizon_heading_interval", 10)))
+        label_iv = max(interval,
+                       int(getattr(self, "horizon_heading_label_interval", 20)))
+        tick_len = float(getattr(self, "horizon_heading_tick_length", 5))
+        col = QColor(getattr(self, "horizon_heading_color", "#ffffff"))
+        if not col.isValid():
+            col = QColor(Qt.GlobalColor.white)
+        roll = self._rollAngle
+
+        p.save()
+        p.resetTransform()
+        p.translate(w / 2.0, h / 2.0 - self._horizon_offset_px())
+        p.rotate(-roll)
+        horizon_y = self._pitchAngle * ppd   # the pitch=0 line in this frame
+
+        pen = QPen(col)
+        pen.setWidth(max(1, qRound(self.fontSize * 0.04)))
+        p.setPen(pen)
+        f = QFont(self.font_family)
+        f.setPixelSize(max(8, qRound(self.fontSize * 0.55)))
+        p.setFont(f)
+        fm = p.fontMetrics()
+        cull = w * 0.75
+
+        for mk in range(0, 360, interval):
+            d = ((mk - head + 180.0) % 360.0) - 180.0
+            x = d * ppd
+            if abs(x) > cull:
+                continue
+            p.drawLine(QPointF(x, horizon_y), QPointF(x, horizon_y - tick_len))
+            if mk % label_iv == 0:
+                lbl = self._heading_label(mk)
+                p.save()
+                p.translate(x, horizon_y - tick_len)
+                p.rotate(roll)   # keep the number upright despite bank
+                p.drawText(QPointF(-fm.horizontalAdvance(lbl) / 2.0, -3.0), lbl)
+                p.restore()
+        p.restore()
+
+    @staticmethod
+    def _heading_label(deg):
+        # Magnetic heading label: cardinal letter at N/E/S/W, else the heading
+        # in tens (060 -> "6", 340 -> "34"), matching the HSI compass rose.
+        deg = int(round(deg)) % 360
+        return {0: "N", 90: "E", 180: "S", 270: "W"}.get(deg, str(deg // 10))
+
     def _horizon_offset_px(self):
         # Pixels to shift the pitch=0 horizon UP from the viewport centre,
         # derived from horizon_position (percent up the screen; 50 = centred,
@@ -959,6 +1031,7 @@ class AI(QGraphicsView):
             p.drawPolygon(diamond)
 
         self._drawFPM(p, w, h)
+        self._draw_horizon_heading(p, w, h)
 
         if _pe_t0:
             perf.add_ns("frame.ai_paintEvent_total",

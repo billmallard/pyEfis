@@ -257,6 +257,22 @@ def _ai_overlay_props():
              help="largest bank angle marked on the bank arc"),
         Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)",
              help="length of the bank-arc ticks (auto-scale off)"),
+        # Compass heading scale on the white horizon line.
+        Prop("horizon_heading_marks", "boolean", default=False,
+             label="Horizon heading marks",
+             help="tick marks + labels for compass heading along the horizon"),
+        Prop("horizon_heading_interval", "integer", default=10, minimum=1,
+             maximum=45, step=1, label="Heading tick interval (deg)",
+             help="degrees of heading between the horizon ticks"),
+        Prop("horizon_heading_label_interval", "integer", default=20, minimum=5,
+             maximum=90, step=5, label="Heading label interval (deg)",
+             help="degrees of heading between the numeric labels"),
+        Prop("horizon_heading_tick_length", "integer", default=5, minimum=1,
+             maximum=30, step=1, label="Heading tick length (px)",
+             help="length of the horizon heading ticks (px)"),
+        Prop("horizon_heading_color", "color", default="#ffffff",
+             label="Heading mark colour",
+             help="colour of the horizon heading ticks and labels"),
     ]
 
 
