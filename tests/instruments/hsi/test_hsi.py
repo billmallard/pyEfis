@@ -125,6 +125,28 @@ def test_hsi_source_auto_color(fix, qtbot):
     assert widget._source_color() is None
 
 
+def test_hsi_source_label(fix, qtbot):
+    """The source annunciation reads GPS for a GPS source, VLOCn from NAVSRC
+    alone, and refines to VOR/LOC when NAVTYPE is set."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.resize(200, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    widget.setNavsrc(2)
+    assert widget._source_label() == "GPS"
+    widget.setNavsrc(0)
+    assert widget._source_label() == "VLOC1"     # no NAVTYPE -> VLOC fallback
+    widget.setNavtype(1)                         # VOR
+    assert widget._source_label() == "VOR1"
+    widget.setNavtype(2)                         # LOC
+    assert widget._source_label() == "LOC1"
+    widget.setNavsrc(1)                          # NAV2
+    widget.setNavtype(0)                         # type unknown -> VLOC fallback
+    assert widget._source_label() == "VLOC2"
+
+
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):
     _set_quality(fix.db.get_item("HEAD"))
     _set_quality(fix.db.get_item("COURSE"))

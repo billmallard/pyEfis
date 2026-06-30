@@ -59,6 +59,10 @@ class HSI(QGraphicsView):
         self.course_color = "#ff00ff"
         self.source_auto_color = True
         self.vloc_color = "#00ff00"
+        # Nav-source annunciation: a small "GPS" / "VLOC1" / "VLOC2" label on the
+        # rose face, coloured to match the source. Refined to VOR/LOC when NAVTYPE
+        # is published. On by default.
+        self.source_label_enabled = True
         # CDI/GSI deviation-needle colour + width.
         self.needle_color = "#ffff00"
         self.needle_width = 3
@@ -205,6 +209,16 @@ class HSI(QGraphicsView):
             self.navsrcdb.valueChanged[float].connect(self.setNavsrc)
         except Exception:
             self.navsrcdb = None
+        # Active source kind (NAVTYPE: 0=GPS, 1=VOR, 2=LOC, 3=LOC-BC) refines the
+        # source label (VOR1/LOC1 vs the NAVSRC-only VLOC1). Defensive; absent ->
+        # the label falls back to GPS/VLOCn from NAVSRC alone.
+        self._navtype = None
+        try:
+            self.navtypedb = fix.db.get_item("NAVTYPE")
+            self._navtype = self.navtypedb.value
+            self.navtypedb.valueChanged[float].connect(self.setNavtype)
+        except Exception:
+            self.navtypedb = None
 
         self._showCDI = not self.isOld()
         self._showGSI = not self.isOld()
@@ -500,6 +514,17 @@ class HSI(QGraphicsView):
                 c.drawLine(qRound(self.cx + self.r - self.fontSize*2 - 6), qRound(y),
                            qRound(self.cx - self.r + self.fontSize*2 + 6), qRound(y))
 
+        # Nav-source annunciation (top-left), coloured to match the active source.
+        if getattr(self, "source_label_enabled", True):
+            label = self._source_label()
+            if label:
+                c.setPen(QPen(self._source_color() or QColor(self.course_color)))
+                lf = QFont(self.font_family)
+                lf.setPixelSize(int(self.fontSize))
+                c.setFont(lf)
+                c.drawText(qRound(self.width() * 0.03),
+                           qRound(self.fontSize * 1.2), label)
+
     def getHeading(self):
         return self._heading
 
@@ -588,6 +613,29 @@ class HSI(QGraphicsView):
                 self.course_pointer.setBrush(QBrush(_cp))
             if self.isVisible():
                 self.update()
+
+    def setNavtype(self, value):
+        if value != self._navtype:
+            self._navtype = value
+            if self.isVisible():
+                self.update()
+
+    def _source_label(self):
+        """Nav-source annunciation text: "GPS" for a GPS source, "VOR{n}" /
+        "LOC{n}" when NAVTYPE identifies the NAV radio, else "VLOC{n}" from NAVSRC
+        alone. Empty when no source is available."""
+        if self._navsrc is None:
+            return ""
+        src = int(round(self._navsrc))
+        if src == 2:
+            return "GPS"
+        slot = src + 1                          # NAVSRC 0->NAV1, 1->NAV2
+        nt = None if self._navtype is None else int(round(self._navtype))
+        if nt == 1:
+            return f"VOR{slot}"
+        if nt in (2, 3):
+            return f"LOC{slot}"
+        return f"VLOC{slot}"
 
     def setCourseOld(self,old):
         self._CourseOld = old

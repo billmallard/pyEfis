@@ -559,6 +559,10 @@ _register(InstrumentSpec(
         Prop("vloc_color", "color", default="#00ff00", label="VOR/LOC color",
              help="course pointer / CDI colour for a VOR or localizer source "
                   "when source auto-color is on"),
+        Prop("source_label_enabled", "boolean", default=True,
+             label="Source label",
+             help="show the nav-source annunciation (GPS / VLOC1 / VLOC2, or "
+                  "VOR/LOC when NAVTYPE is available) on the rose face"),
         Prop("heading_bug_enabled", "boolean", default=False,
              label="Heading bug",
              help="show the cyan heading bug at the selected heading (HEADBUG)"),
