@@ -174,6 +174,29 @@ def test_hsi_cdi_gsi_old_tracks_oldchanged_not_failchanged(fix, qtbot):
     assert widget._showGSI is True
 
 
+def test_hsi_gsi_hidden_when_no_glideslope(fix, qtbot):
+    """GSV=0 (a VOR has no glideslope) hides the GS needle while the lateral CDI
+    stays. GSV absent or >=0.5 -> GS shown on its own quality."""
+    widget = hsi.HSI(cdi_enabled=True, gsi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.resize(200, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = False
+
+    widget.setGsv(1)
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._showGSI is True
+
+    widget.setGsv(0)                       # no glideslope (VOR)
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._showGSI is False        # GS needle hidden
+    assert widget._showCDI is True         # lateral guidance unaffected
+
+    widget.setTofrom(1)                    # TO -> triangle renders without error
+    widget.paintEvent(QPaintEvent(widget.rect()))
+
+
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):
     _set_quality(fix.db.get_item("HEAD"))
     _set_quality(fix.db.get_item("COURSE"))

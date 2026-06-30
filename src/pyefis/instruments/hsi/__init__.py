@@ -219,6 +219,27 @@ class HSI(QGraphicsView):
             self.navtypedb.valueChanged[float].connect(self.setNavtype)
         except Exception:
             self.navtypedb = None
+        # Glideslope/glidepath validity for the selected source (GSV: 1 = GS
+        # present, 0 = none). A VOR has no glideslope, so GSV=0 hides the GS
+        # needle while the lateral CDI stays. Defensive; absent -> the GS shows
+        # on its own quality, preserving behaviour where GSV is not published.
+        self._gsv = None
+        try:
+            self.gsvdb = fix.db.get_item("GSV")
+            self._gsv = self.gsvdb.value
+            self.gsvdb.valueChanged[float].connect(self.setGsv)
+        except Exception:
+            self.gsvdb = None
+        # VOR TO/FROM for the selected source (TOFROM: 0=off/flag, 1=TO, 2=FROM).
+        # Drawn as a triangle on the course line; hidden when 0 (LOC/GPS or no
+        # signal). Defensive; absent -> not shown.
+        self._tofrom = 0
+        try:
+            self.tofromdb = fix.db.get_item("TOFROM")
+            self._tofrom = self.tofromdb.value or 0
+            self.tofromdb.valueChanged[float].connect(self.setTofrom)
+        except Exception:
+            self.tofromdb = None
 
         self._showCDI = not self.isOld()
         self._showGSI = not self.isOld()
@@ -508,11 +529,33 @@ class HSI(QGraphicsView):
                 c.drawLine(qRound(x), qRound(self.cy + self.r - self.fontSize*2 - 6),
                            qRound(x), qRound(self.cy - self.r + self.fontSize*2 + 6))
        
-            self._showGSI = not (self._GsiOld or self._GsiBad)
+            self._showGSI = (self._gsv is None or self._gsv >= 0.5) and not (self._GsiOld or self._GsiBad)
             if self._showGSI and self.gsi_enabled:
                 y = self.cy - self._glideSlopeIndicator * self.gsipph
                 c.drawLine(qRound(self.cx + self.r - self.fontSize*2 - 6), qRound(y),
                            qRound(self.cx - self.r + self.fontSize*2 + 6), qRound(y))
+
+            # TO/FROM indicator: a triangle on the course line near centre,
+            # pointing toward the course head (TO) or tail (FROM). Source-coloured;
+            # shown only when the lateral is valid and the source resolves a
+            # TO/FROM (a VOR; off for LOC/GPS).
+            tf = int(round(self._tofrom)) if self._tofrom else 0
+            if self.cdi_enabled and self._showCDI and tf in (1, 2):
+                _sc = self._source_color() or QColor(self.needle_color)
+                c.setPen(QPen(_sc))
+                c.setBrush(QBrush(_sc))
+                ang = (self._courseSelect - self._heading) * math.pi / 180.0
+                cosa = math.cos(ang); sina = math.sin(ang)
+                rr = self.r * 0.42
+                s = self.tickSize * 0.6
+                length = self.tickSize * 1.1
+                if tf == 1:                       # TO: apex outward (toward head)
+                    pts = [(0, -(rr + length)), (s, -rr), (-s, -rr)]
+                else:                             # FROM: apex inward (toward tail)
+                    pts = [(0, -(rr - length)), (s, -rr), (-s, -rr)]
+                pts = [QPointF((ix*cosa - iy*sina) + self.cx,
+                               (iy*cosa + ix*sina) + self.cy) for ix, iy in pts]
+                c.drawPolygon(QPolygonF(pts))
 
         # Nav-source annunciation (top-left), coloured to match the active source.
         if getattr(self, "source_label_enabled", True):
@@ -617,6 +660,18 @@ class HSI(QGraphicsView):
     def setNavtype(self, value):
         if value != self._navtype:
             self._navtype = value
+            if self.isVisible():
+                self.update()
+
+    def setGsv(self, value):
+        if value != self._gsv:
+            self._gsv = value
+            if self.isVisible():
+                self.update()
+
+    def setTofrom(self, value):
+        if value != self._tofrom:
+            self._tofrom = value
             if self.isVisible():
                 self.update()
 
