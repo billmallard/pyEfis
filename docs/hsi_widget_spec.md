@@ -159,6 +159,10 @@ assumed: build the data (mostly already there), then the pixels.
 
 ### 4.3 Source-numbering reconciliation (recommendation)
 
+> **Status: implemented** in fix-gateway (`xplane-data-driven`, commit `e0e26aa`)
+> — `ahrs.yaml` `NAVSRC` + `compute.yaml` `select`/`remap` migrated to the
+> NAV-first ordering below; verified locally, pending an X-Plane bench test.
+
 Three encodings of "which nav input is active" are in play:
 
 | Input | OBI Flags 450 b1:b2 (CAN-FiX) | `NAVSRC` today | `NAVSRC` proposed | X-Plane `XPHSISRC` |
