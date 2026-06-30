@@ -1,6 +1,6 @@
 # HSI Widget Specification
 
-**Status:** Draft v0.1 (working specification)
+**Status:** Draft v0.2 (working specification)
 **Widget type:** `horizontal_situation_indicator`
 **Source:** [`src/pyefis/instruments/hsi/__init__.py`](../src/pyefis/instruments/hsi/__init__.py)
 **Registry:** [`src/pyefis/screens/screenbuilder_factory.py`](../src/pyefis/screens/screenbuilder_factory.py) (`type="horizontal_situation_indicator"`)
@@ -96,9 +96,8 @@ already fits; only add where there is a genuine gap.
 
 | Key | Type | Meaning | Drives |
 |---|---|---|---|
-| `NAVTYPE` **PROPOSED** | enum/int | active source *kind*: `0=GPS, 1=VOR, 2=LOC, 3=LOC-BC` (NAVSRC gives the slot; this gives whether NAV1 is a VOR or a localizer) | course/CDI **color** (magenta GPS / green VLOC), TO/FROM applicability, fixed LOC sensitivity |
-| `CDISCALE` **PROPOSED** | float (nm) | current full-scale deviation | CDI dot spacing |
-| `CDIMODE` **PROPOSED** | enum | `OCN/ENR/TERM/APR/MAPR` (or "VLOC") | scale annunciation |
+| `NAVTYPE` **PROPOSED** | enum/int | active source *kind*: `0=GPS, 1=VOR, 2=LOC, 3=LOC-BC` (NAVSRC gives the slot; this gives whether the active radio is a VOR or a localizer) | course/CDI **colour** (magenta GPS / green VLOC); whether TO/FROM applies (VOR yes, LOC/GPS no) |
+| `NAVPHASE` **PROPOSED** *(optional)* | enum/string | navigator phase-of-flight annunciation (`ENR/TERM/APR/...`) — **display-only text** | mode label (the widget never uses it to scale CDI) |
 | `TOFROM` **PROPOSED** | enum/int | `0=OFF/flag, 1=TO, 2=FROM` | TO/FROM indicator |
 | `OBSMODE` **PROPOSED** | bool | GPS OBS (suspend sequencing) active | "OBS" annunciation |
 | `SUSP` **PROPOSED** | bool | waypoint sequencing suspended | "SUSP" annunciation |
@@ -109,11 +108,14 @@ already fits; only add where there is a genuine gap.
 | `ETE` **PROPOSED** | float (s) | estimated time enroute to waypoint | data field |
 | `WPID` **PROPOSED** | string | active waypoint identifier | data field |
 
-> Note: `CDI`/`GSI` are published as a normalized deviation today. If `CDISCALE`
-> is added, define clearly whether `CDI` stays normalized (−1..+1 full scale) or
-> becomes an absolute nm/dots value — the renderer needs one convention. The
-> recommendation is **`CDI` stays normalized; `CDISCALE`/`CDIMODE` are display
-> annotation only**, so existing consumers (autopilot) are unaffected.
+> **Decision (CDI scaling).** `CDI`/`GSI` stay **strictly normalized** (−1..+1 =
+> full-scale deflection / the standard dots). Full-scale is owned by the
+> **navigation source**, per FAA needle-deflection standards — VOR ±10° (≈2° per
+> dot), LOC ±2.5° (much more sensitive), GPS 2.0 nm enroute / 1.0 nm terminal /
+> angular on approach (FAA-H-8083-15B; AIM; AC 20-138 / TSO-C146). The widget
+> renders the dots it is given and **never computes scaling** — this also keeps
+> existing consumers (the autopilot) unaffected. No `CDISCALE` key is added; the
+> normalized convention already present in the widget is correct.
 
 ## 5. Appearance options (category 1 — editor)
 
@@ -146,11 +148,13 @@ Each item: what it does, the input(s), the convention.
 2. **Course pointer** — arrow to `COURSE`. Convention: **single-line for source
    1, double-line for source 2**; colored magenta for GPS, green for VOR/LOC
    (gated by `source_auto_color` + `NAVTYPE`).
-3. **CDI (lateral deviation)** — bar offset from the course pointer along a
-   dotted scale; flagged/removed when invalid. Full-scale follows phase:
-   **4.0 nm oceanic, 2.0 nm enroute, 1.0 nm terminal, angular on approach/LOC**
-   (`CDISCALE`/`CDIMODE`). These are standard RNAV values (§8), not vendor
-   numbers.
+3. **CDI (lateral deviation)** — bar offset from the course pointer along the
+   standard dotted scale, drawn from the **normalized** `CDI` value. Full-scale is
+   defined by the **navigation source** (VOR ±10°, LOC ±2.5°, GPS 2.0/1.0 nm by
+   phase — FAA-H-8083-15B), not by the widget: the display renders the dots it is
+   given and never scales. Hidden/flagged when the signal is invalid (see 11). An
+   optional `NAVPHASE` annunciation (ENR/TERM/APR) is display-only text from the
+   navigator.
 4. **TO/FROM** — for VOR sources; hidden for LOC and (typically) GPS.
 5. **Glideslope / glidepath (VDI)** — vertical deviation scale + diamond from
    `GSI`; shown on ILS/LPV/approach.
@@ -169,9 +173,13 @@ Each item: what it does, the input(s), the convention.
     (HDG), distance (DIS/DME), desired track (DTK), ground speed (GS), ETE,
     active waypoint, and the **navigation-source annunciation** (e.g. "GPS",
     "VOR1", "LOC1") colored to match the pointer.
-11. **Failure handling** — follow the widget convention: `fail` → red flag /
-    remove the affected element; `old`/`bad` → grey. Bearing pointers and CDI
-    hide rather than show stale guidance.
+11. **Signal-driven visibility (failure handling)** — the display shows what it
+    **receives**, not what is selected. A needle (CDI, GSI, bearing pointer)
+    appears only when a valid signal for it is present; with no signal it **hides**
+    — the digital equivalent of a mechanical needle parking in the bezel —
+    regardless of which source is selected (e.g. selecting LOC with no localizer
+    received shows no needle). Follow the widget convention: `fail` → remove /
+    red flag; `old`/`bad` → grey. Never show stale or sourceless guidance.
 
 ## 7. Phased implementation plan
 
@@ -237,15 +245,77 @@ source, and expected appearance:
 - TO/FROM for a VOR; absent for LOC and GPS.
 - Failure/stale: `fail` red, `old`/`bad` grey.
 
-## 10. Open questions
+## 10. Resolved questions and remaining work
 
-1. `NAVTYPE` derivation — does fix-gateway know whether a NAV radio is tuned to a
-   VOR vs a LOC (frequency-based), or must the source publish it? (X-Plane and
-   real CAN-FiX nav radios differ.)
-2. Should `CDI` remain normalized with `CDISCALE` as annotation (recommended), or
-   carry absolute deviation? Decide once, document in canfix-spec.
-3. Map proposed keys onto **existing** CAN-FiX navigation parameters wherever one
-   already covers the concept, before proposing new parameter IDs (schema change
-   goes through the careful `.ods` process).
-4. OBS control hardware: encoder vs on-screen — affects whether the widget needs
-   an input path or just writes `COURSE`.
+1. **Signal-driven visibility (resolved).** The display reflects the *received*
+   signal, not the selection: needles hide when no valid signal is present,
+   regardless of the source selected (§6.11). The active source's **type** (for
+   the magenta/green colouring) is published *with* the signal by the producing
+   source/plugin; for X-Plane, fix-gateway derives it. Remaining work: ensure the
+   active source publishes `NAVTYPE` and per-needle validity.
+2. **CDI normalization (resolved).** `CDI`/`GSI` stay strictly normalized; the
+   navigation source owns full-scale per FAA standards (§4.2 decision,
+   FAA-H-8083-15B). `CDISCALE` dropped — the existing normalized convention is
+   correct.
+3. **Map to existing CAN-FiX parameters (remaining).** Audit the existing CAN-FiX
+   navigation parameters and map the proposed keys onto them before proposing any
+   new parameter IDs — the working assumption is that most or all already exist.
+   Any genuine addition goes through the careful `.ods` process.
+4. **Control and interaction (scoped — see §11).** Both physical knob controllers
+   and on-screen touch-select are needed; this is a panel-wide interaction model,
+   not an HSI-only concern.
+
+## 11. Control and interaction (OBS and beyond)
+
+Setting values on the HSI (and other widgets) — selected course (OBS/CRS),
+heading bug, nav source, baro — needs **two complementary input paths**. They are
+not either/or; both are wanted:
+
+**A. Physical knob / button controllers.** Hardware the pilot reaches for without
+looking. In the test environment the **Octavi IFR-1**
+(<https://www.octavi.net/ifr-1>) and **Knobster**
+(<https://siminnovations.com/knobster/>) drive X-Plane today over USB HID. The
+clean integration point is the **FIX bus**, giving three routes:
+- *Sim path (works today):* controller → X-Plane → fix-gateway (reads datarefs) →
+  pyEfis. Fine for bench testing.
+- *Real-aircraft USB path:* a small **fix-gateway source plugin** reads the USB
+  HID controller and writes FIX keys (`COURSE`, `HEADBUG`, `NAVSRC`, baro).
+  Mirrors the existing plugin pattern; no sim required.
+- *Native CAN-FiX path:* a purpose-built **CAN-FiX knob node** (Arduino +
+  `can-fix-arduinolib`) publishes `COURSE`/`HEADBUG` straight onto the bus — the
+  most "native" option and the one the protocol intends.
+
+**B. On-screen touch-select + adjust.** Touch a value field (CRS, HDG, baro) to
+make it the active edit target, then adjust it (encoder, on-screen +/−, or a
+second knob), with a clear highlight and an edit timeout. pyEfis already has an
+**encoder/HMI edit mechanism** (`AbstractGauge` encoder-edit state,
+`hmi/menu.py`) — this is an *extension* of it with a touch-to-select layer, not a
+new subsystem. Should be **web-UI toggleable** (enable/disable touch editing per
+panel).
+
+**C. Dedicated controller surface (optional).** A second Pi with a 5" touch
+display as a control head. Because fix-gateway is **networked (TCP)**, a second
+pyEfis instance can run a "controller screen" (buttons + encoder UI) that writes
+FIX keys over the network — reusing the whole stack instead of building anew.
+
+**Open-source prior art to evaluate** (survey — candidates, not yet vetted):
+- **MobiFlight** — open-source framework binding hardware (encoders, buttons,
+  displays) to flight-sim variables; primarily MSFS with X-Plane support. A
+  reference for the hardware-binding model.
+- **XCSoar / OpenVario** — open-source soaring computer + open touch hardware
+  (7" Pi-class). Its **InfoBox** pattern (touch a field → adjust) is a proven
+  open-source touch-select interaction worth studying directly.
+- **TouchPi** — Raspberry Pi + touchscreen handheld project; evaluate as a
+  reference design for the dedicated-controller hardware (C).
+- **AvareX / Avare** — open-source touch EFB (Android); touch interaction model.
+- **FlightGear Canvas** — open-source instrument-UI toolkit; interaction ideas.
+- **`can-fix-arduinolib`** — already in the MakerPlane org; the basis for a native
+  CAN-FiX knob node.
+- *(Commercial benchmark, not OSS):* **Air Manager / Air Player** (Sim
+  Innovations, makers of Knobster) — the de-facto touch-panel-plus-knob UX to
+  match.
+
+This control work is broader than the HSI — it is a **panel-wide interaction
+model**. The HSI's OBS/CRS control is its first concrete consumer; spec the
+interaction model once and the heading bug, baro, and nav-source controls reuse
+it. Track it as its own issue.
