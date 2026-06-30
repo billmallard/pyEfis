@@ -37,7 +37,7 @@ def test_hsi_default_flags_heading_and_bug(fix, qtbot):
     assert widget._GsiFail is False
     assert widget.fontSize == 30
     assert widget.getHeading() == 0
-    assert widget.getHeadingBug() == 0
+    assert widget.getCoursePointer() == 0
     assert len(widget.labels) > 0
 
     widget.rotate = mock.Mock()
@@ -56,11 +56,11 @@ def test_hsi_default_flags_heading_and_bug(fix, qtbot):
     assert widget.rotate.call_args_list[3].args == (-150,)
     assert widget.rotate.call_args_list[4].args == (-110,)
 
-    widget.headingBug = 370
-    assert widget.headingBug == 360
-    assert widget.heading_bug is not None
-    assert widget.heading_bug.polygon().count() == 3
-    widget.headingBug = 360
+    widget.coursePointer = 370
+    assert widget.coursePointer == 360
+    assert widget.course_pointer is not None
+    assert widget.course_pointer.polygon().count() == 3
+    widget.coursePointer = 360
 
     widget.keyPressEvent(None)
     widget.wheelEvent(None)
@@ -91,16 +91,38 @@ def test_hsi_resize_does_not_accumulate_rotation(fix, qtbot):
     assert abs(t2.m11() - math.cos(math.radians(52))) < 1e-6
 
 
-def test_hsi_heading_bug_before_resize_and_no_deviation_paint(fix, qtbot):
+def test_hsi_course_pointer_before_resize_and_no_deviation_paint(fix, qtbot):
     widget = hsi.HSI()
     qtbot.addWidget(widget)
-    widget.setHeadingBug(45)
+    widget.setCoursePointer(45)
     widget.resize(200, 200)
     widget.show()
     qtbot.waitExposed(widget)
 
-    assert widget.headingBug == 45
+    assert widget.coursePointer == 45
     widget.paintEvent(QPaintEvent(widget.rect()))
+
+
+def test_hsi_source_auto_color(fix, qtbot):
+    """source_auto_color tints the course pointer + CDI by NAVSRC: magenta
+    (course_color) for a GPS source (2), green (vloc_color) for a NAV source
+    (0/1). Off, or with no NAVSRC, falls back to the static colours."""
+    widget = hsi.HSI(cdi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.resize(200, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    widget.setNavsrc(2)                                   # GPS
+    assert widget._source_color() == QColor(widget.course_color)
+    assert widget.course_pointer.brush().color() == QColor(widget.course_color)
+
+    widget.setNavsrc(0)                                   # NAV1
+    assert widget._source_color() == QColor(widget.vloc_color)
+    assert widget.course_pointer.brush().color() == QColor(widget.vloc_color)
+
+    widget.source_auto_color = False                      # static fallback
+    assert widget._source_color() is None
 
 
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):

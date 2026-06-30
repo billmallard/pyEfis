@@ -552,6 +552,13 @@ _register(InstrumentSpec(
         Prop("course_color", "color", default="#ff00ff",
              label="Course pointer color",
              help="selected-course pointer (the magenta CRS triangle)"),
+        Prop("source_auto_color", "boolean", default=True,
+             label="Source auto-color",
+             help="colour the course pointer and CDI by nav source -- magenta "
+                  "for GPS, the VOR/LOC colour for a VOR/LOC source (from NAVSRC)"),
+        Prop("vloc_color", "color", default="#00ff00", label="VOR/LOC color",
+             help="course pointer / CDI colour for a VOR or localizer source "
+                  "when source auto-color is on"),
         Prop("heading_bug_enabled", "boolean", default=False,
              label="Heading bug",
              help="show the cyan heading bug at the selected heading (HEADBUG)"),

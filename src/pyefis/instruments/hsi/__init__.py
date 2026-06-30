@@ -52,9 +52,13 @@ class HSI(QGraphicsView):
         # transparent so the SVS/PFD behind shows through the circle. This fills
         # the round compass disc, not the rectangular widget box.
         self.bg_opacity = 100
-        # Selected-course pointer colour (the triangle driven by COURSE);
-        # magenta matches the Garmin CRS convention.
+        # Selected-course pointer colour (the triangle driven by COURSE). With
+        # source_auto_color on (default), this magenta is used for a GPS source
+        # and vloc_color (green) for a VOR/LOC source, selected by NAVSRC
+        # (2=GPS, 0/1=NAV). Off -> the pointer is always course_color.
         self.course_color = "#ff00ff"
+        self.source_auto_color = True
+        self.vloc_color = "#00ff00"
         # CDI/GSI deviation-needle colour + width.
         self.needle_color = "#ffff00"
         self.needle_width = 3
@@ -65,10 +69,10 @@ class HSI(QGraphicsView):
         self.heading_bug_enabled = False
         self.heading_bug_color = "#00ffff"
         # GPS ground-track diamond (magenta): a marker on the rose at the current
-        # GPS ground track (TRACK). Garmin shows it whenever there is a valid
-        # track. Gated on ground speed (GPS track is meaningless near zero
+        # magnetic GPS ground track (TRACKM). Garmin shows it whenever there is a
+        # valid track. Gated on ground speed (GPS track is meaningless near zero
         # groundspeed) -- shown only at or above track_min_speed kt. On by
-        # default; it self-hides when TRACK/GS are absent, stale, or below the
+        # default; it self-hides when TRACKM/GS are absent, stale, or below the
         # speed gate, so it is safe on panels without a GPS track source.
         self.track_indicator_enabled = True
         self.track_color = "#ff00ff"
@@ -99,8 +103,8 @@ class HSI(QGraphicsView):
         self.labels = list()
 
         self.item = fix.db.get_item("COURSE")
-        self._headingSelect = self.item.value
-        self.item.valueChanged[float].connect(self.setHeadingBug)
+        self._courseSelect = self.item.value
+        self.item.valueChanged[float].connect(self.setCoursePointer)
         self.item.oldChanged[bool].connect(self.setCourseOld)
         self.item.badChanged[bool].connect(self.setCourseBad)
         self.item.failChanged[bool].connect(self.setCourseFail)
@@ -172,7 +176,7 @@ class HSI(QGraphicsView):
         self._TrackFail = True
         self.track_item = None
         try:
-            self.trackdb = fix.db.get_item("TRACK")
+            self.trackdb = fix.db.get_item("TRACKM")
             self._track = self.trackdb.value or 0.0
             self.trackdb.valueChanged[float].connect(self.setTrack)
             self.trackdb.oldChanged[bool].connect(self.setTrackOld)
@@ -190,11 +194,22 @@ class HSI(QGraphicsView):
         except Exception:
             self.gsdb = None
 
-        self._courseSelect = 1
+        # Selected nav source (NAVSRC: 0=NAV1, 1=NAV2, 2=GPS) for source-based
+        # colouring of the course pointer + CDI (magenta GPS / green VLOC).
+        # Subscribed defensively; absent source -> _navsrc stays None and the
+        # static colours are used.
+        self._navsrc = None
+        try:
+            self.navsrcdb = fix.db.get_item("NAVSRC")
+            self._navsrc = self.navsrcdb.value
+            self.navsrcdb.valueChanged[float].connect(self.setNavsrc)
+        except Exception:
+            self.navsrcdb = None
+
         self._showCDI = not self.isOld()
         self._showGSI = not self.isOld()
         self.cardinal = ["N", "E", "S", "W"]
-        self.heading_bug = None
+        self.course_pointer = None
         self.myparent = parent
         self.update_period = None
 
@@ -232,8 +247,9 @@ class HSI(QGraphicsView):
         textBrush = QBrush(QColor(self.fg_color))
         nobrush = QBrush()
 
-        headingPen = QPen(QColor(self.course_color))
-        headingBrush = QBrush(QColor(self.course_color))
+        _cp = self._course_pointer_color()
+        headingPen = QPen(_cp)
+        headingBrush = QBrush(_cp)
         headingPen.setWidth(1)
 
 
@@ -279,10 +295,11 @@ class HSI(QGraphicsView):
                 t.setPos(x3, y3)
                 self.labels.append(t)
 
-        # Course pointer (driven by COURSE -- the magenta CRS triangle). Named
-        # heading_bug for historical reasons; it is the selected-course pointer.
-        triangle = self.heading_bug_polygon()
-        self.heading_bug = self.scene.addPolygon(triangle, headingPen, headingBrush)
+        # Course pointer (driven by COURSE): the selected-course triangle,
+        # coloured by source (magenta GPS / green VLOC) when source_auto_color is
+        # on, else course_color.
+        triangle = self.course_pointer_polygon()
+        self.course_pointer = self.scene.addPolygon(triangle, headingPen, headingBrush)
 
         # Garmin-style heading bug (cyan): scrolls to the HEADBUG selected
         # heading on the inside of the ring. Drawn only when enabled.
@@ -347,13 +364,13 @@ class HSI(QGraphicsView):
 
 
 
-    def heading_bug_polygon(self):
+    def course_pointer_polygon(self):
         inc = int(self.tickSize)
         iyb = -self.r
         points = [ (inc, -self.r),
                   (-inc, -self.r),
                   (0, -self.r + inc)]
-        angle = (self._headingSelect) * math.pi / 180
+        angle = (self._courseSelect) * math.pi / 180
         cosa = math.cos(angle)
         sina = math.sin(angle)
 
@@ -454,7 +471,7 @@ class HSI(QGraphicsView):
 
 
         compassPen = QPen(QColor(self.fg_color))
-        cdiPen = QPen(QColor(self.needle_color))
+        cdiPen = QPen(self._source_color() or QColor(self.needle_color))
         cdiPen.setWidth(int(getattr(self, "needle_width", 3)))
         c.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -532,17 +549,45 @@ class HSI(QGraphicsView):
             for l in self.labels:
                 l.setOpacity(1)
 
-    def getHeadingBug(self):
-        return self._headingSelect
+    def getCoursePointer(self):
+        return self._courseSelect
 
-    def setHeadingBug(self, headingBug):
-        if headingBug != self._headingSelect:
-            self._headingSelect = common.bounds(0, 360, headingBug)
-            if self.heading_bug is not None:
-                triangle = self.heading_bug_polygon()
-                self.heading_bug.setPolygon(triangle)
+    def setCoursePointer(self, course):
+        if course != self._courseSelect:
+            self._courseSelect = common.bounds(0, 360, course)
+            if self.course_pointer is not None:
+                self.course_pointer.setPolygon(self.course_pointer_polygon())
 
-    headingBug = property(getHeadingBug, setHeadingBug)
+    coursePointer = property(getCoursePointer, setCoursePointer)
+
+    def _source_color(self):
+        """Active-source colour for the course pointer and CDI/GSI when
+        source_auto_color is on: course_color (magenta) for a GPS source,
+        vloc_color (green) for a VOR/LOC source. Returns None when auto-colouring
+        is off or NAVSRC is unavailable, so callers fall back to the static
+        per-element colour."""
+        if not getattr(self, "source_auto_color", False):
+            return None
+        if self._navsrc is None:
+            return None
+        # NAVSRC 2 = GPS (magenta); 0/1 = NAV1/NAV2 (green).
+        if int(round(self._navsrc)) == 2:
+            return QColor(self.course_color)
+        return QColor(self.vloc_color)
+
+    def _course_pointer_color(self):
+        return self._source_color() or QColor(self.course_color)
+
+    def setNavsrc(self, value):
+        if value != self._navsrc:
+            self._navsrc = value
+            # Recolour the course pointer now; the CDI/GSI recolour on next paint.
+            if getattr(self, "course_pointer", None) is not None:
+                _cp = self._course_pointer_color()
+                self.course_pointer.setPen(QPen(_cp))
+                self.course_pointer.setBrush(QBrush(_cp))
+            if self.isVisible():
+                self.update()
 
     def setCourseOld(self,old):
         self._CourseOld = old
