@@ -78,6 +78,11 @@ Defaults in **bold**.
 | `aircraft_symbol` | **`classic`** | fixed reference symbol style. `classic` = split wing bars + centre dot; `garmin` / `gi275` / `gi-275` / `g1000` = GI-275-style tapered wing wedges + centre boresight. |
 | `symbol_color` | **`yellow`** | colour of the aircraft reference symbol (any Qt colour name; invalid names fall back to yellow). |
 | `svs` | none | nested block enabling Synthetic Vision — see [Enabling Synthetic Vision](#enabling-synthetic-vision-svs). |
+| `horizon_heading_marks` | **`false`** | draw a compass heading scale on the white horizon line: short vertical ticks with numeric labels that ride the horizon and scroll as the aircraft turns (driven by magnetic `HEAD`; aligns with the SVS terrain). |
+| `horizon_heading_interval` | **`10`** | degrees of heading between ticks. |
+| `horizon_heading_label_interval` | **`20`** | degrees of heading between labels (cardinal letters at N/E/S/W, else the heading in tens, e.g. 060 → "6"). |
+| `horizon_heading_tick_length` | **`5`** | tick length, pixels. |
+| `horizon_heading_color` | **`#ffffff`** | colour of the heading ticks and labels. |
 
 `font_percent` and `font_family` come from
 [preferences](Preferences-and-Styling), not `options:` (see
@@ -85,10 +90,13 @@ Defaults in **bold**.
 pitch-ladder numerals and tick widths.
 
 > The pitch-ladder geometry (`pitchDegreesShown`, `minorDiv`/`majorDiv`/
-> `numberedDiv`, `bankAngleMaximum`, `pitchOpacity`, `drawBankMarkers`, …) exists
-> as instance attributes but is **not** part of the documented YAML surface — the
-> shipped screens leave it at code defaults. `pitchDegreesShown` is fixed at 30°
-> top-to-bottom, which sets the horizontal field of view that SVS terrain shares.
+> `numberedDiv`, `bankAngleMaximum`, `pitchOpacity`, `drawBankMarkers`, …) and the
+> horizon heading marks above are exposed as editor options in the
+> [configurator](https://pyefis.aerocommons.org) (each with a hover tooltip); the
+> shipped screens otherwise leave the geometry at code defaults.
+> `pitchDegreesShown` is fixed at 30° top-to-bottom, which sets the horizontal
+> field of view that SVS terrain — and the heading scale — share. These options
+> apply to both `atitude_indicator` and `virtual_vfr` (they share the AI base).
 
 ---
 
