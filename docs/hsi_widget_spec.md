@@ -1,6 +1,6 @@
 # HSI Widget Specification
 
-**Status:** Draft v0.4 (working specification)
+**Status:** Draft v0.5 (working specification; P0 + P1a + track-diamond fix shipped)
 **Widget type:** `horizontal_situation_indicator`
 **Source:** [`src/pyefis/instruments/hsi/__init__.py`](../src/pyefis/instruments/hsi/__init__.py)
 **Registry:** [`src/pyefis/screens/screenbuilder_factory.py`](../src/pyefis/screens/screenbuilder_factory.py) (`type="horizontal_situation_indicator"`)
@@ -72,10 +72,10 @@ subscriptions):
 "control" is a **generic `button`** instrument configured to cycle `NAVSRC`;
 there is no dedicated nav-source widget.
 
-**Known code-clarity debt:** the `COURSE` value is handled by a method named
-`setHeadingBug` (and stored as `_headingSelect`), while the actual heading bug
-uses `setHdgBug`. Rename to `setCoursePointer` / `_courseSelect` during the first
-implementation phase to remove the trap.
+**Resolved (P0):** the `COURSE` value was handled by a method named
+`setHeadingBug` (stored as `_headingSelect`), confusable with the real heading
+bug (`setHdgBug`). Renamed to `setCoursePointer` / `_courseSelect` /
+`course_pointer`, and a dead `_courseSelect = 1` was dropped. No behaviour change.
 
 ## 4. Data contract — existing and proposed
 
@@ -252,8 +252,11 @@ Each item: what it does, the input(s), the convention.
 5. **Glideslope / glidepath (VDI)** — vertical deviation scale + diamond from
    `GSI`; shown on ILS/LPV/approach.
 6. **Heading bug** — cyan marker at `HEADBUG`.
-7. **Ground-track diamond** — magenta diamond at `TRACK`, gated by `GS ≥
-   track_min_speed`. (Implemented.)
+7. **Ground-track diamond** — magenta diamond at the **magnetic** ground track
+   `TRACKM`, gated by `GS ≥ track_min_speed`. (Implemented.) *Originally read
+   `TRACK` (true), which sat off by the local magnetic variation on the magnetic
+   rose; fixed to `TRACKM`, derived in fix-gateway as `(TRACK + MAGVAR) mod 360`
+   via the new `wrap360` compute function.*
 8. **Bearing pointers 1 & 2** — cyan needles pointing to `BRG1`/`BRG2`;
    single-line (1) / double-line (2); **hidden when heading is invalid**; they
    never override and are visually separated from the deviation bar. Each has a
@@ -278,17 +281,17 @@ Each item: what it does, the input(s), the convention.
 
 Ordered by impact-per-effort; each phase is shippable and testable on its own.
 
-- **P0 — cleanup + foundation (pyEfis only).** Rename the `setHeadingBug`/
-  `_headingSelect` course-pointer code; add the appearance scaffolding
-  (`source_auto_color`, `vloc_color`) with `NAVTYPE` read defensively (absent →
-  current static behavior). No new data required.
-- **P1 — source annunciation + auto-coloring.** Add `NAVTYPE` to canfix-spec +
-  fix-gateway (derive from `NAVSRC` + which NAV radio is a LOC). Widget: color
-  course/CDI by source, single/double-line pointer, on-face source label. *This
-  is the single biggest visual step toward parity — the data is almost all there.*
-- **P2 — TO/FROM + CDI scale annunciation.** Add `TOFROM`, `CDISCALE`,
-  `CDIMODE`; draw the TO/FROM arrow and the scale/mode label. `CDI` stays
-  normalized.
+- **P0 — cleanup + foundation (pyEfis only). [DONE]** Renamed the course-pointer
+  code (see §3); added the `source_auto_color` / `vloc_color` options. No new data.
+- **P1a — source colouring by NAVSRC. [DONE]** The course pointer + CDI/GSI are
+  coloured magenta for a GPS source, `vloc_color` (green) for a NAV source, read
+  from `NAVSRC` (no new data). Widget + registry + schema/R2 + editor twin shipped.
+- **P1b — NAVTYPE refinement + source label.** Decode OBI Flags b4 (LOC vs VOR)
+  into a `NAVTYPE` key for the green-only-on-VLOC nuance and the single/double-line
+  pointer, plus the on-face source annunciation ("GPS" / "VOR1" / "LOC1").
+- **P2 — TO/FROM + phase annunciation.** Add `TOFROM` and the optional `NAVPHASE`
+  label; draw the TO/FROM arrow. `CDI` stays normalized (no `CDISCALE`; the source
+  owns full-scale — see §4.2).
 - **P3 — data fields.** Add `DME/DIS`, `DTK`, `ETE`, `WPID`; render the
   configurable corner readouts (CRS/HDG/GS already available).
 - **P4 — bearing pointers.** Add `BRG1/BRG2` (+ source + valid); render the two
