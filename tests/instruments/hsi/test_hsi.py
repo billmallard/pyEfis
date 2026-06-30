@@ -147,6 +147,33 @@ def test_hsi_source_label(fix, qtbot):
     assert widget._source_label() == "VLOC2"
 
 
+def test_hsi_cdi_gsi_old_tracks_oldchanged_not_failchanged(fix, qtbot):
+    """Regression: CDI/GSI 'old' and 'bad' must follow the oldChanged/badChanged
+    signals. They were wired to failChanged, so once the items were old at
+    construction (no data yet) the flags latched True and the deviation needles
+    never reappeared even with valid data."""
+    widget = hsi.HSI(cdi_enabled=True, gsi_enabled=True)
+    qtbot.addWidget(widget)
+    widget._CdiOld = widget._GsiOld = True
+    widget._CdiBad = widget._GsiBad = True
+
+    widget.cdidb.oldChanged.emit(False)
+    widget.cdidb.badChanged.emit(False)
+    widget.gsidb.oldChanged.emit(False)
+    widget.gsidb.badChanged.emit(False)
+
+    assert widget._CdiOld is False and widget._CdiBad is False
+    assert widget._GsiOld is False and widget._GsiBad is False
+
+    # with the flags clear, the needles are shown independently per channel
+    widget.resize(200, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._showCDI is True
+    assert widget._showGSI is True
+
+
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):
     _set_quality(fix.db.get_item("HEAD"))
     _set_quality(fix.db.get_item("COURSE"))

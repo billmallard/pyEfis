@@ -120,9 +120,9 @@ class HSI(QGraphicsView):
             self.cdidb = fix.db.get_item("CDI")
             self._courseDeviation = self.cdidb.value
             self.cdidb.valueChanged[float].connect(self.setCdi)
-            self.cdidb.failChanged[bool].connect(self.setCdiOld)
+            self.cdidb.oldChanged[bool].connect(self.setCdiOld)
+            self.cdidb.badChanged[bool].connect(self.setCdiBad)
             self.cdidb.failChanged[bool].connect(self.setCdiFail)
-            self.cdidb.failChanged[bool].connect(self.setCdiOld)
             self.setCdiOld(self.cdidb.old)
             self.setCdiBad(self.cdidb.bad)
             self.setCdiFail(self.cdidb.fail)
@@ -134,9 +134,9 @@ class HSI(QGraphicsView):
             self.gsidb = fix.db.get_item("GSI")
             self._glideSlopeIndicator = self.gsidb.value
             self.gsidb.valueChanged[float].connect(self.setGsi)
-            self.gsidb.failChanged[bool].connect(self.setGsiOld)
+            self.gsidb.oldChanged[bool].connect(self.setGsiOld)
+            self.gsidb.badChanged[bool].connect(self.setGsiBad)
             self.gsidb.failChanged[bool].connect(self.setGsiFail)
-            self.gsidb.failChanged[bool].connect(self.setGsiOld)
             self.setGsiOld(self.gsidb.old)
             self.setGsiBad(self.gsidb.bad)
             self.setGsiFail(self.gsidb.fail)
@@ -502,13 +502,13 @@ class HSI(QGraphicsView):
                 deviation += 1.0/3.0
 
             c.setPen(cdiPen)
-            self._showCDI = not self.isOld()
+            self._showCDI = not (self._CdiOld or self._CdiBad)
             if self._showCDI and self.cdi_enabled:
                 x = self.cx + self._courseDeviation * self.cdippw
                 c.drawLine(qRound(x), qRound(self.cy + self.r - self.fontSize*2 - 6),
                            qRound(x), qRound(self.cy - self.r + self.fontSize*2 + 6))
        
-            self._showGSI = not self.isOld()
+            self._showGSI = not (self._GsiOld or self._GsiBad)
             if self._showGSI and self.gsi_enabled:
                 y = self.cy - self._glideSlopeIndicator * self.gsipph
                 c.drawLine(qRound(self.cx + self.r - self.fontSize*2 - 6), qRound(y),
