@@ -1,6 +1,6 @@
 # HSI Widget Specification
 
-**Status:** Draft v0.3 (working specification)
+**Status:** Draft v0.4 (working specification)
 **Widget type:** `horizontal_situation_indicator`
 **Source:** [`src/pyefis/instruments/hsi/__init__.py`](../src/pyefis/instruments/hsi/__init__.py)
 **Registry:** [`src/pyefis/screens/screenbuilder_factory.py`](../src/pyefis/screens/screenbuilder_factory.py) (`type="horizontal_situation_indicator"`)
@@ -137,15 +137,9 @@ existing one.
 | Flight-phase annunciation (ENR/TERM/APR) | GAP (optional) | new nav param, or omit |
 | Bearing TO active GPS waypoint | PARTIAL | compute in fix-gateway from aircraft (451/452) + waypoint (1153/1154) lat/lon — no schema change |
 
-**Source-numbering reconciliation (action item).** Three schemes are already in
-play and must be mapped explicitly so a real CAN-FiX nav radio and the X-Plane
-feed produce identical HSI behavior:
-- CAN-FiX OBI Flags (450): `00=NAV1, 01=NAV2, 10=GPS1, 11=GPS2`
-- fix-gateway `NAVSRC`: `0=GPS, 1=NAV1, 2=NAV2`
-- X-Plane `XPHSISRC`: `0=NAV1, 1=NAV2, 2=GPS`
-
-The bus-native canonical is OBI Flags; document the mapping (or migrate `NAVSRC`
-to match).
+**Source-numbering reconciliation.** Three encodings of the active nav input are
+in play (OBI Flags vs `NAVSRC` vs `XPHSISRC`); **§4.3** reconciles them and
+recommends aligning `NAVSRC` to the bus-native ordering.
 
 **Where the work lands.** The **CAN-FiX schema barely changes** (only the optional
 OBS/SUSP bits). The real work is in the **fix-gateway key layer** — expose
@@ -162,6 +156,55 @@ assumed: build the data (mostly already there), then the pixels.
 > renders the dots it is given and **never computes scaling** — this also keeps
 > existing consumers (the autopilot) unaffected. No `CDISCALE` key is added; the
 > normalized convention already present in the widget is correct.
+
+### 4.3 Source-numbering reconciliation (recommendation)
+
+Three encodings of "which nav input is active" are in play:
+
+| Input | OBI Flags 450 b1:b2 (CAN-FiX) | `NAVSRC` today | `NAVSRC` proposed | X-Plane `XPHSISRC` |
+|---|---|---|---|---|
+| NAV1 | 0 (`00`) | 1 | 0 | 0 |
+| NAV2 | 1 (`01`) | 2 | 1 | 1 |
+| GPS (1) | 2 (`10`) | 0 | 2 | 2 |
+| GPS2 | 3 (`11`) | — | 3 | (2) |
+
+`NAVSRC` today is the **only outlier** (GPS-first). That single difference is why
+fix-gateway needs the `[2, 0, 1]` remap to X-Plane today — and would need a second
+table to decode OBI Flags from real hardware.
+
+**Recommendation: migrate `NAVSRC` to the bus-native NAV-first ordering**
+(`0=NAV1, 1=NAV2, 2=GPS`, extensible `3=GPS2`). This collapses all three schemes
+into one:
+
+1. **Bus-native.** `NAVSRC` then equals OBI Flags b1:b2 directly — a real CAN-FiX
+   nav/GPS source's OBI Flags decodes into `NAVSRC` with no table.
+2. **X-Plane alignment.** X-Plane's HSI source is already NAV-first
+   (`0=NAV1, 1=NAV2, 2=GPS`), so `XPHSISRC` becomes **identity** with `NAVSRC` and
+   the `[2, 0, 1]` remap disappears.
+3. **Dual GPS.** The 2-bit OBI space distinguishes GPS1/GPS2; the 3-value `NAVSRC`
+   cannot. NAV-first ordering leaves room (`3=GPS2`).
+
+**Concrete fix-gateway changes (single-GPS panels):**
+- `ahrs.yaml`: `NAVSRC` description → `0=NAV1, 1=NAV2, 2=GPS`; `max` stays 3.
+- `compute.yaml`: reorder the three `select` input lists from
+  `[NAVSRC, GPS*, NAV1*, NAV2*]` to `[NAVSRC, NAV1*, NAV2*, GPS*]`; the `XPHSISRC`
+  `remap` becomes identity (`table: [0, 1, 2]`) or is dropped (write `NAVSRC`
+  straight to `XPHSISRC`).
+- The nav-source **button**: its cycle is now NAV1→NAV2→GPS. If GPS-primary
+  cycling is preferred, set the button's start value or a custom cycle — that is a
+  UX choice independent of the encoding.
+- Migration is contained: the button writes `NAVSRC` dynamically (no hard-coded
+  value in saved panels), so few or no configs change meaning. It is a live
+  behavior change to fix-gateway, so it should be made deliberately and verified
+  on the bench (X-Plane HSI source still follows after the change).
+
+**Command vs. status (forward-looking).** `NAVSRC` is a *selection command*; OBI
+Flags b1:b2 is the *active-input status*. They coincide today, but Garmin-style
+**auto-switching** (GPS → LOC on an ILS before the FAF) makes the active input
+differ from the manual selection. So the widget should colour/annunciate from the
+**active source** (OBI Flags / a status key), not the raw `NAVSRC` command. For
+now fix-gateway can publish them as the same value; keeping them conceptually
+separate lets auto-switching drop in later without a redesign.
 
 ## 5. Appearance options (category 1 — editor)
 
