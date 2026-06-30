@@ -224,29 +224,39 @@ def _ai_overlay_props():
         Prop("pitchDegreesShown", "number", default=30,
              label="Pitch field of view (deg)",
              help="total vertical pitch span shown"),
-        Prop("minorDiv", "integer", default=1, label="Minor division (deg)"),
-        Prop("majorDiv", "integer", default=5, label="Major division (deg)"),
+        Prop("minorDiv", "integer", default=1, label="Minor division (deg)",
+             help="pitch interval between the smallest ladder ticks"),
+        Prop("majorDiv", "integer", default=5, label="Major division (deg)",
+             help="pitch interval between the longer ladder ticks"),
         Prop("numberedDiv", "integer", default=10,
-             label="Numbered division (deg)"),
+             label="Numbered division (deg)",
+             help="pitch interval at which ladder lines get a number"),
         Prop("visiblePitchAngle", "integer", default=15,
              label="Pitch label range (deg)",
              help="ladder marks fade out beyond this from current pitch"),
         Prop("pitchOpacity", "number", default=0.6, minimum=0.0, maximum=1.0,
-             label="Pitch ladder opacity"),
+             label="Pitch ladder opacity",
+             help="pitch-ladder opacity (0 = invisible, 1 = solid)"),
         Prop("tick_autoscale", "boolean", default=True,
              label="Auto-scale tick widths to font",
              help="off = use the explicit tick-width / bank-size pixels below"),
         Prop("minorDivWidth", "integer", default=10,
-             label="Minor tick width (px)"),
+             label="Minor tick width (px)",
+             help="length of the minor pitch ticks (auto-scale off)"),
         Prop("majorDivWidth", "integer", default=40,
-             label="Major tick width (px)"),
+             label="Major tick width (px)",
+             help="length of the major pitch ticks (auto-scale off)"),
         Prop("numberedDivWidth", "integer", default=50,
-             label="Numbered tick width (px)"),
+             label="Numbered tick width (px)",
+             help="length of the numbered pitch ticks (auto-scale off)"),
         Prop("drawBankMarkers", "boolean", default=True,
-             label="Standard-rate bank markers"),
+             label="Standard-rate bank markers",
+             help="show the bank-angle tick arc across the top"),
         Prop("bankAngleMaximum", "integer", default=25,
-             label="Max indicated bank (deg)"),
-        Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)"),
+             label="Max indicated bank (deg)",
+             help="largest bank angle marked on the bank arc"),
+        Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)",
+             help="length of the bank-arc ticks (auto-scale off)"),
     ]
 
 
@@ -317,7 +327,8 @@ _register(InstrumentSpec(
              enum=["classic", "garmin", "brackets"], label="Aircraft symbol",
              help="classic split-wing bars, GI-275/G1000 wedges, or "
                   "GRT-style L-brackets"),
-        Prop("symbol_color", "color", default="#ffff00", label="Symbol colour"),
+        Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
+             help="colour of the fixed aircraft reference symbol"),
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
@@ -339,14 +350,19 @@ _register(InstrumentSpec(
     keep_aspect=True,
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
-             apply="setter:setDbkey"),
-        Prop("name", "string", default="", label="Name"),
-        Prop("decimal_places", "integer", default=1, label="Decimal places"),
-        Prop("show_units", "boolean", default=False, label="Show units"),
+             apply="setter:setDbkey",
+             help="FIX-database key whose value this gauge displays"),
+        Prop("name", "string", default="", label="Name",
+             help="label drawn on the gauge (e.g. OIL P, CHT)"),
+        Prop("decimal_places", "integer", default=1, label="Decimal places",
+             help="digits after the decimal point in the readout"),
+        Prop("show_units", "boolean", default=False, label="Show units",
+             help="append the FIX key's engineering units to the readout"),
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid band; >0 draws a segmented (LED-style) band"),
         Prop("name_location", "enum", default="top", enum=["top", "right"],
-             label="Name location"),
+             label="Name location",
+             help="where the name label sits relative to the gauge"),
     ],
     # The colour-band thresholds and the value range are FIX-database values
     # (item min/max + aux), set in fix-gateway, not in the panel editor (#64).
@@ -377,10 +393,13 @@ _register(InstrumentSpec(
         # NOTE: no editable dbkey -- Airspeed_Tape is hard-wired to IAS (it has
         # no setDbkey and reads the V-speed aux off that item). The old curated
         # schema offered a dbkey option that did nothing; dropped.
-        Prop("show_tas", "boolean", default=True, label="Show TAS box"),
-        Prop("show_trend", "boolean", default=True, label="Show trend arrow"),
+        Prop("show_tas", "boolean", default=True, label="Show TAS box",
+             help="show the true-airspeed readout box (from TAS)"),
+        Prop("show_trend", "boolean", default=True, label="Show trend arrow",
+             help="show the acceleration trend vector along the tape"),
         Prop("trend_lookahead", "number", default=6.0,
-             label="Trend look-ahead (s)"),
+             label="Trend look-ahead (s)",
+             help="seconds ahead the trend vector projects current accel"),
     ],
     # V-speeds come from the IAS item's aux (fix-gateway), not the panel editor.
     fix_values=[
@@ -453,15 +472,24 @@ _register(InstrumentSpec(
     # All options are consumed by build_altimeter_tape at construction
     # (apply="special"); defaults are the Altimeter_Tape constructor defaults.
     properties=[
-        Prop("dbkey", "fixkey", default="ALT", label="FIX key", apply="special"),
-        Prop("maxalt", "integer", default=50000, label="Max altitude", apply="special"),
-        Prop("majorDiv", "integer", default=200, label="Major division", apply="special"),
-        Prop("minorDiv", "integer", default=100, label="Minor division", apply="special"),
-        Prop("total_decimals", "integer", default=5, label="Total digits", apply="special"),
-        Prop("font_mask", "string", default="00000", label="Font mask", apply="special"),
-        Prop("round_to", "number", default=0, label="Round readout to", apply="special"),
-        Prop("numeric_box", "boolean", default=True, label="Show numeric box", apply="special"),
-        Prop("font_scale", "number", default=1.0, label="Scale-number font scale", apply="special"),
+        Prop("dbkey", "fixkey", default="ALT", label="FIX key", apply="special",
+             help="FIX key driving the tape (default ALT)"),
+        Prop("maxalt", "integer", default=50000, label="Max altitude", apply="special",
+             help="top of the tape's altitude range (ft)"),
+        Prop("majorDiv", "integer", default=200, label="Major division", apply="special",
+             help="altitude between labelled tape ticks (ft)"),
+        Prop("minorDiv", "integer", default=100, label="Minor division", apply="special",
+             help="altitude between the small tape ticks (ft)"),
+        Prop("total_decimals", "integer", default=5, label="Total digits", apply="special",
+             help="number of digits in the altitude readout"),
+        Prop("font_mask", "string", default="00000", label="Font mask", apply="special",
+             help="widest string the readout reserves space for (sizing)"),
+        Prop("round_to", "number", default=0, label="Round readout to", apply="special",
+             help="round the readout to this increment (0 = none)"),
+        Prop("numeric_box", "boolean", default=True, label="Show numeric box", apply="special",
+             help="show the boxed numeric altitude over the tape"),
+        Prop("font_scale", "number", default=1.0, label="Scale-number font scale", apply="special",
+             help="multiplier on the tape scale-number font size"),
     ],
     preview={"value": 3500},
 ))
@@ -490,35 +518,38 @@ _register(InstrumentSpec(
     # self.cdi_enabled / self.gsi_enabled at paint time. COURSE/CDI/GSI/HEAD are
     # direct FIX keys (no aux), so no fix_values.
     properties=[
-        Prop("cdi_enabled", "boolean", default=True, label="CDI"),
-        Prop("gsi_enabled", "boolean", default=True, label="Glideslope"),
-        Prop("fg_color", "color", default="#ffffff", label="Foreground"),
-        Prop("bg_color", "color", default="#000000", label="Background"),
+        Prop("cdi_enabled", "boolean", default=True, label="CDI",
+             help="show the lateral course-deviation needle (CDI)"),
+        Prop("gsi_enabled", "boolean", default=True, label="Glideslope",
+             help="show the vertical glideslope needle (GSI)"),
+        Prop("fg_color", "color", default="#ffffff", label="Foreground",
+             help="compass card, ring and text colour"),
+        Prop("bg_color", "color", default="#000000", label="Background",
+             help="compass-disc fill colour"),
         # Fills the compass disc (not the box); 0 = transparent over the SVS/PFD.
         _bg_opacity_prop(),
-        # CDI/GSI deviation needle (yellow by default).
-        Prop("needle_color", "color", default="#ffff00", label="Needle color"),
+        Prop("needle_color", "color", default="#ffff00", label="Needle color",
+             help="colour of the CDI/GSI deviation needles"),
         Prop("needle_width", "integer", default=3, minimum=1, maximum=10,
-             step=1, label="Needle width"),
-        # Selected-course pointer (the magenta CRS triangle, driven by COURSE).
+             step=1, label="Needle width",
+             help="width of the CDI/GSI deviation needles (px)"),
         Prop("course_color", "color", default="#ff00ff",
-             label="Course pointer color"),
-        # Garmin-style heading bug: a cyan marker that scrolls to the selected
-        # heading (HEADBUG key). Off by default -- needs a selected-heading
-        # source on the bus.
+             label="Course pointer color",
+             help="selected-course pointer (the magenta CRS triangle)"),
         Prop("heading_bug_enabled", "boolean", default=False,
-             label="Heading bug"),
+             label="Heading bug",
+             help="show the cyan heading bug at the selected heading (HEADBUG)"),
         Prop("heading_bug_color", "color", default="#00ffff",
-             label="Heading bug color"),
-        # GPS ground-track diamond (magenta), driven by TRACK. On by default; it
-        # self-hides without a valid TRACK and (when GS exists) below the speed
-        # gate, so GPS panels get it for free and others are unaffected.
+             label="Heading bug color", help="heading-bug colour"),
         Prop("track_indicator_enabled", "boolean", default=True,
-             label="Track diamond"),
+             label="Track diamond",
+             help="show the magenta GPS ground-track diamond (TRACK), "
+                  "above the speed gate"),
         Prop("track_color", "color", default="#ff00ff",
-             label="Track diamond color"),
+             label="Track diamond color", help="GPS ground-track diamond colour"),
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
-             step=1, label="Track min speed (kt)"),
+             step=1, label="Track min speed (kt)",
+             help="hide the track diamond below this groundspeed (kt)"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
 ))
@@ -553,11 +584,16 @@ def _gauge_fix_values():
 def _bar_gauge_props():
     return [
         Prop("dbkey", "fixkey", default="", label="FIX key",
-             apply="setter:setDbkey"),
-        Prop("name", "string", default="", label="Name"),
-        Prop("decimal_places", "integer", default=1, label="Decimal places"),
-        Prop("show_units", "boolean", default=True, label="Show units"),
-        Prop("segments", "integer", default=0, label="Segments"),
+             apply="setter:setDbkey",
+             help="FIX-database key whose value this gauge displays"),
+        Prop("name", "string", default="", label="Name",
+             help="label drawn on the gauge (e.g. OIL P, CHT)"),
+        Prop("decimal_places", "integer", default=1, label="Decimal places",
+             help="digits after the decimal point in the readout"),
+        Prop("show_units", "boolean", default=True, label="Show units",
+             help="append the FIX key's engineering units to the readout"),
+        Prop("segments", "integer", default=0, label="Segments",
+             help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
     ]
 
 
@@ -605,10 +641,14 @@ _register(InstrumentSpec(
                  screen, font_family=font_family)),
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
-             apply="setter:setDbkey"),
-        Prop("decimal_places", "integer", default=1, label="Decimal places"),
-        Prop("font_mask", "string", default="000", label="Font mask"),
-        Prop("show_units", "boolean", default=False, label="Show units"),
+             apply="setter:setDbkey",
+             help="FIX-database key whose value is displayed"),
+        Prop("decimal_places", "integer", default=1, label="Decimal places",
+             help="digits after the decimal point in the readout"),
+        Prop("font_mask", "string", default="000", label="Font mask",
+             help="widest string the readout reserves space for (sizing)"),
+        Prop("show_units", "boolean", default=False, label="Show units",
+             help="append the FIX key's engineering units to the readout"),
     ],
     fix_values=_gauge_fix_values(),
 ))
@@ -622,8 +662,10 @@ _register(InstrumentSpec(
                  screen, font_family=font_family, font_percent=font_percent)),
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
-             apply="setter:setDbkey"),
-        Prop("font_mask", "string", default="", label="Font mask"),
+             apply="setter:setDbkey",
+             help="FIX-database key whose value is displayed"),
+        Prop("font_mask", "string", default="", label="Font mask",
+             help="widest string the text reserves space for (sizing)"),
         Prop("number_format", "string", default="", label="Number format",
              help="Digit mask: blank = as-is; 000 = 089 (rounded, "
                   "zero-padded); 000.0 = 089.0 (with decimals)"),
@@ -637,10 +679,12 @@ _register(InstrumentSpec(
     builder=build_static_text,
     properties=[
         Prop("text", "string", default="Text", label="Text", required=True,
-             apply="special"),
+             apply="special", help="the fixed text to display"),
         Prop("alignment", "enum", default="AlignLeft",
-             enum=["AlignLeft", "AlignCenter", "AlignRight"], label="Alignment"),
-        Prop("font_mask", "string", default="", label="Font mask"),
+             enum=["AlignLeft", "AlignCenter", "AlignRight"], label="Alignment",
+             help="horizontal text alignment within the widget"),
+        Prop("font_mask", "string", default="", label="Font mask",
+             help="widest string the text reserves space for (sizing)"),
     ],
 ))
 
@@ -777,7 +821,8 @@ _register(InstrumentSpec(
              enum=["classic", "garmin", "brackets"], label="Aircraft symbol",
              help="classic split-wing bars, GI-275/G1000 wedges, or "
                   "GRT-style L-brackets"),
-        Prop("symbol_color", "color", default="#ffff00", label="Symbol colour"),
+        Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
+             help="colour of the fixed aircraft reference symbol"),
         # SVS-only: raise the level-flight horizon so the ground area expands
         # (more room for instruments like the HSI in the lower third). The whole
         # attitude reference -- horizon, ladder, symbol, terrain -- shifts up
@@ -790,7 +835,9 @@ _register(InstrumentSpec(
         # which stylised backdrop the configurator twin shows for layout.
         Prop("preview_scene", "enum", default="mountains",
              enum=["mountains", "approach", "coastal"],
-             label="Preview scene (editor)", apply="special"),
+             label="Preview scene (editor)", apply="special",
+             help="which stylised backdrop the editor twin shows (preview "
+                  "only; the device renders real terrain)"),
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
@@ -811,8 +858,10 @@ _register(InstrumentSpec(
         # editor default. font_size is intentionally NOT exposed: the widget
         # recomputes it from the box size on resize (fit_to_mask), so it was a
         # no-op option. Use the common font_percent to scale instead.
-        Prop("fg_color", "color", default="#aaaaaa", label="Foreground"),
-        Prop("bg_color", "color", default="#000000", label="Background"),
+        Prop("fg_color", "color", default="#aaaaaa", label="Foreground",
+             help="heading-text colour"),
+        Prop("bg_color", "color", default="#000000", label="Background",
+             help="background-box fill colour"),
         _bg_opacity_prop(),
     ],
 ))

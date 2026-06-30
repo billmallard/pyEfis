@@ -60,6 +60,17 @@ def test_dbkeys_come_from_registry():
     assert s["instruments"]["static_text"]["dbkeys"] == []
 
 
+def test_every_option_has_help():
+    """Every editable option carries help text, which the editor renders as a
+    tooltip (the configurator's optionField info icon). Enforced so tooltip
+    coverage cannot regress when an instrument gains an option."""
+    s = eschema.build_schema()
+    missing = [(t, name) for t, e in s["instruments"].items()
+               for name, opt in e.get("options", {}).items()
+               if not opt.get("help")]
+    assert missing == [], f"options without help=: {missing}"
+
+
 def test_default_options_are_typed():
     """Migrated instruments expose typed default options sourced from their
     record. heading_display moved off the legacy INSTRUMENT_DEFAULT_OPTIONS: its
