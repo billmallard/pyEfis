@@ -335,6 +335,10 @@ class HSI(QGraphicsView):
         # on, else course_color.
         triangle = self.course_pointer_polygon()
         self.course_pointer = self.scene.addPolygon(triangle, headingPen, headingBrush)
+        # The visible course pointer + CDI are drawn in paintEvent, rotated to the
+        # course on the heading-up card (HSI style); hide the scene triangle so the
+        # head is not doubled. The item is kept for course/state bookkeeping.
+        self.course_pointer.setVisible(False)
 
         # Garmin-style heading bug (cyan): scrolls to the HEADBUG selected
         # heading on the inside of the ring. Drawn only when enabled.
@@ -511,51 +515,65 @@ class HSI(QGraphicsView):
         c.setRenderHint(QPainter.RenderHint.Antialiasing)
 
 
-        # GSI index tics
+        # Course pointer + lateral deviation (CDI) + TO/FROM as one assembly,
+        # rotated to the selected course on the heading-up card (on-screen course
+        # angle = COURSE - HEADING) so it turns with the rose like a real HSI.
         if self.cdi_enabled or self.gsi_enabled:
-            c.setPen(compassPen)
-            deviation = -1.0
-            while deviation <= 1.0:
-                c.drawLine(qRound(self.cx - 5), qRound(self.cy + deviation*self.gsipph),
-                           qRound(self.cx + 5), qRound(self.cy + deviation*self.gsipph))
-                c.drawLine(qRound(self.cx + deviation*self.cdippw), qRound(self.cy - 5),
-                           qRound(self.cx + deviation*self.cdippw), qRound(self.cy + 5))
-                deviation += 1.0/3.0
+            ang = (self._courseSelect - self._heading) * math.pi / 180.0
+            ca = math.cos(ang); sa = math.sin(ang)
 
-            c.setPen(cdiPen)
-            self._showCDI = not (self._CdiOld or self._CdiBad)
-            if self._showCDI and self.cdi_enabled:
-                x = self.cx + self._courseDeviation * self.cdippw
-                c.drawLine(qRound(x), qRound(self.cy + self.r - self.fontSize*2 - 6),
-                           qRound(x), qRound(self.cy - self.r + self.fontSize*2 + 6))
-       
-            self._showGSI = (self._gsv is None or self._gsv >= 0.5) and not (self._GsiOld or self._GsiBad)
-            if self._showGSI and self.gsi_enabled:
-                y = self.cy - self._glideSlopeIndicator * self.gsipph
-                c.drawLine(qRound(self.cx + self.r - self.fontSize*2 - 6), qRound(y),
-                           qRound(self.cx - self.r + self.fontSize*2 + 6), qRound(y))
+            def _p(lx, ly):   # local (lateral, along; -along = toward course head)
+                return QPointF(self.cx + lx*ca - ly*sa, self.cy + ly*ca + lx*sa)
 
-            # TO/FROM indicator: a triangle on the course line near centre,
-            # pointing toward the course head (TO) or tail (FROM). Source-coloured;
-            # shown only when the lateral is valid and the source resolves a
-            # TO/FROM (a VOR; off for LOC/GPS).
-            tf = int(round(self._tofrom)) if self._tofrom else 0
-            if self.cdi_enabled and self._showCDI and tf in (1, 2):
-                _sc = self._source_color() or QColor(self.needle_color)
-                c.setPen(QPen(_sc))
-                c.setBrush(QBrush(_sc))
-                ang = (self._courseSelect - self._heading) * math.pi / 180.0
-                cosa = math.cos(ang); sina = math.sin(ang)
-                rr = self.r * 0.42
-                s = self.tickSize * 0.6
-                length = self.tickSize * 1.1
-                if tf == 1:                       # TO: apex outward (toward head)
-                    pts = [(0, -(rr + length)), (s, -rr), (-s, -rr)]
-                else:                             # FROM: apex inward (toward tail)
-                    pts = [(0, -(rr - length)), (s, -rr), (-s, -rr)]
-                pts = [QPointF((ix*cosa - iy*sina) + self.cx,
-                               (iy*cosa + ix*sina) + self.cy) for ix, iy in pts]
-                c.drawPolygon(QPolygonF(pts))
+            ext = self.r - self.fontSize * 2.0
+            bar = self.cdippw
+            self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad)
+            self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
+                and not (self._GsiOld or self._GsiBad)
+
+            if self.cdi_enabled:
+                # Lateral deviation scale dots (white) along the lateral axis.
+                c.setPen(QPen(QColor(self.fg_color)))
+                c.setBrush(QBrush(QColor(self.fg_color)))
+                dotr = max(1.5, self.tickSize * 0.16)
+                for dev in (-1.0, -2.0/3.0, -1.0/3.0, 1.0/3.0, 2.0/3.0, 1.0):
+                    c.drawEllipse(_p(dev * bar, 0.0), dotr, dotr)
+                # Course pointer (source colour): head + tail through centre with
+                # an arrowhead; the CDI bar (middle) carries the lateral deviation.
+                cpc = self._course_pointer_color()
+                cw = max(2, int(getattr(self, "needle_width", 3)))
+                c.setPen(QPen(cpc, cw)); c.setBrush(QBrush(cpc))
+                arr = self.tickSize
+                c.drawLine(_p(0.0, bar), _p(0.0, ext))                     # tail
+                c.drawLine(_p(0.0, -bar), _p(0.0, -ext + arr))             # head
+                c.drawPolygon(QPolygonF([_p(0.0, -ext), _p(arr * 0.55, -ext + arr),
+                                         _p(-arr * 0.55, -ext + arr)]))    # arrowhead
+                if self._showCDI:
+                    off = self._courseDeviation * bar
+                    c.drawLine(_p(off, -bar), _p(off, bar))                # CDI bar
+                # TO/FROM triangle: apex toward the head (TO) or tail (FROM).
+                tf = int(round(self._tofrom)) if self._tofrom else 0
+                if self._showCDI and tf in (1, 2):
+                    rr = self.r * 0.42
+                    s = self.tickSize * 0.6
+                    length = self.tickSize * 1.1
+                    if tf == 1:
+                        pts = [(0.0, -(rr + length)), (s, -rr), (-s, -rr)]
+                    else:
+                        pts = [(0.0, -(rr - length)), (s, -rr), (-s, -rr)]
+                    c.drawPolygon(QPolygonF([_p(lx, ly) for lx, ly in pts]))
+
+            if self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5):
+                # Glideslope: centred vertical scale + needle (hidden for a VOR).
+                c.setPen(compassPen)
+                for dev in (-1.0, -2.0/3.0, -1.0/3.0, 1.0/3.0, 2.0/3.0, 1.0):
+                    c.drawLine(qRound(self.cx - 5), qRound(self.cy + dev*self.gsipph),
+                               qRound(self.cx + 5), qRound(self.cy + dev*self.gsipph))
+                if self._showGSI:
+                    c.setPen(cdiPen)
+                    y = self.cy - self._glideSlopeIndicator * self.gsipph
+                    c.drawLine(qRound(self.cx + self.r - self.fontSize*2 - 6), qRound(y),
+                               qRound(self.cx - self.r + self.fontSize*2 + 6), qRound(y))
 
         # Nav-source annunciation (top-left), coloured to match the active source.
         if getattr(self, "source_label_enabled", True):
@@ -625,6 +643,8 @@ class HSI(QGraphicsView):
             self._courseSelect = common.bounds(0, 360, course)
             if self.course_pointer is not None:
                 self.course_pointer.setPolygon(self.course_pointer_polygon())
+            if self.isVisible():
+                self.update()
 
     coursePointer = property(getCoursePointer, setCoursePointer)
 
