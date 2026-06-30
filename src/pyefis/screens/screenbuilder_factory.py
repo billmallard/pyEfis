@@ -740,6 +740,10 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: airspeed.Airspeed_Box(screen, font_family=font_family)),
     dbkeys=["IAS", "GS", "TAS"],
+    # Deprecated in favour of the Value Text widget (configurable prefix, value
+    # colour and box). Hidden from the palette but kept in the schema so panels
+    # that already place it still load and render.
+    hidden=True,
 ))
 
 _register(InstrumentSpec(
@@ -897,6 +901,10 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: hsi.HeadingDisplay(screen, font_family=font_family)),
     dbkeys=["HEAD"],
+    # Deprecated in favour of the Value Text widget (a HEAD-bound value with a
+    # "HDG" prefix, colour and box). Hidden from the palette but kept in the
+    # schema so panels that already place it still load and render.
+    hidden=True,
     properties=[
         # Default fg is light grey (#aaaaaa) -- the widget default was the
         # darker Qt "gray" (#808080); aligned for readability + a matching

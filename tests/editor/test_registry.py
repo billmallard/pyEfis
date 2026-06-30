@@ -189,12 +189,24 @@ def test_attr_property_defaults_match_widget(fix, qtbot, hmi_actions):
 
 def test_data_status_is_hidden_from_the_palette():
     """The data-management boot screen is system-managed (gui forces it on
-    boot), so data_status is hidden from the configurator palette; the
-    data-currency annunciator placed on flight screens stays visible, and no
-    other instrument is hidden."""
+    boot), so data_status is hidden from the configurator palette, while the
+    data-currency annunciator placed on flight screens stays visible."""
     s = eschema.build_schema()
     assert factory.REGISTRY["data_status"].hidden is True
     assert s["instruments"]["data_status"]["hidden"] is True
     assert s["instruments"]["data_annunciation"]["hidden"] is False
-    hidden = sorted(t for t, e in s["instruments"].items() if e.get("hidden"))
-    assert hidden == ["data_status"], hidden
+    hidden = {t for t, e in s["instruments"].items() if e.get("hidden")}
+    assert "data_status" in hidden
+
+
+def test_superseded_types_are_hidden_from_the_palette():
+    """airspeed_box and heading_display are deprecated in favour of the Value
+    Text widget, so they are hidden from the palette -- but they remain real,
+    buildable types in the schema so panels that already place them still load
+    and render."""
+    s = eschema.build_schema()
+    for t in ("airspeed_box", "heading_display"):
+        assert factory.REGISTRY[t].hidden is True, t
+        assert s["instruments"][t]["hidden"] is True, t
+        # still present + buildable -- hidden only suppresses palette placement
+        assert t in factory.INSTRUMENT_FACTORIES, t
