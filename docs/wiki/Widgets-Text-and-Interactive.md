@@ -85,6 +85,16 @@ unlike the gauges, it does **not** apply warn/alarm threshold colors.
 | `prefix_font_percent` | **50** | prefix height as a percent of the widget height |
 | `prefix_color` | **`#ffffff`** | colour of the prefix label |
 | `value_color` | **`#ffffff`** | colour of the data value (good/normal state; bad/old still grey, annunciate still red) |
+| `border_color` | **`#ffffff`** | box border colour |
+| `border_width` | **0** | box border thickness in px (0 = no border) |
+| `border_opacity` | **100** | box border opacity (%) |
+| `bg_color` | **`#000000`** | box background fill colour |
+| `bg_opacity` | **0** | box background opacity (%); 0 = transparent (no fill) |
+
+The optional **box** (border + background) is drawn at the widget bounds — the
+same rectangle you drag/resize on screen — under the text. With `border_width`
+and `bg_opacity` both at 0 (the defaults) there is no box, so existing displays
+are unchanged.
 
 The prefix is drawn in its own font/size/colour, baseline-aligned with the value
 and positioned by `alignment` — so `prefix_text: HDG` over `dbkey: HEAD` gives a
