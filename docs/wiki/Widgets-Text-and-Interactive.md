@@ -79,6 +79,16 @@ unlike the gauges, it does **not** apply warn/alarm threshold colors.
 | `font_mask` | none | sizing template (see [Concepts §4](Concepts#4-fonts-masks--ghosting)) |
 | `font_ghost_mask` | none | dim "unlit segment" backing string |
 | `font_ghost_alpha` | **50** | opacity (0–255) of the ghost layer |
+| `number_format` | none | digit mask for the value: blank = as-is; `000` = `089` (rounded, zero-padded); `000.0` = `089.0` (with decimals) |
+| `prefix_text` | none | static label drawn inline **before** the value (e.g. `HDG`, `CRS`); empty = no prefix |
+| `prefix_font_family` | **`Open Sans`** | font family for the prefix label |
+| `prefix_font_percent` | **50** | prefix height as a percent of the widget height |
+| `prefix_color` | **`#ffffff`** | colour of the prefix label |
+| `value_color` | **`#ffffff`** | colour of the data value (good/normal state; bad/old still grey, annunciate still red) |
+
+The prefix is drawn in its own font/size/colour, baseline-aligned with the value
+and positioned by `alignment` — so `prefix_text: HDG` over `dbkey: HEAD` gives a
+Garmin-style **`HDG 114`** with the label and value styled independently.
 
 Color attributes exist on the instance and can be overridden, but they are named
 in this widget's own form (not the gauge `_good_`/`_bad_` form): `textGoodColor`,
@@ -95,9 +105,9 @@ in this widget's own form (not the gauge `_good_`/`_bad_` form): `textGoodColor`
     font_mask: "000"
 ```
 
-> The value is rendered with `str(value)` — there is no `decimal_places` option
-> here. For numeric formatting, rounding, or threshold coloring use
-> [`numeric_display`](Widgets-Engine-Gauges#numeric_display).
+> Use `number_format` for rounding / zero-padding the value. It applies no
+> threshold coloring (the value just follows its quality flags); for warn/alarm
+> bands use [`numeric_display`](Widgets-Engine-Gauges#numeric_display).
 
 ---
 
