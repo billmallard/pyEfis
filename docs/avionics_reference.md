@@ -255,7 +255,30 @@ white / yellow arcs + a thin **red VNE line**, a fixed pointer, a digital IAS re
 **Gaps (§17.7.1):** no **low-speed red band VSO→0** (AS-LSA-001) and no **high-speed red
 band VNE→top** — only a hairline VNE radial, not the required band (AS-HSA-001).
 
-## 7. Requirement IDs and traceability
+## 7. Vertical speed indicator (VSI) — source material
+
+Requirements + IDs live in `vsi_widget_spec.md §4`.
+
+- **AC 23.1311-1C §8.11 (p.24)** — *"If provided, present the vertical speed indicator to
+  the right or directly below the altitude indicator with a scale appropriate to the
+  performance of the aircraft."* → placement (right of / below the altimeter) + a
+  performance-appropriate range.
+- **AC 25-11B §A.6 (p.74)** — *the display range of vertical speed (rate of climb) should
+  be consistent with the climb/descent performance capabilities of the airplane*; if a TCAS
+  RA is integrated, the range must be sufficient to show the red/green RA bands.
+- **AC 25-11B §4.2 Table 4-6 (p.32)** — safety objectives for "other parameters":
+  **loss of all vertical-speed displays = Major**, and **display of misleading
+  vertical-speed information = Major**. So VS-invalid must be annunciated, not shown as a
+  live value (governing principle §2). (Major, not Catastrophic like attitude — but still a
+  flag/remove, not silent freeze.)
+- Placement of the primary VSI *to the right of the primary altitude* is echoed in
+  AC 25-11B (barometric setting / primary VSI to the right of the altitude indication).
+
+Colour (§22 / Table 5-1): the failure flag is **red**; a degraded (`old`/`bad`) indication
+greys. pyEfis status: `VSI_Dial` and `Alt_Trend_Tape` annunciate `fail`/`old`/`bad`; the
+`VSI_PFD` moving dot does **not** yet (VSI-ANN-001 gap — the Major "misleading VS" case).
+
+## 8. Requirement IDs and traceability
 
 The chain, grep-able end-to-end:
 
@@ -271,7 +294,7 @@ AC 25-11B p.43       HSI-COLOR-001          HSI-TC-###             test_hsi_... 
 - The **repo is the system of record** (requirements + catalog + IDs). Issue trackers hold the
   *work* (implement a gap, write a case), not the requirements.
 
-## 8. Open items / to-mine
+## 9. Open items / to-mine
 
 - [ ] Deep-read **AC 25-11B** ch. 4–5 and **AC 23.1311-1C §17/§18/§22** for the full alerting +
       symbology + colour requirement set; pin pages.

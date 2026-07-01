@@ -230,3 +230,94 @@ def test_alt_trend_tape_unchanged_setters_skip_redraw(fix, qtbot):
 
     assert widget.getFail() is False
     widget.redraw.assert_not_called()
+
+
+# =============================================================================
+# VSI requirements test catalog -- keyed to vsi_widget_spec.md sec 4 (Scale,
+# Sign & Annunciation) and avionics_reference.md sec 7.
+#
+# Docstrings: VSI-TC-NNN | requirement ID | intent.
+# Passing tests verify shipped behaviour. The xfail(strict) test is the gap
+# tracker for VSI_PFD invalid-VS annunciation (AC 25-11B Table 4-6: display of
+# misleading vertical speed = Major): today its magenta dot always draws. Spec
+# sec 5 carries the case<->requirement map.
+# =============================================================================
+
+
+def test_vsi_cat_scale_zero_and_sign(fix, qtbot):
+    """VSI-TC-001 | VSI-DISP-001 | The VSI shows a performance-appropriate scale with a
+    clear zero and up=climb / down=descend. AC 23.1311-1C sec 8.11 (p.24); AC 25-11B sec A.6."""
+    _reset_vs_item(fix)
+    tape = vsi.Alt_Trend_Tape()
+    tape.myparent = _parent(qtbot, update_period=0)
+    _show_widget(qtbot, tape)
+    assert tape.y_offset(0) == tape.zero_y                 # clear zero reference
+    assert tape.y_offset(1000) < tape.zero_y               # climb -> up
+    assert tape.y_offset(-1000) > tape.zero_y              # descend -> down
+
+    pfd = vsi.VSI_PFD()
+    _show_widget(qtbot, pfd)
+    assert pfd.max == 2000                                 # performance range (fpm)
+    assert (2000, "2000") in pfd.marks                     # marks span the range
+
+
+def test_vsi_cat_dial_invalid_annunciation(fix, qtbot):
+    """VSI-TC-002 | VSI-ANN-001 | The round dial annunciates invalid VS: fail -> red XXX,
+    old/bad -> grey. AC 25-11B Table 4-6 (p.32, Major); ref sec 2."""
+    item = _reset_vs_item(fix)
+    widget = vsi.VSI_Dial()
+    event = _show_widget(qtbot, widget)
+
+    with track_calls(QPen, "__init__") as tracker:
+        item.bad = True
+        widget.paintEvent(event)
+    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.gray))
+
+    item.bad = False
+    with track_calls(QPen, "__init__") as tracker:
+        item.fail = True
+        widget.paintEvent(event)
+    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))
+
+
+def test_vsi_cat_tape_invalid_annunciation(fix, qtbot):
+    """VSI-TC-003 | VSI-ANN-001 | The VS tape annunciates invalid VS: fail -> XXX + bar
+    removed, old/bad -> blank value. AC 25-11B Table 4-6 (p.32, Major); ref sec 2."""
+    _reset_vs_item(fix)
+    widget = vsi.Alt_Trend_Tape()
+    widget.myparent = _parent(qtbot, update_period=0)
+    _show_widget(qtbot, widget)
+    widget.redraw()
+    assert widget.indicator_line is not None
+
+    widget.fail = True
+    assert widget.vstext.toPlainText() == "XXX"            # fail -> flag
+    assert widget.indicator_line is None                   # ...and bar removed
+    widget.fail = False
+    widget.bad = True
+    assert widget.vstext.toPlainText() == ""               # bad -> no live value
+    widget.bad = False
+    widget.old = True
+    assert widget.vstext.toPlainText() == ""               # old -> no live value
+
+
+@pytest.mark.xfail(strict=True, reason="VSI-ANN-001 gap: VSI_PFD dot ignores fail/old/bad")
+def test_vsi_cat_pfd_invalid_annunciation(fix, qtbot):
+    """VSI-TC-004 | VSI-ANN-001 | The PFD moving-dot VSI must annunciate invalid VS rather
+    than keep drawing the magenta dot (misleading VS = Major, AC 25-11B Table 4-6 p.32).
+    Contract: on fail paintEvent draws a red flag (no magenta dot); on old/bad the dot greys."""
+    item = _reset_vs_item(fix)
+    widget = vsi.VSI_PFD()
+    event = _show_widget(qtbot, widget)
+    widget.value = 500
+
+    item.fail = True
+    with track_calls(QPen, "__init__") as tracker:
+        widget.paintEvent(event)
+    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))   # red fail flag
+
+    item.fail = False
+    item.old = True
+    with track_calls(QColor, "__init__") as tracker:
+        widget.paintEvent(event)
+    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.gray))  # degraded -> grey
