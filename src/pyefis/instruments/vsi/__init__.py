@@ -268,6 +268,25 @@ class VSI_PFD(QWidget):
         # Insert Background
         p.drawPixmap(0, 0, self.background)
 
+        # VS-invalid annunciation (AC 25-11B Table 4-6: loss / misleading
+        # vertical speed = Major). On fail remove the moving dot and show a red
+        # X so a frozen dot cannot be read as a valid vertical speed; on old/bad
+        # grey the dot instead of magenta. Same fail/old/bad convention the VSI
+        # dial and tape already follow.
+        if self.item.fail:
+            pen = QPen(QColor(Qt.GlobalColor.red))
+            pen.setWidth(max(2, int(w * 0.08)))
+            p.setPen(pen)
+            m = w * 0.30
+            cx, cy = w / 2.0, h / 2.0
+            p.drawLine(QPointF(cx - m, cy - m), QPointF(cx + m, cy + m))
+            p.drawLine(QPointF(cx - m, cy + m), QPointF(cx + m, cy - m))
+            return
+
+        dot_color = (QColor(Qt.GlobalColor.gray)
+                     if (self.item.old or self.item.bad)
+                     else QColor(Qt.GlobalColor.magenta))
+
         #p.drawEllipse(QPointF(w+4, h/2), 4.0, 4.0)
         dot_size = int(self.width() * 0.4)
         try:
@@ -277,12 +296,12 @@ class VSI_PFD(QWidget):
             else:
                 y = h/2 + (abs(self._value)**self.scaleRoot / self.max**self.scaleRoot) * self.dy
                 if y > h: y = h
-            p.setPen(Qt.GlobalColor.magenta)
-            p.setBrush(Qt.GlobalColor.magenta)
+            p.setPen(QPen(dot_color))
+            p.setBrush(QBrush(dot_color))
             p.drawEllipse(QRectF(2,y-int(dot_size/2),dot_size,dot_size))
         except ZeroDivisionError:
-            p.setPen(Qt.GlobalColor.gray)
-            p.setBrush(Qt.GlobalColor.gray)
+            p.setPen(QPen(QColor(Qt.GlobalColor.gray)))
+            p.setBrush(QBrush(QColor(Qt.GlobalColor.gray)))
             p.drawEllipse(QRectF(2,h/2,dot_size,dot_size))
 
     def getValue(self):

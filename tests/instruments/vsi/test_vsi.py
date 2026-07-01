@@ -301,7 +301,6 @@ def test_vsi_cat_tape_invalid_annunciation(fix, qtbot):
     assert widget.vstext.toPlainText() == ""               # old -> no live value
 
 
-@pytest.mark.xfail(strict=True, reason="VSI-ANN-001 gap: VSI_PFD dot ignores fail/old/bad")
 def test_vsi_cat_pfd_invalid_annunciation(fix, qtbot):
     """VSI-TC-004 | VSI-ANN-001 | The PFD moving-dot VSI must annunciate invalid VS rather
     than keep drawing the magenta dot (misleading VS = Major, AC 25-11B Table 4-6 p.32).
