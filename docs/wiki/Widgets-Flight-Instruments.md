@@ -340,6 +340,13 @@ a magenta GPS ground-track diamond.
   G1000). GPS track is meaningless near zero groundspeed, so it shows only when
   `GS` is at or above `track_min_speed` kt, and self-hides when `TRACK`/`GS` are
   absent or stale — so it is safe to leave on for panels without a GPS source.
+- The **glideslope diamond** (`GSI`) appears only when vertical guidance is
+  actually being received. For an ILS it additionally requires a **valid
+  localizer**, so it hides if you leave the localizer — going missed, or crossing
+  a false glideslope lobe while climbing out — matching modern glass and the sim's
+  own HSI. (A GPS/LPV glidepath has no localizer and shows on its own.) This gating
+  is applied upstream by fix-gateway through the `GSV` key; the widget just honours
+  it.
 
 The factory constructs the HSI with **`cdi_enabled=True, gsi_enabled=True`** and
 forwards `font_percent`.

@@ -250,7 +250,13 @@ Each item: what it does, the input(s), the convention.
    navigator.
 4. **TO/FROM** — for VOR sources; hidden for LOC and (typically) GPS.
 5. **Glideslope / glidepath (VDI)** — vertical deviation scale + diamond from
-   `GSI`; shown on ILS/LPV/approach.
+   `GSI`; shown on ILS/LPV/approach. **An ILS glideslope requires a valid
+   localizer**: the diamond appears only when a glideslope is received *and* the
+   localizer is captured, so it hides when off the localizer — turned off the
+   approach, or crossing a false glideslope lobe while climbing out. A GPS/LPV
+   glidepath has no separate localizer and shows on its own vertical-guidance
+   flag. Enforced in fix-gateway as `GSV = min(NAV#DH, not nav#_flag_glideslope)`
+   (localizer-displayed AND glideslope-received); see 11.
 6. **Heading bug** — cyan marker at `HEADBUG`.
 7. **Ground-track diamond** — magenta diamond at the **magnetic** ground track
    `TRACKM`, gated by `GS ≥ track_min_speed`. (Implemented.) *Originally read
@@ -274,8 +280,13 @@ Each item: what it does, the input(s), the convention.
     appears only when a valid signal for it is present; with no signal it **hides**
     — the digital equivalent of a mechanical needle parking in the bezel —
     regardless of which source is selected (e.g. selecting LOC with no localizer
-    received shows no needle). Follow the widget convention: `fail` → remove /
-    red flag; `old`/`bad` → grey. Never show stale or sourceless guidance.
+    received shows no needle). The **glideslope is additionally coupled to the
+    localizer**: an ILS GS diamond shows only with a captured localizer, never on
+    its own — a real HSI does not present vertical guidance without lateral. This
+    is enforced upstream in fix-gateway (`GSV = min(NAV#DH, not
+    nav#_flag_glideslope)`), so the widget just reads `GSV`. Follow the widget
+    convention: `fail` → remove / red flag; `old`/`bad` → grey. Never show stale
+    or sourceless guidance.
 
 ## 7. Phased implementation plan
 
@@ -347,8 +358,11 @@ source, and expected appearance:
    signal, not the selection: needles hide when no valid signal is present,
    regardless of the source selected (§6.11). The active source's **type** (for
    the magenta/green colouring) is published *with* the signal by the producing
-   source/plugin; for X-Plane, fix-gateway derives it. Remaining work: ensure the
-   active source publishes `NAVTYPE` and per-needle validity.
+   source/plugin; for X-Plane, fix-gateway derives it. The ILS **glideslope is
+   gated on localizer validity** (`GSV = min(NAV#DH, not nav#_flag_glideslope)`),
+   so it hides off the localizer — implemented and flight-verified against
+   X-Plane. Remaining work: ensure the active source publishes `NAVTYPE` and
+   per-needle validity.
 2. **CDI normalization (resolved).** `CDI`/`GSI` stay strictly normalized; the
    navigation source owns full-scale per FAA standards (§4.2 decision,
    FAA-H-8083-15B). `CDISCALE` dropped — the existing normalized convention is
