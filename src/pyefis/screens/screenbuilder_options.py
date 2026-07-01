@@ -22,6 +22,31 @@ from pyefis.screens import screenbuilder_preferences
 log = logging.getLogger(__name__)
 
 
+def _coerce_to_attr_type(instrument, option, value):
+    """Coerce a string config value to the type of the widget's existing
+    attribute (its default), so a numeric option delivered as a quoted string
+    (e.g. from the configurator code pane / a quoted YAML scalar like
+    ``minorDiv: '5'``) can't reach numeric/geometry code as a str. Several AI
+    pitch-ladder options (minorDiv, majorDiv, numberedDiv, visiblePitchAngle,
+    numberedDivWidth) feed Qt/geometry math that *segfaults* -- not raises -- on
+    a str, which crashes the whole panel. Only string values whose target attr
+    is numeric are converted; anything else is passed through unchanged."""
+    if not isinstance(value, str):
+        return value
+    cur = getattr(instrument, option, None)
+    try:
+        if isinstance(cur, bool):
+            return value.strip().lower() in ("true", "1", "yes", "on")
+        if isinstance(cur, int):            # (bool handled above)
+            return int(float(value))
+        if isinstance(cur, float):
+            return float(value)
+    except (ValueError, TypeError):
+        log.warning("option '%s': could not coerce %r to %s; leaving as-is",
+                    option, value, type(cur).__name__)
+    return value
+
+
 def _warn_undeclared_option(inst_type, option):
     """Warn when a screen sets an option a *migrated* instrument doesn't declare
     in its InstrumentSpec -- catches typos and renamed attributes (the option is
@@ -151,4 +176,5 @@ def apply_options(screen, index, config, state=False):
 
         else:
             _warn_undeclared_option(config["type"], option)
-            setattr(instrument, option, value)
+            setattr(instrument, option,
+                    _coerce_to_attr_type(instrument, option, value))
