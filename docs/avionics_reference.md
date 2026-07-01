@@ -167,12 +167,67 @@ The AI must actively *aid recovery*, not merely display attitude:
 
 Present: attitude, pitch ladder, bank scale + standard-rate markers, slip/skid ball,
 aircraft symbol + FPM, `fail_scene` ("XXX") on failure, `old`/`bad` grey, SVS UNAVAIL.
-**Done:** excessive-bank (A.2.5) + excessive-sideslip (A.2.6) — amber cautions past
-threshold. **Gaps** (App. A recovery layer): recovery chevrons (A.2.2), de-clutter (p.47).
-**Data-blocked:** pitch-limit / stall-margin (A.2.4) needs an `AOA`/stall-margin key
-fix-gateway does not publish yet.
+**Done:** excessive-bank (A.2.5) + excessive-sideslip (A.2.6) amber cautions;
+**recovery chevrons (A.2.2)** — amber chevrons to the nearest horizon past the unusual
+pitch thresholds; **de-clutter (p.47)** — removes non-essential overlays at an unusual
+attitude, keeps the recovery cues. **Data-blocked (the only remaining gap):**
+pitch-limit / stall-margin (A.2.4) needs an `AOA`/stall-margin key fix-gateway does not
+publish yet.
 
-## 6. Requirement IDs and traceability
+## 6. Airspeed tape — source material
+
+Requirements (with IDs) live in `airspeed_widget_spec.md §4` and cite the items here.
+Scope is the **moving-scale (linear tape)** airspeed display and its low/high-speed
+awareness cues; V-speed *values* come from the FIX database (IAS aux keys), so the cues
+are a display-layer job over data the widget does not own (#64).
+
+### 6.1 Moving-scale tape needs explicit awareness cues (AC 23.1311-1C §17.6–17.7, p.40)
+
+**§17.6 (p.40)** — a moving-scale display with a digital read-out is acceptable, but
+*"typically does not provide any inherent visual cue of the relationship of present value
+to low or high airspeed limits,"* so **quick-glance awareness cues are needed**. **§17.7
+(p.40)** — fixed-pointer/moving-scale airspeed displays *require more cues than
+conventional round-dial indicators to compensate for their deficiencies*; green/white
+arcs alone are **not** considered equivalent, so **low-speed awareness cues are necessary
+for part 23 airplanes**. §17.7.b: incorporate *a red arc starting at VSO extending down
+toward zero*, and *a red arc or red barber pole extending from VNE (or VMO) upward to the
+end of the tape*. **Note (p.40):** the red arc below stall is **low-speed awareness only,
+not a flight limit**.
+
+### 6.2 VNE-airplane cues — the normative list (AC 23.1311-1C §17.7.1, Figure 2, p.40–41)
+
+For a **VNE airplane** (the MakerPlane case), showing compliance with §§23.1311(a)(6) and
+23.1545(a)–(d):
+
+- **a. Red band from VSO to 0** (or the minimum displayed number). *During takeoff the
+  low-speed red arc should not be displayed* (§17.7.a) — an optional inhibit.
+- **b. Red band from VNE to the top of the airspeed tape.**
+- **c. Yellow band VSO→VS1 is optional** and *discouraged* (clutter), especially for
+  twins that already carry red/blue one-engine-inoperative lines.
+
+Conventional arcs remain (§23.1545 markings): **white** flap-operating arc VS0→VFE,
+**green** normal-operating arc VS1→VNO, **yellow** caution arc VNO→VNE, **red** VNE
+radial. **§17.7.2 (p.42)** gives the VMO-airplane analog (red band VMO→top) — out of
+scope here (no `VMO` key; MakerPlane is a VNE airplane).
+
+### 6.3 Colour (AC 23.1311-1C §22.2 Table 4, p.45)
+
+Red = **warnings + flight-envelope/system limits** (so both the low-speed and high-speed
+red bands are correctly red); Amber/Yellow = **cautions** (the VNO→VNE caution arc);
+White = **scales/tapes**; Green = **normal/engaged**. Consistent with AC 25-11B Table 5-1
+(§3 above). Colour is never the sole cue (§22.6) — band **position** carries the meaning
+too.
+
+### 6.4 pyEfis status
+
+`instruments/airspeed/__init__.py` — `Airspeed` (round dial), **`Airspeed_Tape`** (the
+moving-scale tape; the verification target), `Airspeed_Box`. The tape draws the green /
+white / yellow arcs + a thin **red VNE line**, a fixed pointer, a digital IAS readout
+(fail→`XXX`, old/bad→blank via `NumericalDisplay`), a TAS box, and a trend vector.
+**Gaps (§17.7.1):** no **low-speed red band VSO→0** (AS-LSA-001) and no **high-speed red
+band VNE→top** — only a hairline VNE radial, not the required band (AS-HSA-001).
+
+## 7. Requirement IDs and traceability
 
 The chain, grep-able end-to-end:
 
@@ -188,7 +243,7 @@ AC 25-11B p.43       HSI-COLOR-001          HSI-TC-###             test_hsi_... 
 - The **repo is the system of record** (requirements + catalog + IDs). Issue trackers hold the
   *work* (implement a gap, write a case), not the requirements.
 
-## 7. Open items / to-mine
+## 8. Open items / to-mine
 
 - [ ] Deep-read **AC 25-11B** ch. 4–5 and **AC 23.1311-1C §17/§18/§22** for the full alerting +
       symbology + colour requirement set; pin pages.
