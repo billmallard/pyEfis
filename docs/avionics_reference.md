@@ -167,9 +167,10 @@ The AI must actively *aid recovery*, not merely display attitude:
 
 Present: attitude, pitch ladder, bank scale + standard-rate markers, slip/skid ball,
 aircraft symbol + FPM, `fail_scene` ("XXX") on failure, `old`/`bad` grey, SVS UNAVAIL.
-**Gaps** (the App. A recovery/envelope layer): recovery chevrons (A.2.2), excessive-bank
-(A.2.5), excessive-sideslip (A.2.6), de-clutter (p.47). **Data-blocked:** pitch-limit /
-stall-margin (A.2.4) needs an `AOA`/stall-margin key fix-gateway does not publish yet.
+**Done:** excessive-bank (A.2.5) + excessive-sideslip (A.2.6) — amber cautions past
+threshold. **Gaps** (App. A recovery layer): recovery chevrons (A.2.2), de-clutter (p.47).
+**Data-blocked:** pitch-limit / stall-margin (A.2.4) needs an `AOA`/stall-margin key
+fix-gateway does not publish yet.
 
 ## 6. Requirement IDs and traceability
 

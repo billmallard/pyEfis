@@ -62,9 +62,9 @@ test catalog (§5). **Status** is the widget as of this writing.
 | **AI-FAIL-001** | Degraded (stale/invalid) attitude greyed | `PITCH`/`ROLL`/`ALAT`/`TAS` old or bad | Grey sky/land | widget convention; AC 25-11B §4.2 | **DONE** |
 | **AI-SLIP-001** | Sideslip shown (slip/skid ball) | `ALAT` | Ball deflects with lateral accel | App A §A.2.6 p.70 | **DONE** |
 | **AI-CHEV-001** | Unusual-attitude **recovery chevrons** | pitch beyond the unusual-attitude threshold | Large chevrons pointing to the nearest horizon, enabling recovery < 1 s | App A §A.2.2 p.70 | **GAP** |
-| **AI-BANK-001** | **Excessive-bank** annunciation | roll beyond threshold (before stall buffet) | Salient bank alert (amber/red) | App A §A.2.5 p.70 | **GAP** |
+| **AI-BANK-001** | **Excessive-bank** annunciation | roll beyond threshold (before stall buffet) | Salient bank alert (amber/red) | App A §A.2.5 p.70 | **DONE** — amber bank scale |
 | **AI-DCL-001** | **De-clutter** at unusual attitude | unusual attitude | Remove non-essential overlays, retain recovery info | AC 25-11B p.47; §A.2 | **GAP** |
-| **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **GAP** |
+| **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **DONE** — amber ball |
 | **AI-LIM-001** | **Pitch-limit / stall-margin** indication | approaching stall AOA | Pitch-limit marker on the ladder | App A §A.2.4 p.70 | **GAP — data-blocked** (no `AOA`/stall-margin key yet; OnSpeed/AOA path) |
 
 **Thresholds.** "Unusual attitude" follows common EFIS/Part 25 convention — roughly
@@ -86,9 +86,9 @@ removal. `AI-LIM-001` stays `xfail` until an `AOA`/stall-margin key exists.
 | 002 | AI-FAIL-001 | `degraded_attitude_stays_greyed` | pass |
 | 003 | AI-SLIP-001 | `slip_ball_tracks_lateral_accel` | pass |
 | 101 | **AI-CHEV-001** | `recovery_chevrons_at_extreme_pitch` | xfail — gap |
-| 102 | **AI-BANK-001** | `excessive_bank_annunciation` | xfail — gap |
+| 102 | **AI-BANK-001** | `excessive_bank_annunciation` | pass |
 | 103 | **AI-DCL-001** | `declutter_at_unusual_attitude` | xfail — gap |
-| 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | xfail — gap |
+| 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | pass |
 | 105 | **AI-LIM-001** | `pitch_limit_indication` | xfail — data-blocked |
 
 ## 6. Conventions and standards basis

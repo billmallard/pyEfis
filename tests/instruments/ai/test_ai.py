@@ -401,15 +401,16 @@ def test_ai_cat_recovery_chevrons_at_extreme_pitch(fix, qtbot):
     assert widget._show_recovery_chevrons is True
 
 
-@pytest.mark.xfail(strict=True, reason="AI-BANK-001 gap: no excessive-bank annunciation")
 def test_ai_cat_excessive_bank_annunciation(fix, qtbot):
     """AI-TC-102 | AI-BANK-001 | Beyond the excessive-bank threshold (before stall buffet)
-    the AI must annunciate excessive bank. AC 25-11B App A A.2.5 (p.70). Contract:
-    paintEvent sets w._excessive_bank."""
+    the AI annunciates excessive bank (amber bank scale). AC 25-11B App A A.2.5 (p.70)."""
     _reset_ai_items(fix)
     widget = ai.AI()
     event = _show_ai(qtbot, widget)
-    widget.rollAngle = 60            # steep bank
+    widget.rollAngle = 20            # normal bank -> no caution
+    widget.paintEvent(event)
+    assert widget._excessive_bank is False
+    widget.rollAngle = 60            # steep bank -> caution
     widget.paintEvent(event)
     assert widget._excessive_bank is True
 
@@ -428,14 +429,16 @@ def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
     assert widget._decluttered is True
 
 
-@pytest.mark.xfail(strict=True, reason="AI-SLIP-002 gap: no excessive-sideslip annunciation")
 def test_ai_cat_excessive_sideslip_annunciation(fix, qtbot):
-    """AI-TC-104 | AI-SLIP-002 | Beyond the excessive-sideslip threshold the AI must give a
-    salient slip alert. AC 25-11B App A A.2.6 (p.70). Contract: w._excessive_slip."""
+    """AI-TC-104 | AI-SLIP-002 | Beyond the excessive-sideslip threshold the AI gives a
+    salient (amber) slip alert. AC 25-11B App A A.2.6 (p.70)."""
     _reset_ai_items(fix)
     widget = ai.AI()
     event = _show_ai(qtbot, widget)
-    widget.setLateralAcceleration(30)    # large lateral accel -> big ball deflection
+    widget.setLateralAcceleration(0.1)   # small slip (in scale) -> no caution
+    widget.paintEvent(event)
+    assert widget._excessive_slip is False
+    widget.setLateralAcceleration(0.3)   # ball pegged -> caution
     widget.paintEvent(event)
     assert widget._excessive_slip is True
 

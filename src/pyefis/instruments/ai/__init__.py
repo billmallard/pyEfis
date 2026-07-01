@@ -96,6 +96,12 @@ class AI(QGraphicsView):
         self.drawBankMarkers = True
         self.bankAngleRadius = None # Radius of the bank angle markings
         self.bankAngleMaximum = 25  # Largest bank angle that will be indicated
+        # Envelope-awareness caution thresholds (AC 25-11B App A A.2.5 / A.2.6):
+        # amber annunciation past excessive bank / sideslip. Configurable.
+        self.excessiveBankDeg = 45
+        self.excessiveSlip = 0.25
+        self._excessive_bank = False
+        self._excessive_slip = False
         # Fixed aircraft reference symbol (the "wings" the horizon moves
         # behind). style: "classic" (split wing bars + center dot) or
         # "garmin"/"gi275" (GI-275-style stepped wing bars + center
@@ -985,16 +991,25 @@ class AI(QGraphicsView):
 
         p.translate(w / 2, h / 2)
 
-        # Slip / Skid ball
+        # Slip / Skid ball -- amber past the excessive-sideslip threshold
+        # (AC 25-11B App A A.2.6: caution).
+        self._excessive_slip = abs(self._latAccel) >= self.excessiveSlip
         p.setPen(QColor(Qt.GlobalColor.black))
-        p.setBrush(QColor(Qt.GlobalColor.white))
+        p.setBrush(QColor(255, 150, 0) if self._excessive_slip
+                   else QColor(Qt.GlobalColor.white))
         p.drawEllipse(QPointF(self._latAccel * -m*12, -r + m*3), m*0.8, m*0.8)
 
+        # Excessive-bank caution (AC 25-11B App A A.2.5): amber bank scale +
+        # pointer past the threshold, before stall buffet.
+        self._excessive_bank = abs(self._rollAngle) > self.excessiveBankDeg
+        _bank_col = (QColor(255, 150, 0) if self._excessive_bank
+                     else QColor(Qt.GlobalColor.white))
         p.rotate(self._rollAngle * -1.0)
         # Add moving Bank Angle Markers
+        marks.setColor(_bank_col)
         marks.setWidth(qRound(self.fontSize * 0.05))
         p.setPen(marks)
-        p.setBrush(QColor(Qt.GlobalColor.white))
+        p.setBrush(_bank_col)
         smallMarks = [10, 20, 45]
         largeMarks = [30, 60]
         shortLine = QLineF(0, -r, 0, -(r-m))
