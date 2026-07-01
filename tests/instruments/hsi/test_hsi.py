@@ -545,11 +545,10 @@ def test_hsi_cat_source_switch_tracks_colour_and_label(fix, qtbot):
     assert w._source_color() == QColor(w.vloc_color) and w._source_label() == "VLOC2"
 
 
-@pytest.mark.xfail(strict=True, reason="HSI-ANN-001 gap: no heading/compass warning flag")
 def test_hsi_cat_hdg_flag_on_head_fail(fix, qtbot):
-    """HSI-TC-101 | HSI-ANN-001 | On HEAD fail the HSI must annunciate a heading
-    (compass) warning flag (IFH p.118; AC 25-11B 4.2). GAP: today it only blanks the
-    cardinal labels. Contract: paintEvent sets w._showHdgFlag True on HEAD fail."""
+    """HSI-TC-101 | HSI-ANN-001 | On HEAD fail the HSI annunciates a heading (compass)
+    warning flag (IFH p.118; AC 25-11B 4.2): paintEvent sets w._showHdgFlag and draws a
+    red HDG flag."""
     w = _mk_hsi(qtbot, cdi_enabled=True)
     w.setHeadFail(True)
     w.paintEvent(QPaintEvent(w.rect()))

@@ -243,6 +243,7 @@ class HSI(QGraphicsView):
 
         self._showCDI = not self.isOld()
         self._showGSI = not self.isOld()
+        self._showHdgFlag = False
         self.cardinal = ["N", "E", "S", "W"]
         self.course_pointer = None
         self.myparent = parent
@@ -604,6 +605,33 @@ class HSI(QGraphicsView):
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2*pad,
                                            fm.height() + 2*pad)
+
+        # Warning flags (AC 25-11B: warnings red). A flag positively annunciates
+        # an invalid signal, distinct from merely hiding an element -- see
+        # hsi_widget_spec.md sec 7.1. Heading (compass) flag: HEAD invalid.
+        self._showHdgFlag = self._HeadFail or self._HeadBad
+        if self._showHdgFlag:
+            self._draw_flag(c, "HDG", self.cx, self.fontSize * 1.1)
+
+    def _draw_flag(self, c, text, x, y):
+        """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
+        red). Black fill keeps it legible over the compass card."""
+        red = QColor(255, 0, 0)
+        f = QFont(self.font_family)
+        f.setBold(True)
+        f.setPixelSize(int(self.fontSize))
+        c.setFont(f)
+        fm = c.fontMetrics()
+        tw = fm.horizontalAdvance(text)
+        th = fm.height()
+        pad = int(self.fontSize * 0.3)
+        box = QRectF(x - tw / 2.0 - pad, y - th / 2.0 - pad,
+                     tw + 2 * pad, th + 2 * pad)
+        c.setBrush(QBrush(QColor(0, 0, 0)))
+        c.setPen(QPen(red, max(2, int(self.fontSize * 0.12))))
+        c.drawRect(box)
+        c.setPen(QPen(red))
+        c.drawText(box, int(Qt.AlignmentFlag.AlignCenter), text)
 
     def getHeading(self):
         return self._heading
