@@ -279,7 +279,30 @@ greys. pyEfis status: all three VSI variants annunciate `fail`/`old`/`bad` — `
 and `Alt_Trend_Tape` already did, and `VSI_PFD` now flags fail (red X, no dot) + greys
 old/bad, closing the Major "misleading VS" gap (VSI-ANN-001).
 
-## 8. Requirement IDs and traceability
+## 8. Turn coordinator / slip-skid — source material
+
+Requirements + IDs live in `tc_widget_spec.md §4`.
+
+- **14 CFR §91.205(d)** — IFR minimum equipment includes a *gyroscopic rate-of-turn
+  indicator combined with an integral slip-skid indicator (turn-and-bank indicator)*;
+  **§91.205(d)(4)** makes the **slip-skid** mandatory. So both the rate-of-turn and the
+  slip-skid ball are required-instrument functions.
+- **AC 23.1311-1C §8.9 (p.26)** — rate-of-turn instrument; place near the heading
+  indicator if required (a second independent attitude indicator may substitute).
+- **AC 23.1311-1C §8.10 (p.26)** — the slip-skid is required by §91.205(d)(4); locate it
+  directly below or near the rate-of-turn, or within the primary attitude display.
+- **AC 25-11B §A.2.6 (p.70)** — sideslip should be clearly indicated, **with an excessive
+  sideslip indication** (the same cue the AI slip/skid carries — `AI-SLIP-002`). The turn
+  coordinator's ball is the dedicated slip-skid instrument, so it should carry the same
+  excessive-slip salience.
+
+The rate-of-turn shows the airplane symbol against **standard-rate** marks (3°/s = a
+2-minute 360). Both the TC ball and the AI slip/skid consume `ALAT` and must agree. pyEfis
+status: `TurnCoordinator` shows rate-of-turn + standard-rate marks + an integral slip-skid
+ball and annunciates `ROT`/`ALAT` `fail`/`old`/`bad`; the **excessive-slip amber cue**
+(TC-SLIP-002) is the one gap, closed to match the AI.
+
+## 9. Requirement IDs and traceability
 
 The chain, grep-able end-to-end:
 
@@ -295,7 +318,7 @@ AC 25-11B p.43       HSI-COLOR-001          HSI-TC-###             test_hsi_... 
 - The **repo is the system of record** (requirements + catalog + IDs). Issue trackers hold the
   *work* (implement a gap, write a case), not the requirements.
 
-## 9. Open items / to-mine
+## 10. Open items / to-mine
 
 - [ ] Deep-read **AC 25-11B** ch. 4–5 and **AC 23.1311-1C §17/§18/§22** for the full alerting +
       symbology + colour requirement set; pin pages.
