@@ -388,7 +388,6 @@ def test_ai_cat_slip_ball_tracks_lateral_accel(fix, qtbot):
     assert widget._latAccel == pytest.approx(0.0)             # coordinated
 
 
-@pytest.mark.xfail(strict=True, reason="AI-CHEV-001 gap: no unusual-attitude recovery chevrons")
 def test_ai_cat_recovery_chevrons_at_extreme_pitch(fix, qtbot):
     """AI-TC-101 | AI-CHEV-001 | Beyond the unusual-attitude pitch threshold the AI must
     show recovery chevrons pointing to the nearest horizon (recognize + recover < 1 s).
@@ -396,7 +395,16 @@ def test_ai_cat_recovery_chevrons_at_extreme_pitch(fix, qtbot):
     _reset_ai_items(fix)
     widget = ai.AI()
     event = _show_ai(qtbot, widget)
+
+    widget.pitchAngle = 10           # normal climb -> no chevrons
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is False
+
     widget.pitchAngle = 45           # nose-high unusual attitude
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is True
+
+    widget.pitchAngle = -30          # nose-low unusual attitude (lower threshold)
     widget.paintEvent(event)
     assert widget._show_recovery_chevrons is True
 

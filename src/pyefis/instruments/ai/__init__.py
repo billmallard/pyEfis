@@ -102,6 +102,14 @@ class AI(QGraphicsView):
         self.excessiveSlip = 0.25
         self._excessive_bank = False
         self._excessive_slip = False
+        # Unusual-attitude recovery chevrons (AC 25-11B App A A.2.2): past
+        # these pitch thresholds large chevrons point to the nearest horizon
+        # so the pilot recognises + initiates recovery within one second.
+        # Asymmetric per common EFIS/Part 25 convention (spec sec 4);
+        # configurable.
+        self.unusualPitchHighDeg = 30
+        self.unusualPitchLowDeg = -20
+        self._show_recovery_chevrons = False
         # Fixed aircraft reference symbol (the "wings" the horizon moves
         # behind). style: "classic" (split wing bars + center dot) or
         # "garmin"/"gi275" (GI-275-style stepped wing bars + center
@@ -804,6 +812,40 @@ class AI(QGraphicsView):
         p.drawLine(QPointF(0.0, -sym_r * 1.1), QPointF(0.0, -sym_r * 2.0))
         p.restore()
 
+    def _draw_recovery_chevrons(self, p, w, h):
+        """AC 25-11B App A A.2.2: at an unusual pitch attitude, large chevrons
+        point to the nearest horizon so the pilot can recognise the attitude and
+        initiate recovery within one second. Drawn in the rolled attitude frame
+        (like the pitch ladder / FPM) so they track the horizon at any bank; the
+        stack marches toward the horizon and the apexes point at it -- down when
+        nose-high (the horizon has fallen below the symbol), up when nose-low."""
+        nose_high = self._pitchAngle > self.unusualPitchHighDeg
+        d = 1.0 if nose_high else -1.0     # +y is down: +1 points/leads to ground
+        half = w * 0.16                    # chevron half-width (shoulder to centre)
+        depth = h * 0.09                   # how far the apex leads the shoulders
+        step = h * 0.15                    # vertical spacing of the stack
+        y0 = d * h * 0.13                  # first chevron, offset toward the horizon
+
+        pen = QPen(QColor(255, 176, 0))    # amber -- caution, not a failure
+        pen.setWidth(max(3, qRound(self.fontSize * 0.14)))
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+
+        p.save()
+        p.resetTransform()
+        p.translate(w / 2.0, h / 2.0 - self._horizon_offset_px())
+        p.rotate(self._rollAngle * -1.0)   # align with the pitch ladder
+        p.setPen(pen)
+        p.setBrush(Qt.GlobalColor.transparent)
+        for i in range(3):
+            yc = y0 + d * i * step
+            p.drawPolyline(QPolygonF([
+                QPointF(-half, yc),
+                QPointF(0.0, yc + d * depth),
+                QPointF(half, yc),
+            ]))
+        p.restore()
+
     # the pitchItems list contains a tuple that represents all of the tick marks
     # and text of the Pitch graducations.  The first item of the tuple is the angle
     # and the second is the item reference.  We use this to make the tick marks
@@ -1047,6 +1089,14 @@ class AI(QGraphicsView):
 
         self._drawFPM(p, w, h)
         self._draw_horizon_heading(p, w, h)
+
+        # Unusual-attitude recovery chevrons (AC 25-11B App A A.2.2). Past the
+        # pitch thresholds, guide the recovery toward the nearest horizon.
+        self._show_recovery_chevrons = (
+            self._pitchAngle > self.unusualPitchHighDeg
+            or self._pitchAngle < self.unusualPitchLowDeg)
+        if self._show_recovery_chevrons:
+            self._draw_recovery_chevrons(p, w, h)
 
         if _pe_t0:
             perf.add_ns("frame.ai_paintEvent_total",
