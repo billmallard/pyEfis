@@ -155,10 +155,10 @@ factory type `heading_tape`).
   display property.
 
 Colour (§22 / Table 5-1): heading scale/text white, cardinal points cyan; failure flag red,
-degraded amber. pyEfis status: `HeadingDisplay` annunciates `HEAD` `fail`/`old`/`bad`
-(red `XXX` / blank amber) — DONE; **`DG_Tape` ignores quality** (an in-code `TODO`), the one
-heading gap (HDG-ANN-001). The ≥120°-arc scale is provided by the HSI compass rose on
-shipped screens.
+degraded amber. pyEfis status: both standalone heading widgets now annunciate `HEAD`
+`fail`/`old`/`bad` — `HeadingDisplay` (red `XXX` / blank amber) and `DG_Tape` (red `XXX`
+mask on fail, grey wash + amber `HDG` on old/bad), closing HDG-ANN-001. No open heading
+code gaps. The ≥120°-arc scale is provided by the HSI compass rose on shipped screens.
 
 ## 5. Attitude indicator (AI) — source material
 

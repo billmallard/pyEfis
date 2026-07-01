@@ -59,7 +59,7 @@ catalog (§5).
 |----|-------------|---------|-------------------|------|--------|
 | **HDG-DISP-001** | Clear heading presentation: numeric readout + heading scale/tape with cardinal points | always | Boxed `NNN°` readout; a heading scale (tape ticks/labels + N/E/S/W) read under a fixed index | §8.6.b p.23 | **DONE** |
 | **HDG-FMT-001** | Magnetic heading formatted 000–359 (3-digit), wrapping at 360 | always | `_fmt_heading` → `"030°"`, `360/0 → "000°"` | §8.6.b p.23 | **DONE** |
-| **HDG-ANN-001** | Heading-invalid annunciation on **every** heading widget | `HEAD` fail / old / bad | fail → remove/flag (`XXX`); old/bad → grey / blank (never a live-looking heading) | §8.6.a p.23; §2 | **PARTIAL** — DONE for `HeadingDisplay`; **GAP for `DG_Tape`** (ignores quality) |
+| **HDG-ANN-001** | Heading-invalid annunciation on **every** heading widget | `HEAD` fail / old / bad | fail → remove/flag (`XXX`); old/bad → grey / blank (never a live-looking heading) | §8.6.a p.23; §2 | **DONE** — `HeadingDisplay` + `DG_Tape` (red `XXX` mask on fail, grey wash + amber `HDG` on old/bad) |
 
 **Contract for the gap.** `DG_Tape` must consume the `HEAD` item quality: wire
 `old`/`bad`/`fail` (init from the item) and, in a `paintEvent` overlay, **flag** an invalid
@@ -80,7 +80,7 @@ tracker** — it flips the run red when the `DG_Tape` annunciation lands.
 | 001 | HDG-DISP-001 | `heading_presentation` | pass |
 | 002 | HDG-FMT-001 | `heading_format_wraps` | pass |
 | 003 | HDG-ANN-001 (numeric) | `numeric_invalid_annunciation` | pass |
-| 004 | **HDG-ANN-001 (tape)** | `tape_invalid_annunciation` | xfail — gap |
+| 004 | **HDG-ANN-001 (tape)** | `tape_invalid_annunciation` | pass |
 
 ## 6. Conventions and standards basis
 
@@ -91,8 +91,6 @@ vendor's *expression*.
 
 ## 7. Open items
 
-- Implement HDG-ANN-001 for `DG_Tape` (resolve the in-code `TODO`), then remove the xfail
-  marker and deploy to the Pi.
 - **Data source indication (§8.6.b):** the standard wants the direction source (heading vs
   track) clearly indicated when track is a selectable option. The stack has no track-up /
   heading-vs-track selection today — tracked, not a current gap.
