@@ -649,7 +649,6 @@ def test_hdg_cat_numeric_invalid_annunciation(fix, qtbot):
     assert tracker.was_called_with("__init__", QColor(255, 150, 0))
 
 
-@pytest.mark.xfail(strict=True, reason="HDG-ANN-001 gap: DG_Tape ignores HEAD fail/old/bad")
 def test_hdg_cat_tape_invalid_annunciation(fix, qtbot):
     """HDG-TC-004 | HDG-ANN-001 | The heading tape must annunciate invalid HEAD (fail -> red
     flag, old/bad -> grey/amber) rather than keep scrolling a frozen tape. AC 23.1311-1C

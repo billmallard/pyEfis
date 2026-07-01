@@ -992,11 +992,21 @@ class DG_Tape(QGraphicsView):
         self._courseDevation = 1
         self.cardinal = ["N", "E", "S", "W", "N"]
 
-        item = fix.db.get_item("HEAD", True)
-        item.valueChanged[float].connect(self.setHeading)
-        self._heading = item.value
+        self.item = fix.db.get_item("HEAD", True)
+        self.item.valueChanged[float].connect(self.setHeading)
+        self._heading = self.item.value
 
-        # TODO Seems the heading tape does not have bad/fail/old
+        # Heading-invalid annunciation (AC 23.1311-1C sec 8.6.a): a lost/stale
+        # heading must be flagged, not scrolled as a frozen tape (loss of
+        # direction reduces the pilot's capability; governing "no misleading
+        # info" principle).
+        self._fail = self.item.fail
+        self._old = self.item.old
+        self._bad = self.item.bad
+        self.item.failChanged[bool].connect(self.setFail)
+        self.item.oldChanged[bool].connect(self.setOld)
+        self.item.badChanged[bool].connect(self.setBad)
+
         self.dpp = 10
     def resizeEvent(self, event):
         w = self.width()
@@ -1069,6 +1079,54 @@ class DG_Tape(QGraphicsView):
             self.redraw()
 
     heading = property(getHeading, setHeading)
+
+    def setFail(self, fail):
+        self._fail = fail
+        self.viewport().update()
+
+    def setOld(self, old):
+        self._old = old
+        self.viewport().update()
+
+    def setBad(self, bad):
+        self._bad = bad
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super(DG_Tape, self).paintEvent(event)
+        # Annunciate an invalid heading over the centre read window. fail -> red
+        # XXX masking the reading (a frozen tape must not read as valid); old/bad
+        # -> grey wash + amber HDG flag (degraded). Same convention as the boxed
+        # HeadingDisplay and the other tapes.
+        if not (self._fail or self._old or self._bad):
+            return
+        w = self.width()
+        h = self.height()
+        p = QPainter(self.viewport())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._fail:
+            color = QColor(Qt.GlobalColor.red)
+            text = "XXX"
+        else:                                   # old / bad -> degraded
+            p.fillRect(self.viewport().rect(), QColor(128, 128, 128, 120))
+            color = QColor(255, 150, 0)
+            text = "HDG"
+        bw = w * 0.34
+        bh = h * 0.72
+        rect = QRectF(w / 2 - bw / 2, h / 2 - bh / 2, bw, bh)
+        if self._fail:
+            p.fillRect(rect, QColor(Qt.GlobalColor.black))
+        pen = QPen(color)
+        pen.setWidth(max(2, qRound(h * 0.03)))
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(rect)
+        f = QFont(self.font_family)
+        f.setBold(True)
+        f.setPixelSize(max(10, qRound(h * 0.4)))
+        p.setFont(f)
+        p.setPen(QPen(color))
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
     def showEvent(self, event):
         self.redraw()
