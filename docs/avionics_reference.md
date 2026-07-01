@@ -240,11 +240,11 @@ there is no red/amber altitude band; altitude limits (if any) are advisory, not 
 marking. Governing "glance-readable, no misleading info" per §2.
 
 **pyEfis status.** `Altimeter_Tape` ships the moving-scale tape + fixed pointer + quality-
-aware digital read-out (the §17.8 format). **Gaps (§17.8):** no distinct **500/1,000-ft**
-tier denotation (AL-MARK-001), no **6-second trend** (AL-TREND-001), and no **altitude
-reference bug** (AL-BUG-001 — data-blocked: fix-gateway publishes no selected-altitude
-key). The trend + tiers are implementable now; the bug waits on the data, like the AI's
-AOA-blocked pitch-limit (§5.2 A.2.4).
+aware digital read-out (the §17.8 format). **Done:** distinct **500/1,000-ft** tick tiers
+(AL-MARK-001) and the **6-second altitude trend** (AL-TREND-001, cyan; ALT-default so the
+shared VS tape stays quiet). **Data-blocked (the only remaining gap):** the **altitude
+reference bug** (AL-BUG-001) waits on a selected-altitude key from fix-gateway, like the
+AI's AOA-blocked pitch-limit (§5.2 A.2.4).
 
 ### 6.4 pyEfis status
 

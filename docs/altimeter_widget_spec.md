@@ -60,8 +60,8 @@ anchor the test catalog (§5). **Status** is the widget as of this writing.
 |----|-------------|---------|-------------------|------|--------|
 | **AL-DISP-001** | Linear moving-scale tape: scrolling scale, fixed pointer, digital read-out | always | Present-value read-out + fixed index over a moving scale | §17.8.a p.43 | **DONE** |
 | **AL-ANN-001** | Altitude-invalid annunciation | `ALT` fail / old / bad | Read-out `XXX` on fail; blank (not a stale number) on old/bad | §18; §2 governing principle | **DONE** |
-| **AL-MARK-001** | **Standard 500-/1,000-ft increment denotation** | always | Distinct emphasis at 1,000-ft (label + longest tick) and 500-ft (intermediate tick), above the minor ticks | §17.8.a p.43 | **GAP** |
-| **AL-TREND-001** | **6-second altitude-trend indicator** | always (unless a VSI is adjacent right) | A trend vector predicting altitude ~6 s ahead (level-off look-ahead) | §17.8.b p.43 | **GAP** |
+| **AL-MARK-001** | **Standard 500-/1,000-ft increment denotation** | always | Distinct emphasis at 1,000-ft (label + longest tick) and 500-ft (intermediate tick), above the minor ticks | §17.8.a p.43 | **DONE** — three tick tiers |
+| **AL-TREND-001** | **6-second altitude-trend indicator** | always (unless a VSI is adjacent right) | A trend vector predicting altitude ~6 s ahead (level-off look-ahead) | §17.8.b p.43 | **DONE** — cyan trend vector (`show_trend`, ALT-default) |
 | **AL-BUG-001** | **Altitude reference bug** | selected altitude set | A bug on the tape at the selected altitude (glance cue for level-off) | §17.8.a p.43 | **GAP — data-blocked** (no selected-altitude FIX key yet) |
 
 **Contract for the gap cues.**
@@ -96,8 +96,8 @@ marker's removal. `AL-BUG-001` stays `xfail` until a selected-altitude key exist
 |-------|-------------|------------------------|--------|
 | 001 | AL-DISP-001 | `linear_tape_format` | pass |
 | 002 | AL-ANN-001 | `altitude_invalid_annunciation` | pass |
-| 003 | **AL-MARK-001** | `standard_500_1000_ticks` | xfail — gap |
-| 004 | **AL-TREND-001** | `six_second_trend_indicator` | xfail — gap |
+| 003 | **AL-MARK-001** | `standard_500_1000_ticks` | pass |
+| 004 | **AL-TREND-001** | `six_second_trend_indicator` (+ `trend_defaults_off_for_vs_tape`) | pass |
 | 005 | **AL-BUG-001** | `altitude_reference_bug` | xfail — data-blocked |
 
 ## 6. Conventions and standards basis
@@ -109,8 +109,6 @@ Symbology is industry convention grounded in open references: **AC 23.1311-1C** 
 
 ## 7. Open items
 
-- Implement AL-TREND-001 (6-second trend) and AL-MARK-001 (500/1,000-ft tiers) against the
-  §4 contract; then remove those xfail markers and deploy to the Pi.
 - **AL-BUG-001 is data-blocked:** publish a **selected-altitude** key from fix-gateway
   (autopilot / altitude-preselect) to unblock the reference bug — the same pattern as the
   AI's AOA-blocked pitch-limit.
