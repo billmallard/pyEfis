@@ -441,3 +441,141 @@ def test_dg_tape_heading_and_events(fix, qtbot):
 
     assert widget.heading == 45
     assert widget.centerOn.call_count == 2
+
+
+# =============================================================================
+# HSI requirements test catalog -- keyed to hsi_widget_spec.md sec 7 (Flags,
+# Alerts & Failure Annunciation) and avionics_reference.md.
+#
+# Each docstring: HSI-TC-NNN | requirement ID | intent.
+# Passing tests verify shipped behaviour. The xfail(strict) tests are the
+# executable gap tracker for the not-yet-implemented warning flags: they fail
+# today (the flag state does not exist) and will xpass -- which, under strict,
+# fails the run -- the moment the flag is implemented, prompting removal of the
+# marker. Spec sec 10 carries the full case<->requirement map.
+# =============================================================================
+
+
+def _mk_hsi(qtbot, **kw):
+    w = hsi.HSI(**kw)
+    qtbot.addWidget(w)
+    w.resize(300, 300)
+    w.show()
+    qtbot.waitExposed(w)
+    return w
+
+
+def test_hsi_cat_all_valid_shows_both_needles(fix, qtbot):
+    """HSI-TC-001 | HSI-FAIL-001 (happy path) | Every deviation signal valid and a
+    glideslope present -> both the CDI and GS needles are shown."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = False
+    w.setGsv(1)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is True
+    assert w._showGSI is True
+
+
+def test_hsi_cat_cdi_hidden_when_old_or_bad(fix, qtbot):
+    """HSI-TC-021 | HSI-FAIL-001 (CDI) | Stale (old) or invalid (bad) lateral deviation
+    removes the CDI bar."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w._CdiOld, w._CdiBad = True, False
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False
+    w._CdiOld, w._CdiBad = False, True
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False
+
+
+def test_hsi_cat_gsi_hidden_when_old_or_bad(fix, qtbot):
+    """HSI-TC-031 | HSI-FAIL-001 (GSI) | Stale/invalid GS deviation removes the GS
+    diamond even with a glideslope present."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w.setGsv(1)
+    w._GsiOld, w._GsiBad = True, False
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showGSI is False
+
+
+def test_hsi_cat_gs_absent_when_gsv_zero(fix, qtbot):
+    """HSI-TC-032 | HSI-ANN-003 (no-GS case) | GSV=0 (a VOR / no glideslope) -> GS scale
+    absent, lateral CDI unaffected. The 'no GS present' branch, distinct from GS-lost
+    (HSI-TC-103)."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = False
+    w.setGsv(0)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showGSI is False
+    assert w._showCDI is True
+
+
+def test_hsi_cat_cdi_full_scale_boundary(fix, qtbot):
+    """HSI-TC-060 | HSI-DEV-001 (edge) | The normalized CDI at +/-1.0 full-scale (and 0)
+    paints without error and stays shown; the source owns full-scale (spec sec 4.2)."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w._CdiOld = w._CdiBad = False
+    for dev in (1.0, -1.0, 0.0):
+        w.setCdi(dev)
+        w.paintEvent(QPaintEvent(w.rect()))
+        assert w._showCDI is True
+
+
+def test_hsi_cat_gsi_full_scale_boundary(fix, qtbot):
+    """HSI-TC-062 | HSI-DEV-001 (edge) | The normalized GS at +/-1.0 full-scale (and 0)
+    paints without error and stays shown."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w.setGsv(1)
+    w._GsiOld = w._GsiBad = False
+    for dev in (1.0, -1.0, 0.0):
+        w.setGsi(dev)
+        w.paintEvent(QPaintEvent(w.rect()))
+        assert w._showGSI is True
+
+
+def test_hsi_cat_source_switch_tracks_colour_and_label(fix, qtbot):
+    """HSI-TC-041 | HSI-COLOR-001 + HSI-SRC-001 (edge) | Switching NAVSRC GPS->NAV1->NAV2
+    moves the source colour (magenta<->green) and the annunciation together."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.setNavsrc(2)
+    assert w._source_color() == QColor(w.course_color) and w._source_label() == "GPS"
+    w.setNavsrc(0)
+    assert w._source_color() == QColor(w.vloc_color) and w._source_label() == "VLOC1"
+    w.setNavsrc(1)
+    assert w._source_color() == QColor(w.vloc_color) and w._source_label() == "VLOC2"
+
+
+@pytest.mark.xfail(strict=True, reason="HSI-ANN-001 gap: no heading/compass warning flag")
+def test_hsi_cat_hdg_flag_on_head_fail(fix, qtbot):
+    """HSI-TC-101 | HSI-ANN-001 | On HEAD fail the HSI must annunciate a heading
+    (compass) warning flag (IFH p.118; AC 25-11B 4.2). GAP: today it only blanks the
+    cardinal labels. Contract: paintEvent sets w._showHdgFlag True on HEAD fail."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.setHeadFail(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showHdgFlag is True
+
+
+@pytest.mark.xfail(strict=True, reason="HSI-ANN-002 gap: no NAV warning flag")
+def test_hsi_cat_nav_flag_on_cdi_invalid(fix, qtbot):
+    """HSI-TC-102 | HSI-ANN-002 | On selected-lateral-source fail/invalid the HSI must
+    show a NAV warning flag and remove the CDI (IFH p.118/p.283). GAP: CDI hides but no
+    flag. Contract: paintEvent sets w._showNavFlag True."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.setCdiBad(True)
+    w.setCdiFail(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showNavFlag is True
+
+
+@pytest.mark.xfail(strict=True, reason="HSI-ANN-003 gap: GS lost only hides, shows no flag")
+def test_hsi_cat_gs_flag_on_gs_lost(fix, qtbot):
+    """HSI-TC-103 | HSI-ANN-003 | When a glideslope is expected (present) but its signal
+    is lost/failed, the HSI must show a GS warning flag -- distinct from 'no GS present'
+    (GSV=0, HSI-TC-032) where the scale is simply absent (IFH p.283). GAP: GS only hides.
+    Contract: paintEvent sets w._showGsFlag True when GS expected but signal invalid."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w.setGsv(1)            # glideslope present / expected
+    w.setGsiFail(True)     # ...but the GS signal has failed
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showGsFlag is True

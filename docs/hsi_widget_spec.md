@@ -350,6 +350,12 @@ honor the convention.
 lateral/vertical guidance (14 CFR §23.2605(b); `avionics_reference.md` §4.1).
 *Status: implemented — the tappable source label.*
 
+### 7.5 Deviation scaling (HSI-DEV)
+
+**HSI-DEV-001.** The CDI and GS needles are strictly normalized (±1.0); the navigation
+source owns full-scale (§4.2, by phase / receiver type). The widget renders the
+deviation it is given and never re-scales. Cite: §4.2; FAA-H-8083-15B; AIM 1-1.
+
 ## 8. Phased implementation plan
 
 Ordered by impact-per-effort; each phase is shippable and testable on its own.
@@ -410,10 +416,32 @@ for the broader open-source posture.
 
 ## 10. Test cases
 
-The full happy-path / edge / failure catalog is being formalized against the §7
-requirement IDs (`HSI-ANN`/`HSI-FAIL`/`HSI-COLOR`/`HSI-SRC`) as an executable pytest
-suite. The manual/visual cases below (label `test-case`) are the seed — record
-heading, source, and expected appearance:
+The executable catalog lives in
+[`tests/instruments/hsi/test_hsi.py`](../tests/instruments/hsi/test_hsi.py), keyed to the
+§7 requirement IDs. Passing tests verify shipped behaviour; the three `xfail(strict)`
+tests are the **gap tracker** for the unimplemented warning flags — they fail today and
+will flip the run red the moment a flag is implemented, forcing removal of the marker.
+(Suite: 22 passed, 3 xfailed.)
+
+| HSI-TC | Requirement | Test (`test_hsi_cat_…`) | Status |
+|--------|-------------|-------------------------|--------|
+| 001 | HSI-FAIL-001 (happy) | `all_valid_shows_both_needles` | pass |
+| 021 | HSI-FAIL-001 (CDI) | `cdi_hidden_when_old_or_bad` | pass |
+| 031 | HSI-FAIL-001 (GSI) | `gsi_hidden_when_old_or_bad` | pass |
+| 032 | HSI-ANN-003 (no-GS) | `gs_absent_when_gsv_zero` | pass |
+| 041 | HSI-COLOR-001 + SRC-001 | `source_switch_tracks_colour_and_label` | pass |
+| 060 | HSI-DEV-001 (CDI edge) | `cdi_full_scale_boundary` | pass |
+| 062 | HSI-DEV-001 (GS edge) | `gsi_full_scale_boundary` | pass |
+| 101 | **HSI-ANN-001** (HDG flag) | `hdg_flag_on_head_fail` | **xfail — gap** |
+| 102 | **HSI-ANN-002** (NAV flag) | `nav_flag_on_cdi_invalid` | **xfail — gap** |
+| 103 | **HSI-ANN-003** (GS flag) | `gs_flag_on_gs_lost` | **xfail — gap** |
+
+Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
+`quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;
+HSI-COLOR-001 → `source_auto_color`; HSI-SRC-001 → `source_label`, `source_label_tap_cycles_navsrc`.
+
+Visual / on-target cases the unit suite can't cover (label `test-case`; record heading,
+source, expected appearance):
 
 - Source switch GPS→NAV1→NAV2: pointer color/line-style and on-face label change.
 - CDI valid/invalid: needle hides + flag on invalid.
