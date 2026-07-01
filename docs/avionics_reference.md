@@ -174,9 +174,10 @@ attitude, keeps the recovery cues. **Data-blocked (the only remaining gap):**
 pitch-limit / stall-margin (A.2.4) needs an `AOA`/stall-margin key fix-gateway does not
 publish yet.
 
-## 6. Airspeed tape — source material
+## 6. Airspeed & altitude tapes — source material
 
-Requirements (with IDs) live in `airspeed_widget_spec.md §4` and cite the items here.
+Requirements (with IDs) live in `airspeed_widget_spec.md §4` (airspeed) and
+`altimeter_widget_spec.md §4` (altitude), and cite the items here.
 Scope is the **moving-scale (linear tape)** airspeed display and its low/high-speed
 awareness cues; V-speed *values* come from the FIX database (IAS aux keys), so the cues
 are a display-layer job over data the widget does not own (#64).
@@ -217,6 +218,33 @@ red bands are correctly red); Amber/Yellow = **cautions** (the VNO→VNE caution
 White = **scales/tapes**; Green = **normal/engaged**. Consistent with AC 25-11B Table 5-1
 (§3 above). Colour is never the sole cue (§22.6) — band **position** carries the meaning
 too.
+
+### 6.5 Altitude tape (AC 23.1311-1C §17.8, p.43)
+
+The linear-tape altimeter is a sibling moving-scale display; requirements + IDs live in
+`altimeter_widget_spec.md §4`.
+
+- **§17.8.a (p.43)** — a linear-tape altimeter should include **enhancements denoting
+  standard 500- and 1,000-foot increments**, convey **unambiguously, at a glance, the
+  present altitude**, and carry enough scale length + markings for (i) the resolution to
+  track altitude precisely in level flight and (ii) **look-ahead room to predict and
+  accomplish level-off**. An **altitude reference bug is recommended** to provide
+  acceptable cues.
+- **§17.8.b (p.43)** — **display a trend indicator** *unless a VSI is located adjacent and
+  to the right of the altimeter*. A **six-second** altitude-trend indicator is typical
+  (other values may suit the airplane's performance / tape scaling).
+
+Colour (§22.2 Table 4): scales/ticks **white**; the trend cue is **cyan** (matching the
+airspeed tape). Unlike airspeed, the altitude tape carries **no envelope-limit band** —
+there is no red/amber altitude band; altitude limits (if any) are advisory, not a tape
+marking. Governing "glance-readable, no misleading info" per §2.
+
+**pyEfis status.** `Altimeter_Tape` ships the moving-scale tape + fixed pointer + quality-
+aware digital read-out (the §17.8 format). **Gaps (§17.8):** no distinct **500/1,000-ft**
+tier denotation (AL-MARK-001), no **6-second trend** (AL-TREND-001), and no **altitude
+reference bug** (AL-BUG-001 — data-blocked: fix-gateway publishes no selected-altitude
+key). The trend + tiers are implementable now; the bug waits on the data, like the AI's
+AOA-blocked pitch-limit (§5.2 A.2.4).
 
 ### 6.4 pyEfis status
 
