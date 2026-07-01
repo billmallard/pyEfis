@@ -300,7 +300,8 @@ The rate-of-turn shows the airplane symbol against **standard-rate** marks (3°/
 2-minute 360). Both the TC ball and the AI slip/skid consume `ALAT` and must agree. pyEfis
 status: `TurnCoordinator` shows rate-of-turn + standard-rate marks + an integral slip-skid
 ball and annunciates `ROT`/`ALAT` `fail`/`old`/`bad`; the **excessive-slip amber cue**
-(TC-SLIP-002) is the one gap, closed to match the AI.
+(TC-SLIP-002) is now implemented — the ball turns amber past `excessiveSlipFraction` of
+full-scale, matching the AI slip/skid. No open TC code gaps.
 
 ## 9. Requirement IDs and traceability
 

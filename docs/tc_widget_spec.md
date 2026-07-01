@@ -61,7 +61,7 @@ test catalog (§5).
 | **TC-DISP-001** | Rate-of-turn symbol + standard-rate index marks | always | Airplane banks with `ROT` against fixed standard-rate marks; rate clamped to scale | §8.9 p.26; §91.205(d) | **DONE** |
 | **TC-SLIP-001** | Integral slip-skid ball with coordinated reference | always | Ball deflects with `ALAT`, centered between the reference lines in coordinated flight | §8.10 p.26; §91.205(d)(4) | **DONE** |
 | **TC-ANN-001** | Invalid annunciation on both sources | `ROT`/`ALAT` fail / old / bad | fail → red `XXX` (element removed); old/bad → grey | §2 governing principle | **DONE** (`TurnCoordinator`); see §7 for the unwired tape variant |
-| **TC-SLIP-002** | **Excessive-slip indication** | `ALAT` beyond threshold | Salient (amber) slip alert on the ball, consistent with the AI's slip/skid | §A.2.6 p.70 | **GAP** |
+| **TC-SLIP-002** | **Excessive-slip indication** | `ALAT` beyond threshold | Salient (amber) slip alert on the ball, consistent with the AI's slip/skid | §A.2.6 p.70 | **DONE** — amber ball past `excessiveSlipFraction` |
 
 **Contract for the gap.** `TurnCoordinator.paintEvent` sets `self._excessive_slip` and
 draws the ball **amber** (`QColor(255,150,0)`) once the deflection reaches
@@ -83,7 +83,7 @@ removal.
 | 001 | TC-DISP-001 | `rate_of_turn_and_standard_rate` | pass |
 | 002 | TC-SLIP-001 | `slip_skid_ball_tracks_alat` | pass |
 | 003 | TC-ANN-001 | `invalid_annunciation` | pass |
-| 004 | **TC-SLIP-002** | `excessive_slip_annunciation` | xfail — gap |
+| 004 | **TC-SLIP-002** | `excessive_slip_annunciation` | pass |
 
 ## 6. Conventions and standards basis
 
@@ -94,8 +94,6 @@ a vendor's *expression*.
 
 ## 7. Open items
 
-- Implement TC-SLIP-002 (excessive-slip amber), then remove the xfail marker and deploy to
-  the Pi. Keep the threshold consistent with the AI slip/skid so the two agree.
 - **`TurnCoordinator_Tape` (latent):** a legacy slip-skid tape that is **not registered in
   the screenbuilder factory and not wired to `ALAT`** (its `setLatAcc` is driven externally
   and its ball ignores quality). Not on any screen, so no live impact — but if it is ever
