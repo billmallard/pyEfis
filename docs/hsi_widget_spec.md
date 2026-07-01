@@ -38,9 +38,9 @@ pointing, which way is my course, and how far off it am I.*
    and their scaling are **FIX-database values** (published by fix-gateway). This
    spec labels every field as one or the other. V-speed-style "which is which"
    mistakes are the main thing this boundary prevents.
-4. **Conventions, not clones (see §8).** The HSI follows long-established
+4. **Conventions, not clones (see §9).** The HSI follows long-established
    symbology conventions so a pilot reads it without retraining. Those
-   conventions come from open standards and decades of practice, cited in §8 —
+   conventions come from open standards and decades of practice, cited in §9 —
    not from any one vendor's copyrighted material.
 5. **Two repos move together.** New behavior that needs new data is a
    **canfix-spec / fix-gateway** change first (the data contract), then a pyEfis
@@ -288,7 +288,69 @@ Each item: what it does, the input(s), the convention.
     convention: `fail` → remove / red flag; `old`/`bad` → grey. Never show stale
     or sourceless guidance.
 
-## 7. Phased implementation plan
+## 7. Flags, alerts, and failure annunciation (requirements)
+
+Standards basis: [`avionics_reference.md`](avionics_reference.md) §2–§4 — 14 CFR
+§23.2600/.2605/.2615; AC 25-11B §4.2 and Table 5-1; AC 23.1311-1C §18/§22; IFH
+(FAA-H-8083-15B) p.118, p.259, p.283.
+
+**Governing rule.** The HSI must *monitor every signal it consumes and annunciate
+loss or invalidity* — a positive **flag** for a primary signal, removal for a needle
+that parks — and must never present stale or sourceless guidance as if it were valid
+("do not display misleading information", `avionics_reference.md` §2). Requirement IDs
+(`HSI-<CLASS>-<NNN>`) are stable and are the anchor for the test-case catalog (§10) and
+any gap issues. **Status** reflects the widget as of this writing.
+
+### 7.1 Warning flags (HSI-ANN)
+
+The IFH HSI figure (IFH p.118) shows three standard warning flags; p.283 gives the
+behavior — *a flag appears whenever its signal is absent, unstable, or the receiver has
+failed, and is removed only when a valid signal drives the needle.*
+
+| ID | Flag | Trigger | Required response | Cite | Status |
+|----|------|---------|-------------------|------|--------|
+| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag; compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **GAP** — not rendered |
+| **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) fail/bad/absent | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **GAP** — CDI hides on old/bad, but no flag |
+| **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (ILS tuned, LOC valid) but the GS signal is invalid/unstable/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **PARTIAL** — GS hides (LOC-gated `GSV`); no explicit flag |
+
+The HSI-ANN-003 distinction matters: **no glideslope tuned/expected → no GS scale**
+(handled by `GSV`); **glideslope expected but signal lost → GS *flag*** (still a gap).
+
+### 7.2 Per-signal failure response (HSI-FAIL)
+
+**HSI-FAIL-001.** Every FIX signal the widget consumes is wired to the widget failure
+convention, and no element is left showing its last-good value after loss:
+
+| Signal | valid | old (stale) | bad (invalid) | fail | absent |
+|--------|-------|-------------|---------------|------|--------|
+| `HEAD` | normal | grey card | grey + HDG flag (ANN-001) | HDG flag, freeze/blank card | HDG flag |
+| `COURSE` | normal | grey pointer | grey pointer | remove pointer | pointer removed |
+| `CDI` | normal | hide bar | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
+| `GSI`/`GSV` | normal | hide diamond | hide diamond | hide/flag (ANN-003) | no scale |
+| `HEADBUG` | normal | grey bug | grey bug | remove bug | no bug |
+| `TRACKM`/`GS` | normal | hide diamond | hide diamond | hide diamond | no diamond |
+| `TOFROM` | normal | hide | hide | hide | hide |
+| `BRG1`/`BRG2` | normal | hide needle | hide needle | hide needle | no needle |
+
+Today the widget wires `old`/`bad`/`fail` for `CDI`/`GSI` and hides on old/bad; the open
+items are the **flags** (ANN-001..003) and confirming `HEAD`/`COURSE`/`HEADBUG` each
+honor the convention.
+
+### 7.3 Colour (HSI-COLOR)
+
+| ID | Requirement | Cite |
+|----|-------------|------|
+| **HSI-COLOR-001** | Nav-source colour: **magenta = GPS**; **green = VOR/LOC (VLOC) and ADF bearing needles**. Established market convention (Garmin and others); a *documented, intentional* deviation from AC 25-11B Table 5-1's "ILS deviation pointer = magenta", chosen for source-identification clarity in a GPS-primary cockpit | `avionics_reference.md` §4.3 |
+| **HSI-COLOR-002** | Warnings **red**; cautions **amber/yellow**; engaged/normal **green**; scales/tapes/text **white**; selected/bug markers **cyan**. Colour is never the sole code — pair with shape, size, or location | AC 25-11B Table 5-1, §5.8 |
+
+### 7.4 Source annunciation (HSI-SRC)
+
+**HSI-SRC-001.** The active nav source is annunciated on the face at all times (e.g.
+"GPS", "VOR1", "LOC1"), coloured per HSI-COLOR-001, so the crew always knows what drives
+lateral/vertical guidance (14 CFR §23.2605(b); `avionics_reference.md` §4.1).
+*Status: implemented — the tappable source label.*
+
+## 8. Phased implementation plan
 
 Ordered by impact-per-effort; each phase is shippable and testable on its own.
 
@@ -315,19 +377,26 @@ Each phase: implement widget + factory `Prop`s, regenerate `schema.json` →
 R2, update the `editor.html` twin to match (fidelity rule), add unit tests and a
 visual test case.
 
-## 8. Conventions and standards basis (and sourcing note)
+## 9. Conventions and standards basis (and sourcing note)
 
 The symbology in this spec is **industry convention**, grounded in open
-references — not proprietary to any vendor:
+references — not proprietary to any vendor. The consolidated, page-cited standards
+basis is [`avionics_reference.md`](avionics_reference.md); the flag/alert/colour
+*requirements* derived from it are in §7. Primary references:
 
 - **FAA Instrument Flying Handbook, FAA-H-8083-15B** — HSI, CDI, RMI/bearing
   pointers, OBS, TO/FROM.
 - **FAA AIM** (1-1, GPS/RNAV) — CDI full-scale by phase (2.0 nm enroute, 1.0 nm
   terminal, angular approach), mode behavior.
 - **AC 20-138 / TSO-C146** (GPS/WAAS) — RNAV CDI scaling and flight-phase modes.
-- **AC 25-11** (Electronic Flight Deck Displays) — color conventions (magenta for
-  the active GPS course, green for VOR/LOC, cyan for selected/bearing markers)
-  and symbology guidance.
+- **AC 25-11B** (Electronic Flight Displays) — colour standard (Table 5-1),
+  failure/alerting philosophy (§4.2), and the "do not display misleading
+  information" rule; the primary source for flags/alerts.
+- **AC 23.1311-1C** (Electronic Displays, Part 23) — the GA analog: §17 symbology,
+  §18 annunciation, §22 colour standardization.
+- **14 CFR §23.2600 / .2605 / .2615** — flightcrew-interface rule: information must
+  be monitorable, with discernible warnings/cautions/normal indications, and not
+  misleading.
 - **[CAN-FiX specification](https://billmallard.github.io/canfix-spec/)** — the
   data contract these keys live in.
 
@@ -339,10 +408,12 @@ trade dress are reproduced. Match the *conventions* (which are unprotected and a
 safety benefit); never copy a competitor's *expression*. See the project README
 for the broader open-source posture.
 
-## 9. Test cases
+## 10. Test cases
 
-Log a manual/visual test case (label `test-case`) for each, recording heading,
-source, and expected appearance:
+The full happy-path / edge / failure catalog is being formalized against the §7
+requirement IDs (`HSI-ANN`/`HSI-FAIL`/`HSI-COLOR`/`HSI-SRC`) as an executable pytest
+suite. The manual/visual cases below (label `test-case`) are the seed — record
+heading, source, and expected appearance:
 
 - Source switch GPS→NAV1→NAV2: pointer color/line-style and on-face label change.
 - CDI valid/invalid: needle hides + flag on invalid.
@@ -352,7 +423,7 @@ source, and expected appearance:
 - TO/FROM for a VOR; absent for LOC and GPS.
 - Failure/stale: `fail` red, `old`/`bad` grey.
 
-## 10. Resolved questions and remaining work
+## 11. Resolved questions and remaining work
 
 1. **Signal-driven visibility (resolved).** The display reflects the *received*
    signal, not the selection: needles hide when no valid signal is present,
@@ -373,11 +444,11 @@ source, and expected appearance:
    of OBI Flags via the careful `.ods` process; the GPS bearing pointer is
    fix-gateway-computable from existing lat/lon. Source-numbering schemes need
    reconciling.
-4. **Control and interaction (scoped — see §11).** Both physical knob controllers
+4. **Control and interaction (scoped — see §12).** Both physical knob controllers
    and on-screen touch-select are needed; this is a panel-wide interaction model,
    not an HSI-only concern.
 
-## 11. Control and interaction (OBS and beyond)
+## 12. Control and interaction (OBS and beyond)
 
 Setting values on the HSI (and other widgets) — selected course (OBS/CRS),
 heading bug, nav source, baro — needs **two complementary input paths**. They are
