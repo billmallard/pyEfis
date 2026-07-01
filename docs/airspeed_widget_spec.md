@@ -68,8 +68,8 @@ catalog (§5). **Status** is the widget as of this writing.
 | **AS-DISP-001** | Moving-scale tape: scrolling scale, fixed pointer, digital read-out | always | Present-value read-out + fixed index over a moving scale | §17.6 p.40 | **DONE** |
 | **AS-MARK-001** | Conventional V-speed arcs | always | White VS0→VFE, green VS0/VS1→VNO, yellow VNO→VNE arcs | §23.1545; §22.2 Table 4 | **DONE** |
 | **AS-ANN-001** | Airspeed-invalid annunciation | `IAS` fail / old / bad | Read-out `XXX` on fail; blank (not a stale number) on old/bad | §18; §2 governing principle | **DONE** |
-| **AS-LSA-001** | **Low-speed red band VSO→0** | always (optional takeoff inhibit) | Red band from VSO down to zero — low-speed awareness (not a limit) | §17.7.1.a p.40–41 (Fig 2) | **GAP** |
-| **AS-HSA-001** | **High-speed red band VNE→top** | always | Red band (or barber pole) from VNE up to the top of the tape — not merely a hairline radial | §17.7.1.b p.40–41 (Fig 2) | **GAP** |
+| **AS-LSA-001** | **Low-speed red band VSO→0** | always (optional takeoff inhibit) | Red band from VSO down to zero — low-speed awareness (not a limit) | §17.7.1.a p.40–41 (Fig 2) | **DONE** — `low_speed_band` |
+| **AS-HSA-001** | **High-speed red band VNE→top** | always | Red band (or barber pole) from VNE up to the top of the tape — not merely a hairline radial | §17.7.1.b p.40–41 (Fig 2) | **DONE** — `high_speed_band` |
 | **AS-LSA-002** | *(optional)* yellow band VSO→VS1 | always | Yellow low-speed band | §17.7.1.c p.41 | **OPTIONAL — not planned** (discouraged as clutter) |
 | **AS-VMO-001** | VMO-airplane red band VMO→top | always | Red band from VMO up | §17.7.2 p.42 | **N/A — out of scope** (no `Vmo` key; MakerPlane is a VNE airplane) |
 
@@ -101,8 +101,8 @@ marker's removal.
 | 001 | AS-DISP-001 | `moving_scale_tape_format` | pass |
 | 002 | AS-MARK-001 | `conventional_vspeed_arcs` | pass |
 | 003 | AS-ANN-001 | `airspeed_invalid_annunciation` | pass |
-| 101 | **AS-LSA-001** | `low_speed_red_band` | xfail — gap |
-| 102 | **AS-HSA-001** | `high_speed_red_band` | xfail — gap |
+| 101 | **AS-LSA-001** | `low_speed_red_band` | pass |
+| 102 | **AS-HSA-001** | `high_speed_red_band` | pass |
 
 ## 6. Conventions and standards basis
 
@@ -114,8 +114,6 @@ Match the *conventions* (unprotected, a safety benefit); never copy a vendor's *
 
 ## 7. Open items
 
-- Implement AS-LSA-001 + AS-HSA-001 (the two red awareness bands) against the §4 contract,
-  then remove the xfail markers and deploy to the Pi.
 - **Takeoff inhibit (§17.7.a):** the low-speed red arc *should not* display during takeoff.
   Deferred — needs a phase-of-flight signal (weight-on-wheels / a takeoff mode) the stack
   does not publish yet; record as a follow-up so the band can be suppressed on the ground.
