@@ -235,7 +235,6 @@ def test_tc_cat_invalid_annunciation(fix, qtbot, config_parent):
     assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))
 
 
-@pytest.mark.xfail(strict=True, reason="TC-SLIP-002 gap: no excessive-slip amber cue on the ball")
 def test_tc_cat_excessive_slip_annunciation(fix, qtbot, config_parent):
     """TC-TC-004 | TC-SLIP-002 | Beyond the excessive-slip threshold the ball gives a
     salient (amber) alert, consistent with the AI slip/skid. AC 25-11B sec A.2.6 (p.70).
