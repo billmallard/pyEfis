@@ -197,6 +197,37 @@ def test_hsi_gsi_hidden_when_no_glideslope(fix, qtbot):
     widget.paintEvent(QPaintEvent(widget.rect()))
 
 
+def test_hsi_source_label_tap_cycles_navsrc(fix, qtbot, monkeypatch):
+    """Tapping the nav-source annunciation writes the next NAVSRC (GPS 2 -> NAV1
+    0); taps outside the label do nothing."""
+    widget = hsi.HSI(cdi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.resize(200, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.navsrcdb = object()             # simulate a panel with a nav source
+    widget._navsrc = 2                      # GPS
+    widget.paintEvent(QPaintEvent(widget.rect()))   # sets the tap rect
+    assert widget._source_label_rect is not None
+
+    written = []
+    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+
+    class _P:
+        def __init__(s, x, y): s._x, s._y = x, y
+        def x(s): return s._x
+        def y(s): return s._y
+
+    class _Ev:
+        def __init__(s, x, y): s._p = _P(x, y)
+        def pos(s): return s._p
+        def accept(s): pass
+
+    r = widget._source_label_rect
+    widget.mousePressEvent(_Ev(r[0] + r[2] // 2, r[1] + r[3] // 2))   # inside label
+    assert written == [("NAVSRC", 0.0)]    # GPS(2) -> NAV1(0)
+
+
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):
     _set_quality(fix.db.get_item("HEAD"))
     _set_quality(fix.db.get_item("COURSE"))

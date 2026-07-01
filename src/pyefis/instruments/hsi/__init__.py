@@ -586,6 +586,9 @@ class HSI(QGraphicsView):
                                              QPointF(gx, gy + ds), QPointF(gx - ds, gy)]))
 
         # Nav-source annunciation (top-left), coloured to match the active source.
+        # Its bounding box is stored as a tap target -- tapping it cycles NAVSRC
+        # (see mousePressEvent).
+        self._source_label_rect = None
         if getattr(self, "source_label_enabled", True):
             label = self._source_label()
             if label:
@@ -593,8 +596,14 @@ class HSI(QGraphicsView):
                 lf = QFont(self.font_family)
                 lf.setPixelSize(int(self.fontSize))
                 c.setFont(lf)
-                c.drawText(qRound(self.width() * 0.03),
-                           qRound(self.fontSize * 1.2), label)
+                lx = qRound(self.width() * 0.03)
+                ly = qRound(self.fontSize * 1.2)
+                c.drawText(lx, ly, label)
+                fm = c.fontMetrics()
+                pad = int(self.fontSize * 0.5)
+                self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
+                                           fm.horizontalAdvance(label) + 2*pad,
+                                           fm.height() + 2*pad)
 
     def getHeading(self):
         return self._heading
@@ -704,6 +713,19 @@ class HSI(QGraphicsView):
             self._tofrom = value
             if self.isVisible():
                 self.update()
+
+    def mousePressEvent(self, event):
+        # Tapping the nav-source annunciation cycles the source: GPS -> NAV1 ->
+        # NAV2 -> GPS (NAVSRC 2/0/1). Anywhere else, default handling.
+        r = getattr(self, "_source_label_rect", None)
+        if r is not None and getattr(self, "navsrcdb", None) is not None:
+            px, py = event.pos().x(), event.pos().y()
+            if r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]:
+                cur = int(round(self._navsrc)) if self._navsrc is not None else 2
+                fix.db.set_value("NAVSRC", float((cur + 1) % 3))
+                event.accept()
+                return
+        super(HSI, self).mousePressEvent(event)
 
     def _source_label(self):
         """Nav-source annunciation text: "GPS" for a GPS source, "VOR{n}" /
