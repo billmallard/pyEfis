@@ -341,9 +341,11 @@ _register(InstrumentSpec(
     svs_capable=True,
     properties=[
         Prop("aircraft_symbol", "enum", default="classic",
-             enum=["classic", "garmin", "brackets"], label="Aircraft symbol",
-             help="classic split-wing bars, GI-275/G1000 wedges, or "
-                  "GRT-style L-brackets"),
+             enum=["classic", "garmin", "g1000", "gi275", "brackets"],
+             label="Aircraft symbol",
+             help="classic split-wing bars + dot; garmin delta boresight + "
+                  "tapered wings; g1000 flat wings + centre triangle; gi275 "
+                  "wings + boresight ring; brackets GRT-style L-brackets"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
@@ -879,9 +881,11 @@ _register(InstrumentSpec(
     # unlike the square attitude dial.
     properties=[
         Prop("aircraft_symbol", "enum", default="classic",
-             enum=["classic", "garmin", "brackets"], label="Aircraft symbol",
-             help="classic split-wing bars, GI-275/G1000 wedges, or "
-                  "GRT-style L-brackets"),
+             enum=["classic", "garmin", "g1000", "gi275", "brackets"],
+             label="Aircraft symbol",
+             help="classic split-wing bars + dot; garmin delta boresight + "
+                  "tapered wings; g1000 flat wings + centre triangle; gi275 "
+                  "wings + boresight ring; brackets GRT-style L-brackets"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),
         # SVS-only: raise the level-flight horizon so the ground area expands

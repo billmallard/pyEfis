@@ -315,26 +315,51 @@ class AI(QGraphicsView):
         p.setPen(QPen(QColor(Qt.GlobalColor.black), 1))
         p.setBrush(QBrush(col))
         style = str(getattr(self, "aircraft_symbol", "classic")).lower()
-        if style in ("garmin", "gi275", "gi-275", "g1000"):
-            # GI-275 / G1000 style: a bold flat-topped trapezoid wing each side
-            # -- tall by the boresight, tapering down to a blunt outboard tip --
-            # whose inboard ends step down to a chevron point at the centre.
-            th = max(4.0, h * 0.055)    # inboard wing height (bold)
-            tt = max(1.5, h * 0.014)    # blunt outboard tip height
-            gap = w * 0.05              # half-gap from centre to the inboard edge
-            wing = w * 0.16             # wing length
-            p.drawPolygon(QPolygonF([                 # left wing: flat top, blunt tip
-                QPointF(cx - gap, cy - th * 0.5),          # inboard top
-                QPointF(cx - gap - wing, cy - tt * 0.5),   # outboard top
-                QPointF(cx - gap - wing, cy + tt * 0.5),   # outboard bottom
-                QPointF(cx - gap, cy + th * 0.5)]))        # inboard bottom
-            p.drawPolygon(QPolygonF([                 # right wing (mirror)
-                QPointF(cx + gap, cy - th * 0.5),
-                QPointF(cx + gap + wing, cy - tt * 0.5),
-                QPointF(cx + gap + wing, cy + tt * 0.5),
-                QPointF(cx + gap, cy + th * 0.5)]))
-            # Centre boresight dot.
-            p.drawEllipse(QPointF(cx, cy), th * 0.22, th * 0.22)
+        if style in ("garmin", "delta"):
+            # Garmin/delta style: the whole symbol is a bold upward CHEVRON --
+            # the wings themselves sweep UP to a central apex, forming the delta
+            # that nests into the flight-director bat-wings. Constant-thickness
+            # band with blunt outboard tips; apex above the reference line, tips
+            # on it. Yellow, black-outlined.
+            ww = w * 0.17               # wing half-span (outboard tip x)
+            ah = max(9.0, h * 0.085)    # apex height above the reference line
+            bt = max(4.0, h * 0.034)    # band thickness (vertical)
+            p.drawPolygon(QPolygonF([
+                QPointF(cx - ww, cy),               # left outer tip (top edge)
+                QPointF(cx, cy - ah),               # apex (top edge)
+                QPointF(cx + ww, cy),               # right outer tip (top edge)
+                QPointF(cx + ww, cy + bt),          # right tip (bottom edge)
+                QPointF(cx, cy - ah + bt),          # inner apex (bottom edge)
+                QPointF(cx - ww, cy + bt)]))        # left tip (bottom edge)
+        elif style in ("g1000", "g3x"):
+            # G1000/G3X style: two FLAT split wing bars with a small upward
+            # triangle standing in the centre gap between them (distinct from the
+            # garmin delta, whose wings taper off the delta base).
+            bt = max(2.5, h * 0.017)    # wing bar half-thickness
+            gap = w * 0.05              # half-gap from centre to the inboard bar
+            wing = w * 0.15             # wing-bar length
+            trih = max(6.0, h * 0.052)  # centre triangle height
+            triw = gap * 0.72           # centre triangle half-base (fits the gap)
+            p.drawRect(QRectF(cx - gap - wing, cy - bt, wing, 2 * bt))  # left bar
+            p.drawRect(QRectF(cx + gap, cy - bt, wing, 2 * bt))         # right bar
+            p.drawPolygon(QPolygonF([                 # centre up-triangle
+                QPointF(cx, cy - trih),
+                QPointF(cx + triw, cy),
+                QPointF(cx - triw, cy)]))
+        elif style in ("gi275", "gi-275", "boresight", "ring"):
+            # Boresight style: two flat wing bars flanking an OPEN ring (the
+            # aircraft "boresight"/waterline circle) at the centre.
+            bt = max(2.5, h * 0.015)    # wing bar half-thickness
+            gap = w * 0.055             # half-gap from centre to the inboard bar
+            wing = w * 0.15             # wing-bar length
+            rr = max(4.0, h * 0.030)    # boresight ring radius
+            p.drawRect(QRectF(cx - gap - wing, cy - bt, wing, 2 * bt))  # left bar
+            p.drawRect(QRectF(cx + gap, cy - bt, wing, 2 * bt))         # right bar
+            ring = QPen(col)                       # open yellow ring (no fill)
+            ring.setWidth(max(2, qRound(h * 0.012)))
+            p.setPen(ring)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), rr, rr)
         elif style in ("brackets", "grt", "l", "l-bracket", "l_bracket"):
             # GRT-style L-brackets: a wing bar each side with an inboard
             # down-tick (forming an "L"), flanking a small centre dot.
