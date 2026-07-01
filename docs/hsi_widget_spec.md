@@ -309,9 +309,9 @@ failed, and is removed only when a valid signal drives the needle.*
 
 | ID | Flag | Trigger | Required response | Cite | Status |
 |----|------|---------|-------------------|------|--------|
-| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag; compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **GAP** — not rendered |
-| **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) fail/bad/absent | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **GAP** — CDI hides on old/bad, but no flag |
-| **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (ILS tuned, LOC valid) but the GS signal is invalid/unstable/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **PARTIAL** — GS hides (LOC-gated `GSV`); no explicit flag |
+| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag; compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
+| **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) fail/bad/absent | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
+| **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (ILS tuned, LOC valid) but the GS signal is invalid/unstable/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **DONE** — red GS flag; diamond suppressed |
 
 The HSI-ANN-003 distinction matters: **no glideslope tuned/expected → no GS scale**
 (handled by `GSV`); **glideslope expected but signal lost → GS *flag*** (still a gap).
@@ -332,9 +332,10 @@ convention, and no element is left showing its last-good value after loss:
 | `TOFROM` | normal | hide | hide | hide | hide |
 | `BRG1`/`BRG2` | normal | hide needle | hide needle | hide needle | no needle |
 
-Today the widget wires `old`/`bad`/`fail` for `CDI`/`GSI` and hides on old/bad; the open
-items are the **flags** (ANN-001..003) and confirming `HEAD`/`COURSE`/`HEADBUG` each
-honor the convention.
+The widget now renders all three flags (ANN-001..003), and `_showGSI` hides on `fail`
+too. Open items: gating `_showCDI` on `fail` (currently old/bad only — the NAV flag
+covers annunciation, but a pure-fail CDI is not yet removed) and confirming
+`HEAD`/`COURSE`/`HEADBUG` each fully honor the convention.
 
 ### 7.3 Colour (HSI-COLOR)
 
@@ -421,7 +422,7 @@ The executable catalog lives in
 §7 requirement IDs. Passing tests verify shipped behaviour; the three `xfail(strict)`
 tests are the **gap tracker** for the unimplemented warning flags — they fail today and
 will flip the run red the moment a flag is implemented, forcing removal of the marker.
-(Suite: 22 passed, 3 xfailed.)
+(Suite: 25 passed, 0 xfailed.)
 
 | HSI-TC | Requirement | Test (`test_hsi_cat_…`) | Status |
 |--------|-------------|-------------------------|--------|
@@ -432,9 +433,9 @@ will flip the run red the moment a flag is implemented, forcing removal of the m
 | 041 | HSI-COLOR-001 + SRC-001 | `source_switch_tracks_colour_and_label` | pass |
 | 060 | HSI-DEV-001 (CDI edge) | `cdi_full_scale_boundary` | pass |
 | 062 | HSI-DEV-001 (GS edge) | `gsi_full_scale_boundary` | pass |
-| 101 | **HSI-ANN-001** (HDG flag) | `hdg_flag_on_head_fail` | **xfail — gap** |
-| 102 | **HSI-ANN-002** (NAV flag) | `nav_flag_on_cdi_invalid` | **xfail — gap** |
-| 103 | **HSI-ANN-003** (GS flag) | `gs_flag_on_gs_lost` | **xfail — gap** |
+| 101 | **HSI-ANN-001** (HDG flag) | `hdg_flag_on_head_fail` | pass |
+| 102 | **HSI-ANN-002** (NAV flag) | `nav_flag_on_cdi_invalid` | pass |
+| 103 | **HSI-ANN-003** (GS flag) | `gs_flag_on_gs_lost` | pass |
 
 Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
 `quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;
