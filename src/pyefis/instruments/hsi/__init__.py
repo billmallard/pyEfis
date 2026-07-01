@@ -245,6 +245,7 @@ class HSI(QGraphicsView):
         self._showGSI = not self.isOld()
         self._showHdgFlag = False
         self._showNavFlag = False
+        self._showGsFlag = False
         self.cardinal = ["N", "E", "S", "W"]
         self.course_pointer = None
         self.myparent = parent
@@ -531,7 +532,7 @@ class HSI(QGraphicsView):
             bar = self.cdippw
             self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad)
             self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
-                and not (self._GsiOld or self._GsiBad)
+                and not (self._GsiOld or self._GsiBad or self._GsiFail)
 
             if self.cdi_enabled:
                 # Lateral deviation scale dots (white) along the lateral axis.
@@ -618,6 +619,15 @@ class HSI(QGraphicsView):
         self._showNavFlag = self._CdiFail or self._CdiBad
         if self._showNavFlag:
             self._draw_flag(c, "NAV", self.cx - self.r * 0.4, self.cy)
+        # GS flag: glideslope expected (present per GSV) but its signal is
+        # unreliable (bad/failed). The diamond (_showGSI) already excludes bad/fail,
+        # so the diamond and this flag are mutually exclusive. Distinct from 'no GS
+        # present' (GSV<0.5), where the scale is simply absent -- no flag.
+        self._showGsFlag = (self.gsi_enabled
+                            and self._gsv is not None and self._gsv >= 0.5
+                            and (self._GsiFail or self._GsiBad))
+        if self._showGsFlag:
+            self._draw_flag(c, "GS", self.cx + self.r * 0.72, self.cy)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings

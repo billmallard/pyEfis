@@ -161,6 +161,7 @@ def test_hsi_cdi_gsi_old_tracks_oldchanged_not_failchanged(fix, qtbot):
     widget.cdidb.badChanged.emit(False)
     widget.gsidb.oldChanged.emit(False)
     widget.gsidb.badChanged.emit(False)
+    widget._GsiFail = False
 
     assert widget._CdiOld is False and widget._CdiBad is False
     assert widget._GsiOld is False and widget._GsiBad is False
@@ -182,7 +183,7 @@ def test_hsi_gsi_hidden_when_no_glideslope(fix, qtbot):
     widget.resize(200, 200)
     widget.show()
     qtbot.waitExposed(widget)
-    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = False
+    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
 
     widget.setGsv(1)
     widget.paintEvent(QPaintEvent(widget.rect()))
@@ -469,7 +470,7 @@ def test_hsi_cat_all_valid_shows_both_needles(fix, qtbot):
     """HSI-TC-001 | HSI-FAIL-001 (happy path) | Every deviation signal valid and a
     glideslope present -> both the CDI and GS needles are shown."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
-    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = False
+    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = w._GsiFail = False
     w.setGsv(1)
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showCDI is True
@@ -503,7 +504,7 @@ def test_hsi_cat_gs_absent_when_gsv_zero(fix, qtbot):
     absent, lateral CDI unaffected. The 'no GS present' branch, distinct from GS-lost
     (HSI-TC-103)."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
-    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = False
+    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = w._GsiFail = False
     w.setGsv(0)
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showGSI is False
@@ -526,7 +527,7 @@ def test_hsi_cat_gsi_full_scale_boundary(fix, qtbot):
     paints without error and stays shown."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
     w.setGsv(1)
-    w._GsiOld = w._GsiBad = False
+    w._GsiOld = w._GsiBad = w._GsiFail = False
     for dev in (1.0, -1.0, 0.0):
         w.setGsi(dev)
         w.paintEvent(QPaintEvent(w.rect()))
@@ -567,14 +568,14 @@ def test_hsi_cat_nav_flag_on_cdi_invalid(fix, qtbot):
     assert w._showCDI is False        # flag + remove the deviation bar
 
 
-@pytest.mark.xfail(strict=True, reason="HSI-ANN-003 gap: GS lost only hides, shows no flag")
 def test_hsi_cat_gs_flag_on_gs_lost(fix, qtbot):
     """HSI-TC-103 | HSI-ANN-003 | When a glideslope is expected (present) but its signal
-    is lost/failed, the HSI must show a GS warning flag -- distinct from 'no GS present'
-    (GSV=0, HSI-TC-032) where the scale is simply absent (IFH p.283). GAP: GS only hides.
-    Contract: paintEvent sets w._showGsFlag True when GS expected but signal invalid."""
+    is lost/failed, the HSI shows a GS warning flag and no diamond -- distinct from 'no GS
+    present' (GSV=0, HSI-TC-032) where the scale is simply absent (IFH p.283): paintEvent
+    sets w._showGsFlag and _showGSI stays False (mutually exclusive)."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
     w.setGsv(1)            # glideslope present / expected
     w.setGsiFail(True)     # ...but the GS signal has failed
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showGsFlag is True
+    assert w._showGSI is False       # flag replaces the diamond
