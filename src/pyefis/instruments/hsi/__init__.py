@@ -244,6 +244,7 @@ class HSI(QGraphicsView):
         self._showCDI = not self.isOld()
         self._showGSI = not self.isOld()
         self._showHdgFlag = False
+        self._showNavFlag = False
         self.cardinal = ["N", "E", "S", "W"]
         self.course_pointer = None
         self.myparent = parent
@@ -612,6 +613,11 @@ class HSI(QGraphicsView):
         self._showHdgFlag = self._HeadFail or self._HeadBad
         if self._showHdgFlag:
             self._draw_flag(c, "HDG", self.cx, self.fontSize * 1.1)
+        # NAV (lateral) flag: selected lateral source invalid. The CDI bar is
+        # already removed by _showCDI; the flag positively annunciates the loss.
+        self._showNavFlag = self._CdiFail or self._CdiBad
+        if self._showNavFlag:
+            self._draw_flag(c, "NAV", self.cx - self.r * 0.4, self.cy)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings

@@ -555,16 +555,16 @@ def test_hsi_cat_hdg_flag_on_head_fail(fix, qtbot):
     assert w._showHdgFlag is True
 
 
-@pytest.mark.xfail(strict=True, reason="HSI-ANN-002 gap: no NAV warning flag")
 def test_hsi_cat_nav_flag_on_cdi_invalid(fix, qtbot):
-    """HSI-TC-102 | HSI-ANN-002 | On selected-lateral-source fail/invalid the HSI must
-    show a NAV warning flag and remove the CDI (IFH p.118/p.283). GAP: CDI hides but no
-    flag. Contract: paintEvent sets w._showNavFlag True."""
+    """HSI-TC-102 | HSI-ANN-002 | On selected-lateral-source fail/invalid the HSI shows a
+    NAV warning flag and removes the CDI (IFH p.118/p.283): paintEvent sets w._showNavFlag
+    and _showCDI is False."""
     w = _mk_hsi(qtbot, cdi_enabled=True)
     w.setCdiBad(True)
     w.setCdiFail(True)
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showNavFlag is True
+    assert w._showCDI is False        # flag + remove the deviation bar
 
 
 @pytest.mark.xfail(strict=True, reason="HSI-ANN-003 gap: GS lost only hides, shows no flag")
