@@ -231,6 +231,10 @@ class Altimeter_Tape(QGraphicsView):
         round_to=0,
         numeric_box=True,
         font_scale=1.0,
+        show_trend=None,
+        trend_lookahead=6.0,
+        trend_window=3.0,
+        trend_min_change=20.0,
     ):
         super(Altimeter_Tape, self).__init__(parent)
         self.setStyleSheet("background: transparent")
@@ -269,6 +273,18 @@ class Altimeter_Tape(QGraphicsView):
         # Multiplier on the tape's scale-number (tick label) font size.
         self.font_scale = font_scale
         self.myparent = parent
+
+        # 6-second altitude-trend indicator (AC 23.1311-1C sec 17.8.b): a cyan
+        # vector predicting where the altitude will be trend_lookahead seconds
+        # ahead, for level-off look-ahead. It is an ALTITUDE cue, so default it
+        # on only for an ALT tape -- a VS tape shares this class and should not
+        # sprout a trend-of-VS. An explicit show_trend (config/caller) always wins.
+        self.show_trend = (dbkey == "ALT") if show_trend is None else show_trend
+        self.trend_lookahead = trend_lookahead
+        self.trend_window = trend_window
+        self.trend_min_change = trend_min_change
+        self._trend_history = []   # (monotonic_time, altitude) samples
+        self._trend_px = 0.0
 
         self.conversionFunction1 = lambda x: x
         self.conversionFunction2 = lambda x: x
@@ -311,20 +327,34 @@ class Altimeter_Tape(QGraphicsView):
 
         for i in range(self.maxalt * 2, -1, -self.minorDiv):
             y = self.y_offset(i)
-            if (i - self.maxalt) % self.majorDiv == 0:
-                l = self.scene.addLine(w_2 + 15, y, w, y, dialPen)
-                l.setOpacity(self.foregroundOpacity)
-                t = self.scene.addText(str(i - self.maxalt))
+            alt = i - self.maxalt
+            # Three tick tiers denoting the standard increments (AC 23.1311-1C
+            # sec 17.8.a): 1,000-ft longest, 500-ft intermediate, minorDiv short.
+            # Labels ride every 1,000-ft tick and every majorDiv tick, so a
+            # config's chosen label spacing is preserved while the 500/1,000-ft
+            # sense of altitude is reinforced.
+            if alt % 1000 == 0:
+                tick_x0 = w_2                       # longest
+                labeled = True
+            elif alt % 500 == 0:
+                tick_x0 = w_2 + 15                  # intermediate
+                labeled = (alt % self.majorDiv == 0)
+            elif alt % self.majorDiv == 0:
+                tick_x0 = w_2 + 15                  # labeled major
+                labeled = True
+            else:
+                tick_x0 = w_2 + 30                  # short minor
+                labeled = False
+            l = self.scene.addLine(tick_x0, y, w, y, dialPen)
+            l.setOpacity(self.foregroundOpacity)
+            if labeled:
+                t = self.scene.addText(str(alt))
                 t.setFont(f)
                 self.scene.setFont(f)
                 t.setDefaultTextColor(QColor(Qt.GlobalColor.white))
                 t.setX(0)
                 t.setY(y - t.boundingRect().height() / 2)
                 t.setOpacity(self.foregroundOpacity)
-
-            else:
-                l = self.scene.addLine(w_2 + 30, y, w, y, dialPen)
-                l.setOpacity(self.foregroundOpacity)
         self.setScene(self.scene)
 
         nbh = w / 1.20
@@ -398,6 +428,31 @@ class Altimeter_Tape(QGraphicsView):
             )
         )
 
+        # Altitude-trend vector (AC 23.1311-1C sec 17.8.b) -- a cyan look-ahead
+        # from the read pointer: up when climbing, down when descending. Only
+        # shown once it clears a noise floor so a level-flight jitter stays quiet.
+        if self.show_trend:
+            noise_floor_px = self.trend_min_change * self.pph
+            if abs(self._trend_px) >= noise_floor_px:
+                trend_color = QColor(0, 220, 255)
+                line_w = max(2, qRound(w / 40))
+                p.setPen(QPen(trend_color, line_w))
+                p.setBrush(QBrush(trend_color))
+                max_trend_px = qRound(h * 0.45)
+                trend_y = max(-max_trend_px, min(max_trend_px, qRound(-self._trend_px)))
+                x0 = qRound(triangle_size * 1.3)
+                p.drawLine(x0, 0, x0, trend_y)
+                arrow = max(3, qRound(w / 14))
+                if trend_y < 0:      # climbing
+                    tip = [QPointF(x0, trend_y),
+                           QPointF(x0 - arrow, trend_y + arrow),
+                           QPointF(x0 + arrow, trend_y + arrow)]
+                else:                # descending
+                    tip = [QPointF(x0, trend_y),
+                           QPointF(x0 - arrow, trend_y - arrow),
+                           QPointF(x0 + arrow, trend_y - arrow)]
+                p.drawPolygon(QPolygonF(tip))
+
     def setUnitSwitching(self):
         """When this function is called the unit switching features are used"""
         self.__currentUnits = 1
@@ -428,11 +483,35 @@ class Altimeter_Tape(QGraphicsView):
     def getAltimeter(self):
         return self._altimeter
 
+    def _push_trend(self, now, value):
+        """Update the trend history and derive self._trend_px -- the look-ahead
+        offset in scene pixels (positive = climbing -> vector up)."""
+        self._trend_history.append((now, value))
+        cutoff = now - self.trend_window
+        while self._trend_history and self._trend_history[0][0] < cutoff:
+            self._trend_history.pop(0)
+        if len(self._trend_history) >= 2:
+            t0, v0 = self._trend_history[0]
+            t1, v1 = self._trend_history[-1]
+            dt = t1 - t0
+            if dt >= 0.1:
+                rate = (v1 - v0) / dt                       # units per second
+                self._trend_px = rate * self.trend_lookahead * self.pph
+            else:
+                self._trend_px = 0.0
+        else:
+            self._trend_px = 0.0
+
     def setAltimeter(self, altimeter):
         cvalue = self.conversionFunction(altimeter)
+        if self.show_trend:
+            self._push_trend(time.monotonic(), cvalue)
         if cvalue != self._altimeter:
             self._altimeter = cvalue
             self.redraw()
+        elif self.show_trend:
+            # value unchanged but the trend may have decayed -- repaint the cue.
+            self.viewport().update()
 
     altimeter = property(getAltimeter, setAltimeter)
 

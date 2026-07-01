@@ -291,7 +291,6 @@ def test_al_cat_altitude_invalid_annunciation(fix, qtbot):
     assert widget.numerical_display.bad is True
 
 
-@pytest.mark.xfail(strict=True, reason="AL-MARK-001 gap: no distinct 500/1000-ft tick tiers")
 def test_al_cat_standard_500_1000_ticks(fix, qtbot):
     """AL-TC-003 | AL-MARK-001 | The tape must denote standard 500- and 1,000-ft increments
     distinctly (1000 = longest + label, 500 = intermediate, minor = short). AC 23.1311-1C
@@ -300,7 +299,6 @@ def test_al_cat_standard_500_1000_ticks(fix, qtbot):
     assert len(_horizontal_tick_x0(widget)) >= 3         # 1000 / 500 / minor tiers
 
 
-@pytest.mark.xfail(strict=True, reason="AL-TREND-001 gap: no 6-second altitude trend")
 def test_al_cat_six_second_trend_indicator(fix, qtbot):
     """AL-TC-004 | AL-TREND-001 | A 6-second altitude-trend indicator predicts altitude
     ahead for level-off look-ahead. AC 23.1311-1C sec 17.8.b (p.43). Contract: show_trend +
@@ -319,6 +317,18 @@ def test_al_cat_six_second_trend_indicator(fix, qtbot):
     widget._push_trend(200.0, 1200.0)
     widget._push_trend(202.0, 1000.0)                    # -200 ft in 2 s -> descending
     assert widget._trend_px < 0
+
+
+def test_al_cat_trend_defaults_off_for_vs_tape(fix, qtbot):
+    """AL-TC-004b | AL-TREND-001 | The trend is an ALTITUDE cue (sec 17.8.b); the shared
+    Altimeter_Tape class must not sprout a trend on a VS tape by default, though an explicit
+    show_trend still wins."""
+    vs = altimeter.Altimeter_Tape(dbkey="VS")
+    assert vs.show_trend is False                        # VS tape: no default trend
+    alt = altimeter.Altimeter_Tape(dbkey="ALT")
+    assert alt.show_trend is True                        # ALT tape: trend on
+    forced = altimeter.Altimeter_Tape(dbkey="VS", show_trend=True)
+    assert forced.show_trend is True                     # explicit config wins
 
 
 @pytest.mark.xfail(strict=True, reason="AL-BUG-001 data-blocked: no selected-altitude FIX key")
