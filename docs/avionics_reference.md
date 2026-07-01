@@ -136,6 +136,30 @@ for source-identification clarity in a GPS-primary cockpit. Revisit if TSO/ARP r
 testing argues for the Table 5-1 allocation. (Exactly the kind of "documented equivalent-or-
 better" decision the framing calls for.)
 
+### 4.4 Standalone heading displays (HeadingDisplay / DG_Tape)
+
+Requirements + IDs live in `heading_widget_spec.md §4`. Distinct from the full HSI: the
+boxed numeric heading readout (`HeadingDisplay`) and the moving heading tape (`DG_Tape`,
+factory type `heading_tape`).
+
+- **§8.2 (p.20)** — heading (direction) is **Primary Flight Information**, part of the
+  basic-T; **14 CFR §91.205** requires a magnetic direction indicator (VFR) / gyro-stabilized
+  heading (IFR).
+- **§8.6 (p.23)** — *clear and unmistakable display of aircraft symbol and heading*; on the
+  primary display the heading **scale should have a mode presenting at least 120° of arc**;
+  the direction **source should be clearly indicated** (heading vs track, when track is a
+  selectable option). *Loss of direction could reduce the pilot's capability* (§8.6.a) — so
+  an invalid heading must be annunciated, not shown as live (governing §2).
+- **§8.8 (p.24)** — magnetic-heading **accuracy** targets (gyro-stabilized ±4° ground / ±6°
+  flight; non-stabilized ±10°). A *data-source* obligation on the AHRS/magnetometer, not a
+  display property.
+
+Colour (§22 / Table 5-1): heading scale/text white, cardinal points cyan; failure flag red,
+degraded amber. pyEfis status: `HeadingDisplay` annunciates `HEAD` `fail`/`old`/`bad`
+(red `XXX` / blank amber) — DONE; **`DG_Tape` ignores quality** (an in-code `TODO`), the one
+heading gap (HDG-ANN-001). The ≥120°-arc scale is provided by the HSI compass rose on
+shipped screens.
+
 ## 5. Attitude indicator (AI) — source material
 
 Requirements (with IDs) live in `ai_widget_spec.md §4 "Flags, Alerts & Recovery

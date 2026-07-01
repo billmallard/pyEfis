@@ -579,3 +579,92 @@ def test_hsi_cat_gs_flag_on_gs_lost(fix, qtbot):
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showGsFlag is True
     assert w._showGSI is False       # flag replaces the diamond
+
+
+# =============================================================================
+# Heading / compass requirements test catalog -- keyed to heading_widget_spec.md
+# sec 4 (Heading Presentation & Annunciation) and avionics_reference.md sec 4.4.
+#
+# Docstrings: HDG-TC-NNN | requirement ID | intent.
+# Passing tests verify shipped behaviour. The xfail(strict) test is the gap
+# tracker for DG_Tape heading-invalid annunciation (AC 23.1311-1C sec 8.6.a):
+# today the heading tape ignores HEAD fail/old/bad (an in-code TODO). Spec sec 5
+# carries the case<->requirement map.
+# =============================================================================
+
+
+def test_hdg_cat_heading_presentation(fix, qtbot):
+    """HDG-TC-001 | HDG-DISP-001 | Clear heading presentation: a boxed numeric readout plus
+    a heading scale/tape with cardinal points. AC 23.1311-1C sec 8.6.b (p.23)."""
+    _set_quality(fix.db.get_item("HEAD"))
+    disp = hsi.HeadingDisplay(fg_color=Qt.GlobalColor.white)
+    qtbot.addWidget(disp)
+    disp.resize(200, 80)
+    disp.show()
+    qtbot.waitExposed(disp)
+    disp.setHeading(90)
+    assert disp.getHeading() == 90
+
+    tape = hsi.DG_Tape()
+    qtbot.addWidget(tape)
+    tape.resize(300, 100)
+    tape.show()
+    qtbot.waitExposed(tape)
+    assert tape.scene is not None
+    assert tape.cardinal[:4] == ["N", "E", "S", "W"]      # cardinal points
+    tape.setHeading(180)
+    assert tape.getHeading() == 180
+
+
+def test_hdg_cat_heading_format_wraps(fix, qtbot):
+    """HDG-TC-002 | HDG-FMT-001 | Magnetic heading is three zero-padded digits, wrapping at
+    360 (000-359). AC 23.1311-1C sec 8.6.b (p.23)."""
+    f = hsi.HeadingDisplay._fmt_heading
+    assert f(30) == "030°"
+    assert f(0) == "000°"
+    assert f(360) == "000°"        # wraps
+    assert f(359.7) == "359°"
+
+
+def test_hdg_cat_numeric_invalid_annunciation(fix, qtbot):
+    """HDG-TC-003 | HDG-ANN-001 | The numeric heading readout annunciates invalid HEAD:
+    fail -> red XXX, old/bad -> amber blank. AC 23.1311-1C sec 8.6.a; ref sec 2."""
+    _set_quality(fix.db.get_item("HEAD"))
+    widget = hsi.HeadingDisplay(fg_color=Qt.GlobalColor.white)
+    qtbot.addWidget(widget)
+    widget.resize(200, 80)
+    widget.show()
+    qtbot.waitExposed(widget)
+    event = QPaintEvent(widget.rect())
+
+    with track_calls(QPen, "__init__") as tracker:
+        widget.setFail(True)
+        widget.paintEvent(event)
+    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))
+
+    widget.setFail(False)
+    with track_calls(QPen, "__init__") as tracker:
+        widget.setBad(True)
+        widget.paintEvent(event)
+    assert tracker.was_called_with("__init__", QColor(255, 150, 0))
+
+
+@pytest.mark.xfail(strict=True, reason="HDG-ANN-001 gap: DG_Tape ignores HEAD fail/old/bad")
+def test_hdg_cat_tape_invalid_annunciation(fix, qtbot):
+    """HDG-TC-004 | HDG-ANN-001 | The heading tape must annunciate invalid HEAD (fail -> red
+    flag, old/bad -> grey/amber) rather than keep scrolling a frozen tape. AC 23.1311-1C
+    sec 8.6.a; ref sec 2. Contract: DG_Tape wires HEAD old/bad/fail (w._fail etc.) and
+    paintEvent flags it."""
+    _set_quality(fix.db.get_item("HEAD"))
+    widget = hsi.DG_Tape()
+    qtbot.addWidget(widget)
+    widget.resize(300, 100)
+    widget.show()
+    qtbot.waitExposed(widget)
+    event = QPaintEvent(widget.rect())
+
+    fix.db.get_item("HEAD").fail = True
+    assert widget._fail is True                           # quality wired
+    with track_calls(QPen, "__init__") as tracker:
+        widget.paintEvent(event)
+    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))   # red flag
