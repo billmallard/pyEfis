@@ -58,7 +58,7 @@ a Major hazard. IDs (`VSI-<CLASS>-<NNN>`) are stable and anchor the test catalog
 | ID | Requirement | Trigger | Required response | Cite | Status |
 |----|-------------|---------|-------------------|------|--------|
 | **VSI-DISP-001** | Performance-appropriate scale, clear zero, up=climb/down=descend | always | Zero reference + signed scale over a climb/descent-appropriate range | §8.11 p.24; §A.6 p.74 | **DONE** (range fixed — see §7) |
-| **VSI-ANN-001** | VS-invalid annunciation on **every** variant | `VS` fail / old / bad | `fail` → remove the moving element + show a clear flag; `old`/`bad` → grey / blank (never a live-looking value) | Table 4-6 p.32 (Major); §2 | **PARTIAL** — DONE for `VSI_Dial` + `Alt_Trend_Tape`; **GAP for `VSI_PFD`** (dot always magenta) |
+| **VSI-ANN-001** | VS-invalid annunciation on **every** variant | `VS` fail / old / bad | `fail` → remove the moving element + show a clear flag; `old`/`bad` → grey / blank (never a live-looking value) | Table 4-6 p.32 (Major); §2 | **DONE** — all three variants: `VSI_PFD` now flags fail (red X, no dot) + greys old/bad |
 
 **Contract for the gap.** `VSI_PFD.paintEvent` must consume the `VS` item quality: on
 `fail`, **do not draw the magenta dot** — draw a red failure flag (an `X`) so a frozen dot
@@ -80,7 +80,7 @@ removal.
 | 001 | VSI-DISP-001 | `scale_zero_and_sign` | pass |
 | 002 | VSI-ANN-001 (dial) | `dial_invalid_annunciation` | pass |
 | 003 | VSI-ANN-001 (tape) | `tape_invalid_annunciation` | pass |
-| 004 | **VSI-ANN-001 (PFD)** | `pfd_invalid_annunciation` | xfail — gap |
+| 004 | **VSI-ANN-001 (PFD)** | `pfd_invalid_annunciation` | pass |
 
 ## 6. Conventions and standards basis
 
@@ -91,8 +91,6 @@ consolidated + page-cited in [`avionics_reference.md`](avionics_reference.md) §
 
 ## 7. Open items
 
-- Implement VSI-ANN-001 for `VSI_PFD` (the Major "misleading VS" gap), then remove the
-  xfail marker and deploy to the Pi.
 - **Configurable range (VSI-DISP-001 / §A.6):** the variants use fixed ranges (`VSI_Dial`
   2,000 fpm, `VSI_PFD` 2,000, `Alt_Trend_Tape` 2,500). Reasonable for a typical GA
   experimental, but §A.6 wants the range to track the airplane's climb/descent performance

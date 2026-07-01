@@ -275,8 +275,9 @@ Requirements + IDs live in `vsi_widget_spec.md §4`.
   AC 25-11B (barometric setting / primary VSI to the right of the altitude indication).
 
 Colour (§22 / Table 5-1): the failure flag is **red**; a degraded (`old`/`bad`) indication
-greys. pyEfis status: `VSI_Dial` and `Alt_Trend_Tape` annunciate `fail`/`old`/`bad`; the
-`VSI_PFD` moving dot does **not** yet (VSI-ANN-001 gap — the Major "misleading VS" case).
+greys. pyEfis status: all three VSI variants annunciate `fail`/`old`/`bad` — `VSI_Dial`
+and `Alt_Trend_Tape` already did, and `VSI_PFD` now flags fail (red X, no dot) + greys
+old/bad, closing the Major "misleading VS" gap (VSI-ANN-001).
 
 ## 8. Requirement IDs and traceability
 
