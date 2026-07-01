@@ -287,6 +287,11 @@ class Airspeed_Tape(QGraphicsView):
 
         self.max = int(round(self.Vne * 1.25))
 
+        # Low/high-speed awareness bands (AC 23.1311-1C sec 17.7.1) -- built in
+        # resizeEvent; None until then / when the V-speeds don't support them.
+        self.low_speed_band = None
+        self.high_speed_band = None
+
         self.backgroundOpacity = 0.3
         self.foregroundOpacity = 0.6
         self.pph = 10  # Pixels per unit
@@ -347,6 +352,34 @@ class Airspeed_Tape(QGraphicsView):
         )
         x = self.scene.addRect(r, QPen(Qt.GlobalColor.yellow), QBrush(Qt.GlobalColor.yellow))
         x.setOpacity(self.foregroundOpacity)
+
+        # Low/high-speed awareness bands (AC 23.1311-1C sec 17.7.1, Fig 2). A
+        # moving scale gives no inherent sense of margin to the stall / VNE, so
+        # a red band runs from VSO down to 0 and another from VNE up to the top
+        # of the tape. Added before the tick lines / labels so those stay
+        # legible on top (colour is not the sole cue -- the band POSITION carries
+        # the awareness). They are cues, not limits -- they change no behaviour.
+        redBandPen = QPen(QColor(Qt.GlobalColor.red))
+        redBandBrush = QBrush(QColor(Qt.GlobalColor.red))
+        self.low_speed_band = None
+        self.high_speed_band = None
+        # Low-speed red band: VSO -> 0. Requires a real VSO (defaults to 0 when
+        # the aux value is unset -> no band rather than a zero-height sliver).
+        if self.Vs0 > 0:
+            r = QRectF(
+                QPointF(0, -self.Vs0 * self.pph + tape_start),
+                QPointF(self.markWidth, tape_start),
+            )
+            self.low_speed_band = self.scene.addRect(r, redBandPen, redBandBrush)
+            self.low_speed_band.setOpacity(self.foregroundOpacity)
+        # High-speed red band: VNE -> top of the tape (scene y = 0).
+        if 0 < self.Vne < self.max:
+            r = QRectF(
+                QPointF(0, 0),
+                QPointF(self.markWidth, -self.Vne * self.pph + tape_start),
+            )
+            self.high_speed_band = self.scene.addRect(r, redBandPen, redBandBrush)
+            self.high_speed_band.setOpacity(self.foregroundOpacity)
 
         # Draw the little white lines and the text
         for i in range(self.max, -1, -1):

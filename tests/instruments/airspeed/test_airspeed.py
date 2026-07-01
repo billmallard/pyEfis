@@ -247,7 +247,6 @@ def test_as_cat_airspeed_invalid_annunciation(fix, qtbot):
     assert widget.numerical_display.bad is True
 
 
-@pytest.mark.xfail(strict=True, reason="AS-LSA-001 gap: no low-speed red band VSO->0")
 def test_as_cat_low_speed_red_band(fix, qtbot):
     """AS-TC-101 | AS-LSA-001 | A moving-scale tape must show a red band from VSO down to
     zero for low-speed awareness. AC 23.1311-1C sec 17.7.1.a (Fig 2, p.40-41). Contract:
@@ -261,7 +260,6 @@ def test_as_cat_low_speed_red_band(fix, qtbot):
     assert r.bottom() == pytest.approx(_tape_y(widget, 0), abs=3)         # down to 0
 
 
-@pytest.mark.xfail(strict=True, reason="AS-HSA-001 gap: red VNE line only, no band VNE->top")
 def test_as_cat_high_speed_red_band(fix, qtbot):
     """AS-TC-102 | AS-HSA-001 | A moving-scale tape must show a red band (not just a
     hairline radial) from VNE up to the top of the tape. AC 23.1311-1C sec 17.7.1.b
