@@ -564,16 +564,26 @@ class HSI(QGraphicsView):
                     c.drawPolygon(QPolygonF([_p(lx, ly) for lx, ly in pts]))
 
             if self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5):
-                # Glideslope: centred vertical scale + needle (hidden for a VOR).
-                c.setPen(compassPen)
-                for dev in (-1.0, -2.0/3.0, -1.0/3.0, 1.0/3.0, 2.0/3.0, 1.0):
-                    c.drawLine(qRound(self.cx - 5), qRound(self.cy + dev*self.gsipph),
-                               qRound(self.cx + 5), qRound(self.cy + dev*self.gsipph))
+                # Glideslope/glidepath: a vertical deviation scale on the RIGHT of
+                # the rose (HSI convention) with a source-coloured diamond pointer.
+                # Centre = on path; two dots each side. Hidden when there is no
+                # glideslope (e.g. a VOR).
+                gx = self.cx + self.r * 0.72
+                grange = self.gsipph
+                c.setPen(QPen(QColor(self.fg_color)))
+                c.setBrush(QBrush(QColor(self.fg_color)))
+                gdot = max(1.5, self.tickSize * 0.16)
+                c.drawLine(qRound(gx - self.tickSize*0.55), qRound(self.cy),
+                           qRound(gx + self.tickSize*0.55), qRound(self.cy))
+                for dev in (-1.0, -0.5, 0.5, 1.0):
+                    c.drawEllipse(QPointF(gx, self.cy - dev*grange), gdot, gdot)
                 if self._showGSI:
-                    c.setPen(cdiPen)
-                    y = self.cy - self._glideSlopeIndicator * self.gsipph
-                    c.drawLine(qRound(self.cx + self.r - self.fontSize*2 - 6), qRound(y),
-                               qRound(self.cx - self.r + self.fontSize*2 + 6), qRound(y))
+                    gsc = self._source_color() or QColor(self.needle_color)
+                    c.setPen(QPen(gsc)); c.setBrush(QBrush(gsc))
+                    gy = self.cy - self._glideSlopeIndicator * grange
+                    ds = self.tickSize * 0.6
+                    c.drawPolygon(QPolygonF([QPointF(gx, gy - ds), QPointF(gx + ds, gy),
+                                             QPointF(gx, gy + ds), QPointF(gx - ds, gy)]))
 
         # Nav-source annunciation (top-left), coloured to match the active source.
         if getattr(self, "source_label_enabled", True):
