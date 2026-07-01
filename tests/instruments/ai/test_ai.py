@@ -335,3 +335,118 @@ def test_fpm_solution_independent_of_optional_vpath(fix, qtbot):
     widget._fpm_gs = 120.0
     widget._fpm_fail['VPATH'] = True
     assert widget._fpm_solution_valid() is True
+
+
+# =============================================================================
+# AI requirements test catalog -- keyed to ai_widget_spec.md sec 4 (Flags,
+# Alerts & Recovery Annunciation) and avionics_reference.md.
+#
+# Docstrings: AI-TC-NNN | requirement ID | intent.
+# Passing tests verify shipped behaviour. The xfail(strict) tests are the
+# executable gap tracker for the unimplemented recovery/envelope alerts: they
+# fail today and flip the run red when the alert is implemented, forcing removal
+# of the marker. AI-LIM-001 stays xfail until fix-gateway publishes AOA / stall
+# margin. Spec sec 5 carries the case<->requirement map.
+# =============================================================================
+
+
+def test_ai_cat_attitude_fail_shows_fail_scene(fix, qtbot):
+    """AI-TC-001 | AI-ANN-001 | On PITCH/ROLL fail the AI removes the attitude and shows
+    the fail display (XXX / fail_scene). Table 4-1 p.27 -- loss of attitude is
+    Catastrophic."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    assert QGraphicsView.scene(widget) == widget.scene        # valid -> attitude shown
+    widget.setAIFailPitch(True)
+    assert widget.getAIFail() is True
+    assert QGraphicsView.scene(widget) == widget.fail_scene   # failed -> XXX
+
+
+def test_ai_cat_degraded_attitude_stays_greyed(fix, qtbot):
+    """AI-TC-002 | AI-FAIL-001 | Stale/invalid (old/bad) attitude greys the display but
+    keeps showing it -- degraded, not removed (that is the fail case)."""
+    _reset_ai_items(fix, old=True, bad=True)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    assert widget.getAIOld() is True and widget.getAIBad() is True
+    assert widget.getAIFail() is False
+    assert QGraphicsView.scene(widget) == widget.scene        # greyed, still shown
+
+
+def test_ai_cat_slip_ball_tracks_lateral_accel(fix, qtbot):
+    """AI-TC-003 | AI-SLIP-001 | The slip/skid ball deflects with lateral acceleration
+    (ALAT). AC 25-11B App A A.2.6."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    widget.setLateralAcceleration(9)
+    assert widget._latAccel == pytest.approx(0.3)             # slip right
+    widget.setLateralAcceleration(-9)
+    assert widget._latAccel == pytest.approx(-0.3)            # slip left
+    widget.setLateralAcceleration(0)
+    assert widget._latAccel == pytest.approx(0.0)             # coordinated
+
+
+@pytest.mark.xfail(strict=True, reason="AI-CHEV-001 gap: no unusual-attitude recovery chevrons")
+def test_ai_cat_recovery_chevrons_at_extreme_pitch(fix, qtbot):
+    """AI-TC-101 | AI-CHEV-001 | Beyond the unusual-attitude pitch threshold the AI must
+    show recovery chevrons pointing to the nearest horizon (recognize + recover < 1 s).
+    AC 25-11B App A A.2.2 (p.70). Contract: paintEvent sets w._show_recovery_chevrons."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.pitchAngle = 45           # nose-high unusual attitude
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is True
+
+
+@pytest.mark.xfail(strict=True, reason="AI-BANK-001 gap: no excessive-bank annunciation")
+def test_ai_cat_excessive_bank_annunciation(fix, qtbot):
+    """AI-TC-102 | AI-BANK-001 | Beyond the excessive-bank threshold (before stall buffet)
+    the AI must annunciate excessive bank. AC 25-11B App A A.2.5 (p.70). Contract:
+    paintEvent sets w._excessive_bank."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.rollAngle = 60            # steep bank
+    widget.paintEvent(event)
+    assert widget._excessive_bank is True
+
+
+@pytest.mark.xfail(strict=True, reason="AI-DCL-001 gap: no unusual-attitude de-clutter")
+def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
+    """AI-TC-103 | AI-DCL-001 | At an unusual attitude the AI must de-clutter -- remove
+    non-essential overlays, keep recovery info. AC 25-11B p.47, App A. Contract:
+    paintEvent sets w._decluttered."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.pitchAngle = 45
+    widget.rollAngle = 60
+    widget.paintEvent(event)
+    assert widget._decluttered is True
+
+
+@pytest.mark.xfail(strict=True, reason="AI-SLIP-002 gap: no excessive-sideslip annunciation")
+def test_ai_cat_excessive_sideslip_annunciation(fix, qtbot):
+    """AI-TC-104 | AI-SLIP-002 | Beyond the excessive-sideslip threshold the AI must give a
+    salient slip alert. AC 25-11B App A A.2.6 (p.70). Contract: w._excessive_slip."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.setLateralAcceleration(30)    # large lateral accel -> big ball deflection
+    widget.paintEvent(event)
+    assert widget._excessive_slip is True
+
+
+@pytest.mark.xfail(strict=True, reason="AI-LIM-001 data-blocked: no AOA / stall-margin key yet")
+def test_ai_cat_pitch_limit_indication(fix, qtbot):
+    """AI-TC-105 | AI-LIM-001 | Approaching stall AOA the AI must show a pitch-limit
+    indication. AC 25-11B App A A.2.4 (p.70). Data-blocked: fix-gateway publishes no AOA /
+    stall-margin key yet (OnSpeed/AOA path). Contract: w._show_pitch_limit."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is True

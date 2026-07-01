@@ -136,7 +136,42 @@ for source-identification clarity in a GPS-primary cockpit. Revisit if TSO/ARP r
 testing argues for the Table 5-1 allocation. (Exactly the kind of "documented equivalent-or-
 better" decision the framing calls for.)
 
-## 5. Requirement IDs and traceability
+## 5. Attitude indicator (AI) — source material
+
+Requirements (with IDs) live in `ai_widget_spec.md §4 "Flags, Alerts & Recovery
+Annunciation"` and cite the items here.
+
+### 5.1 Failure objectives
+
+**AC 25-11B Table 4-1 (p.27)** — *loss of all attitude displays (incl. standby) is
+**Catastrophic** / Extremely Improbable*. Attitude-fail annunciation and continued
+function are therefore safety-critical: primary attitude must keep working through
+unusual attitudes and rapid maneuvers (**§25.1301**; App. A §A.3).
+
+### 5.2 Unusual-attitude recovery + envelope awareness (AC 25-11B App. A, p.70)
+
+The AI must actively *aid recovery*, not merely display attitude:
+
+- **§A.2.2** — quick-glance attitude for *all* unusual attitudes; the pilot must recognize
+  and initiate recovery **within one second**. **Chevrons, pointers, and/or a permanent
+  ground-sky horizon** are the recommended means.
+- **§A.2.4** — a means to determine **margin to stall**; a **pitch-limit** indication is
+  acceptable.
+- **§A.2.5** — a means to identify an **excessive bank angle** before stall buffet.
+- **§A.2.6** — **sideslip** clearly indicated (e.g. split trapezoid), with an **excessive
+  sideslip** indication.
+- **De-clutter (p.47)** — the AI may auto-de-clutter at an unusual attitude, removing
+  non-essential information and retaining what is needed to recover.
+
+### 5.3 pyEfis status
+
+Present: attitude, pitch ladder, bank scale + standard-rate markers, slip/skid ball,
+aircraft symbol + FPM, `fail_scene` ("XXX") on failure, `old`/`bad` grey, SVS UNAVAIL.
+**Gaps** (the App. A recovery/envelope layer): recovery chevrons (A.2.2), excessive-bank
+(A.2.5), excessive-sideslip (A.2.6), de-clutter (p.47). **Data-blocked:** pitch-limit /
+stall-margin (A.2.4) needs an `AOA`/stall-margin key fix-gateway does not publish yet.
+
+## 6. Requirement IDs and traceability
 
 The chain, grep-able end-to-end:
 
@@ -152,7 +187,7 @@ AC 25-11B p.43       HSI-COLOR-001          HSI-TC-###             test_hsi_... 
 - The **repo is the system of record** (requirements + catalog + IDs). Issue trackers hold the
   *work* (implement a gap, write a case), not the requirements.
 
-## 6. Open items / to-mine
+## 7. Open items / to-mine
 
 - [ ] Deep-read **AC 25-11B** ch. 4–5 and **AC 23.1311-1C §17/§18/§22** for the full alerting +
       symbology + colour requirement set; pin pages.
