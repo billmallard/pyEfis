@@ -423,7 +423,6 @@ def test_ai_cat_excessive_bank_annunciation(fix, qtbot):
     assert widget._excessive_bank is True
 
 
-@pytest.mark.xfail(strict=True, reason="AI-DCL-001 gap: no unusual-attitude de-clutter")
 def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
     """AI-TC-103 | AI-DCL-001 | At an unusual attitude the AI must de-clutter -- remove
     non-essential overlays, keep recovery info. AC 25-11B p.47, App A. Contract:
@@ -431,10 +430,28 @@ def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
     _reset_ai_items(fix)
     widget = ai.AI()
     event = _show_ai(qtbot, widget)
-    widget.pitchAngle = 45
-    widget.rollAngle = 60
+
+    widget.pitchAngle = 5            # normal attitude, gentle bank -> no de-clutter
+    widget.rollAngle = 20
+    widget.paintEvent(event)
+    assert widget._decluttered is False
+
+    widget.pitchAngle = 45           # unusual pitch -> de-clutter
+    widget.rollAngle = 0
     widget.paintEvent(event)
     assert widget._decluttered is True
+
+    widget.pitchAngle = 0            # steep bank alone (past unusualBankDeg) -> de-clutter
+    widget.rollAngle = 70
+    widget.paintEvent(event)
+    assert widget._decluttered is True
+
+    # A normal steep turn (excessive-bank caution) is NOT yet the unusual-attitude
+    # regime -- the display stays fully cluttered so the pilot keeps all cues.
+    widget.rollAngle = 50
+    widget.paintEvent(event)
+    assert widget._excessive_bank is True
+    assert widget._decluttered is False
 
 
 def test_ai_cat_excessive_sideslip_annunciation(fix, qtbot):

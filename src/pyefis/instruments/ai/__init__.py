@@ -110,6 +110,14 @@ class AI(QGraphicsView):
         self.unusualPitchHighDeg = 30
         self.unusualPitchLowDeg = -20
         self._show_recovery_chevrons = False
+        # De-clutter (AC 25-11B p.47, App A): at an unusual attitude remove
+        # non-essential overlays (FPM, standard-rate turn diamonds, horizon
+        # heading scale), keeping only recovery-critical symbology. Engages on
+        # the unusual-pitch condition above or a steep bank past this threshold.
+        # (65 deg, past the excessive-bank caution, is the unusual-attitude
+        # regime -- not a normal steep turn.) Configurable.
+        self.unusualBankDeg = 65
+        self._decluttered = False
         # Fixed aircraft reference symbol (the "wings" the horizon moves
         # behind). style: "classic" (split wing bars + center dot) or
         # "garmin"/"gi275" (GI-275-style stepped wing bars + center
@@ -1033,6 +1041,16 @@ class AI(QGraphicsView):
 
         p.translate(w / 2, h / 2)
 
+        # Unusual-attitude regime (AC 25-11B App A A.2.2 / p.47) -- drives both
+        # the recovery chevrons and the de-clutter. Computed up front so the
+        # non-essential overlays below can be suppressed this frame; the
+        # chevrons themselves are drawn last (on top).
+        self._show_recovery_chevrons = (
+            self._pitchAngle > self.unusualPitchHighDeg
+            or self._pitchAngle < self.unusualPitchLowDeg)
+        self._decluttered = (self._show_recovery_chevrons
+                             or abs(self._rollAngle) > self.unusualBankDeg)
+
         # Slip / Skid ball -- amber past the excessive-sideslip threshold
         # (AC 25-11B App A A.2.6: caution).
         self._excessive_slip = abs(self._latAccel) >= self.excessiveSlip
@@ -1072,8 +1090,9 @@ class AI(QGraphicsView):
                              QPointF(-m/2, -(r+m/2)),
                              QPointF(0, -(r - m/2))])
         p.drawPolygon(triangle)
-        # Draw standard rate turn markers
-        if self.drawBankMarkers:
+        # Draw standard rate turn markers (non-essential -- de-cluttered at an
+        # unusual attitude).
+        if self.drawBankMarkers and not self._decluttered:
             a = math.degrees(math.atan(self._tas/364.0))
             if a > self.bankAngleMaximum:
                 a = self.bankAngleMaximum
@@ -1087,14 +1106,15 @@ class AI(QGraphicsView):
             p.rotate(-2 * a)
             p.drawPolygon(diamond)
 
-        self._drawFPM(p, w, h)
-        self._draw_horizon_heading(p, w, h)
+        # FPM and the horizon heading scale are non-essential recovery clutter --
+        # suppressed at an unusual attitude (de-clutter).
+        if not self._decluttered:
+            self._drawFPM(p, w, h)
+            self._draw_horizon_heading(p, w, h)
 
         # Unusual-attitude recovery chevrons (AC 25-11B App A A.2.2). Past the
-        # pitch thresholds, guide the recovery toward the nearest horizon.
-        self._show_recovery_chevrons = (
-            self._pitchAngle > self.unusualPitchHighDeg
-            or self._pitchAngle < self.unusualPitchLowDeg)
+        # pitch thresholds, guide the recovery toward the nearest horizon. Drawn
+        # last so they sit on top of the de-cluttered display.
         if self._show_recovery_chevrons:
             self._draw_recovery_chevrons(p, w, h)
 
