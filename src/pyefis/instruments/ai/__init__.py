@@ -324,21 +324,44 @@ class AI(QGraphicsView):
         p.setBrush(QBrush(col))
         style = str(getattr(self, "aircraft_symbol", "classic")).lower()
         if style in ("garmin", "delta"):
-            # Garmin/delta style: the whole symbol is a bold upward CHEVRON --
-            # the wings themselves sweep UP to a central apex, forming the delta
-            # that nests into the flight-director bat-wings. Constant-thickness
-            # band with blunt outboard tips; apex above the reference line, tips
-            # on it. Yellow, black-outlined.
-            ww = w * 0.17               # wing half-span (outboard tip x)
-            ah = max(9.0, h * 0.085)    # apex height above the reference line
-            bt = max(4.0, h * 0.034)    # band thickness (vertical)
-            p.drawPolygon(QPolygonF([
-                QPointF(cx - ww, cy),               # left outer tip (top edge)
-                QPointF(cx, cy - ah),               # apex (top edge)
-                QPointF(cx + ww, cy),               # right outer tip (top edge)
-                QPointF(cx + ww, cy + bt),          # right tip (bottom edge)
-                QPointF(cx, cy - ah + bt),          # inner apex (bottom edge)
-                QPointF(cx - ww, cy + bt)]))        # left tip (bottom edge)
+            # Garmin G3X-style "bat wing": two slender ANHEDRAL triangles
+            # sweeping down-outboard from a notched apex on the horizon
+            # line. Each wing is split lengthwise into a lit upper face
+            # (the symbol colour) and a shaded darker lower face -- the
+            # bevelled 3D look of the real display -- with a matching
+            # two-tone horizon-reference barb (rounded pill) riding the
+            # horizon out toward each edge.
+            span = w * 0.15             # wing length, root -> outer tip
+            drop = span * 0.30          # anhedral: tip this far below root
+            root = max(6.0, span * 0.16)  # root thickness (inner edge)
+            gap = max(3.0, w * 0.012)   # half-notch between the wing roots
+            dark = QColor(col).darker(165)
+            for s in (-1, 1):
+                xi = cx + s * gap                 # inner (root) edge x
+                xo = cx + s * (gap + span)        # outer tip x
+                p.setBrush(QBrush(col))           # lit upper face
+                p.drawPolygon(QPolygonF([
+                    QPointF(xi, cy),
+                    QPointF(xo, cy + drop),
+                    QPointF(xi, cy + root * 0.5)]))
+                p.setBrush(QBrush(dark))          # shaded lower face
+                p.drawPolygon(QPolygonF([
+                    QPointF(xi, cy + root * 0.5),
+                    QPointF(xo, cy + drop),
+                    QPointF(xi, cy + root)]))
+            # Horizon reference barbs: two-tone pills centred ON the
+            # horizon line, out near the roll-scale edges.
+            bl = w * 0.062              # barb length
+            bx = w * 0.35               # barb centre offset from centre
+            bh = max(6.0, h * 0.024)    # barb thickness (total)
+            for s in (-1, 1):
+                x0 = cx + s * bx - bl / 2.0
+                p.setBrush(QBrush(col))           # full pill, lit tone
+                p.drawRoundedRect(QRectF(x0, cy - bh / 2.0, bl, bh),
+                                  bh / 2.0, bh / 2.0)
+                p.setBrush(QBrush(dark))          # lower half, shaded
+                p.drawRoundedRect(QRectF(x0, cy, bl, bh / 2.0),
+                                  bh / 4.0, bh / 4.0)
         elif style in ("g1000", "g3x"):
             # G1000/G3X style: two FLAT split wing bars with a small upward
             # triangle standing in the centre gap between them (distinct from the
