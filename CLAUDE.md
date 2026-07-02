@@ -9,7 +9,7 @@ pyEfis is the **Python EFIS** for the MakerPlane open-source aircraft. It's a Py
 ## Where this repo lives
 
 - Working tree: `d:/Users/wpballard/Documents/github/MAOS/makerplane/pyEfis/`
-- Active branch: **`gpu-required`** (on `origin = billmallard/pyEfis`, the user's fork). Older docs/memory say `svs-renderer` — stale.
+- Active branch: **`display-changes`** (on `origin = billmallard/pyEfis`, the user's fork) — the current development line, ~20 commits **ahead** of `gpu-required`. It carries the recent SVS perf work (#74/#73/#70, cached-VBO migration) AND the **editor/configurator subsystem** (`src/pyefis/editor/`, schema exporter + visual preview). `gpu-required` is the Pi-deploy branch and the base of upstream PR #274 (it's now behind). Older docs/memory saying `gpu-required` or `svs-renderer` is the active branch are **stale**.
 - Upstream: `makerplane/pyEfis` — **do not push or open PRs upstream without explicit authorisation.** Standing instruction.
 - When opening an upstream PR, note "please use merge commit, not squash" — GitHub's squash merge has had defects during this period.
 
@@ -17,7 +17,8 @@ pyEfis is the **Python EFIS** for the MakerPlane open-source aircraft. It's a Py
 
 - **PR #274** — `billmallard:gpu-required → makerplane/pyEfis:master`, the whole SVS contribution (~206 commits). **CI is green.** I have READ on the makerplane org, so it's a cross-fork PR a maintainer merges; I offered an integration-branch workflow in a PR comment (maintainer makes a branch, I retarget the base). **Pushing to `gpu-required` auto-updates this PR and re-runs its CI.**
 - Companion **fix-gateway PR #203** wires the X-Plane feed (RREF nav → HSI COURSE/CDI). Its `send:` (FIX→X-Plane throttle/mixture) block is DISABLED by default — it commanded the engine closed once it reached X-Plane's real port.
-- NOTE: this CLAUDE.md is committed on `gpu-required` and currently rides in PR #274, with local/ssh specifics — consider gitignoring it out of the upstream PR.
+- NOTE: this CLAUDE.md is committed on `display-changes` (commit 3f79497) with local/ssh specifics in it. It is NOT on `gpu-required`, so it does not currently ride in PR #274 — but if `display-changes` is ever the PR base, gitignore it out first.
+- A second, broader workspace orientation lives at `../CLAUDE.md` (uncommitted, the `makerplane/` umbrella) — covers the whole stack and the cross-repo instrument-widget pipeline. This file stays SVS-focused.
 
 ## Running things
 
@@ -85,6 +86,37 @@ The SVS lives in [src/pyefis/instruments/ai/](src/pyefis/instruments/ai/):
 - [docs/svs_planning.md](docs/svs_planning.md) — design rationale; original Issue #28 NASR-import plan (now shipped)
 - [docs/svs_hardware_options.md](docs/svs_hardware_options.md) — Pi 5 vs N100 vs Compulab vs Onlogic; user has Pi 5 hardware on order for in-flight testing
 
+## Configurator SVS preview patches (2026-07-02)
+
+The configurator (makerplane-data) previews virtual_vfr with a REAL terrain
+render on a canvas -- its data comes from THIS repo:
+
+- **`tools/export_svs_preview_patch.py`** exports one JSON patch per preview
+  scene (two-tier SRTM3 elevation grid: 1/1200 deg within 2.5 NM of the
+  camera, 1/300 deg to 15 NM; NASR runway end-pairs; near-airport state and
+  field elevation resolved at export time; ocean flood-filled from the patch
+  border to the -9999 sentinel). **The SCENES dict in that file is the single
+  source of truth for scene poses** -- the Pi fallback captures and the JS
+  renderer both key off it. Scenes: coastal (SBA), mountains (Aspen),
+  approach (Telluride RWY 9 final), final (1 NM final RWY 7 KSBA, 600 AGL).
+- Regenerate + upload:
+  `PYTHONPATH="C:/pylib;src" python tools/export_svs_preview_patch.py` then
+  `wrangler r2 object put makerplane-configs/assets/editor/svs/<scene>.json ...`
+  from makerplane-data/configurator (no CLOUDFLARE_API_TOKEN; see that repo's
+  CLAUDE.md). If you change `preview_scene`'s enum (screenbuilder_factory),
+  regenerate schema.json too.
+- The JS renderer twin (`renderSVS()` in configurator/public/editor.html) is
+  a PORT of svs.py/svs_gl.py -- palettes, clearance bands, the elevation-gated
+  airport-proximity collapse, SAFE_LOW gradient, alt-scaled exponential haze
+  by 3D slant distance, painter's order with no depth test. If you change the
+  GL shader's look (svs_gl.py fragment shader constants/logic), THE TWIN MUST
+  FOLLOW -- full handoff notes live in
+  makerplane-data/configurator/CLAUDE.md ("The SVS data-driven preview").
+- Fallback webps are terrain-only GL captures at the exporter poses:
+  `SVS_TERRAIN_ONLY=1 SVS_RENDERER=opengl` + SVS_SCREENGRAB via
+  tests/visual_svs_test.py on the Pi (eglfs; stop pyefis first; output is
+  1920x1080 regardless of SVS_W/H).
+
 ## Issues open against `billmallard/pyEfis`
 
 - **#33** — FPM / pitch-ladder symbology occluding the runway on stabilized approach (matches every PFD-with-FPM)
@@ -119,7 +151,12 @@ The low-altitude approach stutter was the three **spatial-data collectors** — 
 The Pi runs its own checkout at `~/pyEfis` as **systemd user service `pyefis.service`** (fix-gateway = `fixgw.service`). Its git HEAD is stale (`gpu-required`@#71) because deploys happen by **scp/patch, not pull** — the working `svs.py` is ahead of HEAD. Deploy a change as a patch and validate the baseline first: `git -C local diff -- <file> > p.patch` -> scp -> `git -C ~/pyEfis apply --check p.patch` (must report OK) -> `apply`. Restart with `systemctl --user restart pyefis` (the SVS can take ~90 s to stop on SIGTERM); verify `is-active` + `NRestarts=0` + journal for traceback/segfault. Back up the file you replace.
 
 ### Runtime config lives outside the checkout
-pyEfis reads config from `~/makerplane/pyefis/config` (NOT the git tree). Active screen = `main/default.yaml:defaultScreen` resolved through `preferences.yaml.custom` (`SCREEN_*` map) — currently `screens/managed.yaml`, with the SVS layer paths (`water_db_path`/`highway_db_path`/`dof_db_path`) inline there. Editing the checkout or a `.dist` does nothing; edit the active tree and restart. (Same pattern for fix-gateway: `~/makerplane/fixgw/config/preferences.yaml` base + `preferences.yaml.custom` override.)
+pyEfis reads config from `~/makerplane/pyefis/config` (NOT the git tree). Active screen = `main/default.yaml:defaultScreen` resolved through `preferences.yaml.custom` (`SCREEN_*` map) — but the **live** panel is a Configurator/panel-manager override `screens/managed_<SCREEN>.yaml` (see the next lesson), with the SVS layer paths (`water_db_path`/`highway_db_path`/`dof_db_path`) inline. Editing the checkout or a `.dist` does nothing; edit the active tree and restart. (Same pattern for fix-gateway: `~/makerplane/fixgw/config/preferences.yaml` base + `preferences.yaml.custom` override.)
+
+### A widget option "not working" on the Pi → verify the LIVE config FIRST (cost a full session, 2026-06-29)
+`defaultScreen: PFD_AI_ONLY` is NOT served from `screens/managed.yaml`, nor from the `SCREEN_*`-mapped `screens/pfd_ai_only.yaml` (→ `includes/ahrs/svs.yaml`). It comes from a **Configurator/panel-manager override** `screens/managed_PFD_AI_ONLY.yaml` (`.panel_backup/` sibling, flat `svs_*` options, quoted scalars like `horizon_position: '70'`). So to toggle a `virtual_vfr`/AI option (`horizon_heading_marks`, …) for the RUNNING display, edit **`managed_PFD_AI_ONLY.yaml`** — editing managed.yaml / pfd_ai_only.yaml / svs.yaml does nothing. `apply_options` setattrs every YAML option raw, so the fix is purely landing it in the right file (no code change was needed; the widget/editor/schema/docs were all correct).
+
+**Confirm which file is live by PROBING THE WIDGET, not by reading configs:** add a one-shot write of the widget's option state to `/tmp` from a paint/draw method, restart, read it. `enabled=False horizon_position=70` pinned it (70 lived only in the managed file). Debug traps that burned the session: (1) **pyEfis app logging does NOT reach journald** — probe via files (`/tmp` or `~`; no PrivateTmp/ProtectHome on the service). (2) **`AI.paintEvent` fires only after the SVS screen actually paints** (the DataStatus boot screen shows first) — a probe checked 15-30 s post-restart reads as falsely "never called"; wait and recheck. (3) **paintEvent DOES run under the QOpenGLWidget viewport** (the FPM / slip-ball / bank markers prove it) — "GL bypasses paintEvent" was a red herring. First instinct when an option is inert: prove it reached the live widget, THEN suspect code.
 
 ### fix-gateway has no source arbitration
 Two plugins writing the same FIX key = last-writer-wins (they fight). `xplane` and `stratux` both write attitude/position — running both gives a flickering mix; enable exactly one source per key. Real source-selection + a SIM/FLIGHT interlock are still TODO (see `MAOS-DESIGN/docs/AVIONICS_STACK_ROADMAP.md` sections 8-9).
