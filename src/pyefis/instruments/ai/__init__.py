@@ -331,24 +331,25 @@ class AI(QGraphicsView):
             # bevelled 3D look of the real display -- with a matching
             # two-tone horizon-reference barb (rounded pill) riding the
             # horizon out toward each edge.
-            span = w * 0.15             # wing length, root -> outer tip
-            drop = span * 0.30          # anhedral: tip this far below root
-            root = max(6.0, span * 0.16)  # root thickness (inner edge)
-            gap = max(3.0, w * 0.012)   # half-notch between the wing roots
+            span = w * 0.15             # wing length, apex -> outer edge
+            drop = span * 0.30          # anhedral: outer edge below the apex
+            thick = max(6.0, span * 0.16)  # outer (blunt) edge thickness
+            gap = max(3.0, w * 0.012)   # half-notch between the apex points
             dark = QColor(col).darker(165)
             for s in (-1, 1):
-                xi = cx + s * gap                 # inner (root) edge x
-                xo = cx + s * (gap + span)        # outer tip x
+                xi = cx + s * gap                 # SHARP apex, on the horizon
+                xo = cx + s * (gap + span)        # blunt outer edge x
+                ym = cy + drop + thick * 0.5      # outer-edge tone split
                 p.setBrush(QBrush(col))           # lit upper face
                 p.drawPolygon(QPolygonF([
                     QPointF(xi, cy),
                     QPointF(xo, cy + drop),
-                    QPointF(xi, cy + root * 0.5)]))
+                    QPointF(xo, ym)]))
                 p.setBrush(QBrush(dark))          # shaded lower face
                 p.drawPolygon(QPolygonF([
-                    QPointF(xi, cy + root * 0.5),
-                    QPointF(xo, cy + drop),
-                    QPointF(xi, cy + root)]))
+                    QPointF(xi, cy),
+                    QPointF(xo, ym),
+                    QPointF(xo, cy + drop + thick)]))
             # Horizon reference barbs: two-tone pills centred ON the
             # horizon line, out near the roll-scale edges.
             bl = w * 0.062              # barb length
