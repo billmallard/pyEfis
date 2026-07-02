@@ -899,7 +899,7 @@ _register(InstrumentSpec(
         # Editor preview only: the device renders real SVS terrain; this picks
         # which stylised backdrop the configurator twin shows for layout.
         Prop("preview_scene", "enum", default="mountains",
-             enum=["mountains", "approach", "coastal"],
+             enum=["mountains", "approach", "coastal", "final"],
              label="Preview scene (editor)", apply="special",
              help="which stylised backdrop the editor twin shows (preview "
                   "only; the device renders real terrain)"),
