@@ -143,6 +143,14 @@ class AI(QGraphicsView):
         self.horizon_heading_tick_length = 5
         self.horizon_heading_color = "#ffffff"
 
+        # Clean-terrain capture mode (for the configurator's static SVS preview):
+        # when True the widget renders ONLY the environment -- SVS terrain + sky
+        # / ground -- and suppresses every symbology layer (horizon line, pitch
+        # ladder, aircraft symbol, bank scale, slip ball, FPM, heading marks,
+        # chevrons). Used by the visual harness (SVS_TERRAIN_ONLY) to grab a
+        # symbology-free terrain frame that the configurator twin draws over.
+        self.terrain_only = False
+
         self.setStyleSheet("border: 0px")
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -467,9 +475,9 @@ class AI(QGraphicsView):
         # stays visible OVER the SVS terrain (z=0.5) — otherwise
         # mountains rising above the horizon hide it, removing the
         # attitude reference exactly when terrain fills the view.
-        _horizon = self.scene.addLine(
+        self._horizon_line = self.scene.addLine(
             0, sceneHeight / 2, sceneWidth, sceneHeight / 2, pen)
-        _horizon.setZValue(1)
+        self._horizon_line.setZValue(1)
         # draw the degree hash marks
         pen.setColor(Qt.GlobalColor.white)
         w = self.scene.width()
@@ -1022,6 +1030,17 @@ class AI(QGraphicsView):
         # the pose key is unchanged. Change-cached, so it only touches the brush
         # on an actual transition.
         self._update_land_brush()
+        if self.terrain_only:
+            # Clean SVS-environment frame: hide the z=1 symbology scene items
+            # (horizon line + pitch ladder), render terrain + sky only, and skip
+            # every paintEvent overlay (aircraft symbol, bank, slip, FPM, ...).
+            hl = getattr(self, "_horizon_line", None)
+            if hl is not None:
+                hl.setOpacity(0.0)
+            for _i, _item in self.pitchItems:
+                _item.setOpacity(0.0)
+            super(AI, self).paintEvent(event)
+            return
         super(AI, self).paintEvent(event)
         w = self.width()
         h = self.height()

@@ -153,6 +153,11 @@ win.resize(int(os.environ.get("SVS_W", "800")), int(os.environ.get("SVS_H", "600
 widget = AI(win, show_fpm=True)
 widget.aircraft_symbol = os.environ.get("SVS_SYMBOL", "classic")
 widget.symbol_color = os.environ.get("SVS_SYMBOL_COLOR", "yellow")
+# Clean-terrain capture for the configurator's static SVS preview: render only
+# the terrain + sky, no symbology, so the configurator twin can draw live
+# symbology over it (SVS_TERRAIN_ONLY=1).
+widget.terrain_only = os.environ.get("SVS_TERRAIN_ONLY", "").lower() \
+    in ("1", "true", "yes")
 widget.set_svs_config({
     "enabled":            True,
     "tile_path":          TILE_PATH,
