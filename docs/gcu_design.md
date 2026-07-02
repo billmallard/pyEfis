@@ -199,8 +199,28 @@ Deliberately NO direct pyEfis coupling.
   bridge.
 - **Output report** (1 byte, LED usage page): indicator/backlight
   control — usable for focus/mode feedback on the device itself.
-- Button-to-bit mapping: from labelled capture (tools:
-  `octavi_capture.py` decodes report 0x0B live) — table TBD, first
-  labelled capture session pending.
-- Bridge implication: the daemon is ~60 lines — hidapi read loop ->
-  `fixgw.netfix.Client` writes of `ENC1`/`ENC2` deltas + `BTNn` booleans.
+- **Control map** (labelled capture, 2026-07-03):
+
+  | HID | Physical control | Notes |
+  |---|---|---|
+  | DIAL1 | outer ring | +1/detent CW, -1 CCW |
+  | DIAL2 | inner knob | +1/detent CW, -1 CCW |
+  | BTN10 | inner knob push | momentary |
+  | BTN09 | **shift/toggle key under the rotaries** | momentary (confirmed by two labelled presses) |
+  | BTN05-BTN08 | function buttons (user's left-to-right order) | momentary |
+  | BTN15-BTN20 | six-button row, left-to-right | momentary |
+  | bits 33-35 | **3-bit knob-context STATE, not buttons** | changes atomically, counted 1..7 during the top-row pass |
+
+- The 3-bit state matches the IFR-1's eight knob contexts
+  (COM1/COM2/NAV1/NAV2/FMS1/FMS2/AP/XPDR): the top-row mode buttons do
+  NOT emit their own button bits -- they set this state (value = button
+  index, first/default context = 0 so its press is silent). Design
+  gift: the mapper can read bits 33-35 DIRECTLY as the focus selector
+  (mode -> `GCUSEL`), letting the Octavi's own context buttons drive
+  edit focus with zero bridge-side state.
+- Per-button physical labels beyond the above can be pinned
+  interactively during P1 bring-up (the bridge forwards `BTNn`
+  generically; only the mapper config needs labels).
+- Bridge implication: the daemon is ~60 lines -- hidapi read loop ->
+  `fixgw.netfix.Client` writes of `ENC1`/`ENC2` deltas + `BTNn`
+  booleans + a `GCUSEL` hint from the mode bits.
