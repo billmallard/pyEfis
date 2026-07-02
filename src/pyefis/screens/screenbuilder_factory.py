@@ -341,11 +341,11 @@ _register(InstrumentSpec(
     svs_capable=True,
     properties=[
         Prop("aircraft_symbol", "enum", default="classic",
-             enum=["classic", "garmin", "g1000", "gi275", "brackets"],
+             enum=["classic", "garmin", "brackets"],
              label="Aircraft symbol",
-             help="classic split-wing bars + dot; garmin delta boresight + "
-                  "tapered wings; g1000 flat wings + centre triangle; gi275 "
-                  "wings + boresight ring; brackets GRT-style L-brackets"),
+             help="classic split-wing bars + dot; garmin G3X-style two-tone "
+                  "bat wing + horizon barbs; brackets GRT-style L-brackets "
+                  "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
@@ -881,11 +881,11 @@ _register(InstrumentSpec(
     # unlike the square attitude dial.
     properties=[
         Prop("aircraft_symbol", "enum", default="classic",
-             enum=["classic", "garmin", "g1000", "gi275", "brackets"],
+             enum=["classic", "garmin", "brackets"],
              label="Aircraft symbol",
-             help="classic split-wing bars + dot; garmin delta boresight + "
-                  "tapered wings; g1000 flat wings + centre triangle; gi275 "
-                  "wings + boresight ring; brackets GRT-style L-brackets"),
+             help="classic split-wing bars + dot; garmin G3X-style two-tone "
+                  "bat wing + horizon barbs; brackets GRT-style L-brackets "
+                  "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),
         # SVS-only: raise the level-flight horizon so the ground area expands
@@ -899,7 +899,7 @@ _register(InstrumentSpec(
         # Editor preview only: the device renders real SVS terrain; this picks
         # which stylised backdrop the configurator twin shows for layout.
         Prop("preview_scene", "enum", default="mountains",
-             enum=["mountains", "approach", "coastal", "final"],
+             enum=["mountains", "approach", "final"],
              label="Preview scene (editor)", apply="special",
              help="which stylised backdrop the editor twin shows (preview "
                   "only; the device renders real terrain)"),
