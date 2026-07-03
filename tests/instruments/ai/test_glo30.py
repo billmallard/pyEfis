@@ -111,4 +111,7 @@ class TestMixedResolutionPatch:
         r = SVSRenderer({"enabled": True, "tile_path": str(tmp_path)})
         glr = SVSGLRenderer(r)
         patch = glr._build_patch(32, -98)
-        assert patch.shape == (2402, 2402)   # exactly the pre-P6 size
+        # 2*(N-1)+1: shared tile edges are no longer duplicated, so the
+        # patch is edge-inclusive with samples on the global native grid
+        # (keeps decimation phase-anchored across patch rebuilds).
+        assert patch.shape == (2401, 2401)

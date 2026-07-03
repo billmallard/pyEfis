@@ -95,7 +95,9 @@ Garmin. Notes:
 ## Standing queue (unchanged)
 
 P8 Track 1b (streaming heightmap textures — far-range fidelity +
-native 30 m), traffic via Stratux (P9), chart draping (P10),
+native 30 m), clipmap ring vertex-morph band (LOD approach-morphing
+over mountains — designed in the clipmap session, never implemented),
+traffic via Stratux (P9), chart draping (P10),
 data-manager (awaiting MakerPlane reply), svs/ package split.
 
 ## Feature request (Bill, 2026-06-12): GI-275-style autopilot command

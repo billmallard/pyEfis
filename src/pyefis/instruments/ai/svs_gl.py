@@ -111,8 +111,14 @@ void main() {
     // sampled at identical points every frame (no swim).
     vec2 exy = u_level_origin + a_cell * u_level_spacing;
 
-    // Heightmap UV: the ENU origin IS the patch SW corner.
-    vec2 uv = exy / u_patch_extent_m;
+    // Heightmap UV: the ENU origin IS the patch SW corner. The patch grid
+    // is EDGE-INCLUSIVE (w samples spanning the extent, sample 0 on the SW
+    // edge, sample w-1 on the NE edge), so map through texel CENTERS:
+    // uv = (frac * (w-1) + 0.5) / w. Without this half-texel correction the
+    // sampled ground shifts by up to half a texel, and vertex-to-texel
+    // alignment differs between patch rebuilds.
+    vec2 uv = (exy / u_patch_extent_m * (u_patch_texels - 1.0) + 0.5)
+              / u_patch_texels;
 
     float elev_m_raw = texture(u_heightmap, uv).r;
     float is_water   = step(elev_m_raw, WATER_THR_M);
@@ -1797,9 +1803,24 @@ class SVSGLRenderer:
                 if t is not None:
                     max_n = max(max_n, t.shape[0])
         N = max_n if max_n else 1201
-        patch = np.zeros((_PATCH_TILES * N, _PATCH_TILES * N),
-                         dtype=np.float32)
-        for (di, dj), tile in tiles.items():
+        # Assemble WITHOUT duplicating the shared tile edges: a 3601-px
+        # GLO-30 tile spans its degree INCLUSIVE of both edges, so adjacent
+        # tiles overlap by one row/col and the patch has 2*(N-1)+1 unique
+        # samples per side -- row i sits exactly at global native grid index
+        # start*(N-1) + i. That keeps the power-of-two decimation below
+        # PHASE-ANCHORED to the global grid ((N-1) per degree is even), so
+        # every rebuild's decimated texels describe the SAME ground as the
+        # previous patch's. The old duplicated-seam layout (2N per side, N
+        # odd) flipped the sampling parity at every patch rebuild, and the
+        # whole scene visibly reshaped at half-degree crossings -- the
+        # residual terrain "morphing", worst over steep relief.
+        stride = N - 1
+        side = _PATCH_TILES * stride + 1
+        patch = np.zeros((side, side), dtype=np.float32)
+        # Place missing tiles (zeros) first so a present neighbour's real
+        # values win the shared row/col.
+        order = sorted(tiles.items(), key=lambda kv: kv[1] is not None)
+        for (di, dj), tile in order:
             if tile is None:
                 tile_data = np.zeros((N, N), dtype=np.float32)
             else:
@@ -1807,7 +1828,8 @@ class SVSGLRenderer:
                     tile.astype(np.float32, copy=False), N)
             # Flip top-to-bottom so row 0 of the placement = south.
             tile_data = tile_data[::-1, :]
-            patch[di * N:(di + 1) * N, dj * N:(dj + 1) * N] = tile_data
+            patch[di * stride:di * stride + N,
+                  dj * stride:dj * stride + N] = tile_data
 
         cap = int(getattr(self._parent, "heightmap_max_px", 4096))
         try:
