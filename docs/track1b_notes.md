@@ -116,10 +116,17 @@ kept here as a methodology lesson. The full A/B chain that found it:
 3. Footprint-max level textures (throwaway hack): teeth unchanged =>
    not vertex-height decimation aliasing.
 4. Per-fragment clearance/water/shading (38ae5f2): teeth unchanged =>
-   not varying interpolation. (Kept -- real improvement on its own:
-   shading resolves at texel not vertex resolution, and clearance-band
-   boundaries no longer kink at mesh edges. Costs 5 R32F fetches per
-   terrain fragment; watch Pi frame time.)
+   not varying interpolation. REVERTED (9ddf689) after the first Pi
+   flight: V3D cannot linearly filter fp32 textures (silently point-
+   samples), so between-texel fragment fetches return per-texel
+   constants -- flat square facets ("tiles") and loss of the smooth
+   vertex-interpolated relief. Vertex fetches land exactly on texel
+   centres, so geometry was always fine and desktop (which filters
+   fp32) looked strictly better -- which is how it shipped. If wanted
+   later: bake intensity on CPU into a filterable 8-bit texture,
+   ideally computed at NATIVE pitch -- that would also restore the
+   constant-frequency mid-field relief the old monolithic texture
+   gave for free (the known track1b ring-matched-shading trade).
 5. ROOT CAUSE: camera.py emitted clip.z = 0 -- NO depth buffer, ever.
    Within a level, triangle draw order is grid order, so terrain behind
    a ridge paints over the nearer crest wherever their projections
@@ -161,3 +168,7 @@ Pi deploy checks for these three commits (ride along with 5b):
 - M_PER_DEG_LAT lives in ai/camera.py (111139.0), not svs.py.
 - _sample_elevations returns elev CLAMPED >=0 where water=True; write the
   sentinel from the water mask, not from elev values.
+- Pi V3D does NOT filter fp32 textures (GL_LINEAR on R32F silently
+  point-samples; desktop GPUs filter it fine). Any fragment-stage fetch
+  from the height textures must either land on texel centres or use a
+  filterable format (8-bit / fp16). Vertex-stage fetches are safe.
