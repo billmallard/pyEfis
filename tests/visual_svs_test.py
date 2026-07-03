@@ -182,6 +182,10 @@ widget.set_svs_config({
     "highway_db_path":    os.environ.get("SVS_HIGHWAY_PATH", ""),
     "paved_only":         os.environ.get("SVS_PAVED_ONLY", "1").lower()
                           not in ("0", "false", "no"),
+    # Clipmap A/B knobs (defaults match svs.py).
+    "clipmap_cells":      int(os.environ.get("SVS_CLIP_CELLS", "64")),
+    "clipmap_levels":     int(os.environ.get("SVS_CLIP_LEVELS", "7")),
+    "clipmap_base_m":     float(os.environ.get("SVS_CLIP_BASE_M", "0")),
 })
 win.setCentralWidget(widget)
 win.show()

@@ -643,7 +643,9 @@ class SVSGLRenderer:
         self._a_position = -1
         self._vao: QOpenGLVertexArrayObject | None = None
         self._vbo: QOpenGLBuffer | None = None
-        self._ibo: QOpenGLBuffer | None = None
+        # Index buffers: (parity-0, parity-1) checkerboard variants.
+        self._ibo_full: tuple | None = None
+        self._ibo_annulus: tuple | None = None
         self._index_count = 0
         self._u: dict[str, int] = {}
         # Heightmap texture state. _patch_origin is (start_lat, start_lon)
@@ -980,13 +982,19 @@ class SVSGLRenderer:
                         self._u["u_hmc_spacing"], float(info[kc][8]))
                     self._program.setUniformValue(
                         self._u["u_hmc_size"], float(info[kc][7]))
+                    # World-anchored checkerboard diagonals: pick the
+                    # template variant matching this level's origin
+                    # cell parity so an odd-cell snap doesn't flip the
+                    # split pattern over the same ground.
+                    par = (int(round(ox / spacing))
+                           + int(round(oy / spacing))) % 2
                     if k == 0:
-                        self._ibo.bind()
+                        self._ibo_full[par].bind()
                         gl.glDrawElements(
                             gl.GL_TRIANGLES, self._index_count,
                             gl.GL_UNSIGNED_INT, None)
                     else:
-                        self._ibo_annulus.bind()
+                        self._ibo_annulus[par].bind()
                         gl.glDrawElements(
                             gl.GL_TRIANGLES, self._annulus_count,
                             gl.GL_UNSIGNED_INT, None)
@@ -1763,7 +1771,16 @@ class SVSGLRenderer:
         if not vao.create():
             raise RuntimeError("could not create QOpenGLVertexArrayObject")
 
-        verts, indices, annulus_idx = self._build_clipmap_template()
+        verts, full_idx, annulus_idx = self._build_clipmap_template()
+
+        def make_ibo(idx):
+            b = QOpenGLBuffer(QOpenGLBuffer.Type.IndexBuffer)
+            if not b.create():
+                raise RuntimeError("could not create index buffer")
+            b.setUsagePattern(QOpenGLBuffer.UsagePattern.StaticDraw)
+            b.bind()
+            b.allocate(idx.tobytes(), int(idx.nbytes))
+            return b
 
         vao.bind()
         try:
@@ -1782,33 +1799,22 @@ class SVSGLRenderer:
             finally:
                 self._program.release()
 
-            ibo = QOpenGLBuffer(QOpenGLBuffer.Type.IndexBuffer)
-            if not ibo.create():
-                raise RuntimeError("could not create index buffer")
-            ibo.setUsagePattern(QOpenGLBuffer.UsagePattern.StaticDraw)
-            ibo.bind()
-            ibo.allocate(indices.tobytes(), int(indices.nbytes))
+            # Two checkerboard-parity variants each of the full grid
+            # (innermost level) and the annulus (outer levels). The
+            # draw pass binds one per level — element binding is VAO
+            # state, so rebinding inside the bound VAO swaps it.
+            ibos_annulus = tuple(make_ibo(i) for i in annulus_idx)
+            ibos_full = tuple(make_ibo(i) for i in full_idx)
+            ibos_full[0].bind()   # leave a full IBO as the VAO default
         finally:
             vao.release()
 
-        # Annulus IBO for the outer levels (bound in place of the full
-        # IBO per draw — element binding is VAO state, so rebinding
-        # inside the bound VAO swaps it).
-        ibo_a = QOpenGLBuffer(QOpenGLBuffer.Type.IndexBuffer)
-        ibo_a.create()
-        ibo_a.setUsagePattern(QOpenGLBuffer.UsagePattern.StaticDraw)
-        vao.bind()
-        ibo_a.bind()
-        ibo_a.allocate(annulus_idx.tobytes(), int(annulus_idx.nbytes))
-        ibo.bind()   # leave the full IBO as the VAO default
-        vao.release()
-
         self._vao = vao
         self._vbo = vbo
-        self._ibo = ibo
-        self._ibo_annulus = ibo_a
-        self._index_count = int(indices.size)
-        self._annulus_count = int(annulus_idx.size)
+        self._ibo_full = ibos_full
+        self._ibo_annulus = ibos_annulus
+        self._index_count = int(full_idx[0].size)
+        self._annulus_count = int(annulus_idx[0].size)
 
         log.info(
             "SVSGLRenderer clipmap template: %d vertices, %d indices "
@@ -2114,7 +2120,16 @@ class SVSGLRenderer:
     def _build_clipmap_template(self):
         """One (n+1) x (n+1) vertex grid of integer cell coordinates,
         reused for every clipmap level via the u_level_spacing /
-        u_level_origin uniforms."""
+        u_level_origin uniforms.
+
+        Index buffers alternate the quad split diagonal in a
+        checkerboard: a uniform diagonal chops alternate triangles
+        out of any crest running against the grain — a coherent
+        sawtooth along ridge lines. Two parity variants of each
+        buffer are returned; the draw loop picks the one matching
+        the level origin's cell parity so the checkerboard stays
+        pinned to the WORLD across level snaps (a fixed template
+        pattern would flip on every odd-cell snap)."""
         n = self._parent._clip_cells
         m = n + 1
         i_grid, j_grid = np.mgrid[0:m, 0:m]
@@ -2122,23 +2137,28 @@ class SVSGLRenderer:
             j_grid.ravel(), i_grid.ravel()]).astype(np.float32)
         ci, cj = np.mgrid[0:n, 0:n]
 
-        def make_idx(mask):
+        def make_idx(mask, parity):
             a = ci[mask].ravel()
             b = cj[mask].ravel()
             v00 = (a * m + b)
             v10 = ((a + 1) * m + b)
             v01 = (a * m + b + 1)
             v11 = ((a + 1) * m + b + 1)
+            # Quads with (a + b + parity) even split along v10-v01
+            # (the historical diagonal), odd along v00-v11. Same
+            # winding either way.
+            alt = ((a + b + parity) % 2).astype(bool)
             idx = np.empty(v00.size * 6, dtype=np.uint32)
             idx[0::6] = v00
             idx[1::6] = v10
-            idx[2::6] = v01
-            idx[3::6] = v10
+            idx[2::6] = np.where(alt, v11, v01)
+            idx[3::6] = np.where(alt, v00, v10)
             idx[4::6] = v11
             idx[5::6] = v01
             return idx
 
-        full = make_idx(np.ones((n, n), dtype=bool))
+        every = np.ones((n, n), dtype=bool)
+        full = tuple(make_idx(every, p) for p in (0, 1))
         # Annulus: outer levels skip the centre hole that finer levels
         # cover. Hole half-width = n/4 - 1 cells: one coarse cell of
         # margin against the independent per-level snapping, so the
@@ -2147,5 +2167,5 @@ class SVSGLRenderer:
         h = n // 4 - 1
         lo, hi = n // 2 - h, n // 2 + h
         hole = ((ci >= lo) & (ci < hi) & (cj >= lo) & (cj < hi))
-        annulus = make_idx(~hole)
+        annulus = tuple(make_idx(~hole, p) for p in (0, 1))
         return verts, full, annulus

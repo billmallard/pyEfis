@@ -97,3 +97,98 @@ def test_native_base_m(glr):
     ~92.7 m)."""
     assert glr._native_base_m() == pytest.approx(
         M_PER_DEG_LAT / 1200.0, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Clipmap index template: checkerboard diagonals (ridge-crest sawtooth fix).
+# _build_clipmap_template only touches self._parent._clip_cells, so a
+# SimpleNamespace stands in -- no GL context needed.
+# ---------------------------------------------------------------------------
+
+_TN = 8   # template test grid size
+
+
+def _template(n=_TN):
+    import types
+    fake = types.SimpleNamespace(
+        _parent=types.SimpleNamespace(_clip_cells=n))
+    return SVSGLRenderer._build_clipmap_template(fake)
+
+
+def _quads(idx):
+    """Index buffer -> (quads, 2 triangles, 3 vertex ids)."""
+    return idx.reshape(-1, 2, 3)
+
+
+def test_template_checkerboard_diagonals():
+    """Each parity variant splits quads with (row+col+parity) even along
+    v10-v01 (the historical diagonal) and odd quads along v00-v11."""
+    n, m = _TN, _TN + 1
+    verts, full, _ = _template()
+    assert verts.shape == (m * m, 2)
+    for parity in (0, 1):
+        quads = _quads(full[parity])
+        assert quads.shape[0] == n * n
+        for q, (t1, t2) in enumerate(quads):
+            a, b = divmod(q, n)
+            v00 = a * m + b
+            v10 = (a + 1) * m + b
+            v01 = a * m + b + 1
+            v11 = (a + 1) * m + b + 1
+            if (a + b + parity) % 2 == 0:
+                assert list(t1) == [v00, v10, v01]
+                assert list(t2) == [v10, v11, v01]
+            else:
+                assert list(t1) == [v00, v10, v11]
+                assert list(t2) == [v00, v11, v01]
+
+
+def test_template_checkerboard_world_anchored():
+    """The draw loop selects the variant by origin cell parity, so a
+    one-cell snap (which flips origin parity AND shifts the template
+    quad covering a given world cell by one) must leave the WORLD
+    diagonal unchanged: variant 1 at column b-1 == variant 0 at b."""
+    n, m = _TN, _TN + 1
+    _, full, _ = _template()
+    q0 = _quads(full[0]).reshape(n, n, 2, 3)
+    q1 = _quads(full[1]).reshape(n, n, 2, 3)
+
+    def split_is_alt(pair, a, b):
+        shared = set(pair[0]) & set(pair[1])
+        return shared == {a * m + b, (a + 1) * m + b + 1}
+
+    for a in range(n):
+        for b in range(1, n):
+            # Same world cell, origins one cell apart in east:
+            # template (a, b) under variant 0 vs (a, b-1) under
+            # variant 1. The vertex ids differ; the split must not.
+            assert (split_is_alt(q0[a, b], a, b)
+                    == split_is_alt(q1[a, b - 1], a, b - 1))
+
+
+def test_template_winding_consistent():
+    """Both split directions keep the original template winding."""
+    verts, full, annulus = _template()
+    for idx in (*full, *annulus):
+        tri = verts[idx.reshape(-1, 3)]
+        e1 = tri[:, 1] - tri[:, 0]
+        e2 = tri[:, 2] - tri[:, 0]
+        cross = e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]
+        assert (cross < 0).all()
+
+
+def test_template_annulus_skips_hole():
+    """Annulus variants drop exactly the centre-hole quads."""
+    n, m = _TN, _TN + 1
+    _, _, annulus = _template()
+    h = n // 4 - 1
+    lo, hi = n // 2 - h, n // 2 + h
+    for parity in (0, 1):
+        quads = _quads(annulus[parity])
+        assert quads.shape[0] == n * n - (2 * h) ** 2
+        # Both split patterns start triangle 1 at v00 -> quad identity.
+        cells = {divmod(int(t1[0]), m) for t1, _ in quads}
+        for a in range(n):
+            for b in range(n):
+                inside = lo <= a < hi and lo <= b < hi
+                assert ((a, b) in cells) == (not inside)
