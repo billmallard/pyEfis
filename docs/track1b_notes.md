@@ -69,7 +69,7 @@ at half-degree crossings.
 ## STATE (update as you go)
 
 - [x] Branch created, notes committed.
-- [ ] Increment 1 — CPU builder + tests.
+- [x] Increment 1 — CPU builder + tests (see git log; 4 tests in tests/instruments/ai/test_track1b.py incl. bit-identity across snaps).
 - [ ] Increment 2 — shader + GL plumbing.
 - [ ] Increment 3 — local validation renders.
 - [ ] Increment 4 — perf pass on rebuild cadence.
@@ -77,4 +77,6 @@ at half-degree crossings.
 
 ## Gotchas discovered along the way
 
-- (add as found)
+- M_PER_DEG_LAT lives in ai/camera.py (111139.0), not svs.py.
+- _sample_elevations returns elev CLAMPED >=0 where water=True; write the
+  sentinel from the water mask, not from elev values.

@@ -628,6 +628,9 @@ class SVSGLRenderer:
         # Heightmap texture state. _patch_origin is (start_lat, start_lon)
         # in integer degrees; when it changes we rebuild.
         self._heightmap_tex_id: int | None = None
+        # Track 1b: per-level heightmap textures --
+        # {level: (key, tex_id, tex_origin_e, tex_origin_n, size)}
+        self._level_tex: dict[int, tuple] = {}
         self._patch_origin: tuple[int, int] | None = None
         self._patch_texels = 2402.0   # actual texture px, set per build
         self._patch_bounds = (0.0, 0.0, 0.0, 0.0)  # lat_min, lat_max, lon_min, lon_max
@@ -1754,6 +1757,81 @@ class SVSGLRenderer:
             "(%d cells, %d levels)",
             verts.shape[0], self._index_count,
             self._parent._clip_cells, self._parent._clip_levels)
+
+    # ------------------------------------------------------------------
+    # Track 1b: per-level heightmap textures. Each clipmap level gets its
+    # own small R32F texture (cells+3 texels/side) at the level's OWN
+    # spacing: native-resolution ground under the aircraft, real data out
+    # to the horizon, no monolithic patch upload. docs/track1b_notes.md.
+
+    _LEVEL_GUARD = 1     # guard texels each side (slope + morph fetches)
+
+    def _level_height_array(self, origin_e: float, origin_n: float,
+                            spacing: float, size: int) -> np.ndarray:
+        """Sample a level texture: ``size`` x ``size`` texels, texel (i, j)
+        at ENU (origin_e + j*spacing, origin_n + i*spacing) in the CURRENT
+        patch frame. Water/missing ground carries the -9999 sentinel (the
+        shader's WATER_THR_M catches it)."""
+        o_lat, o_lon = self._patch_origin
+        lat_cos = self._frame_lat_cos or 1.0
+        idx = np.arange(size, dtype=np.float64)
+        e = origin_e + idx * spacing
+        n = origin_n + idx * spacing
+        lon = o_lon + e / (M_PER_DEG_LAT * lat_cos)
+        lat = o_lat + n / M_PER_DEG_LAT
+        lon_g, lat_g = np.meshgrid(lon, lat)
+        elev, water = self._parent._sample_elevations(lat_g, lon_g)
+        out = np.where(water, np.float32(-9999.0),
+                       elev.astype(np.float32))
+        return np.ascontiguousarray(out, dtype=np.float32)
+
+    def _native_base_m(self) -> float:
+        """Finest tile resolution around the aircraft -> innermost level
+        spacing (metres). GLO-30: ~30.9 m; SRTM3: ~92.7 m. Falls back to
+        SRTM3 spacing when no tiles are loadable."""
+        o_lat, o_lon = self._patch_origin
+        cache = self._parent.cache
+        max_n = 0
+        for di in range(_PATCH_TILES):
+            for dj in range(_PATCH_TILES):
+                t = cache.get(o_lat + di, o_lon + dj)
+                if t is not None:
+                    max_n = max(max_n, t.shape[0])
+        n = max_n if max_n else 1201
+        return M_PER_DEG_LAT / float(n - 1)
+
+    def _ensure_level_texture(self, k: int, origin_e: float,
+                              origin_n: float, spacing: float) -> int:
+        """(Re)build level ``k``'s texture when its snapped origin or the
+        patch frame changed. Returns the GL texture id. The texture covers
+        the level footprint plus _LEVEL_GUARD texels on every side; its SW
+        texel centre sits at level_origin - guard*spacing."""
+        cells = int(self._parent._clip_cells)
+        size = cells + 1 + 2 * self._LEVEL_GUARD
+        tex_o_e = origin_e - self._LEVEL_GUARD * spacing
+        tex_o_n = origin_n - self._LEVEL_GUARD * spacing
+        key = (round(tex_o_e, 3), round(tex_o_n, 3), round(spacing, 6),
+               self._patch_origin)
+        state = self._level_tex.get(k)
+        if state is not None and state[0] == key:
+            return state[1]
+        arr = self._level_height_array(tex_o_e, tex_o_n, spacing, size)
+        if state is None:
+            tex_arr = gl.glGenTextures(1)
+            tex_id = int(tex_arr if np.isscalar(tex_arr) else tex_arr[0])
+        else:
+            tex_id = state[1]
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_R32F, size, size, 0,
+                        gl.GL_RED, gl.GL_FLOAT, arr.tobytes())
+        for pname, val in ((gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
+                           (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR),
+                           (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
+                           (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, pname, val)
+        self._level_tex[k] = (key, tex_id, tex_o_e, tex_o_n, size)
+        return tex_id
 
     @staticmethod
     def _patch_origin_for(ac_lat: float, ac_lon: float) -> tuple[int, int]:
