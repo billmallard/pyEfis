@@ -81,7 +81,19 @@ at half-degree crossings.
       (inner level rebuilds every ~250 m of travel, not every ~31 m). All
       levels 15-26 ms per rebuild on the dev box; async worker is the
       escape hatch if the Pi shows hitches.
-- [ ] Increment 5 — Pi flight validation, then merge to display-changes.
+- [x] Increment 5a — FIRST Pi flight test FAILED ("massive entire frame
+      shifts"): (1) synchronous rebuilds stalled the Pi render thread,
+      (2) lat_cos snap-back -- textures BAKE the east-scale at build time,
+      so accumulated drift released as a whole-ring sideways JUMP at each
+      rebuild (outer rings: hundreds of metres). Fixed by the async worker
+      (svs-level-tex thread, latest-wins per level, GL thread only
+      uploads; sync build only at startup/frame-rebase) + drift-bounded
+      refresh (_drift_exceeded: rebuild when accumulated shift would
+      exceed HALF A TEXEL at the texture's east extent -- snap-backs stay
+      sub-texel) + clipmap_base_m config knob (0=native) for flight A/B
+      of resolution vs cadence. 25 s sim-motion soak clean on the dev GPU.
+- [ ] Increment 5b — Pi flight re-validation, then merge to
+      display-changes + delete _build_patch dead code.
 
 ## Gotchas discovered along the way
 

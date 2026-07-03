@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
 import weakref
 
 # PyOpenGL tracks per-context state by default; under Qt's EGL/eglfs
@@ -640,9 +642,19 @@ class SVSGLRenderer:
         # in integer degrees; when it changes we rebuild.
         self._heightmap_tex_id: int | None = None
         # Track 1b: per-level heightmap textures --
-        # {level: (key, tex_id, tex_origin_e, tex_origin_n, size)}
+        # {level: (key, tex_id, tex_o_e, tex_o_n, size, tex_spacing,
+        #          lat_cos_built)}
         self._level_tex: dict[int, tuple] = {}
         self._base_m: float | None = None   # innermost level spacing
+        # Async rebuild worker (issue-#74 lesson: NO blocking work on the
+        # render thread). Jobs latest-wins per level; the worker computes
+        # arrays, the GL thread uploads finished ones. A level keeps
+        # drawing its previous texture until the fresh one lands -- the
+        # 8-cell margin makes a briefly-stale window invisible.
+        self._tex_lock = threading.Lock()
+        self._tex_jobs: dict[int, tuple] = {}
+        self._tex_results: dict[int, tuple] = {}
+        self._tex_worker: threading.Thread | None = None
         self._patch_origin: tuple[int, int] | None = None
         self._patch_texels = 2402.0   # actual texture px, set per build
         self._patch_bounds = (0.0, 0.0, 0.0, 0.0)  # lat_min, lat_max, lon_min, lon_max
@@ -1853,32 +1865,36 @@ class SVSGLRenderer:
                 if t is not None:
                     max_n = max(max_n, t.shape[0])
         n = max_n if max_n else 1201
-        return M_PER_DEG_LAT / float(n - 1)
+        base = M_PER_DEG_LAT / float(n - 1)
+        # Optional coarsening knob (svs config clipmap_base_m): lets a
+        # flight A/B trade near-field resolution for rebuild cadence.
+        # 0/absent = native.
+        override = float(getattr(self._parent, "_clip_base_m", 0.0) or 0.0)
+        return max(base, override)
 
-    def _ensure_level_texture(self, k: int, origin_e: float,
-                              origin_n: float, spacing: float) -> int:
-        """(Re)build level ``k``'s texture when its snapped origin or the
-        patch frame changed. Returns the GL texture id. The texture covers
-        the level footprint plus _LEVEL_GUARD texels on every side; its SW
-        texel centre sits at level_origin - guard*spacing."""
-        cells = int(self._parent._clip_cells)
-        tpc = self._TEXELS_PER_CELL
-        tex_spacing = spacing / tpc
-        # Anchor the texture window to a margin-cell world grid so it only
-        # rebuilds when the level window crosses an anchor boundary.
-        anchor = self._LEVEL_MARGIN * spacing
-        ax = math.floor(origin_e / anchor) * anchor
-        ay = math.floor(origin_n / anchor) * anchor
-        size = ((cells + self._LEVEL_MARGIN) * tpc + 1
-                + 2 * self._LEVEL_GUARD)
-        tex_o_e = ax - self._LEVEL_GUARD * tex_spacing
-        tex_o_n = ay - self._LEVEL_GUARD * tex_spacing
-        key = (round(tex_o_e, 3), round(tex_o_n, 3), round(spacing, 6),
-               self._patch_origin)
+    def _tex_worker_loop(self):
+        while True:
+            with self._tex_lock:
+                if not self._tex_jobs:
+                    job = None
+                else:
+                    k = min(self._tex_jobs)      # inner levels first
+                    job = (k, *self._tex_jobs.pop(k))
+            if job is None:
+                time.sleep(0.02)
+                continue
+            k, key, toe, ton, tsp, size = job
+            try:
+                arr = self._level_height_array(toe, ton, tsp, size)
+            except Exception:
+                log.exception("level %d texture build failed", k)
+                continue
+            with self._tex_lock:
+                self._tex_results[k] = (key, arr, toe, ton, size, tsp)
+
+    def _upload_level_texture(self, k, key, arr, toe, ton, size, tsp,
+                              lat_cos):
         state = self._level_tex.get(k)
-        if state is not None and state[0] == key:
-            return state[1]
-        arr = self._level_height_array(tex_o_e, tex_o_n, tex_spacing, size)
         if state is None:
             tex_arr = gl.glGenTextures(1)
             tex_id = int(tex_arr if np.isscalar(tex_arr) else tex_arr[0])
@@ -1893,9 +1909,78 @@ class SVSGLRenderer:
                            (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
                            (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
             gl.glTexParameteri(gl.GL_TEXTURE_2D, pname, val)
-        self._level_tex[k] = (key, tex_id, tex_o_e, tex_o_n, size,
-                              tex_spacing)
+        self._level_tex[k] = (key, tex_id, toe, ton, size, tsp, lat_cos)
         return tex_id
+
+    def _drift_exceeded(self, state, tex_spacing):
+        """True when the frame's east-scale (lat_cos) has drifted enough
+        since this texture was built that a rebuild would visibly shift
+        it: threshold = half a texel at the texture's far east extent.
+        Rebuilding well before the shift is perceptible keeps every
+        snap-back sub-texel."""
+        lat_cos_built = state[6]
+        lc = self._frame_lat_cos or lat_cos_built
+        if not lat_cos_built:
+            return False
+        toe, size, tsp = state[2], state[4], state[5]
+        e_max = max(abs(toe), abs(toe + size * tsp))
+        shift = e_max * abs(lc - lat_cos_built) / max(lc, 1e-6)
+        return shift > 0.5 * tex_spacing
+
+    def _ensure_level_texture(self, k: int, origin_e: float,
+                              origin_n: float, spacing: float) -> int:
+        """Return level ``k``'s texture id, scheduling an async rebuild
+        when its anchored window moved or the east-scale drifted. Builds
+        synchronously only when there is nothing usable to draw (startup,
+        or a patch-frame rebase that invalidates the old ENU mapping)."""
+        cells = int(self._parent._clip_cells)
+        tpc = self._TEXELS_PER_CELL
+        tex_spacing = spacing / tpc
+        anchor = self._LEVEL_MARGIN * spacing
+        ax = math.floor(origin_e / anchor) * anchor
+        ay = math.floor(origin_n / anchor) * anchor
+        size = ((cells + self._LEVEL_MARGIN) * tpc + 1
+                + 2 * self._LEVEL_GUARD)
+        tex_o_e = ax - self._LEVEL_GUARD * tex_spacing
+        tex_o_n = ay - self._LEVEL_GUARD * tex_spacing
+        key = (round(tex_o_e, 3), round(tex_o_n, 3), round(spacing, 6),
+               self._patch_origin)
+        lc = self._frame_lat_cos or 1.0
+
+        state = self._level_tex.get(k)
+        if (state is not None and state[0] == key
+                and not self._drift_exceeded(state, tex_spacing)):
+            return state[1]
+
+        # A finished async result for this exact window? Upload it now.
+        with self._tex_lock:
+            res = self._tex_results.pop(k, None)
+        if res is not None and res[0] == key:
+            return self._upload_level_texture(
+                k, key, res[1], res[2], res[3], res[4], res[5], lc)
+
+        # Nothing usable on screen for this level (first build, or the
+        # ENU frame rebased so the old texture is in the wrong frame):
+        # build synchronously -- rare by construction.
+        if state is None or state[0][3] != self._patch_origin:
+            arr = self._level_height_array(tex_o_e, tex_o_n,
+                                           tex_spacing, size)
+            return self._upload_level_texture(
+                k, key, arr, tex_o_e, tex_o_n, size, tex_spacing, lc)
+
+        # Otherwise: keep drawing the stale-but-margined texture and
+        # queue the fresh window (latest wins).
+        if self._tex_worker is None:
+            self._tex_worker = threading.Thread(
+                target=self._tex_worker_loop, name="svs-level-tex",
+                daemon=True)
+            self._tex_worker.start()
+        with self._tex_lock:
+            pending = self._tex_jobs.get(k)
+            if pending is None or pending[0] != key:
+                self._tex_jobs[k] = (key, tex_o_e, tex_o_n,
+                                     tex_spacing, size)
+        return state[1]
 
     @staticmethod
     def _patch_origin_for(ac_lat: float, ac_lon: float) -> tuple[int, int]:

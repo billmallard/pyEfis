@@ -526,6 +526,10 @@ class SVSRenderer:
         # spacing.
         self._clip_cells  = int(config.get("clipmap_cells", 64))
         self._clip_levels = int(config.get("clipmap_levels", 7))
+        # Track 1b: optional floor on the innermost level's texel spacing
+        # (metres). 0 = native tile resolution (GLO-30 ~30.9 m). Lets a
+        # flight A/B trade near-field resolution for rebuild cadence.
+        self._clip_base_m = float(config.get("clipmap_base_m", 0))
         # Legacy polar-fan parameters — accepted and retained for
         # config compatibility (the Pi config sets n_range), no
         # longer consulted by the renderer.
