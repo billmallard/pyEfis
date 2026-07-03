@@ -94,8 +94,15 @@ Garmin. Notes:
 
 ## Standing queue (unchanged)
 
-P8 Track 1b (streaming heightmap textures — far-range fidelity +
-native 30 m), traffic via Stratux (P9), chart draping (P10),
+P8 Track 1b (branch track1b-per-level-heightmap-textures: flying on
+the Pi, sawtooth fix next — see docs/track1b_notes.md), FLTA:
+forward-looking terrain alerting along the PREDICTED path (pose.py
+prediction x _sample_elevations x the fail/old/bad annunciation
+conventions — the one substantive gap vs Nighthawk Guardian's
+predictive-SVS pitch; see GitHub issue), attitude-rate smoothing
+(bench-check 5 Hz AHRS pitch/roll stepping; extend pose.py
+interpolation to attitude channels if confirmed — GitHub issue),
+traffic via Stratux (P9), chart draping (P10),
 data-manager (awaiting MakerPlane reply), svs/ package split.
 
 ## Feature request (Bill, 2026-06-12): GI-275-style autopilot command
