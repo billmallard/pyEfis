@@ -778,6 +778,26 @@ _register(InstrumentSpec(
     # The widget reads VS (vertical speed) directly; the legacy curated default
     # was "ALT", a key it never consumes.
     dbkeys=["VS"],
+    preview={"value": 500},
+    properties=[
+        # AC 23.1311-1C 8.11 / AC 25-11B A.6: the VS range should suit the
+        # airplane's climb/descent performance (VSI-DISP-001; closes the
+        # vsi_widget_spec 7 "configurable range" open item).
+        Prop("maxvs", "integer", default=2500, minimum=500, maximum=10000,
+             step=100, label="Range (ft/min)",
+             help="full scale, plus and minus; pick to suit the airplane's "
+                  "climb/descent performance (AC 23.1311-1C 8.11)"),
+        Prop("minorDiv", "integer", default=100, minimum=25, maximum=1000,
+             step=25, label="Tick interval (ft/min)",
+             help="minor tick mark every N ft/min"),
+        Prop("numberedDiv", "integer", default=200, minimum=50, maximum=2000,
+             step=50, label="Numbered interval (ft/min)",
+             help="numbered graduation every N ft/min (labels print in "
+                  "hundreds: 2400 ft/min prints as 24)"),
+        Prop("bg_color", "color", default="#000000", label="Background",
+             help="tape face colour"),
+        _bg_opacity_prop(),
+    ],
 ))
 
 _register(InstrumentSpec(

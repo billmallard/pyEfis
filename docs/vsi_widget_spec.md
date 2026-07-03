@@ -57,7 +57,7 @@ a Major hazard. IDs (`VSI-<CLASS>-<NNN>`) are stable and anchor the test catalog
 
 | ID | Requirement | Trigger | Required response | Cite | Status |
 |----|-------------|---------|-------------------|------|--------|
-| **VSI-DISP-001** | Performance-appropriate scale, clear zero, up=climb/down=descend | always | Zero reference + signed scale over a climb/descent-appropriate range | §8.11 p.24; §A.6 p.74 | **DONE** (range fixed — see §7) |
+| **VSI-DISP-001** | Performance-appropriate scale, clear zero, up=climb/down=descend | always | Zero reference + signed scale over a climb/descent-appropriate range | §8.11 p.24; §A.6 p.74 | **DONE** — `Alt_Trend_Tape` range + graduations now config (`maxvs`/`minorDiv`/`numberedDiv`); dial + PFD ranges still fixed (see §7) |
 | **VSI-ANN-001** | VS-invalid annunciation on **every** variant | `VS` fail / old / bad | `fail` → remove the moving element + show a clear flag; `old`/`bad` → grey / blank (never a live-looking value) | Table 4-6 p.32 (Major); §2 | **DONE** — all three variants: `VSI_PFD` now flags fail (red X, no dot) + greys old/bad |
 
 **Contract for the gap.** `VSI_PFD.paintEvent` must consume the `VS` item quality: on
@@ -81,6 +81,8 @@ removal.
 | 002 | VSI-ANN-001 (dial) | `dial_invalid_annunciation` | pass |
 | 003 | VSI-ANN-001 (tape) | `tape_invalid_annunciation` | pass |
 | 004 | **VSI-ANN-001 (PFD)** | `pfd_invalid_annunciation` | pass |
+| 005 | VSI-DISP-001 (configurable scale) | `trend_tape_configurable_scale` | pass |
+| 006 | display convention (bg opacity) | `trend_tape_bg_opacity` | pass |
 
 ## 6. Conventions and standards basis
 
@@ -91,10 +93,11 @@ consolidated + page-cited in [`avionics_reference.md`](avionics_reference.md) §
 
 ## 7. Open items
 
-- **Configurable range (VSI-DISP-001 / §A.6):** the variants use fixed ranges (`VSI_Dial`
-  2,000 fpm, `VSI_PFD` 2,000, `Alt_Trend_Tape` 2,500). Reasonable for a typical GA
-  experimental, but §A.6 wants the range to track the airplane's climb/descent performance
-  — expose it as a config option so a high-performer can widen it. (Not a hard gap;
-  tracked.)
+- **Configurable range (VSI-DISP-001 / §A.6):** RESOLVED for `Alt_Trend_Tape`
+  (2026-07-03): `maxvs` (full scale ±ft/min), `minorDiv` (tick interval) and
+  `numberedDiv` (numbered-graduation interval) are editor/YAML options, with
+  `bg_color`/`bg_opacity` face control; defaults preserve the shipped look
+  (±2,500, ticks 100, numbers 200, solid black). `VSI_Dial` (2,000 fpm) and
+  `VSI_PFD` (2,000) remain fixed — still tracked here.
 - **TCAS RA bands (§A.6):** if a resolution advisory is ever integrated, the range must be
   sufficient to show the red/green RA bands — out of scope (no TCAS).
