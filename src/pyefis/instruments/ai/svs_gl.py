@@ -90,6 +90,10 @@ uniform float u_level_spacing;     // this level's cell size, metres
 uniform vec2  u_level_origin;      // this level's SW corner, ENU metres
                                    // (snapped to whole cells — what
                                    // pins vertices to the WORLD)
+uniform float u_level_half;        // this level's half extent, metres
+uniform float u_morph_on;          // 1 = geomorph toward the next-coarser
+                                   // level near the outer edge (0 on the
+                                   // outermost level — nothing to match)
 uniform sampler2D u_heightmap;     // R32F, single-channel metres
 
 out float v_clearance_ft;
@@ -104,6 +108,21 @@ const float SLOPE_EXAG    = 1.0;
 const float AMBIENT       = 0.35;
 const float DIFFUSE       = 0.65;
 const float WATER_THR_M   = -1000.0;
+// Geomorph band: fraction of the level half-extent where the blend to
+// the next-coarser surface starts / completes. Ends short of 1.0 so the
+// visible seam (this level's outer edge, where the coarser level shows
+// from underneath) is drawn fully coarse-matched: C0-continuous.
+const float MORPH_START   = 0.70;
+const float MORPH_END     = 0.95;
+
+// Water-clamped heightmap fetch at an ENU position (same edge-inclusive
+// texel-centre mapping as the primary sample in main()).
+float hm_height(vec2 p_enu) {
+    vec2 uv = (p_enu / u_patch_extent_m * (u_patch_texels - 1.0) + 0.5)
+              / u_patch_texels;
+    float e = texture(u_heightmap, uv).r;
+    return mix(e, 0.0, step(e, WATER_THR_M));
+}
 
 void main() {
     // World position: fixed for a given (level origin, cell) — the
@@ -138,6 +157,33 @@ void main() {
     vec3 sun_dir = normalize(vec3(-1.0, 1.0, 2.0));
     float diff = clamp(dot(normal, sun_dir), 0.0, 1.0);
     v_intensity = AMBIENT + DIFFUSE * diff;
+
+    // --- clipmap vertex-morph band -----------------------------------
+    // Near this level's outer edge, morph the vertex height onto the
+    // surface the NEXT-COARSER level renders there (bilinear over the
+    // four surrounding coarse-grid vertices, which sit on the global
+    // 2x-spacing lattice). Terrain then transitions gradually inside
+    // the band instead of reshaping ("popping") when a feature crosses
+    // a ring seam, and the seam itself is continuous.
+    if (u_morph_on > 0.5) {
+        vec2 lvl_c = u_level_origin + vec2(u_level_half);
+        vec2 dxy = abs(exy - lvl_c);
+        float edge_d = max(dxy.x, dxy.y) / u_level_half;
+        float w_m = clamp((edge_d - MORPH_START)
+                          / (MORPH_END - MORPH_START), 0.0, 1.0);
+        if (w_m > 0.0) {
+            float s2 = u_level_spacing * 2.0;
+            vec2 c0 = floor(exy / s2) * s2;
+            vec2 fw = (exy - c0) / s2;
+            float h00 = hm_height(c0);
+            float h10 = hm_height(c0 + vec2(s2, 0.0));
+            float h01 = hm_height(c0 + vec2(0.0, s2));
+            float h11 = hm_height(c0 + vec2(s2, s2));
+            float h_coarse = mix(mix(h00, h10, fw.x),
+                                 mix(h01, h11, fw.x), fw.y);
+            elev_m = mix(elev_m, h_coarse, w_m);
+        }
+    }
 
     v_clearance_ft = u_ac_alt_ft - elev_m * FT_PER_M;
     v_is_water     = is_water;
@@ -870,6 +916,13 @@ class SVSGLRenderer:
                     self._program.setUniformValue(
                         self._u["u_level_origin"],
                         float(ox), float(oy))
+                    self._program.setUniformValue(
+                        self._u["u_level_half"], float(half))
+                    # Geomorph toward the next-coarser level; the
+                    # outermost level has no coarser target.
+                    self._program.setUniformValue(
+                        self._u["u_morph_on"],
+                        0.0 if k == p._clip_levels - 1 else 1.0)
                     if k == 0:
                         self._ibo.bind()
                         gl.glDrawElements(
@@ -1630,6 +1683,7 @@ class SVSGLRenderer:
                      "u_patch_texels", "u_haze_inv",
                      "u_patch_extent_m", "u_tex_xform",
                      "u_level_spacing", "u_level_origin",
+                     "u_level_half", "u_morph_on",
                      "u_heightmap",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_apt_gate_ft", "u_safe_grad", "u_tex_amp",
