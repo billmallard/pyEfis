@@ -94,28 +94,56 @@ at half-degree crossings.
       of resolution vs cadence. 25 s sim-motion soak clean on the dev GPU.
 - [ ] Increment 5b — Pi flight re-validation, then merge to
       display-changes + delete _build_patch dead code.
+- [x] Sawtooth fix (2026-07-03, three commits a82cc8e/38ae5f2/180cf1c):
+      checkerboard diagonals + per-fragment terrain sampling + DEPTH
+      BUFFER for the terrain pass (the actual root cause -- see the
+      RESOLVED section below). Local validation complete; NOT yet on
+      the Pi.
 
-## NEXT SESSION OPENER: the ridge-crest sawtooth ("jagged edge")
+## RESOLVED (2026-07-03): the ridge-crest sawtooth ("jagged edge")
 
-Bill's long-standing "jagged edge" artifact -- reproduced locally at the
-live X-Plane pose (35.862022, -82.440437, 8004 ft, hdg 110.73, pitch 3.77,
-roll 2.60 -- Black Mountains near Mt. Mitchell; scratchpad mitchell_*.png):
-evenly-spaced dark triangular teeth along ridge crests, glaring on a 21.5in
-panel. A/B results (all at that pose):
-- central-difference normals: teeth unchanged (shipped anyway, correct fix
-  for shading symmetry);
-- morph band OFF: teeth REDUCED but present -- the band amplifies crest
-  notching (odd vertices mid-blend pull toward the coarse average, far
-  below a knife-edge crest) but is not the root cause;
-- _TEXELS_PER_CELL 2 -> 4: unchanged => NOT texture aliasing.
-CONCLUSION: mesh geometry -- the clipmap index template splits every quad
-along the SAME diagonal; crests running against the grain get alternate
-triangles chopped = coherent sawtooth. Predates Track 1b (June clipmap).
-FIX PLAN: alternate the split diagonal per quad parity (checkerboard) in
-_build_clipmap_template (both the full grid and the annulus template);
-literature-standard, index-buffer-only change. Secondary: consider
-softening the morph band on high-curvature crests, or narrowing the band
-(MORPH_START 0.85) if crest notching remains visible mid-band.
+Bill's long-standing "jagged edge" -- reproduced at the live X-Plane pose
+(35.862022, -82.440437, 8004 ft, hdg 110.73, pitch 3.77, roll 2.60 --
+Black Mountains near Mt. Mitchell): evenly-spaced straight-edged teeth
+along ridge crests at grazing view angles.
+
+The previous session's conclusion (uniform quad diagonal) was WRONG --
+kept here as a methodology lesson. The full A/B chain that found it:
+1. Checkerboard diagonals (a82cc8e): teeth pixel-identical. Kept as mesh
+   hygiene (heatmap shows it only redistributes intra-quad interpolation).
+2. Lattice-density discriminator (SVS_CLIP_CELLS=128 via the new harness
+   knobs): tooth period halves => teeth are MESH-PERIOD, not data.
+3. Footprint-max level textures (throwaway hack): teeth unchanged =>
+   not vertex-height decimation aliasing.
+4. Per-fragment clearance/water/shading (38ae5f2): teeth unchanged =>
+   not varying interpolation. (Kept -- real improvement on its own:
+   shading resolves at texel not vertex resolution, and clearance-band
+   boundaries no longer kink at mesh edges. Costs 5 R32F fetches per
+   terrain fragment; watch Pi frame time.)
+5. ROOT CAUSE: camera.py emitted clip.z = 0 -- NO depth buffer, ever.
+   Within a level, triangle draw order is grid order, so terrain behind
+   a ridge paints over the nearer crest wherever their projections
+   overlap; the overwrite boundary is the far surface's triangle edges
+   = razor-straight mesh-period teeth. FIX (180cf1c): perspective z row
+   in camera.py (Z_NEAR 2 m / Z_FAR 800 km) + GL_DEPTH_TEST in the
+   terrain pass with a per-level depth clear (painter's coarse-to-fine
+   ACROSS levels preserved -- fine rings must still overdraw the coarse
+   ground under the ring-margin overlap). Overlays/Qt keep depth off.
+
+Teeth GONE at the Mitchell pose. Local validation: coastal SBA 500 ft
+final (runway/markings/highways/water/obstacle) clean, FL300 far-field
+clean, 25 s sim-motion soak clean, tests/instruments/ai green (the 4
+virtualvfr metadata failures pre-exist on Windows).
+
+Pi deploy checks for these three commits (ride along with 5b):
+- Depth buffer present under eglfs QOpenGLWidget (Qt attaches combined
+  depth-stencil by default -- verify no GL errors in the journal).
+- ES link: samplers now declared highp in BOTH stages (ES requires
+  matching cross-stage precision; desktop ignores it -- a mismatch
+  would fail at LINK on the Pi only).
+- Frame time: +5 texture fetches/fragment + 7 depth clears/frame.
+  Fallback if it hurts: bake intensity into a second texture channel
+  (1 fetch), or drop the per-level clear for a depth-offset scheme.
 
 ## Gotchas discovered along the way
 
