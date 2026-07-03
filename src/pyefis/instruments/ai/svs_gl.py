@@ -961,8 +961,19 @@ class SVSGLRenderer:
                     st = self._level_tex[k]
                     info.append((spacing, half, ox, oy, tex,
                                  st[2], st[3], st[4], st[5]))
-                # Pass 2: draw coarse to fine (painter's algorithm).
+                # Pass 2: draw coarse to fine (painter's algorithm
+                # ACROSS levels). WITHIN a level the depth buffer
+                # resolves self-occlusion — without it, grid-order
+                # triangles behind a ridge paint over the nearer crest
+                # (mesh-period sawtooth along every ridge silhouette).
+                # Depth is cleared per level so a finer ring still
+                # unconditionally overdraws the coarser ground beneath
+                # it (the ring-margin overlap relies on that).
+                gl.glEnable(gl.GL_DEPTH_TEST)
+                gl.glDepthFunc(gl.GL_LESS)
+                gl.glDepthMask(gl.GL_TRUE)
                 for k in range(levels - 1, -1, -1):
+                    gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
                     (spacing, half, ox, oy, tex,
                      toe, ton, tsz, tsp) = info[k]
                     kc = min(k + 1, levels - 1)
@@ -1012,6 +1023,9 @@ class SVSGLRenderer:
                             gl.GL_TRIANGLES, self._annulus_count,
                             gl.GL_UNSIGNED_INT, None)
             finally:
+                # Overlays and Qt's paint engine expect depth testing
+                # OFF (painter's-order compositing).
+                gl.glDisable(gl.GL_DEPTH_TEST)
                 self._vao.release()
                 self._program.release()
 
