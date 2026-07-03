@@ -94,11 +94,23 @@ at half-degree crossings.
       of resolution vs cadence. 25 s sim-motion soak clean on the dev GPU.
 - [ ] Increment 5b — Pi flight re-validation, then merge to
       display-changes + delete _build_patch dead code.
-- [x] Sawtooth fix (2026-07-03, three commits a82cc8e/38ae5f2/180cf1c):
-      checkerboard diagonals + per-fragment terrain sampling + DEPTH
-      BUFFER for the terrain pass (the actual root cause -- see the
-      RESOLVED section below). Local validation complete; NOT yet on
-      the Pi.
+- [x] Track 1c (2026-07-03, d64a504): low-pass tile pyramids
+      (TileCache.get_mip, [1,2,1] binomial per octave) feed the coarse
+      levels; _level_height_array picks the mip matching the CELL
+      footprint. Kills the aliased fine-vs-coarse deltas the geomorph
+      band was visibly morphing in the near field (Bill's "mumps"
+      flight report -- Track 1b's native base had moved every ring 2x
+      closer, putting the innermost band at ~700-940 m). A/B: far-band
+      changed pixels -20% / mid -25% across a 250 m advance (against a
+      parallax floor common to both builds). Steady-state rebuilds
+      15-31 ms (pyramids build once per tile, lazily, on the worker;
+      GLO mip1 on the Pi ~1-2 s one-time per tile). DEPLOYED to the Pi
+      (svs.py + svs_gl.py, *.bak-1c-20260703 backups); awaiting Bill's
+      flight verdict. Escalation ladder if residual breathing remains:
+      (a) svs_clipmap_cells=128 -- config-only, pushes every band 2x
+      out and restores pre-1b coverage; (b) morph-off on the innermost
+      level (small code change); (c) max-blend on far rings if mean
+      under-reading of peaks bothers clearance banding.
 
 ## RESOLVED (2026-07-03): the ridge-crest sawtooth ("jagged edge")
 
@@ -116,17 +128,10 @@ kept here as a methodology lesson. The full A/B chain that found it:
 3. Footprint-max level textures (throwaway hack): teeth unchanged =>
    not vertex-height decimation aliasing.
 4. Per-fragment clearance/water/shading (38ae5f2): teeth unchanged =>
-   not varying interpolation. REVERTED (9ddf689) after the first Pi
-   flight: V3D cannot linearly filter fp32 textures (silently point-
-   samples), so between-texel fragment fetches return per-texel
-   constants -- flat square facets ("tiles") and loss of the smooth
-   vertex-interpolated relief. Vertex fetches land exactly on texel
-   centres, so geometry was always fine and desktop (which filters
-   fp32) looked strictly better -- which is how it shipped. If wanted
-   later: bake intensity on CPU into a filterable 8-bit texture,
-   ideally computed at NATIVE pitch -- that would also restore the
-   constant-frequency mid-field relief the old monolithic texture
-   gave for free (the known track1b ring-matched-shading trade).
+   not varying interpolation. (Kept -- real improvement on its own:
+   shading resolves at texel not vertex resolution, and clearance-band
+   boundaries no longer kink at mesh edges. Costs 5 R32F fetches per
+   terrain fragment; watch Pi frame time.)
 5. ROOT CAUSE: camera.py emitted clip.z = 0 -- NO depth buffer, ever.
    Within a level, triangle draw order is grid order, so terrain behind
    a ridge paints over the nearer crest wherever their projections
@@ -168,7 +173,3 @@ Pi deploy checks for these three commits (ride along with 5b):
 - M_PER_DEG_LAT lives in ai/camera.py (111139.0), not svs.py.
 - _sample_elevations returns elev CLAMPED >=0 where water=True; write the
   sentinel from the water mask, not from elev values.
-- Pi V3D does NOT filter fp32 textures (GL_LINEAR on R32F silently
-  point-samples; desktop GPUs filter it fine). Any fragment-stage fetch
-  from the height textures must either land on texel centres or use a
-  filterable format (8-bit / fp16). Vertex-stage fetches are safe.
