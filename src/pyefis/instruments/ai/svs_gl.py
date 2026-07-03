@@ -896,15 +896,26 @@ class SVSGLRenderer:
                     float(1.0 / 150.0),
                     float(o_lat * M_PER_DEG_LAT / 150.0))
 
-                # Clipmap levels, coarse to fine (painter's algorithm:
-                # finer levels overdraw coarser — no seams, no
-                # T-junction stitching needed). Each level's origin is
-                # snapped to its own spacing: the mesh is pinned to
-                # the WORLD, turns change nothing, forward flight only
-                # swaps edge cells.
+                # Clipmap levels, coarse to fine (painter's algorithm
+                # ACROSS levels: finer levels overdraw coarser — no
+                # seams, no T-junction stitching needed). Each level's
+                # origin is snapped to its own spacing: the mesh is
+                # pinned to the WORLD, turns change nothing, forward
+                # flight only swaps edge cells.
+                # WITHIN a level the depth buffer resolves
+                # self-occlusion — without it, grid-order triangles
+                # behind a ridge paint over the nearer crest
+                # (mesh-period sawtooth along every ridge silhouette,
+                # the "jagged edge"). Depth is cleared per level so a
+                # finer ring still unconditionally overdraws the
+                # coarser ground beneath it.
+                gl.glEnable(gl.GL_DEPTH_TEST)
+                gl.glDepthFunc(gl.GL_LESS)
+                gl.glDepthMask(gl.GL_TRUE)
                 n_cells = p._clip_cells
                 base_m = ext_n / max(self._patch_texels - 1.0, 1.0)
                 for k in range(p._clip_levels - 1, -1, -1):
+                    gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
                     spacing = base_m * (2 ** k)
                     half = (n_cells / 2.0) * spacing
                     ox = (math.floor(self._frame_ac_e / spacing)
@@ -934,6 +945,9 @@ class SVSGLRenderer:
                             gl.GL_TRIANGLES, self._annulus_count,
                             gl.GL_UNSIGNED_INT, None)
             finally:
+                # Overlays and Qt's paint engine expect depth testing
+                # OFF (painter's-order compositing).
+                gl.glDisable(gl.GL_DEPTH_TEST)
                 self._vao.release()
                 self._program.release()
 
