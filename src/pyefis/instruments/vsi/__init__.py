@@ -400,7 +400,8 @@ class Alt_Trend_Tape(QGraphicsView):
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
         super(Alt_Trend_Tape, self).__init__(parent)
-        self.setStyleSheet("border: 0px")
+        self.setStyleSheet(
+            "background-color: rgba(0, 0, 0, 0%); border: 0px")
         self.font_family = font_family
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
