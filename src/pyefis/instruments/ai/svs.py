@@ -239,12 +239,47 @@ def elevation_at(tile: np.ndarray, tile_lat: int, tile_lon: int,
 # Terrain cache — keeps recently used tiles in memory
 # ---------------------------------------------------------------------------
 
+
+def _mip_reduce(a: np.ndarray) -> np.ndarray:
+    """One pyramid step: separable [1,2,1]/4 binomial low-pass, then 2x
+    decimation on the even indices. Grid registration is preserved (mip
+    point (i, j) sits exactly on native point (2i, 2j)), and a LINEAR
+    elevation field passes through unchanged — which is what makes the
+    pyramid safe to bilinear-sample with the ordinary tile math.
+
+    Water/void handling: land taps are weighted 1, water/void taps 0;
+    a mip point is the weighted mean of its LAND taps (shoreline
+    terrain is not dragged toward sea level), and becomes water (0.0)
+    when land taps hold less than half the kernel weight."""
+    land = (a > _WATER_SENTINEL / 2.0) & (a != 0.0)
+    v = np.where(land, a, 0.0).astype(np.float32)
+    w = land.astype(np.float32)
+
+    def blur(x):
+        p = np.pad(x, ((1, 1), (0, 0)), mode="edge")
+        x = (p[:-2] + 2.0 * p[1:-1] + p[2:]) * 0.25
+        p = np.pad(x, ((0, 0), (1, 1)), mode="edge")
+        return (p[:, :-2] + 2.0 * p[:, 1:-1] + p[:, 2:]) * 0.25
+
+    num = blur(v)[::2, ::2]
+    den = blur(w)[::2, ::2]
+    out = num / np.maximum(den, 1e-6)
+    return np.where(den >= 0.5, out, 0.0).astype(np.float32)
+
+
 class TileCache:
     def __init__(self, tile_root: Path, max_tiles: int = 9):
         self.tile_root = tile_root
         self.max_tiles = max_tiles
         self._cache: dict[tuple, np.ndarray] = {}
         self._order: list[tuple] = []
+        # Track 1c: lazily built low-pass pyramids per tile, keyed
+        # (lat, lon, mip). Mip m is the tile box-filtered to a 2**m
+        # native-cell pitch — coarse clipmap levels sample these so
+        # their geometry is a true low-pass of the data instead of an
+        # aliased point-decimation (that aliasing is what the geomorph
+        # band turned into visible near-field "breathing").
+        self._mips: dict[tuple, np.ndarray] = {}
         # The async water collector samples elevations from a worker
         # thread while the render thread also reads tiles.
         self._lock = threading.Lock()
@@ -265,7 +300,34 @@ class TileCache:
                     if len(self._order) > self.max_tiles:
                         evict = self._order.pop(0)
                         del self._cache[evict]
+                        for m in range(1, 16):
+                            self._mips.pop((*evict, m), None)
         return tile
+
+    def get_mip(self, lat: int, lon: int, mip: int) -> np.ndarray | None:
+        """Return the tile low-passed to a 2**mip native-cell pitch,
+        building (and caching) the pyramid chain on first use. Falls
+        back to the deepest buildable level when the tile's grid stops
+        halving cleanly (needs (n-1) even at each step). mip=0 is the
+        raw tile."""
+        base = self.get(lat, lon)
+        if base is None or mip <= 0:
+            return base
+        prev = base
+        for m in range(1, mip + 1):
+            key = (lat, lon, m)
+            with self._lock:
+                cached = self._mips.get(key)
+            if cached is not None:
+                prev = cached
+                continue
+            if (prev.shape[0] - 1) % 2 or prev.shape[0] < 5:
+                break   # grid no longer halves — use the deepest built
+            nxt = _mip_reduce(prev)
+            with self._lock:
+                self._mips.setdefault(key, nxt)
+            prev = nxt
+        return prev
 
     def elevation(self, lat: float, lon: float) -> float:
         """Return MSL elevation in metres at (lat, lon), or 0.0 if no tile."""
@@ -2022,11 +2084,18 @@ class SVSRenderer:
         return hit
 
     def _sample_elevations(self, lat_grid: np.ndarray,
-                           lon_grid: np.ndarray) -> tuple:
+                           lon_grid: np.ndarray, mip: int = 0) -> tuple:
         """
         Sample elevation for the entire grid in one vectorised pass.
         Returns (elev_m, is_water) — same shape as the input grids —
         with is_water marking ocean (SRTM void tiles or missing tiles).
+
+        ``mip`` selects the tiles' low-pass pyramid level (Track 1c):
+        mip m samples the terrain box-filtered to a 2**m native-cell
+        pitch. Coarse clipmap levels pass their cell pitch here so
+        their vertex heights are a true low-pass of the data — the
+        bilinear tile math is unchanged because the pyramid keeps grid
+        registration (mip arrays are edge-inclusive squares too).
 
         Points over ocean are initialised to _WATER_SENTINEL; bilinear
         interpolation near coastlines may produce large-negative values that are
@@ -2044,7 +2113,7 @@ class SVSRenderer:
         )
 
         for tile_lat, tile_lon in keys:
-            tile = self.cache.get(int(tile_lat), int(tile_lon))
+            tile = self.cache.get_mip(int(tile_lat), int(tile_lon), mip)
             if tile is None:
                 continue  # missing tile file — stays as water sentinel
 

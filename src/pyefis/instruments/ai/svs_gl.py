@@ -1859,9 +1859,27 @@ class SVSGLRenderer:
         """Sample a level texture: ``size`` x ``size`` texels, texel (i, j)
         at ENU (origin_e + j*spacing, origin_n + i*spacing) in the CURRENT
         patch frame. Water/missing ground carries the -9999 sentinel (the
-        shader's WATER_THR_M catches it)."""
+        shader's WATER_THR_M catches it).
+
+        Track 1c: levels coarser than the native data sample the tile
+        cache's low-pass PYRAMID (TileCache.get_mip) at the mip whose
+        pitch matches the level's CELL footprint -- the texels the mesh
+        VERTICES read are one cell apart, and it is vertex-height
+        aliasing that feeds the geomorph band. Coarse levels are then
+        true low-passes of the fine data, so the band blends between
+        nearly-identical surfaces: approach-morphing (the near-field
+        "breathing" as the rings travel with the aircraft) collapses,
+        and so do texture-rebuild pops and far-field shimmer. The
+        pyramid keeps grid registration, so world-anchoring (texels
+        bit-identical across window snaps) is preserved. The price is
+        up to one octave of sub-cell shading sparkle mid-field --
+        geometry smoothness wins."""
         o_lat, o_lon = self._patch_origin
         lat_cos = self._frame_lat_cos or 1.0
+        footprint = spacing * self._TEXELS_PER_CELL
+        ratio = footprint / self._native_data_m()
+        mip = max(0, int(math.floor(math.log2(ratio) + 0.5))) \
+            if ratio > 1.0 else 0
         idx = np.arange(size, dtype=np.float64)
         e = origin_e + idx * spacing
         n = origin_n + idx * spacing
@@ -1875,15 +1893,18 @@ class SVSGLRenderer:
         lon = np.clip(lon, o_lon + eps, o_lon + _PATCH_TILES - eps)
         lat = np.clip(lat, o_lat + eps, o_lat + _PATCH_TILES - eps)
         lon_g, lat_g = np.meshgrid(lon, lat)
-        elev, water = self._parent._sample_elevations(lat_g, lon_g)
+        elev, water = self._parent._sample_elevations(lat_g, lon_g,
+                                                      mip=mip)
         out = np.where(water, np.float32(-9999.0),
                        elev.astype(np.float32))
         return np.ascontiguousarray(out, dtype=np.float32)
 
-    def _native_base_m(self) -> float:
-        """Finest tile resolution around the aircraft -> innermost level
-        spacing (metres). GLO-30: ~30.9 m; SRTM3: ~92.7 m. Falls back to
-        SRTM3 spacing when no tiles are loadable."""
+    def _native_data_m(self) -> float:
+        """Finest tile resolution around the aircraft (metres): GLO-30
+        ~30.9 m, SRTM3 ~92.7 m. Falls back to SRTM3 spacing when no
+        tiles are loadable. This is the DATA pitch -- the clipmap_base_m
+        coarsening knob does not apply (the footprint filter must know
+        what the ground truth resolution is)."""
         o_lat, o_lon = self._patch_origin
         cache = self._parent.cache
         max_n = 0
@@ -1893,12 +1914,15 @@ class SVSGLRenderer:
                 if t is not None:
                     max_n = max(max_n, t.shape[0])
         n = max_n if max_n else 1201
-        base = M_PER_DEG_LAT / float(n - 1)
-        # Optional coarsening knob (svs config clipmap_base_m): lets a
-        # flight A/B trade near-field resolution for rebuild cadence.
-        # 0/absent = native.
+        return M_PER_DEG_LAT / float(n - 1)
+
+    def _native_base_m(self) -> float:
+        """Innermost level spacing (metres): the native data pitch,
+        optionally coarsened by the svs config clipmap_base_m knob
+        (flight A/B of near-field resolution vs rebuild cadence;
+        0/absent = native)."""
         override = float(getattr(self._parent, "_clip_base_m", 0.0) or 0.0)
-        return max(base, override)
+        return max(self._native_data_m(), override)
 
     def _tex_worker_loop(self):
         while True:

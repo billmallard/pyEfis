@@ -41,10 +41,11 @@ def glr(tmp_path):
 
 
 def test_level_array_matches_direct_sampling(glr):
-    """Texel (i, j) must hold the elevation at exactly the ENU point
-    origin + (j, i)*spacing, i.e. the same value the CPU sampler returns
-    for the equivalent lat/lon."""
-    spacing = 92.0
+    """At native texel pitch (the innermost level: texels at native/TPC)
+    texel (i, j) must hold the elevation at exactly the ENU point
+    origin + (j, i)*spacing -- the Track 1c filter must leave f=1 levels
+    bit-identical to direct sampling."""
+    spacing = 46.0   # ~native/2: cell footprint ~native -> f = 1
     size = 9
     o_e, o_n = 40000.0, 50000.0
     arr = glr._level_height_array(o_e, o_n, spacing, size)
@@ -97,6 +98,118 @@ def test_native_base_m(glr):
     ~92.7 m)."""
     assert glr._native_base_m() == pytest.approx(
         M_PER_DEG_LAT / 1200.0, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Track 1c: coarse levels sample the TileCache low-pass pyramid (get_mip)
+# so their geometry is a true low-pass of the native data instead of an
+# aliased point-decimation -- that is what makes the geomorph band blend
+# between nearly-identical surfaces.
+# ---------------------------------------------------------------------------
+
+
+def test_mip_preserves_linear_field(glr, tmp_path):
+    """The [1,2,1] binomial pyramid passes a LINEAR elevation field
+    through unchanged, so a coarse level (mip-sampled) must match
+    direct native sampling away from tile edges. The fixture tiles'
+    0.1 m/row gradient quantises to an int16 staircase, so write a
+    1 m/row tile (integer at every cell -> exactly linear)."""
+    _write_hgt(tmp_path, 32, -98, 1201, 100, gradient=1.0)
+    glr._parent.cache._cache.clear()
+    glr._parent.cache._order.clear()
+    glr._parent.cache._mips.clear()
+    native = glr._native_data_m()
+    spacing = 4.0 * native          # cell footprint 8x native -> mip 3
+    arr = glr._level_height_array(40000.0, 50000.0, spacing, 8)
+    ref = glr._level_height_array(40000.0, 50000.0, spacing / 8.0, 1)
+    # Compare texel (0,0) of both (same world point, mip 3 vs mip 0).
+    assert arr[0, 0] == pytest.approx(ref[0, 0], abs=0.05)
+
+
+def test_mip_attenuates_impulse(glr, tmp_path):
+    """A single-cell spike must be attenuated by the pyramid -- the
+    whole point of Track 1c (aliased detail fed the morph band)."""
+    # Spike one native cell at lat 32.5, lon -97.5 in tile (32, -98).
+    ns = tmp_path / "N32"
+    data = np.fromfile(ns / "N32W098.hgt", dtype=">i2").reshape(1201, 1201)
+    data = data.astype(np.int16).copy()
+    data[600, 600] = 3000    # hgt row 600 = lat 32.5 (row 0 = north)
+    (ns / "N32W098.hgt").write_bytes(data.astype(">i2").tobytes())
+    glr._parent.cache._cache.clear()
+    glr._parent.cache._order.clear()
+    glr._parent.cache._mips.clear()
+    native = glr._native_data_m()
+    lat_cos = glr._frame_lat_cos
+    e0 = 0.5 * M_PER_DEG_LAT * lat_cos   # texel (0,0) exactly on the spike
+    n0 = 0.5 * M_PER_DEG_LAT
+    sharp = glr._level_height_array(e0, n0, native / 2.0, 1)   # mip 0
+    smooth = glr._level_height_array(e0, n0, 4.0 * native, 1)  # mip 3
+    assert sharp[0, 0] == pytest.approx(3000.0, abs=2.0)
+    assert smooth[0, 0] < 1200.0
+    assert smooth[0, 0] > 90.0   # still terrain, not zeroed
+
+
+def test_mip_water_land_mean_not_dragged(glr, tmp_path):
+    """Mixed shoreline blocks average LAND taps only: constant terrain
+    one mip footprint inland of an ocean edge stays exactly constant,
+    and open water stays water."""
+    # Rebuild tile (32, -98): west half ocean (0), east half 500 m.
+    ns = tmp_path / "N32"
+    flat = np.zeros((1201, 1201), dtype=np.int16)
+    flat[:, 600:] = 500
+    (ns / "N32W098.hgt").write_bytes(flat.astype(">i2").tobytes())
+    glr._parent.cache._cache.clear()
+    glr._parent.cache._order.clear()
+    glr._parent.cache._mips.clear()
+    native = glr._native_data_m()
+    lat_cos = glr._frame_lat_cos
+    spacing = 4.0 * native               # mip 3, box 8 native cells
+    x_coast = 0.5 * M_PER_DEG_LAT * lat_cos
+    n0 = 0.5 * M_PER_DEG_LAT
+    # 3 texels (=12 native cells) inland of the coast: exactly 500.
+    inland = glr._level_height_array(x_coast + 3 * spacing, n0, spacing, 1)
+    assert inland[0, 0] == pytest.approx(500.0, abs=0.5)
+    # 3 texels offshore: water sentinel.
+    sea = glr._level_height_array(x_coast - 3 * spacing, n0, spacing, 1)
+    assert sea[0, 0] <= -1000.0
+
+
+def test_mip_world_anchored_across_snap(glr):
+    """The anchoring invariant survives the pyramid: the same ground
+    sampled from the same mip is bit-identical across window snaps."""
+    native = glr._native_data_m()
+    spacing = 4.0 * native
+    a = glr._level_height_array(30000.0, 60000.0, spacing, 12)
+    b = glr._level_height_array(30000.0 + 3 * spacing,
+                                60000.0 + 2 * spacing, spacing, 12)
+    assert np.array_equal(a[2:, 3:], b[:-2, :-3])
+
+
+def test_mip_chain_caps_at_grid_divisibility(glr):
+    """A 1201 tile halves 1200 -> 600 -> 300 -> 150 -> 75(odd): get_mip
+    beyond the chain returns the deepest buildable level (76 px)."""
+    t = glr._parent.cache.get_mip(32, -98, 6)
+    assert t is not None and t.shape == (76, 76)
+    # Missing tiles stay missing at every mip.
+    assert glr._parent.cache.get_mip(30, -90, 3) is None
+
+
+def test_missing_tile_is_water_at_any_mip(glr, tmp_path):
+    """Ground over a missing tile carries the sentinel regardless of
+    the mip a coarse level requests."""
+    (tmp_path / "N33" / "N33W097.hgt").unlink()
+    glr._parent.cache._cache.clear()
+    glr._parent.cache._order.clear()
+    glr._parent.cache._mips.clear()
+    native = glr._native_data_m()
+    spacing = 4.0 * native
+    lat_cos = glr._frame_lat_cos
+    x_edge = 1.0 * M_PER_DEG_LAT * lat_cos
+    o_n = 1.5 * M_PER_DEG_LAT
+    arr = glr._level_height_array(x_edge, o_n, spacing, 6)
+    assert (arr[:, 2:] <= -1000.0).all()
+    west = glr._level_height_array(x_edge - 4 * spacing, o_n, spacing, 1)
+    assert west[0, 0] > -1000.0
 
 
 # ---------------------------------------------------------------------------
