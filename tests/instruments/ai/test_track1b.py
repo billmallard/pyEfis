@@ -74,12 +74,22 @@ def test_level_array_world_anchored_across_snap(glr):
     assert np.array_equal(a[2:, 3:], b[:-2, :-3])
 
 
-def test_level_array_water_sentinel(glr):
-    """Ground outside any tile carries the -9999 sentinel."""
-    # Far north of the written tiles (lat 35+): no tile -> sentinel.
-    o_n = 3.2 * M_PER_DEG_LAT
-    arr = glr._level_height_array(10000.0, o_n, 500.0, 8)
+def test_level_array_water_sentinel(glr, tmp_path):
+    """A missing tile INSIDE the patch carries the -9999 sentinel; ground
+    beyond the patch bounds clamps to the edge (old CLAMP_TO_EDGE look)."""
+    import shutil
+    # Remove the NE tile (33, -97) and rebuild the renderer's cache view.
+    (tmp_path / "N33" / "N33W097.hgt").unlink()
+    glr._parent.cache._cache.clear()
+    glr._parent.cache._order.clear()
+    # Sample inside the missing tile's quadrant (lat 33.5, lon -96.5-ish).
+    o_e = 1.4 * M_PER_DEG_LAT * glr._frame_lat_cos
+    o_n = 1.5 * M_PER_DEG_LAT
+    arr = glr._level_height_array(o_e, o_n, 200.0, 8)
     assert (arr <= -1000.0).all()
+    # Beyond the patch: clamped, so finite (edge values), never garbage.
+    far = glr._level_height_array(o_e, 3.5 * M_PER_DEG_LAT, 500.0, 8)
+    assert np.isfinite(far).all()
 
 
 def test_native_base_m(glr):

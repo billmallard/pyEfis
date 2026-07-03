@@ -70,12 +70,31 @@ at half-degree crossings.
 
 - [x] Branch created, notes committed.
 - [x] Increment 1 — CPU builder + tests (see git log; 4 tests in tests/instruments/ai/test_track1b.py incl. bit-identity across snaps).
-- [ ] Increment 2 — shader + GL plumbing.
-- [ ] Increment 3 — local validation renders.
-- [ ] Increment 4 — perf pass on rebuild cadence.
+- [x] Increment 2 — shader + GL plumbing (per-level samplers, coarse
+      sampler for the morph band, two-pass draw loop).
+- [x] Increment 3 — mountains-pose parity vs old: mean|dL| 0.5 (identical);
+      FL300 renders clean. Mid-field shading is now resolution-proportional
+      (ring-matched) instead of constant-frequency -- visually smoother far
+      out; _TEXELS_PER_CELL is the dial if Bill wants more far relief.
+- [x] Increment 4 — clamp sampling to the 2x2 patch (coarsest ring was
+      touching dozens of tiles: 1 s rebuild -> 17 ms) + 8-cell anchor grid
+      (inner level rebuilds every ~250 m of travel, not every ~31 m). All
+      levels 15-26 ms per rebuild on the dev box; async worker is the
+      escape hatch if the Pi shows hitches.
 - [ ] Increment 5 — Pi flight validation, then merge to display-changes.
 
 ## Gotchas discovered along the way
+
+- The old single texture gave coarse rings CONSTANT-frequency shading detail
+  for free; ring-matched textures lose it. _TEXELS_PER_CELL=2 restores one
+  octave; raise it if mid-field looks too smooth in flight.
+- Coarse-ring sampling MUST be bounded: unclamped, the outermost ring spans
+  ~780 km == dozens of tiles through a 9-tile LRU cache = 1 s rebuild and
+  cache thrash. Clamped to the patch for now; real beyond-patch data (phase
+  2) needs a tile-overview cache, not naive native sampling.
+- Old dead code kept on purpose: _build_patch/_resample_tile (+ their
+  test_glo30 tests) still exist for reference; delete in a cleanup pass
+  after flight validation.
 
 - M_PER_DEG_LAT lives in ai/camera.py (111139.0), not svs.py.
 - _sample_elevations returns elev CLAMPED >=0 where water=True; write the

@@ -75,8 +75,6 @@ uniform mat4  u_vp;                // unified camera matrix (camera.py)
 uniform float u_ac_e;              // aircraft ENU east, metres
 uniform float u_ac_n;              // aircraft ENU north, metres
 uniform float u_earth_curv;        // 1/(2R_earth), or 0 when disabled
-uniform float u_patch_texels;      // heightmap texture dimension in px
-uniform vec2  u_patch_extent_m;    // heightmap patch size in ENU metres
 uniform vec4  u_tex_xform;         // world-fixed texture transform:
                                    // (x_scale, x_offset, y_scale,
                                    // y_offset). Anchored to the PATCH
@@ -94,7 +92,18 @@ uniform float u_level_half;        // this level's half extent, metres
 uniform float u_morph_on;          // 1 = geomorph toward the next-coarser
                                    // level near the outer edge (0 on the
                                    // outermost level — nothing to match)
-uniform sampler2D u_heightmap;     // R32F, single-channel metres
+// Track 1b: per-level heightmap textures. u_heightmap is THIS level's
+// texture (texel spacing == the level's cell spacing); u_heightmap_coarse
+// is the NEXT-COARSER level's (for the morph band). Each has its own
+// world placement: SW texel centre (ENU metres), texel spacing, size.
+uniform sampler2D u_heightmap;         // this level, R32F metres
+uniform vec2  u_hm_origin;             // SW texel centre, ENU metres
+uniform float u_hm_spacing;            // texel spacing, metres
+uniform float u_hm_size;               // texels per side
+uniform sampler2D u_heightmap_coarse;  // next-coarser level
+uniform vec2  u_hmc_origin;
+uniform float u_hmc_spacing;
+uniform float u_hmc_size;
 
 out float v_clearance_ft;
 out float v_intensity;
@@ -115,12 +124,16 @@ const float WATER_THR_M   = -1000.0;
 const float MORPH_START   = 0.70;
 const float MORPH_END     = 0.95;
 
-// Water-clamped heightmap fetch at an ENU position (same edge-inclusive
-// texel-centre mapping as the primary sample in main()).
-float hm_height(vec2 p_enu) {
-    vec2 uv = (p_enu / u_patch_extent_m * (u_patch_texels - 1.0) + 0.5)
-              / u_patch_texels;
-    float e = texture(u_heightmap, uv).r;
+// Texel-centred UV into a level texture placed at (origin, spacing, size).
+vec2 hm_uv(vec2 p_enu, vec2 o, float sp, float sz) {
+    return ((p_enu - o) / sp + 0.5) / sz;
+}
+
+// Water-clamped fetch from the NEXT-COARSER level's texture (morph band).
+float hm_coarse_height(vec2 p_enu) {
+    float e = texture(u_heightmap_coarse,
+                      hm_uv(p_enu, u_hmc_origin, u_hmc_spacing,
+                            u_hmc_size)).r;
     return mix(e, 0.0, step(e, WATER_THR_M));
 }
 
@@ -130,26 +143,24 @@ void main() {
     // sampled at identical points every frame (no swim).
     vec2 exy = u_level_origin + a_cell * u_level_spacing;
 
-    // Heightmap UV: the ENU origin IS the patch SW corner. The patch grid
-    // is EDGE-INCLUSIVE (w samples spanning the extent, sample 0 on the SW
-    // edge, sample w-1 on the NE edge), so map through texel CENTERS:
-    // uv = (frac * (w-1) + 0.5) / w. Without this half-texel correction the
-    // sampled ground shifts by up to half a texel, and vertex-to-texel
-    // alignment differs between patch rebuilds.
-    vec2 uv = (exy / u_patch_extent_m * (u_patch_texels - 1.0) + 0.5)
-              / u_patch_texels;
+    // Height from THIS level's texture: vertices sit exactly on texel
+    // centres (both are on the level's snapped world lattice), so the
+    // fetch is exact -- and the texel spacing matches the mesh density,
+    // which is the whole point of Track 1b.
+    vec2 uv = hm_uv(exy, u_hm_origin, u_hm_spacing, u_hm_size);
 
     float elev_m_raw = texture(u_heightmap, uv).r;
     float is_water   = step(elev_m_raw, WATER_THR_M);
     float elev_m     = mix(elev_m_raw, 0.0, is_water);
 
-    // Slope shading: finite differences against neighbour texels.
-    vec2 texel_uv = vec2(1.0 / u_patch_texels);
+    // Slope shading: finite differences against neighbour texels (one
+    // guard texel exists on every side), resolution-matched per level.
+    vec2 texel_uv = vec2(1.0 / u_hm_size);
     float elev_e_raw = texture(u_heightmap, uv + vec2(texel_uv.x, 0.0)).r;
     float elev_n_raw = texture(u_heightmap, uv + vec2(0.0, texel_uv.y)).r;
     float elev_e_m   = mix(elev_e_raw, 0.0, step(elev_e_raw, WATER_THR_M));
     float elev_n_m   = mix(elev_n_raw, 0.0, step(elev_n_raw, WATER_THR_M));
-    vec2 texel_m = texel_uv * u_patch_extent_m;
+    vec2 texel_m = vec2(u_hm_spacing);
     float dE = ((elev_e_m - elev_m) / max(texel_m.x, 1.0)) * SLOPE_EXAG;
     float dN = ((elev_n_m - elev_m) / max(texel_m.y, 1.0)) * SLOPE_EXAG;
     float mag = sqrt(dE * dE + dN * dN + 1.0);
@@ -175,10 +186,10 @@ void main() {
             float s2 = u_level_spacing * 2.0;
             vec2 c0 = floor(exy / s2) * s2;
             vec2 fw = (exy - c0) / s2;
-            float h00 = hm_height(c0);
-            float h10 = hm_height(c0 + vec2(s2, 0.0));
-            float h01 = hm_height(c0 + vec2(0.0, s2));
-            float h11 = hm_height(c0 + vec2(s2, s2));
+            float h00 = hm_coarse_height(c0);
+            float h10 = hm_coarse_height(c0 + vec2(s2, 0.0));
+            float h01 = hm_coarse_height(c0 + vec2(0.0, s2));
+            float h11 = hm_coarse_height(c0 + vec2(s2, s2));
             float h_coarse = mix(mix(h00, h10, fw.x),
                                  mix(h01, h11, fw.x), fw.y);
             elev_m = mix(elev_m, h_coarse, w_m);
@@ -631,6 +642,7 @@ class SVSGLRenderer:
         # Track 1b: per-level heightmap textures --
         # {level: (key, tex_id, tex_origin_e, tex_origin_n, size)}
         self._level_tex: dict[int, tuple] = {}
+        self._base_m: float | None = None   # innermost level spacing
         self._patch_origin: tuple[int, int] | None = None
         self._patch_texels = 2402.0   # actual texture px, set per build
         self._patch_bounds = (0.0, 0.0, 0.0, 0.0)  # lat_min, lat_max, lon_min, lon_max
@@ -827,11 +839,8 @@ class SVSGLRenderer:
         cover keep the AI's painted sky/ground background — the same
         compositing the transparent-FBO blit used to provide."""
         if True:
-            # Bind the heightmap to texture unit 0; the shader's
-            # sampler2D uniform points at unit 0.
-            gl.glActiveTexture(gl.GL_TEXTURE0)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, self._heightmap_tex_id)
-
+            # Track 1b: per-level textures bind inside the level loop
+            # (unit 0 = this level, unit 1 = next-coarser for the morph).
             self._program.bind()
             self._vao.bind()
             try:
@@ -847,12 +856,11 @@ class SVSGLRenderer:
                 self._program.setUniformValue(
                     self._u["u_earth_curv"], float(self._frame_curv))
                 self._program.setUniformValue(
-                    self._u["u_patch_texels"],
-                    float(self._patch_texels))
-                self._program.setUniformValue(
                     self._u["u_haze_inv"], float(self._frame_haze_inv))
                 self._program.setUniformValue(
                     self._u["u_heightmap"], 0)
+                self._program.setUniformValue(
+                    self._u["u_heightmap_coarse"], 1)
                 self._program.setUniformValue(
                     self._u["u_green_ft"], float(p.green_ft))
                 self._program.setUniformValue(
@@ -877,14 +885,9 @@ class SVSGLRenderer:
                     self._u["u_grid_amp"],
                     float(getattr(p, "terrain_grid", 0.35)))
 
-                # Patch geometry in ENU metres (ENU origin = patch SW
-                # corner) and the absolute-world noise offset.
+                # Absolute-world noise offset (ENU origin = patch SW
+                # corner).
                 lat_cos = self._frame_lat_cos
-                ext_e = 2.0 * M_PER_DEG_LAT * lat_cos
-                ext_n = 2.0 * M_PER_DEG_LAT
-                self._program.setUniformValue(
-                    self._u["u_patch_extent_m"],
-                    float(ext_e), float(ext_n))
                 o_lat, o_lon = self._patch_origin
                 # Pattern anchored to the world: x converts frame-ENU
                 # back to longitude (divide by the FRAME lat_cos) and
@@ -906,14 +909,32 @@ class SVSGLRenderer:
                 # the WORLD, turns change nothing, forward flight only
                 # swaps edge cells.
                 n_cells = p._clip_cells
-                base_m = ext_n / max(self._patch_texels - 1.0, 1.0)
-                for k in range(p._clip_levels - 1, -1, -1):
+                base_m = self._base_m or self._native_base_m()
+                levels = p._clip_levels
+                # Pass 1: snap every level's window and (re)build its
+                # texture if it moved -- BEFORE drawing, because the
+                # morph band reads the next-coarser level's texture.
+                info = []
+                for k in range(levels):
                     spacing = base_m * (2 ** k)
                     half = (n_cells / 2.0) * spacing
                     ox = (math.floor(self._frame_ac_e / spacing)
                           * spacing - half)
                     oy = (math.floor(self._frame_ac_n / spacing)
                           * spacing - half)
+                    tex = self._ensure_level_texture(k, ox, oy, spacing)
+                    st = self._level_tex[k]
+                    info.append((spacing, half, ox, oy, tex,
+                                 st[2], st[3], st[4], st[5]))
+                # Pass 2: draw coarse to fine (painter's algorithm).
+                for k in range(levels - 1, -1, -1):
+                    (spacing, half, ox, oy, tex,
+                     toe, ton, tsz, tsp) = info[k]
+                    kc = min(k + 1, levels - 1)
+                    gl.glActiveTexture(gl.GL_TEXTURE1)
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, info[kc][4])
+                    gl.glActiveTexture(gl.GL_TEXTURE0)
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
                     self._program.setUniformValue(
                         self._u["u_level_spacing"], float(spacing))
                     self._program.setUniformValue(
@@ -925,7 +946,20 @@ class SVSGLRenderer:
                     # outermost level has no coarser target.
                     self._program.setUniformValue(
                         self._u["u_morph_on"],
-                        0.0 if k == p._clip_levels - 1 else 1.0)
+                        0.0 if k == levels - 1 else 1.0)
+                    self._program.setUniformValue(
+                        self._u["u_hm_origin"], float(toe), float(ton))
+                    self._program.setUniformValue(
+                        self._u["u_hm_spacing"], float(tsp))
+                    self._program.setUniformValue(
+                        self._u["u_hm_size"], float(tsz))
+                    self._program.setUniformValue(
+                        self._u["u_hmc_origin"],
+                        float(info[kc][5]), float(info[kc][6]))
+                    self._program.setUniformValue(
+                        self._u["u_hmc_spacing"], float(info[kc][8]))
+                    self._program.setUniformValue(
+                        self._u["u_hmc_size"], float(info[kc][7]))
                     if k == 0:
                         self._ibo.bind()
                         gl.glDrawElements(
@@ -949,7 +983,9 @@ class SVSGLRenderer:
                 range_nm)
 
             # Leave GL state tidy for Qt's paint engine: unit 0
-            # active, nothing bound.
+            # active, nothing bound (unit 1 carried the coarse level).
+            gl.glActiveTexture(gl.GL_TEXTURE1)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
             gl.glActiveTexture(gl.GL_TEXTURE0)
             gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
@@ -1683,11 +1719,13 @@ class SVSGLRenderer:
             raise RuntimeError("a_cell attribute missing after link")
         for name in ("u_ac_alt_ft",
                      "u_vp", "u_ac_e", "u_ac_n", "u_earth_curv",
-                     "u_patch_texels", "u_haze_inv",
-                     "u_patch_extent_m", "u_tex_xform",
+                     "u_haze_inv",
+                     "u_tex_xform",
                      "u_level_spacing", "u_level_origin",
                      "u_level_half", "u_morph_on",
-                     "u_heightmap",
+                     "u_heightmap", "u_heightmap_coarse",
+                     "u_hm_origin", "u_hm_spacing", "u_hm_size",
+                     "u_hmc_origin", "u_hmc_spacing", "u_hmc_size",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_apt_gate_ft", "u_safe_grad", "u_tex_amp",
                      "u_grid_amp"):
@@ -1764,7 +1802,17 @@ class SVSGLRenderer:
     # spacing: native-resolution ground under the aircraft, real data out
     # to the horizon, no monolithic patch upload. docs/track1b_notes.md.
 
-    _LEVEL_GUARD = 1     # guard texels each side (slope + morph fetches)
+    _LEVEL_GUARD = 2     # guard texels each side (slope + morph fetches)
+    _TEXELS_PER_CELL = 2  # texture density vs mesh: one octave finer, so
+                          # slope shading keeps sub-cell relief detail on
+                          # the coarse rings (the old full-res single
+                          # texture provided this for free)
+    _LEVEL_MARGIN = 8    # texture anchor grid, in CELLS: each level's
+                          # texture is anchored to an 8-cell world grid and
+                          # covers the window plus that margin, so it
+                          # rebuilds every 8 cells of travel instead of
+                          # every cell (inner level: every ~250 m, not
+                          # every ~31 m)
 
     def _level_height_array(self, origin_e: float, origin_n: float,
                             spacing: float, size: int) -> np.ndarray:
@@ -1779,6 +1827,13 @@ class SVSGLRenderer:
         n = origin_n + idx * spacing
         lon = o_lon + e / (M_PER_DEG_LAT * lat_cos)
         lat = o_lat + n / M_PER_DEG_LAT
+        # Clamp to the 2x2-tile patch: bounds the tile I/O per rebuild to
+        # the same four tiles as ever (the coarsest ring would otherwise
+        # touch dozens) and matches the old texture's CLAMP_TO_EDGE look
+        # beyond the patch. Real far-field data = Track 1b phase 2.
+        eps = 1.0 / 7200.0
+        lon = np.clip(lon, o_lon + eps, o_lon + _PATCH_TILES - eps)
+        lat = np.clip(lat, o_lat + eps, o_lat + _PATCH_TILES - eps)
         lon_g, lat_g = np.meshgrid(lon, lat)
         elev, water = self._parent._sample_elevations(lat_g, lon_g)
         out = np.where(water, np.float32(-9999.0),
@@ -1807,15 +1862,23 @@ class SVSGLRenderer:
         the level footprint plus _LEVEL_GUARD texels on every side; its SW
         texel centre sits at level_origin - guard*spacing."""
         cells = int(self._parent._clip_cells)
-        size = cells + 1 + 2 * self._LEVEL_GUARD
-        tex_o_e = origin_e - self._LEVEL_GUARD * spacing
-        tex_o_n = origin_n - self._LEVEL_GUARD * spacing
+        tpc = self._TEXELS_PER_CELL
+        tex_spacing = spacing / tpc
+        # Anchor the texture window to a margin-cell world grid so it only
+        # rebuilds when the level window crosses an anchor boundary.
+        anchor = self._LEVEL_MARGIN * spacing
+        ax = math.floor(origin_e / anchor) * anchor
+        ay = math.floor(origin_n / anchor) * anchor
+        size = ((cells + self._LEVEL_MARGIN) * tpc + 1
+                + 2 * self._LEVEL_GUARD)
+        tex_o_e = ax - self._LEVEL_GUARD * tex_spacing
+        tex_o_n = ay - self._LEVEL_GUARD * tex_spacing
         key = (round(tex_o_e, 3), round(tex_o_n, 3), round(spacing, 6),
                self._patch_origin)
         state = self._level_tex.get(k)
         if state is not None and state[0] == key:
             return state[1]
-        arr = self._level_height_array(tex_o_e, tex_o_n, spacing, size)
+        arr = self._level_height_array(tex_o_e, tex_o_n, tex_spacing, size)
         if state is None:
             tex_arr = gl.glGenTextures(1)
             tex_id = int(tex_arr if np.isscalar(tex_arr) else tex_arr[0])
@@ -1830,7 +1893,8 @@ class SVSGLRenderer:
                            (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
                            (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
             gl.glTexParameteri(gl.GL_TEXTURE_2D, pname, val)
-        self._level_tex[k] = (key, tex_id, tex_o_e, tex_o_n, size)
+        self._level_tex[k] = (key, tex_id, tex_o_e, tex_o_n, size,
+                              tex_spacing)
         return tex_id
 
     @staticmethod
@@ -1850,54 +1914,25 @@ class SVSGLRenderer:
                 int(math.floor(ac_lon - 0.5)))
 
     def _ensure_heightmap(self, ac_lat: float, ac_lon: float):
-        """(Re)build the heightmap texture when the aircraft crosses
-        into a new 2x2-tile patch. See :meth:`_patch_origin_for` for
-        the centring choice."""
+        """Track the ENU patch frame (origin/bounds). Track 1b: there is
+        no monolithic heightmap texture any more -- per-level textures
+        build lazily in the draw loop (their cache keys include the patch
+        origin, so a frame rebase invalidates all of them automatically).
+        This just maintains the frame bookkeeping every consumer keys off:
+        _patch_origin, _patch_bounds and the native base spacing."""
         origin = self._patch_origin_for(ac_lat, ac_lon)
-        start_lat, start_lon = origin
-        if (self._heightmap_tex_id is not None
-                and self._patch_origin == origin):
+        if self._patch_origin == origin and self._base_m is not None:
             return
-
-        patch = self._build_patch(start_lat, start_lon)
-        h, w = patch.shape
-        self._patch_texels = float(w)
-
-        if self._heightmap_tex_id is None:
-            tex_id_arr = gl.glGenTextures(1)
-            # PyOpenGL returns either an int or a numpy array of ints
-            # depending on count; coerce to int either way.
-            self._heightmap_tex_id = int(
-                tex_id_arr if np.isscalar(tex_id_arr) else tex_id_arr[0])
-
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self._heightmap_tex_id)
-        gl.glTexImage2D(
-            gl.GL_TEXTURE_2D, 0, gl.GL_R32F,
-            w, h, 0,
-            gl.GL_RED, gl.GL_FLOAT, patch.tobytes())
-        # Linear filtering of float textures requires
-        # OES_texture_float_linear on ES; if unavailable the driver
-        # will fall back to nearest. Either is fine for Step 4.
-        gl.glTexParameteri(gl.GL_TEXTURE_2D,
-                           gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D,
-                           gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D,
-                           gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D,
-                           gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-
+        start_lat, start_lon = origin
         self._patch_origin = origin
-        # Bounds: the 2x2 patch covers
-        # lat ∈ [start_lat, start_lat + 2], lon ∈ [start_lon, start_lon + 2].
         self._patch_bounds = (
             float(start_lat), float(start_lat + 2),
             float(start_lon), float(start_lon + 2))
+        self._base_m = self._native_base_m()
         log.info(
-            "SVSGLRenderer heightmap built: 2x2 patch from (%d, %d), "
-            "shape %dx%d",
-            start_lat, start_lon, w, h)
+            "SVSGLRenderer frame rebase: patch origin (%d, %d), "
+            "base spacing %.1f m", start_lat, start_lon, self._base_m)
+
 
     @staticmethod
     def _resample_tile(tile: np.ndarray, n: int) -> np.ndarray:
