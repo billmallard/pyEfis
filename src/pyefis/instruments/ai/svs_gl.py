@@ -72,6 +72,7 @@ log = logging.getLogger(__name__)
 _VERT_BODY = """
 in vec2 a_cell;                    // cell coords (0..n) in the level grid
 
+uniform float u_ac_alt_ft;
 uniform mat4  u_vp;                // unified camera matrix (camera.py)
 uniform float u_ac_e;              // aircraft ENU east, metres
 uniform float u_ac_n;              // aircraft ENU north, metres
@@ -97,24 +98,26 @@ uniform float u_morph_on;          // 1 = geomorph toward the next-coarser
 // texture (texel spacing == the level's cell spacing); u_heightmap_coarse
 // is the NEXT-COARSER level's (for the morph band). Each has its own
 // world placement: SW texel centre (ENU metres), texel spacing, size.
-// highp samplers: these carry heights in metres, and the fragment
-// stage declares u_heightmap highp — ES requires matching precision
-// across stages or the program fails to LINK (desktop GL ignores it).
-uniform highp sampler2D u_heightmap;   // this level, R32F metres
+uniform sampler2D u_heightmap;         // this level, R32F metres
 uniform vec2  u_hm_origin;             // SW texel centre, ENU metres
 uniform float u_hm_spacing;            // texel spacing, metres
 uniform float u_hm_size;               // texels per side
-uniform highp sampler2D u_heightmap_coarse;  // next-coarser level
+uniform sampler2D u_heightmap_coarse;  // next-coarser level
 uniform vec2  u_hmc_origin;
 uniform float u_hmc_spacing;
 uniform float u_hmc_size;
 
-out vec2  v_hm_uv;                 // heightmap UV (affine in world ->
-                                   // interpolates exactly; the fragment
-                                   // stage samples height per PIXEL)
+out float v_clearance_ft;
+out float v_intensity;
+out float v_is_water;
 out float v_dist;                  // metres from aircraft (haze)
 out vec2  v_tex;                   // world-anchored noise coords
 
+const float M_PER_FT      = 0.3048;
+const float FT_PER_M      = 3.28084;
+const float SLOPE_EXAG    = 1.0;
+const float AMBIENT       = 0.35;
+const float DIFFUSE       = 0.65;
 const float WATER_THR_M   = -1000.0;
 // Geomorph band: fraction of the level half-extent where the blend to
 // the next-coarser surface starts / completes. Ends short of 1.0 so the
@@ -152,6 +155,30 @@ void main() {
     float is_water   = step(elev_m_raw, WATER_THR_M);
     float elev_m     = mix(elev_m_raw, 0.0, is_water);
 
+    // Slope shading: CENTRAL differences against both neighbour texels
+    // (guard texels exist on every side), resolution-matched per level.
+    // Forward differences put a facing-away normal exactly ON ridge
+    // crests -- alternating dark "shark tooth" facets along every
+    // ridgeline (glaring on large panels). Central differences are
+    // symmetric across the crest and shade it smoothly.
+    vec2 texel_uv = vec2(1.0 / u_hm_size);
+    float e_e = texture(u_heightmap, uv + vec2(texel_uv.x, 0.0)).r;
+    float e_w = texture(u_heightmap, uv - vec2(texel_uv.x, 0.0)).r;
+    float e_n = texture(u_heightmap, uv + vec2(0.0, texel_uv.y)).r;
+    float e_s = texture(u_heightmap, uv - vec2(0.0, texel_uv.y)).r;
+    e_e = mix(e_e, 0.0, step(e_e, WATER_THR_M));
+    e_w = mix(e_w, 0.0, step(e_w, WATER_THR_M));
+    e_n = mix(e_n, 0.0, step(e_n, WATER_THR_M));
+    e_s = mix(e_s, 0.0, step(e_s, WATER_THR_M));
+    vec2 texel_m = vec2(u_hm_spacing);
+    float dE = ((e_e - e_w) / max(2.0 * texel_m.x, 1.0)) * SLOPE_EXAG;
+    float dN = ((e_n - e_s) / max(2.0 * texel_m.y, 1.0)) * SLOPE_EXAG;
+    float mag = sqrt(dE * dE + dN * dN + 1.0);
+    vec3 normal = vec3(-dE / mag, -dN / mag, 1.0 / mag);
+    vec3 sun_dir = normalize(vec3(-1.0, 1.0, 2.0));
+    float diff = clamp(dot(normal, sun_dir), 0.0, 1.0);
+    v_intensity = AMBIENT + DIFFUSE * diff;
+
     // --- clipmap vertex-morph band -----------------------------------
     // Near this level's outer edge, morph the vertex height onto the
     // surface the NEXT-COARSER level renders there (bilinear over the
@@ -179,7 +206,8 @@ void main() {
         }
     }
 
-    v_hm_uv = uv;
+    v_clearance_ft = u_ac_alt_ft - elev_m * FT_PER_M;
+    v_is_water     = is_water;
 
     // World-anchored texture coordinate: absolute world position via
     // a per-frame CPU transform that converts frame-ENU x back to
@@ -197,7 +225,9 @@ void main() {
 """
 
 _FRAG_BODY = """
-in vec2  v_hm_uv;
+in float v_clearance_ft;
+in float v_intensity;
+in float v_is_water;
 in float v_dist;
 in vec2  v_tex;
 out vec4 outColor;
@@ -209,18 +239,8 @@ uniform float u_apt_gate_ft;     // collapse only below this MSL elevation
 uniform float u_safe_grad;       // 1.0 => clearance-graded SAFE band
 uniform float u_tex_amp;         // ground-texture amplitude, 0 = off
 uniform float u_grid_amp;        // world-grid darkening, 0 = off
-uniform float u_ac_alt_ft;       // aircraft altitude, feet
+uniform float u_ac_alt_ft;       // aircraft altitude (shared w/ vertex)
 uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
-// Per-FRAGMENT terrain sampling (highp: heights, not colors — the ES
-// header's mediump sampler default would quantize them). Clearance,
-// water and slope shading were per-vertex varyings once; linear
-// interpolation of those across triangles turned every color/shade
-// boundary crossing a ridge into a mesh-period sawtooth ("jagged
-// edge"). Sampling the SAME level texture per pixel makes the
-// boundaries follow the bilinear height field instead of the mesh.
-uniform highp sampler2D u_heightmap;
-uniform float u_hm_size;         // texels per side
-uniform float u_hm_spacing;      // texel spacing, metres
 
 // Match the CPU tier's COLOR_* constants in svs.py.
 const vec3 COLOR_SAFE     = vec3(0.0,   0.392, 0.0  );  // (  0, 100,   0)
@@ -236,12 +256,6 @@ const vec3 HAZE_COLOR     = vec3(0.65, 0.77, 0.90);
 // terrain warms as it approaches the green threshold (shape-from-
 // color, the G1000-style depth cue).
 const vec3 COLOR_SAFE_LOW = vec3(0.50, 0.46, 0.22);
-
-const float FT_PER_M      = 3.28084;
-const float SLOPE_EXAG    = 1.0;
-const float AMBIENT       = 0.35;
-const float DIFFUSE       = 0.65;
-const float WATER_THR_M   = -1000.0;
 
 float hash2(vec2 p) {
     // Sin-free hash (Hoskins-style): the classic sin() lattice hash
@@ -270,49 +284,22 @@ float vnoise(vec2 p) {
 }
 
 void main() {
-    // Height, water and clearance per PIXEL from the level texture
-    // (bilinear) — never from interpolated per-vertex values.
-    float h_raw   = texture(u_heightmap, v_hm_uv).r;
-    float is_water = step(h_raw, WATER_THR_M);
-    float elev_m  = mix(h_raw, 0.0, is_water);
-    float clearance_ft = u_ac_alt_ft - elev_m * FT_PER_M;
-
-    // Slope shading: central differences one texel out (guard texels
-    // exist on every side; fragments only ever sample between vertex
-    // texel centres, so the +-1 texel fetch stays in bounds).
-    float tx = 1.0 / u_hm_size;
-    float e_e = texture(u_heightmap, v_hm_uv + vec2(tx, 0.0)).r;
-    float e_w = texture(u_heightmap, v_hm_uv - vec2(tx, 0.0)).r;
-    float e_n = texture(u_heightmap, v_hm_uv + vec2(0.0, tx)).r;
-    float e_s = texture(u_heightmap, v_hm_uv - vec2(0.0, tx)).r;
-    e_e = mix(e_e, 0.0, step(e_e, WATER_THR_M));
-    e_w = mix(e_w, 0.0, step(e_w, WATER_THR_M));
-    e_n = mix(e_n, 0.0, step(e_n, WATER_THR_M));
-    e_s = mix(e_s, 0.0, step(e_s, WATER_THR_M));
-    float dE = ((e_e - e_w) / max(2.0 * u_hm_spacing, 1.0)) * SLOPE_EXAG;
-    float dN = ((e_n - e_s) / max(2.0 * u_hm_spacing, 1.0)) * SLOPE_EXAG;
-    float mag = sqrt(dE * dE + dN * dN + 1.0);
-    vec3 normal = vec3(-dE / mag, -dN / mag, 1.0 / mag);
-    vec3 sun_dir = normalize(vec3(-1.0, 1.0, 2.0));
-    float diff = clamp(dot(normal, sun_dir), 0.0, 1.0);
-    float intensity = AMBIENT + DIFFUSE * diff;
-
     vec3 base;
-    if (is_water > 0.5) {
+    if (v_is_water > 0.5) {
         base = COLOR_WATER;
-    } else if (clearance_ft < 0.0) {
+    } else if (v_clearance_ft < 0.0) {
         base = COLOR_CONFLICT;
     } else if (u_near_airport > 0.5
-               && (u_ac_alt_ft - clearance_ft) < u_apt_gate_ft) {
+               && (u_ac_alt_ft - v_clearance_ft) < u_apt_gate_ft) {
         // Airport-proximity collapse, elevation-gated (issue #32
         // Option B): only the runway environment — terrain below
         // field elevation + airport_gate_agl_ft — has its warning
         // bands suppressed. Rising terrain inside the proximity
         // radius keeps full red/amber treatment.
         base = COLOR_SAFE;
-    } else if (clearance_ft < u_yellow_ft) {
+    } else if (v_clearance_ft < u_yellow_ft) {
         base = COLOR_WARNING;
-    } else if (clearance_ft < u_green_ft) {
+    } else if (v_clearance_ft < u_green_ft) {
         base = COLOR_CAUTION;
     } else {
         base = COLOR_SAFE;
@@ -320,18 +307,18 @@ void main() {
             // Blend olive->green across 2,500 ft of clearance above
             // the green threshold: ground far below stays deep green,
             // ground rising toward the aircraft warms continuously.
-            float t = clamp((clearance_ft - u_green_ft) / 2500.0,
+            float t = clamp((v_clearance_ft - u_green_ft) / 2500.0,
                             0.0, 1.0);
             base = mix(COLOR_SAFE_LOW, COLOR_SAFE, t);
         }
     }
-    vec3 shaded = base * intensity;
+    vec3 shaded = base * v_intensity;
 
     // World-anchored ground texture: two octaves of value noise,
     // strong in the near field and faded out by ~4 NM (the haze owns
     // the far field). Restores the texture gradient + optic flow the
     // eye needs to read slope and closure rate up close.
-    if (u_tex_amp > 0.0 && is_water < 0.5) {
+    if (u_tex_amp > 0.0 && v_is_water < 0.5) {
         // Each octave attenuated by its own Nyquist fade — coarse
         // detail survives to mid-range, fine detail only up close.
         float n = 0.50 * (vnoise(v_tex) - 0.5)
@@ -349,7 +336,7 @@ void main() {
     // on rising slopes — the dominant foreground slope cue — and
     // stream past with motion. Gaussian fade keeps it foreground-only
     // (~gone past 2 NM); fwidth antialiases to a crisp 1 px line.
-    if (u_grid_amp > 0.0 && is_water < 0.5) {
+    if (u_grid_amp > 0.0 && v_is_water < 0.5) {
         vec2 gp = v_tex * 0.5;
         vec2 g_to_edge = abs(fract(gp) - 0.5);
         vec2 g_aa = fwidth(gp) * 0.75;
