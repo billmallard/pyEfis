@@ -155,16 +155,24 @@ void main() {
     float is_water   = step(elev_m_raw, WATER_THR_M);
     float elev_m     = mix(elev_m_raw, 0.0, is_water);
 
-    // Slope shading: finite differences against neighbour texels (one
-    // guard texel exists on every side), resolution-matched per level.
+    // Slope shading: CENTRAL differences against both neighbour texels
+    // (guard texels exist on every side), resolution-matched per level.
+    // Forward differences put a facing-away normal exactly ON ridge
+    // crests -- alternating dark "shark tooth" facets along every
+    // ridgeline (glaring on large panels). Central differences are
+    // symmetric across the crest and shade it smoothly.
     vec2 texel_uv = vec2(1.0 / u_hm_size);
-    float elev_e_raw = texture(u_heightmap, uv + vec2(texel_uv.x, 0.0)).r;
-    float elev_n_raw = texture(u_heightmap, uv + vec2(0.0, texel_uv.y)).r;
-    float elev_e_m   = mix(elev_e_raw, 0.0, step(elev_e_raw, WATER_THR_M));
-    float elev_n_m   = mix(elev_n_raw, 0.0, step(elev_n_raw, WATER_THR_M));
+    float e_e = texture(u_heightmap, uv + vec2(texel_uv.x, 0.0)).r;
+    float e_w = texture(u_heightmap, uv - vec2(texel_uv.x, 0.0)).r;
+    float e_n = texture(u_heightmap, uv + vec2(0.0, texel_uv.y)).r;
+    float e_s = texture(u_heightmap, uv - vec2(0.0, texel_uv.y)).r;
+    e_e = mix(e_e, 0.0, step(e_e, WATER_THR_M));
+    e_w = mix(e_w, 0.0, step(e_w, WATER_THR_M));
+    e_n = mix(e_n, 0.0, step(e_n, WATER_THR_M));
+    e_s = mix(e_s, 0.0, step(e_s, WATER_THR_M));
     vec2 texel_m = vec2(u_hm_spacing);
-    float dE = ((elev_e_m - elev_m) / max(texel_m.x, 1.0)) * SLOPE_EXAG;
-    float dN = ((elev_n_m - elev_m) / max(texel_m.y, 1.0)) * SLOPE_EXAG;
+    float dE = ((e_e - e_w) / max(2.0 * texel_m.x, 1.0)) * SLOPE_EXAG;
+    float dN = ((e_n - e_s) / max(2.0 * texel_m.y, 1.0)) * SLOPE_EXAG;
     float mag = sqrt(dE * dE + dN * dN + 1.0);
     vec3 normal = vec3(-dE / mag, -dN / mag, 1.0 / mag);
     vec3 sun_dir = normalize(vec3(-1.0, 1.0, 2.0));

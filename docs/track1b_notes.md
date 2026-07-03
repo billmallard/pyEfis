@@ -95,6 +95,28 @@ at half-degree crossings.
 - [ ] Increment 5b — Pi flight re-validation, then merge to
       display-changes + delete _build_patch dead code.
 
+## NEXT SESSION OPENER: the ridge-crest sawtooth ("jagged edge")
+
+Bill's long-standing "jagged edge" artifact -- reproduced locally at the
+live X-Plane pose (35.862022, -82.440437, 8004 ft, hdg 110.73, pitch 3.77,
+roll 2.60 -- Black Mountains near Mt. Mitchell; scratchpad mitchell_*.png):
+evenly-spaced dark triangular teeth along ridge crests, glaring on a 21.5in
+panel. A/B results (all at that pose):
+- central-difference normals: teeth unchanged (shipped anyway, correct fix
+  for shading symmetry);
+- morph band OFF: teeth REDUCED but present -- the band amplifies crest
+  notching (odd vertices mid-blend pull toward the coarse average, far
+  below a knife-edge crest) but is not the root cause;
+- _TEXELS_PER_CELL 2 -> 4: unchanged => NOT texture aliasing.
+CONCLUSION: mesh geometry -- the clipmap index template splits every quad
+along the SAME diagonal; crests running against the grain get alternate
+triangles chopped = coherent sawtooth. Predates Track 1b (June clipmap).
+FIX PLAN: alternate the split diagonal per quad parity (checkerboard) in
+_build_clipmap_template (both the full grid and the annulus template);
+literature-standard, index-buffer-only change. Secondary: consider
+softening the morph band on high-curvature crests, or narrowing the band
+(MORPH_START 0.85) if crest notching remains visible mid-band.
+
 ## Gotchas discovered along the way
 
 - The old single texture gave coarse rings CONSTANT-frequency shading detail
