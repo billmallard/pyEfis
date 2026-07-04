@@ -138,6 +138,10 @@ class AI(QGraphicsView):
         # roll pointer, datum triangle, standard-rate diamonds and
         # slip/skid ball -- moves and scales together. An explicit
         # bankAngleRadius (px) in the YAML still wins over bank_radius.
+        # G1000-style declutter (checkbox): stop drawing pitch-ladder
+        # rows whose SCREEN position rises above a line just below the
+        # bank arc, so ladder dashes/numbers never render through it.
+        self.pitch_ladder_avoid_bank = False
         self.bank_position = 50
         self.bank_radius = 100.0 / 3.0   # percent; == the classic height/3
         # Overlay opacities (0 = invisible .. 1 = solid), the same dial
@@ -974,8 +978,25 @@ class AI(QGraphicsView):
     # and the second is the item reference.  We use this to make the tick marks
     # disappear when they are a certain distance from the current pitch angle
     def setPitchItems(self):
+        # Optional G1000-style declutter: rows whose screen position is
+        # above a line just below the bank arc's lower tips are hidden
+        # (the arc spans +/-60 deg, so its tick ends sit ~r/2 above the
+        # anchor). Row-granular, evaluated in SCREEN space so it tracks
+        # roll, pitch, horizon_position and the bank placement knobs.
+        cut = None
+        if getattr(self, "pitch_ladder_avoid_bank", False):
+            h = self.height()
+            r = self.bankAngleRadius if self.bankAngleRadius else h / 3
+            m = self.bankMarkSize
+            cut = self._bank_anchor_y(h) - (r - m) * 0.5 + m * 1.5
         for each in self.pitchItems:
             if abs(each[0] - self._pitchAngle) < self.visiblePitchAngle:
+                if cut is not None:
+                    pt = self.mapFromScene(
+                        each[1].sceneBoundingRect().center())
+                    if pt.y() < cut:
+                        each[1].setOpacity(0)
+                        continue
                 each[1].setOpacity(self.pitchOpacity)
             else:
                 each[1].setOpacity(0)
@@ -1077,6 +1098,7 @@ class AI(QGraphicsView):
         if scene is None:
             return
         self.resetTransform()
+        _avoid = getattr(self, "pitch_ladder_avoid_bank", False)
         # Raise the whole attitude reference per horizon_position. The view
         # rotates roll about the viewport CENTRE, so a plain vertical centre
         # offset would make the raised horizon swing around the centre (the
@@ -1094,6 +1116,9 @@ class AI(QGraphicsView):
         self.rotate(self._rollAngle * -1.0)
 
 # We use the paintEvent to draw on the viewport the parts that aren't moving.
+        if _avoid:
+            self.setPitchItems()
+
     def paintEvent(self, event):
         # Wall-clock-bound paintEvent timing for perf debugging. When
         # svs_perf_log is enabled on the SVS renderer we report the
