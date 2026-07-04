@@ -871,6 +871,15 @@ _register(InstrumentSpec(
              label="Terrain tile path",
              help="GLO-30/SRTM HGT tree (the SVS tile_path; on the Pi "
                   "/data/makerplane-data/terrain/tiles)"),
+        Prop("layer_airports", "boolean", default=True,
+             label="Layer: airports",
+             help="FAA sectional airport symbols with ident labels "
+                  "(declutters by zoom)"),
+        Prop("nasr_db_path", "string", default="",
+             label="Airport db path",
+             help="NASR airports.sqlite (the SVS nasr_db_path; on the "
+                  "Pi /data/makerplane-data/navdata/current/"
+                  "airports.sqlite)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = "
