@@ -978,17 +978,20 @@ class AI(QGraphicsView):
     # and the second is the item reference.  We use this to make the tick marks
     # disappear when they are a certain distance from the current pitch angle
     def setPitchItems(self):
-        # Optional G1000-style declutter: rows whose screen position is
-        # above a line just below the bank arc's lower tips are hidden
-        # (the arc spans +/-60 deg, so its tick ends sit ~r/2 above the
-        # anchor). Row-granular, evaluated in SCREEN space so it tracks
-        # roll, pitch, horizon_position and the bank placement knobs.
+        # Optional G1000-style declutter: the ladder may climb INTO the
+        # arch of the bank arc (useful space), but stops just below the
+        # slip/skid ball -- rows whose screen position rises above the
+        # ball's bottom edge are hidden. The ball rides at
+        # anchor - r + 3*markSize with radius 0.8*markSize (paintEvent),
+        # so the cutoff is that bottom edge plus a half-mark of air.
+        # Row-granular, evaluated in SCREEN space so it tracks roll,
+        # pitch, horizon_position and the bank placement knobs.
         cut = None
         if getattr(self, "pitch_ladder_avoid_bank", False):
             h = self.height()
             r = self.bankAngleRadius if self.bankAngleRadius else h / 3
             m = self.bankMarkSize
-            cut = self._bank_anchor_y(h) - (r - m) * 0.5 + m * 1.5
+            cut = self._bank_anchor_y(h) - r + m * 4.3
         for each in self.pitchItems:
             if abs(each[0] - self._pitchAngle) < self.visiblePitchAngle:
                 if cut is not None:

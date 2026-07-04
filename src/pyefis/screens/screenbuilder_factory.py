@@ -278,8 +278,8 @@ def _ai_overlay_props():
                   "bankAngleRadius px in YAML overrides it"),
         Prop("pitch_ladder_avoid_bank", "boolean", default=False,
              label="Ladder stops below bank arc",
-             help="G1000-style declutter: hide pitch-ladder rows that "
-                  "would render through the bank arc"),
+             help="G1000-style declutter: the ladder climbs into the bank "
+                  "arch but stops below the slip/skid ball"),
         # Compass heading scale on the white horizon line.
         Prop("horizon_heading_marks", "boolean", default=False,
              label="Horizon heading marks",
