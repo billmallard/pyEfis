@@ -153,6 +153,13 @@ win.resize(int(os.environ.get("SVS_W", "800")), int(os.environ.get("SVS_H", "600
 widget = AI(win, show_fpm=True)
 widget.aircraft_symbol = os.environ.get("SVS_SYMBOL", "classic")
 widget.symbol_color = os.environ.get("SVS_SYMBOL_COLOR", "yellow")
+# Overlay opacity knobs (SVS-as-background A/B: SVS_SYMBOL=none plus all
+# three at 0 and SVS_FPM=0 leaves the bare environment).
+widget.pitchOpacity = float(os.environ.get("SVS_PITCH_OPACITY", "0.6"))
+widget.bankOpacity = float(os.environ.get("SVS_BANK_OPACITY", "1.0"))
+widget.horizonOpacity = float(os.environ.get("SVS_HORIZON_OPACITY", "1.0"))
+widget.show_fpm = os.environ.get("SVS_FPM", "1").lower() \
+    not in ("0", "false", "no")
 # Clean-terrain capture for the configurator's static SVS preview: render only
 # the terrain + sky, no symbology, so the configurator twin can draw live
 # symbology over it (SVS_TERRAIN_ONLY=1).

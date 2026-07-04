@@ -238,6 +238,14 @@ def _ai_overlay_props():
         Prop("pitchOpacity", "number", default=0.6, minimum=0.0, maximum=1.0,
              label="Pitch ladder opacity",
              help="pitch-ladder opacity (0 = invisible, 1 = solid)"),
+        Prop("bankOpacity", "number", default=1.0, minimum=0.0, maximum=1.0,
+             label="Bank display opacity",
+             help="bank scale, roll pointer, standard-rate diamonds and "
+                  "slip/skid ball together (0 = hidden, 1 = solid)"),
+        Prop("horizonOpacity", "number", default=1.0, minimum=0.0,
+             maximum=1.0, label="Horizon line opacity",
+             help="the white zero-pitch reference line "
+                  "(0 = hidden, 1 = solid)"),
         Prop("tick_autoscale", "boolean", default=True,
              label="Auto-scale tick widths to font",
              help="off = use the explicit tick-width / bank-size pixels below"),
@@ -341,10 +349,11 @@ _register(InstrumentSpec(
     svs_capable=True,
     properties=[
         Prop("aircraft_symbol", "enum", default="classic",
-             enum=["classic", "garmin", "brackets"],
+             enum=["classic", "garmin", "brackets", "none"],
              label="Aircraft symbol",
              help="classic split-wing bars + dot; garmin G3X-style two-tone "
-                  "bat wing + horizon barbs; brackets GRT-style L-brackets "
+                  "bat wing + horizon barbs; brackets GRT-style L-brackets; "
+                  "none hides the symbol (SVS-as-background) "
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),
@@ -901,10 +910,11 @@ _register(InstrumentSpec(
     # unlike the square attitude dial.
     properties=[
         Prop("aircraft_symbol", "enum", default="classic",
-             enum=["classic", "garmin", "brackets"],
+             enum=["classic", "garmin", "brackets", "none"],
              label="Aircraft symbol",
              help="classic split-wing bars + dot; garmin G3X-style two-tone "
-                  "bat wing + horizon barbs; brackets GRT-style L-brackets "
+                  "bat wing + horizon barbs; brackets GRT-style L-brackets; "
+                  "none hides the symbol (SVS-as-background) "
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),

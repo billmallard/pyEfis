@@ -119,12 +119,22 @@ class AI(QGraphicsView):
         self.unusualBankDeg = 65
         self._decluttered = False
         # Fixed aircraft reference symbol (the "wings" the horizon moves
-        # behind). style: "classic" (split wing bars + center dot) or
+        # behind). style: "classic" (split wing bars + center dot),
         # "garmin"/"gi275" (GI-275-style stepped wing bars + center
-        # chevron). Set from the screen YAML options (aircraft_symbol,
-        # symbol_color); applied by the screenbuilder factory.
+        # chevron), or "none" (no symbol -- SVS-as-background mode). Set
+        # from the screen YAML options (aircraft_symbol, symbol_color);
+        # applied by the screenbuilder factory.
         self.aircraft_symbol = "classic"
         self.symbol_color = "yellow"
+        # Overlay opacities (0 = invisible .. 1 = solid), the same dial
+        # pitchOpacity gives the ladder. bankOpacity fades the whole
+        # bank-angle cluster (bank scale + roll pointer + standard-rate
+        # diamonds + slip/skid ball); horizonOpacity fades the white
+        # zero-pitch reference line. With aircraft_symbol "none",
+        # pitchOpacity 0, bankOpacity 0, horizonOpacity 0 and show_fpm
+        # off, the widget renders the bare SVS environment.
+        self.bankOpacity = 1.0
+        self.horizonOpacity = 1.0
         # Vertical position of the pitch=0 horizon, as a percent of widget
         # height measured UP from the bottom. 50 = centred (the default; the
         # plain AI never changes this). The SVS widget can raise it (e.g. ~67 =
@@ -314,6 +324,9 @@ class AI(QGraphicsView):
         """Draw the fixed aircraft reference symbol into the static
         overlay. Style + colour come from self.aircraft_symbol /
         self.symbol_color (screen YAML options)."""
+        style = str(getattr(self, "aircraft_symbol", "classic")).lower()
+        if style in ("none", "off", "hidden"):
+            return   # SVS-as-background mode: no fixed reference symbol
         # The symbol rides the horizon, so it shifts up with horizon_position
         # (0 offset by default = centred).
         cx, cy = w / 2.0, h / 2.0 - self._horizon_offset_px()
@@ -322,7 +335,6 @@ class AI(QGraphicsView):
             col = QColor(Qt.GlobalColor.yellow)
         p.setPen(QPen(QColor(Qt.GlobalColor.black), 1))
         p.setBrush(QBrush(col))
-        style = str(getattr(self, "aircraft_symbol", "classic")).lower()
         if style in ("garmin", "delta"):
             # Garmin G3X-style "bat wing": two slender ANHEDRAL triangles
             # sweeping down-outboard from a notched apex on the horizon
@@ -508,6 +520,11 @@ class AI(QGraphicsView):
         self._horizon_line = self.scene.addLine(
             0, sceneHeight / 2, sceneWidth, sceneHeight / 2, pen)
         self._horizon_line.setZValue(1)
+        # horizonOpacity (0..1): fade/hide the zero-pitch reference line
+        # (SVS-as-background mode). Applied here because the scene is
+        # rebuilt on every resize.
+        self._horizon_line.setOpacity(
+            max(0.0, min(1.0, float(getattr(self, "horizonOpacity", 1.0)))))
         # draw the degree hash marks
         pen.setColor(Qt.GlobalColor.white)
         w = self.scene.width()
@@ -573,14 +590,21 @@ class AI(QGraphicsView):
         r = self.bankAngleRadius
         self._draw_aircraft_symbol(p, w, h)
 
-        m = self.bankMarkSize
-        p.setBrush(QColor(Qt.GlobalColor.white))
-        p.translate(w / 2, h/2 - r)
-        triangle = QPolygonF([QPointF(m,  m*2),
-                             QPointF(-m, m*2),
-                             QPointF(0,  m/2)])
-        p.drawPolygon(triangle)
-
+        # Fixed bank-datum pointer at the top of the bank arc: part of the
+        # bank-angle display, so it follows bankOpacity like the rotating
+        # scale in paintEvent.
+        _bank_op = max(0.0, min(1.0,
+                                float(getattr(self, "bankOpacity", 1.0))))
+        if _bank_op > 0.0:
+            p.setOpacity(_bank_op)
+            m = self.bankMarkSize
+            p.setBrush(QColor(Qt.GlobalColor.white))
+            p.translate(w / 2, h/2 - r)
+            triangle = QPolygonF([QPointF(m,  m*2),
+                                 QPointF(-m, m*2),
+                                 QPointF(0,  m/2)])
+            p.drawPolygon(triangle)
+            p.setOpacity(1.0)
 
         self.overlay = self.map.toImage()
 
@@ -1125,60 +1149,75 @@ class AI(QGraphicsView):
         self._decluttered = (self._show_recovery_chevrons
                              or abs(self._rollAngle) > self.unusualBankDeg)
 
-        # Slip / Skid ball -- amber past the excessive-sideslip threshold
-        # (AC 25-11B App A A.2.6: caution).
+        # Caution states are computed even when the bank cluster is drawn
+        # transparent -- other logic (annunciations, tests) reads them.
+        # Slip / Skid: amber past the excessive-sideslip threshold
+        # (AC 25-11B App A A.2.6: caution). Excessive bank
+        # (AC 25-11B App A A.2.5): amber scale + pointer past the
+        # threshold, before stall buffet.
         self._excessive_slip = abs(self._latAccel) >= self.excessiveSlip
-        p.setPen(QColor(Qt.GlobalColor.black))
-        p.setBrush(QColor(255, 150, 0) if self._excessive_slip
-                   else QColor(Qt.GlobalColor.white))
-        p.drawEllipse(QPointF(self._latAccel * -m*12, -r + m*3), m*0.8, m*0.8)
-
-        # Excessive-bank caution (AC 25-11B App A A.2.5): amber bank scale +
-        # pointer past the threshold, before stall buffet.
         self._excessive_bank = abs(self._rollAngle) > self.excessiveBankDeg
-        _bank_col = (QColor(255, 150, 0) if self._excessive_bank
-                     else QColor(Qt.GlobalColor.white))
-        p.rotate(self._rollAngle * -1.0)
-        # Add moving Bank Angle Markers
-        marks.setColor(_bank_col)
-        marks.setWidth(qRound(self.fontSize * 0.05))
-        p.setPen(marks)
-        p.setBrush(_bank_col)
-        smallMarks = [10, 20, 45]
-        largeMarks = [30, 60]
-        shortLine = QLineF(0, -r, 0, -(r-m))
-        longLine = QLineF(0, -(r+m), 0, -(r-m))
-        for angle in smallMarks:
-            p.rotate(angle)
-            p.drawLine(shortLine)
-            p.rotate(- 2 * angle)
-            p.drawLine(shortLine)
-            p.rotate(angle)
-        for angle in largeMarks:
-            p.rotate(angle)
-            p.drawLine(longLine)
-            p.rotate(- 2 * angle)
-            p.drawLine(longLine)
-            p.rotate(angle)
-        triangle = QPolygonF([QPointF(m/2, -(r+m/2)),
-                             QPointF(-m/2, -(r+m/2)),
-                             QPointF(0, -(r - m/2))])
-        p.drawPolygon(triangle)
-        # Draw standard rate turn markers (non-essential -- de-cluttered at an
-        # unusual attitude).
-        if self.drawBankMarkers and not self._decluttered:
-            a = math.degrees(math.atan(self._tas/364.0))
-            if a > self.bankAngleMaximum:
-                a = self.bankAngleMaximum
-            diamond = QPolygonF([QPointF(0, -r),
-                                QPointF(-m*0.8, -(r+m*0.8)),
-                                QPointF(-0, -r - m*1.6),
-                                QPointF(m*0.8, -(r+m*0.8))])
-            p.setBrush(Qt.GlobalColor.transparent)
-            p.rotate(a)
-            p.drawPolygon(diamond)
-            p.rotate(-2 * a)
-            p.drawPolygon(diamond)
+
+        # bankOpacity (0..1): the whole bank-angle cluster -- slip/skid
+        # ball, bank scale + roll pointer, standard-rate diamonds -- fades
+        # together, the same dial pitchOpacity gives the ladder. 0 skips
+        # the drawing entirely (SVS-as-background mode).
+        bank_op = max(0.0, min(1.0,
+                               float(getattr(self, "bankOpacity", 1.0))))
+        if bank_op > 0.0:
+            if bank_op < 1.0:
+                p.setOpacity(bank_op)
+            p.setPen(QColor(Qt.GlobalColor.black))
+            p.setBrush(QColor(255, 150, 0) if self._excessive_slip
+                       else QColor(Qt.GlobalColor.white))
+            p.drawEllipse(QPointF(self._latAccel * -m*12, -r + m*3),
+                          m*0.8, m*0.8)
+
+            _bank_col = (QColor(255, 150, 0) if self._excessive_bank
+                         else QColor(Qt.GlobalColor.white))
+            p.rotate(self._rollAngle * -1.0)
+            # Add moving Bank Angle Markers
+            marks.setColor(_bank_col)
+            marks.setWidth(qRound(self.fontSize * 0.05))
+            p.setPen(marks)
+            p.setBrush(_bank_col)
+            smallMarks = [10, 20, 45]
+            largeMarks = [30, 60]
+            shortLine = QLineF(0, -r, 0, -(r-m))
+            longLine = QLineF(0, -(r+m), 0, -(r-m))
+            for angle in smallMarks:
+                p.rotate(angle)
+                p.drawLine(shortLine)
+                p.rotate(- 2 * angle)
+                p.drawLine(shortLine)
+                p.rotate(angle)
+            for angle in largeMarks:
+                p.rotate(angle)
+                p.drawLine(longLine)
+                p.rotate(- 2 * angle)
+                p.drawLine(longLine)
+                p.rotate(angle)
+            triangle = QPolygonF([QPointF(m/2, -(r+m/2)),
+                                 QPointF(-m/2, -(r+m/2)),
+                                 QPointF(0, -(r - m/2))])
+            p.drawPolygon(triangle)
+            # Draw standard rate turn markers (non-essential -- de-cluttered
+            # at an unusual attitude).
+            if self.drawBankMarkers and not self._decluttered:
+                a = math.degrees(math.atan(self._tas/364.0))
+                if a > self.bankAngleMaximum:
+                    a = self.bankAngleMaximum
+                diamond = QPolygonF([QPointF(0, -r),
+                                    QPointF(-m*0.8, -(r+m*0.8)),
+                                    QPointF(-0, -r - m*1.6),
+                                    QPointF(m*0.8, -(r+m*0.8))])
+                p.setBrush(Qt.GlobalColor.transparent)
+                p.rotate(a)
+                p.drawPolygon(diamond)
+                p.rotate(-2 * a)
+                p.drawPolygon(diamond)
+            if bank_op < 1.0:
+                p.setOpacity(1.0)
 
         # FPM and the horizon heading scale are non-essential recovery clutter --
         # suppressed at an unusual attitude (de-clutter).

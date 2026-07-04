@@ -76,6 +76,39 @@ def test_ai_resize_paint_and_input_events(fix, qtbot):
     widget.showEvent(None)
 
 
+def test_ai_symbology_can_be_fully_hidden(fix, qtbot):
+    """SVS-as-background mode: aircraft_symbol 'none' draws nothing, and
+    bankOpacity / horizonOpacity 0 hide the bank cluster and the
+    zero-pitch reference line. Defaults leave everything solid."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    # Defaults keep today's look (and match the schema-gate Props).
+    assert widget.bankOpacity == 1.0
+    assert widget.horizonOpacity == 1.0
+
+    widget.aircraft_symbol = "none"
+    widget.bankOpacity = 0.0
+    widget.horizonOpacity = 0.0
+    event = _show_ai(qtbot, widget)
+
+    # "none" short-circuits before touching the painter at all.
+    painter = mock.Mock()
+    widget._draw_aircraft_symbol(painter, 240, 220)
+    assert painter.method_calls == []
+
+    # The zero-pitch line is invisible, paint runs clean, and the
+    # caution states are still computed with the cluster hidden.
+    assert widget._horizon_line.opacity() == 0.0
+    widget._rollAngle = 70.0
+    widget.paintEvent(event)
+    assert widget._excessive_bank is True
+
+    # Partial transparency paints clean too.
+    widget.bankOpacity = 0.5
+    widget._rollAngle = 0.0
+    widget.paintEvent(event)
+
+
 def test_ai_resize_with_gray_quality_and_custom_bank_radius(fix, qtbot):
     _reset_ai_items(fix, old=True, bad=True)
     widget = ai.AI()
