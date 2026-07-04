@@ -864,6 +864,17 @@ _register(InstrumentSpec(
         Prop("layer_range_rings", "boolean", default=True,
              label="Layer: range rings",
              help="concentric half/full range rings with labels"),
+        Prop("layer_terrain", "boolean", default=True,
+             label="Layer: terrain",
+             help="hillshaded hypsometric terrain relief"),
+        Prop("tile_path", "string", default="",
+             label="Terrain tile path",
+             help="GLO-30/SRTM HGT tree (the SVS tile_path; on the Pi "
+                  "/data/makerplane-data/terrain/tiles)"),
+        Prop("terrain_mode", "enum", default="relief",
+             enum=["relief", "caution"], label="Terrain mode",
+             help="relief = sectional-style hypsometric; caution = "
+                  "TAWS-style amber/red relative to altitude"),
     ],
 ))
 

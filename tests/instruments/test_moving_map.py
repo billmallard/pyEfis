@@ -33,5 +33,6 @@ def test_widget_paint_and_hmi(fix, qtbot):
     w.range_down(); assert w.range_nm == 10
     w.toggle_orientation(); assert w.orientation == "north_up"
     assert w.set_layer("range_rings") is True   # toggled off
-    assert w._layers[0].enabled is False
+    rings = next(l for l in w._layers if l.id == "range_rings")
+    assert rings.enabled is False
     w.paintEvent(QPaintEvent(w.rect()))

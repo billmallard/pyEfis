@@ -61,14 +61,18 @@ class MovingMap(QWidget):
         self.ownship_position = 50             # percent up from bottom
         self.symbol_color = "yellow"
         self.layer_range_rings = True
+        self.layer_terrain = True
+        self.tile_path = ""                    # GLO-30/SRTM HGT tree
+        self.terrain_mode = "relief"           # or "caution"
         self._layers = []
         self._layers_built = False
 
         self._lat = self._lon = 0.0
         self._track = 0.0
+        self._alt_ft = 0.0
         self._old = {}
         for key, attr in (("LAT", "_lat"), ("LONG", "_lon"),
-                          ("TRACKM", "_track")):
+                          ("TRACKM", "_track"), ("ALT", "_alt_ft")):
             try:
                 item = fix.db.get_item(key)
                 item.valueChanged[float].connect(
@@ -84,12 +88,14 @@ class MovingMap(QWidget):
 
     # --- layer plumbing ---------------------------------------------------
     def _build_layers(self):
+        from pyefis.instruments.map.layers import terrain  # noqa: F401
         self._layers = []
         for lid, cls in sorted(map_layers.LAYER_REGISTRY.items(),
                                key=lambda kv: kv[1].z):
             layer = cls()
             layer.enabled = bool(getattr(self, "layer_" + lid,
                                          cls.default_on))
+            layer.configure(self)
             self._layers.append(layer)
         self._layers_built = True
 
