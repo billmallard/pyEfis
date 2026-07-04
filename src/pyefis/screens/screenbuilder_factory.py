@@ -26,6 +26,7 @@ from pyefis.instruments import data_status
 from pyefis.instruments import gauges
 from pyefis.instruments import hsi
 from pyefis.instruments import listbox
+from pyefis.instruments import map as moving_map
 from pyefis.instruments import misc
 from pyefis.instruments import tc
 from pyefis.instruments import vsi
@@ -832,6 +833,37 @@ _register(InstrumentSpec(
         Prop("bg_color", "color", default="#000000", label="Background",
              help="tape face colour"),
         _bg_opacity_prop(),
+    ],
+))
+
+_register(InstrumentSpec(
+    type="moving_map",
+    label="Moving Map",
+    category="navigation",
+    builder=(lambda screen, config, font_percent=None, font_family=None,
+             replace=None: moving_map.MovingMap(
+                 screen, font_family=font_family)),
+    dbkeys=["LAT", "LONG", "TRACKM"],
+    properties=[
+        Prop("range_nm", "number", default=10.0, minimum=1, maximum=500,
+             label="Range (NM)",
+             help="distance from the ownship anchor to the top edge"),
+        Prop("range_ladder", "string", default="2,5,10,20,40,80,160",
+             label="Range ladder",
+             help="comma list of ranges the range buttons step through"),
+        Prop("orientation", "enum", default="track_up",
+             enum=["track_up", "north_up"], label="Orientation",
+             help="track-up rotates the world; north-up rotates ownship"),
+        Prop("ownship_position", "number", default=50, minimum=0,
+             maximum=100, label="Ownship position (%)",
+             help="ownship anchor, percent up from the bottom "
+                  "(30 = classic look-ahead offset)"),
+        Prop("symbol_color", "color", default="#ffff00",
+             label="Ownship colour",
+             help="colour of the top-down ownship symbol"),
+        Prop("layer_range_rings", "boolean", default=True,
+             label="Layer: range rings",
+             help="concentric half/full range rings with labels"),
     ],
 ))
 
