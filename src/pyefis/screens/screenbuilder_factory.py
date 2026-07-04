@@ -880,6 +880,19 @@ _register(InstrumentSpec(
              help="NASR airports.sqlite (the SVS nasr_db_path; on the "
                   "Pi /data/makerplane-data/navdata/current/"
                   "airports.sqlite)"),
+        Prop("layer_navaids", "boolean", default=True,
+             label="Layer: navaids",
+             help="VOR/NDB symbols with ident and frequency"),
+        Prop("layer_fixes", "boolean", default=False,
+             label="Layer: waypoints",
+             help="named fixes as open triangles (shown at/below 20 NM)"),
+        Prop("layer_airways", "boolean", default=False,
+             label="Layer: airways",
+             help="victor/T-route segments with idents"),
+        Prop("navaid_db_path", "string", default="",
+             label="Navaid db path",
+             help="navaids.sqlite (tools/build_navaid_db.py; on the Pi "
+                  "/data/makerplane-data/navaids/current/navaids.sqlite)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = "

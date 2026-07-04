@@ -66,6 +66,10 @@ class MovingMap(QWidget):
         self.terrain_mode = "relief"           # or "caution"
         self.layer_airports = True
         self.nasr_db_path = ""                 # NASR airports.sqlite
+        self.layer_navaids = True
+        self.layer_fixes = False
+        self.layer_airways = False
+        self.navaid_db_path = ""               # navaids.sqlite (Phase D)
         self._layers = []
         self._layers_built = False
 
@@ -91,6 +95,7 @@ class MovingMap(QWidget):
     # --- layer plumbing ---------------------------------------------------
     def _build_layers(self):
         from pyefis.instruments.map.layers import airports  # noqa: F401
+        from pyefis.instruments.map.layers import navaids  # noqa: F401
         from pyefis.instruments.map.layers import terrain  # noqa: F401
         self._layers = []
         for lid, cls in sorted(map_layers.LAYER_REGISTRY.items(),

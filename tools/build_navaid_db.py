@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Build navaids.sqlite from FAA NASR NAV / FIX / AWY CSVs.
+
+Feeds the moving map's navaid, fix and airway layers
+(docs/moving_map_spec.md 5.3). Mirrors tools/build_airport_db.py:
+plain stdlib, produces a self-contained sqlite consumed on-device.
+
+    python tools/build_navaid_db.py \
+        --nav NAV_BASE.csv --fix FIX_BASE.csv --awy AWY_BASE.csv \
+        -o navaids.sqlite
+
+Tables:
+  navaids(id, type, name, freq, elev_ft, lat, lon)
+  fixes(id, use_code, lat, lon)
+  awy_segments(awy_id, seq, p1, lat1, lon1, p2, lat2, lon2)
+
+Airway geometry comes from AWY_BASE.AIRWAY_STRING (ordered point
+names) joined against the fix/navaid coordinates. Points whose name
+is ambiguous (duplicate id with different coordinates) or unknown are
+skipped; the polyline connects across the gap.
+"""
+
+import argparse
+import csv
+import sqlite3
+
+
+def _f(row, key):
+    v = (row.get(key) or "").strip()
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+def load_navaids(path):
+    out = []
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            lat, lon = _f(r, "LAT_DECIMAL"), _f(r, "LONG_DECIMAL")
+            if lat is None or lon is None:
+                continue
+            out.append(((r.get("NAV_ID") or "").strip(),
+                        (r.get("NAV_TYPE") or "").strip(),
+                        (r.get("NAME") or "").strip().title(),
+                        (r.get("FREQ") or "").strip(),
+                        _f(r, "ELEV"), lat, lon))
+    return out
+
+
+def load_fixes(path):
+    out = []
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            lat, lon = _f(r, "LAT_DECIMAL"), _f(r, "LONG_DECIMAL")
+            if lat is None or lon is None:
+                continue
+            out.append(((r.get("FIX_ID") or "").strip(),
+                        (r.get("FIX_USE_CODE") or "").strip(), lat, lon))
+    return out
+
+
+def point_lookup(navaids, fixes):
+    """name -> (lat, lon); ambiguous names (conflicting coords beyond
+    ~1 NM) are dropped so airways never jump continents."""
+    pts, dead = {}, set()
+    for name, _t, _n, _f2, _e, lat, lon in navaids:
+        _add(pts, dead, name, lat, lon)
+    for name, _u, lat, lon in fixes:
+        _add(pts, dead, name, lat, lon)
+    for name in dead:
+        pts.pop(name, None)
+    return pts
+
+
+def _add(pts, dead, name, lat, lon):
+    if not name or name in dead:
+        return
+    old = pts.get(name)
+    if old is None:
+        pts[name] = (lat, lon)
+    elif abs(old[0] - lat) + abs(old[1] - lon) > 0.02:
+        dead.add(name)
+
+
+def load_airways(path, pts):
+    segs = []
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            awy = (r.get("AWY_ID") or "").strip()
+            chain = [(n, pts[n]) for n in
+                     (r.get("AIRWAY_STRING") or "").split()
+                     if n in pts]
+            for i, ((n1, c1), (n2, c2)) in enumerate(
+                    zip(chain, chain[1:])):
+                segs.append((awy, i, n1, c1[0], c1[1], n2, c2[0], c2[1]))
+    return segs
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--nav", required=True)
+    ap.add_argument("--fix", required=True)
+    ap.add_argument("--awy", required=True)
+    ap.add_argument("-o", "--output", default="navaids.sqlite")
+    args = ap.parse_args(argv)
+
+    navaids = load_navaids(args.nav)
+    fixes = load_fixes(args.fix)
+    pts = point_lookup(navaids, fixes)
+    segs = load_airways(args.awy, pts)
+
+    con = sqlite3.connect(args.output)
+    cur = con.cursor()
+    cur.executescript("""
+        DROP TABLE IF EXISTS navaids;
+        DROP TABLE IF EXISTS fixes;
+        DROP TABLE IF EXISTS awy_segments;
+        CREATE TABLE navaids (id TEXT, type TEXT, name TEXT, freq TEXT,
+                              elev_ft REAL, lat REAL, lon REAL);
+        CREATE TABLE fixes (id TEXT, use_code TEXT, lat REAL, lon REAL);
+        CREATE TABLE awy_segments (awy_id TEXT, seq INTEGER,
+                                   p1 TEXT, lat1 REAL, lon1 REAL,
+                                   p2 TEXT, lat2 REAL, lon2 REAL);
+    """)
+    cur.executemany("INSERT INTO navaids VALUES (?,?,?,?,?,?,?)", navaids)
+    cur.executemany("INSERT INTO fixes VALUES (?,?,?,?)", fixes)
+    cur.executemany("INSERT INTO awy_segments VALUES (?,?,?,?,?,?,?,?)",
+                    segs)
+    cur.executescript("""
+        CREATE INDEX idx_nav_ll ON navaids(lat, lon);
+        CREATE INDEX idx_fix_ll ON fixes(lat, lon);
+        CREATE INDEX idx_seg_ll ON awy_segments(lat1, lon1);
+    """)
+    con.commit()
+    con.close()
+    print("wrote %s: %d navaids, %d fixes, %d airway segments"
+          % (args.output, len(navaids), len(fixes), len(segs)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
