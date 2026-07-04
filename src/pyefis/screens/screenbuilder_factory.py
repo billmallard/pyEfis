@@ -266,6 +266,16 @@ def _ai_overlay_props():
              help="largest bank angle marked on the bank arc"),
         Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)",
              help="length of the bank-arc ticks (auto-scale off)"),
+        Prop("bank_position", "number", default=50, minimum=0, maximum=100,
+             label="Bank scale position (%)",
+             help="vertical position of the bank-arc centre, percent up "
+                  "from the bottom (50 = centred, the classic look); the "
+                  "whole cluster incl. pointer and slip ball moves with it"),
+        Prop("bank_radius", "number", default=100.0 / 3.0, minimum=10,
+             maximum=60, step=0.1, label="Bank scale radius (% height)",
+             help="radius of the bank arc as a percent of widget height "
+                  "(33.3 = the classic height/3); an explicit "
+                  "bankAngleRadius px in YAML overrides it"),
         # Compass heading scale on the white horizon line.
         Prop("horizon_heading_marks", "boolean", default=False,
              label="Horizon heading marks",
@@ -357,6 +367,10 @@ _register(InstrumentSpec(
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),
+        Prop("symbol_scale", "number", default=1.0, minimum=0.3, maximum=3.0,
+             step=0.05, label="Symbol scale",
+             help="multiplies the reference symbol size -- wingspan and "
+                  "proportions together (1 = standard)"),
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
@@ -918,6 +932,10 @@ _register(InstrumentSpec(
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
              help="colour of the fixed aircraft reference symbol"),
+        Prop("symbol_scale", "number", default=1.0, minimum=0.3, maximum=3.0,
+             step=0.05, label="Symbol scale",
+             help="multiplies the reference symbol size -- wingspan and "
+                  "proportions together (1 = standard)"),
         # SVS-only: raise the level-flight horizon so the ground area expands
         # (more room for instruments like the HSI in the lower third). The whole
         # attitude reference -- horizon, ladder, symbol, terrain -- shifts up

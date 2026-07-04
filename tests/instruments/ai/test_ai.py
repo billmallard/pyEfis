@@ -109,6 +109,36 @@ def test_ai_symbology_can_be_fully_hidden(fix, qtbot):
     widget.paintEvent(event)
 
 
+def test_ai_symbol_scale_and_bank_placement(fix, qtbot):
+    """symbol_scale multiplies the reference symbol; bank_position /
+    bank_radius move and size the bank cluster. Defaults reproduce the
+    classic geometry exactly."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    assert widget.symbol_scale == 1.0
+    assert widget.bank_position == 50
+    assert widget.bank_radius == pytest.approx(100.0 / 3.0)
+
+    widget.bank_radius = 20.0
+    widget.bank_position = 25
+    widget.symbol_scale = 2.0
+    event = _show_ai(qtbot, widget, width=300, height=300)
+
+    # bank_radius drives the default arc radius (explicit
+    # bankAngleRadius px would win instead).
+    assert widget.bankAngleRadius == pytest.approx(300 * 0.20)
+    # anchor: 25% up from the bottom of a 300px widget
+    assert widget._bank_anchor_y(300) == pytest.approx(225.0)
+    widget.paintEvent(event)
+
+    # An explicit pixel radius still wins over the percent.
+    widget2 = ai.AI()
+    widget2.bankAngleRadius = 77
+    widget2.bank_radius = 20.0
+    _show_ai(qtbot, widget2, width=300, height=300)
+    assert widget2.bankAngleRadius == 77
+
+
 def test_ai_resize_with_gray_quality_and_custom_bank_radius(fix, qtbot):
     _reset_ai_items(fix, old=True, bad=True)
     widget = ai.AI()

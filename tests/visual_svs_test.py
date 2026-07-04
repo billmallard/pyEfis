@@ -160,6 +160,10 @@ widget.bankOpacity = float(os.environ.get("SVS_BANK_OPACITY", "1.0"))
 widget.horizonOpacity = float(os.environ.get("SVS_HORIZON_OPACITY", "1.0"))
 widget.show_fpm = os.environ.get("SVS_FPM", "1").lower() \
     not in ("0", "false", "no")
+widget.symbol_scale = float(os.environ.get("SVS_SYMBOL_SCALE", "1.0"))
+widget.bank_position = float(os.environ.get("SVS_BANK_POSITION", "50"))
+widget.bank_radius = float(os.environ.get("SVS_BANK_RADIUS",
+                                          str(100.0 / 3.0)))
 # Clean-terrain capture for the configurator's static SVS preview: render only
 # the terrain + sky, no symbology, so the configurator twin can draw live
 # symbology over it (SVS_TERRAIN_ONLY=1).

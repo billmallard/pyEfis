@@ -126,6 +126,20 @@ class AI(QGraphicsView):
         # applied by the screenbuilder factory.
         self.aircraft_symbol = "classic"
         self.symbol_color = "yellow"
+        # Proportional size multiplier for the reference symbol (1 =
+        # standard). Scales each style's own dimensions around the
+        # horizon anchor, so wingspan and proportions grow together.
+        self.symbol_scale = 1.0
+        # Bank-angle cluster placement: the arc centre sits at
+        # bank_position percent of widget height measured UP from the
+        # bottom (50 = centred, the classic look -- same convention as
+        # horizon_position), with radius bank_radius percent of height
+        # (33.3 = the classic height/3). The whole cluster -- arc,
+        # roll pointer, datum triangle, standard-rate diamonds and
+        # slip/skid ball -- moves and scales together. An explicit
+        # bankAngleRadius (px) in the YAML still wins over bank_radius.
+        self.bank_position = 50
+        self.bank_radius = 100.0 / 3.0   # percent; == the classic height/3
         # Overlay opacities (0 = invisible .. 1 = solid), the same dial
         # pitchOpacity gives the ladder. bankOpacity fades the whole
         # bank-angle cluster (bank scale + roll pointer + standard-rate
@@ -330,6 +344,9 @@ class AI(QGraphicsView):
         # The symbol rides the horizon, so it shifts up with horizon_position
         # (0 offset by default = centred).
         cx, cy = w / 2.0, h / 2.0 - self._horizon_offset_px()
+        # symbol_scale multiplies every style's own dimensions around the
+        # horizon anchor -- wingspan and proportions grow together.
+        ss = max(0.3, min(3.0, float(getattr(self, "symbol_scale", 1.0))))
         col = QColor(self.symbol_color)
         if not col.isValid():
             col = QColor(Qt.GlobalColor.yellow)
@@ -343,12 +360,12 @@ class AI(QGraphicsView):
             # bevelled 3D look of the real display -- with a matching
             # two-tone horizon-reference barb (rounded pill) riding the
             # horizon out toward each edge.
-            span = w * 0.15             # wing length, apex -> outer edge
+            span = w * 0.15 * ss        # wing length, apex -> outer edge
             drop = span * 0.30          # anhedral: outer edge below the apex
             thick = max(6.0, span * 0.16)  # outer-edge thickness (vertical)
             ext = span * 0.12           # base slant: bottom corner runs this
                                         # much further outboard than the top
-            gap = max(3.0, w * 0.012)   # half-notch between the apex points
+            gap = max(3.0, w * 0.012 * ss)  # half-notch between the apexes
             dark = QColor(col).darker(165)
             for s in (-1, 1):
                 xi = cx + s * gap                 # SHARP apex, on the horizon
@@ -370,9 +387,9 @@ class AI(QGraphicsView):
                     QPointF(xt, cy + drop + thick)]))
             # Horizon reference barbs: two-tone pills centred ON the
             # horizon line, out near the roll-scale edges.
-            bl = w * 0.062              # barb length
-            bx = w * 0.35               # barb centre offset from centre
-            bh = max(6.0, h * 0.024)    # barb thickness (total)
+            bl = w * 0.062 * ss         # barb length
+            bx = w * 0.35 * ss          # barb centre offset from centre
+            bh = max(6.0, h * 0.024 * ss)   # barb thickness (total)
             for s in (-1, 1):
                 x0 = cx + s * bx - bl / 2.0
                 p.setBrush(QBrush(col))           # full pill, lit tone
@@ -385,10 +402,10 @@ class AI(QGraphicsView):
             # G1000/G3X style: two FLAT split wing bars with a small upward
             # triangle standing in the centre gap between them (distinct from the
             # garmin delta, whose wings taper off the delta base).
-            bt = max(2.5, h * 0.017)    # wing bar half-thickness
-            gap = w * 0.05              # half-gap from centre to the inboard bar
-            wing = w * 0.15             # wing-bar length
-            trih = max(6.0, h * 0.052)  # centre triangle height
+            bt = max(2.5, h * 0.017 * ss)   # wing bar half-thickness
+            gap = w * 0.05 * ss         # half-gap from centre to the inboard bar
+            wing = w * 0.15 * ss        # wing-bar length
+            trih = max(6.0, h * 0.052 * ss)  # centre triangle height
             triw = gap * 0.72           # centre triangle half-base (fits the gap)
             p.drawRect(QRectF(cx - gap - wing, cy - bt, wing, 2 * bt))  # left bar
             p.drawRect(QRectF(cx + gap, cy - bt, wing, 2 * bt))         # right bar
@@ -399,10 +416,10 @@ class AI(QGraphicsView):
         elif style in ("gi275", "gi-275", "boresight", "ring"):
             # Boresight style: two flat wing bars flanking an OPEN ring (the
             # aircraft "boresight"/waterline circle) at the centre.
-            bt = max(2.5, h * 0.015)    # wing bar half-thickness
-            gap = w * 0.055             # half-gap from centre to the inboard bar
-            wing = w * 0.15             # wing-bar length
-            rr = max(4.0, h * 0.030)    # boresight ring radius
+            bt = max(2.5, h * 0.015 * ss)   # wing bar half-thickness
+            gap = w * 0.055 * ss        # half-gap from centre to the inboard bar
+            wing = w * 0.15 * ss        # wing-bar length
+            rr = max(4.0, h * 0.030 * ss)   # boresight ring radius
             p.drawRect(QRectF(cx - gap - wing, cy - bt, wing, 2 * bt))  # left bar
             p.drawRect(QRectF(cx + gap, cy - bt, wing, 2 * bt))         # right bar
             ring = QPen(col)                       # open yellow ring (no fill)
@@ -413,9 +430,9 @@ class AI(QGraphicsView):
         elif style in ("brackets", "grt", "l", "l-bracket", "l_bracket"):
             # GRT-style L-brackets: a wing bar each side with an inboard
             # down-tick (forming an "L"), flanking a small centre dot.
-            bt = max(3.0, h * 0.012)     # bar thickness
-            inner = w * 0.07             # half-gap from centre to the inboard tip
-            wing = w * 0.14              # wing-bar length
+            bt = max(3.0, h * 0.012 * ss)   # bar thickness
+            inner = w * 0.07 * ss        # half-gap from centre to the inboard tip
+            wing = w * 0.14 * ss         # wing-bar length
             tick = bt * 2.6              # inboard down-tick length
             p.drawRect(QRectF(cx - inner - wing, cy - bt / 2, wing, bt))  # left bar
             p.drawRect(QRectF(cx - inner - bt, cy - bt / 2, bt, tick))    # left tick
@@ -423,10 +440,17 @@ class AI(QGraphicsView):
             p.drawRect(QRectF(cx + inner, cy - bt / 2, bt, tick))         # right tick
             p.drawEllipse(QPointF(cx, cy), bt * 0.7, bt * 0.7)            # centre dot
         else:
-            # Classic: split wing bars + centre dot.
-            p.drawRect(QRectF(w / 4, cy - 3, w / 6, 6))
-            p.drawRect(QRectF(w - w / 4 - w / 6, cy - 3, w / 6, 6))
-            p.drawEllipse(QRectF(cx - 3, cy - 3, 9, 9))
+            # Classic: split wing bars + centre dot. Rewritten
+            # centre-relative so the scale grows the bars around the
+            # anchor: at ss=1 the inboard edge sits at w/12 from centre
+            # and the bar is w/6 long -- exactly the historical
+            # [w/4, w/4 + w/6] placement.
+            inner = (w / 12.0) * ss
+            wing = (w / 6.0) * ss
+            bh2 = 3.0 * ss               # bar half-height
+            p.drawRect(QRectF(cx - inner - wing, cy - bh2, wing, 2 * bh2))
+            p.drawRect(QRectF(cx + inner, cy - bh2, wing, 2 * bh2))
+            p.drawEllipse(QRectF(cx - 3 * ss, cy - 3 * ss, 9 * ss, 9 * ss))
 
     def resizeEvent(self, event):
         self.pitchItems = []
@@ -459,9 +483,13 @@ class AI(QGraphicsView):
                                self.height() * self.height())
         self.pixelsPerDeg = self.height() / self.pitchDegreesShown
         self.scene = QGraphicsScene(0, 0, sceneWidth, sceneHeight)
-        # Setup default values
+        # Setup default values. bank_radius (percent of height, default
+        # 33.3 = the classic height/3) sizes the bank arc; an explicit
+        # bankAngleRadius px from the YAML still wins.
         if self.bankAngleRadius is None:
-            self.bankAngleRadius = self.height() / 3
+            self.bankAngleRadius = self.height() * max(
+                5.0, min(80.0,
+                         float(getattr(self, "bank_radius", 33.3)))) / 100.0
         # Get a failure scene ready in case it's needed
         self.fail_scene = QGraphicsScene(0, 0, sceneWidth, sceneHeight)
         self.fail_scene.addRect(0,0, sceneWidth, sceneHeight, QPen(QColor(Qt.GlobalColor.white)), QBrush(QColor(50,50,50)))
@@ -599,7 +627,7 @@ class AI(QGraphicsView):
             p.setOpacity(_bank_op)
             m = self.bankMarkSize
             p.setBrush(QColor(Qt.GlobalColor.white))
-            p.translate(w / 2, h/2 - r)
+            p.translate(w / 2, self._bank_anchor_y(h) - r)
             triangle = QPolygonF([QPointF(m,  m*2),
                                  QPointF(-m, m*2),
                                  QPointF(0,  m/2)])
@@ -1021,6 +1049,16 @@ class AI(QGraphicsView):
         return (float(getattr(self, "horizon_position", 50)) / 100.0
                 - 0.5) * self.height()
 
+    def _bank_anchor_y(self, h):
+        # Screen y of the bank-arc CENTRE, from bank_position (percent of
+        # height measured UP from the bottom, like horizon_position;
+        # 50 = the classic viewport centre). The whole bank cluster --
+        # arc, roll pointer, datum triangle, diamonds, slip ball --
+        # anchors here.
+        pos = max(0.0, min(100.0,
+                           float(getattr(self, "bank_position", 50))))
+        return h * (1.0 - pos / 100.0)
+
     def _horizon_offset_deg(self):
         # The same shift expressed as a look-down angle (offset_px /
         # pixelsPerDeg, which reduces to height-independent form). The SVS
@@ -1137,7 +1175,8 @@ class AI(QGraphicsView):
         p.setBrush(QColor(Qt.GlobalColor.white))
         marks = QPen(Qt.GlobalColor.white)
 
-        p.translate(w / 2, h / 2)
+        # Bank-cluster anchor (bank_position; 50 = the classic centre).
+        p.translate(w / 2, self._bank_anchor_y(h))
 
         # Unusual-attitude regime (AC 25-11B App A A.2.2 / p.47) -- drives both
         # the recovery chevrons and the de-clutter. Computed up front so the
