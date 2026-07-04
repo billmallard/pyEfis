@@ -237,6 +237,9 @@ class Altimeter_Tape(QGraphicsView):
         trend_min_change=20.0,
     ):
         super(Altimeter_Tape, self).__init__(parent)
+        # Checkbox option: alpha-fade the scrolling scale into the
+        # background over the top/bottom 15% of the tape.
+        self.edge_fade = False
         self.setStyleSheet("background: transparent")
         self.font_family = font_family
         self.font_mask = font_mask
@@ -407,7 +410,13 @@ class Altimeter_Tape(QGraphicsView):
 
     #  Index Line that doesn't move to make it easy to read the altimeter.
     def paintEvent(self, event):
-        super(Altimeter_Tape, self).paintEvent(event)
+        # edge_fade (percent of height, 0 = off): melt the scrolling
+        # scale in/out at the top and bottom instead of hard-clipping.
+        _fade = bool(getattr(self, "edge_fade", False))
+        if _fade > 0:
+            helpers.render_view_edge_faded(self, 15.0)
+        else:
+            super(Altimeter_Tape, self).paintEvent(event)
         w = self.width()
         h = self.height()
         p = QPainter(self.viewport())

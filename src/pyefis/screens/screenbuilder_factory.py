@@ -432,6 +432,10 @@ _register(InstrumentSpec(
                  screen, font_percent=font_percent)),
     dbkeys=["IAS"],
     properties=[
+        Prop("edge_fade", "boolean", default=False,
+             label="Fade tape edges",
+             help="alpha-fade the top and bottom of the scrolling "
+                  "scale into the background (SVS shows through)"),
         # NOTE: no editable dbkey -- Airspeed_Tape is hard-wired to IAS (it has
         # no setDbkey and reads the V-speed aux off that item). The old curated
         # schema offered a dbkey option that did nothing; dropped.
@@ -514,6 +518,10 @@ _register(InstrumentSpec(
     # All options are consumed by build_altimeter_tape at construction
     # (apply="special"); defaults are the Altimeter_Tape constructor defaults.
     properties=[
+        Prop("edge_fade", "boolean", default=False,
+             label="Fade tape edges",
+             help="alpha-fade the top and bottom of the scrolling "
+                  "scale into the background (SVS shows through)"),
         Prop("dbkey", "fixkey", default="ALT", label="FIX key", apply="special",
              help="FIX key driving the tape (default ALT)"),
         Prop("maxalt", "integer", default=50000, label="Max altitude", apply="special",
