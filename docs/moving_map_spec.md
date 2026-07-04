@@ -212,14 +212,18 @@ for 3 s after any action (so button UX works blind of the menu).
 - Each phase ships behind the standard two-repo pipeline (factory ->
   schema -> R2 -> twin) and lands on the Pi for flight eval.
 
-## 11. Open questions (for Bill)
+## 11. Decisions (Bill, 2026-07-05)
 
-1. v1 default screen use: standalone MFD page, or split-screen next
-   to the PFD? (Affects default ownship_position and range.)
-2. Track-up as default, or north-up? (Chart-reading vs situational
-   preference; both exist, one boots first.)
-3. Airport tower coloring needs NASR TWR data added to the airports
-   pack — OK to grow that pack in makerplane-data during Phase C?
-4. Range ladder values above — match what you fly?
-5. Terrain default: absolute relief (sectional look) or caution
-   (TAWS look)? Both exist as `terrain_mode`; pick the default.
+1. **Split-screen**: expected down the road; since the widget is
+   freely placeable/sizable in the configurator, split layouts come
+   for free — no special casing, just don't assume full-screen.
+2. **Orientation**: configurator property (`orientation`,
+   track_up/north_up — pilots fight endlessly; we don't pick sides).
+   Boot default track_up.
+3. **Pack growth approved** (TWR for tower coloring; more packs
+   expected generally).
+4. **Range ladder**: configurable property (`range_ladder`, comma
+   list; default 2,5,10,20,40,80,160).
+5. **Terrain default**: configurator property; default `relief`.
+
+Development branch: `moving-map` (off display-changes).
