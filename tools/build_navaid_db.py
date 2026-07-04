@@ -9,6 +9,10 @@ plain stdlib, produces a self-contained sqlite consumed on-device.
         --nav NAV_BASE.csv --fix FIX_BASE.csv --awy AWY_BASE.csv \
         -o navaids.sqlite
 
+    # or point at a directory holding the extracted NAV/FIX/AWY CSV zips
+    # (the makerplane-data pack pipeline calls it this way):
+    python tools/build_navaid_db.py --nasr-dir extracted/ -o navaids.sqlite
+
 Tables:
   navaids(id, type, name, freq, elev_ft, lat, lon)
   fixes(id, use_code, lat, lon)
@@ -23,6 +27,14 @@ skipped; the polyline connects across the gap.
 import argparse
 import csv
 import sqlite3
+from pathlib import Path
+
+
+def _find_csv(root, name):
+    hits = sorted(Path(root).rglob(name))
+    if not hits:
+        raise SystemExit(f"{name} not found under {root}")
+    return str(hits[0])
 
 
 def _f(row, key):
@@ -99,11 +111,21 @@ def load_airways(path, pts):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--nav", required=True)
-    ap.add_argument("--fix", required=True)
-    ap.add_argument("--awy", required=True)
+    ap.add_argument("--nav")
+    ap.add_argument("--fix")
+    ap.add_argument("--awy")
+    ap.add_argument("--nasr-dir",
+                    help="directory holding extracted NAV/FIX/AWY CSVs; "
+                         "stands in for any of --nav/--fix/--awy")
     ap.add_argument("-o", "--output", default="navaids.sqlite")
     args = ap.parse_args(argv)
+
+    if args.nasr_dir:
+        args.nav = args.nav or _find_csv(args.nasr_dir, "NAV_BASE.csv")
+        args.fix = args.fix or _find_csv(args.nasr_dir, "FIX_BASE.csv")
+        args.awy = args.awy or _find_csv(args.nasr_dir, "AWY_BASE.csv")
+    if not (args.nav and args.fix and args.awy):
+        ap.error("provide --nav/--fix/--awy or --nasr-dir")
 
     navaids = load_navaids(args.nav)
     fixes = load_fixes(args.fix)
