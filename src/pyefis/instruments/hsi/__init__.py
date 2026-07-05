@@ -503,10 +503,74 @@ class HSI(QGraphicsView):
         self._TrackFail = fail
         self._update_track()
 
-    def paintEvent(self, event):
-        super(HSI, self).paintEvent(event)
+    def _rose_image(self):
+        """The static rose (disc, ticks, cardinal/numeral labels) baked
+        UNROTATED at 2x supersample -- once per scene build (#94). The
+        heading rotation is applied at blit time in paintEvent; the
+        dynamic card items (heading bug, track diamond) are hidden
+        during the bake and drawn directly under the same rotation.
+        The cache holds the scene OBJECT (resizeEvent replaces the
+        scene wholesale; id() could be recycled -- same hazard as the
+        tape strip cache, #93)."""
+        scene = self.scene
+        w, hgt = self.width(), self.height()
+        key = (w, hgt, float(self.fontSize))
+        cached = getattr(self, "_rose_cache", None)
+        if (cached is not None and cached[0] is scene
+                and cached[1] == key):
+            return cached[2]
+        ss = 2
+        img = QImage(w * ss, hgt * ss,
+                     QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        dyn = [i for i in (self.hdg_bug_item, self.track_item)
+               if i is not None]
+        vis = [i.isVisible() for i in dyn]
+        for i in dyn:
+            i.setVisible(False)
+        try:
+            p = QPainter(img)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            self.scene.render(p, QRectF(0, 0, w * ss, hgt * ss),
+                              QRectF(0, 0, w, hgt))
+            p.end()
+        finally:
+            for i, v in zip(dyn, vis):
+                i.setVisible(v)
+        self._rose_cache = (scene, key, img)
+        return img
 
+    def paintEvent(self, event):
+        # The rose is static art on a rotating card: blit the cached
+        # unrotated bake through the heading rotation instead of having
+        # QGraphicsView re-render ~84 items per frame (#94 -- the HSI
+        # was ~24% of all GIL time in flight). The heading bug and
+        # track diamond are the only dynamic card items; they are drawn
+        # here under the same rotation, in scene coordinates, exactly
+        # as their scene polygons are computed. setHeading still
+        # rotates the (now unpainted) view so scene-item updates keep
+        # scheduling repaints.
         c = QPainter(self.viewport())
+        c.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        c.save()
+        c.translate(self.cx, self.cy)
+        c.rotate(-self._heading)
+        c.drawImage(QRectF(-self.cx, -self.cy,
+                           self.width(), self.height()),
+                    self._rose_image())
+        c.translate(-self.cx, -self.cy)
+        if self.hdg_bug_item is not None:
+            _hbc = QColor(self.heading_bug_color)
+            c.setPen(QPen(_hbc))
+            c.setBrush(QBrush(_hbc))
+            c.drawPolygon(self._hdg_bug_polygon())
+        if self.track_item is not None and self.track_item.isVisible():
+            _tc = QColor(self.track_color)
+            c.setPen(QPen(_tc))
+            c.setBrush(QBrush(_tc))
+            c.drawPolygon(self._track_diamond_polygon())
+        c.restore()
 
         # Put the static overlay image on the view
         c.drawImage(self.rect(), self.overlay)
