@@ -14,8 +14,8 @@ import math
 import threading
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF
-from PyQt6.QtGui import QImage
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPolygonF
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map.layers import MapLayer, register_layer
@@ -75,6 +75,7 @@ class TerrainLayer(MapLayer):
         self._worker = None
         self._lock = threading.Lock()
         self._alt_ft = 0.0
+        self._water = None          # WaterDB (set in configure)
 
     def configure(self, owner):
         tile_path = str(getattr(owner, "tile_path", "") or "")
@@ -83,6 +84,21 @@ class TerrainLayer(MapLayer):
             from pathlib import Path
             from pyefis.instruments.ai.svs import TileCache
             self._cache = TileCache(Path(tile_path))
+        # Water pack (#91): lakes + crisp coastline rasterized into the
+        # window image on the worker thread. Own WaterDB instance (own
+        # sqlite connection) -- never shared with the SVS's.
+        self._water = None
+        water_path = str(getattr(owner, "water_db_path", "") or "")
+        if water_path:
+            try:
+                from pyefis.instruments.ai.water_db import WaterDB
+                cap = int(getattr(owner, "water_max_vertices", 128)
+                          or 128)
+                self._water = WaterDB(water_path, max_vertices=cap)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "map water db unavailable")
         self._owner = owner
 
     # --- window key: snapped centre + range bucket ------------------------
@@ -219,7 +235,42 @@ class TerrainLayer(MapLayer):
         rgbx[..., 3] = 255
         qimg = QImage(rgbx.data, n, n, 4 * n,
                       QImage.Format.Format_RGBX8888).copy()
+        if self._water is not None and self._water.ready:
+            self._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
         return qimg, (lat0, lon0, mpp)
+
+    def _draw_water(self, qimg, lat0, lon0, mpp, n, lat_cos):
+        """Rasterize water-pack polygons (lakes + coastline) into the
+        north-up window image -- on the worker thread, so per-frame
+        cost is zero: the paint path still blits one image (#91).
+        Painted AFTER the caution tint on purpose: water is not a
+        TAWS threat surface. The elevation-derived water (void-tile
+        ocean) stays underneath as the backstop."""
+        half_px = (n - 1) / 2.0
+        range_nm = (half_px * mpp) / 1852.0
+        # Skip polygons whose bbox spans under ~3 image px before any
+        # BLOB decode (ocean pieces are never size-filtered by the db).
+        min_diag = 3.0 * mpp / M_PER_DEG_LAT
+        px_per_deg_lat = M_PER_DEG_LAT / mpp
+        px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
+        p = QPainter(qimg)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(60, 110, 160)))
+        try:
+            for poly in self._water.polygons_in_range(
+                    lat0, lon0, range_nm, min_bbox_diag_deg=min_diag):
+                pts = [QPointF((lo - lon0) * px_per_deg_lon + half_px,
+                               (lat0 - la) * px_per_deg_lat + half_px)
+                       for la, lo in poly.vertices]
+                if len(pts) >= 3:
+                    p.drawPolygon(QPolygonF(pts))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map water rasterize failed")
+        finally:
+            p.end()
 
     def _sample(self, lats, lons, mip):
         """Vectorised elevation sampling straight off the TileCache.

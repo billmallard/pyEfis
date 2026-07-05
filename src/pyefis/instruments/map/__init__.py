@@ -65,6 +65,8 @@ class MovingMap(QWidget):
         self.layer_terrain = True
         self.tile_path = ""                    # GLO-30/SRTM HGT tree
         self.terrain_mode = "relief"           # or "caution"
+        self.water_db_path = ""                # water.sqlite (#91)
+        self.water_max_vertices = 128          # per-polygon raster cap
         self.layer_airports = True
         self.nasr_db_path = ""                 # NASR airports.sqlite
         self.layer_navaids = True

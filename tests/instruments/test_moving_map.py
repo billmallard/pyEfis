@@ -69,6 +69,67 @@ def _painted_water_fraction(rot_deg):
             water[: h // 2, :].mean(), water[h // 2:, :].mean())
 
 
+class _LandCache:
+    """Fake TileCache: uniform 500 m land everywhere."""
+
+    def get(self, la, lo):
+        return np.full((1201, 1201), 500.0, dtype=np.float32)
+
+
+class _FakeWaterDB:
+    """Stub WaterDB: one square lake polygon, ~2 km on a side, centred
+    a little EAST of the window centre."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0):
+        d = 0.01                       # ~1.1 km half-side
+        clat, clon = lat0, lon0 + 0.05  # offset east of centre
+        self._poly = type("P", (), {})()
+        self._poly.vertices = [
+            (clat - d, clon - d), (clat - d, clon + d),
+            (clat + d, clon + d), (clat + d, clon - d)]
+        self._poly.kind = "lake"
+
+    def polygons_in_range(self, lat, lon, range_nm,
+                          min_bbox_diag_deg=None):
+        yield self._poly
+
+
+def test_terrain_water_rasterized_into_window(qapp):
+    """#91: water-pack polygons paint into the north-up window image on
+    the worker thread. A lake east of centre must be blue in the image;
+    the rest stays land-coloured (no elevation-derived water on a
+    uniform 500 m terrain)."""
+    lat0, lon0 = 34.5, -120.5
+    lay = TerrainLayer()
+    lay._cache = _LandCache()
+    lay._water = _FakeWaterDB(lat0, lon0)
+
+    class Owner:
+        _alt_ft = 3000.0
+    lay._owner = Owner
+
+    x = moving_map.MapTransform(lat0, lon0, 10.0, 0.0, 400, 400, 0.5)
+    key = lay._key(x)
+    img, meta = lay._render((key, x.lat0, x.lon0, x.range_nm,
+                             x.w, x.h, x.cy))
+    clat, clon, mpp = meta
+    n = img.width()
+
+    def px(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = (lo - clon) * M * np.cos(np.radians(clat)) / mpp + half
+        cy = (clat - la) * M / mpp + half
+        return img.pixelColor(int(round(cx)), int(round(cy)))
+
+    lake = px(lat0, lon0 + 0.05)          # lake centre
+    land = px(lat0, lon0 - 0.05)          # mirror point, west (land)
+    assert lake.blue() > lake.red() and lake.blue() > lake.green()
+    assert not (land.blue() > land.red() and land.blue() > land.green())
+
+
 def test_terrain_orientation_north_up(qapp):
     """North-up: land (north) paints on the TOP half."""
     left, right, top, bottom = _painted_water_fraction(0.0)

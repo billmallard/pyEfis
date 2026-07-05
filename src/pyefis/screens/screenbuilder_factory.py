@@ -897,6 +897,16 @@ _register(InstrumentSpec(
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = "
                   "TAWS-style amber/red relative to altitude"),
+        Prop("water_db_path", "string", default="",
+             label="Water db path",
+             help="water.sqlite (the SVS water_db_path; on the Pi "
+                  "/data/makerplane-data/water/current/water.sqlite). "
+                  "When set, lakes and coastline from the water pack "
+                  "are rasterized into the terrain image"),
+        Prop("water_max_vertices", "number", default=128, minimum=16,
+             maximum=1024, step=16, label="Water vertex cap",
+             help="per-polygon vertex cap for map water rasterization "
+                  "(higher = more coastline/lake detail per rebuild)"),
     ],
 ))
 
