@@ -1,3 +1,4 @@
+#  SPDX-License-Identifier: GPL-2.0-or-later
 #  Moving map layer-provider model (docs/moving_map_spec.md section 4).
 #  Phase A ships the base contract + registry + the range-rings layer
 #  (the provider-model proof). Terrain/airports/navaids follow in

@@ -1,3 +1,4 @@
+#  SPDX-License-Identifier: GPL-2.0-or-later
 #  Moving map terrain layer (spec 5.1, Phase B).
 #
 #  Renders a NORTH-UP window image covering the view (oversized by

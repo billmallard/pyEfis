@@ -1,3 +1,4 @@
+#  SPDX-License-Identifier: GPL-2.0-or-later
 #  Moving map navaid / fix / airway layers (spec 5.3, Phase D).
 #
 #  Reads navaids.sqlite (tools/build_navaid_db.py from NASR NAV/FIX/

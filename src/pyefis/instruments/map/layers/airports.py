@@ -1,3 +1,4 @@
+#  SPDX-License-Identifier: GPL-2.0-or-later
 #  Moving map airports layer (spec 5.2, Phase C).
 #
 #  FAA sectional symbology from the NASR airports.sqlite (the same db

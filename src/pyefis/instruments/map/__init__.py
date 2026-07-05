@@ -1,3 +1,4 @@
+#  SPDX-License-Identifier: GPL-2.0-or-later
 #  Moving map instrument -- Phase A skeleton (docs/moving_map_spec.md).
 #  Top-down view: MapTransform owns ALL world->screen math, layers from
 #  the provider registry paint in z order, ownship rides a configurable
