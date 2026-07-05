@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#  SPDX-License-Identifier: GPL-2.0-or-later
 """
 Build airports.sqlite from FAA NASR CSV data for the SVS renderer.
 

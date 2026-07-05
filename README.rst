@@ -215,3 +215,15 @@ To cleanup all of the test files, virtual environemnt and other changes made by 
 
     $ make clean
 
+
+Licensing & Patents (this fork)
+-------------------------------
+
+pyEfis is GPL-2.0-or-later (Phil Birkelbach and contributors); all work on
+this fork's branches (SVS, moving map, instrument registry/editor) is
+contributed under the same license, which carries the GPL's implied patent
+license and, at v3, an express patent grant. The extended architecture
+around pyEfis (configurator, data currency, provider model) is publicly
+disclosed as prior art in the makerplane-data repository
+(docs/AC-DP-001-architecture-disclosure.md); the intent is that all of it
+remain permanently free to implement.
