@@ -33,17 +33,24 @@ _STOPS = [
 ]
 
 
+_STOP_E = np.array([s[0] for s in _STOPS], np.float64)
+_STOP_R = np.array([s[1] for s in _STOPS], np.float64)
+_STOP_G = np.array([s[2] for s in _STOPS], np.float64)
+_STOP_B = np.array([s[3] for s in _STOPS], np.float64)
+
+
 def _palette(elev_ft):
-    """Vectorised hypsometric colour lookup (elev in FEET)."""
-    r = np.empty(elev_ft.shape, np.float32)
-    g = np.empty_like(r)
-    b = np.empty_like(r)
-    e = np.clip(elev_ft, _STOPS[0][0], _STOPS[-1][0])
-    for (e0, r0, g0, b0), (e1, r1, g1, b1) in zip(_STOPS, _STOPS[1:]):
-        m = (e >= e0) & (e <= e1)
-        t = np.where(m, (e - e0) / max(1.0, (e1 - e0)), 0)
-        for chan, c0, c1 in ((r, r0, r1), (g, g0, g1), (b, b0, b1)):
-            chan[m] = (c0 + (c1 - c0) * t)[m]
+    """Vectorised hypsometric colour lookup (elev in FEET).
+
+    Piecewise-linear over _STOPS via np.interp -- one C pass per
+    channel (np.interp clamps to the end stops, matching the old
+    per-segment masking). #89: the masked-segment version was ~24% of
+    the terrain worker's GIL time."""
+    e = elev_ft.ravel()
+    shape = elev_ft.shape
+    r = np.interp(e, _STOP_E, _STOP_R).astype(np.float32).reshape(shape)
+    g = np.interp(e, _STOP_E, _STOP_G).astype(np.float32).reshape(shape)
+    b = np.interp(e, _STOP_E, _STOP_B).astype(np.float32).reshape(shape)
     return r, g, b
 
 
@@ -82,10 +89,15 @@ class TerrainLayer(MapLayer):
     def _key(self, x):
         span_m = x.range_nm * 1852.0 * 2.0
         snap = span_m * self._SNAP_FRAC
+        # Ownship altitude only shapes the image in caution mode (TAWS
+        # tint). Keying on it in relief mode forced a full re-render
+        # every 500 ft of climb/descent for an identical image (#89).
+        alt_band = (round(self._alt_ft / 500.0)
+                    if self._mode == "caution" else 0)
         return (round(x.lat0 * M_PER_DEG_LAT / snap),
                 round(x.lon0 * M_PER_DEG_LAT / snap),
                 round(x.range_nm, 2), round(x.w), round(x.h),
-                self._mode, round(self._alt_ft / 500.0))
+                self._mode, alt_band)
 
     def paint(self, p, x):
         if self._cache is None:
@@ -166,10 +178,7 @@ class TerrainLayer(MapLayer):
         native = M_PER_DEG_LAT / ((tile.shape[0] - 1) if tile is not None
                                   else 1200)
         mip = max(0, min(4, int(round(math.log2(max(1.0, mpp / native))))))
-        lon_g, lat_g = np.meshgrid(lons, lats)
-        # Reuse the SVS sampling machinery (mip pyramid included).
-        from pyefis.instruments.ai.svs import SVSRenderer  # noqa: F401
-        elev_m, water = self._sample(lat_g, lon_g, mip)
+        elev_m, water = self._sample(lats, lons, mip)
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
         if self._mode == "caution":
@@ -187,40 +196,52 @@ class TerrainLayer(MapLayer):
             0, 1)
         r *= shade; g *= shade; b *= shade
         r[water], g[water], b[water] = 60, 110, 160
-        rgb = np.dstack([r, g, b]).astype(np.uint8)
-        rgbx = np.ascontiguousarray(
-            np.dstack([rgb, np.full(elev_m.shape, 255, np.uint8)]))
+        rgbx = np.empty((n, n, 4), np.uint8)
+        rgbx[..., 0] = r
+        rgbx[..., 1] = g
+        rgbx[..., 2] = b
+        rgbx[..., 3] = 255
         qimg = QImage(rgbx.data, n, n, 4 * n,
                       QImage.Format.Format_RGBX8888).copy()
         return qimg, (lat0, lon0, mpp)
 
-    def _sample(self, lat_g, lon_g, mip):
-        """Vectorised elevation sampling straight off the TileCache
-        (mirrors SVSRenderer._sample_elevations without needing a full
-        renderer instance)."""
-        elev = np.full(lat_g.shape, -9999.0, dtype=np.float32)
-        tl = np.floor(lat_g).astype(np.int32)
-        tn = np.floor(lon_g).astype(np.int32)
-        for la, lo in {(int(a), int(b))
-                       for a, b in zip(tl.ravel(), tn.ravel())}:
-            # Track-1c pyramid when the branch has it; raw tile
-            # otherwise (aliasing at far zooms until 1c merges).
-            t = (self._cache.get_mip(la, lo, mip)
-                 if hasattr(self._cache, "get_mip")
-                 else self._cache.get(la, lo))
-            if t is None:
-                continue
-            m = (tl == la) & (tn == lo)
-            nn = t.shape[0]
-            rf = np.clip((la + 1.0 - lat_g[m]) * (nn - 1), 0, nn - 2)
-            cf = np.clip((lon_g[m] - lo) * (nn - 1), 0, nn - 2)
-            r0 = np.floor(rf).astype(np.int32)
-            c0 = np.floor(cf).astype(np.int32)
-            dr = (rf - r0).astype(np.float32)
-            dc = (cf - c0).astype(np.float32)
-            elev[m] = (t[r0, c0] * (1 - dr) * (1 - dc)
-                       + t[r0, c0 + 1] * (1 - dr) * dc
-                       + t[r0 + 1, c0] * dr * (1 - dc)
-                       + t[r0 + 1, c0 + 1] * dr * dc)
+    def _sample(self, lats, lons, mip):
+        """Vectorised elevation sampling straight off the TileCache.
+
+        Unlike SVSRenderer._sample_elevations (arbitrary camera-ray
+        grids), the map window is a separable north-up raster: *lats*
+        varies only by row, *lons* only by column. Bilinear weights are
+        therefore computed on the 1-D axes and gathered per 1-degree
+        tile block by broadcasting -- no full-grid tile masks and no
+        per-pixel Python. #89: the previous per-pixel unique-tile set
+        comprehension was 54% of the whole process's GIL time."""
+        elev = np.full((lats.size, lons.size), -9999.0, dtype=np.float32)
+        tl = np.floor(lats).astype(np.int32)   # per-row tile latitude
+        tn = np.floor(lons).astype(np.int32)   # per-col tile longitude
+        for la in np.unique(tl):
+            rsel = np.nonzero(tl == la)[0]
+            for lo in np.unique(tn):
+                csel = np.nonzero(tn == lo)[0]
+                # Track-1c pyramid when the branch has it; raw tile
+                # otherwise (aliasing at far zooms until 1c merges).
+                t = (self._cache.get_mip(int(la), int(lo), mip)
+                     if hasattr(self._cache, "get_mip")
+                     else self._cache.get(int(la), int(lo)))
+                if t is None:
+                    continue
+                nn = t.shape[0]
+                rf = np.clip((la + 1.0 - lats[rsel]) * (nn - 1), 0, nn - 2)
+                cf = np.clip((lons[csel] - lo) * (nn - 1), 0, nn - 2)
+                r0 = np.floor(rf).astype(np.int32)
+                c0 = np.floor(cf).astype(np.int32)
+                dr = (rf - r0).astype(np.float32)[:, None]
+                dc = (cf - c0).astype(np.float32)[None, :]
+                r0 = r0[:, None]
+                c0 = c0[None, :]
+                elev[np.ix_(rsel, csel)] = (
+                    t[r0, c0] * (1 - dr) * (1 - dc)
+                    + t[r0, c0 + 1] * (1 - dr) * dc
+                    + t[r0 + 1, c0] * dr * (1 - dc)
+                    + t[r0 + 1, c0 + 1] * dr * dc)
         water = (elev < -4500.0) | (elev == 0.0)
         return np.where(water, 0.0, elev), water

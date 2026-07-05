@@ -6,7 +6,7 @@
 
 import math
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QWidget
 
@@ -78,12 +78,23 @@ class MovingMap(QWidget):
         self._track = 0.0
         self._alt_ft = 0.0
         self._old = {}
+        # Frame clock (#89, mirrors the AI's P4 pattern): inputs only
+        # store values; the clock repaints at a bounded rate and only
+        # when the pose moved enough to change pixels. X-Plane/GPS can
+        # deliver LAT/LONG/TRACKM/ALT at tens of Hz each -- routing
+        # every update through QWidget.update() repainted the whole
+        # map (rotated terrain blit included) at the data rate.
+        self._frame_rate = 10.0
+        self._frame_last_pose = None
+        self._frame_timer = QTimer(self)
+        self._frame_timer.timeout.connect(self._frame_tick)
+        self._frame_timer.start(int(round(1000.0 / self._frame_rate)))
         for key, attr in (("LAT", "_lat"), ("LONG", "_lon"),
                           ("TRACKM", "_track"), ("ALT", "_alt_ft")):
             try:
                 item = fix.db.get_item(key)
                 item.valueChanged[float].connect(
-                    lambda v, a=attr: (setattr(self, a, v), self.update()))
+                    lambda v, a=attr: setattr(self, a, v))
                 item.oldChanged[bool].connect(
                     lambda o, k=key: (self._old.__setitem__(k, o),
                                       self.update()))
@@ -92,6 +103,35 @@ class MovingMap(QWidget):
             except KeyError:
                 # Graceful missing-key pattern: run with what exists.
                 self._old[key] = True
+
+    # --- frame clock (#89) --------------------------------------------------
+    @property
+    def frame_rate(self):
+        return self._frame_rate
+
+    @frame_rate.setter
+    def frame_rate(self, fps):
+        """Screenbuilder option: map repaint clock in Hz (clamped 1-30)."""
+        self._frame_rate = max(1.0, min(30.0, float(fps)))
+        self._frame_timer.start(int(round(1000.0 / self._frame_rate)))
+
+    def _frame_tick(self):
+        """Repaint at most at the clock rate, and only when the pose
+        changed enough to move pixels: position by ~half a screen px,
+        track by 0.25 deg (rotation), altitude by 100 ft (caution
+        tint). Explicit UI actions (range, orientation, layer toggles)
+        and async layer completions still call update() directly."""
+        if not self.isVisible():
+            return
+        m_per_px = (float(self.range_nm) * NM_M) / max(1.0, self.height() / 2.0)
+        q = max(1e-7, (0.5 * m_per_px) / M_PER_DEG_LAT)  # deg per half-px
+        pose = (round(self._lat / q), round(self._lon / q),
+                round(self._track * 4.0), round(self._alt_ft / 100.0),
+                self.orientation, float(self.range_nm))
+        if pose == self._frame_last_pose:
+            return
+        self._frame_last_pose = pose
+        self.update()
 
     # --- layer plumbing ---------------------------------------------------
     def _build_layers(self):
