@@ -130,6 +130,80 @@ def test_terrain_water_rasterized_into_window(qapp):
     assert not (land.blue() > land.red() and land.blue() > land.green())
 
 
+class _FakeHighwayDB:
+    """Stub HighwayDB: one motorway segment strictly NORTH of the
+    ownship (so orientation tests can discriminate sides -- a through
+    road is a diameter and cannot) plus a short residential spur."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0):
+        import numpy as np
+
+        class L:
+            def __init__(self, vertices, fclass):
+                self.vertices = vertices
+                self.fclass = fclass
+
+        self._lines = [
+            L(np.array([[lat0 + 0.02, lon0], [lat0 + 0.2, lon0]],
+                       dtype=np.float32), "motorway"),
+            L(np.array([[lat0, lon0 + 0.05], [lat0 + 0.02, lon0 + 0.05]],
+                       dtype=np.float32), "residential"),
+        ]
+
+    def polylines_in_range(self, lat, lon, range_nm):
+        yield from self._lines
+
+
+def _roads_paint(range_nm, rot_deg):
+    """Render the roads layer synchronously into a widget-sized image
+    and return it with its transform."""
+    from pyefis.instruments.map.layers.roads import RoadsLayer
+
+    lat0, lon0 = 34.5, -120.5
+    lay = RoadsLayer()
+    lay._db = _FakeHighwayDB(lat0, lon0)
+
+    class Owner:
+        pass
+    lay._owner = Owner
+
+    w = h = 400
+    x = moving_map.MapTransform(lat0, lon0, range_nm, rot_deg, w, h, 0.5)
+    key = lay._key(x)
+    img, meta = lay._render((key, x.lat0, x.lon0, x.range_nm,
+                             x.w, x.h, x.cy))
+    lay._img = (img, key, meta)
+
+    out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(0)
+    p = QPainter(out)
+    lay.paint(p, x)
+    p.end()
+    buf = out.constBits()
+    buf.setsize(out.sizeInBytes())
+    px = np.frombuffer(buf, np.uint8).reshape(h, out.bytesPerLine() // 4, 4)
+    return px[:, :400, 3]      # alpha channel: road pixels > 0
+
+
+def test_roads_track_up_east_paints_north_road_left(qapp):
+    """Track-up heading east: a due-north motorway must paint on the
+    LEFT half (same convention pinned for terrain in #90)."""
+    alpha = _roads_paint(10.0, 90.0)
+    left = alpha[:, :200].astype(bool).sum()
+    right = alpha[:, 200:].astype(bool).sum()
+    assert left > 50 and left > 5 * max(1, right)
+
+
+def test_roads_declutter_drops_minor_above_20nm(qapp):
+    """Above the declutter range only arterial classes draw: the
+    residential spur contributes pixels at 10 NM but not at 30 NM."""
+    a10 = _roads_paint(10.0, 0.0).astype(bool).sum()
+    a30 = _roads_paint(30.0, 0.0).astype(bool).sum()
+    assert a10 > a30 > 0
+
+
 def test_terrain_orientation_north_up(qapp):
     """North-up: land (north) paints on the TOP half."""
     left, right, top, bottom = _painted_water_fraction(0.0)

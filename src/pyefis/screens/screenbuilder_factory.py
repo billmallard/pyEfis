@@ -871,6 +871,19 @@ _register(InstrumentSpec(
              label="Terrain tile path",
              help="GLO-30/SRTM HGT tree (the SVS tile_path; on the Pi "
                   "/data/makerplane-data/terrain/tiles)"),
+        Prop("layer_roads", "boolean", default=True,
+             label="Layer: roads",
+             help="major roads from the highways pack (shown at/below "
+                  "40 NM; arterials only above 20 NM)"),
+        Prop("highway_db_path", "string", default="",
+             label="Roads db path",
+             help="highways.sqlite (the SVS highway_db_path; on the Pi "
+                  "/data/makerplane-data/highways/current/"
+                  "highways.sqlite)"),
+        Prop("road_color", "color", default="#c0c0c0",
+             label="Road colour",
+             help="road line colour (minor classes draw thinner and "
+                  "slightly transparent)"),
         Prop("layer_airports", "boolean", default=True,
              label="Layer: airports",
              help="FAA sectional airport symbols with ident labels "

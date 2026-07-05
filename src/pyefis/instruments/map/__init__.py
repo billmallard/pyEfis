@@ -67,6 +67,9 @@ class MovingMap(QWidget):
         self.terrain_mode = "relief"           # or "caution"
         self.water_db_path = ""                # water.sqlite (#91)
         self.water_max_vertices = 512          # per-polygon raster cap
+        self.layer_roads = True
+        self.highway_db_path = ""              # highways.sqlite (SVS pack)
+        self.road_color = "#c0c0c0"
         self.layer_airports = True
         self.nasr_db_path = ""                 # NASR airports.sqlite
         self.layer_navaids = True
@@ -139,6 +142,7 @@ class MovingMap(QWidget):
     def _build_layers(self):
         from pyefis.instruments.map.layers import airports  # noqa: F401
         from pyefis.instruments.map.layers import navaids  # noqa: F401
+        from pyefis.instruments.map.layers import roads  # noqa: F401
         from pyefis.instruments.map.layers import terrain  # noqa: F401
         self._layers = []
         for lid, cls in sorted(map_layers.LAYER_REGISTRY.items(),
