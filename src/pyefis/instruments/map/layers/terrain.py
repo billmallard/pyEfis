@@ -130,6 +130,14 @@ class TerrainLayer(MapLayer):
     def _request(self, key, x):
         job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy)
         with self._lock:
+            # Same window already queued/in flight: do NOT refresh the
+            # job. The tuple carries the raw (unsnapped) pose, so each
+            # repaint used to post a same-key-different-pose job; the
+            # worker's latest-wins check then threw away every finished
+            # image while the aircraft moved -- an endless render loop
+            # that never updated the display (#89).
+            if self._job is not None and self._job[0] == key:
+                return
             self._job = job
             if self._worker is None:
                 self._worker = threading.Thread(
@@ -155,6 +163,9 @@ class TerrainLayer(MapLayer):
                 import logging
                 logging.getLogger(__name__).exception(
                     "map terrain render failed")
+                with self._lock:
+                    if self._job == job:
+                        self._job = None   # let the next paint re-request
             last = job
             try:
                 self._owner.update()

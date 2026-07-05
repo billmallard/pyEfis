@@ -52,7 +52,12 @@ class _DbLayer(MapLayer):
             snap = self._snap
             if snap is not None and snap[0] == key:
                 return snap[1]
-            self._job = (key, x.lat0, x.lon0, x.range_nm)
+            # Don't refresh an in-flight job for the same window: the
+            # tuple carries the raw pose, so a same-key repost makes
+            # the worker's latest-wins check discard the finished
+            # snapshot every time the aircraft is moving (#89).
+            if self._job is None or self._job[0] != key:
+                self._job = (key, x.lat0, x.lon0, x.range_nm)
             if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._worker_loop,
@@ -81,6 +86,9 @@ class _DbLayer(MapLayer):
                 import logging
                 logging.getLogger(__name__).exception(
                     "map %s collect failed", self.id)
+                with self._lock:
+                    if self._job == job:
+                        self._job = None   # let the next paint re-request
             last = job
             try:
                 self._owner.update()
