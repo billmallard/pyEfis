@@ -497,8 +497,17 @@ vertices provably world-fixed: same pose -> bit-identical terrain
 regardless of approach heading); KRIL/KASE/DFW poses render
 equivalently to the fan; Pi frame time within budget.
 **IMPLEMENTED + DEPLOYED 2026-06-12** (Windows 5.65 ms, Pi production
-app clean, KASE/KRIL/DFW poses verified). Awaiting Bill's steep-turn
-flight verdict on the swim before marking complete.
+app clean, KASE/KRIL/DFW poses verified).
+
+**FLIGHT VERDICT (Bill, 2026-07-05) — mixed, NOT a clear win.** Track 1a
+is live on `display-changes` and its residual swim is *tolerable* (not
+rock-solid, but not overly distracting either). The problem is fidelity:
+the **pre-P8 polar fan "just looked better and was substantially more
+accurate representing the terrain."** The clipmap traded terrain
+fidelity/accuracy for reduced swim, and Bill does not consider that trade a
+win. **Open direction for "what's next": consider reverting Track 1a to the
+polar fan** — accept more swim for better, more-accurate terrain. Not yet
+decided.
 
 ### Jet-altitude findings (2026-06-12, FL170/FL300 testing)
 
@@ -514,6 +523,15 @@ every frame); (3) cache the designator collector (uncached, loops
 all airports every frame); (4) Track 1b below.
 
 ### Track 1b — toroidal per-level height textures (streaming)
+
+> **STATUS: ATTEMPTED then ABANDONED (2026-07-05).** Built over a weekend on
+> branch **`track1b-per-level-heightmap-textures`** (retained on origin, NOT
+> merged; design notes in `docs/track1b_notes.md`). The result was
+> **catastrophic**: terrain swim increased markedly and performance degraded
+> across the board. Unresolved whether this was the wrong approach or just
+> needed more work — the effort is **shelved**. Do not resume without first
+> re-examining the approach. The checkboxes below are the original (unbuilt)
+> design, left for reference.
 
 - [ ] Replace the monolithic 2x2-deg patch with one small toroidal
       height texture per clipmap level, updated INCREMENTALLY (strip

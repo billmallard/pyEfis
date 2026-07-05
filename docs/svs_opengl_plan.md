@@ -1,5 +1,12 @@
 # SVS OpenGL Renderer — Implementation Plan
 
+> **STATUS: COMPLETE — historical plan (Stage 1, terrain mesh on GPU).** All
+> eight steps shipped and are deployed on the Pi 5; the terrain renders at
+> ~196 FPS / ~5 ms, over 3x the 60 FPS target. The `opengl` tier is now the
+> *only* SVS renderer. **Live status for the whole SVS GPU effort lives in
+> [svs_structural_plan.md](svs_structural_plan.md)** (this file is kept for
+> historical context only).
+
 The biggest single performance gain available to the SVS on Pi 5-class hardware
 is moving the terrain rasterisation off the CPU and onto the V3D GPU. This doc
 captures the design, scope, and step-by-step path for that work, organised so

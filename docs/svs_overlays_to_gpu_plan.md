@@ -1,5 +1,12 @@
 # SVS overlays → GPU plan
 
+> **STATUS: COMPLETE — historical plan (Stage 2, overlays on GPU).** All phases
+> (0-5: water, obstacles, runways, markings, designator text, airport flags +
+> text) shipped. The SVS is now GL-only with no CPU overlay path, and total SVS
+> frame cost fell from the ~28 ms measured here to ~7 ms. **Live status for the
+> whole SVS GPU effort lives in [svs_structural_plan.md](svs_structural_plan.md)**
+> (P1 = flags/text, P2 = CPU-era deletion); this file is historical context only.
+
 ## Why
 
 Pyefis's main Python thread is **pegged at 90-95% CPU** during SVS rendering on
