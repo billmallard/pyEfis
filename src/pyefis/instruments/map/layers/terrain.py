@@ -119,7 +119,12 @@ class TerrainLayer(MapLayer):
         p.save()
         p.translate(c)
         if x.rot:
-            p.rotate(math.degrees(x.rot))
+            # to_screen applies R(+rot) to world EN vectors; carrying a
+            # NORTH-UP image onto that screen therefore needs the
+            # painter rotated by -rot (QPainter.rotate is clockwise,
+            # y-down). +rot painted the terrain 2*track degrees off --
+            # a coastline reads as mirrored on east/west tracks (#90).
+            p.rotate(-math.degrees(x.rot))
         s = mpp * x._px_per_m               # screen px per image px
         w = qimg.width() * s
         h = qimg.height() * s
