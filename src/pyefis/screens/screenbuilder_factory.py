@@ -903,7 +903,7 @@ _register(InstrumentSpec(
                   "/data/makerplane-data/water/current/water.sqlite). "
                   "When set, lakes and coastline from the water pack "
                   "are rasterized into the terrain image"),
-        Prop("water_max_vertices", "number", default=128, minimum=16,
+        Prop("water_max_vertices", "number", default=512, minimum=16,
              maximum=1024, step=16, label="Water vertex cap",
              help="per-polygon vertex cap for map water rasterization "
                   "(higher = more coastline/lake detail per rebuild)"),

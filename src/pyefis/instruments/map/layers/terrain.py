@@ -92,8 +92,8 @@ class TerrainLayer(MapLayer):
         if water_path:
             try:
                 from pyefis.instruments.ai.water_db import WaterDB
-                cap = int(getattr(owner, "water_max_vertices", 128)
-                          or 128)
+                cap = int(getattr(owner, "water_max_vertices", 512)
+                          or 512)
                 self._water = WaterDB(water_path, max_vertices=cap)
             except Exception:
                 import logging
