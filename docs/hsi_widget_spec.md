@@ -24,10 +24,19 @@ pointing, which way is my course, and how far off it am I.*
 
 ## 2. Design principles
 
-1. **The widget is a display, not a controller.** It renders state published on
-   the FIX bus and (with an OBS control) may *write* a single selected-course
-   value, but it does not own navigation logic. Source selection, deviation
-   scaling, and waypoint sequencing live upstream (fix-gateway / the navigator).
+1. **A display first, with a thin, honest control surface.** The HSI's main job
+   is to render navigation state published on the FIX bus. It *may* also write
+   back a small, well-defined set of **pilot selections made at the instrument** —
+   the **selected course** (OBS/CRS) and the **active nav source** (`NAVSRC`, via
+   the tappable source label / a `CDI SRC` button) — because those are choices a
+   pilot makes *on the HSI*. What it must **not** do is own navigation *logic*:
+   source **routing** (the `select` compute), deviation scaling, and waypoint
+   sequencing live upstream (fix-gateway / the navigator). Rule of thumb: the
+   widget may publish *what the pilot picked*, never *compute what the needles
+   mean*. (Note the distinction: the widget writes the source **selection**
+   `NAVSRC`; fix-gateway does the source **routing**. Persistence of that
+   selection and its publication as a true CAN-FiX bus parameter are fix-gateway
+   concerns — see §4.3, §11.4, and issue #84.)
 2. **One canonical key per concept, fed by a selector.** The HSI reads
    `COURSE` / `CDI` / `GSI`; fix-gateway's `compute` `select` routes the active
    source (`NAVSRC`) into those canonical keys. The widget never has to know
