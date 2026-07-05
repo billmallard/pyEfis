@@ -112,6 +112,77 @@ Bosch CAN (1986, automotive)
                  flexibility axis)
 ```
 
+## 6. Assessment: is CAN-FIX the right protocol to standardize on?
+
+(2026-07-05.) **Yes — with precision about what "standardize" means in
+this stack.** fix-gateway is the hub, and the FIX key vocabulary — not
+any wire protocol — is the real standard. That decomposes the question
+into two decisions with very different stakes:
+
+1. **The semantic vocabulary** (which parameters exist, units, ranges,
+   metadata). This is where lock-in actually lives, and it is already
+   decided by adoption: the FIX key space is CAN-FIX's parameter
+   model, and the configurator (V-speed profiles, gauge bands), the
+   GCU contract and the instrument-bugs design all ride CAN-FIX
+   semantics.
+2. **The wire protocol for our own hardware nodes** (GCU head, sensor
+   nodes). Nearly free to choose — anything else can be bridged in
+   through a fix-gateway plugin, as GDL90/Stratux, X-Plane, GNX-375,
+   OnSpeed and the Dynon/MGL/Garmin serial protocols already are.
+
+### The alternatives, honestly
+
+- **CANaerospace** — frozen at V1.7/2006, no steward, and the
+  flexibility-at-the-endpoints burden is what CAN-FIX rejected.
+  Relevant as an *input*: a CANaerospace plugin yields native Rotax iS
+  engine data, and a frozen spec is a pleasant integration target.
+  Consume it; don't adopt it.
+- **ARINC 825** — paywalled spec, committee governance without an
+  E-AB seat, zero experimental-aviation ecosystem. Wrong domain.
+- **DroneCAN / Cyphal** — the only serious rival: actively developed,
+  strong tooling, cheap COTS nodes (a ~$50 DroneCAN magnetometer is a
+  tempting answer to the compass gap). But the semantics are
+  drone-centric — no V-speed metadata, no GA engine-instrument
+  vocabulary, none of the pilot-facing configuration this ecosystem is
+  built on — and Cyphal's DSDL toolchain is heavy for the
+  cheap-microcontroller audience CAN-FIX serves. Right relationship:
+  **bridge, don't migrate** (a DroneCAN input plugin someday to
+  harvest commodity sensors).
+- **NMEA 2000** — closed PGN registry, marine semantics. No.
+
+### The slow-moving environment cuts in favor
+
+Aviation buses cement over decades (CANaerospace 1998 → still in every
+injected Rotax; CAN-FIX ~2012 → still the MakerPlane bus). In a slow
+environment the dominant risk is not being outrun — it is **a standard
+dying with its steward**, which is precisely the CANaerospace story.
+Against that, CAN-FIX is unusually well positioned for this project:
+CC-licensed, multiple open implementations, Birkelbach active, and the
+canfix-spec fork (.ods master → generated JSON/XML/RST, live Pages
+spec, wiki) is stewardship infrastructure we already operate. A
+co-steward seat is unavailable at any price with Cyphal or AEEC. In a
+slow environment, owning the vocabulary beats renting a bigger one.
+
+### Practical posture
+
+- **Declare it:** CAN-FIX semantics as the standard; other protocols
+  are federated inputs via fix-gateway plugins. (Clean against the IP
+  posture: CC license, documented Birkelbach provenance.)
+- **Exercise stewardship on real gaps** — e.g. the missing Selected
+  Heading parameter surfaced by the instrument-bugs design is a
+  natural first spec addition through the fork process.
+- **Known ceilings, no action needed yet:** classic CAN 2.0 bandwidth
+  (fine for flight/engine data, not video/radar-class payloads) and no
+  CAN FD story. If that ever matters, add a second transport bridged
+  at fix-gateway — not a protocol migration.
+- **Keep two bridge plugins on the roadmap:** CANaerospace-in (Rotax
+  iS), DroneCAN-in (commodity sensors).
+
+One-sentence version: the architecture already made the wire protocol
+swappable, so standardizing on CAN-FIX costs little even if wrong —
+and the stewardship position makes it the only option whose future is
+partly in our own hands.
+
 ## Sources
 
 - [Wikipedia — CANaerospace](https://en.wikipedia.org/wiki/CANaerospace)
