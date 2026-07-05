@@ -30,6 +30,15 @@ import csv
 import sqlite3
 from pathlib import Path
 
+# SP = SPECIAL ROUTE (NASR 26-01 DPN, effective 03 Sep 2026): non-regulatory
+# ZK helicopter-air-ambulance RNAV routes. Per the FAA they are "not included
+# on public charts" and may not be filed or flown without Flight Standards
+# approval -- so they must never be drawn on the moving map. Filter them out at
+# build time by their AWY_DESIGNATION. See makerplane-data
+# docs/nasr_2601_dpn_prep.md section 4. No SP rows exist before the 03 Sep
+# cycle, so this is a no-op on every current pack.
+EXCLUDE_AWY_DESIGNATIONS = frozenset({"SP"})
+
 
 def _find_csv(root, name):
     hits = sorted(Path(root).rglob(name))
@@ -98,8 +107,12 @@ def _add(pts, dead, name, lat, lon):
 
 def load_airways(path, pts):
     segs = []
+    skipped = 0
     with open(path, encoding="utf-8-sig", newline="") as fh:
         for r in csv.DictReader(fh):
+            if (r.get("AWY_DESIGNATION") or "").strip() in EXCLUDE_AWY_DESIGNATIONS:
+                skipped += 1          # SP special routes -- never charted
+                continue
             awy = (r.get("AWY_ID") or "").strip()
             chain = [(n, pts[n]) for n in
                      (r.get("AIRWAY_STRING") or "").split()
@@ -107,7 +120,7 @@ def load_airways(path, pts):
             for i, ((n1, c1), (n2, c2)) in enumerate(
                     zip(chain, chain[1:])):
                 segs.append((awy, i, n1, c1[0], c1[1], n2, c2[0], c2[1]))
-    return segs
+    return segs, skipped
 
 
 def main(argv=None):
@@ -131,7 +144,7 @@ def main(argv=None):
     navaids = load_navaids(args.nav)
     fixes = load_fixes(args.fix)
     pts = point_lookup(navaids, fixes)
-    segs = load_airways(args.awy, pts)
+    segs, skipped_awy = load_airways(args.awy, pts)
 
     con = sqlite3.connect(args.output)
     cur = con.cursor()
@@ -157,8 +170,11 @@ def main(argv=None):
     """)
     con.commit()
     con.close()
-    print("wrote %s: %d navaids, %d fixes, %d airway segments"
-          % (args.output, len(navaids), len(fixes), len(segs)))
+    # The "skipped N special routes" count always prints (even at 0) so a CI log
+    # reader can see the SP filter ran, per docs/nasr_2601_dpn_prep.md section 4.
+    print("wrote %s: %d navaids, %d fixes, %d airway segments "
+          "(skipped %d special routes)"
+          % (args.output, len(navaids), len(fixes), len(segs), skipped_awy))
     return 0
 
 
