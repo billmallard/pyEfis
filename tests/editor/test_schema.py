@@ -128,3 +128,21 @@ def test_schema_is_json_serialisable():
     assert reparsed["schema_version"] == eschema.SCHEMA_VERSION
     assert "instruments" in reparsed
     assert reparsed["instruments"]  # non-empty
+
+
+def test_action_catalogue_is_well_formed():
+    """The Button action catalogue drives the configurator's action picker
+    (soft-controls Phase B). Every entry is complete and its arg.kind is one the
+    editor knows how to render."""
+    s = eschema.build_schema()
+    actions = s["actions"]
+    assert actions, "empty action catalogue"
+    KINDS = {"none", "fixkey", "fixkey_number", "fixkey_fixkey",
+             "screen", "color", "text", "string", "raw"}
+    verbs = [a["verb"] for a in actions]
+    assert len(verbs) == len(set(verbs)), "duplicate verbs"
+    for a in actions:
+        for f in ("verb", "label", "group", "arg", "help"):
+            assert a.get(f), f"action {a.get('verb')!r} missing {f}"
+        assert a["arg"]["kind"] in KINDS, \
+            f"action {a['verb']!r}: unknown arg kind {a['arg'].get('kind')!r}"

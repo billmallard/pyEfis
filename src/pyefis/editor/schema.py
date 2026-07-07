@@ -244,6 +244,76 @@ def _entry_from_curation(instrument_type):
     }
 
 
+# --- Button conditions/actions catalogue (soft-controls Phase B) -------------
+# The action verbs a Button's conditions can trigger, with the argument shape
+# the configurator's action editor should collect for each. pyEfis owns this
+# (docs: makerplane-data/docs/soft_controls_configurator.md section 11.4).
+# Non-"style" verbs are HMI actions (pyefis.hmi.actionclass.ActionClass); the
+# three "style" verbs are handled locally by the Button widget. A test asserts
+# this list stays in lockstep with the real HMI action registry.
+#
+# arg.kind vocabulary the editor renders an input for:
+#   none | fixkey | fixkey_number | fixkey_fixkey | screen | color | text
+#   | string | raw
+_ACTIONS = [
+    # --- FIX-database value ---
+    {"verb": "change value", "label": "Change value by", "group": "value",
+     "arg": {"kind": "fixkey_number", "number_label": "Delta"},
+     "help": "add a delta to a FIX key (clamped at its min/max)"},
+    {"verb": "change value wrap", "label": "Change value (wrap)", "group": "value",
+     "arg": {"kind": "fixkey_number", "number_label": "Delta"},
+     "help": "add a delta, wrapping within the key's range -- e.g. a heading "
+             "bug stepping down through 0 to just below max"},
+    {"verb": "set value", "label": "Set value", "group": "value",
+     "arg": {"kind": "fixkey_number", "number_label": "Value"},
+     "help": "set a FIX key to a fixed value"},
+    {"verb": "sync value", "label": "Copy value", "group": "value",
+     "arg": {"kind": "fixkey_fixkey", "labels": ["Into key", "From key"]},
+     "help": "copy one key's value into another"},
+    {"verb": "toggle bit", "label": "Toggle", "group": "value",
+     "arg": {"kind": "fixkey"},
+     "help": "flip a boolean FIX key on/off"},
+    # --- screen navigation ---
+    {"verb": "show screen", "label": "Show screen", "group": "screen",
+     "arg": {"kind": "screen"}, "help": "jump to a named screen"},
+    {"verb": "show next screen", "label": "Next screen", "group": "screen",
+     "arg": {"kind": "none"}, "help": "cycle to the next screen"},
+    {"verb": "show previous screen", "label": "Previous screen", "group": "screen",
+     "arg": {"kind": "none"}, "help": "cycle to the previous screen"},
+    # --- the button's own appearance (handled locally by the widget) ---
+    {"verb": "set bg color", "label": "Set background colour", "group": "style",
+     "arg": {"kind": "color"}, "help": "change the button's fill colour"},
+    {"verb": "set fg color", "label": "Set text colour", "group": "style",
+     "arg": {"kind": "color"}, "help": "change the button's label colour"},
+    {"verb": "set text", "label": "Set text", "group": "style",
+     "arg": {"kind": "text"}, "help": "change the button's label"},
+    # --- instrument modes / units ---
+    {"verb": "set airspeed mode", "label": "Set airspeed mode", "group": "mode",
+     "arg": {"kind": "string"}, "help": "switch the airspeed display mode"},
+    {"verb": "set egt mode", "label": "Set EGT mode", "group": "mode",
+     "arg": {"kind": "string"}, "help": "switch the EGT gauge display mode"},
+    {"verb": "set instrument units", "label": "Set instrument units", "group": "mode",
+     "arg": {"kind": "string"}, "help": "switch an instrument's units"},
+    # --- HMI menu navigation ---
+    {"verb": "activate menu", "label": "Activate menu", "group": "menu",
+     "arg": {"kind": "string"}, "help": "open an HMI menu"},
+    {"verb": "activate menu item", "label": "Activate menu item", "group": "menu",
+     "arg": {"kind": "string"}, "help": "select an item in the active menu"},
+    {"verb": "menu encoder", "label": "Menu encoder", "group": "menu",
+     "arg": {"kind": "string"}, "help": "route encoder turns to the active menu"},
+    {"verb": "set menu focus", "label": "Set menu focus", "group": "menu",
+     "arg": {"kind": "string"}, "help": "move focus within the menu"},
+    # --- advanced / escape hatches ---
+    {"verb": "exit", "label": "Send command / exit", "group": "advanced",
+     "arg": {"kind": "string"},
+     "help": "send a command to named instruments (<names>:<command>)"},
+    {"verb": "evaluate", "label": "Evaluate (raw Python)", "group": "advanced",
+     "arg": {"kind": "raw"},
+     "warn": "runs arbitrary Python on the device -- use with care",
+     "help": "evaluate a raw Python expression (advanced)"},
+]
+
+
 def build_schema():
     """Return the full instrument schema as a JSON-serialisable dict.
 
@@ -274,6 +344,7 @@ def build_schema():
         "common_options": _COMMON_OPTIONS,
         "categories": sorted(categories),
         "instruments": instruments,
+        "actions": _ACTIONS,
     }
 
 

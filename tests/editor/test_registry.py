@@ -187,6 +187,22 @@ def test_attr_property_defaults_match_widget(fix, qtbot, hmi_actions):
                     f"default {p.default!r}")
 
 
+def test_action_catalogue_matches_hmi_registry(qtbot, hmi_actions):
+    """The Button action catalogue (schema._ACTIONS, soft-controls Phase B) must
+    stay in lockstep with the real HMI action registry, so the configurator can
+    never offer a verb the runtime doesn't handle -- or miss one it does. The
+    three "style" verbs are handled locally by the Button widget, not the HMI
+    hub, so they are exempt from the registry comparison."""
+    from pyefis import hmi
+    real = set(hmi.actions.signalMap)
+    hmi_verbs = {a["verb"] for a in eschema._ACTIONS if a["group"] != "style"}
+    assert hmi_verbs == real, (
+        f"catalogue drift from HMI registry -- missing: {sorted(real - hmi_verbs)}, "
+        f"extra: {sorted(hmi_verbs - real)}")
+    catalogue = {a["verb"] for a in eschema._ACTIONS}
+    assert {"set bg color", "set fg color", "set text"} <= catalogue
+
+
 def test_data_status_is_hidden_from_the_palette():
     """The data-management boot screen is system-managed (gui forces it on
     boot), so data_status is hidden from the configurator palette, while the
