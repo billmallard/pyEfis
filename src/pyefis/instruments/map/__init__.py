@@ -221,8 +221,14 @@ class MovingMap(LiveBindingMixin, QWidget):
     def paintEvent(self, event):
         if not self._layers_built:
             self._build_layers()
-            # Options are applied by now; wire runtime control bindings once.
-            self.init_live_bindings(self._live_binding_specs())
+            # Options are applied by now; wire runtime control bindings once, but
+            # DEFER out of the paint. Binding init writes the seed values (FIX
+            # emissions) and can touch layers; doing that inside paintEvent risks
+            # re-entering the painter. singleShot(0) runs it after this paint.
+            QTimer.singleShot(0, self._init_live_bindings_once)
+
+    def _init_live_bindings_once(self):
+        self.init_live_bindings(self._live_binding_specs())
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(16, 24, 32))

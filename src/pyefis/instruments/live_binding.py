@@ -81,6 +81,13 @@ class LiveBindingMixin:
             except Exception:                  # noqa: BLE001 -- construct-never-raises
                 logger.warning("live binding: FIX key %r unavailable", key)
                 continue
+            # Seed the key from the config default BEFORE connecting our slot, so
+            # seeding does not fire our OWN applier. That matters for a setter
+            # binding (a map layer): applying mid-init would call set_layer and,
+            # on the device, re-enter the terrain system and abort. Seeding first
+            # still puts the value on the bus for other listeners; the widget is
+            # already at its config default, so there is nothing to re-apply.
+            self._seed(b, item)
             slot = self._live_slot(b, item)
             for typ in (float, int, bool):
                 try:
@@ -88,7 +95,6 @@ class LiveBindingMixin:
                 except Exception:              # overload may not exist; harmless
                     pass
             self._live_binds.append((b, item, slot))
-            self._seed(b, item)
 
     # --- internals ---------------------------------------------------------
     def _live_slot(self, b, item):
