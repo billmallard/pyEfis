@@ -70,6 +70,41 @@ APPLY_ATTR = "attr"
 # Where a category-2 value lives on the FIX item.
 FIX_SOURCES = frozenset({"aux", "min", "max"})
 
+# How a bound FIX key's *value* maps onto a bindable property (control_bindings.md
+# section 5). A "setting" (read-write, on the value channel) -- NOT a category-2
+# reference value (read-only, on min/max/aux). See #64 for why they stay distinct.
+BINDING_SEMANTICS = frozenset({"bool", "index_ladder", "enum", "scalar"})
+
+
+@dataclass
+class Binding:
+    """Marks a :class:`Prop` as *live-bindable*: the setting can also be driven at
+    runtime by a FIX key, not only set once in the editor. A control (button /
+    knob) writes the key; the widget subscribes and derives the property.
+
+    ``semantics`` says how the key value maps to the property:
+      * ``bool``          -- 0/1 <-> a boolean setting (a map layer);
+      * ``index_ladder``  -- an int index into a comma-list option (map range);
+      * ``enum``          -- an int index into the Prop's ``enum`` (orientation);
+      * ``scalar``        -- the float value directly.
+    ``key_option`` is the option that names the FIX key (defaults to
+    ``<prop>_key``). ``ladder_option`` (index_ladder only) names the comma-list
+    option the index steps through.
+    """
+
+    semantics: str
+    key_option: str = ""
+    ladder_option: str = ""
+
+    def __post_init__(self):
+        if self.semantics not in BINDING_SEMANTICS:
+            raise ValueError(
+                f"Binding: unknown semantics {self.semantics!r} "
+                f"(expected one of {sorted(BINDING_SEMANTICS)})")
+        if self.semantics == "index_ladder" and not self.ladder_option:
+            raise ValueError(
+                "Binding: semantics 'index_ladder' requires ladder_option=")
+
 
 @dataclass
 class Prop:
@@ -90,6 +125,7 @@ class Prop:
     required: bool = False
     help: str = ""
     apply: str = APPLY_ATTR
+    bindable: object = None   # a Binding when this setting is live-bindable
 
     def __post_init__(self):
         if self.kind not in PROP_KINDS:
@@ -109,6 +145,16 @@ class Prop:
                 or self.apply == "special"):
             raise ValueError(
                 f"Prop {self.name!r}: bad apply {self.apply!r}")
+        if self.bindable is not None:
+            if not isinstance(self.bindable, Binding):
+                raise ValueError(
+                    f"Prop {self.name!r}: bindable must be a Binding")
+            if not self.bindable.key_option:
+                self.bindable.key_option = f"{self.name}_key"
+            if self.bindable.semantics == "enum" and self.kind != "enum":
+                raise ValueError(
+                    f"Prop {self.name!r}: bindable semantics 'enum' needs kind "
+                    f"'enum'")
         if not self.label:
             self.label = self.name.replace("_", " ").capitalize()
 

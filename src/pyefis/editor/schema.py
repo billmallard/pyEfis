@@ -194,6 +194,15 @@ def _prop_to_field(p):
         field["step"] = p.step
     if p.help:
         field["help"] = p.help
+    if p.bindable is not None:
+        # A live-bindable setting (control_bindings.md): the configurator's
+        # binding surface reads this to offer "drive this with a control" and to
+        # write the <key_option> that names the FIX key.
+        b = p.bindable
+        field["bindable"] = {"semantics": b.semantics,
+                             "key_option": b.key_option}
+        if b.ladder_option:
+            field["bindable"]["ladder_option"] = b.ladder_option
     return field
 
 
