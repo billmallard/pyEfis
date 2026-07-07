@@ -97,7 +97,10 @@ def test_gl_types_flagged_not_offscreen_renderable():
 
 def test_required_options_present():
     s = eschema.build_schema()
-    assert s["instruments"]["button"]["required_options"] == ["config"]
+    # The button is now defined inline (its fields ARE the options); dbkey is the
+    # one that must be set (the configurator auto-allocates a TSBTN key). The
+    # legacy external 'config' path is optional, for hand-authored panels.
+    assert s["instruments"]["button"]["required_options"] == ["dbkey"]
     assert s["instruments"]["static_text"]["required_options"] == ["text"]
 
 

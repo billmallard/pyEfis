@@ -118,15 +118,21 @@ def build_virtual_vfr(
 
 
 def build_button(screen, config, font_percent=None, font_family=None, replace=None):
-    if "options" in config and "config" in config["options"]:
+    opts = config.get("options", {}) or {}
+    # Legacy: an external button YAML referenced by path (hand-authored panels).
+    if opts.get("config"):
         return button.Button(
             screen,
-            config_file=os.path.join(
-                screen.parent.config_path, config["options"]["config"]
-            ),
+            config_file=os.path.join(screen.parent.config_path, opts["config"]),
             font_family=font_family,
         )
-    raise ValueError("button must specify options: config:")
+    # Inline: the instrument's options ARE the button definition (authored in the
+    # configurator). Needs at least a dbkey to bind to.
+    if opts.get("dbkey"):
+        return button.Button(screen, config=dict(opts), font_family=font_family)
+    raise ValueError(
+        "button needs options: either 'config:' (an external YAML) or inline "
+        "fields including 'dbkey:'")
 
 
 def build_static_text(
@@ -960,16 +966,46 @@ _register(InstrumentSpec(
     ],
 ))
 
+# A soft touchscreen button (Eric Blevins' Button widget). Its definition is
+# either inline (these options -- authored in the configurator) or an external
+# YAML referenced by the legacy 'config' path. All props are apply="special":
+# build_button consumes the options directly (the widget reads self.config), so
+# they are NOT setattr'd onto the widget. The conditions/actions behaviour block
+# is a later phase (docs: makerplane-data/docs/soft_controls_configurator.md).
 _register(InstrumentSpec(
     type="button",
     label="Button",
     category="control",
     builder=build_button,
     builds_in_isolation=False,
+    offscreen_renderable=False,
     properties=[
-        Prop("config", "string", required=True, apply="special",
-             label="Config file",
-             help="path (under the config dir) to the button's YAML definition"),
+        Prop("text", "string", default="", apply="special",
+             label="Text", help="button label (use \\n for two lines)"),
+        Prop("type", "enum", default="simple",
+             enum=["simple", "toggle", "repeat"], apply="special",
+             label="Type",
+             help="simple = click; toggle = on/off state; repeat = "
+                  "auto-repeat while held"),
+        Prop("dbkey", "fixkey", default="", required=True, apply="special",
+             label="FIX key",
+             help="backing touchscreen-button key (TSBTN...); the configurator "
+                  "assigns it automatically"),
+        Prop("bg_color", "color", default="#101418", apply="special",
+             label="Background colour", help="button fill colour"),
+        Prop("fg_color", "color", default="#00ffff", apply="special",
+             label="Text colour", help="button label colour"),
+        Prop("transparent", "boolean", default=False, apply="special",
+             label="Transparent background",
+             help="draw no fill so what is behind the button shows through"),
+        Prop("hover_show", "boolean", default=False, apply="special",
+             label="Show only on hover",
+             help="hide the button until the pointer is over it"),
+        # Legacy: an external button YAML referenced by path (hand-authored
+        # panels). Leave blank to use the inline fields above.
+        Prop("config", "string", default="", apply="special",
+             label="Config file (legacy)",
+             help="path to an external button YAML; blank = use the fields above"),
     ],
 ))
 
