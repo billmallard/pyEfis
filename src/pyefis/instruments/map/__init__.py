@@ -228,9 +228,6 @@ class MovingMap(LiveBindingMixin, QWidget):
             # emissions) and can touch layers; doing that inside paintEvent risks
             # re-entering the painter. singleShot(0) runs it after this paint.
             QTimer.singleShot(0, self._init_live_bindings_once)
-
-    def _init_live_bindings_once(self):
-        self.init_live_bindings(self._live_binding_specs())
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(16, 24, 32))
@@ -271,3 +268,6 @@ class MovingMap(LiveBindingMixin, QWidget):
             chip += "  NO POS"
         p.drawText(QRectF(6, 4, self.width() - 12, f.pixelSize() + 6),
                    Qt.AlignmentFlag.AlignLeft, chip)
+
+    def _init_live_bindings_once(self):
+        self.init_live_bindings(self._live_binding_specs())
