@@ -14,6 +14,7 @@ import pyavtools.fix as fix
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map import layers as map_layers
+from pyefis.instruments.live_binding import LiveBind, LiveBindingMixin
 
 NM_M = 1852.0
 
@@ -49,7 +50,7 @@ class MapTransform:
                        self.cy - dn * self._px_per_m)
 
 
-class MovingMap(QWidget):
+class MovingMap(LiveBindingMixin, QWidget):
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
         super(MovingMap, self).__init__(parent)
         self.setStyleSheet("background: transparent; border: 0px")
@@ -76,6 +77,12 @@ class MovingMap(QWidget):
         self.layer_fixes = False
         self.layer_airways = False
         self.navaid_db_path = ""               # navaids.sqlite (Phase D)
+        # Control-binding keys (control_bindings.md): when an <x>_key option
+        # names a FIX key, a control (button/knob) drives that setting at
+        # runtime. Empty = the setting stays a static config option.
+        self.range_key = ""
+        self.orientation_key = ""
+        self.terrain_key = ""
         self._layers = []
         self._layers_built = False
 
@@ -182,6 +189,21 @@ class MovingMap(QWidget):
                               if v < self.range_nm), lad[0])
         self.update()
 
+    def _live_binding_specs(self):
+        """Runtime control bindings (control_bindings.md). Each fires only if its
+        ``<x>_key`` option names a FIX key; otherwise the setting stays static.
+        range = index over the ladder, orientation = enum index, terrain = a
+        boolean layer (applied via set_layer so the live layer object toggles)."""
+        return [
+            LiveBind("range_nm", "index_ladder", "range_key",
+                     ladder_option="range_ladder"),
+            LiveBind("orientation", "enum", "orientation_key",
+                     enum=("track_up", "north_up")),
+            LiveBind("layer_terrain", "bool", "terrain_key",
+                     apply=lambda w, v: (setattr(w, "layer_terrain", v),
+                                         w.set_layer("terrain", v))),
+        ]
+
     def toggle_orientation(self):
         self.orientation = ("north_up" if self.orientation == "track_up"
                             else "track_up")
@@ -199,6 +221,8 @@ class MovingMap(QWidget):
     def paintEvent(self, event):
         if not self._layers_built:
             self._build_layers()
+            # Options are applied by now; wire runtime control bindings once.
+            self.init_live_bindings(self._live_binding_specs())
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(16, 24, 32))

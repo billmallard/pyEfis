@@ -33,7 +33,8 @@ from pyefis.instruments import vsi
 from pyefis.instruments import weston
 from pyefis.instruments import wind
 from pyefis.instruments.ai.VirtualVfr import VirtualVfr
-from pyefis.screens.instrument_spec import InstrumentSpec, Prop, FixValue
+from pyefis.screens.instrument_spec import (
+    Binding, InstrumentSpec, Prop, FixValue)
 
 
 def build_weston(screen, config, font_percent=None, font_family=None, replace=None):
@@ -853,13 +854,25 @@ _register(InstrumentSpec(
     properties=[
         Prop("range_nm", "number", default=10.0, minimum=1, maximum=500,
              label="Range (NM)",
-             help="distance from the ownship anchor to the top edge"),
+             help="distance from the ownship anchor to the top edge",
+             bindable=Binding("index_ladder", key_option="range_key",
+                              ladder_option="range_ladder")),
+        Prop("range_key", "fixkey", default="",
+             label="Range control key",
+             help="optional FIX key that cycles the range at runtime (a button "
+                  "'change value wrap' / the knob steps the ladder index). "
+                  "Empty = fixed range"),
         Prop("range_ladder", "string", default="2,5,10,20,40,80,160",
              label="Range ladder",
              help="comma list of ranges the range buttons step through"),
         Prop("orientation", "enum", default="track_up",
              enum=["track_up", "north_up"], label="Orientation",
-             help="track-up rotates the world; north-up rotates ownship"),
+             help="track-up rotates the world; north-up rotates ownship",
+             bindable=Binding("enum", key_option="orientation_key")),
+        Prop("orientation_key", "fixkey", default="",
+             label="Orientation control key",
+             help="optional FIX key that switches orientation at runtime "
+                  "(0=track_up, 1=north_up). Empty = fixed"),
         Prop("ownship_position", "number", default=50, minimum=0,
              maximum=100, label="Ownship position (%)",
              help="ownship anchor, percent up from the bottom "
@@ -872,7 +885,12 @@ _register(InstrumentSpec(
              help="concentric half/full range rings with labels"),
         Prop("layer_terrain", "boolean", default=True,
              label="Layer: terrain",
-             help="hillshaded hypsometric terrain relief"),
+             help="hillshaded hypsometric terrain relief",
+             bindable=Binding("bool", key_option="terrain_key")),
+        Prop("terrain_key", "fixkey", default="",
+             label="Terrain control key",
+             help="optional FIX key that toggles the terrain layer at runtime "
+                  "(a button 'toggle bit'). Empty = fixed"),
         Prop("tile_path", "string", default="",
              label="Terrain tile path",
              help="GLO-30/SRTM HGT tree (the SVS tile_path; on the Pi "
