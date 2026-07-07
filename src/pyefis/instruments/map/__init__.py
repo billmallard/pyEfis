@@ -192,16 +192,18 @@ class MovingMap(LiveBindingMixin, QWidget):
     def _live_binding_specs(self):
         """Runtime control bindings (control_bindings.md). Each fires only if its
         ``<x>_key`` option names a FIX key; otherwise the setting stays static.
-        range = index over the ladder, orientation = enum index, terrain = a
-        boolean layer (applied via set_layer so the live layer object toggles)."""
+        range = index over the ladder, orientation = enum index -- both plain
+        attributes the frame timer already polls, so applying them from the
+        (non-GUI) FIX thread is safe.
+
+        Layer bindings (e.g. terrain via set_layer) are DEFERRED: toggling a live
+        layer is a Qt call that must run on the GUI thread, which needs marshaling
+        the FIX callback across threads. See control_bindings.md / #96."""
         return [
             LiveBind("range_nm", "index_ladder", "range_key",
                      ladder_option="range_ladder"),
             LiveBind("orientation", "enum", "orientation_key",
                      enum=("track_up", "north_up")),
-            LiveBind("layer_terrain", "bool", "terrain_key",
-                     apply=lambda w, v: (setattr(w, "layer_terrain", v),
-                                         w.set_layer("terrain", v))),
         ]
 
     def toggle_orientation(self):

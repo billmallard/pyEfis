@@ -94,14 +94,6 @@ def test_orientation_enum_binding(bound_map):
     assert m.orientation == "track_up"
 
 
-def test_terrain_bool_binding(bound_map):
-    m, fix = bound_map
-    fix.db.set_value("MAPTERRAIN", False)
-    assert m.layer_terrain is False
-    fix.db.set_value("MAPTERRAIN", True)
-    assert m.layer_terrain is True
-
-
 def test_unbound_setting_stays_static(fix, qtbot):
     """No <x>_key set -> no subscription; the setting keeps its config value and
     is untouched by the (unrelated) key traffic."""

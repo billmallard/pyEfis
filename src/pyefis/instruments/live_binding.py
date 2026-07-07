@@ -106,11 +106,17 @@ class LiveBindingMixin:
         value = self._convert(b, raw)
         if value is None:
             return
+        # CRITICAL: FIX valueChanged callbacks arrive on a NON-GUI thread. Touch
+        # only plain Python attributes here -- do NOT call Qt (update(), a layer
+        # toggle, ...) directly, or Qt aborts (SIGABRT) on the cross-thread
+        # access. The widget repaints from its own GUI-thread loop; the map's
+        # frame timer already polls the bound attrs (range_nm/orientation) and
+        # repaints on change, exactly like its LAT/LONG handlers. A setter
+        # `apply` must itself be GUI-thread-safe (none are wired yet).
         if b.apply is not None:
             b.apply(self, value)
         else:
             setattr(self, b.attr, value)
-        self.update()
 
     def _bind_options(self, b):
         if b.semantics == "enum":
