@@ -82,7 +82,6 @@ class MovingMap(LiveBindingMixin, QWidget):
         # runtime. Empty = the setting stays a static config option.
         self.range_key = ""
         self.orientation_key = ""
-        self.terrain_key = ""
         self._layers = []
         self._layers_built = False
 

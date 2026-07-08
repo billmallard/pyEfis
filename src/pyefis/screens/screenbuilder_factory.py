@@ -885,12 +885,7 @@ _register(InstrumentSpec(
              help="concentric half/full range rings with labels"),
         Prop("layer_terrain", "boolean", default=True,
              label="Layer: terrain",
-             help="hillshaded hypsometric terrain relief",
-             bindable=Binding("bool", key_option="terrain_key")),
-        Prop("terrain_key", "fixkey", default="",
-             label="Terrain control key",
-             help="optional FIX key that toggles the terrain layer at runtime "
-                  "(a button 'toggle bit'). Empty = fixed"),
+             help="hillshaded hypsometric terrain relief"),
         Prop("tile_path", "string", default="",
              label="Terrain tile path",
              help="GLO-30/SRTM HGT tree (the SVS tile_path; on the Pi "
