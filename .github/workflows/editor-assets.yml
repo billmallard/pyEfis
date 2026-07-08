@@ -80,10 +80,9 @@ jobs:
             echo "branch ${{ github.ref_name }} maps to no env prefix; nothing to upload."
             exit 0
           fi
-          npm i -g wrangler@^4 >/dev/null 2>&1
           BUCKET=makerplane-configs
           for f in schema.json groups.json; do
-            wrangler r2 object put "${BUCKET}/${PREFIX}${f}" \
+            npx --yes wrangler@4 r2 object put "${BUCKET}/${PREFIX}${f}" \
               --file "work/editor_assets/${f}" \
               --content-type application/json --remote >/dev/null
             echo "  put ${PREFIX}${f}"
