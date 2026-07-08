@@ -1,0 +1,95 @@
+name: editor-assets
+
+# Phase 3 of docs/environments.md (section 6): a push that can change the editor
+# schema or an instrument's look regenerates the editor asset bundle from THIS
+# branch and uploads it to the branch's environment prefix on the makerplane-configs
+# R2 bucket.
+#   dev -> assets/editor/dev/ , qa -> assets/editor/qa/ , master -> assets/editor/ (prod, bare)
+#
+# Builds schema.json + groups.json + palette/<type>.svg via tools/build_editor_assets.py
+# (offscreen Qt; GL-only types like virtual_vfr/moving_map get placeholder SVGs).
+# SVS preview patches (svs/<scene>.json|webp) need local SRTM/NASR terrain data and
+# are NOT built here -- regenerate with tools/export_svs_preview_patch.py and upload
+# manually (they change rarely). Existing svs/* objects are left untouched.
+#
+# SKIPS with a warning (stays green) until CLOUDFLARE_API_TOKEN (with R2 write on
+# makerplane-configs) is set, so landing this file causes no red runs.
+on:
+  push:
+    branches: [dev, qa, master]
+    paths:
+      - "src/pyefis/editor/**"
+      - "src/pyefis/screens/screenbuilder_factory.py"
+      - "src/pyefis/instruments/**"
+      - "tools/build_editor_assets.py"
+      - "tools/render_instrument.py"
+      - ".github/workflows/editor-assets.yml"
+  workflow_dispatch:
+
+concurrency: editor-assets-${{ github.ref_name }}
+
+jobs:
+  build-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Offscreen-Qt system deps
+        run: |
+          # Same libegl1 dance as ci.yml: refresh the apt index first (the runner's
+          # baked list can point at a rotated-off .deb and 404 on a bare install).
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+      - run: pip install -e .[qt,svs]
+
+      - name: Build editor assets (schema + groups + palette SVGs)
+        run: |
+          QT_QPA_PLATFORM=offscreen python tools/build_editor_assets.py --out work/editor_assets
+          echo "built:"; find work/editor_assets -type f | sort
+
+      - name: Map branch -> R2 prefix
+        id: map
+        run: |
+          b="${{ github.ref_name }}"
+          if   [ "$b" = dev ];    then p="assets/editor/dev/"
+          elif [ "$b" = qa ];     then p="assets/editor/qa/"
+          elif [ "$b" = master ]; then p="assets/editor/"
+          else p=""; fi
+          echo "prefix=$p" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bundle to R2 (prefix=${{ steps.map.outputs.prefix }})
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREFIX: ${{ steps.map.outputs.prefix }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN not set - skipping upload. See docs/environments.md section 6."
+            exit 0
+          fi
+          if [ -z "$PREFIX" ]; then
+            echo "branch ${{ github.ref_name }} maps to no env prefix; nothing to upload."
+            exit 0
+          fi
+          npm i -g wrangler@^4 >/dev/null 2>&1
+          BUCKET=makerplane-configs
+          ct() { case "$1" in
+            *.json) echo application/json ;; *.svg) echo image/svg+xml ;;
+            *.webp) echo image/webp ;; *) echo application/octet-stream ;;
+          esac; }
+          cd work/editor_assets
+          n=0
+          while IFS= read -r f; do
+            rel="${f#./}"
+            wrangler r2 object put "${BUCKET}/${PREFIX}${rel}" --file "$rel" \
+              --content-type "$(ct "$rel")" --remote >/dev/null
+            echo "  put ${PREFIX}${rel}"
+            n=$((n + 1))
+          done < <(find . -type f)
+          echo "uploaded $n objects under ${PREFIX}"
