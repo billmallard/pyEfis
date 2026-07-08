@@ -1,16 +1,18 @@
 name: editor-assets
 
 # Phase 3 of docs/environments.md (section 6): a push that can change the editor
-# schema or an instrument's look regenerates the editor asset bundle from THIS
-# branch and uploads it to the branch's environment prefix on the makerplane-configs
-# R2 bucket.
+# schema regenerates schema.json + groups.json from THIS branch and uploads them to
+# the branch's environment prefix on the makerplane-configs R2 bucket.
 #   dev -> assets/editor/dev/ , qa -> assets/editor/qa/ , master -> assets/editor/ (prod, bare)
 #
-# Builds schema.json + groups.json + palette/<type>.svg via tools/build_editor_assets.py
-# (offscreen Qt; GL-only types like virtual_vfr/moving_map get placeholder SVGs).
-# SVS preview patches (svs/<scene>.json|webp) need local SRTM/NASR terrain data and
-# are NOT built here -- regenerate with tools/export_svs_preview_patch.py and upload
-# manually (they change rarely). Existing svs/* objects are left untouched.
+# SCOPE: schema.json + groups.json ONLY. These are pure data (deterministic, no
+# display needed). Palette thumbnails (palette/<type>.svg) are NOT built here --
+# headless CI cannot render the Qt widgets to SVG (they come out as placeholders,
+# which would clobber the real thumbnails in prod). Palette SVGs and the SVS preview
+# patches (svs/<scene>.json|webp, which also need local SRTM/NASR terrain data) stay
+# LOCAL-gen: regenerate with `python tools/build_editor_assets.py` on a machine with
+# a display and `python tools/export_svs_preview_patch.py`, then upload manually.
+# (Enabling headless palette rendering -- xvfb + QtSvg -- is a possible follow-up.)
 #
 # SKIPS with a warning (stays green) until CLOUDFLARE_API_TOKEN (with R2 write on
 # makerplane-configs) is set, so landing this file causes no red runs.
@@ -20,9 +22,6 @@ on:
     paths:
       - "src/pyefis/editor/**"
       - "src/pyefis/screens/screenbuilder_factory.py"
-      - "src/pyefis/instruments/**"
-      - "tools/build_editor_assets.py"
-      - "tools/render_instrument.py"
       - ".github/workflows/editor-assets.yml"
   workflow_dispatch:
 
@@ -42,16 +41,20 @@ jobs:
 
       - name: Offscreen-Qt system deps
         run: |
-          # Same libegl1 dance as ci.yml: refresh the apt index first (the runner's
-          # baked list can point at a rotated-off .deb and 404 on a bare install).
+          # schema/groups are pure data, but importing the factory pulls Qt in;
+          # libegl1 + offscreen keeps the import happy without a display. Refresh
+          # the apt index first (baked list can 404 on a rotated-off .deb).
           sudo apt-get update
           sudo apt-get install -y libegl1
       - run: pip install -e .[qt,svs]
 
-      - name: Build editor assets (schema + groups + palette SVGs)
+      - name: Generate schema.json + groups.json
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
-          QT_QPA_PLATFORM=offscreen python tools/build_editor_assets.py --out work/editor_assets
-          echo "built:"; find work/editor_assets -type f | sort
+          mkdir -p work/editor_assets
+          python -c "from pathlib import Path; from pyefis.editor import schema, groups; Path('work/editor_assets/schema.json').write_text(schema.to_json()+chr(10)); Path('work/editor_assets/groups.json').write_text(groups.to_json()+chr(10)); print('wrote schema.json + groups.json')"
+          ls -l work/editor_assets
 
       - name: Map branch -> R2 prefix
         id: map
@@ -63,7 +66,7 @@ jobs:
           else p=""; fi
           echo "prefix=$p" >> "$GITHUB_OUTPUT"
 
-      - name: Upload bundle to R2 (prefix=${{ steps.map.outputs.prefix }})
+      - name: Upload schema + groups to R2 (prefix=${{ steps.map.outputs.prefix }})
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -79,17 +82,10 @@ jobs:
           fi
           npm i -g wrangler@^4 >/dev/null 2>&1
           BUCKET=makerplane-configs
-          ct() { case "$1" in
-            *.json) echo application/json ;; *.svg) echo image/svg+xml ;;
-            *.webp) echo image/webp ;; *) echo application/octet-stream ;;
-          esac; }
-          cd work/editor_assets
-          n=0
-          while IFS= read -r f; do
-            rel="${f#./}"
-            wrangler r2 object put "${BUCKET}/${PREFIX}${rel}" --file "$rel" \
-              --content-type "$(ct "$rel")" --remote >/dev/null
-            echo "  put ${PREFIX}${rel}"
-            n=$((n + 1))
-          done < <(find . -type f)
-          echo "uploaded $n objects under ${PREFIX}"
+          for f in schema.json groups.json; do
+            wrangler r2 object put "${BUCKET}/${PREFIX}${f}" \
+              --file "work/editor_assets/${f}" \
+              --content-type application/json --remote >/dev/null
+            echo "  put ${PREFIX}${f}"
+          done
+          echo "uploaded schema.json + groups.json under ${PREFIX}"
