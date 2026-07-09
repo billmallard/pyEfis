@@ -6,9 +6,9 @@
 
 import math
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QPinchGesture, QWidget
 
 import pyavtools.fix as fix
 
@@ -55,11 +55,18 @@ class MovingMap(LiveBindingMixin, QWidget):
         super(MovingMap, self).__init__(parent)
         self.setStyleSheet("background: transparent; border: 0px")
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Touch input: pinch to zoom the range (two-finger drag to pan is Phase
+        # 2). A single PinchGesture reports both scaleFactor and centerPoint, so
+        # one handler covers both. Grab it unconditionally; the handler honours
+        # the touch_gestures option (set later by the screenbuilder).
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.grabGesture(Qt.GestureType.PinchGesture)
         self.font_family = font_family
         # Options (screenbuilder setattrs; defaults per the spec):
         self.range_nm = 10.0
         self.range_ladder = "2,5,10,20,40,80,160"
         self.orientation = "track_up"          # or "north_up"
+        self.touch_gestures = True             # pinch-zoom / two-finger pan
         self.ownship_position = 50             # percent up from bottom
         self.symbol_color = "yellow"
         self.layer_range_rings = True
@@ -209,6 +216,48 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.orientation = ("north_up" if self.orientation == "track_up"
                             else "track_up")
         self.update()
+
+    # --- touch / pointer zoom ---------------------------------------------
+    def _range_bounds(self):
+        lad = self._ladder()
+        return min(lad), max(lad)
+
+    def zoom_by(self, factor):
+        """Scale the view continuously by ``factor`` (>1 = zoom IN = smaller
+        ``range_nm``). Pinch-spread and wheel-up both zoom in. Clamped to the
+        range-ladder span; ``range_up``/``range_down`` still do the discrete
+        button/knob stepping. Returns the new range."""
+        try:
+            factor = float(factor)
+        except (TypeError, ValueError):
+            return self.range_nm
+        if factor <= 0.0:
+            return self.range_nm
+        lo, hi = self._range_bounds()
+        self.range_nm = max(lo, min(hi, float(self.range_nm) / factor))
+        self.update()
+        return self.range_nm
+
+    def event(self, e):
+        if (e.type() == QEvent.Type.Gesture
+                and getattr(self, "touch_gestures", True)):
+            g = e.gesture(Qt.GestureType.PinchGesture)
+            if g is not None:
+                cf = QPinchGesture.ChangeFlag.ScaleFactorChanged
+                if g.changeFlags() & cf:
+                    self.zoom_by(g.scaleFactor())
+                # two-finger drag (g.centerPoint() delta) -> pan: Phase 2
+                return True
+        return super().event(e)
+
+    def wheelEvent(self, e):
+        """Desktop / configurator zoom, mirroring pinch (wheel-up = zoom in).
+        One notch (120 eighths-of-a-degree) = 1.25x."""
+        if getattr(self, "touch_gestures", True):
+            dy = e.angleDelta().y()
+            if dy:
+                self.zoom_by(1.25 ** (dy / 120.0))
+        e.accept()
 
     # --- painting ----------------------------------------------------------
     def _transform(self):

@@ -236,3 +236,55 @@ def test_widget_paint_and_hmi(fix, qtbot):
     rings = next(l for l in w._layers if l.id == "range_rings")
     assert rings.enabled is False
     w.paintEvent(QPaintEvent(w.rect()))
+
+
+def test_zoom_by_core(fix, qtbot):
+    """Continuous pinch/wheel zoom scales range_nm inversely and clamps to
+    the ladder span; range_up/down keep the discrete stepping."""
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.range_ladder = "2,5,10,20,40,80,160"
+    w.range_nm = 10.0
+    # spread (scaleFactor 2) zooms IN -> range halves; pinch-in doubles it.
+    assert w.zoom_by(2.0) == pytest.approx(5.0)
+    assert w.zoom_by(0.5) == pytest.approx(10.0)
+    # clamp to the ladder span in both directions.
+    w.range_nm = 10.0
+    assert w.zoom_by(0.001) == pytest.approx(160.0)   # cannot zoom out past hi
+    w.range_nm = 10.0
+    assert w.zoom_by(1e6) == pytest.approx(2.0)        # cannot zoom in past lo
+    # degenerate / bad factors are ignored (no change).
+    w.range_nm = 10.0
+    assert w.zoom_by(0) == 10.0
+    assert w.zoom_by(-2) == 10.0
+    assert w.zoom_by("x") == 10.0
+
+
+def test_zoom_wheel_and_gate(fix, qtbot):
+    """wheelEvent mirrors pinch (up = zoom in), and the touch_gestures option
+    gates the input paths."""
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.range_ladder = "2,5,10,20,40,80,160"
+
+    def wheel(dy):
+        ev = QWheelEvent(
+            QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, dy),
+            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase, False)
+        w.wheelEvent(ev)
+
+    w.range_nm = 10.0
+    wheel(120)                       # wheel up -> zoom in -> smaller range
+    assert w.range_nm < 10.0
+    zoomed_in = w.range_nm
+    wheel(-120)                      # wheel down -> zoom out
+    assert w.range_nm > zoomed_in
+
+    w.range_nm = 10.0
+    w.touch_gestures = False
+    wheel(120)
+    assert w.range_nm == 10.0        # gated off -> no change
