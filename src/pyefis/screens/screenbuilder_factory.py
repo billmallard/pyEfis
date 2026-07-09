@@ -873,6 +873,11 @@ _register(InstrumentSpec(
              label="Orientation control key",
              help="optional FIX key that switches orientation at runtime "
                   "(0=track_up, 1=north_up). Empty = fixed"),
+        Prop("touch_gestures", "boolean", default=True,
+             label="Touch gestures",
+             help="pinch to zoom the range (two-finger pan is tracked in "
+                  "#99); mouse wheel mirrors zoom on desktop. Off = "
+                  "touch/wheel input ignored"),
         Prop("ownship_position", "number", default=50, minimum=0,
              maximum=100, label="Ownship position (%)",
              help="ownship anchor, percent up from the bottom "
