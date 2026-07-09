@@ -15,33 +15,57 @@ registered to the native corners (tiles keep abutting), and the result is
 anti-aliased (no strided-subsample moire). Voids (``SRTM3_VOID``) are excluded
 from each average; GLO-30 has none, so this is a safety net for SRTM3.
 
+Each tile is independent, so the build parallelises across CPU cores (``--jobs``,
+default = all cores). Workers receive the void marker from the parent and never
+import the pyEfis GUI stack, so spawning is cheap on Windows. A 16-core box cuts
+the all-NA build from hours to tens of minutes -- handy for a cloud runner.
+
 Usage::
 
     python tools/build_terrain_mips.py <tile_root> [--levels 6] [--force]
-                                        [--only N35W098 N36W099 ...]
+                                        [--jobs 0] [--only N35W098 N36W099 ...]
 """
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from pyefis.instruments.ai.svs import SRTM3_VOID     # noqa: E402
-
 MAX_LEVEL = 6           # matches the terrain.py mip clamp (min(6, ...))
+DEFAULT_VOID = -32768   # SRTM3/GLO-30 void marker; overridden by the authoritative
+                        # pyefis.instruments.ai.svs.SRTM3_VOID when it is importable.
+
+# Void marker used by :func:`downsample`. Set once in the parent (``_resolve_void``)
+# and re-established in each worker by the pool initializer, so workers do not need
+# to import ``pyefis.instruments.ai`` (and PyQt6) just for a constant.
+_VOID = DEFAULT_VOID
 
 
-def downsample(native: np.ndarray, factor: int) -> np.ndarray:
+def _resolve_void() -> int:
+    """The authoritative void marker from pyEfis if importable, else the literal.
+    Called once in the parent; the value is handed to workers so none of them
+    import the GUI stack (which makes ``multiprocessing`` spawn cheap)."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from pyefis.instruments.ai.svs import SRTM3_VOID
+        return int(SRTM3_VOID)
+    except Exception:
+        return DEFAULT_VOID
+
+
+def downsample(native: np.ndarray, factor: int, void: int | None = None) -> np.ndarray:
     """Anti-aliased node-centred box downsample of a square ``(n, n)`` int16
     tile by ``factor``. Returns an ``(m, m)`` big-endian int16 array with
     ``m = round((n-1)/factor) + 1``, corners registered to the native corners.
-    Voids (== ``SRTM3_VOID``) are excluded per box; an all-void box stays void."""
+    Voids (== ``void``, default the module marker) are excluded per box; an
+    all-void box stays void."""
+    void = _VOID if void is None else void
     n = native.shape[0]
     m = int(round((n - 1) / factor)) + 1
     data = native.astype(np.float64)
-    valid = (native != SRTM3_VOID).astype(np.float64)
+    valid = (native != void).astype(np.float64)
     dv = data * valid
     # coarse node positions, corner-exact (first = 0, last = n-1)
     idx = np.rint(np.linspace(0, n - 1, m)).astype(np.int64)
@@ -60,7 +84,7 @@ def downsample(native: np.ndarray, factor: int) -> np.ndarray:
     ws = boxsum(boxsum(valid).T)            # (m_col, m_row)
     with np.errstate(invalid="ignore", divide="ignore"):
         coarse = (ds / ws).T                # (m_row, m_col)
-    coarse = np.where(ws.T > 0, coarse, float(SRTM3_VOID))
+    coarse = np.where(ws.T > 0, coarse, float(void))
     return np.ascontiguousarray(np.rint(coarse)).astype(">i2")
 
 
@@ -91,6 +115,22 @@ def build_tile(root: Path, stem: str, path: Path, levels: int, force: bool) -> i
     return written
 
 
+def _init_worker(void: int):
+    """Pool initializer: pin this worker's void marker (no pyEfis import)."""
+    global _VOID
+    _VOID = void
+
+
+def _worker(job):
+    """Pool task: build one tile's pyramid. Returns ``(stem, written, error)``;
+    a failure on one tile is captured, not raised, so the batch continues."""
+    root, stem, path, levels, force = job
+    try:
+        return stem, build_tile(root, stem, path, levels, force), None
+    except Exception as exc:                 # noqa: BLE001 -- one bad tile != abort
+        return stem, 0, repr(exc)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Build a terrain mip pyramid.")
     ap.add_argument("tile_root", help="terrain tile tree (holds <NSdir>/*.hgt)")
@@ -98,6 +138,8 @@ def main(argv=None):
                     help=f"deepest level to build (default {MAX_LEVEL})")
     ap.add_argument("--force", action="store_true",
                     help="rebuild levels that already exist")
+    ap.add_argument("-j", "--jobs", type=int, default=0,
+                    help="worker processes (0 = all CPUs, the default; 1 = sequential)")
     ap.add_argument("--only", nargs="*", default=None,
                     help="only these tiles (e.g. N35W098)")
     args = ap.parse_args(argv)
@@ -105,21 +147,59 @@ def main(argv=None):
     root = Path(args.tile_root)
     only = {s.upper() for s in args.only} if args.only else None
     tiles = list(_iter_native(root, only))
-    print(f"root={root}  native tiles: {len(tiles)}  levels 1..{args.levels}")
-    import time
+
+    void = _resolve_void()
+    global _VOID
+    _VOID = void                             # for the sequential path (parent process)
+    jobs = args.jobs if args.jobs > 0 else (os.cpu_count() or 1)
+    jobs = max(1, min(jobs, len(tiles) or 1))
+
+    print(f"root={root}  native tiles: {len(tiles)}  levels 1..{args.levels}  "
+          f"jobs={jobs}  void={void}")
     t0 = time.perf_counter()
     files = 0
-    for i, (stem, path) in enumerate(tiles):
-        files += build_tile(root, stem, path, args.levels, args.force)
-        if (i + 1) % 50 == 0:
-            print(f"  {i + 1}/{len(tiles)} tiles...")
+    errors = []
+    jobargs = [(root, stem, path, args.levels, args.force) for stem, path in tiles]
+
+    def _progress(i):
+        if (i + 1) % 50 == 0 or (i + 1) == len(tiles):
+            dt = time.perf_counter() - t0
+            rate = (i + 1) / dt if dt > 0 else 0
+            print(f"  {i + 1}/{len(tiles)} tiles... "
+                  f"({files} files, {dt:.0f}s, {rate:.1f} tiles/s)")
+
+    if jobs == 1:
+        for i, ja in enumerate(jobargs):
+            _, written, err = _worker(ja)
+            files += written
+            if err:
+                errors.append((ja[1], err))
+            _progress(i)
+    else:
+        import multiprocessing as mp
+        with mp.Pool(jobs, initializer=_init_worker, initargs=(void,)) as pool:
+            for i, (stem, written, err) in enumerate(
+                    pool.imap_unordered(_worker, jobargs, chunksize=1)):
+                files += written
+                if err:
+                    errors.append((stem, err))
+                _progress(i)
+
     footprint = 0
     mip_root = root / ".mip"
     if mip_root.exists():
         footprint = sum(f.stat().st_size for f in mip_root.rglob("*.hgt"))
+    dt = time.perf_counter() - t0
     print(f"done: {len(tiles)} tiles -> {files} mip files written, "
-          f"pyramid {footprint / 1e9:.2f} GB, {time.perf_counter() - t0:.1f}s")
-    return 0
+          f"pyramid {footprint / 1e9:.2f} GB, {dt:.1f}s"
+          + (f" ({len(tiles) / dt:.1f} tiles/s)" if dt > 0 else ""))
+    if errors:
+        print(f"WARNING: {len(errors)} tile(s) errored:")
+        for stem, err in errors[:20]:
+            print(f"  {stem}: {err}")
+        if len(errors) > 20:
+            print(f"  ... and {len(errors) - 20} more")
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
