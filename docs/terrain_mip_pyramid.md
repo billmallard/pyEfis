@@ -152,19 +152,26 @@ fallback (§6) — it just stays slow at range until it pulls the pyramid editio
   airports + VORs) so wide views show nav data, not just terrain — *separate*
   layer work, tracked apart from this pyramid.
 
-## 10. Open decisions
+## 10. Decisions (Bill, 2026-07-08)
 
-1. **Level set** — the cheap coarse ladder (`f=4,16,48,144`, ~+6 %) vs a denser
-   pyramid (add `f=2,8`, ~+33 %) for smoother 40–160 NM LOD.
-2. **Layout** — parallel `.mip/<L>/` tree vs a filename suffix (`<name>.m<L>.hgt`)
-   vs one multi-level container per tile.
-3. **Downsample** — block-mean (anti-aliased) vs plain subsample; exact void
-   handling.
-4. **Manifest** — a schema field for the pyramid (needs the merge-before-publish
-   dance) vs a pure path convention (no schema change).
-5. **Cache** — grow `TileCache.max_tiles` for mixed sizes vs a dedicated coarse
-   cache; sizing for a national working set.
-6. **Interim** — land the `>i2`-direct sampling win in P1, or defer to P4.
+1. **Level set — DENSE.** Full 2×-per-level pyramid, levels 1–6 (`f = 2^k`,
+   ~+33 %, ~+30 GB all-NA). R2 is zero-egress (~pennies/mo), and dense buys smooth
+   zoom **easing** (a planned cool-factor touch): smaller detail "pops" at level
+   changes, less mid-animation blur, and it keeps the door open for LOD cross-fade
+   (trilinear blend between adjacent levels) later. The coarse ladder was only the
+   minimum to unblock national; dense is the low-regret pick.
+2. **Layout — parallel `.mip/<L>/` tree.** `<tile_root>/.mip/<L>/<NSdir>/<name>.hgt`.
+   Already what `get_mip` reads; unions across regions like native; `load_tile`
+   reuses with a different root; dot-prefix stays out of the way.
+3. **Downsample — anti-aliased.** Node-centred box average (corner-registered,
+   void-aware), not plain subsampling.
+4. **Manifest — pure path convention.** No manifest/pack_meta schema field; the
+   `.mip/` files just ride in the region zip and the renderer discovers them by
+   trying to read (native fallback if absent). No merge-before-publish gate.
+5. **Cache — grow as needed.** The coarse cache holds a national working set
+   (`_mip_max = 512` small tiles); grow further if a use case needs it.
+6. **Interim `>i2`-direct sampling** — optional, deferred (P4); the pyramid already
+   removes the per-tile cast for wide views.
 
 ## 11. Non-goals
 
