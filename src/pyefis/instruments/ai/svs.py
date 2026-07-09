@@ -248,6 +248,11 @@ class TileCache:
         # The async water collector samples elevations from a worker
         # thread while the render thread also reads tiles.
         self._lock = threading.Lock()
+        # Coarse pyramid tiles are tiny (a whole national window fits), so
+        # cache far more of them than native tiles (terrain_mip_pyramid.md).
+        self._mip: dict[tuple, np.ndarray] = {}
+        self._mip_order: list[tuple] = []
+        self._mip_max = 512
 
     def get(self, lat: int, lon: int) -> np.ndarray | None:
         key = (lat, lon)
@@ -265,6 +270,36 @@ class TileCache:
                     if len(self._order) > self.max_tiles:
                         evict = self._order.pop(0)
                         del self._cache[evict]
+        return tile
+
+    def get_mip(self, lat: int, lon: int, level: int) -> np.ndarray | None:
+        """Coarse pyramid tile for (lat, lon) at ``level`` (0 = native).
+
+        Levels >= 1 read a pre-built downsampled tile from
+        ``<tile_root>/.mip/<level>/<NSdir>/<name>.hgt`` -- an ordinary smaller
+        square ``>i2`` HGT (``load_tile`` infers the side from file size, and
+        ``_sample`` keys off ``t.shape[0]``, so nothing else changes). A missing
+        level file (an edition built without a pyramid) falls back to the native
+        tile, so old data still renders -- just slow at range. Spec:
+        docs/terrain_mip_pyramid.md."""
+        if level <= 0:
+            return self.get(lat, lon)
+        key = (lat, lon, level)
+        with self._lock:
+            if key in self._mip:
+                self._mip_order.remove(key)
+                self._mip_order.append(key)
+                return self._mip[key]
+        tile = load_tile(self.tile_root / ".mip" / str(level), lat, lon)
+        if tile is None:
+            return self.get(lat, lon)          # no pyramid here -> native
+        with self._lock:
+            if key not in self._mip:
+                self._mip[key] = tile
+                self._mip_order.append(key)
+                if len(self._mip_order) > self._mip_max:
+                    evict = self._mip_order.pop(0)
+                    del self._mip[evict]
         return tile
 
     def elevation(self, lat: float, lon: float) -> float:

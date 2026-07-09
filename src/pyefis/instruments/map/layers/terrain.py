@@ -201,7 +201,9 @@ class TerrainLayer(MapLayer):
         res = max(1.0, px_per_m / self._RES)   # px per metre of image
         n = int(min(1024, max(64, 2 * half_diag_m * px_per_m * self._RES)))
         mpp = 2 * half_diag_m / n              # metres per image pixel
-        # Pick the mip whose pitch best matches mpp (native ~30-93 m).
+        # Pick the mip whose pitch best matches mpp (native ~30-93 m). The
+        # ceiling is the deepest pyramid level a terrain pack ships
+        # (docs/terrain_mip_pyramid.md); high-range views select coarse levels.
         lat_cos = math.cos(math.radians(lat0))
         idx = np.arange(n, dtype=np.float64) - (n - 1) / 2.0
         lats = lat0 + (-idx * mpp) / M_PER_DEG_LAT      # row 0 = north
@@ -209,7 +211,7 @@ class TerrainLayer(MapLayer):
         tile = self._cache.get(int(math.floor(lat0)), int(math.floor(lon0)))
         native = M_PER_DEG_LAT / ((tile.shape[0] - 1) if tile is not None
                                   else 1200)
-        mip = max(0, min(4, int(round(math.log2(max(1.0, mpp / native))))))
+        mip = max(0, min(6, int(round(math.log2(max(1.0, mpp / native))))))
         elev_m, water = self._sample(lats, lons, mip)
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
