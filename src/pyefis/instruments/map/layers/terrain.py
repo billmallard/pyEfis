@@ -283,7 +283,15 @@ class TerrainLayer(MapLayer):
         therefore computed on the 1-D axes and gathered per 1-degree
         tile block by broadcasting -- no full-grid tile masks and no
         per-pixel Python. #89: the previous per-pixel unique-tile set
-        comprehension was 54% of the whole process's GIL time."""
+        comprehension was 54% of the whole process's GIL time.
+
+        Wide-range fast path: when a coarse mosaic exists for this mip level, the
+        whole window is one memmap slice + one bilinear -- no per-degree file
+        opens (the measured cold-I/O bottleneck; map_wide_range_perf_plan.md)."""
+        mos = (self._cache.get_mosaic(mip)
+               if hasattr(self._cache, "get_mosaic") else None)
+        if mos is not None:
+            return self._sample_mosaic(lats, lons, mos)
         elev = np.full((lats.size, lons.size), -9999.0, dtype=np.float32)
         tl = np.floor(lats).astype(np.int32)   # per-row tile latitude
         tn = np.floor(lons).astype(np.int32)   # per-col tile longitude
@@ -313,4 +321,33 @@ class TerrainLayer(MapLayer):
                     + t[r0 + 1, c0] * dr * (1 - dc)
                     + t[r0 + 1, c0 + 1] * dr * dc)
         water = (elev < -4500.0) | (elev == 0.0)
+        return np.where(water, 0.0, elev), water
+
+    def _sample_mosaic(self, lats, lons, mos):
+        """One vectorised bilinear off the memory-mapped coarse mosaic -- the
+        wide-range fast path. No per-tile file opens and no Python tile loop:
+        the north-up window is separable, so row/col indices are computed on the
+        1-D axes and a single fancy-index gather pages in just the touched span
+        of the one mmap (map_wide_range_perf_plan.md)."""
+        arr, meta = mos
+        spd = meta["spd"]
+        R = meta["rows"]
+        C = meta["cols"]
+        rf_raw = (meta["lat_n"] - lats) * spd
+        cf_raw = (lons - meta["lon_w"]) * spd
+        oob = (((rf_raw < 0) | (rf_raw > R - 1))[:, None]
+               | ((cf_raw < 0) | (cf_raw > C - 1))[None, :])
+        rf = np.clip(rf_raw, 0, R - 2)
+        cf = np.clip(cf_raw, 0, C - 2)
+        r0 = np.floor(rf).astype(np.int64)
+        c0 = np.floor(cf).astype(np.int64)
+        dr = (rf - r0).astype(np.float32)[:, None]
+        dc = (cf - c0).astype(np.float32)[None, :]
+        v00 = arr[np.ix_(r0, c0)].astype(np.float32)
+        v01 = arr[np.ix_(r0, c0 + 1)].astype(np.float32)
+        v10 = arr[np.ix_(r0 + 1, c0)].astype(np.float32)
+        v11 = arr[np.ix_(r0 + 1, c0 + 1)].astype(np.float32)
+        elev = (v00 * (1 - dr) * (1 - dc) + v01 * (1 - dr) * dc
+                + v10 * dr * (1 - dc) + v11 * dr * dc)
+        water = (elev < -4500.0) | (elev == 0.0) | oob
         return np.where(water, 0.0, elev), water

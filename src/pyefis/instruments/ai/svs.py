@@ -253,6 +253,10 @@ class TileCache:
         self._mip: dict[tuple, np.ndarray] = {}
         self._mip_order: list[tuple] = []
         self._mip_max = 512
+        # Coarse whole-extent mosaics (one memmap per level) -- wide-range
+        # renders slice these instead of opening hundreds of per-degree files
+        # (docs/map_wide_range_perf_plan.md). Lazily loaded, kept resident.
+        self._mosaic: dict[int, object] = {}
 
     def get(self, lat: int, lon: int) -> np.ndarray | None:
         key = (lat, lon)
@@ -301,6 +305,36 @@ class TileCache:
                     evict = self._mip_order.pop(0)
                     del self._mip[evict]
         return tile
+
+    def get_mosaic(self, level: int):
+        """Coarse whole-extent mosaic for ``level``, or ``None`` if not built.
+
+        Returns ``(memmap, meta)`` for ``.mip/mosaic/L<level>.{hgt,json}`` -- one
+        memory-mapped big-endian int16 array covering the tile tree's extent, so
+        a wide-range render slices its window in a single vectorized bilinear
+        instead of opening hundreds of per-degree files (the measured cold-I/O
+        bottleneck; docs/map_wide_range_perf_plan.md). meta keys: rows, cols,
+        spd (samples per degree), lat_n (north lat of row 0), lon_w (west lon of
+        col 0). Row r -> lat = lat_n - r/spd; col c -> lon = lon_w + c/spd."""
+        with self._lock:
+            if level in self._mosaic:
+                return self._mosaic[level]
+        import json
+        mdir = self.tile_root / ".mip" / "mosaic"
+        jp = mdir / f"L{level}.json"
+        dp = mdir / f"L{level}.hgt"
+        val = None
+        if jp.exists() and dp.exists():
+            try:
+                meta = json.loads(jp.read_text())
+                arr = np.memmap(dp, dtype=">i2", mode="r",
+                                shape=(meta["rows"], meta["cols"]))
+                val = (arr, meta)
+            except Exception as e:
+                log.warning(f"SVS: mosaic L{level} unreadable: {e}")
+        with self._lock:
+            self._mosaic[level] = val
+        return val
 
     def elevation(self, lat: float, lon: float) -> float:
         """Return MSL elevation in metres at (lat, lon), or 0.0 if no tile."""
