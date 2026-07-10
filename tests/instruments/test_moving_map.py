@@ -92,7 +92,7 @@ class _FakeWaterDB:
         self._poly.kind = "lake"
 
     def polygons_in_range(self, lat, lon, range_nm,
-                          min_bbox_diag_deg=None):
+                          min_bbox_diag_deg=None, drop_ocean=False):
         yield self._poly
 
 

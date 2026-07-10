@@ -135,7 +135,8 @@ class WaterDB:
 
     def polygons_in_range(self, ac_lat: float, ac_lon: float,
                           range_nm: float,
-                          min_bbox_diag_deg: float | None = None):
+                          min_bbox_diag_deg: float | None = None,
+                          drop_ocean: bool = False):
         """Yield ``WaterPolygon`` for each polygon whose bounding box
         overlaps the aircraft's ``range_nm`` square. The yielded
         polygons may extend well beyond the range — the SVS clipper
@@ -147,7 +148,14 @@ class WaterDB:
         per-vertex projection cost. The check is done on the squared
         diagonal so the SQL stays multiplication-only. Ocean polygons
         are NEVER filtered by size — a coastline poly's bbox can be
-        tiny (small bay, inlet) yet still cover the visible field.
+        tiny (small bay, inlet) yet still cover the visible field —
+        UNLESS ``drop_ocean`` is set.
+
+        ``drop_ocean`` excludes ``kind == 'ocean'`` polygons entirely and
+        subjects everything else to the size floor. At wide zoom the terrain
+        void-water already shows oceans, so dropping the (never-size-filtered,
+        vertex-heavy) coastline here is the cheap way to keep only large inland
+        lakes — e.g. the Great Lakes — for orientation.
         """
         if not self.ready:
             return
@@ -177,11 +185,13 @@ class WaterDB:
                 "WHERE r.min_lat <= ? AND r.max_lat >= ? "
                 "  AND r.min_lon <= ? AND r.max_lon >= ?")
             params = (lat_hi, lat_lo, lon_hi, lon_lo)
+            if drop_ocean:
+                sql += " AND p.kind != 'ocean'"
             if min_d2 is not None:
-                sql += (" AND (p.kind = 'ocean' OR "
-                        "((p.max_lat-p.min_lat)*(p.max_lat-p.min_lat) "
-                        "+ (p.max_lon-p.min_lon)*(p.max_lon-p.min_lon)) "
-                        ">= ?)")
+                size = ("((p.max_lat-p.min_lat)*(p.max_lat-p.min_lat) "
+                        "+ (p.max_lon-p.min_lon)*(p.max_lon-p.min_lon)) >= ?")
+                sql += (f" AND ({size})" if drop_ocean
+                        else f" AND (p.kind = 'ocean' OR {size})")
                 params = params + (min_d2,)
             cur = self._con.execute(sql, params)
         else:
@@ -195,11 +205,13 @@ class WaterDB:
                 "WHERE max_lat > ? AND min_lat < ? "
                 "  AND max_lon > ? AND min_lon < ?")
             params = (lat_lo, lat_hi, lon_lo, lon_hi)
+            if drop_ocean:
+                sql += " AND kind != 'ocean'"
             if min_d2 is not None:
-                sql += (" AND (kind = 'ocean' OR "
-                        "((max_lat-min_lat)*(max_lat-min_lat) "
-                        "+ (max_lon-min_lon)*(max_lon-min_lon)) "
-                        ">= ?)")
+                size = ("((max_lat-min_lat)*(max_lat-min_lat) "
+                        "+ (max_lon-min_lon)*(max_lon-min_lon)) >= ?")
+                sql += (f" AND ({size})" if drop_ocean
+                        else f" AND (kind = 'ocean' OR {size})")
                 params = params + (min_d2,)
             cur = self._con.execute(sql, params)
         cap = self._max_vertices

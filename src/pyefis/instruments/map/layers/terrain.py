@@ -65,11 +65,17 @@ class TerrainLayer(MapLayer):
     _SNAP_FRAC = 0.15
     #: rendered image pixels per screen pixel (1 = exact; <1 = softer/faster)
     _RES = 1.0
-    #: above this range the fine water overlay (lakes/coastline) is skipped --
-    #: it isn't range-capped and dominates the worker at wide zoom (2.8 s @ 800
-    #: NM, 15 s @ 2500 NM), while the terrain void-water still shows oceans. The
-    #: detail only matters up close (map_wide_range_perf_plan.md).
-    _WATER_MAX_NM = 300.0
+    #: at/below this range the full water overlay draws (ocean coastline + all
+    #: lakes). Above it, the ocean is dropped (terrain void-water still shows
+    #: oceans) and only large inland lakes -- Great Lakes scale -- draw, for
+    #: orientation. Uncapped, _draw_water dominated the worker at wide zoom
+    #: (2.8 s @ 800 NM, 15 s @ 2500) -- the ocean coastline is never size-
+    #: filtered. map_wide_range_perf_plan.md.
+    _WATER_FULL_MAX_NM = 300.0
+    #: above _WATER_FULL_MAX_NM keep only lakes whose bbox diagonal >= this
+    #: (deg). Great Lakes span several degrees; 0.3 deg (~18 NM) admits big
+    #: lakes/reservoirs and drops ponds.
+    _WATER_WIDE_MIN_DIAG_DEG = 0.3
 
     def __init__(self):
         super(TerrainLayer, self).__init__()
@@ -242,8 +248,7 @@ class TerrainLayer(MapLayer):
         rgbx[..., 3] = 255
         qimg = QImage(rgbx.data, n, n, 4 * n,
                       QImage.Format.Format_RGBX8888).copy()
-        if (self._water is not None and self._water.ready
-                and range_nm <= self._WATER_MAX_NM):
+        if self._water is not None and self._water.ready:
             self._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
         return qimg, (lat0, lon0, mpp)
 
@@ -256,9 +261,14 @@ class TerrainLayer(MapLayer):
         ocean) stays underneath as the backstop."""
         half_px = (n - 1) / 2.0
         range_nm = (half_px * mpp) / 1852.0
-        # Skip polygons whose bbox spans under ~3 image px before any
-        # BLOB decode (ocean pieces are never size-filtered by the db).
-        min_diag = 3.0 * mpp / M_PER_DEG_LAT
+        # Wide zoom: drop the ocean coastline (terrain void-water already shows
+        # oceans) and keep only large inland lakes -- the Great Lakes etc. --
+        # for orientation. The never-size-filtered coastline is what dominated
+        # the worker (2.8 s @ 800 NM). Close in: full overlay, sub-3-px pieces
+        # skipped before the BLOB decode.
+        wide = range_nm > self._WATER_FULL_MAX_NM
+        min_diag = (self._WATER_WIDE_MIN_DIAG_DEG if wide
+                    else 3.0 * mpp / M_PER_DEG_LAT)
         px_per_deg_lat = M_PER_DEG_LAT / mpp
         px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
         p = QPainter(qimg)
@@ -267,7 +277,8 @@ class TerrainLayer(MapLayer):
         p.setBrush(QBrush(QColor(60, 110, 160)))
         try:
             for poly in self._water.polygons_in_range(
-                    lat0, lon0, range_nm, min_bbox_diag_deg=min_diag):
+                    lat0, lon0, range_nm, min_bbox_diag_deg=min_diag,
+                    drop_ocean=wide):
                 pts = [QPointF((lo - lon0) * px_per_deg_lon + half_px,
                                (lat0 - la) * px_per_deg_lat + half_px)
                        for la, lo in poly.vertices]
