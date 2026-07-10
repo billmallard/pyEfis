@@ -6,6 +6,18 @@ This doc is what a fresh thread needs to get it to every user. Companion:
 `map_wide_range_perf_plan.md` (the profiling + design), `terrain_mip_pyramid.md`,
 makerplane-data `docs/terrain.md`.
 
+> **UPDATE 2026-07-10 — §3.1 RESOLVED in the cloud, not on the device.** The
+> mosaic now ships as a **national `terrain-mosaic` pack built by the cloud
+> pipeline** (makerplane-data `packtools/cloud/entrypoint.sh`: mips → mosaic
+> stitch → region packs → mosaic pack → verify), so **no on-device build step is
+> needed** — this supersedes the Option A/B decision below. `make-terrain
+> --mosaic` packages `.mip/mosaic/`, the updater auto-tracks it with any terrain
+> region, and it unzips into `terrain/tiles/.mip/mosaic/` for `get_mosaic()` with
+> zero renderer change. Region packs also now ship compressed. Landed on
+> makerplane-data `dev`. **Remaining:** run the QNAP container to publish
+> (§3.5 clean-device verify still applies), then §3.3 branch promotion + §3.4
+> tests + §3.6 bench reconcile. §3.2 big-water is still optional/deferred.
+
 ## 1. What's done, and exactly where it lives
 
 **Code — pushed to `billmallard/pyEfis` branch `dev`** (NOT master/release):
@@ -38,28 +50,30 @@ Two independent things must reach a user's device:
 
 ## 3. Work items
 
-### 3.1 Get the mosaic onto every device — DECISION FIRST
+### 3.1 Get the mosaic onto every device — DONE (national pack, cloud-built)
 The mosaic is a **whole-extent stitched file per level**, but terrain packs are
-**per-region** and devices **union** whatever regions they opted into. So:
+**per-region** and devices **union** whatever regions they opted into — so a
+per-region mosaic piece can't be stitched back into one file on-device.
 
-- **Option A — ship mosaics in the packs.** Awkward: per-region mosaic pieces
-  don't union into one file; a device with us-west+us-central would need a mosaic
-  covering exactly its union. You'd ship pieces and stitch on-device anyway.
-- **Option B — build the mosaic ON THE DEVICE after `pyefis-data update`
-  (RECOMMENDED).** Exactly how the bench Pi got it. `build_terrain_mosaic.py`
-  already ships in `pyEfis/tools`; the device runs it against its unioned `.mip`
-  tree (fast — 1.2 s for CONUS on the Pi). Naturally handles any region
-  combination and re-runs when regions change. No pack/pipeline change.
+**Resolved: ship ONE national `terrain-mosaic` pack, built in the cloud.** A
+single whole-extent mosaic is the only artifact that is both cloud-built *and*
+correct for any region combination. Implemented (makerplane-data `dev`):
+- **`build_terrain_mosaic.py`** runs in the cloud pipeline right after the mip
+  build (`entrypoint.sh` step 2), stitching `.mip/mosaic/L{4,5,6}` from the full
+  tree (seconds).
+- **`packtool make-terrain --mosaic`** (`packtools/make_terrain.build_mosaic_pack`)
+  packages `.mip/mosaic/*` into `terrain-mosaic-<edition>.pack`, tagged with the
+  synthetic region `mosaic` (isolates tile provenance from the real region packs).
+- **Updater auto-tracks it** whenever any terrain region is tracked
+  (`core._tracked_ids`); it unzips into `terrain/tiles/.mip/mosaic/`, which
+  `TileCache.get_mosaic()` reads with **zero renderer change** (absent ⇒ per-tile
+  fallback).
 
-**Recommended: Option B.** Implementation:
-- Add a post-update hook to the `pyefis-data` updater: after a terrain pack is
-  unzipped, run the mosaic build (or invoke `build_terrain_mosaic` as a library).
-- Make it **idempotent/stale-aware**: build only if `.mip/mosaic/` is missing or
-  older than the newest `.mip` tile (so it re-runs after a region add, skips
-  otherwise). A startup check in `TerrainLayer.configure` is an alternative/backup
-  trigger.
-- Needs numpy (pyEfis already has it). Guard failures (mosaic absent ⇒ existing
-  per-tile fallback still works).
+This replaces the earlier on-device-build idea (which needed numpy in the updater
+venv + a path to the pyEfis tool + a stale-aware hook — all avoided). Devices with
+a us-west-only selection do download the national mosaic (~200–300 MB compressed),
+which is exactly the data national zoom needs. **Next: run the QNAP container to
+publish, then verify §3.5.**
 
 ### 3.2 (Optional) big-water index — instant wide-range water
 Wide-range water is currently query-bound (~2.3 s @ 2500 NM: SQLite scans a
@@ -118,8 +132,11 @@ checkout (backups `.bak-pre-mosaic` exist). Not urgent — it works as-is.
   cold vs warm.
 
 ## 5. Recommended order
-1. §3.1 Option B — on-device mosaic build after update (the one thing that gives
-   every user the terrain win). Verify §3.5 on a clean device.
-2. §3.4 tests, §3.3 branch promotion (mind PR #274), upstream PR.
+1. ~~§3.1 mosaic to every device~~ **DONE** — national `terrain-mosaic` pack in
+   the cloud pipeline (makerplane-data `dev`). Run the QNAP container to publish,
+   then verify §3.5 on a clean device.
+2. §3.4 tests (mosaic-pack + auto-track tests landed; the `_sample_mosaic`
+   vs per-tile equivalence + water-tiering unit tests are still open),
+   §3.3 branch promotion (mind PR #274), upstream PR.
 3. §3.2 big-water index only if wide-range water instantness is wanted.
 4. §3.6 reconcile the bench Pi.
