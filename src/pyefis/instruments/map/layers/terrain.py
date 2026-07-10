@@ -72,10 +72,14 @@ class TerrainLayer(MapLayer):
     #: (2.8 s @ 800 NM, 15 s @ 2500) -- the ocean coastline is never size-
     #: filtered. map_wide_range_perf_plan.md.
     _WATER_FULL_MAX_NM = 300.0
-    #: above _WATER_FULL_MAX_NM keep only lakes whose bbox diagonal >= this
-    #: (deg). Great Lakes span several degrees; 0.3 deg (~18 NM) admits big
-    #: lakes/reservoirs and drops ponds.
-    _WATER_WIDE_MIN_DIAG_DEG = 0.3
+    #: above _WATER_FULL_MAX_NM the lake size floor scales with range (bbox
+    #: diagonal deg = range_nm * this, clamped to _WATER_WIDE_DIAG_MAX) so the
+    #: drawn-poly count stays bounded (~dozens) as you zoom out -- only
+    #: progressively larger bodies survive, and the Great Lakes (6-8 deg) always
+    #: do. This DB tags everything kind='water' with no elev, so SIZE is the
+    #: only discriminator (map_wide_range_perf_plan.md).
+    _WATER_WIDE_DIAG_PER_NM = 0.001
+    _WATER_WIDE_DIAG_MAX = 3.0
 
     def __init__(self):
         super(TerrainLayer, self).__init__()
@@ -267,7 +271,8 @@ class TerrainLayer(MapLayer):
         # the worker (2.8 s @ 800 NM). Close in: full overlay, sub-3-px pieces
         # skipped before the BLOB decode.
         wide = range_nm > self._WATER_FULL_MAX_NM
-        min_diag = (self._WATER_WIDE_MIN_DIAG_DEG if wide
+        min_diag = (min(self._WATER_WIDE_DIAG_MAX,
+                        range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
                     else 3.0 * mpp / M_PER_DEG_LAT)
         px_per_deg_lat = M_PER_DEG_LAT / mpp
         px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
