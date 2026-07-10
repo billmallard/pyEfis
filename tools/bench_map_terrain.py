@@ -37,6 +37,8 @@ def main(argv=None):
     ap.add_argument("--h", type=int, default=700, help="map widget height px")
     ap.add_argument("--repeat", type=int, default=1,
                     help="render N times per cell, report the fastest")
+    ap.add_argument("--water", default="",
+                    help="water db path (enables the _draw_water overlay)")
     args = ap.parse_args(argv)
 
     from PyQt6.QtGui import QGuiApplication
@@ -48,7 +50,7 @@ def main(argv=None):
     class Owner:
         tile_path = args.tiles
         terrain_mode = "relief"
-        water_db_path = ""                      # skip the water overlay for timing
+        water_db_path = args.water              # "" skips the water overlay
         water_max_vertices = 512
 
     layer = tmod.TerrainLayer()

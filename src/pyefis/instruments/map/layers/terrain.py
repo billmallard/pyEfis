@@ -65,6 +65,11 @@ class TerrainLayer(MapLayer):
     _SNAP_FRAC = 0.15
     #: rendered image pixels per screen pixel (1 = exact; <1 = softer/faster)
     _RES = 1.0
+    #: above this range the fine water overlay (lakes/coastline) is skipped --
+    #: it isn't range-capped and dominates the worker at wide zoom (2.8 s @ 800
+    #: NM, 15 s @ 2500 NM), while the terrain void-water still shows oceans. The
+    #: detail only matters up close (map_wide_range_perf_plan.md).
+    _WATER_MAX_NM = 300.0
 
     def __init__(self):
         super(TerrainLayer, self).__init__()
@@ -237,7 +242,8 @@ class TerrainLayer(MapLayer):
         rgbx[..., 3] = 255
         qimg = QImage(rgbx.data, n, n, 4 * n,
                       QImage.Format.Format_RGBX8888).copy()
-        if self._water is not None and self._water.ready:
+        if (self._water is not None and self._water.ready
+                and range_nm <= self._WATER_MAX_NM):
             self._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
         return qimg, (lat0, lon0, mpp)
 
