@@ -10,8 +10,12 @@
 #  per-vertex-Python failure mode of SVS #74 -- so all vertex work
 #  happens once per window change, off the paint path.
 #
-#  When the rivers pack lands (#92) it shares the highways sqlite
-#  schema, so a rivers layer is a config variation of this one.
+#  LOD (docs/map_layers_roadmap.md section 1): the class set drawn scales
+#  with range -- interstates alone when zoomed out, arterials added as you
+#  zoom in. The class filter is pushed into the DB query so the worker only
+#  fetches what it will draw. The rivers layer (#92) shares this machinery
+#  and the highways sqlite schema -- it is just a subclass with its own
+#  class bands + colour (map/layers/rivers.py).
 
 import math
 import threading
@@ -23,13 +27,17 @@ from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map.layers import MapLayer, register_layer
 
-#: NM: layer hidden above this range
-_SHOW_RANGE = 40.0
-#: above this range only the arterial classes draw
-_DECLUTTER_RANGE = 20.0
-_MAJOR = ("motorway", "trunk", "primary")
 #: per-window vertex budget (worker-side; metro windows are dense)
 _MAX_VERTICES = 150000
+
+
+def _with_links(bases):
+    """Expand base road classes to include their ``_link`` ramps."""
+    out = []
+    for c in bases:
+        out.append(c)
+        out.append(c + "_link")
+    return tuple(out)
 
 
 @register_layer
@@ -39,13 +47,36 @@ class RoadsLayer(MapLayer):
     z = 10
     default_on = True
 
+    # --- config option names (subclasses point these elsewhere) ----------
+    _DB_OPTION = "highway_db_path"
+    _COLOR_OPTION = "road_color"
+    _DEFAULT_COLOR = "#c0c0c0"
+
+    # LOD bands: (max range NM, base classes drawn at/below it). Cumulative
+    # and coarsest-last; above the last band the layer is hidden. Each base
+    # class also matches its _link ramp. Keep in sync with
+    # tools/build_highway_db.py PRESETS["roads"].
+    _BAND_BASE = (
+        (5.0, ("motorway", "trunk", "primary", "secondary")),
+        (20.0, ("motorway", "trunk", "primary")),
+        (40.0, ("motorway", "trunk")),
+        (80.0, ("motorway",)),
+    )
+    #: base class -> pen tier (0 = boldest). Unknown classes fall to the
+    #: thinnest tier.
+    _TIER = {"motorway": 0, "trunk": 0, "primary": 1, "secondary": 2}
+    #: tier -> (width px, alpha). Interstates boldest; arterials thin/faint.
+    _TIER_PEN = {0: (1.8, 255), 1: (1.3, 220), 2: (1.0, 170)}
+    #: roads carry _link ramps; waterway subclasses (rivers) do not.
+    _EXPAND_LINKS = True
+
     #: metres of travel before the window re-anchors (hysteresis)
     _SNAP_FRAC = 0.15
 
     def __init__(self):
         super(RoadsLayer, self).__init__()
         self._db = None
-        self._color = "#c0c0c0"
+        self._color = self._DEFAULT_COLOR
         self._img = None            # (QImage, key, meta)
         self._job = None
         self._worker = None
@@ -53,8 +84,9 @@ class RoadsLayer(MapLayer):
 
     def configure(self, owner):
         self._owner = owner
-        self._color = str(getattr(owner, "road_color", "") or "#c0c0c0")
-        path = str(getattr(owner, "highway_db_path", "") or "")
+        self._color = str(getattr(owner, self._COLOR_OPTION, "")
+                          or self._DEFAULT_COLOR)
+        path = str(getattr(owner, self._DB_OPTION, "") or "")
         if path:
             try:
                 from pyefis.instruments.ai.highway_db import HighwayDB
@@ -62,7 +94,22 @@ class RoadsLayer(MapLayer):
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception(
-                    "map roads db unavailable")
+                    "map %s db unavailable", self.id)
+
+    # --- LOD ---------------------------------------------------------------
+    def _classes_for_range(self, range_nm):
+        """fclass set to draw at ``range_nm`` (with _link ramps), or None
+        when the layer is hidden (zoomed out past the coarsest band)."""
+        for max_r, bases in self._BAND_BASE:
+            if range_nm <= max_r:
+                return _with_links(bases) if self._EXPAND_LINKS else tuple(bases)
+        return None
+
+    def _tier_for(self, fclass):
+        base = (fclass or "")
+        if base.endswith("_link"):
+            base = base[:-5]
+        return self._TIER.get(base, 2)
 
     # --- window key: snapped centre + range bucket (terrain pattern) -----
     def _key(self, x):
@@ -74,7 +121,7 @@ class RoadsLayer(MapLayer):
 
     def paint(self, p, x):
         if self._db is None or not self._db.ready \
-                or x.range_nm > _SHOW_RANGE:
+                or self._classes_for_range(x.range_nm) is None:
             return
         key = self._key(x)
         with self._lock:
@@ -108,7 +155,7 @@ class RoadsLayer(MapLayer):
             self._job = job
             if self._worker is None:
                 self._worker = threading.Thread(
-                    target=self._worker_loop, name="map-roads",
+                    target=self._worker_loop, name="map-" + self.id,
                     daemon=True)
                 self._worker.start()
 
@@ -129,7 +176,7 @@ class RoadsLayer(MapLayer):
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception(
-                    "map roads render failed")
+                    "map %s render failed", self.id)
                 with self._lock:
                     if self._job == job:
                         self._job = None   # let the next paint re-request
@@ -138,6 +185,19 @@ class RoadsLayer(MapLayer):
                 self._owner.update()
             except RuntimeError:
                 return                        # widget destroyed
+
+    def _pens(self):
+        """Build one QPen per tier from the layer colour (cached per render)."""
+        pens = {}
+        for tier, (width, alpha) in self._TIER_PEN.items():
+            col = QColor(self._color)
+            if not col.isValid():
+                col = QColor(self._DEFAULT_COLOR)
+            col.setAlpha(alpha)
+            pen = QPen(col)
+            pen.setWidthF(width)
+            pens[tier] = pen
+        return pens
 
     def _render(self, job):
         key, lat0, lon0, range_nm, w, h, cy = job
@@ -156,25 +216,14 @@ class RoadsLayer(MapLayer):
         img.fill(0)
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        col = QColor(self._color)
-        if not col.isValid():
-            col = QColor("#c0c0c0")
-        major_pen = QPen(col)
-        major_pen.setWidthF(1.6)
-        minor = QColor(col)
-        minor.setAlpha(170)
-        minor_pen = QPen(minor)
-        minor_pen.setWidthF(1.0)
+        pens = self._pens()
 
-        arterial_only = range_nm > _DECLUTTER_RANGE
+        classes = self._classes_for_range(range_nm)   # LOD-filtered fetch
         query_nm = half_diag_m / 1852.0
         budget = _MAX_VERTICES
         try:
-            for line in self._db.polylines_in_range(lat0, lon0, query_nm):
-                fc = (line.fclass or "")
-                is_major = fc.startswith(_MAJOR)
-                if arterial_only and not is_major:
-                    continue
+            for line in self._db.polylines_in_range(lat0, lon0, query_nm,
+                                                    classes=classes):
                 v = line.vertices
                 if budget <= 0:
                     break
@@ -185,7 +234,7 @@ class RoadsLayer(MapLayer):
                 if (xs.max() < 0 or xs.min() > n
                         or ys.max() < 0 or ys.min() > n):
                     continue
-                p.setPen(major_pen if is_major else minor_pen)
+                p.setPen(pens[self._tier_for(line.fclass)])
                 p.drawPolyline(QPolygonF(
                     [QPointF(float(a), float(b))
                      for a, b in zip(xs, ys)]))

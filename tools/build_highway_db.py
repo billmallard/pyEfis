@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 """
-Build the SVS highway database from OSM road shapefiles (issue #35).
+Build the polyline database the SVS + moving map read (issue #35, #92).
 
-Input: gis_osm_roads_free_1.shp from a Geofabrik state "free
-shapefile" bundle. Filters to the major classes (motorway, trunk and
-their _link ramps by default), Douglas-Peucker decimates each polyline
-(default 40 m tolerance — finer than the display can resolve), and
-stores (lat, lon) float32 blobs in an R-tree-indexed sqlite the
-runtime HighwayDB reads.
+Input: a Geofabrik state "free shapefile" bundle layer --
+``gis_osm_roads_free_1.shp`` for roads, ``gis_osm_waterways_free_1.shp``
+for rivers (both carry an ``fclass`` field). Filters to the requested
+classes, Douglas-Peucker decimates each polyline (default 40 m tolerance --
+finer than the display can resolve), and stores (lat, lon) float32 blobs
+in an R-tree-indexed sqlite the runtime HighwayDB reads (same schema for
+both -- the roads/rivers map layers differ only in class set + colour).
 
-Usage:
+Presets pick the class set (moving-map roads LOD wants primary/secondary
+arterials, not just interstates); ``--classes`` overrides:
+
+    # roads (default preset): motorway/trunk/primary/secondary + ramps
     python tools/build_highway_db.py --dest highways.sqlite \
         path/to/colorado/gis_osm_roads_free_1.shp [more .shp ...]
+
+    # rivers (#92): same schema, waterway classes, own sqlite
+    python tools/build_highway_db.py --preset rivers --dest rivers.sqlite \
+        path/to/colorado/gis_osm_waterways_free_1.shp [more .shp ...]
 
 Requires pyshp (like build_water_db.py). Data (c) OpenStreetMap
 contributors, ODbL.
@@ -27,7 +35,17 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from pyefis.instruments.ai.highway_db import encode_vertices  # noqa: E402
 
-DEFAULT_CLASSES = ("motorway", "motorway_link", "trunk", "trunk_link")
+# Class presets by data layer. Roads carry primary/secondary now (not just the
+# motorway/trunk interstates) so the moving-map roads layer can add arterials
+# as it zooms in (docs/map_layers_roadmap.md section 1). Rivers reuse the same
+# schema with OSM waterway classes (#92). Keep the road tiers in sync with the
+# roads layer LOD bands (map/layers/roads.py _BAND_BASE).
+PRESETS = {
+    "roads": ("motorway", "motorway_link", "trunk", "trunk_link",
+              "primary", "primary_link", "secondary", "secondary_link"),
+    "rivers": ("river", "canal", "stream"),
+}
+DEFAULT_CLASSES = PRESETS["roads"]
 M_PER_DEG = 111139.0
 
 SCHEMA = """
@@ -75,9 +93,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("shapefiles", nargs="+")
     ap.add_argument("--dest", required=True)
-    ap.add_argument("--classes", nargs="*", default=list(DEFAULT_CLASSES))
+    ap.add_argument("--preset", choices=sorted(PRESETS), default="roads",
+                    help="class set to keep (default roads); ignored if "
+                         "--classes is given")
+    ap.add_argument("--classes", nargs="*", default=None,
+                    help="explicit fclass list (overrides --preset)")
     ap.add_argument("--tolerance-m", type=float, default=40.0)
     args = ap.parse_args()
+    if not args.classes:
+        args.classes = list(PRESETS[args.preset])
 
     import shapefile  # pyshp
 

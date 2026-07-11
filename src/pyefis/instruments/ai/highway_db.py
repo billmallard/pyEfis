@@ -60,17 +60,27 @@ class HighwayDB:
             log.warning("HighwayDB: failed to open %s: %s", path, e)
             self._con = None
 
-    def polylines_in_range(self, lat: float, lon: float, range_nm: float):
-        """Yield HighwayLine objects whose bbox intersects the range
-        box around (lat, lon)."""
+    def polylines_in_range(self, lat: float, lon: float, range_nm: float,
+                           classes=None):
+        """Yield HighwayLine objects whose bbox intersects the range box
+        around (lat, lon).
+
+        ``classes`` optionally restricts to an ``fclass`` set, filtered in
+        SQL so the moving-map LOD only fetches the classes it will draw at
+        the current range (map/layers/roads.py). ``None`` = every class."""
         if not self.ready:
             return
         d = range_nm * NM_TO_DEG
-        cur = self._con.execute(
-            "SELECT l.fclass, l.verts FROM highway_lines l "
-            "JOIN highway_rtree r ON r.id = l.id "
-            "WHERE r.max_lat >= ? AND r.min_lat <= ? "
-            "  AND r.max_lon >= ? AND r.min_lon <= ?",
-            (lat - d, lat + d, lon - d * 2.0, lon + d * 2.0))
-        for fclass, blob in cur:
+        sql = ("SELECT l.fclass, l.verts FROM highway_lines l "
+               "JOIN highway_rtree r ON r.id = l.id "
+               "WHERE r.max_lat >= ? AND r.min_lat <= ? "
+               "  AND r.max_lon >= ? AND r.min_lon <= ?")
+        params = [lat - d, lat + d, lon - d * 2.0, lon + d * 2.0]
+        classes = list(classes) if classes is not None else None
+        if classes is not None:
+            if not classes:
+                return                       # empty set -> draw nothing
+            sql += " AND l.fclass IN (%s)" % ",".join("?" * len(classes))
+            params.extend(classes)
+        for fclass, blob in self._con.execute(sql, params):
             yield HighwayLine(decode_vertices(blob), fclass)
