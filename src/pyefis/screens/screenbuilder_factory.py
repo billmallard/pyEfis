@@ -897,8 +897,9 @@ _register(InstrumentSpec(
                   "/data/makerplane-data/terrain/tiles)"),
         Prop("layer_roads", "boolean", default=True,
              label="Layer: roads",
-             help="major roads from the highways pack (shown at/below "
-                  "40 NM; arterials only above 20 NM)"),
+             help="roads from the highways pack, LOD by range: interstates "
+                  "when zoomed out (<=80 NM), arterials added as you zoom "
+                  "in (primary <=20 NM, secondary <=5 NM)"),
         Prop("highway_db_path", "string", default="",
              label="Roads db path",
              help="highways.sqlite (the SVS highway_db_path; on the Pi "
@@ -906,8 +907,21 @@ _register(InstrumentSpec(
                   "highways.sqlite)"),
         Prop("road_color", "color", default="#c0c0c0",
              label="Road colour",
-             help="road line colour (minor classes draw thinner and "
+             help="road line colour (arterial classes draw thinner and "
                   "slightly transparent)"),
+        Prop("layer_rivers", "boolean", default=True,
+             label="Layer: rivers",
+             help="rivers/waterways as lines from the rivers pack (#92), "
+                  "LOD by range: major rivers when zoomed out, canals and "
+                  "streams added close in"),
+        Prop("river_db_path", "string", default="",
+             label="Rivers db path",
+             help="rivers.sqlite (shares the highways schema; on the Pi "
+                  "/data/makerplane-data/rivers/current/rivers.sqlite)"),
+        Prop("river_color", "color", default="#4a6d8c",
+             label="River colour",
+             help="waterway line colour (smaller waterways draw thinner "
+                  "and slightly transparent)"),
         Prop("layer_airports", "boolean", default=True,
              label="Layer: airports",
              help="FAA sectional airport symbols with ident labels "

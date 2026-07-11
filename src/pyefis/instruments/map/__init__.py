@@ -78,6 +78,9 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.layer_roads = True
         self.highway_db_path = ""              # highways.sqlite (SVS pack)
         self.road_color = "#c0c0c0"
+        self.layer_rivers = True
+        self.river_db_path = ""                # rivers.sqlite (highways schema, #92)
+        self.river_color = "#4a6d8c"
         self.layer_airports = True
         self.nasr_db_path = ""                 # NASR airports.sqlite
         self.layer_navaids = True
@@ -155,6 +158,7 @@ class MovingMap(LiveBindingMixin, QWidget):
     def _build_layers(self):
         from pyefis.instruments.map.layers import airports  # noqa: F401
         from pyefis.instruments.map.layers import navaids  # noqa: F401
+        from pyefis.instruments.map.layers import rivers  # noqa: F401
         from pyefis.instruments.map.layers import roads  # noqa: F401
         from pyefis.instruments.map.layers import terrain  # noqa: F401
         self._layers = []
