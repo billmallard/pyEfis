@@ -133,7 +133,8 @@ def test_terrain_water_rasterized_into_window(qapp):
 class _FakeHighwayDB:
     """Stub HighwayDB: one motorway segment strictly NORTH of the
     ownship (so orientation tests can discriminate sides -- a through
-    road is a diameter and cannot) plus a short residential spur."""
+    road is a diameter and cannot) plus a short secondary spur. Honours
+    the LOD ``classes`` filter the layer passes, like the real DB."""
 
     ready = True
 
@@ -148,12 +149,14 @@ class _FakeHighwayDB:
         self._lines = [
             L(np.array([[lat0 + 0.02, lon0], [lat0 + 0.2, lon0]],
                        dtype=np.float32), "motorway"),
-            L(np.array([[lat0, lon0 + 0.05], [lat0 + 0.02, lon0 + 0.05]],
-                       dtype=np.float32), "residential"),
+            L(np.array([[lat0, lon0 + 0.03], [lat0 + 0.02, lon0 + 0.03]],
+                       dtype=np.float32), "secondary"),
         ]
 
-    def polylines_in_range(self, lat, lon, range_nm):
-        yield from self._lines
+    def polylines_in_range(self, lat, lon, range_nm, classes=None):
+        for line in self._lines:
+            if classes is None or line.fclass in classes:
+                yield line
 
 
 def _roads_paint(range_nm, rot_deg):
@@ -196,12 +199,76 @@ def test_roads_track_up_east_paints_north_road_left(qapp):
     assert left > 50 and left > 5 * max(1, right)
 
 
-def test_roads_declutter_drops_minor_above_20nm(qapp):
-    """Above the declutter range only arterial classes draw: the
-    residential spur contributes pixels at 10 NM but not at 30 NM."""
-    a10 = _roads_paint(10.0, 0.0).astype(bool).sum()
+def test_roads_lod_classes_by_range():
+    """LOD class bands: closer in = more classes; hidden past the coarsest."""
+    from pyefis.instruments.map.layers.roads import RoadsLayer
+    lay = RoadsLayer()
+    near = lay._classes_for_range(3.0)      # <=5 NM: everything
+    assert "secondary" in near and "primary" in near and "motorway" in near
+    assert "secondary_link" in near         # _link ramps ride along
+    mid = lay._classes_for_range(15.0)      # <=20 NM: no secondary
+    assert "primary" in mid and "secondary" not in mid
+    far = lay._classes_for_range(30.0)      # <=40 NM: motorway + trunk
+    assert set(far) == {"motorway", "motorway_link", "trunk", "trunk_link"}
+    assert set(lay._classes_for_range(70.0)) == {"motorway", "motorway_link"}
+    assert lay._classes_for_range(200.0) is None    # hidden when zoomed out
+
+
+def test_roads_lod_drops_secondary_when_zoomed_out(qapp):
+    """Integration: a secondary road paints at 3 NM (in band) but not at
+    30 NM, where the layer only fetches motorway/trunk."""
+    a3 = _roads_paint(3.0, 0.0).astype(bool).sum()
     a30 = _roads_paint(30.0, 0.0).astype(bool).sum()
-    assert a10 > a30 > 0
+    # both draw the motorway; only the 3 NM view adds the secondary spur
+    assert a3 > a30 > 0
+
+
+def test_rivers_layer_lod_and_config():
+    """Rivers reuse the roads machinery with waterway classes, no _link
+    ramps, and their own db-path/colour options."""
+    from pyefis.instruments.map.layers.rivers import RiversLayer
+    lay = RiversLayer()
+    assert lay.id == "rivers" and lay._DB_OPTION == "river_db_path"
+    near = lay._classes_for_range(5.0)
+    assert set(near) == {"river", "canal", "stream"}   # no _link expansion
+    assert lay._classes_for_range(40.0) == ("river",)  # only major rivers wide
+    assert lay._classes_for_range(100.0) is None
+
+    class Owner:
+        river_db_path = ""
+        river_color = "#123456"
+    lay.configure(Owner())
+    assert lay._color == "#123456" and lay._db is None   # empty path -> no db
+
+
+def test_highwaydb_class_filter(tmp_path):
+    """The real HighwayDB filters by fclass in SQL (the LOD fetch)."""
+    import sqlite3
+    from pyefis.instruments.ai.highway_db import HighwayDB, encode_vertices
+    p = tmp_path / "roads.sqlite"
+    con = sqlite3.connect(str(p))
+    con.executescript(
+        "CREATE TABLE highway_lines (id INTEGER PRIMARY KEY, fclass TEXT,"
+        " min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL, verts BLOB);"
+        "CREATE VIRTUAL TABLE highway_rtree USING rtree(id, min_lat, max_lat,"
+        " min_lon, max_lon);")
+    rows = [(1, "motorway"), (2, "secondary")]
+    for rid, fc in rows:
+        verts = encode_vertices(np.array([[34.5, -120.5], [34.6, -120.4]]))
+        con.execute("INSERT INTO highway_lines VALUES (?,?,?,?,?,?,?)",
+                    (rid, fc, 34.5, 34.6, -120.5, -120.4, verts))
+        con.execute("INSERT INTO highway_rtree VALUES (?,?,?,?,?)",
+                    (rid, 34.5, 34.6, -120.5, -120.4))
+    con.commit(); con.close()
+
+    db = HighwayDB(str(p))
+    assert db.ready
+    allc = {l.fclass for l in db.polylines_in_range(34.5, -120.5, 50)}
+    assert allc == {"motorway", "secondary"}            # None = every class
+    only = {l.fclass for l in db.polylines_in_range(
+        34.5, -120.5, 50, classes=("motorway", "trunk"))}
+    assert only == {"motorway"}                          # filtered in SQL
+    assert list(db.polylines_in_range(34.5, -120.5, 50, classes=())) == []
 
 
 def test_terrain_orientation_north_up(qapp):
