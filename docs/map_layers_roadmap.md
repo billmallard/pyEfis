@@ -46,9 +46,13 @@ roads/rivers; charts are genuinely new.
   Stop there: `tertiary/residential` is visual clutter for aviation and explodes
   size. These four give the landmark network a pilot actually uses (interstates,
   US highways, major arterials).
-- **`minzoom` per row** -- the coarsest range band at which a line draws,
-  derived from its class (the LOD decision, section 1.4). A new nullable column;
-  old DBs without it fall back to "always draw" (construct-never-raises).
+- **Class-based LOD lives in the LAYER, not the data** (realized design). The
+  class->range-band map is a small fixed table in `roads.py` (`_BAND_BASE`), and
+  the layer pushes the band's class set into the DB query (`HighwayDB.
+  polylines_in_range(classes=...)` -> SQL `fclass IN (...)`), so no new column or
+  schema migration is needed and old motorway/trunk-only DBs keep working. (A
+  data-driven `minzoom` column stays an option only if per-region band tuning is
+  ever wanted.)
 - **Footprint / delivery.** Adding primary+secondary multiplies polyline count;
   ship the highways pack **region-tiered + compressed** like terrain (Geofabrik
   extracts are already per-state, so region grouping is natural), opt-in by
