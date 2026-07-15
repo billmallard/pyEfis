@@ -36,11 +36,20 @@ It is recommende that you work in a virtual environment. To use the global inter
 
 The second command, the activation of the virtual environment, needs to be performed every time you start a new console session.
 
-Next, you install all dependencies.
+Next, install the dependencies. ``make init`` installs the development tooling
+(pytest, flake8, black, ...); the runtime GUI and 3D dependencies live in
+optional extras, so install those too:
 
 ::
 
     $ make init
+    $ pip install -e '.[qt,svs]'
+
+The ``qt`` extra (PyQt6) is **required** -- pyEfis will not start without it. The
+``svs`` extra (numpy, PyOpenGL) is optional and only needed to render Synthetic
+Vision terrain; without it pyEfis runs normally and the attitude view shows
+``SVS UNAVAIL``. See `docs/running_from_source.md <docs/running_from_source.md>`_
+for the full walkthrough.
 
 Install `FIX-Gateway <https://github.com/makerplane/FIX-Gateway>`_  as documented in its readme.
 

@@ -6,6 +6,9 @@
 - [Screen Builder](Screen-Builder)
 - [Preferences & Styling](Preferences-and-Styling)
 
+**Install & Run**
+- [Running from Source](Running-from-Source)
+
 **Widget Reference**
 - [Index](Widget-Reference)
 - [Flight Instruments](Widgets-Flight-Instruments)

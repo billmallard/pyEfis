@@ -42,6 +42,7 @@ The mapping of sensors→keys is fix-gateway's job. Understand the
 | If you want to… | Read |
 |-----------------|------|
 | Understand the shared vocabulary (FIX keys, colors, fonts, layout) | **[Concepts](Concepts)** |
+| Run pyEFIS from a source checkout (developers) | **[Running from Source](Running-from-Source)** |
 | Lay out or edit a screen in YAML | **[Screen Builder](Screen-Builder)** |
 | Look up a specific widget and its options | **[Widget Reference](Widget-Reference)** |
 | Customize the shipped screens without rewriting them | **[Preferences & Styling](Preferences-and-Styling)** |
