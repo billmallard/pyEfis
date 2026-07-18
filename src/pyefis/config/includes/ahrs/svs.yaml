@@ -2,9 +2,14 @@
 #
 # Cloned from virtual_vfr.yaml for the PFD_AI_ONLY (SVS-focused) screen so the
 # shared virtual_vfr.yaml stays untouched for the standard PFD. Differences:
-#   * Synthetic Vision is ENABLED (svs block below). Paths assume the
-#     makerplane-data updater's standard Pi data root (/data/makerplane-data);
-#     adjust if your data root differs.
+#   * This screen carries the Synthetic Vision (svs) block. SVS ships DISABLED
+#     by default so a fresh install boots to the standard sky/ground attitude
+#     with no dependency on terrain data existing. To use SVS, set
+#     `enabled: true` below and point the paths at your data root. The paths
+#     default to the makerplane-data updater's standard Pi root
+#     (/data/makerplane-data); on a laptop set them to a directory you control.
+#     (On a Pi provisioned from the configurator, the updater injects the svs
+#     block for you, so this default does not affect managed installs.)
 #   * The HSI, the "Auto Pilot:" status line (label + MAVMSG message), and the
 #     UTC/local time readouts are removed for a cleaner synthetic-vision view.
 instruments:
@@ -17,12 +22,14 @@ instruments:
     options:
       font_percent: 0.025
       # Synthetic Vision (terrain + water/roads overlays + airport/runway and
-      # obstacle symbology). Enabled here. The SVS only renders when an `svs:`
-      # block is present AND `enabled: true`. A supported GPU is required; with
-      # no usable GPU/driver SVS disables itself and the view reverts to
-      # sky/ground with an SVS UNAVAIL annunciation.
+      # obstacle symbology). Disabled by default -- see the header note. The SVS
+      # only renders when an `svs:` block is present AND `enabled: true`, a
+      # supported GPU is available, and the data paths below resolve. With no
+      # usable GPU/driver (or absent data) SVS disables itself and the view
+      # reverts to sky/ground with an SVS UNAVAIL annunciation. To turn it on,
+      # set `enabled: true` and adjust the paths to your data root.
       svs:
-        enabled: true
+        enabled: false
         range_nm: 30
         tile_path: /data/makerplane-data/terrain/tiles
         nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
