@@ -1405,7 +1405,7 @@ class TestScreenBuilderPreferencesAndOptions:
         screen = Screen(_TestParent(config))
         qtbot.addWidget(screen)
 
-        with pytest.raises(ValueError, match="button must specify options: config:"):
+        with pytest.raises(ValueError, match="button needs options"):
             screen.init_screen()
 
     def test_encoder_order_option_ignores_non_selectable_widget(self, fix, qtbot):
