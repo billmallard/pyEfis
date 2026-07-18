@@ -9,16 +9,16 @@ pyEfis is the **Python EFIS** for the MakerPlane open-source aircraft. It's a Py
 ## Where this repo lives
 
 - Working tree: `d:/Users/wpballard/Documents/github/MAOS/makerplane/pyEfis/`
-- Active branch: **`display-changes`** (on `origin = billmallard/pyEfis`, the user's fork) — the current development line, ~20 commits **ahead** of `gpu-required`. It carries the recent SVS perf work (#74/#73/#70, cached-VBO migration) AND the **editor/configurator subsystem** (`src/pyefis/editor/`, schema exporter + visual preview). `gpu-required` is the Pi-deploy branch and the base of upstream PR #274 (it's now behind). Older docs/memory saying `gpu-required` or `svs-renderer` is the active branch are **stale**.
+- Branch model (since 2026-07-08): **`dev`** (active development — work here) → `qa` → `master`, promoted by merge. `origin = billmallard/pyEfis` (the fork). Old feature branches (`display-changes`, `moving-map`, `svs-renderer`, …) are parked history — except **`gpu-required`**, which now serves as the **curated head of upstream PR #274** (rebuilt from `dev` minus fork-only files, then force-pushed; see `../UPSTREAM_LANDING_PLAN.md`). Older docs/memory naming `display-changes` as the active branch are **stale**.
 - Upstream: `makerplane/pyEfis` — **do not push or open PRs upstream without explicit authorisation.** Standing instruction.
-- When opening an upstream PR, note "please use merge commit, not squash" — GitHub's squash merge has had defects during this period.
+- Merge strategy is decided per PR (locked 2026-07-18): pyEfis **#274 squash-merges** to one signed commit; fix-gateway **#203 merge-commits**. See the landing plan Phase 0.
 
 ## Current upstream contribution (in flight)
 
-- **PR #274** — `billmallard:gpu-required → makerplane/pyEfis:master`, the whole SVS contribution (~206 commits). **CI is green.** I have READ on the makerplane org, so it's a cross-fork PR a maintainer merges; I offered an integration-branch workflow in a PR comment (maintainer makes a branch, I retarget the base). **Pushing to `gpu-required` auto-updates this PR and re-runs its CI.**
-- Companion **fix-gateway PR #203** wires the X-Plane feed (RREF nav → HSI COURSE/CDI). Its `send:` (FIX→X-Plane throttle/mixture) block is DISABLED by default — it commanded the engine closed once it reached X-Plane's real port.
-- NOTE: this CLAUDE.md is committed on `display-changes` (commit 3f79497) with local/ssh specifics in it. It is NOT on `gpu-required`, so it does not currently ride in PR #274 — but if `display-changes` is ever the PR base, gitignore it out first.
-- A second, broader workspace orientation lives at `../CLAUDE.md` (uncommitted, the `makerplane/` umbrella) — covers the whole stack and the cross-repo instrument-widget pipeline. This file stays SVS-focused.
+- **PR #274** — `billmallard:gpu-required → makerplane/pyEfis:master`, the curated mega-PR (SVS, moving map, editor schema, HSI/nav, instruments; +32,969/−434, 183 files, ~402 commits). **CI green (2026-07-18); awaiting Eric Blevins.** Curated = `dev` minus 3 fork-only files (`.github/workflows/editor-assets.yml`, this `CLAUDE.md`, `tools/export_svs_preview_patch.py`). **To update #274: rebuild the curated branch off `dev`, `git rm` those 3, force-push `gpu-required`** — pushing `gpu-required` auto-updates the PR and re-runs its CI. Plan: `../UPSTREAM_LANDING_PLAN.md`; live status: `../STATE.md`.
+- Companion **fix-gateway PRs** (both CI-green): **#203** — X-Plane rewrite + NAVSRC persistence folded in (merge-commit); **#204** — moving-map control keys via the new versioned `database/map.yaml`. #203's `send:` (FIX→X-Plane throttle/mixture) block is DISABLED by default — it commanded the engine closed once it reached X-Plane's real port.
+- This CLAUDE.md is committed on `dev` (local/ssh specifics included) and is **excluded from the curated PR branch**, so it never rides upstream.
+- A second, broader workspace orientation lives at `../CLAUDE.md` (uncommitted, the `makerplane/` umbrella) — covers the whole stack and the cross-repo instrument-widget pipeline; live thread state is `../STATE.md`. This file stays SVS-focused.
 
 ## Running things
 

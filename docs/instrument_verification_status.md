@@ -6,7 +6,7 @@ Each instrument is held to FAA Part 23 / AC / TSO material as an **engineering t
 FAA corpus, and closed with an executable test catalog. See
 [`avionics_reference.md`](avionics_reference.md) for the standards basis and the framing.
 
-Branch: **`display-changes`** (billmallard/pyEfis fork). Last updated: 2026-07-01.
+Branch: **`dev`** (billmallard/pyEfis fork). Last updated: 2026-07-18.
 
 ## The template (repeated per instrument)
 
