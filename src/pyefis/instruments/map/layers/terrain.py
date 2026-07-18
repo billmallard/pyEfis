@@ -15,7 +15,8 @@ import threading
 
 import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPolygonF
+from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
+                         QPolygonF)
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map.layers import MapLayer, register_layer
@@ -287,7 +288,23 @@ class TerrainLayer(MapLayer):
                 pts = [QPointF((lo - lon0) * px_per_deg_lon + half_px,
                                (lat0 - la) * px_per_deg_lat + half_px)
                        for la, lo in poly.vertices]
-                if len(pts) >= 3:
+                rings = getattr(poly, "rings", None)
+                if rings:
+                    # Multi-ring row (outer + island holes, #44):
+                    # even-odd fill leaves the hole rings — islands —
+                    # unpainted. The vertices list concatenates all
+                    # rings, so a plain drawPolygon would be garbage.
+                    path = QPainterPath()
+                    path.setFillRule(Qt.FillRule.OddEvenFill)
+                    start = 0
+                    for end in rings:
+                        ring_pts = pts[start:end]
+                        if len(ring_pts) >= 3:
+                            path.addPolygon(QPolygonF(ring_pts))
+                            path.closeSubpath()
+                        start = end
+                    p.drawPath(path)
+                elif len(pts) >= 3:
                     p.drawPolygon(QPolygonF(pts))
         except Exception:
             import logging

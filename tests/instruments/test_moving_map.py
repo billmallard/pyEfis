@@ -130,6 +130,66 @@ def test_terrain_water_rasterized_into_window(qapp):
     assert not (land.blue() > land.red() and land.blue() > land.green())
 
 
+class _FakeIslandWaterDB:
+    """Stub WaterDB: one multi-ring lake (#44) — outer ring with an
+    island hole at its centre, rings = uint16-style end offsets as the
+    real WaterDB decodes them."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0):
+        d, hd = 0.03, 0.01              # outer / island half-sides
+        outer = [(lat0 - d, lon0 - d), (lat0 - d, lon0 + d),
+                 (lat0 + d, lon0 + d), (lat0 + d, lon0 - d)]
+        hole = [(lat0 - hd, lon0 - hd), (lat0 - hd, lon0 + hd),
+                (lat0 + hd, lon0 + hd), (lat0 + hd, lon0 - hd)]
+        self._poly = type("P", (), {})()
+        self._poly.vertices = outer + hole
+        self._poly.rings = [4, 8]
+        self._poly.kind = "lake"
+
+    def polygons_in_range(self, lat, lon, range_nm,
+                          min_bbox_diag_deg=None, drop_ocean=False):
+        yield self._poly
+
+
+def test_terrain_water_island_hole_stays_land(qapp):
+    """#44: a multi-ring water polygon paints even-odd — the water ring
+    goes blue, the island hole inside it stays land-coloured instead of
+    being flooded by the outer ring's fill."""
+    lat0, lon0 = 34.5, -120.5
+    lay = TerrainLayer()
+    lay._cache = _LandCache()
+    lay._water = _FakeIslandWaterDB(lat0, lon0)
+
+    class Owner:
+        _alt_ft = 3000.0
+    lay._owner = Owner
+
+    x = moving_map.MapTransform(lat0, lon0, 10.0, 0.0, 400, 400, 0.5)
+    key = lay._key(x)
+    img, meta = lay._render((key, x.lat0, x.lon0, x.range_nm,
+                             x.w, x.h, x.cy))
+    clat, clon, mpp = meta
+    n = img.width()
+
+    def px(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = (lo - clon) * M * np.cos(np.radians(clat)) / mpp + half
+        cy = (clat - la) * M / mpp + half
+        return img.pixelColor(int(round(cx)), int(round(cy)))
+
+    water = px(lat0, lon0 + 0.02)         # between hole and outer ring
+    island = px(lat0, lon0)               # island centre
+    outside = px(lat0, lon0 + 0.05)       # beyond the outer ring
+    assert water.blue() > water.red() and water.blue() > water.green()
+    assert not (island.blue() > island.red()
+                and island.blue() > island.green())
+    assert not (outside.blue() > outside.red()
+                and outside.blue() > outside.green())
+
+
 class _FakeHighwayDB:
     """Stub HighwayDB: one motorway segment strictly NORTH of the
     ownship (so orientation tests can discriminate sides -- a through

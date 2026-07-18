@@ -1577,8 +1577,18 @@ class SVSRenderer:
             else:
                 surface_ft = sampled_ft.get(i, 0.0)
 
-            n_v = len(poly.vertices)
+            verts = poly.vertices
             tri_idx = poly.triangles
+            if tri_idx is None and poly.rings:
+                # Multi-ring (outer + island holes) row without stored
+                # triangles — the builder guarantees rings => triangles,
+                # so this is defensive. Fan the outer ring alone: a fan
+                # across the concatenated rings would paint the island
+                # holes as water (#44).
+                verts = poly.outer_vertices
+            n_v = len(verts)
+            if n_v < 3:
+                continue
             if tri_idx is None:
                 # Pre-tessellation DB — fall back to a fan from v0.
                 # Correct for convex polygons, approximation for
@@ -1593,7 +1603,7 @@ class SVSRenderer:
             # Clip indices defensively; the build tool may emit one
             # malformed entry on a tessellation edge case.
             np.clip(tri_idx, 0, n_v - 1, out=tri_idx)
-            verts_np = np.asarray(poly.vertices, dtype=np.float32)
+            verts_np = np.asarray(verts, dtype=np.float32)
             picked = verts_np[tri_idx]   # (n_idx, 2) — fancy indexing
             buf = np.empty((picked.shape[0], 3), dtype=np.float32)
             buf[:, 0:2] = picked
