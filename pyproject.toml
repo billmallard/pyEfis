@@ -61,6 +61,13 @@ svs = [
     "numpy>=1.24",
     "PyOpenGL>=3.1.6",
 ]
+# Build-time-only deps for the water-pack builder (tools/build_water_db.py)
+# and its tests: earcut tessellation + shapefile reading. Never needed at
+# runtime — the renderer reads the pre-computed sqlite.
+watertools = [
+    "mapbox-earcut>=1.0",
+    "pyshp>=2.3",
+]
 
 [project.scripts]
 pyefis = "pyefis.main:main"
