@@ -1,3 +1,5 @@
+> **STATUS: ARCHIVED session handoff — historical record, do not act on.** Superseded by the live ledger (`makerplane/STATE.md`) and the docs index (`docs/README.md`). Archived 2026-07-18.
+
 # Handoff: ship the wide-range map performance work to all users
 
 Status: 2026-07-10. The wide-range moving-map performance work (terrain mosaic +

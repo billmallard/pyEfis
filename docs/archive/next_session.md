@@ -1,3 +1,5 @@
+> **STATUS: ARCHIVED session handoff — historical record, do not act on.** Superseded by the live ledger (`makerplane/STATE.md`) and the docs index (`docs/README.md`). Archived 2026-07-18.
+
 # Next session — opening moves
 
 State as of 2026-06-12 end of session. Written for a cold start (a
