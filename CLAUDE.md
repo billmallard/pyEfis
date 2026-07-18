@@ -18,7 +18,7 @@ pyEfis is the **Python EFIS** for the MakerPlane open-source aircraft. It's a Py
 - **PR #274** — `billmallard:gpu-required → makerplane/pyEfis:master`, the curated mega-PR (SVS, moving map, editor schema, HSI/nav, instruments; +32,969/−434, 183 files, ~402 commits). **CI green (2026-07-18); awaiting Eric Blevins.** Curated = `dev` minus 3 fork-only files (`.github/workflows/editor-assets.yml`, this `CLAUDE.md`, `tools/export_svs_preview_patch.py`). **To update #274: rebuild the curated branch off `dev`, `git rm` those 3, force-push `gpu-required`** — pushing `gpu-required` auto-updates the PR and re-runs its CI. Plan: `../UPSTREAM_LANDING_PLAN.md`; live status: `../STATE.md`.
 - Companion **fix-gateway PRs** (both CI-green): **#203** — X-Plane rewrite + NAVSRC persistence folded in (merge-commit); **#204** — moving-map control keys via the new versioned `database/map.yaml`. #203's `send:` (FIX→X-Plane throttle/mixture) block is DISABLED by default — it commanded the engine closed once it reached X-Plane's real port.
 - This CLAUDE.md is committed on `dev` (local/ssh specifics included) and is **excluded from the curated PR branch**, so it never rides upstream.
-- A second, broader workspace orientation lives at `../CLAUDE.md` (uncommitted, the `makerplane/` umbrella) — covers the whole stack and the cross-repo instrument-widget pipeline; live thread state is `../STATE.md`. This file stays SVS-focused.
+- A second, broader workspace orientation lives at `../CLAUDE.md` (the `makerplane/` umbrella, versioned in the private `maos-workspace` repo) — covers the whole stack and the cross-repo instrument-widget pipeline; live thread state is `../STATE.md`. This file stays SVS-focused.
 
 ## Running things
 
