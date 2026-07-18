@@ -65,8 +65,10 @@ Switch screens with the on-screen button / configured control.
 - [ ] **C3. Synthetic Vision (SVS)** — **off by default.** To test: on a
   GPU-capable device with terrain data, set `enabled: true` in the `svs:` block
   of your `svs.yaml` and point the paths at your data root. **Expected:** terrain
-  mesh with airport/runway and water/road overlays. *(Skip if you have no GPU or
-  no terrain data — see C5/C6.)*
+  mesh with airport/runway and water/road overlays. To fetch terrain/nav data,
+  run the makerplane-data updater (`pyefis-data update`) — on a Pi it's already
+  installed. *(No GPU or no data? Skip this and rely on the degradation checks
+  D1/D2 instead — "SVS UNAVAIL" is the expected, correct result.)*
 - [ ] **C4. Instrument fixes** — altimeter and numeric/value_text readouts show
   correct formatting (decimals, units) with live or test data.
 
