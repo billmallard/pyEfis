@@ -48,9 +48,19 @@ import mapbox_earcut as _earcut
 import numpy as np
 
 
+def _index_dtype(n_vertices):
+    """Dtype for the ``triangles`` and ``rings`` BLOBs of a row with
+    ``n_vertices`` total vertices. uint16 covers indices 0..65534 and
+    the final ring-end offset (== n_vertices) up to 65535; past that
+    both BLOBs switch to uint32. The reader (water_db.py) applies the
+    same threshold to the vertex count it already decodes, so the
+    choice is recoverable from the row itself."""
+    return np.uint32 if n_vertices > 65535 else np.uint16
+
+
 def tessellate_polygon(vertices, ring_ends=None):
     """Triangulate a polygon via earcut. Returns a numpy array of
-    uint16 indices (3 per triangle) into ``vertices``, or None if the
+    indices (3 per triangle) into ``vertices``, or None if the
     input is degenerate / fails tessellation.
 
     ``vertices`` is a list of (lat, lon) tuples — earcut sees them
@@ -74,10 +84,14 @@ def tessellate_polygon(vertices, ring_ends=None):
         return None
     if idx.size == 0 or (idx.size % 3) != 0:
         return None
-    # uint16 caps us at 65535 vertices per polygon — rings are
-    # decimated to <=32 vertices each at build time and insert_polygon
-    # refuses multi-ring rows past the uint16 range, so this is safe.
-    return idx.astype(np.uint16)
+    # Index dtype is implied by the row's vertex count: uint16 while
+    # every index AND ring-end offset fits (<= 65535 vertices), uint32
+    # beyond that. The reader derives the identical rule from the
+    # vertices BLOB length, so dense rows need no schema flag. The old
+    # builder silently DROPPED all holes past the uint16 ceiling — a
+    # dense cell like the lower Florida Keys (3,322 island rings) lost
+    # every island and #44 persisted there (oracle-gate residual B).
+    return idx.astype(_index_dtype(len(vertices)))
 
 
 SCHEMA = """
@@ -91,14 +105,18 @@ CREATE TABLE IF NOT EXISTS water_polygons (
     elev_ft   REAL,
     vertices  BLOB NOT NULL,
     -- Pre-tessellated triangle indices into the ``vertices`` array,
-    -- packed as little-endian uint16 (3 indices per triangle). NULL
-    -- only when tessellation failed at build time (logged as a
-    -- warning). The GPU water renderer uploads these directly to a
-    -- GL element-array buffer with one draw call per polygon.
+    -- packed little-endian (3 indices per triangle): uint16 for rows
+    -- of <= 65535 vertices, uint32 beyond (dense multi-ring cells;
+    -- the dtype is implied by the row's vertex count on both the
+    -- build and read side). NULL only when tessellation failed at
+    -- build time (logged as a warning). The GPU water renderer
+    -- uploads these directly to a GL element-array buffer with one
+    -- draw call per polygon.
     triangles BLOB,
     -- Ring topology for multi-ring (outer + hole) polygons, packed as
-    -- little-endian uint16 ring END offsets into ``vertices`` (earcut
-    -- convention: outer ring first, then each hole ring). NULL for
+    -- little-endian ring END offsets into ``vertices`` (earcut
+    -- convention: outer ring first, then each hole ring; same
+    -- uint16/uint32 vertex-count rule as ``triangles``). NULL for
     -- plain single-ring polygons — the overwhelming majority. When
     -- present, ``triangles`` was tessellated hole-aware, so island
     -- holes are excluded from the fill (#44).
@@ -294,20 +312,13 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
     for h in holes:
         all_verts.extend(h)
         ring_ends.append(len(all_verts))
-    if len(all_verts) > 65535:
-        # uint16 triangle-index ceiling — drop the holes rather than
-        # store corrupt indices (only reachable with the vertex cap
-        # disabled on a pathological polygon).
-        print(f"  WARNING: {len(all_verts)} vertices exceeds the uint16 "
-              "index range; dropping holes for this polygon",
-              file=sys.stderr)
-        all_verts = list(vertices)
-        ring_ends = [len(vertices)]
-        holes = []
     # Pre-tessellate. The renderer reads these indices directly into a
     # GL element-array buffer at draw time — keeps per-frame Python
     # work down to a buffer upload + glDrawElements call. Hole-aware:
     # earcut subtracts the hole rings so islands are not filled (#44).
+    # Rows past 65535 vertices store uint32 indices instead of losing
+    # their holes (the old drop-the-holes fallback re-created #44 in
+    # exactly the densest island cells).
     tri_idx = tessellate_polygon(all_verts,
                                  ring_ends if holes else None)
     if tri_idx is None and holes:
@@ -319,8 +330,10 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
         ring_ends = [len(vertices)]
         holes = []
         tri_idx = tessellate_polygon(all_verts)
-    tri_blob = tri_idx.tobytes() if tri_idx is not None else None
-    rings_blob = (np.asarray(ring_ends, dtype=np.uint16).tobytes()
+    idx_dtype = _index_dtype(len(all_verts))
+    tri_blob = (np.asarray(tri_idx, dtype=idx_dtype).tobytes()
+                if tri_idx is not None else None)
+    rings_blob = (np.asarray(ring_ends, dtype=idx_dtype).tobytes()
                   if holes else None)
     cur = con.execute(
         "INSERT INTO water_polygons "

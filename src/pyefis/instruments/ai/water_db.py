@@ -24,11 +24,16 @@ Schema (built by tools/build_water_db.py):
         kind      TEXT NOT NULL,   -- 'ocean' | 'lake' | 'river' | ...
         elev_ft   REAL,            -- known surface elev (lakes); NULL for ocean
         vertices  BLOB NOT NULL,   -- struct-packed <dd>... = list of (lat, lon)
-        triangles BLOB,            -- uint16 LE triangle indices (may be absent)
-        rings     BLOB             -- uint16 LE ring END offsets for multi-ring
-                                   -- (outer + island holes) rows; NULL for
-                                   -- single-ring rows and absent in pre-#44
-                                   -- databases
+        triangles BLOB,            -- LE triangle indices (may be absent).
+                                   -- uint16 for rows of <= 65535 vertices,
+                                   -- uint32 beyond (dense multi-ring cells) —
+                                   -- the dtype is implied by the row's vertex
+                                   -- count, mirrored by the builder
+        rings     BLOB             -- LE ring END offsets for multi-ring
+                                   -- (outer + island holes) rows; same
+                                   -- uint16/uint32 vertex-count rule as
+                                   -- ``triangles``. NULL for single-ring rows
+                                   -- and absent in pre-#44 databases
     )
     INDEX idx_bbox ON water_polygons(min_lat, max_lat, min_lon, max_lon)
 """
@@ -254,7 +259,12 @@ class WaterDB:
             cur = self._con.execute(sql, params)
         cap = self._max_vertices
         for r in cur:
-            rings = _decode_rings(r["rings"])
+            # The stored vertex count picks the triangle/ring index
+            # dtype (uint16 <= 65535 vertices, uint32 beyond) — dense
+            # multi-ring cells overflow uint16 and the builder mirrors
+            # this exact rule, so the row is self-describing.
+            n_verts = len(r["vertices"]) // 16 if r["vertices"] else 0
+            rings = _decode_rings(r["rings"], n_verts)
             # Multi-ring rows are never re-decimated on load: stride
             # decimation across concatenated rings would corrupt the
             # ring topology AND the pre-tessellated triangle indices.
@@ -265,7 +275,7 @@ class WaterDB:
                 elev_ft=r["elev_ft"],
                 vertices=_decode_vertices(r["vertices"],
                                           None if rings else cap),
-                triangles=_decode_triangles(r["triangles"]),
+                triangles=_decode_triangles(r["triangles"], n_verts),
                 rings=rings)
 
 
@@ -308,23 +318,41 @@ def encode_vertices(vertices) -> bytes:
     return bytes(buf)
 
 
-def _decode_triangles(blob):
-    """Unpack a uint16 little-endian triangle-index blob into a flat
-    list of ints (3 entries per triangle). Returns None when the
-    polygon was inserted by a pre-tessellation build of the DB and
-    has no triangles stored."""
+def _decode_triangles(blob, n_vertices):
+    """Unpack a little-endian triangle-index blob into a flat list of
+    ints (3 entries per triangle). Returns None when the polygon was
+    inserted by a pre-tessellation build of the DB and has no
+    triangles stored.
+
+    The index dtype is implied by the row's vertex count: uint16 for
+    <= 65535 vertices, uint32 beyond. Dense multi-ring cells (the
+    lower Florida Keys cell carries 3,322 island rings) overflow
+    uint16; the old builder dropped their holes entirely rather than
+    widen the indices (#44 residual). The builder applies the same
+    threshold, so no schema flag is needed."""
     if not blob:
         return None
+    if n_vertices > 65535:
+        if len(blob) % 4:
+            return None     # not a uint32 blob — treat as untessellated
+        n = len(blob) // 4
+        return list(struct.unpack(f"<{n}I", blob))
     n = len(blob) // 2
     return list(struct.unpack(f"<{n}H", blob))
 
 
-def _decode_rings(blob):
-    """Unpack a uint16 little-endian ring-end-offset blob into a list
-    of ints (earcut convention: entry k is the END offset of ring k in
-    the vertices list; ring 0 is the outer ring, the rest are island
-    holes). Returns None for single-ring polygons and pre-#44 DBs."""
+def _decode_rings(blob, n_vertices):
+    """Unpack a little-endian ring-end-offset blob into a list of ints
+    (earcut convention: entry k is the END offset of ring k in the
+    vertices list; ring 0 is the outer ring, the rest are island
+    holes). Returns None for single-ring polygons and pre-#44 DBs.
+    Same uint16/uint32 vertex-count rule as ``_decode_triangles``."""
     if not blob:
         return None
+    if n_vertices > 65535:
+        if len(blob) % 4:
+            return None
+        n = len(blob) // 4
+        return list(struct.unpack(f"<{n}I", blob))
     n = len(blob) // 2
     return list(struct.unpack(f"<{n}H", blob))
