@@ -289,6 +289,104 @@ class TestShapefileImport:
                                          poly.triangles)
 
 
+class TestHoleVerification:
+    """Residual A of #44: per-ring decimation can hand earcut a self-
+    intersecting or outer-crossing hole, and earcut then FILLS it
+    (54/770 hole interiors covered in a Keys probe build). The builder
+    now verifies every hole interior against the stored triangles,
+    escalates the decimation cap on failure, and strips hole-covering
+    triangles as a last resort."""
+
+    def _bad_fan(self):
+        import numpy as np
+        # The outer square fan-filled with the hole ignored — covers
+        # the island, exactly what a corrupted hole degenerates to.
+        return np.asarray([0, 1, 2, 0, 2, 3], dtype=np.uint16)
+
+    def test_interior_points_are_inside_their_ring(self):
+        concave = [(24.50, -81.80), (24.50, -81.70), (24.60, -81.70),
+                   (24.60, -81.74), (24.52, -81.74), (24.52, -81.76),
+                   (24.60, -81.76), (24.60, -81.80)]
+        for ring in (HOLE_CCW, OUTER_CW, concave):
+            pts = bw._ring_interior_points(ring)
+            assert pts
+            for lat, lon in pts:
+                assert bw._point_in_ring(lat, lon, ring)
+
+    def test_detector_flags_fill_that_covers_hole(self):
+        all_verts = OUTER_CW + HOLE_CCW
+        assert bw._covered_hole_indices(all_verts, [4, 8],
+                                        self._bad_fan()) == [0]
+
+    def test_detector_passes_hole_aware_fill(self):
+        all_verts = OUTER_CW + HOLE_CCW
+        tri = bw.tessellate_polygon(all_verts, [4, 8])
+        assert tri is not None
+        assert bw._covered_hole_indices(all_verts, [4, 8], tri) == []
+
+    def test_escalation_recovers_from_bad_tessellation(self, tmp_path,
+                                                       monkeypatch):
+        # First attempt returns the hole-covering fan; the retry (at
+        # the doubled cap) delegates to the real earcut. The bad fill
+        # must be detected and never stored.
+        real = bw.tessellate_polygon
+        calls = {"n": 0}
+
+        def flaky(verts, ring_ends=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return self._bad_fan()
+            return real(verts, ring_ends)
+
+        monkeypatch.setattr(bw, "tessellate_polygon", flaky)
+        path, con = _open_db(tmp_path)
+        stats = {}
+        assert bw.insert_polygon(con, "ocean", None, OUTER_CW,
+                                 max_vertices=32, holes=[HOLE_CCW],
+                                 stats=stats)
+        con.commit()
+        con.close()
+        assert stats.get("escalated") == 1
+        assert "stripped" not in stats and "unresolved" not in stats
+        verts, tris, rings = _decode(_fetch_rows(path)[0])
+        assert rings is not None and len(rings) == 2
+        assert not _covered_by_triangles(*ISLAND_PT, verts, tris)
+        assert _covered_by_triangles(*WATER_PT, verts, tris)
+
+    def test_strip_fallback_when_raw_rings_still_fail(self, tmp_path,
+                                                      monkeypatch):
+        # Every attempt (including the raw source rings) yields a
+        # correct hole-aware fill PLUS one rogue triangle inside the
+        # hole: the escalation ladder exhausts, then the strip repair
+        # removes the rogue triangle and the row verifies clean.
+        import numpy as np
+        real = bw.tessellate_polygon
+
+        def always_rogue(verts, ring_ends=None):
+            good = real(verts, ring_ends)
+            # Vertices 4, 5, 6 are hole vertices — the rogue triangle
+            # sits inside the island.
+            return np.concatenate(
+                [good, np.asarray([4, 5, 6], dtype=good.dtype)])
+
+        monkeypatch.setattr(bw, "tessellate_polygon", always_rogue)
+        path, con = _open_db(tmp_path)
+        stats = {}
+        assert bw.insert_polygon(con, "ocean", None, OUTER_CW,
+                                 max_vertices=32, holes=[HOLE_CCW],
+                                 stats=stats)
+        con.commit()
+        con.close()
+        assert stats.get("escalated") == 1    # ladder ran first
+        assert stats.get("stripped") == 1
+        assert "unresolved" not in stats
+        verts, tris, rings = _decode(_fetch_rows(path)[0])
+        assert rings is not None and len(rings) == 2
+        assert len(tris) % 3 == 0
+        assert not _covered_by_triangles(*ISLAND_PT, verts, tris)
+        assert _covered_by_triangles(*WATER_PT, verts, tris)
+
+
 def _dense_multipolygon():
     """A synthetic dense cell: one outer box + a 20x15 grid of
     220-vertex circular island holes = 66,004 vertices, past the
