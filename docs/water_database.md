@@ -73,6 +73,72 @@ The build is currently driven by hand from the Windows dev box
 because the shapefiles are downloaded manually. Resulting sqlite
 file is scp'd to the Pi at `/home/wpballard/pyEfis/water/`.
 
+## Multi-ring polygons — island holes (#44)
+
+A multipolygon's interior rings are LAND (islands): the Florida Keys
+are holes in the ocean polygons that surround them. The original
+ingest emitted every ring as its own filled polygon and tessellated
+single-ring only, so an island was painted as water twice over — the
+outer ring's fill covered it, and its own coastline became a filled
+ocean polygon (KEYW rendered as ocean; issue #44).
+
+The builder now preserves ring topology:
+
+- Rings are classified by winding (shapefile convention, which the
+  data preserves: outer rings are clockwise in (lon, lat) = negative
+  shoelace signed area; holes counter-clockwise = positive) and each
+  hole is grouped under the smallest outer ring containing it.
+- One `water_polygons` row is stored per OUTER ring. Its `vertices`
+  BLOB holds the outer ring followed by each hole ring; a new
+  nullable `rings` BLOB (little-endian ring END offsets, earcut
+  convention) records the ring boundaries. `rings` is NULL for
+  single-ring rows — the overwhelming majority.
+- `triangles` is tessellated hole-aware (earcut's ring list), so the
+  GPU fill excludes the islands with no renderer change.
+- **Index dtype rule (dense cells):** both the `triangles` and
+  `rings` BLOBs are uint16 for rows of <= 65535 total vertices and
+  uint32 beyond. The dtype is implied by the row's vertex count
+  (which the reader already derives from the `vertices` BLOB length),
+  so no schema flag is needed. Before this rule, rows past the uint16
+  ceiling silently DROPPED all their holes — the lower Florida Keys
+  cell (3,322 island rings, > 65535 vertices at any realistic
+  per-ring cap) lost every island, which kept #44 alive at the KEYW
+  test-case location.
+- **Hole verification (build time):** after tessellation, every hole
+  ring's interior (even-odd scanline sample points) is checked
+  against the row's fill triangles — decimation can corrupt a ring
+  into something self-intersecting or outer-crossing that earcut
+  fills instead of subtracting. On failure the per-ring decimation
+  cap escalates (doubling to 512, then the raw source rings); if raw
+  still fails, fill triangles whose centroid lands in a hole are
+  stripped (biased toward land — painting an island as water is the
+  dangerous direction). Unresolved rows warn on stderr and
+  `import_shapefile` prints escalated / stripped / unresolved counts.
+- Safety fallbacks: a single-ring shape imports as an outer whatever
+  its winding (Natural Earth / text-format sources); a multi-ring
+  shape with no clockwise ring fills every ring (reversed-winding
+  source, the pre-#44 behavior); a hole contained by no outer is
+  dropped, never filled.
+- Decimation (`--max-vertices`) applies PER RING at build time, and
+  `WaterDB` never re-decimates multi-ring rows on load — a stride
+  across concatenated rings would corrupt both the ring offsets and
+  the triangle indices.
+
+Reader/consumer contract: `WaterPolygon.rings` is the decoded offset
+list (None on single-ring rows and pre-#44 databases — those stay
+fully readable). Triangle-based consumers (the SVS GL water layer)
+need no ring handling. Outline/fill consumers must not treat
+`vertices` as one drawable ring: fill even-odd per ring (the moving
+map's `_draw_water`) or use `WaterPolygon.outer_vertices`.
+
+Old databases keep working against new code (probe-based, like the
+`triangles` column; old rows never exceed 65535 vertices, so the
+uint16 decode path applies to all of them). New databases read under
+OLD code degrade on multi-ring rows (the concatenated vertex list
+draws as one outline), and an old reader would mis-decode a dense
+row's uint32 blobs as uint16 — deploy the code update FIRST, then
+ship the pack rebuild.
+
 ## Pi-side wiring
 
 `virtual_vfr.yaml` in the screen YAML carries:

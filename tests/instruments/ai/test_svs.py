@@ -487,6 +487,69 @@ class TestWaterDB:
             assert abs(la - la2) < 1e-12
             assert abs(lo - lo2) < 1e-12
 
+    def test_multi_ring_row_decodes_rings_and_skips_redecimation(
+            self, tmp_path):
+        """#44: a multi-ring row (outer ring + island hole) decodes its
+        ring topology, is never re-decimated on load (stride decimation
+        across concatenated rings would corrupt the ring offsets and
+        the pre-tessellated triangle indices), and exposes the outer
+        ring via ``outer_vertices``."""
+        import sqlite3
+        import struct
+        from pyefis.instruments.ai.water_db import (
+            WaterDB, encode_vertices)
+        outer = [(24.0, -82.5), (25.0, -82.5),
+                 (25.0, -81.0), (24.0, -81.0)]
+        hole = [(24.5, -81.8), (24.5, -81.7),
+                (24.6, -81.7), (24.6, -81.8)]
+        path = tmp_path / "water.sqlite"
+        con = sqlite3.connect(str(path))
+        con.execute("""
+            CREATE TABLE water_polygons (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                min_lat   REAL NOT NULL, max_lat   REAL NOT NULL,
+                min_lon   REAL NOT NULL, max_lon   REAL NOT NULL,
+                kind      TEXT NOT NULL, elev_ft   REAL,
+                vertices  BLOB NOT NULL, triangles BLOB, rings BLOB)
+        """)
+        con.execute(
+            "INSERT INTO water_polygons "
+            "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+            " vertices, triangles, rings) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (24.0, 25.0, -82.5, -81.0, "ocean", None,
+             encode_vertices(outer + hole), None,
+             struct.pack("<2H", 4, 8)))
+        con.commit()
+        con.close()
+
+        # Cap below the 8 stored vertices: a legacy single-ring row
+        # would be decimated; the multi-ring row must come back intact.
+        db = WaterDB(path, max_vertices=6)
+        assert db.ready is True
+        polys = list(db.polygons_in_range(24.5, -81.7, 60.0))
+        assert len(polys) == 1
+        poly = polys[0]
+        assert poly.rings == [4, 8]
+        assert len(poly.vertices) == 8
+        assert poly.outer_vertices == outer
+
+    def test_pre_rings_db_reads_with_rings_none(self, tmp_path):
+        """A pre-#44 database (no rings column) stays readable; every
+        polygon reports ``rings is None`` and single-ring behavior is
+        unchanged."""
+        from pyefis.instruments.ai.water_db import WaterDB
+        path = self._build_db(tmp_path, [
+            ("ocean", None, [(34.0, -120.5), (34.0, -119.5),
+                             (34.5, -119.5), (34.5, -120.5)]),
+        ])
+        db = WaterDB(path)
+        assert db.ready is True
+        polys = list(db.polygons_in_range(34.4, -119.8, 30.0))
+        assert len(polys) == 1
+        assert polys[0].rings is None
+        assert polys[0].outer_vertices == polys[0].vertices
+
 
 class TestSVSWaterRendering:
     """``_draw_water`` overlays water polygons on top of the terrain
@@ -580,6 +643,58 @@ class TestSVSWaterRendering:
                    0.0, 0.0, 270.0, 12.0)
         finally:
             p.end()
+
+    def test_collect_water_multi_ring_without_triangles_fans_outer_only(
+            self, tmp_path):
+        """#44 defensive path: a multi-ring row with no stored triangles
+        (the builder guarantees rings => triangles, so only a corrupt or
+        hand-built DB gets here) must fan the OUTER ring alone — a fan
+        across the concatenated rings would paint the island hole as
+        water."""
+        import sqlite3
+        import struct
+        from pyefis.instruments.ai.water_db import encode_vertices
+        outer = [(24.0, -82.5), (25.0, -82.5),
+                 (25.0, -81.0), (24.0, -81.0)]
+        hole = [(24.5, -81.8), (24.5, -81.7),
+                (24.6, -81.7), (24.6, -81.8)]
+        path = tmp_path / "water.sqlite"
+        con = sqlite3.connect(str(path))
+        con.execute("""
+            CREATE TABLE water_polygons (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                min_lat   REAL NOT NULL, max_lat   REAL NOT NULL,
+                min_lon   REAL NOT NULL, max_lon   REAL NOT NULL,
+                kind      TEXT NOT NULL, elev_ft   REAL,
+                vertices  BLOB NOT NULL, triangles BLOB, rings BLOB)
+        """)
+        con.execute(
+            "INSERT INTO water_polygons "
+            "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+            " vertices, triangles, rings) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (24.0, 25.0, -82.5, -81.0, "ocean", None,
+             encode_vertices(outer + hole), None,
+             struct.pack("<2H", 4, 8)))
+        con.commit()
+        con.close()
+
+        root = _make_tile_dir(tmp_path, 24, -82, elevation=0)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "water_db_path": str(path),
+        })
+        tris = r._collect_water_sync(24.5, -81.7, 30.0)
+        assert tris is not None
+        # Every emitted vertex comes from the outer ring; the hole's
+        # vertices never appear in the fan. (Coordinates ride through
+        # float32, so compare at 3 decimals.)
+        emitted = {(round(float(v[0]), 3), round(float(v[1]), 3))
+                   for v in tris[:, :2]}
+        outer_set = {(round(la, 3), round(lo, 3)) for la, lo in outer}
+        hole_set = {(round(la, 3), round(lo, 3)) for la, lo in hole}
+        assert emitted <= outer_set
+        assert not (emitted & hole_set)
 
 
 class TestSVSGLFallback:

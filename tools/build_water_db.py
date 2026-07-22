@@ -48,32 +48,50 @@ import mapbox_earcut as _earcut
 import numpy as np
 
 
-def tessellate_polygon(vertices):
-    """Triangulate a single-ring polygon via earcut. Returns a numpy
-    array of uint16 indices (3 per triangle) into ``vertices``, or
-    None if the input is degenerate / fails tessellation.
+def _index_dtype(n_vertices):
+    """Dtype for the ``triangles`` and ``rings`` BLOBs of a row with
+    ``n_vertices`` total vertices. uint16 covers indices 0..65534 and
+    the final ring-end offset (== n_vertices) up to 65535; past that
+    both BLOBs switch to uint32. The reader (water_db.py) applies the
+    same threshold to the vertex count it already decodes, so the
+    choice is recoverable from the row itself."""
+    return np.uint32 if n_vertices > 65535 else np.uint16
+
+
+def tessellate_polygon(vertices, ring_ends=None):
+    """Triangulate a polygon via earcut. Returns a numpy array of
+    indices (3 per triangle) into ``vertices``, or None if the
+    input is degenerate / fails tessellation.
 
     ``vertices`` is a list of (lat, lon) tuples — earcut sees them
     as generic 2D points, so lat/lon vs xy doesn't matter at this
-    stage. Each output index is in [0, len(vertices))."""
+    stage. Each output index is in [0, len(vertices)).
+
+    ``ring_ends`` is the earcut ring-end-index list for a multi-ring
+    (outer + holes) polygon: ``vertices`` holds the outer ring followed
+    by each hole ring, and ``ring_ends[k]`` is the end offset of ring
+    k. earcut then subtracts the holes from the fill (#44 — island
+    holes must not triangulate as water). None means single ring."""
     if len(vertices) < 3:
         return None
-    # earcut wants a flat float64 Nx2 array and a ring-end-index list.
-    # Single ring => one element pointing at the end of the vertex
-    # array. Multi-ring (outer + holes) support comes later if we
-    # need it; current OSM ingest collapses multi-rings into
-    # single-ring polygons.
     pts = np.asarray(vertices, dtype=np.float64)
-    rings = np.asarray([len(pts)], dtype=np.uint32)
+    if ring_ends is None:
+        ring_ends = [len(pts)]
+    rings = np.asarray(ring_ends, dtype=np.uint32)
     try:
         idx = _earcut.triangulate_float64(pts, rings)
     except Exception:
         return None
     if idx.size == 0 or (idx.size % 3) != 0:
         return None
-    # uint16 caps us at 65535 vertices per polygon — every polygon we
-    # store is decimated to <=32 vertices so this is comfortably safe.
-    return idx.astype(np.uint16)
+    # Index dtype is implied by the row's vertex count: uint16 while
+    # every index AND ring-end offset fits (<= 65535 vertices), uint32
+    # beyond that. The reader derives the identical rule from the
+    # vertices BLOB length, so dense rows need no schema flag. The old
+    # builder silently DROPPED all holes past the uint16 ceiling — a
+    # dense cell like the lower Florida Keys (3,322 island rings) lost
+    # every island and #44 persisted there (oracle-gate residual B).
+    return idx.astype(_index_dtype(len(vertices)))
 
 
 SCHEMA = """
@@ -87,11 +105,22 @@ CREATE TABLE IF NOT EXISTS water_polygons (
     elev_ft   REAL,
     vertices  BLOB NOT NULL,
     -- Pre-tessellated triangle indices into the ``vertices`` array,
-    -- packed as little-endian uint16 (3 indices per triangle). NULL
-    -- only when tessellation failed at build time (logged as a
-    -- warning). The GPU water renderer uploads these directly to a
-    -- GL element-array buffer with one draw call per polygon.
-    triangles BLOB
+    -- packed little-endian (3 indices per triangle): uint16 for rows
+    -- of <= 65535 vertices, uint32 beyond (dense multi-ring cells;
+    -- the dtype is implied by the row's vertex count on both the
+    -- build and read side). NULL only when tessellation failed at
+    -- build time (logged as a warning). The GPU water renderer
+    -- uploads these directly to a GL element-array buffer with one
+    -- draw call per polygon.
+    triangles BLOB,
+    -- Ring topology for multi-ring (outer + hole) polygons, packed as
+    -- little-endian ring END offsets into ``vertices`` (earcut
+    -- convention: outer ring first, then each hole ring; same
+    -- uint16/uint32 vertex-count rule as ``triangles``). NULL for
+    -- plain single-ring polygons — the overwhelming majority. When
+    -- present, ``triangles`` was tessellated hole-aware, so island
+    -- holes are excluded from the fill (#44).
+    rings     BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_bbox
     ON water_polygons(min_lat, max_lat, min_lon, max_lon);
@@ -173,31 +202,322 @@ def _decimate(vertices, max_vertices):
             for k in range(max_vertices)]
 
 
-def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None):
+def ring_signed_area(vertices):
+    """Shoelace signed area of a (lat, lon) ring in degrees^2, computed
+    in (x=lon, y=lat) plane coordinates. Shapefile winding convention:
+    OUTER rings are clockwise in (x, y) => NEGATIVE signed area; HOLE
+    rings (islands) are counter-clockwise => POSITIVE. The winding
+    survives our ingest, so it is the outer-vs-hole discriminator."""
+    n = len(vertices)
+    if n < 3:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        lat1, lon1 = vertices[i]
+        lat2, lon2 = vertices[(i + 1) % n]
+        s += lon1 * lat2 - lon2 * lat1
+    return s / 2.0
+
+
+def _point_in_ring(lat, lon, ring):
+    """Even-odd ray-cast point-in-polygon on a (lat, lon) ring."""
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        la1, lo1 = ring[i]
+        la2, lo2 = ring[(i + 1) % n]
+        if (la1 > lat) != (la2 > lat):
+            x = lo1 + (lat - la1) / (la2 - la1) * (lo2 - lo1)
+            if x > lon:
+                inside = not inside
+    return inside
+
+
+def _ring_interior_points(ring, max_points=3):
+    """Up to ``max_points`` points strictly inside a (lat, lon) ring,
+    found by even-odd scanline: cut the ring at a constant-lat line,
+    sort the edge crossings, take midpoints of the odd (inside) spans.
+    Works for concave and even self-intersecting rings — 'inside' is
+    exactly the even-odd sense the renderer fills with."""
+    lats = [v[0] for v in ring]
+    lo, hi = min(lats), max(lats)
+    if hi <= lo:
+        return []
+    pts = []
+    n = len(ring)
+    for frac in (0.5, 0.3, 0.7):
+        lat = lo + (hi - lo) * frac
+        xs = []
+        for i in range(n):
+            la1, lo1 = ring[i]
+            la2, lo2 = ring[(i + 1) % n]
+            if (la1 > lat) != (la2 > lat):
+                xs.append(lo1 + (lat - la1) / (la2 - la1) * (lo2 - lo1))
+        xs.sort()
+        for k in range(0, len(xs) - 1, 2):
+            if xs[k + 1] > xs[k]:
+                pts.append((lat, 0.5 * (xs[k] + xs[k + 1])))
+                if len(pts) >= max_points:
+                    return pts
+    return pts
+
+
+def _triangle_cover_tester(vertices, tri_idx):
+    """Build a covered(lat, lon) -> bool closure over a tessellation.
+    Triangles are binned into latitude strips so each query tests only
+    the local candidates — a dense island cell carries 10^5 triangles
+    and the verification sweep visits thousands of points."""
+    v = np.asarray(vertices, dtype=np.float64)
+    t = np.asarray(tri_idx, dtype=np.int64).reshape(-1, 3)
+    if t.size == 0:
+        return lambda lat, lon: False
+    a, b, c = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    lat_min = np.minimum(np.minimum(a[:, 0], b[:, 0]), c[:, 0])
+    lat_max = np.maximum(np.maximum(a[:, 0], b[:, 0]), c[:, 0])
+    lon_min = np.minimum(np.minimum(a[:, 1], b[:, 1]), c[:, 1])
+    lon_max = np.maximum(np.maximum(a[:, 1], b[:, 1]), c[:, 1])
+    strips = min(64, max(1, len(t) // 64))
+    lo = float(lat_min.min())
+    span = max(float(lat_max.max()) - lo, 1e-12)
+    s_lo = np.clip(((lat_min - lo) / span * strips).astype(int),
+                   0, strips - 1)
+    s_hi = np.clip(((lat_max - lo) / span * strips).astype(int),
+                   0, strips - 1)
+    bins = [[] for _ in range(strips)]
+    for i in range(len(t)):
+        for s in range(s_lo[i], s_hi[i] + 1):
+            bins[s].append(i)
+    bins = [np.asarray(bn, dtype=np.int64) for bn in bins]
+
+    def covered(lat, lon):
+        s = int(np.clip((lat - lo) / span * strips, 0, strips - 1))
+        cand = bins[s]
+        if cand.size == 0:
+            return False
+        m = ((lat_min[cand] <= lat) & (lat_max[cand] >= lat)
+             & (lon_min[cand] <= lon) & (lon_max[cand] >= lon))
+        cand = cand[m]
+        if cand.size == 0:
+            return False
+        aa, bb, cc = a[cand], b[cand], c[cand]
+        d1 = ((lon - bb[:, 1]) * (aa[:, 0] - bb[:, 0])
+              - (aa[:, 1] - bb[:, 1]) * (lat - bb[:, 0]))
+        d2 = ((lon - cc[:, 1]) * (bb[:, 0] - cc[:, 0])
+              - (bb[:, 1] - cc[:, 1]) * (lat - cc[:, 0]))
+        d3 = ((lon - aa[:, 1]) * (cc[:, 0] - aa[:, 0])
+              - (cc[:, 1] - aa[:, 1]) * (lat - aa[:, 0]))
+        neg = (d1 < 0) | (d2 < 0) | (d3 < 0)
+        pos = (d1 > 0) | (d2 > 0) | (d3 > 0)
+        return bool((~(neg & pos)).any())
+
+    return covered
+
+
+def _covered_hole_indices(all_verts, ring_ends, tri_idx):
+    """Indices (into the hole list) of hole rings whose interior is
+    covered by the row's fill triangles — the residual-A defect class
+    of #44: decimation can hand earcut a self-intersecting or outer-
+    crossing hole, and earcut then fills it instead of subtracting
+    it. Judged on the STORED rings and triangles, i.e. exactly what
+    the renderer will draw."""
+    if len(ring_ends) <= 1:
+        return []
+    covered = _triangle_cover_tester(all_verts, tri_idx)
+    bad = []
+    for k in range(1, len(ring_ends)):
+        ring = all_verts[ring_ends[k - 1]:ring_ends[k]]
+        if any(covered(lat, lon)
+               for lat, lon in _ring_interior_points(ring)):
+            bad.append(k - 1)
+    return bad
+
+
+def _strip_hole_triangles(all_verts, ring_ends, tri_idx):
+    """Last-resort repair when even the raw source rings tessellate
+    with covered holes: drop fill triangles whose centroid lies inside
+    any hole ring (even-odd). Biased toward land — for an EFIS,
+    painting an island as water is the dangerous direction (#44)."""
+    v = np.asarray(all_verts, dtype=np.float64)
+    t = np.asarray(tri_idx, dtype=np.int64).reshape(-1, 3)
+    clat = (v[t[:, 0], 0] + v[t[:, 1], 0] + v[t[:, 2], 0]) / 3.0
+    clon = (v[t[:, 0], 1] + v[t[:, 1], 1] + v[t[:, 2], 1]) / 3.0
+    keep = np.ones(len(t), dtype=bool)
+    for k in range(1, len(ring_ends)):
+        ring = all_verts[ring_ends[k - 1]:ring_ends[k]]
+        rlats = [p[0] for p in ring]
+        rlons = [p[1] for p in ring]
+        m = ((clat >= min(rlats)) & (clat <= max(rlats))
+             & (clon >= min(rlons)) & (clon <= max(rlons)) & keep)
+        for i in np.nonzero(m)[0]:
+            if _point_in_ring(clat[i], clon[i], ring):
+                keep[i] = False
+    return t[keep].reshape(-1)
+
+
+def group_rings(rings):
+    """Group a shape's rings into (outer, [holes]) pairs by winding +
+    containment, so holes (islands) can be subtracted from their outer
+    ring's fill instead of being emitted as filled water (#44).
+
+    - A single-ring shape is always an outer, regardless of winding —
+      preserves every existing single-ring source (Natural Earth lakes,
+      the text format) that may not follow shapefile winding.
+    - Multi-ring: negative signed area (CW) = outer, positive = hole.
+      Each hole is assigned to the smallest outer whose bbox and even-odd
+      interior contain the hole's first vertex — smallest-first handles
+      nesting (lake on an island in a lake).
+    - Anomalies fall back to the pre-#44 fill-everything behavior:
+      a shape with no CW ring treats all rings as outers (reversed-
+      winding source); a hole with no containing outer is DROPPED
+      (never filled — filling holes is exactly the #44 bug).
+
+    Returns (groups, orphan_holes) where groups is a list of
+    (outer_ring, [hole_rings]) and orphan_holes counts dropped holes."""
+    rings = [r for r in rings if len(r) >= 3]
+    if not rings:
+        return [], 0
+    if len(rings) == 1:
+        return [(rings[0], [])], 0
+    areas = [ring_signed_area(r) for r in rings]
+    outers = [(r, abs(a)) for r, a in zip(rings, areas) if a < 0]
+    holes = [r for r, a in zip(rings, areas) if a >= 0]
+    if not outers:
+        # Reversed-winding (or degenerate) source — fill every ring,
+        # exactly what the pre-#44 ingest did.
+        return [(r, []) for r in rings], 0
+    outers.sort(key=lambda t: t[1])          # smallest first
+    groups = {id(r): (r, []) for r, _ in outers}
+    orphans = 0
+    for hole in holes:
+        hlat, hlon = hole[0]
+        placed = False
+        for outer, _ in outers:
+            lats = [v[0] for v in outer]
+            lons = [v[1] for v in outer]
+            if not (min(lats) <= hlat <= max(lats)
+                    and min(lons) <= hlon <= max(lons)):
+                continue
+            if _point_in_ring(hlat, hlon, outer):
+                groups[id(outer)][1].append(hole)
+                placed = True
+                break
+        if not placed:
+            orphans += 1
+    return list(groups.values()), orphans
+
+
+# Escalation bound for the per-ring decimation cap when hole
+# verification fails: the cap doubles up to this value, then the raw
+# source rings are used. Bounded so a pathological shape cannot loop.
+_MAX_ESCALATED_CAP = 512
+
+
+def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
+                   holes=None, stats=None):
+    """Insert one water polygon: ``vertices`` is the OUTER ring,
+    ``holes`` an optional list of interior (island) rings subtracted
+    from the fill. Returns False if the outer ring is degenerate.
+
+    Multi-ring rows are VERIFIED after tessellation: every hole ring
+    must keep its interior clear of the row's fill triangles. The
+    per-ring decimation runs before earcut sees the rings, and an
+    aggressively simplified ring can self-intersect or cross its outer
+    ring — earcut then fills the hole instead of subtracting it
+    (oracle-gate residual A of #44: 54/770 hole interiors covered in
+    a Keys probe build). On a failed verification the decimation cap
+    escalates (doubling up to _MAX_ESCALATED_CAP, then the raw source
+    rings); if the raw rings still fail, fill triangles whose centroid
+    lands in a hole are stripped as a last resort — biased toward
+    land, since painting an island as water is the dangerous direction
+    for an EFIS. ``stats`` (a dict, optional) accumulates 'escalated'
+    / 'stripped' / 'unresolved' row counts for the caller's summary."""
     if len(vertices) < 3:
         return False
-    # Decimate at build time so the BLOBs stored on disk are small.
-    # Reading a 50-100 KB BLOB per polygon at query time was the
-    # dominant cost in the perf log; with a 32-vertex cap each BLOB
-    # is ~512 bytes and the query is bound by index scanning rather
-    # than disk I/O.
-    vertices = _decimate(vertices, max_vertices)
-    lats = [v[0] for v in vertices]
-    lons = [v[1] for v in vertices]
+    src_holes = [h for h in (holes or []) if len(h) >= 3]
+    cap = max_vertices
+    escalated = stripped = unresolved = False
+    while True:
+        # Decimate at build time so the BLOBs stored on disk are small.
+        # Reading a 50-100 KB BLOB per polygon at query time was the
+        # dominant cost in the perf log; with a 32-vertex cap each BLOB
+        # is ~512 bytes and the query is bound by index scanning rather
+        # than disk I/O. Multi-ring: the cap applies PER RING (outer and
+        # each hole) — the reader skips its own decimation for multi-ring
+        # rows, so the build-time cap is the only bound.
+        out_ring = _decimate(vertices, cap)
+        dec_holes = [h for h in (_decimate(h, cap) for h in src_holes)
+                     if len(h) >= 3]
+        all_verts = list(out_ring)
+        ring_ends = [len(out_ring)]
+        for h in dec_holes:
+            all_verts.extend(h)
+            ring_ends.append(len(all_verts))
+        # Pre-tessellate. The renderer reads these indices directly
+        # into a GL element-array buffer at draw time — keeps per-frame
+        # Python work down to a buffer upload + glDrawElements call.
+        # Hole-aware: earcut subtracts the hole rings so islands are
+        # not filled (#44). Rows past 65535 vertices store uint32
+        # indices instead of losing their holes (the old drop-the-holes
+        # fallback re-created #44 in exactly the densest island cells).
+        tri_idx = tessellate_polygon(all_verts,
+                                     ring_ends if dec_holes else None)
+        if not src_holes:
+            break               # single-ring rows: nothing to verify
+        if (tri_idx is not None
+                and not _covered_hole_indices(all_verts, ring_ends,
+                                              tri_idx)):
+            break               # verified: every hole interior is dry
+        if cap is not None:
+            cap = cap * 2 if cap * 2 <= _MAX_ESCALATED_CAP else None
+            escalated = True
+            continue
+        # Raw source rings and the fill still covers a hole (or earcut
+        # refused the ring set outright).
+        if tri_idx is None:
+            # Store the outer ring alone rather than a multi-ring
+            # vertex blob without triangles, which would draw garbage
+            # through the renderer's fan fallback.
+            all_verts = list(out_ring)
+            ring_ends = [len(out_ring)]
+            dec_holes = []
+            tri_idx = tessellate_polygon(all_verts)
+            unresolved = True
+        else:
+            tri_idx = _strip_hole_triangles(all_verts, ring_ends,
+                                            tri_idx)
+            stripped = True
+            if _covered_hole_indices(all_verts, ring_ends, tri_idx):
+                unresolved = True
+        break
+    if stats is not None and src_holes:
+        for flag, key in ((escalated, "escalated"),
+                          (stripped, "stripped"),
+                          (unresolved, "unresolved")):
+            if flag:
+                stats[key] = stats.get(key, 0) + 1
+    if unresolved:
+        print("  WARNING: hole verification unresolved for a "
+              f"{len(src_holes)}-hole polygon near "
+              f"({vertices[0][0]:.3f}, {vertices[0][1]:.3f}) — "
+              "some island interior may render as water",
+              file=sys.stderr)
+    # The bbox is the outer ring's — holes lie inside it by definition.
+    lats = [v[0] for v in out_ring]
+    lons = [v[1] for v in out_ring]
     min_lat, max_lat = min(lats), max(lats)
     min_lon, max_lon = min(lons), max(lons)
-    # Pre-tessellate. The renderer reads these indices directly into a
-    # GL element-array buffer at draw time — keeps per-frame Python
-    # work down to a buffer upload + glDrawElements call.
-    tri_idx = tessellate_polygon(vertices)
-    tri_blob = tri_idx.tobytes() if tri_idx is not None else None
+    idx_dtype = _index_dtype(len(all_verts))
+    tri_blob = (np.asarray(tri_idx, dtype=idx_dtype).tobytes()
+                if tri_idx is not None else None)
+    rings_blob = (np.asarray(ring_ends, dtype=idx_dtype).tobytes()
+                  if dec_holes else None)
     cur = con.execute(
         "INSERT INTO water_polygons "
         "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
-        " vertices, triangles) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        " vertices, triangles, rings) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (min_lat, max_lat, min_lon, max_lon,
-         kind, elev_ft, encode_vertices(vertices), tri_blob))
+         kind, elev_ft, encode_vertices(all_verts), tri_blob, rings_blob))
     con.execute(
         "INSERT INTO water_rtree (id, min_lat, max_lat, min_lon, max_lon) "
         "VALUES (?, ?, ?, ?, ?)",
@@ -224,9 +544,14 @@ def ring_area_km2(vertices):
 
 def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
                      min_area_km2=0.0, keep_fclass=None):
-    """Import every polygon (and every ring of every multi-polygon) from
-    a shapefile into the water_polygons table. Rings smaller than
-    ``min_area_km2`` are skipped (declutters tiny ponds; 0 disables).
+    """Import every polygon from a shapefile into the water_polygons
+    table. Multi-ring shapes are grouped by winding + containment
+    (``group_rings``): one row per OUTER ring, with its interior (hole)
+    rings stored alongside and subtracted from the tessellated fill —
+    a hole ring is never emitted as its own filled polygon (#44).
+    Outer rings smaller than ``min_area_km2`` are skipped (declutters
+    tiny ponds; 0 disables; holes are never size-filtered — dropping a
+    hole fills its island).
 
     ``keep_fclass`` (a set of OSM feature classes) keeps only those classes
     when the shapefile has an ``fclass`` field — used to keep still open water
@@ -247,6 +572,9 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
     n = 0
     dropped = 0
     fc_dropped = 0
+    holes_kept = 0
+    orphan_holes = 0
+    hole_stats = {}
     records = sf.iterShapeRecords() if use_fclass else (
         (shape, None) for shape in sf.shapes())
     for item in records:
@@ -256,24 +584,41 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
             continue
         if not shape.points:
             continue
-        # shape.parts marks the start of each ring; iterate ring by ring.
+        # shape.parts marks the start of each ring; split ring by ring,
+        # then group outer rings with their holes by winding (#44).
         parts = list(shape.parts) + [len(shape.points)]
+        rings = []
         for k in range(len(parts) - 1):
             ring = shape.points[parts[k]:parts[k + 1]]
             # Shapefile stores (lon, lat); we want (lat, lon).
-            vertices = [(p[1], p[0]) for p in ring]
-            if min_area_km2 > 0 and ring_area_km2(vertices) < min_area_km2:
+            rings.append([(p[1], p[0]) for p in ring])
+        groups, orphans = group_rings(rings)
+        orphan_holes += orphans
+        for outer, holes in groups:
+            if min_area_km2 > 0 and ring_area_km2(outer) < min_area_km2:
                 dropped += 1
                 continue
-            if insert_polygon(con, kind, elev_ft, vertices, max_vertices):
+            if insert_polygon(con, kind, elev_ft, outer, max_vertices,
+                              holes=holes, stats=hole_stats):
                 n += 1
+                holes_kept += len(holes)
     notes = []
     if dropped:
         notes.append(f"{dropped} below {min_area_km2} km^2")
     if fc_dropped:
         notes.append(f"{fc_dropped} off-class")
+    if orphan_holes:
+        notes.append(f"{orphan_holes} orphan hole(s)")
     extra = f" ({', '.join(notes)} dropped)" if notes else ""
-    print(f"  {Path(path).name}: imported {n} ring(s) as kind={kind}{extra}")
+    holes_note = f" (+{holes_kept} island hole(s))" if holes_kept else ""
+    verify_bits = [f"{hole_stats[k]} {label}" for k, label in
+                   (("escalated", "row(s) escalated past the cap"),
+                    ("stripped", "row(s) strip-repaired"),
+                    ("unresolved", "row(s) UNRESOLVED"))
+                   if hole_stats.get(k)]
+    vnote = f" [hole verify: {', '.join(verify_bits)}]" if verify_bits else ""
+    print(f"  {Path(path).name}: imported {n} polygon(s) as "
+          f"kind={kind}{holes_note}{extra}{vnote}")
     return n
 
 

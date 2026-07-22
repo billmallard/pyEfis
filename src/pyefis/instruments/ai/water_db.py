@@ -23,7 +23,17 @@ Schema (built by tools/build_water_db.py):
         max_lon   REAL NOT NULL,
         kind      TEXT NOT NULL,   -- 'ocean' | 'lake' | 'river' | ...
         elev_ft   REAL,            -- known surface elev (lakes); NULL for ocean
-        vertices  BLOB NOT NULL    -- struct-packed <dd>... = list of (lat, lon)
+        vertices  BLOB NOT NULL,   -- struct-packed <dd>... = list of (lat, lon)
+        triangles BLOB,            -- LE triangle indices (may be absent).
+                                   -- uint16 for rows of <= 65535 vertices,
+                                   -- uint32 beyond (dense multi-ring cells) —
+                                   -- the dtype is implied by the row's vertex
+                                   -- count, mirrored by the builder
+        rings     BLOB             -- LE ring END offsets for multi-ring
+                                   -- (outer + island holes) rows; same
+                                   -- uint16/uint32 vertex-count rule as
+                                   -- ``triangles``. NULL for single-ring rows
+                                   -- and absent in pre-#44 databases
     )
     INDEX idx_bbox ON water_polygons(min_lat, max_lat, min_lon, max_lon)
 """
@@ -54,10 +64,26 @@ class WaterPolygon:
     # convert to whatever it wants. None when the build tool was
     # older than the tessellation schema bump.
     triangles : list | None = None
+    # Ring END offsets into ``vertices`` for multi-ring polygons
+    # (outer ring first, then each island hole — earcut convention).
+    # None for single-ring polygons. When present, ``triangles`` was
+    # tessellated hole-aware, so triangle-based consumers need no
+    # ring handling; outline/fill consumers must use even-odd filling
+    # or ``outer_vertices`` — the raw ``vertices`` list concatenates
+    # all rings and is NOT one drawable outline.
+    rings     : list | None = None
 
     @property
     def is_ocean(self) -> bool:
         return self.kind == "ocean"
+
+    @property
+    def outer_vertices(self) -> list:
+        """The outer ring alone — the whole ``vertices`` list for a
+        single-ring polygon."""
+        if self.rings:
+            return self.vertices[:self.rings[0]]
+        return self.vertices
 
 
 class WaterDB:
@@ -84,6 +110,7 @@ class WaterDB:
         # scale queries against the 878k-polygon OSM dataset.
         self._has_rtree = False
         self._has_triangles = False
+        self._has_rings = False
         if self._path is None or not self._path.is_file():
             log.info("WaterDB: %s not found — water rendering disabled",
                      self._path)
@@ -125,6 +152,18 @@ class WaterDB:
                     "renderer will fan-tessellate at draw time "
                     "(slower; rebuild with current build_water_db.py "
                     "for pre-tessellation)")
+            # Probe for the rings column (the #44 island-hole fix).
+            # Older DBs without it are all single-ring; islands inside
+            # water polygons render as water until the pack is rebuilt.
+            try:
+                self._con.execute(
+                    "SELECT rings FROM water_polygons LIMIT 0")
+                self._has_rings = True
+            except sqlite3.OperationalError:
+                log.info(
+                    "WaterDB: no rings column found; island holes in "
+                    "water polygons render as water (rebuild with "
+                    "current build_water_db.py — issue #44)")
         except Exception as e:
             log.warning("WaterDB: cannot open %s: %s", self._path, e)
             self._con = None
@@ -176,9 +215,11 @@ class WaterDB:
             # the B-tree fallback at OSM dataset scale.
             tri_expr = ("p.triangles" if self._has_triangles
                         else "NULL AS triangles")
+            rings_expr = ("p.rings" if self._has_rings
+                          else "NULL AS rings")
             sql = (
                 "SELECT p.id, p.kind, p.elev_ft, p.vertices, "
-                f"       {tri_expr}, "
+                f"       {tri_expr}, {rings_expr}, "
                 "       p.min_lat, p.max_lat, p.min_lon, p.max_lon "
                 "FROM water_polygons p "
                 "JOIN water_rtree r ON r.id = p.id "
@@ -197,9 +238,11 @@ class WaterDB:
         else:
             tri_expr = ("triangles" if self._has_triangles
                         else "NULL AS triangles")
+            rings_expr = ("rings" if self._has_rings
+                          else "NULL AS rings")
             sql = (
                 "SELECT id, kind, elev_ft, vertices, "
-                f"       {tri_expr}, "
+                f"       {tri_expr}, {rings_expr}, "
                 "       min_lat, max_lat, min_lon, max_lon "
                 "FROM water_polygons "
                 "WHERE max_lat > ? AND min_lat < ? "
@@ -216,12 +259,24 @@ class WaterDB:
             cur = self._con.execute(sql, params)
         cap = self._max_vertices
         for r in cur:
+            # The stored vertex count picks the triangle/ring index
+            # dtype (uint16 <= 65535 vertices, uint32 beyond) — dense
+            # multi-ring cells overflow uint16 and the builder mirrors
+            # this exact rule, so the row is self-describing.
+            n_verts = len(r["vertices"]) // 16 if r["vertices"] else 0
+            rings = _decode_rings(r["rings"], n_verts)
+            # Multi-ring rows are never re-decimated on load: stride
+            # decimation across concatenated rings would corrupt the
+            # ring topology AND the pre-tessellated triangle indices.
+            # The build-time per-ring cap is the bound for these rows.
             yield WaterPolygon(
                 id=r["id"],
                 kind=(r["kind"] or "").strip().lower(),
                 elev_ft=r["elev_ft"],
-                vertices=_decode_vertices(r["vertices"], cap),
-                triangles=_decode_triangles(r["triangles"]))
+                vertices=_decode_vertices(r["vertices"],
+                                          None if rings else cap),
+                triangles=_decode_triangles(r["triangles"], n_verts),
+                rings=rings)
 
 
 def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
@@ -263,12 +318,41 @@ def encode_vertices(vertices) -> bytes:
     return bytes(buf)
 
 
-def _decode_triangles(blob):
-    """Unpack a uint16 little-endian triangle-index blob into a flat
-    list of ints (3 entries per triangle). Returns None when the
-    polygon was inserted by a pre-tessellation build of the DB and
-    has no triangles stored."""
+def _decode_triangles(blob, n_vertices):
+    """Unpack a little-endian triangle-index blob into a flat list of
+    ints (3 entries per triangle). Returns None when the polygon was
+    inserted by a pre-tessellation build of the DB and has no
+    triangles stored.
+
+    The index dtype is implied by the row's vertex count: uint16 for
+    <= 65535 vertices, uint32 beyond. Dense multi-ring cells (the
+    lower Florida Keys cell carries 3,322 island rings) overflow
+    uint16; the old builder dropped their holes entirely rather than
+    widen the indices (#44 residual). The builder applies the same
+    threshold, so no schema flag is needed."""
     if not blob:
         return None
+    if n_vertices > 65535:
+        if len(blob) % 4:
+            return None     # not a uint32 blob — treat as untessellated
+        n = len(blob) // 4
+        return list(struct.unpack(f"<{n}I", blob))
+    n = len(blob) // 2
+    return list(struct.unpack(f"<{n}H", blob))
+
+
+def _decode_rings(blob, n_vertices):
+    """Unpack a little-endian ring-end-offset blob into a list of ints
+    (earcut convention: entry k is the END offset of ring k in the
+    vertices list; ring 0 is the outer ring, the rest are island
+    holes). Returns None for single-ring polygons and pre-#44 DBs.
+    Same uint16/uint32 vertex-count rule as ``_decode_triangles``."""
+    if not blob:
+        return None
+    if n_vertices > 65535:
+        if len(blob) % 4:
+            return None
+        n = len(blob) // 4
+        return list(struct.unpack(f"<{n}I", blob))
     n = len(blob) // 2
     return list(struct.unpack(f"<{n}H", blob))
