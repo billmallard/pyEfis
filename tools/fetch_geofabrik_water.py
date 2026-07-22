@@ -35,7 +35,12 @@ from pathlib import Path
 
 
 CONUS_STATES = [
-    "alabama", "arizona", "arkansas", "california", "colorado",
+    # Geofabrik ships no combined California shapefile extract (the
+    # -latest-free.shp.zip URL 302s to the homepage); it is split into
+    # norcal/socal subregion files. State entries may contain a "/" for
+    # such subregion paths; filenames flatten it to "-".
+    "alabama", "arizona", "arkansas",
+    "california/norcal", "california/socal", "colorado",
     "connecticut", "delaware", "district-of-columbia", "florida",
     "georgia", "idaho", "illinois", "indiana", "iowa", "kansas",
     "kentucky", "louisiana", "maine", "maryland", "massachusetts",
@@ -75,9 +80,13 @@ def _fmt_bytes(n):
 
 def download_state(state, cache_dir):
     """Download a single state's shp.zip from Geofabrik. Idempotent:
-    if the file already exists with non-zero size, skip the download."""
+    if the file already exists with non-zero size, skip the download.
+    Validates the result is actually a zip — Geofabrik answers unknown
+    URLs with a 302 to its homepage, which otherwise lands here as a
+    small HTML file and explodes later in ZipFile (California burned us:
+    it only exists as norcal/socal subregion extracts)."""
     url = f"{BASE_URL}/{state}-latest-free.shp.zip"
-    out = cache_dir / f"{state}-latest-free.shp.zip"
+    out = cache_dir / (state.replace("/", "-") + "-latest-free.shp.zip")
     if out.exists() and out.stat().st_size > 0:
         print(f"  [cached] {out.name} ({_fmt_bytes(out.stat().st_size)})")
         return out
@@ -100,6 +109,16 @@ def download_state(state, cache_dir):
                       f"{_fmt_bytes(total)})", end="\r")
         print()
     tmp.rename(out)
+    with open(out, "rb") as fh:
+        magic = fh.read(4)
+    if not magic.startswith(b"PK"):
+        size = out.stat().st_size
+        out.unlink()
+        raise RuntimeError(
+            f"{url} returned a non-zip ({_fmt_bytes(size)}; magic "
+            f"{magic!r}) — Geofabrik redirects unknown URLs to its "
+            "homepage. Wrong state name, or a split state (see "
+            "california/norcal + california/socal)?")
     print(f"    done in {time.time() - t0:.1f}s "
           f"({_fmt_bytes(out.stat().st_size)})")
     return out
@@ -197,21 +216,40 @@ def main():
     print()
 
     shp_paths = []
+    failed = []
     if not args.build_only:
         for i, state in enumerate(states, 1):
             print(f"[{i}/{len(states)}] {state}")
+            # Resume support: the zip is deleted after extraction, so a
+            # re-run must not re-download states whose layer is already
+            # extracted.
+            done = (extracted_dir / state.replace("/", "-")
+                    / WATER_LAYER_FILES[0])
+            if done.exists() and done.stat().st_size > 0:
+                print(f"  [extracted] {done.parent.name}")
+                shp_paths.append(done)
+                continue
             try:
                 zip_path = download_state(state, cache_dir)
+                shp = extract_water_layer(zip_path, extracted_dir)
             except Exception as e:
-                print(f"  ERROR: download failed: {e}")
+                print(f"  ERROR: {state}: {e}")
+                failed.append(state)
                 continue
-            shp = extract_water_layer(zip_path, extracted_dir)
             if shp:
                 shp_paths.append(shp)
                 if not args.keep_zips:
                     zip_path.unlink()
                     print(f"  removed {zip_path.name} "
                           "(--keep-zips to retain)")
+            else:
+                failed.append(state)
+    if failed:
+        # A CONUS pack silently missing a state's lakes is worse than no
+        # pack: fail loud, list the gaps, build nothing.
+        print(f"ERROR: {len(failed)} state(s) failed: "
+              f"{', '.join(failed)}", file=sys.stderr)
+        sys.exit(1)
     else:
         for sub in sorted(extracted_dir.iterdir()):
             shp = sub / WATER_LAYER_FILES[0]
