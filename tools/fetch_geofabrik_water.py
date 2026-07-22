@@ -53,6 +53,19 @@ CONUS_STATES = [
 ]
 
 BASE_URL = "https://download.geofabrik.de/north-america/us"
+NA_BASE_URL = "https://download.geofabrik.de/north-america"
+
+# Canada provinces + territories, prefixed with their Geofabrik area so
+# download_state can route them under north-america/canada/. The canonical
+# water-na pack includes them: 1.03M of its 1.27M inland rows sit north of
+# 49.5N (617k north of 60N — the territories are in), measured 2026-07-21.
+CANADA_PROVINCES = [
+    "canada/alberta", "canada/british-columbia", "canada/manitoba",
+    "canada/new-brunswick", "canada/newfoundland-and-labrador",
+    "canada/northwest-territories", "canada/nova-scotia", "canada/nunavut",
+    "canada/ontario", "canada/prince-edward-island", "canada/quebec",
+    "canada/saskatchewan", "canada/yukon",
+]
 
 # Files we keep from the per-state zip. gis_osm_water_a is polygons
 # (lakes/reservoirs/ponds/wide rivers); the linestring waterways layer
@@ -85,7 +98,10 @@ def download_state(state, cache_dir):
     URLs with a 302 to its homepage, which otherwise lands here as a
     small HTML file and explodes later in ZipFile (California burned us:
     it only exists as norcal/socal subregion extracts)."""
-    url = f"{BASE_URL}/{state}-latest-free.shp.zip"
+    if state.startswith("canada/"):
+        url = f"{NA_BASE_URL}/{state}-latest-free.shp.zip"
+    else:
+        url = f"{BASE_URL}/{state}-latest-free.shp.zip"
     out = cache_dir / (state.replace("/", "-") + "-latest-free.shp.zip")
     if out.exists() and out.stat().st_size > 0:
         print(f"  [cached] {out.name} ({_fmt_bytes(out.stat().st_size)})")
@@ -157,6 +173,10 @@ def parse_states_arg(s):
     s = s.strip().lower()
     if s == "conus":
         return list(CONUS_STATES)
+    if s == "na":
+        # Full water-na scope: lower 48 + Alaska + all of Canada. This is
+        # what the published water-na pack contains.
+        return list(CONUS_STATES) + ["alaska"] + list(CANADA_PROVINCES)
     states = []
     for part in s.split(","):
         part = part.strip()
