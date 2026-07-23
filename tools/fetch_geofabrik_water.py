@@ -215,6 +215,14 @@ def main():
     p.add_argument("--max-vertices", type=int, default=32,
                    help="per-polygon vertex cap (build_water_db.py "
                         "default)")
+    p.add_argument("--min-area-km2", type=float, default=0.0,
+                   help="passthrough to build_water_db.py: drop inland "
+                        "rings smaller than this (declutter; ocean "
+                        "never filtered). Default 0 disables.")
+    p.add_argument("--keep-fclass", nargs="*", default=None,
+                   help="passthrough to build_water_db.py: keep only "
+                        "these OSM fclass values (e.g. water "
+                        "reservoir). Omit to keep all.")
     p.add_argument("--build-only", action="store_true",
                    help="skip download/extract; only run the build "
                         "step using whatever shapefiles are already "
@@ -300,6 +308,10 @@ def main():
         str(output),
         "--max-vertices", str(args.max_vertices),
     ]
+    if args.min_area_km2 > 0:
+        cmd += ["--min-area-km2", str(args.min_area_km2)]
+    if args.keep_fclass:
+        cmd += ["--keep-fclass", *args.keep_fclass]
     if args.ocean_shp:
         cmd += ["--ocean", args.ocean_shp]
     if args.ne_lakes:

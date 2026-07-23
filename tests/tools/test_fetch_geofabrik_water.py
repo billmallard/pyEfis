@@ -43,9 +43,10 @@ def _seed_cache(cache_dir, areas):
         (d / LAYER).write_bytes(b"stub")
 
 
-def _run_main(monkeypatch, tmp_path, states, extra_args=()):
+def _run_main(monkeypatch, tmp_path, states, extra_args=(), capture=None):
     """Run main() against a tmp cache with the builder call captured.
-    Returns the list of --osm-water argument values it would pass."""
+    Returns the list of --osm-water argument values it would pass;
+    ``capture`` (a list) additionally receives the full builder cmd."""
     cache = tmp_path / "cache"
     out = tmp_path / "out.sqlite"
     calls = []
@@ -67,6 +68,8 @@ def _run_main(monkeypatch, tmp_path, states, extra_args=()):
     fw.main()
     assert len(calls) == 1
     cmd = calls[0]
+    if capture is not None:
+        capture.append(cmd)
     return [cmd[i + 1] for i, a in enumerate(cmd) if a == "--osm-water"]
 
 
@@ -106,3 +109,25 @@ def test_duplicate_states_arg_collapses(monkeypatch, tmp_path):
     _seed_cache(tmp_path / "cache", ["texas"])
     paths = _run_main(monkeypatch, tmp_path, "texas,texas")
     assert len(paths) == 1
+
+
+def test_declutter_filters_pass_through(monkeypatch, tmp_path):
+    # --min-area-km2 / --keep-fclass reach the builder cmd verbatim
+    # (and stay absent at their defaults, matching prior behavior).
+    (tmp_path / "cache").mkdir()
+    _seed_cache(tmp_path / "cache", ["texas"])
+    cmds = []
+    _run_main(monkeypatch, tmp_path, "texas",
+              extra_args=("--min-area-km2", "0.5",
+                          "--keep-fclass", "water", "reservoir"),
+              capture=cmds)
+    cmd = cmds[0]
+    i = cmd.index("--min-area-km2")
+    assert cmd[i + 1] == "0.5"
+    j = cmd.index("--keep-fclass")
+    assert cmd[j + 1:j + 3] == ["water", "reservoir"]
+
+    cmds2 = []
+    _run_main(monkeypatch, tmp_path, "texas", capture=cmds2)
+    assert "--min-area-km2" not in cmds2[0]
+    assert "--keep-fclass" not in cmds2[0]
