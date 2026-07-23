@@ -270,11 +270,24 @@ def main():
         print(f"ERROR: {len(failed)} state(s) failed: "
               f"{', '.join(failed)}", file=sys.stderr)
         sys.exit(1)
-    else:
+    if args.build_only:
+        # --build-only skipped the download loop, so assemble the input
+        # list from whatever the cache holds. This sweep must run ONLY
+        # in --build-only mode: the download loop above already appends
+        # every requested area (including cache-resumed ones), and
+        # sweeping on top of that passed every shapefile twice, doubling
+        # each inland polygon in the output — build_water_db.py does
+        # plain INSERTs with no dedup (issue #106, caught in the
+        # 2026q2r6 candidate: 128 args for 64 areas, 18.9 GB output).
         for sub in sorted(extracted_dir.iterdir()):
             shp = sub / WATER_LAYER_FILES[0]
             if shp.exists():
                 shp_paths.append(shp)
+
+    # Belt and braces: a duplicate --osm-water input double-ingests its
+    # polygons downstream, so collapse repeats no matter how the list
+    # was assembled (e.g. the same state named twice in --states).
+    shp_paths = list(dict.fromkeys(shp_paths))
 
     if not shp_paths:
         print("ERROR: no water shapefiles to build from", file=sys.stderr)
