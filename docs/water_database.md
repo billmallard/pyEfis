@@ -68,6 +68,10 @@ PYTHONPATH="C:/pylib;src" python tools/build_water_db.py \
 - `--text input.txt` is a documented hand-rollable format useful
   for tiny test datasets without pulling pyshp into the runtime
   environment.
+- `--waterway path/to/gis_osm_waterways_free_1.shp` imports OSM
+  waterway CENTERLINES into the separate `waterway_lines` polyline
+  table (rivers as lines, issue #39 — see the section below), not
+  the polygon store.
 
 The build is currently driven by hand from the Windows dev box
 because the shapefiles are downloaded manually. Resulting sqlite
@@ -138,6 +142,60 @@ OLD code degrade on multi-ring rows (the concatenated vertex list
 draws as one outline), and an old reader would mis-decode a dense
 row's uint32 blobs as uint16 — deploy the code update FIRST, then
 ship the pack rebuild.
+
+## Waterway centerlines — rivers as lines (#39)
+
+Winding rivers cannot be stored as filled polygons: Douglas-Peucker
+on a polygon outline cuts chords across the meanders and balloons a
+thin channel into a filled lake-blob, which is why the polygon
+ingest drops `riverbank` shapes (`--keep-fclass`) and rivers were
+simply absent from the SVS. On a POLYLINE the same simplification is
+shape-preserving — there is no fill to corrupt — so rivers live in a
+dedicated centerline table instead.
+
+`build_water_db.py --waterway <shp>` reads the Geofabrik per-state
+waterways layer (`gis_osm_waterways_free_1.shp`, the same bundle the
+roads build uses) and writes two additional tables into the water
+sqlite:
+
+```sql
+CREATE TABLE waterway_lines (
+    id INTEGER PRIMARY KEY,
+    fclass TEXT NOT NULL,                -- river | canal | stream
+    min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,
+    verts BLOB NOT NULL                  -- little-endian float32
+);                                       --   (lat, lon) pairs
+CREATE VIRTUAL TABLE waterway_rtree USING rtree(
+    id, min_lat, max_lat, min_lon, max_lon
+);
+```
+
+- **The schema mirrors the highway store 1:1**
+  (`highway_lines`/`highway_rtree`, see `highway_db.py` and
+  `tools/build_highway_db.py`): same columns, same float32 vertex
+  encoding (`highway_db.encode_vertices`), one row per polyline
+  part, R-tree indexed for the per-frame bbox query. A future
+  waterway reader reuses the proven `polylines_in_range` pattern
+  (and its decode) unchanged.
+- **Class filter**: `river`, `canal`, `stream` by default (issue
+  #39's set, matching the moving map's rivers preset); `drain` and
+  `ditch` are dropped as noise at EFIS scale. Override with
+  `--waterway-classes`.
+- **Decimation**: Douglas-Peucker at `--waterway-tolerance-m`
+  (default 40 m, the highway build's default — finer than the
+  display resolves). No vertex cap: a polyline row is cheap and a
+  cap would flatten long meanders.
+- **A shapefile without an `fclass` field fails the build loudly**
+  — it means the input is not an OSM waterways layer.
+- **Compatibility**: the tables are created in every new build
+  (empty when `--waterway` is not given) so readers can probe by
+  content. The polygon store is untouched; old readers
+  (`WaterDB`) never see the new tables, and old databases without
+  them keep working — a waterway reader must treat a missing table
+  as "no waterways" (the construct-never-raises convention).
+- **Scope**: builder + schema only. Renderer wiring (a
+  `waterways_in_range` query and an SVS/moving-map line layer in
+  the water color) is the follow-up half of #39.
 
 ## Pi-side wiring
 
