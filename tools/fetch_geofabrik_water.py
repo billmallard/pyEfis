@@ -12,6 +12,17 @@ usage bounded (each state zip is 50 MB–1.5 GB).
 The ocean coastline layer is sourced separately from the existing
 ``water-polygons-split-4326`` extract that ships with this checkout.
 
+Regions that outgrow Geofabrik's free-shapefile size cap stop getting
+daily shp builds (BC + Nunavut as of 2026-07; their ``-latest`` pointers
+dangle at purged dated files and 404). When a region's shp.zip 404s the
+script falls back to the region's ``-latest.osm.pbf`` extract — always
+current, never size-capped — and extracts the same water layer from it
+with pyosmium (issue #104). The fallback writes a shapefile twin of
+``gis_osm_water_a_free_1`` into the cache, so the rest of the pipeline
+(resume, filters, build) is unchanged. pyosmium is a tool-side optional
+dependency (``pip install osmium``), never required by the pyEfis
+runtime.
+
 Usage:
     # Single state — fast path for verifying the pipeline
     python tools/fetch_geofabrik_water.py --states texas
@@ -25,10 +36,12 @@ Usage:
 """
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -82,6 +95,71 @@ OCEAN_SHP_DEFAULT = (
     "openstreetmapsdata/water-polygons-split-4326/water_polygons.shp"
 )
 
+# WGS84 projection string as shipped in Geofabrik's .prj files, emitted
+# alongside the pbf-extracted shapefile twin so the layer is a drop-in.
+_WGS84_PRJ = (
+    'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",'
+    '6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",'
+    '0.017453292519943295]]'
+)
+
+# natural=wetland subtypes that get their own fclass (wetland_<sub>) and
+# dbf code in the Geofabrik layer; any other subtype folds into plain
+# "wetland". Codes read from real dbf records, not documentation.
+_WETLAND_SUBTYPES = {
+    "marsh": 8221, "reedbed": 8222, "saltmarsh": 8223, "bog": 8224,
+    "fen": 8225, "swamp": 8226, "tidalflat": 8229,
+}
+
+
+def water_fclass(tags):
+    """Map OSM tags to Geofabrik's gis_osm_water_a ``(fclass, code)``,
+    or None when the feature is not part of that layer.
+
+    Derived empirically, not from documentation: a 100% osm_id join
+    between Geofabrik's prince-edward-island daily shapefile and the
+    same-day pbf (3,064/3,064 records matched, 2026-07-23). The join
+    proves the precedence: natural=water wins over its water=/wetland=
+    subtags except water=river -> riverbank and water=reservoir ->
+    reservoir; bare landuse=basin and bare water=* (without
+    natural=water) are NOT in the layer. glacier/dock follow Geofabrik's
+    documented code scheme (no instances on PEI to verify empirically).
+
+    ``tags`` is anything with dict-style ``.get`` (an osmium TagList or
+    a plain dict).
+    """
+    nat = tags.get("natural")
+    if nat == "water":
+        w = tags.get("water")
+        if w == "river":
+            return ("riverbank", 8202)
+        if w == "reservoir":
+            return ("reservoir", 8201)
+        return ("water", 8200)
+    if nat == "wetland":
+        sub = tags.get("wetland")
+        if sub in _WETLAND_SUBTYPES:
+            return ("wetland_" + sub, _WETLAND_SUBTYPES[sub])
+        return ("wetland", 8220)
+    if nat == "glacier":
+        return ("glacier", 8211)
+    if tags.get("landuse") == "reservoir":
+        return ("reservoir", 8201)
+    ww = tags.get("waterway")
+    if ww == "riverbank":
+        return ("riverbank", 8202)
+    if ww == "dock":
+        return ("dock", 8203)
+    return None
+
+
+def _ring_signed_area_xy(pts):
+    """Shoelace signed area of an (x, y) ring; positive = CCW."""
+    s = 0.0
+    for i in range(len(pts) - 1):
+        s += pts[i][0] * pts[i + 1][1] - pts[i + 1][0] * pts[i][1]
+    return s / 2.0
+
 
 def _fmt_bytes(n):
     for unit in ("B", "KB", "MB", "GB"):
@@ -91,24 +169,13 @@ def _fmt_bytes(n):
     return f"{n:.1f} TB"
 
 
-def download_state(state, cache_dir):
-    """Download a single state's shp.zip from Geofabrik. Idempotent:
-    if the file already exists with non-zero size, skip the download.
-    Validates the result is actually a zip — Geofabrik answers unknown
-    URLs with a 302 to its homepage, which otherwise lands here as a
-    small HTML file and explodes later in ZipFile (California burned us:
-    it only exists as norcal/socal subregion extracts)."""
-    if state.startswith("canada/"):
-        url = f"{NA_BASE_URL}/{state}-latest-free.shp.zip"
-    else:
-        url = f"{BASE_URL}/{state}-latest-free.shp.zip"
-    out = cache_dir / (state.replace("/", "-") + "-latest-free.shp.zip")
-    if out.exists() and out.stat().st_size > 0:
-        print(f"  [cached] {out.name} ({_fmt_bytes(out.stat().st_size)})")
-        return out
+def _download_url(url, out):
+    """Stream ``url`` to ``out`` with progress, via a .partial temp so
+    an interrupted download never leaves a truncated file under the
+    final name."""
     print(f"  downloading {url}")
     t0 = time.time()
-    tmp = out.with_suffix(".zip.partial")
+    tmp = out.with_suffix(out.suffix + ".partial")
     with urllib.request.urlopen(url) as resp, open(tmp, "wb") as fh:
         total = int(resp.headers.get("Content-Length", 0))
         copied = 0
@@ -124,7 +191,31 @@ def download_state(state, cache_dir):
                 print(f"    {pct:5.1f}%  ({_fmt_bytes(copied)} / "
                       f"{_fmt_bytes(total)})", end="\r")
         print()
-    tmp.rename(out)
+    tmp.replace(out)
+    print(f"    done in {time.time() - t0:.1f}s "
+          f"({_fmt_bytes(out.stat().st_size)})")
+    return out
+
+
+def _state_url_base(state):
+    if state.startswith("canada/"):
+        return f"{NA_BASE_URL}/{state}"
+    return f"{BASE_URL}/{state}"
+
+
+def download_state(state, cache_dir):
+    """Download a single state's shp.zip from Geofabrik. Idempotent:
+    if the file already exists with non-zero size, skip the download.
+    Validates the result is actually a zip — Geofabrik answers unknown
+    URLs with a 302 to its homepage, which otherwise lands here as a
+    small HTML file and explodes later in ZipFile (California burned us:
+    it only exists as norcal/socal subregion extracts)."""
+    url = f"{_state_url_base(state)}-latest-free.shp.zip"
+    out = cache_dir / (state.replace("/", "-") + "-latest-free.shp.zip")
+    if out.exists() and out.stat().st_size > 0:
+        print(f"  [cached] {out.name} ({_fmt_bytes(out.stat().st_size)})")
+        return out
+    _download_url(url, out)
     with open(out, "rb") as fh:
         magic = fh.read(4)
     if not magic.startswith(b"PK"):
@@ -135,9 +226,133 @@ def download_state(state, cache_dir):
             f"{magic!r}) — Geofabrik redirects unknown URLs to its "
             "homepage. Wrong state name, or a split state (see "
             "california/norcal + california/socal)?")
-    print(f"    done in {time.time() - t0:.1f}s "
-          f"({_fmt_bytes(out.stat().st_size)})")
     return out
+
+
+def download_state_pbf(state, cache_dir):
+    """Download a region's .osm.pbf extract (the shp-less fallback
+    source). Idempotent like download_state. A pbf starts with a
+    4-byte big-endian BlobHeader length — small, so the leading bytes
+    are zero; an HTML redirect page is not, which catches Geofabrik's
+    redirect-to-homepage answer for unknown regions."""
+    url = f"{_state_url_base(state)}-latest.osm.pbf"
+    out = cache_dir / (state.replace("/", "-") + "-latest.osm.pbf")
+    if out.exists() and out.stat().st_size > 0:
+        print(f"  [cached] {out.name} ({_fmt_bytes(out.stat().st_size)})")
+        return out
+    _download_url(url, out)
+    with open(out, "rb") as fh:
+        magic = fh.read(2)
+    if magic != b"\x00\x00":
+        size = out.stat().st_size
+        out.unlink()
+        raise RuntimeError(
+            f"{url} returned a non-pbf ({_fmt_bytes(size)}; leading "
+            f"bytes {magic!r}) — likely Geofabrik's redirect-to-"
+            "homepage for an unknown region name")
+    return out
+
+
+def iter_pbf_water_areas(pbf_path):
+    """Assemble water areas from a Geofabrik pbf extract and yield
+    ``(osm_id, name, fclass, code, polygons)`` per feature, where
+    ``polygons`` is GeoJSON MultiPolygon coordinates (list of polygons,
+    each a list of [lon, lat] rings, first ring the outer).
+
+    Requires pyosmium — a tool-side optional dependency only; the
+    KeyFilter pre-assembly cut keeps the area assembler off the ~97% of
+    ways that carry no water-adjacent key. Degenerate geometries osmium
+    cannot build are counted and reported, not silently eaten."""
+    try:
+        import osmium
+    except ImportError as e:
+        raise RuntimeError(
+            "pbf fallback requires pyosmium (`pip install osmium`) — a "
+            "tool-side optional dependency, never a pyEfis runtime "
+            "requirement") from e
+    fac = osmium.geom.GeoJSONFactory()
+    fp = (osmium.FileProcessor(str(pbf_path))
+          .with_areas(osmium.filter.KeyFilter("natural", "landuse",
+                                              "waterway"))
+          .with_filter(osmium.filter.EntityFilter(osmium.osm.AREA)))
+    geom_fail = 0
+    for area in fp:
+        hit = water_fclass(area.tags)
+        if hit is None:
+            continue
+        fclass, code = hit
+        try:
+            coords = json.loads(fac.create_multipolygon(area))
+        except (RuntimeError, ValueError):
+            geom_fail += 1
+            continue
+        yield (str(area.orig_id()), area.tags.get("name", ""),
+               fclass, code, coords["coordinates"])
+    if geom_fail:
+        print(f"    WARNING: {geom_fail} water area(s) had degenerate "
+              "geometry osmium could not assemble; dropped")
+
+
+def extract_water_from_pbf(pbf_path, out_dir):
+    """Write a shapefile twin of gis_osm_water_a_free_1 from a pbf
+    extract, under the canonical layer filenames in ``out_dir``, so
+    the rest of the pipeline consumes it unchanged (resume, fclass
+    filters, build_water_db.py — which reads it with the same pyshp).
+
+    Writes via temp names and renames only on completion, so a killed
+    extraction never leaves a truncated layer the resume path would
+    trust. Zero extracted polygons is a hard error: a region with no
+    water is a broken extract, not a real geography."""
+    import shapefile  # pyshp — build_water_db.py already requires it
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = WATER_LAYER_FILES[0][:-len(".shp")]
+    tmp_base = out_dir / (stem + "_partial")
+    w = shapefile.Writer(str(tmp_base), shapeType=shapefile.POLYGON)
+    # Field spec mirrors the real layer's dbf exactly (read from a
+    # Geofabrik file, not invented).
+    w.field("osm_id", "C", size=12)
+    w.field("code", "N", size=4, decimal=0)
+    w.field("fclass", "C", size=28)
+    w.field("name", "C", size=100)
+    t0 = time.time()
+    n = 0
+    for osm_id, name, fclass, code, polygons in \
+            iter_pbf_water_areas(pbf_path):
+        parts = []
+        for rings in polygons:
+            for k, ring in enumerate(rings):
+                pts = [(float(x), float(y)) for x, y in ring]
+                if len(pts) < 4:  # closed ring needs 3 distinct points
+                    continue
+                # Shapefile winding: outer rings CW, holes CCW. Ring
+                # role comes from GeoJSON position (first = outer),
+                # which is structural — don't infer role from winding.
+                cw = _ring_signed_area_xy(pts) < 0
+                if (k == 0) != cw:
+                    pts.reverse()
+                parts.append(pts)
+        if not parts:
+            continue
+        w.poly(parts)
+        name = name.encode("utf-8")[:100].decode("utf-8", "ignore")
+        w.record(osm_id, code, fclass, name)
+        n += 1
+        if n % 20000 == 0:
+            print(f"    {n} water polygons...")
+    w.close()
+    if n == 0:
+        for ext in (".shp", ".shx", ".dbf"):
+            tmp_base.with_suffix(ext).unlink(missing_ok=True)
+        raise RuntimeError(
+            f"{pbf_path.name}: pbf extraction produced 0 water "
+            "polygons — refusing to emit an empty layer")
+    for ext in (".shp", ".shx", ".dbf"):
+        tmp_base.with_suffix(ext).replace(out_dir / (stem + ext))
+    (out_dir / (stem + ".prj")).write_text(_WGS84_PRJ)
+    (out_dir / (stem + ".cpg")).write_text("UTF-8")
+    print(f"    extracted {n} water polygon(s) from {pbf_path.name} "
+          f"in {time.time() - t0:.1f}s")
+    return out_dir / WATER_LAYER_FILES[0]
 
 
 def extract_water_layer(zip_path, dest_dir):
@@ -209,9 +424,9 @@ def main():
                         "non-US coverage outside the state list. "
                         "Pass '' to skip.")
     p.add_argument("--keep-zips", action="store_true",
-                   help="don't delete state zips after extraction "
-                        "(useful for re-running with different "
-                        "filters)")
+                   help="don't delete state zips (or fallback pbfs) "
+                        "after extraction (useful for re-running with "
+                        "different filters)")
     p.add_argument("--max-vertices", type=int, default=32,
                    help="per-polygon vertex cap (build_water_db.py "
                         "default)")
@@ -260,6 +475,34 @@ def main():
             try:
                 zip_path = download_state(state, cache_dir)
                 shp = extract_water_layer(zip_path, extracted_dir)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    print(f"  ERROR: {state}: {e}")
+                    failed.append(state)
+                    continue
+                # Regions past Geofabrik's free-shapefile size cap stop
+                # getting shp builds and their -latest pointer 404s (BC
+                # + Nunavut, issue #104). The pbf extract stays current;
+                # extract the same water layer from it instead. Only a
+                # 404 routes here — the redirect-to-homepage case means
+                # a wrong region name, which the pbf wouldn't fix.
+                print(f"  shp.zip unavailable (HTTP 404) — falling "
+                      "back to pbf extraction (#104)")
+                try:
+                    pbf_path = download_state_pbf(state, cache_dir)
+                    shp = extract_water_from_pbf(
+                        pbf_path,
+                        extracted_dir / state.replace("/", "-"))
+                except Exception as e2:
+                    print(f"  ERROR: {state}: pbf fallback: {e2}")
+                    failed.append(state)
+                    continue
+                shp_paths.append(shp)
+                if not args.keep_zips:
+                    pbf_path.unlink()
+                    print(f"  removed {pbf_path.name} "
+                          "(--keep-zips to retain)")
+                continue
             except Exception as e:
                 print(f"  ERROR: {state}: {e}")
                 failed.append(state)
