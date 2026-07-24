@@ -176,7 +176,11 @@ def _download_url(url, out):
     print(f"  downloading {url}")
     t0 = time.time()
     tmp = out.with_suffix(out.suffix + ".partial")
-    with urllib.request.urlopen(url) as resp, open(tmp, "wb") as fh:
+    # Socket timeout so a stalled mirror fails loud instead of hanging
+    # the build forever (observed 2026-07-23: a Geofabrik pbf download
+    # went silent mid-transfer and sat for 15+ minutes).
+    with urllib.request.urlopen(url, timeout=120) as resp, \
+            open(tmp, "wb") as fh:
         total = int(resp.headers.get("Content-Length", 0))
         copied = 0
         chunk = 1 << 20  # 1 MB
