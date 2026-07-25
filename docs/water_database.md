@@ -42,7 +42,13 @@ download-and-update tool we still need to build.
   detail)**: would catch every lake and wider river worldwide.
   Comes from running a full OSM .pbf extract through osmium /
   imposm with the right tag filters. ~10 GB+ world; ~1 GB CONUS.
-  Worth doing once we have a proper download/build pipeline.
+  Partially in place: `tools/fetch_geofabrik_water.py` ingests
+  Geofabrik's per-region `gis_osm_water_a` shapefiles, and for
+  regions Geofabrik no longer ships as shapefiles (past its free-shp
+  size cap: BC + Nunavut as of 2026-07) it falls back to extracting
+  the same layer from the region's `.osm.pbf` with pyosmium
+  (issue #104; tag->fclass mapping empirically pinned against the
+  real layer — see `water_fclass` in that tool).
 - **NOAA GSHHG hierarchical shorelines**: alternate ocean polygon
   set with built-in LOD (full / high / intermediate / low / crude
   resolutions). Could replace OSM for ocean if we want
