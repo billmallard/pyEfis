@@ -386,6 +386,54 @@ class TestHoleVerification:
         assert not _covered_by_triangles(*ISLAND_PT, verts, tris)
         assert _covered_by_triangles(*WATER_PT, verts, tris)
 
+    def test_strip_removes_large_cover_with_centroid_outside_hole(self):
+        # The residual behind the #44/#103 "0 inland" gate slip: a large
+        # fill triangle covers a small island while its OWN centroid sits
+        # outside the island. The old centroid-in-hole strip left it; the
+        # interior-point strip removes it. Big triangle (verts 8,9,10)
+        # contains the whole HOLE_CCW island; its centroid is at ~24.67N,
+        # north of the 24.5-24.6N island.
+        import numpy as np
+        all_verts = OUTER_CW + HOLE_CCW + [
+            (24.0, -81.75), (25.0, -81.90), (25.0, -81.60)]
+        ring_ends = [4, 8]
+        tri = np.asarray([8, 9, 10], dtype=np.uint16)
+        assert bw._covered_hole_indices(all_verts, ring_ends, tri) == [0]
+        cen = ((24.0 + 25.0 + 25.0) / 3, (-81.75 - 81.90 - 81.60) / 3)
+        assert not bw._point_in_ring(cen[0], cen[1], HOLE_CCW)  # centroid out
+        stripped = bw._strip_hole_triangles(all_verts, ring_ends, tri)
+        assert bw._covered_hole_indices(all_verts, ring_ends, stripped) == []
+        assert len(stripped) == 0     # the only triangle covered the island
+
+    def test_distinct_ring_len_ignores_dups_and_closure(self):
+        assert bw._distinct_ring_len([(0, 0), (1, 1), (0, 0)]) == 2   # a line
+        assert bw._distinct_ring_len(
+            [(0, 0), (1, 0), (1, 1), (0, 0)]) == 3      # triangle + closure
+        assert bw._distinct_ring_len(HOLE_CCW) == 4
+
+    def test_degenerate_decimated_hole_is_dropped(self, tmp_path):
+        # A hole that collapses to two distinct points (a zero-area line)
+        # must not be emitted as a hole: it has no probeable interior yet
+        # the pack-check oracle flags it. The row stores as single-ring.
+        path, con = _open_db(tmp_path)
+        degenerate = [(24.5, -81.8), (24.6, -81.7), (24.5, -81.8)]
+        assert bw.insert_polygon(con, "water", None, OUTER_CW,
+                                 max_vertices=32, holes=[degenerate])
+        con.commit()
+        con.close()
+        _, _, rings = _decode(_fetch_rows(path)[0])
+        assert rings is None
+
+    def test_ring_interior_points_probes_a_tiny_triangle(self):
+        # A 3-vertex island the scanline can miss must still yield an
+        # interior point (the centroid), or the verifier treats it as
+        # clean and ships it covered (the fail-open bug).
+        tiny = [(34.0742, -118.2603), (34.0746, -118.2596),
+                (34.0744, -118.2600)]
+        pts = bw._ring_interior_points(tiny)
+        assert pts
+        assert any(bw._point_in_ring(lat, lon, tiny) for lat, lon in pts)
+
 
 def _dense_multipolygon():
     """A synthetic dense cell: one outer box + a 20x15 grid of
