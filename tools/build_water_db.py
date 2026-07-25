@@ -17,6 +17,10 @@ Usage:
     # for hand-crafting a small test dataset):
     python build_water_db.py water.sqlite --text input.txt
 
+    # Waterway centerlines (rivers as lines, issue #39):
+    python build_water_db.py water.sqlite \\
+        --waterway /path/to/gis_osm_waterways_free_1.shp
+
 Text format:
     # Each polygon starts with a 'P kind [elev_ft]' line, followed by
     # vertex lines 'lat lon', ended with a blank line or EOF.
@@ -40,6 +44,10 @@ from pathlib import Path
 # Local import; let it fail loudly if the module is wrong.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from pyefis.instruments.ai.water_db import encode_vertices
+# Waterway centerlines share the highway store's float32 line format
+# (issue #39) — same encoder, so the future reader can share the
+# highway decode path.
+from pyefis.instruments.ai.highway_db import encode_vertices as encode_line_vertices
 
 # Tessellation library. Pure-data Python interface around the well-
 # tested earcut C++ port. Used at build time only; the renderer just
@@ -136,6 +144,28 @@ CREATE VIRTUAL TABLE IF NOT EXISTS water_rtree USING rtree(
     id,
     min_lat, max_lat,
     min_lon, max_lon
+);
+
+-- Waterway centerlines (issue #39): rivers/streams/canals as LINE
+-- features, not filled polygons. A winding river cannot survive as a
+-- decimated polygon — simplification cuts chords across the meanders
+-- and balloons the channel into a lake-blob, which is why the polygon
+-- ingest drops 'riverbank' — so the builder imports OSM waterway
+-- centerlines here instead. Columns and encoding mirror the highway
+-- store (highway_db.py / build_highway_db.py): ``verts`` is
+-- little-endian float32 (lat, lon) pairs, one row per polyline part,
+-- R-tree indexed for the range query. The tables exist in every new
+-- build (empty when --waterway was not given) so a reader can probe
+-- by content; old readers that only know water_polygons are
+-- unaffected.
+CREATE TABLE IF NOT EXISTS waterway_lines (
+    id INTEGER PRIMARY KEY,
+    fclass TEXT NOT NULL,
+    min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,
+    verts BLOB NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS waterway_rtree USING rtree(
+    id, min_lat, max_lat, min_lon, max_lon
 );
 """
 
@@ -622,6 +652,81 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
     return n
 
 
+# Default OSM waterway classes kept by --waterway. Matches issue #39
+# (waterway=river/stream/canal) and the moving map's rivers preset
+# (tools/build_highway_db.py PRESETS["rivers"]); drain/ditch are noise
+# at EFIS scale. Override with --waterway-classes.
+WATERWAY_CLASSES = ("river", "canal", "stream")
+
+
+def import_waterways(con, path, tol_deg, keep_classes):
+    """Import OSM waterway CENTERLINES from a polyline shapefile
+    (Geofabrik ``gis_osm_waterways_free_1``) into the waterway_lines
+    table — rivers as lines, not polygons (#39).
+
+    Douglas-Peucker on a polyline is shape-preserving (no fill to
+    corrupt), so the meander-blob failure that makes river POLYGONS
+    undrawable does not apply here. Multi-part shapes split into one
+    row per part, mirroring the highway build. Renderer wiring is
+    deliberately not part of this importer."""
+    try:
+        import shapefile  # pyshp
+    except ImportError:
+        print("ERROR: shapefile import requires pyshp (`pip install pyshp`)",
+              file=sys.stderr)
+        sys.exit(2)
+
+    sf = shapefile.Reader(str(path))
+    fields = [f[0] for f in sf.fields[1:]]
+    if "fclass" not in fields:
+        print(f"ERROR: {Path(path).name} has no 'fclass' field — expected "
+              "an OSM waterways layer (gis_osm_waterways_free_1)",
+              file=sys.stderr)
+        sys.exit(2)
+    fclass_idx = fields.index("fclass")
+    keep = set(keep_classes)
+    next_id = con.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM waterway_lines").fetchone()[0] + 1
+    n = 0
+    fc_dropped = 0
+    for sr in sf.iterShapeRecords():
+        fclass = sr.record[fclass_idx]
+        if fclass not in keep:
+            fc_dropped += 1
+            continue
+        if not sr.shape.points:
+            continue
+        pts = np.asarray(sr.shape.points, dtype=np.float64)
+        parts = list(sr.shape.parts) + [len(pts)]
+        for a, b in zip(parts[:-1], parts[1:]):
+            seg = pts[a:b]
+            if len(seg) < 2:
+                continue
+            # Shapefile stores (lon, lat); we store (lat, lon).
+            latlon = np.column_stack([seg[:, 1], seg[:, 0]])
+            latlon = _rdp(latlon, tol_deg)
+            min_lat = float(latlon[:, 0].min())
+            max_lat = float(latlon[:, 0].max())
+            min_lon = float(latlon[:, 1].min())
+            max_lon = float(latlon[:, 1].max())
+            con.execute(
+                "INSERT INTO waterway_lines "
+                "(id, fclass, min_lat, max_lat, min_lon, max_lon, verts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (next_id, fclass, min_lat, max_lat, min_lon, max_lon,
+                 encode_line_vertices(latlon)))
+            con.execute(
+                "INSERT INTO waterway_rtree "
+                "(id, min_lat, max_lat, min_lon, max_lon) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (next_id, min_lat, max_lat, min_lon, max_lon))
+            next_id += 1
+            n += 1
+    extra = f" ({fc_dropped} off-class dropped)" if fc_dropped else ""
+    print(f"  {Path(path).name}: imported {n} waterway line(s){extra}")
+    return n
+
+
 def import_text(con, path, max_vertices):
     """Import polygons from the documented text format."""
     cur_kind = None
@@ -669,6 +774,19 @@ def main():
                    help="generic OSM water shapefile (kind='water')")
     p.add_argument("--text", action="append", default=[],
                    help="text-format polygon file (see module docstring)")
+    p.add_argument("--waterway", action="append", default=[],
+                   help="OSM waterway LINE shapefile (Geofabrik "
+                        "gis_osm_waterways_free_1); imports river/canal/"
+                        "stream centerlines into the waterway_lines "
+                        "polyline table (#39) instead of the polygon store")
+    p.add_argument("--waterway-classes", nargs="*", default=None,
+                   help="waterway fclass values to keep (default: "
+                        + " ".join(WATERWAY_CLASSES) + ")")
+    p.add_argument("--waterway-tolerance-m", type=float, default=40.0,
+                   help="Douglas-Peucker tolerance (metres) for waterway "
+                        "centerlines; matches the highway build default. "
+                        "Polyline decimation is shape-preserving, so this "
+                        "only drops sub-resolution jitter")
     p.add_argument("--max-vertices", type=int, default=32,
                    help="cap polygons to this many vertices via stride "
                         "decimation; on-disk BLOBs shrink ~150x for OSM "
@@ -723,11 +841,20 @@ def main():
                                   min_area_km2=min_area, keep_fclass=keep_fclass)
     for path in args.text:
         total += import_text(con, path, max_verts)
+    waterway_classes = (args.waterway_classes if args.waterway_classes
+                        else WATERWAY_CLASSES)
+    lines = 0
+    for path in args.waterway:
+        lines += import_waterways(con, path,
+                                  args.waterway_tolerance_m / _M_PER_DEG,
+                                  waterway_classes)
     con.commit()
     con.close()
     filt = f", min-area={min_area} km^2" if min_area > 0 else ""
     ocn = f", ocean cap={ocean_verts}" if ocean_verts != max_verts else ""
-    print(f"-> {out} ({total} polygons, vertex cap={max_verts}{ocn}{filt})")
+    wline = f", {lines} waterway lines" if args.waterway else ""
+    print(f"-> {out} ({total} polygons{wline}, "
+          f"vertex cap={max_verts}{ocn}{filt})")
 
 
 if __name__ == "__main__":
