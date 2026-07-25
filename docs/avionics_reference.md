@@ -327,7 +327,281 @@ ball and annunciates `ROT`/`ALAT` `fail`/`old`/`bad`; the **excessive-slip amber
 (TC-SLIP-002) is now implemented — the ball turns amber past `excessiveSlipFraction` of
 full-scale, matching the AI slip/skid. No open TC code gaps.
 
-## 9. Requirement IDs and traceability
+## 9. Engine / powerplant gauges — source material
+
+Requirements (with IDs) will live in a per-widget spec (`gauge_widget_spec.md`)
+covering the quantitative gauge family — `arc_gauge` (`gauges.ArcGauge`),
+`horizontal_bar_gauge`, `vertical_bar_gauge`, `numeric_display`, and the
+`gauges.abstract.AbstractGauge` base (ranges, `lowWarn`/`highWarn`/`highAlarm`
+bands, `fail`/`old`/`bad` annunciation) — and will cite the items here.
+
+**Recodification finding (resolve, do not assume).** The classic granular
+Part 23 powerplant-marking rules this section was expected to rest on —
+**§23.1305** (required powerplant instruments), **§23.1549** (powerplant
+instrument markings), **§23.1541/§23.1543/§23.1553** (markings/placards), and
+the electronic-display rule **§23.1311** the guidance AC is named for — are
+**absent from the 2025 corpus** (`CFR-2025-title14-vol1.txt`; grep for each
+returns no matches). They were swept away by the performance-based rewrite of
+Part 23 (**Amdt. 23–64**, cited in the surviving text at
+`CFR-2025-title14-vol1.txt` §23.2600 note, p.209) and replaced by the
+**§23.2600-series** performance rules, which contain *no* colour/arc detail.
+The substantive granular marking language therefore survives in this corpus
+only in **Part 25** (transport category — not binding on an amateur-built
+airplane, adopted here as the engineering target per the framing above) and in
+the guidance ACs, which still restate the old §23.1549 semantics verbatim. Each
+subsection below cites what actually exists in the corpus and flags where a
+classic rule is recodified/absent.
+
+### 9.1 Required powerplant instruments
+
+The current Part 23 rule is performance-based and non-enumerative:
+
+- **14 CFR §23.2615(a)** *(CFR vol 1, p.209)* — installed systems must give the
+  crewmember who sets/monitors flight, navigation, **and powerplant** parameters
+  "the information necessary to do so during each phase of flight," presented so
+  the crewmember "can **monitor the parameter and determine trends**," and
+  including **limitations** unless the limit cannot be exceeded in all intended
+  operations. **§23.2615(b)** — integrated flight/powerplant displays must not
+  inhibit the primary display of parameters needed by any crewmember, and must
+  keep information essential for continued safe flight available after any single
+  failure. This is the *only* Part 23 statement of what powerplant instruments
+  must do; it names **no specific instruments** (RPM, MAP, oil, CHT, EGT, fuel,
+  volts/amps) — that enumeration is **recodified/absent** from Part 23 in the
+  2025 corpus.
+- **14 CFR §23.2600(b)** *(p.209)* — the applicant must install "flight,
+  navigation, surveillance, and **powerplant** controls and displays so
+  flightcrew members can monitor and perform defined tasks," and the design must
+  minimize flightcrew errors.
+- **14 CFR §23.2605(b)** *(p.209)* — "a discernible means of providing system
+  operating parameters required to operate the airplane, **including warnings,
+  cautions, and normal indications**." **§23.2605(c)** — unsafe-condition
+  information must be provided "in a timely manner" and "clear enough to avoid
+  likely crewmember errors." (The powerplant analog of the governing §2 rule.)
+
+The **enumerated required-instrument list** (the RPM/MAP/oil-temp/oil-
+pressure/CHT/fuel/etc. that pyEfis engine gauges render) survives in the corpus
+only as the transport-category rule:
+
+- **14 CFR §25.1305** *(CFR vol 1, p.359)* — "The following are required
+  powerplant instruments." **(a) all airplanes:** fuel-pressure warning, a
+  **fuel quantity indicator for each tank**, oil quantity, an **oil-pressure
+  indicator** and oil-pressure warning per engine, an **oil-temperature
+  indicator for each engine**, fire-warning. **(b) reciprocating engines**
+  (the MakerPlane case): a **carburetor air-temperature indicator**, a
+  **cylinder-head-temperature (CHT) indicator for each air-cooled engine**, a
+  **manifold-pressure indicator**, a **fuel-pressure indicator**, a **fuel
+  flowmeter or fuel-mixture indicator**, and a **tachometer for each engine**.
+  (Turbine/turbojet/turboprop paragraphs (c)–(e) add gas-temperature/EGT,
+  torque, thrust, etc. — out of the recip scope but the same instrument family.)
+  This is the corpus' authority for *which* engine parameters a panel is
+  expected to show; treat it as best-practice reference, not a Part 23
+  obligation.
+
+### 9.2 Range / marking system — red-line, caution-yellow, normal-green
+
+The governing rule (granular colour-band semantics) — **recodified out of
+Part 23, present in Part 25**:
+
+- **14 CFR §25.1549 Powerplant and auxiliary power unit instruments**
+  *(CFR vol 1, p.389)* — for each required powerplant instrument, as
+  appropriate to the type:
+  - **(a)** "Each **maximum** and, if applicable, **minimum safe operating
+    limit** must be marked with a **red radial or a red line**;"
+  - **(b)** "Each **normal operating range** must be marked with a **green arc
+    or green line**, not extending beyond the maximum and minimum safe limits;"
+  - **(c)** "Each **takeoff and precautionary range** must be marked with a
+    **yellow arc or a yellow line**;" and
+  - **(d)** each speed range restricted by excessive vibration stress marked
+    with **red arcs or red lines**.
+  This is the canonical red-line / yellow-caution / green-normal mapping the
+  pyEfis `AbstractGauge` band system (`highAlarm`=red, `highWarn`/`lowWarn`=
+  yellow caution, normal=green) is targeting. **The equivalent Part 23 rule
+  (§23.1549) is absent from the 2025 corpus.**
+- **14 CFR §25.1553 Fuel quantity indicator** *(CFR vol 1, p.389)* — if
+  unusable fuel exceeds 1 gal or 5% of tank capacity, "a **red arc** must be
+  marked on its indicator extending from the calibrated zero reading to the
+  lowest reading obtainable in level flight." (Specific low-end red band for the
+  fuel-quantity gauge.)
+- **14 CFR §25.1543(b)** *(CFR vol 1, p.388)* — "Each instrument marking must be
+  **clearly visible to the appropriate crewmember**." **§25.1541** *(p.388)* —
+  markings must be conspicuous and not easily obscured. (General legibility.)
+
+Electronic-display restatement (guidance) — still worded against the old
+Part 23 numbers, but the semantics are what matters:
+
+- **AC 23.1311-1C §9.5 Marking of Powerplant Parameters (p.29)** — "Mark
+  powerplant parameters on electronic displays **in accordance with §23.1549**.
+  AC 20-88A provides alternate methods of marking electronic powerplant
+  displays… Alternate markings that do not comply with the requirements of
+  §23.1549 require an ELOS." (Confirms the §23.1549/§25.1549 arc scheme is the
+  intended target for a *glass* engine display, not just round dials.)
+- **AC 23.1311-1C §9.4.b (p.28)** — invokes the (now-recodified) §23.1311(a)(6)
+  requiring "sensory cues that provide a **quick glance sense of rate and…
+  trend** information," and §23.1311(a)(7) requiring equivalent visual displays
+  of the §§23.1541–1553 instrument markings **or** visual displays that "alert
+  the pilot to abnormal operational values or approaches to established
+  limitation values." (Both cited rule numbers are absent from the 2025 corpus;
+  the guidance intent stands.)
+
+Behavioral corroboration (handbook, describes the same arcs as fielded on GA
+engine gauges — useful for widget visual QA, non-normative):
+
+- **FAA-H-8083-25c (PHAK) "Powerplant" limitations (p.233)** — maximum normal
+  operating power "is depicted by a **green arc**"; general engine-gauge
+  markings use "a **red radial line** and the normal operating range with a
+  **green arc**… Some instruments may have a **yellow arc** to indicate a
+  caution area."
+- **PHAK p.166** — the **manifold-pressure** gauge "contains a **green arc** to
+  show the normal operating range and a **red radial line** to indicate the
+  upper limit."
+- **PHAK p.177** — the **oil-temperature** gauge: "a **green area** shows the
+  normal operating range, and the **red line** indicates the maximum allowable
+  temperature."
+- **PHAK p.178** — **cylinder-head-temperature (CHT)**: "**green arc** to
+  indicate the normal operating range. A **red line**… indicates maximum
+  allowable cylinder head temperature."
+- **PHAK p.171** — **carburetor air-temperature**: optional "**red radial**…
+  maximum permissible… inlet air temperature… a **green arc** indicates the
+  normal operating range."
+
+### 9.3 Colour mapping to AC 25-11B Table 5-1
+
+The engine gauges inherit the same colour standard curated in §3 above
+(AC 25-11B **Table 5-1**, p.43). The engine-relevant rows:
+
+| Gauge state | Function (Table 5-1) | Colour |
+|-------------|----------------------|--------|
+| Value past red-line / min-max safe limit (`highAlarm`/exceedance) | **Warnings**; **Flight-envelope / system limits, exceedances** | **Red** (amber acceptable for a limit that is caution-not-warning) |
+| Caution / takeoff-precautionary band (`highWarn`, `lowWarn`) | **Cautions, non-normal sources** | **Yellow/Amber** |
+| Normal operating range | **Engaged modes / normal conditions** | **Green** |
+| Dial / scale / numeric furniture | **Scales, dials, tapes, associated info** | **White** |
+
+- **AC 25-11B Table 5-1 (p.43)** explicitly lists "**Flight envelope and system
+  limits, exceedances**" as a red-coded function — the row that authorises a red
+  engine exceedance band. (Grep line confirms the row text.)
+- **AC 23.1311-1C §9.4.c(6) (p.29)** gives the identical three-colour operating-
+  state mapping in prose: "The use of **color in accordance with §23.1549**… a
+  **green** indication would indicate normal operation, a **yellow** indication
+  would indicate operation in a **takeoff or precautionary range**, and a
+  **red** indication would indicate operation **outside of the safe operating
+  limits**." This is the cleanest single-cite for the pyEfis green/yellow/red
+  band semantics.
+- **AC 23.1311-1C §22.2 Table 4 (p.45)** — the Part 23 colour-standardization
+  analog (Red = warnings + flight-envelope/system limits; Amber/Yellow =
+  cautions; Green = normal/engaged; White = scales), consistent with Table 5-1
+  (curated in §3 / §6.3 above).
+- **Colour is never the sole cue** (AC 25-11B §5.8, p.42; AC 23.1311-1C §22.6):
+  band **position/shape** must also carry the meaning — relevant to the bar and
+  numeric gauges where a colour change alone signals a limit.
+
+### 9.4 Failure / invalid annunciation for engine params
+
+- **14 CFR §23.2605(b)-(c)** *(p.209)* — the display must provide **warnings,
+  cautions, and normal indications**, and unsafe-condition information "in a
+  timely manner… clear enough to avoid likely crewmember errors." An engine
+  parameter that is lost/stale/invalid must therefore be annunciated, not shown
+  as if valid (the powerplant instance of governing §2). This maps to the pyEfis
+  `fail`→red `XXX`, `old`/`bad`→grey convention that `AbstractGauge` already
+  carries.
+- **AC 23.1311-1C §9.2.a Loss of Critical Powerplant Information (p.27)** — "No
+  single failure, malfunction, or probable combination of failures, should
+  result in either the **loss of critical powerplant information or an erroneous
+  display of powerplant parameters** that would jeopardize continued safe flight
+  and landing." (The "no misleading engine display" rule.)
+- **AC 23.1311-1C §18.3 Alerting Messages (p.45)** — "Alerting messages should
+  **differentiate between normal and abnormal** indications. Abnormal
+  indications should be **clear and unmistakable**, using techniques such as
+  different shapes, sizes, colors, flashing, boxing, outlining… Provide
+  **individual alerts for each function** essential for safe operation."
+  (Governs how an engine caution/warning is drawn — colour plus a second cue.)
+- **AC 25-11B Appendix B.2.1 (p.78)** — "**Safety-related engine limit
+  exceedances should be indicated in a clear and unambiguous manner.**
+  Flightcrew alerting is addressed in §25.1322." **B.2.2 (p.78)** — a
+  significant-thrust-loss indication, if provided, must likewise be clear and
+  unambiguous.
+
+### 9.5 Electronic-display-specific guidance (AC 23.1311-1C §9)
+
+Guidance unique to a *glass* engine display, beyond the arc colours:
+
+- **§9.3.b Exceedance auto-present (p.28)** — "**Before and upon reaching or
+  exceeding any operating limit, the display should present the required
+  powerplant parameters without pilot action.** Timely alerts for each phase of
+  flight should be provided when any operating limit is reached or exceeded…"
+  The required powerplant information "should be presented continuously during a
+  critical takeoff and landing phase." (An **exceedance-driven auto-display /
+  pop-up** expectation — richer than a static band.)
+- **§9.3.a Continuous presentation (p.28)** — primary powerplant parameters
+  presented **continuously** when required, unless a monitor gives an adequate
+  alert; provide a manual-select option too.
+- **§9.3.c Alert prioritisation (p.28)** — one parameter/display/alert must not
+  suppress another that also needs immediate crew awareness; alerts must be
+  prioritised (see §18).
+- **§9.4 Digital reading alphanumeric displays (p.28)** — directly governs the
+  `numeric_display` widget. Digital read-outs "are most valuable when
+  **integrated with an analog display**" (proximity pairing). They **"should not
+  be used in place of analog formats… where trend or rate-of-change information
+  is important for safety, or when the pilot needs to monitor parameters with a
+  quick glance,"** because they "limit the pilot's ability to assess trend
+  information" and to "easily **compare parameters from multiple engines**" or
+  check proximity to limits.
+- **§9.4.c (p.29)** — a **digital-only** engine display "**not associated with
+  any scale, tape, or pointer**" needs an ELOS; "a scale, dial, or tape will be
+  needed" so the pilot can judge margin-to-limit and compare engine-to-engine.
+  (Design implication for pyEfis: a bare `numeric_display` for a limit-bearing
+  engine parameter should be paired with an `arc_gauge`/bar so the margin-to-
+  redline is glanceable — matching §9.4.a's "close proximity" pairing.)
+- **§9.1.c / §9.2.b-c multiengine + secondary display (p.27)** — a failure
+  affecting one engine's parameter display should not lose the others; a
+  secondary powerplant display (or throttle/power-lever position with limit
+  protection) may back up a lost primary. (Relevant if engine clusters are ever
+  multiplexed.)
+
+### 9.6 Where the corpus is silent
+
+- **No colour/marking detail for electrical gauges (volts / amps).** §25.1305
+  lists *powerplant* instruments and does not enumerate a voltmeter/ammeter;
+  §25.1549's arc scheme applies to "powerplant and APU instruments." The corpus
+  gives **no red/yellow/green band rule specific to a volts or amps gauge** —
+  any band choice for those is uncorpused (apply the §25.1549 limit-marking
+  logic by analogy, flagged as such).
+- **No numeric thresholds.** The corpus never gives quantitative red-line /
+  caution values for any engine parameter (RPM, MAP inHg, oil °F/psi, CHT °C,
+  EGT °F, fuel psi/gph). Those are engine-/airframe-specific and come from the
+  AFM/engine TCDS — in pyEfis they are **FIX-database (fix-gateway) values, not
+  layout options** (per `makerplane/CLAUDE.md` #64). The standard fixes only the
+  *colour semantics*, never the numbers.
+- **No coolant-temperature marking rule.** Liquid-cooled piston engines (e.g.
+  Rotax) are not addressed; "coolant" appears in no marking rule in the corpus.
+  Treat as an oil-temperature analog under §25.1549, flagged uncorpused.
+- **No EGT-specific marking rule for piston engines.** §25.1305(c)(1) covers a
+  turbine "gas temperature indicator"; piston **EGT** (as a leaning aid) has no
+  dedicated marking rule in the corpus. Its normal/limit banding is uncorpused.
+- **No arc-geometry / sweep-angle / tick-density spec.** The corpus mandates
+  *what* colours mean and that markings be "clearly visible" (§25.1543b), but
+  specifies **no gauge sweep angle, tick spacing, or numeric-font size** for an
+  engine gauge — those are pyEfis design choices, not standards requirements.
+- **No trend-vector format for engine parameters.** §23.2615(a)(1) and
+  §9.4 require *that* trend/rate be assessable, but the corpus gives **no
+  engine-specific trend indicator format** (unlike the airspeed/altitude
+  6-second trend in §6). Uncorpused as to form.
+
+### 9.7 Citation self-check (Stage 1 Verify)
+
+Three citations re-grepped against the corpus; all reproduce verbatim:
+
+1. **§25.1549(a)** — `CFR-2025-title14-vol1.txt` line 27417: "(a) Each maximum
+   and, if applicable, minimum safe operating limit must be marked with a red
+   radial or a red line;" — **PASS**.
+2. **AC 23.1311-1C §9.4.c(6)** — `AC_23_1311-1C.txt` line 1495: "…a green
+   indication would indicate normal operation, a yellow indication would
+   indicate operation in a takeoff or precautionary range, and a red indication
+   would indicate operation outside of the safe operating limits." — **PASS**.
+3. **AC 25-11B App B.2.1** — `AC_25-11B.txt` line 5689: "Safety-related engine
+   limit exceedances should be indicated in a clear and unambiguous manner.
+   Flightcrew alerting is addressed in §25.1322." — **PASS**.
+
+## 10. Requirement IDs and traceability
 
 The chain, grep-able end-to-end:
 
@@ -343,7 +617,7 @@ AC 25-11B p.43       HSI-COLOR-001          HSI-TC-###             test_hsi_... 
 - The **repo is the system of record** (requirements + catalog + IDs). Issue trackers hold the
   *work* (implement a gap, write a case), not the requirements.
 
-## 10. Open items / to-mine
+## 11. Open items / to-mine
 
 - [ ] Deep-read **AC 25-11B** ch. 4–5 and **AC 23.1311-1C §17/§18/§22** for the full alerting +
       symbology + colour requirement set; pin pages.
