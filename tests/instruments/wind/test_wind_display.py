@@ -201,6 +201,25 @@ class TestWindDisplay:
         widget.resize(40, 30)
         assert widget._row_h > 0
 
+    def test_reconstruct_and_resize_without_error(self, fix, qtbot):
+        """Regression (#45 family): WindDisplay connects its FIX signals once in
+        __init__ (not resizeEvent), so repeated resizes and a second instance
+        binding the same HWIND/XWIND items must not raise -- the previous
+        UniqueConnection form was a latent PyQt6 TypeError footgun, unnecessary
+        for a once-only connect."""
+        w1 = WindDisplay()
+        qtbot.addWidget(w1)
+        w1.resize(80, 60)
+        w1.resizeEvent(None)
+        w1.resizeEvent(None)
+
+        w2 = WindDisplay()   # binds the same FIX items -- plain connect allows it
+        qtbot.addWidget(w2)
+
+        fix.db.set_value("HWIND", 9.0)
+        assert w1._hwind == pytest.approx(9.0)
+        assert w2._hwind == pytest.approx(9.0)
+
 
 class TestWindDisplayDataFeedOffline:
     """Wind feed offline scenarios — gateway never published HWIND/XWIND, or

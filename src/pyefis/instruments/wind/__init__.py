@@ -48,24 +48,16 @@ class WindDisplay(QWidget):
         self._hwind_fail = self._hwind_item.fail
         self._xwind_fail = self._xwind_item.fail
 
-        self._hwind_item.valueChanged[float].connect(
-            self._on_hwind_changed, Qt.ConnectionType.UniqueConnection
-        )
-        self._xwind_item.valueChanged[float].connect(
-            self._on_xwind_changed, Qt.ConnectionType.UniqueConnection
-        )
-        self._hwind_item.failChanged.connect(
-            self._on_hwind_fail, Qt.ConnectionType.UniqueConnection
-        )
-        self._xwind_item.failChanged.connect(
-            self._on_xwind_fail, Qt.ConnectionType.UniqueConnection
-        )
-        self._hwind_item.badChanged.connect(
-            self._on_hwind_bad, Qt.ConnectionType.UniqueConnection
-        )
-        self._xwind_item.badChanged.connect(
-            self._on_xwind_bad, Qt.ConnectionType.UniqueConnection
-        )
+        # Connected once here in __init__ (not resizeEvent), so a plain connect
+        # is correct. UniqueConnection is a footgun under PyQt6 -- it raises
+        # TypeError rather than silently deduping if a slot is ever already
+        # connected (the mechanism behind the Airspeed_Tape resize crash, #45).
+        self._hwind_item.valueChanged[float].connect(self._on_hwind_changed)
+        self._xwind_item.valueChanged[float].connect(self._on_xwind_changed)
+        self._hwind_item.failChanged.connect(self._on_hwind_fail)
+        self._xwind_item.failChanged.connect(self._on_xwind_fail)
+        self._hwind_item.badChanged.connect(self._on_hwind_bad)
+        self._xwind_item.badChanged.connect(self._on_xwind_bad)
 
     def _on_hwind_changed(self, value):
         self._hwind = value
