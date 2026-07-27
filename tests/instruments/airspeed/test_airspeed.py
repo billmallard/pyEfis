@@ -105,6 +105,33 @@ def test_airspeed_tape_without_font_percent_uses_default_font_size(qtbot):
     assert widget.numerical_display.value == widget._airspeed
 
 
+def test_airspeed_tape_resize_twice_connects_signals_once(fix, qtbot):
+    """Regression (#45): Airspeed_Tape connects its IAS FIX signals inside
+    resizeEvent, which Qt fires repeatedly. Re-connecting on every resize with
+    Qt.ConnectionType.UniqueConnection raised TypeError inside the Qt virtual
+    and aborted the process under PyQt6; a bare re-connect would instead stack
+    duplicate slots. Firing resizeEvent several times must not raise and must
+    leave exactly one connection."""
+    widget = airspeed.Airspeed_Tape()
+    qtbot.addWidget(widget)
+    widget.font_mask = ""
+
+    # Spy on the IAS value slot before any connection is made.
+    calls = []
+    widget.setAirspeed = lambda v: calls.append(v)
+
+    widget.resize(80, 300)
+    widget.resizeEvent(None)   # connects the (spied) IAS signals
+    widget.resizeEvent(None)   # would raise TypeError under UniqueConnection
+    widget.resizeEvent(None)
+    assert widget._signals_connected is True
+
+    # Exactly one connection: a single value change fires the slot once.
+    calls.clear()
+    fix.db.set_value("IAS", 123.0)
+    assert calls == [123.0]
+
+
 def test_numerical_airspeed_box(fix, qtbot):
     hmi.initialize({})
     widget = airspeed.Airspeed_Box()

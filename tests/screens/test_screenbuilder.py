@@ -1544,11 +1544,13 @@ class TestScreenBuilderPreferencesAndOptions:
         assert screen.get_instrument_defaults("heading_tape") == ["HEAD"]
         assert screen.get_instrument_defaults("turn_coordinator") == ["ROT", "ALAT"]
         assert screen.get_instrument_defaults("vsi_pfd") == ["VS"]
+        # virtual_vfr subscribes to COURSE (not HEAD) for its heading item;
+        # the default lists the keys the widget actually reads (#46).
         assert screen.get_instrument_defaults("virtual_vfr") == [
             "PITCH",
             "LAT",
             "LONG",
-            "HEAD",
+            "COURSE",
             "ALT",
             "ROLL",
             "ALAT",

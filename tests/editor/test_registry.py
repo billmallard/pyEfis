@@ -203,6 +203,16 @@ def test_action_catalogue_matches_hmi_registry(qtbot, hmi_actions):
     assert {"set bg color", "set fg color", "set text"} <= catalogue
 
 
+def test_virtual_vfr_dbkeys_use_course_not_head():
+    """Regression (#46): the virtual_vfr record must list the FIX keys the
+    widget actually consumes. VirtualVfr subscribes to COURSE for its heading
+    item (keyed internally as 'HEAD'); the default previously listed HEAD, a key
+    the widget never reads."""
+    dbkeys = factory.REGISTRY["virtual_vfr"].dbkeys
+    assert "COURSE" in dbkeys, "virtual_vfr must declare the COURSE key it reads"
+    assert "HEAD" not in dbkeys, "virtual_vfr reads COURSE, not HEAD"
+
+
 def test_data_status_is_hidden_from_the_palette():
     """The data-management boot screen is system-managed (gui forces it on
     boot), so data_status is hidden from the configurator palette, while the

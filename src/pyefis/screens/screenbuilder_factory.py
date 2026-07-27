@@ -1083,8 +1083,11 @@ _register(InstrumentSpec(
     label="Virtual VFR / Synthetic Vision",
     category="attitude",
     builder=build_virtual_vfr,
-    # Deduped from the legacy default (which listed PITCH twice).
-    dbkeys=["PITCH", "LAT", "LONG", "HEAD", "ALT", "ROLL", "ALAT", "TAS"],
+    # Deduped from the legacy default (which listed PITCH twice). The widget
+    # subscribes to COURSE, not HEAD, for its heading item (VirtualVfr.py --
+    # it keys the value internally under 'HEAD' but reads the COURSE FIX key);
+    # the default listed the wrong key (#46).
+    dbkeys=["PITCH", "LAT", "LONG", "COURSE", "ALT", "ROLL", "ALAT", "TAS"],
     svs_capable=True,
     offscreen_renderable=False,   # QOpenGLWidget SVS terrain; hangs offscreen
     builds_in_isolation=False,    # GL widget needs a real screen

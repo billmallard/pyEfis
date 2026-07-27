@@ -200,6 +200,39 @@ def test_alt_trend_tape_resize_config_and_redraw_states(fix, qtbot):
     assert widget.vstext.toPlainText() == "123"
 
 
+def test_vs_fixture_is_valid_not_bad_or_fail(fix):
+    """Regression (#47): the shared conftest defined VS but then re-cleared
+    ROT's flags (copy-paste), leaving VS bad/fail in every fixture. VS must come
+    up valid so widgets under test see live vertical speed by default rather
+    than a stale/failed value."""
+    vs = fix.db.get_item("VS")
+    assert vs.bad is False
+    assert vs.fail is False
+
+
+def test_alt_trend_tape_resize_twice_connects_signals_once(fix, qtbot):
+    """Regression (#45): Alt_Trend_Tape connects its VS FIX signals inside
+    resizeEvent (Qt fires it repeatedly). The _signals_connected guard keeps it
+    to one connection, so repeated resizes neither raise nor stack duplicate
+    slots."""
+    _reset_vs_item(fix)
+    widget = vsi.Alt_Trend_Tape()
+    widget.myparent = _parent(qtbot, update_period=0)
+
+    calls = []
+    widget.setVs = lambda v: calls.append(v)
+
+    widget.resize(300, 200)
+    widget.resizeEvent(None)
+    widget.resizeEvent(None)
+    widget.resizeEvent(None)
+    assert widget._signals_connected is True
+
+    calls.clear()
+    fix.db.set_value("VS", 321.0)
+    assert calls == [321.0]
+
+
 def test_alt_trend_tape_default_update_period_and_throttle(fix, qtbot):
     _reset_vs_item(fix)
     parent = _parent(qtbot)

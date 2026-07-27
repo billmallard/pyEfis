@@ -272,11 +272,11 @@ def fix():
         30000,
         "ft/min",
         50000,
-        "Min,Max" 
+        "Min,Max"
     )
-    fix.db.set_value("ROT", 0)
-    fix.db.get_item("ROT").bad = False
-    fix.db.get_item("ROT").fail = False
+    fix.db.set_value("VS", 0)
+    fix.db.get_item("VS").bad = False
+    fix.db.get_item("VS").fail = False
 
     fix.db.define_item(
         "HIDEBUTTON",

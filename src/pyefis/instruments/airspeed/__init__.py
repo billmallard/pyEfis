@@ -270,6 +270,11 @@ class Airspeed_Tape(QGraphicsView):
             self._trend_history = []  # list of (monotonic_time, ias) tuples
             self._trend_px = 0.0
         self._nbh = 0  # IAS box half-height in pixels, set in resizeEvent
+        # resizeEvent fires repeatedly; the IAS FIX signals are connected there
+        # (they need the scene built first) but must connect exactly once --
+        # re-connecting on every resize raised TypeError under
+        # Qt.ConnectionType.UniqueConnection and aborted the process (#45).
+        self._signals_connected = False
 
         # V Speeds
         self.Vs = self.item.get_aux_value("Vs")
@@ -438,10 +443,12 @@ class Airspeed_Tape(QGraphicsView):
 
         self.setScene(self.scene)
         self.centerOn(self.scene.width() / 2, -self._airspeed * self.pph + tape_start)
-        self.item.valueChanged[float].connect(self.setAirspeed, Qt.ConnectionType.UniqueConnection)
-        self.item.oldChanged[bool].connect(self.setAsOld, Qt.ConnectionType.UniqueConnection)
-        self.item.badChanged[bool].connect(self.setAsBad, Qt.ConnectionType.UniqueConnection)
-        self.item.failChanged[bool].connect(self.setAsFail, Qt.ConnectionType.UniqueConnection)
+        if not self._signals_connected:
+            self.item.valueChanged[float].connect(self.setAirspeed)
+            self.item.oldChanged[bool].connect(self.setAsOld)
+            self.item.badChanged[bool].connect(self.setAsBad)
+            self.item.failChanged[bool].connect(self.setAsFail)
+            self._signals_connected = True
 
     def redraw(self):
         if not self.isVisible():

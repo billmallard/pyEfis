@@ -263,33 +263,55 @@ def _point_in_ring(lat, lon, ring):
     return inside
 
 
-def _ring_interior_points(ring, max_points=3):
-    """Up to ``max_points`` points strictly inside a (lat, lon) ring,
-    found by even-odd scanline: cut the ring at a constant-lat line,
-    sort the edge crossings, take midpoints of the odd (inside) spans.
-    Works for concave and even self-intersecting rings — 'inside' is
-    exactly the even-odd sense the renderer fills with."""
-    lats = [v[0] for v in ring]
-    lo, hi = min(lats), max(lats)
-    if hi <= lo:
+def _ring_interior_points(ring, max_points=6):
+    """Up to ``max_points`` points inside a (lat, lon) ring for the hole
+    verifier. Two sources, and BOTH matter:
+
+    1. The ring **centroid** and an **across-the-ring midpoint** — the
+       exact two points the oracle (auspex.pack_check) probes with. These
+       are tested FIRST and unconditionally: a hole can be covered only in
+       a small region, and if the even-odd scanline below happens to
+       sample the dry part while the oracle's centroid lands on the fill,
+       the builder must still see the covered point or it ships the very
+       #44-class island the gate then flags. (An earlier version added
+       these only as a fallback when the scanline came up short, so a hole
+       with 3 dry scanline points but a covered centroid slipped through —
+       the builder caught 1/168 of the residual instead of all of it.)
+    2. Even-odd **scanline** midpoints for spatial coverage of larger,
+       concave holes.
+
+    The centroid/midpoint candidates are kept only if ``_point_in_ring``
+    places them inside — the same even-odd sense the oracle uses — so the
+    two agree on which holes are covered."""
+    n = len(ring)
+    if n < 3:
         return []
     pts = []
-    n = len(ring)
-    for frac in (0.5, 0.3, 0.7):
-        lat = lo + (hi - lo) * frac
-        xs = []
-        for i in range(n):
-            la1, lo1 = ring[i]
-            la2, lo2 = ring[(i + 1) % n]
-            if (la1 > lat) != (la2 > lat):
-                xs.append(lo1 + (lat - la1) / (la2 - la1) * (lo2 - lo1))
-        xs.sort()
-        for k in range(0, len(xs) - 1, 2):
-            if xs[k + 1] > xs[k]:
-                pts.append((lat, 0.5 * (xs[k] + xs[k + 1])))
-                if len(pts) >= max_points:
-                    return pts
-    return pts
+    clat = sum(v[0] for v in ring) / n
+    clon = sum(v[1] for v in ring) / n
+    for la, ln in ((clat, clon),
+                   (0.5 * (ring[0][0] + ring[n // 2][0]),
+                    0.5 * (ring[0][1] + ring[n // 2][1]))):
+        if (la, ln) not in pts and _point_in_ring(la, ln, ring):
+            pts.append((la, ln))
+    lats = [v[0] for v in ring]
+    lo, hi = min(lats), max(lats)
+    if hi > lo:
+        for frac in (0.5, 0.3, 0.7, 0.4, 0.6):
+            if len(pts) >= max_points:
+                break
+            lat = lo + (hi - lo) * frac
+            xs = []
+            for i in range(n):
+                la1, lo1 = ring[i]
+                la2, lo2 = ring[(i + 1) % n]
+                if (la1 > lat) != (la2 > lat):
+                    xs.append(lo1 + (lat - la1) / (la2 - la1) * (lo2 - lo1))
+            xs.sort()
+            for k in range(0, len(xs) - 1, 2):
+                if xs[k + 1] > xs[k]:
+                    pts.append((lat, 0.5 * (xs[k] + xs[k + 1])))
+    return pts[:max_points]
 
 
 def _triangle_cover_tester(vertices, tri_idx):
@@ -362,25 +384,56 @@ def _covered_hole_indices(all_verts, ring_ends, tri_idx):
     return bad
 
 
+def _point_in_triangle(pt, a, b, c):
+    """True if ``pt`` (lat, lon) lies in triangle (a, b, c) — sign test,
+    edges inclusive."""
+    def s(u, w, p):
+        return (u[0] - p[0]) * (w[1] - p[1]) - (w[0] - p[0]) * (u[1] - p[1])
+    d1, d2, d3 = s(a, b, pt), s(b, c, pt), s(c, a, pt)
+    neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+    pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+    return not (neg and pos)
+
+
 def _strip_hole_triangles(all_verts, ring_ends, tri_idx):
-    """Last-resort repair when even the raw source rings tessellate
-    with covered holes: drop fill triangles whose centroid lies inside
-    any hole ring (even-odd). Biased toward land — for an EFIS,
-    painting an island as water is the dangerous direction (#44)."""
+    """Last-resort repair when even the raw source rings tessellate with
+    covered holes: drop every fill triangle that covers a hole's INTERIOR
+    — an interior sample point of the hole (``_ring_interior_points``,
+    the same probes the verifier judges with) falls inside the triangle.
+    Keying the strip to strictly-interior points means it clears exactly
+    what verification flags while leaving the fill that merely abuts a
+    hole's boundary: a cleanly subtracted hole shares vertices and edges
+    with its neighbouring fill, and those triangles hold no interior point
+    of the hole, so they survive. The earlier centroid-in-hole-only test
+    missed a large triangle covering a small island (its centroid sits
+    outside the island), leaving ~0.02% of inland island interiors covered
+    at continental scale — the residual behind the #44/#103 "0 inland"
+    gate slip. Biased toward land — painting an island as water is the
+    dangerous direction for an EFIS (#44)."""
     v = np.asarray(all_verts, dtype=np.float64)
     t = np.asarray(tri_idx, dtype=np.int64).reshape(-1, 3)
-    clat = (v[t[:, 0], 0] + v[t[:, 1], 0] + v[t[:, 2], 0]) / 3.0
-    clon = (v[t[:, 0], 1] + v[t[:, 1], 1] + v[t[:, 2], 1]) / 3.0
+    if t.size == 0:
+        return t.reshape(-1)
+    a, b, c = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    t_lat_min = np.minimum(np.minimum(a[:, 0], b[:, 0]), c[:, 0])
+    t_lat_max = np.maximum(np.maximum(a[:, 0], b[:, 0]), c[:, 0])
+    t_lon_min = np.minimum(np.minimum(a[:, 1], b[:, 1]), c[:, 1])
+    t_lon_max = np.maximum(np.maximum(a[:, 1], b[:, 1]), c[:, 1])
     keep = np.ones(len(t), dtype=bool)
     for k in range(1, len(ring_ends)):
         ring = all_verts[ring_ends[k - 1]:ring_ends[k]]
-        rlats = [p[0] for p in ring]
-        rlons = [p[1] for p in ring]
-        m = ((clat >= min(rlats)) & (clat <= max(rlats))
-             & (clon >= min(rlons)) & (clon <= max(rlons)) & keep)
-        for i in np.nonzero(m)[0]:
-            if _point_in_ring(clat[i], clon[i], ring):
-                keep[i] = False
+        if len(ring) < 3:
+            continue
+        for plat, plon in _ring_interior_points(ring, max_points=8):
+            cand = np.nonzero(keep
+                              & (t_lat_min <= plat) & (t_lat_max >= plat)
+                              & (t_lon_min <= plon) & (t_lon_max >= plon))[0]
+            for i in cand:
+                if _point_in_triangle((plat, plon),
+                                      (a[i, 0], a[i, 1]),
+                                      (b[i, 0], b[i, 1]),
+                                      (c[i, 0], c[i, 1])):
+                    keep[i] = False
     return t[keep].reshape(-1)
 
 
@@ -442,6 +495,27 @@ def group_rings(rings):
 _MAX_ESCALATED_CAP = 512
 
 
+def _distinct_ring_len(ring):
+    """Count distinct vertices in a ring, collapsing consecutive
+    duplicates and an explicit first==last closure. Fewer than 3 distinct
+    vertices is a point or a line — zero area, no island to preserve — and
+    such a ring must not be emitted as a hole: decimation can crush a
+    sub-resolution islet down to two points, and the resulting degenerate
+    ring has no interior the verifier can probe, yet the pack-check oracle
+    still flags it (a residual behind the #44/#103 gate slip). Dropping it
+    fills that sub-40 m spot as water — the islet is below display
+    resolution anyway."""
+    if not ring:
+        return 0
+    count = 1
+    for i in range(1, len(ring)):
+        if ring[i] != ring[i - 1]:
+            count += 1
+    if len(ring) > 1 and ring[0] == ring[-1]:
+        count -= 1
+    return count
+
+
 def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
                    holes=None, stats=None):
     """Insert one water polygon: ``vertices`` is the OUTER ring,
@@ -463,7 +537,7 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
     / 'stripped' / 'unresolved' row counts for the caller's summary."""
     if len(vertices) < 3:
         return False
-    src_holes = [h for h in (holes or []) if len(h) >= 3]
+    src_holes = [h for h in (holes or []) if _distinct_ring_len(h) >= 3]
     cap = max_vertices
     escalated = stripped = unresolved = False
     while True:
@@ -476,7 +550,7 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
         # rows, so the build-time cap is the only bound.
         out_ring = _decimate(vertices, cap)
         dec_holes = [h for h in (_decimate(h, cap) for h in src_holes)
-                     if len(h) >= 3]
+                     if _distinct_ring_len(h) >= 3]
         all_verts = list(out_ring)
         ring_ends = [len(out_ring)]
         for h in dec_holes:
