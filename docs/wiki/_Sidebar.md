@@ -8,6 +8,7 @@
 
 **Install & Run**
 - [Running from Source](Running-from-Source)
+- [Headless Linux Appliance](Headless-Linux-Appliance)
 
 **Widget Reference**
 - [Index](Widget-Reference)

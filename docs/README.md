@@ -26,6 +26,7 @@ Live workstream state lives outside the repo in the workspace ledger
 | [adding_an_instrument.md](adding_an_instrument.md) | How-to: add/change an instrument + its configurator twin without drift |
 | [screenbuilder.md](screenbuilder.md) | Screen YAML / screenbuilder reference (upstream-origin) |
 | [requirements.md](requirements.md) | pyEfis display requirements (upstream-origin) |
+| [wiki/Headless-Linux-Appliance.md](wiki/Headless-Linux-Appliance.md) | x86-64 headless Linux source install + boot-to-EFIS kiosk notes/gotchas (eglfs-vs-wheel, X/xcb, systemd) — published to the wiki |
 | [svs_rendering.md](svs_rendering.md) | SVS renderer tiers, polar config, runway markings |
 | [svs_data_refresh.md](svs_data_refresh.md) | Manual FAA data refresh workflow (NASR/CIFP/DOF) |
 | [water_database.md](water_database.md) | Water DB build + format |
