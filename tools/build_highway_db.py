@@ -61,6 +61,64 @@ CREATE VIRTUAL TABLE IF NOT EXISTS highway_rtree USING rtree(
 """
 
 
+def prepare_dest(dest: str, overwrite: bool) -> Path:
+    """Guard the append footgun (makerplane-data#17).
+
+    ``build_highway_db`` continues INSERTing from ``MAX(id)+1``, so building
+    into an existing sqlite APPENDS -- the June roads rebuild silently doubled
+    every state (1.76M rows, 856k duplicates). Refuse an existing ``--dest`` by
+    default; ``--overwrite`` starts from a fresh file instead of appending.
+    """
+    p = Path(dest)
+    if p.exists():
+        if not overwrite:
+            sys.exit(
+                f"refusing to build into an existing file: {dest}\n"
+                f"  build_highway_db appends -- rebuilding over an existing "
+                f"sqlite silently doubles every row (makerplane-data#17).\n"
+                f"  pass --overwrite to replace it, or choose a fresh --dest.")
+        p.unlink()
+    return p
+
+
+def validate_shapefiles(paths: list[str]) -> None:
+    """Guard the silent empty-extract failure (makerplane-data#17).
+
+    A state whose Geofabrik extract ended up empty (California's shapefile
+    bundle was discontinued and its extract dir was left EMPTY) used to vanish
+    from the pack with no error -- invisible until someone flew that area. A
+    missing or empty ``.shp`` reaching the builder IS that empty extract; fail
+    loudly rather than build a silently-incomplete pack.
+
+    (This guards the input the builder actually receives. A state that fails to
+    download and is dropped BEFORE reaching the builder is a fetch-side skip in
+    the roads fetch job, which lives outside this repo -- see the PR notes.)
+    """
+    import shapefile  # pyshp
+
+    for shp in paths:
+        p = Path(shp)
+        if not p.exists() or p.stat().st_size == 0:
+            sys.exit(
+                f"empty or missing road extract: {shp}\n"
+                f"  the state's Geofabrik extract produced no shapefile "
+                f"(makerplane-data#17); refusing to build a "
+                f"silently-incomplete pack.")
+        try:
+            sf = shapefile.Reader(str(p))
+        except shapefile.ShapefileException as e:
+            sys.exit(f"unreadable road extract {shp}: {e}")
+        try:
+            n = len(sf)
+        finally:
+            sf.close()
+        if n == 0:
+            sys.exit(
+                f"empty road extract (0 shapes): {shp}\n"
+                f"  the state's extract is empty (makerplane-data#17); "
+                f"refusing to build a silently-incomplete pack.")
+
+
 def rdp(points: np.ndarray, tol_deg: float) -> np.ndarray:
     """Iterative Douglas-Peucker on an (N, 2) lat/lon array."""
     n = len(points)
@@ -99,9 +157,19 @@ def main():
     ap.add_argument("--classes", nargs="*", default=None,
                     help="explicit fclass list (overrides --preset)")
     ap.add_argument("--tolerance-m", type=float, default=40.0)
+    ap.add_argument("--overwrite", action="store_true",
+                    help="replace an existing --dest instead of refusing "
+                         "(the builder appends, so reusing a file doubles "
+                         "every row -- makerplane-data#17)")
     args = ap.parse_args()
     if not args.classes:
         args.classes = list(PRESETS[args.preset])
+
+    # Fail loudly before touching anything: never build into an existing file
+    # (append footgun) and never accept an empty/missing extract (silent
+    # incomplete pack) -- makerplane-data#17.
+    prepare_dest(args.dest, args.overwrite)
+    validate_shapefiles(args.shapefiles)
 
     import shapefile  # pyshp
 
