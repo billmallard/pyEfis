@@ -18,6 +18,18 @@ from pyefis.instruments.live_binding import LiveBind, LiveBindingMixin
 
 NM_M = 1852.0
 
+#: desktop-parity drag: degrees of map rotation per pixel of a modifier-drag.
+_ROTATE_DEG_PER_PX = 0.5
+#: a press/release with less than this much travel is a tap (-> recenter),
+#: not a drag.
+_TAP_PX = 4.0
+
+
+def _wrap180(deg):
+    """Normalise degrees to the half-open range (-180, 180]."""
+    d = (float(deg) + 180.0) % 360.0 - 180.0
+    return 180.0 if d == -180.0 else d
+
 
 class MapTransform:
     """World (lat/lon) -> screen (px). Local azimuthal-equidistant about
@@ -66,7 +78,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.range_nm = 10.0
         self.range_ladder = "2,5,10,20,40,80,160"
         self.orientation = "track_up"          # or "north_up"
-        self.touch_gestures = True             # pinch-zoom / two-finger pan
+        self.touch_gestures = True             # pinch-zoom / two-finger pan+rotate
+        self.gesture_timeout = 30.0            # s before a pan/rotate re-locks
         self.ownship_position = 50             # percent up from bottom
         self.symbol_color = "yellow"
         self.layer_range_rings = True
@@ -94,6 +107,20 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.orientation_key = ""
         self._layers = []
         self._layers_built = False
+
+        # --- decoupled view state (#99 pan / #111 rotate) --------------------
+        # Manual view-centre offset from ownship (east/north metres) and a
+        # manual rotation offset (degrees); all zero = locked to ownship. One
+        # shared single-shot timer re-locks the view gesture_timeout seconds
+        # after the last pan/rotate touch (full re-lock, decision C).
+        self._pan_e = 0.0
+        self._pan_n = 0.0
+        self._rot_offset = 0.0
+        self._drag_last = None          # desktop drag anchor (QPointF)
+        self._drag_total = 0.0          # cumulative drag px (tap vs drag)
+        self._revert_timer = QTimer(self)
+        self._revert_timer.setSingleShot(True)
+        self._revert_timer.timeout.connect(self.recenter)
 
         self._lat = self._lon = 0.0
         self._track = 0.0
@@ -148,7 +175,9 @@ class MovingMap(LiveBindingMixin, QWidget):
         q = max(1e-7, (0.5 * m_per_px) / M_PER_DEG_LAT)  # deg per half-px
         pose = (round(self._lat / q), round(self._lon / q),
                 round(self._track * 4.0), round(self._alt_ft / 100.0),
-                self.orientation, float(self.range_nm))
+                self.orientation, float(self.range_nm),
+                round(self._pan_e), round(self._pan_n),
+                round(self._rot_offset * 4.0))
         if pose == self._frame_last_pose:
             return
         self._frame_last_pose = pose
@@ -242,17 +271,131 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.update()
         return self.range_nm
 
+    # --- decoupled pan / rotate (#99 / #111) ------------------------------
+    @property
+    def is_offset(self):
+        """True while the view is manually panned or rotated off ownship."""
+        return bool(self._pan_e or self._pan_n or self._rot_offset)
+
+    def _restart_revert_timer(self):
+        """(Re)start the single shared last-touch timer; ``gesture_timeout``=0
+        disables auto-revert (the view stays where left until a tap / HMI
+        recenter)."""
+        try:
+            secs = float(self.gesture_timeout)
+        except (TypeError, ValueError):
+            secs = 30.0
+        if secs > 0.0:
+            self._revert_timer.start(int(secs * 1000.0))
+        elif self._revert_timer.isActive():
+            self._revert_timer.stop()
+
+    def pan_by(self, dx, dy):
+        """Shift the manual view-centre offset by a screen-space drag of
+        ``(dx, dy)`` pixels (two-finger drag / left-drag), decoupling the view
+        from ownship. The screen delta is un-rotated into world ENU (#99's
+        track-up rule) and stored as an east/north metre offset, so the panned
+        point stays geographically fixed as the aircraft turns. Content follows
+        the finger. (Re)starts the auto-revert timer. Returns ``(pan_e,
+        pan_n)``."""
+        try:
+            dx = float(dx)
+            dy = float(dy)
+        except (TypeError, ValueError):
+            return (self._pan_e, self._pan_n)
+        if dx == 0.0 and dy == 0.0:
+            return (self._pan_e, self._pan_n)
+        anchor = max(0.0, min(100.0, float(self.ownship_position))) / 100.0
+        cy = max(1.0, (self.height() or 1) * (1.0 - anchor))
+        px = cy / max(1.0, float(self.range_nm) * NM_M)     # screen px / metre
+        track = self._track if self.orientation == "track_up" else 0.0
+        rot = math.radians(track + self._rot_offset)
+        c, s = math.cos(rot), math.sin(rot)
+        # View centre moves opposite the finger drag, un-rotated to world ENU.
+        self._pan_e += (-dx * c + dy * s) / px
+        self._pan_n += (dx * s + dy * c) / px
+        self._restart_revert_timer()
+        self.update()
+        return (self._pan_e, self._pan_n)
+
+    def rotate_by(self, deg):
+        """Rotate the map by a manual offset on top of the configured
+        orientation (two-finger rotate / modifier-drag). (Re)starts the
+        auto-revert timer. Returns the new rotation offset in degrees."""
+        try:
+            deg = float(deg)
+        except (TypeError, ValueError):
+            return self._rot_offset
+        if deg == 0.0:
+            return self._rot_offset
+        self._rot_offset = _wrap180(self._rot_offset + deg)
+        self._restart_revert_timer()
+        self.update()
+        return self._rot_offset
+
+    def recenter(self):
+        """Re-lock the view to ownship: clear the pan offset AND the rotation
+        offset (full re-lock, decision C) and stop the auto-revert timer. Safe
+        to call any time -- a tap, an HMI action, or the timer firing."""
+        changed = self.is_offset
+        self._pan_e = self._pan_n = 0.0
+        self._rot_offset = 0.0
+        if self._revert_timer.isActive():
+            self._revert_timer.stop()
+        if changed:
+            self.update()
+
     def event(self, e):
         if (e.type() == QEvent.Type.Gesture
                 and getattr(self, "touch_gestures", True)):
             g = e.gesture(Qt.GestureType.PinchGesture)
             if g is not None:
-                cf = QPinchGesture.ChangeFlag.ScaleFactorChanged
-                if g.changeFlags() & cf:
+                flags = g.changeFlags()
+                CF = QPinchGesture.ChangeFlag
+                if flags & CF.ScaleFactorChanged:
                     self.zoom_by(g.scaleFactor())
-                # two-finger drag (g.centerPoint() delta) -> pan: Phase 2
+                if flags & CF.CenterPointChanged:
+                    d = g.centerPoint() - g.lastCenterPoint()
+                    self.pan_by(d.x(), d.y())
+                if flags & CF.RotationAngleChanged:
+                    self.rotate_by(g.rotationAngle() - g.lastRotationAngle())
                 return True
         return super().event(e)
+
+    # --- desktop parity: drag = pan, modifier-drag = rotate, tap = recenter
+    def mousePressEvent(self, e):
+        if (getattr(self, "touch_gestures", True)
+                and e.button() == Qt.MouseButton.LeftButton):
+            self._drag_last = e.position()
+            self._drag_total = 0.0
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._drag_last is None or not getattr(self, "touch_gestures", True):
+            super().mouseMoveEvent(e)
+            return
+        pos = e.position()
+        d = pos - self._drag_last
+        self._drag_last = pos
+        self._drag_total += math.hypot(d.x(), d.y())
+        if e.modifiers() & (Qt.KeyboardModifier.ShiftModifier
+                            | Qt.KeyboardModifier.ControlModifier):
+            self.rotate_by(d.x() * _ROTATE_DEG_PER_PX)
+        else:
+            self.pan_by(d.x(), d.y())
+        e.accept()
+
+    def mouseReleaseEvent(self, e):
+        if self._drag_last is not None:
+            tap = self._drag_total < _TAP_PX
+            self._drag_last = None
+            if tap:
+                self.recenter()          # click/tap with no drag re-locks
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
 
     def wheelEvent(self, e):
         """Desktop / configurator zoom, mirroring pinch (wheel-up = zoom in).
@@ -265,10 +408,18 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     # --- painting ----------------------------------------------------------
     def _transform(self):
-        rot = self._track if self.orientation == "track_up" else 0.0
+        track = self._track if self.orientation == "track_up" else 0.0
+        rot = track + self._rot_offset
         anchor = max(0.0, min(100.0,
                               float(self.ownship_position))) / 100.0
-        return MapTransform(self._lat, self._lon, float(self.range_nm),
+        # View centre = ownship + the manual pan offset (east/north metres).
+        # Feeding the OFFSET centre as the transform origin keeps every layer
+        # (terrain image, vector features, rings) registered to it for free;
+        # ownship then projects to its own off-centre position in paintEvent.
+        coslat = math.cos(math.radians(self._lat)) or 1e-6
+        vlat = self._lat + self._pan_n / M_PER_DEG_LAT
+        vlon = self._lon + self._pan_e / (M_PER_DEG_LAT * coslat)
+        return MapTransform(vlat, vlon, float(self.range_nm),
                             rot, self.width(), self.height(), anchor,
                             self.font_family)
 
@@ -298,10 +449,13 @@ class MovingMap(LiveBindingMixin, QWidget):
         if not col.isValid():
             col = QColor(Qt.GlobalColor.yellow)
         s = max(8.0, self.width() * 0.025)
+        osp = x.to_screen(self._lat, self._lon)   # off-centre when panned
         p.save()
-        p.translate(x.cx, x.cy)
-        if self.orientation == "north_up":
-            p.rotate(self._track)
+        p.translate(osp.x(), osp.y())
+        # Nose points along the ground track as it lands on screen: 0 in the
+        # locked track-up case, self._track in locked north-up, and correct
+        # under a manual rotation offset (track minus the screen rotation).
+        p.rotate(self._track - math.degrees(x.rot))
         p.setPen(QPen(QColor(Qt.GlobalColor.black), 1))
         p.setBrush(QBrush(col))
         p.drawPolygon(QPolygonF([
@@ -320,6 +474,28 @@ class MovingMap(LiveBindingMixin, QWidget):
             chip += "  NO POS"
         p.drawText(QRectF(6, 4, self.width() - 12, f.pixelSize() + 6),
                    Qt.AlignmentFlag.AlignLeft, chip)
+
+        # Revert indicator (decision A): while the view is manually offset a
+        # small top-RIGHT chip (distinct from the top-left range chip) signals
+        # the pending auto-revert -- "CTR" plus the remaining seconds while a
+        # timer runs (amber = action pending; no countdown when gesture_timeout
+        # is 0, so the view holds until a tap / HMI recenter).
+        if self.is_offset:
+            rem = self._revert_timer.remainingTime()
+            label = "CTR %ds" % int(math.ceil(rem / 1000.0)) \
+                if rem and rem > 0 else "CTR"
+            fr = QFont(self.font_family)
+            fr.setPixelSize(max(9, int(self.width() * 0.03)))
+            p.setFont(fr)
+            pad = 5.0
+            bw = p.fontMetrics().horizontalAdvance(label) + 2 * pad
+            bh = fr.pixelSize() + 2 * pad
+            box = QRectF(self.width() - bw - 6.0, 4.0, bw, bh)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor(30, 30, 30, 170)))
+            p.drawRoundedRect(box, 4.0, 4.0)
+            p.setPen(QPen(QColor(255, 190, 60)))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
 
     def _init_live_bindings_once(self):
         self.init_live_bindings(self._live_binding_specs())

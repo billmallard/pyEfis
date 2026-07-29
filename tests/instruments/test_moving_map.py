@@ -415,3 +415,145 @@ def test_zoom_wheel_and_gate(fix, qtbot):
     w.touch_gestures = False
     wheel(120)
     assert w.range_nm == 10.0        # gated off -> no change
+
+
+# --- decoupled pan / rotate (#99 / #111) ---------------------------------
+
+def _panmap(qtbot, orientation="track_up", track=0.0):
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.resize(400, 400)
+    w.ownship_position = 50          # cy = 200
+    w.range_nm = 10.0                # px_per_m = 200 / (10*1852)
+    w.orientation = orientation
+    w._track = track
+    return w
+
+
+def test_pan_by_core(fix, qtbot):
+    """North-up: a screen-space drag moves the view centre opposite the finger
+    (content follows the finger), stored as an east/north metre offset. The
+    px<->metre scale is cy / (range_nm * 1852)."""
+    w = _panmap(qtbot)
+    per_px = (10.0 * 1852.0) / 200.0          # metres per screen pixel
+    # drag right 100 px -> view centre moves WEST (content moves east with it).
+    e, n = w.pan_by(100.0, 0.0)
+    assert e == pytest.approx(-100.0 * per_px)
+    assert n == pytest.approx(0.0)
+    assert w.is_offset
+    # drag down 100 px -> view centre moves NORTH.
+    w.recenter()
+    e, n = w.pan_by(0.0, 100.0)
+    assert e == pytest.approx(0.0)
+    assert n == pytest.approx(100.0 * per_px)
+    # ownship now projects off-centre (to the correct side): after the earlier
+    # west pan it sits east == right of centre.
+    w.recenter()
+    w.pan_by(100.0, 0.0)
+    x = w._transform()
+    osp = x.to_screen(w._lat, w._lon)
+    assert osp.x() > x.cx             # ownship east of the panned view centre
+    # bad / zero deltas are ignored.
+    w.recenter()
+    assert w.pan_by(0.0, 0.0) == (0.0, 0.0)
+    assert w.pan_by("x", 1.0) == (0.0, 0.0)
+    assert not w.is_offset
+
+
+def test_pan_by_screen_space_under_rotation(fix, qtbot):
+    """Track-up heading EAST (090): a screen-X drag is un-rotated into world,
+    so it moves the offset along NORTH/SOUTH, not east/west (#99 track-up
+    rule)."""
+    w = _panmap(qtbot, orientation="track_up", track=90.0)
+    per_px = (10.0 * 1852.0) / 200.0
+    e, n = w.pan_by(100.0, 0.0)
+    assert e == pytest.approx(0.0, abs=1e-6)
+    assert abs(n) == pytest.approx(100.0 * per_px)
+
+
+def test_rotate_by_accumulates_and_wraps(fix, qtbot):
+    w = _panmap(qtbot)
+    assert w.rotate_by(30.0) == pytest.approx(30.0)
+    assert w.rotate_by(20.0) == pytest.approx(50.0)
+    assert w.is_offset
+    # wraps into (-180, 180].
+    w.recenter()
+    assert w.rotate_by(200.0) == pytest.approx(-160.0)
+    assert w.rotate_by(0.0) == pytest.approx(-160.0)   # zero ignored
+    assert w.rotate_by("x") == pytest.approx(-160.0)   # bad ignored
+
+
+def test_recenter_full_relock(fix, qtbot):
+    """Full re-lock (decision C): recenter clears BOTH the pan offset and the
+    rotation offset and stops the timer."""
+    w = _panmap(qtbot)
+    w.pan_by(80.0, -40.0)
+    w.rotate_by(25.0)
+    assert w.is_offset and w._revert_timer.isActive()
+    w.recenter()
+    assert not w.is_offset
+    assert (w._pan_e, w._pan_n, w._rot_offset) == (0.0, 0.0, 0.0)
+    assert not w._revert_timer.isActive()
+
+
+def test_gesture_restarts_revert_timer(fix, qtbot):
+    """Any pan/rotate (re)starts the single shared last-touch timer, and the
+    revert (the timer's slot) restores the lock."""
+    w = _panmap(qtbot)
+    w.gesture_timeout = 30
+    w.pan_by(50.0, 0.0)
+    assert w._revert_timer.isActive()
+    assert w._revert_timer.isSingleShot()
+    w.rotate_by(10.0)                # a second touch re-arms it
+    assert w._revert_timer.isActive()
+    # firing the timer's slot re-locks (immediate re-lock behaviour).
+    w.recenter()
+    assert not w.is_offset and not w._revert_timer.isActive()
+
+
+def test_gesture_timeout_zero_disables_revert(fix, qtbot):
+    """gesture_timeout=0: the view stays offset (no timer) until a manual
+    recenter."""
+    w = _panmap(qtbot)
+    w.gesture_timeout = 0
+    w.pan_by(50.0, 20.0)
+    assert w.is_offset
+    assert not w._revert_timer.isActive()   # no auto-revert armed
+    w.recenter()
+    assert not w.is_offset
+
+
+def test_paint_with_offsets_never_raises(fix, qtbot):
+    """construct/paint never raises with pan + rotation offsets set, and the
+    top-right revert indicator draws."""
+    from PyQt6.QtGui import QPaintEvent
+    w = _panmap(qtbot)
+    w.show()
+    qtbot.waitExposed(w)
+    w.pan_by(60.0, 30.0)
+    w.rotate_by(15.0)
+    w.paintEvent(QPaintEvent(w.rect()))     # offset + indicator path
+    w.recenter()
+    w.paintEvent(QPaintEvent(w.rect()))     # locked path
+
+
+def test_pose_tuple_tracks_offsets(fix, qtbot):
+    """The frame-clock pose includes the offsets so a purely-offset change
+    still repaints (no position/track motion needed)."""
+    w = _panmap(qtbot)
+    w.show()
+    qtbot.waitExposed(w)
+    w._frame_tick()
+    before = w._frame_last_pose
+    w._pan_e += 5000.0               # move the offset without moving ownship
+    w._frame_tick()
+    assert w._frame_last_pose != before
+
+
+def test_gesture_timeout_in_schema():
+    """The new option exports through the REGISTRY into schema.json (lockstep
+    with the configurator twin)."""
+    from pyefis.editor import schema as sch
+    opts = sch.build_schema()["instruments"]["moving_map"]["options"]
+    assert "gesture_timeout" in opts
+    assert opts["gesture_timeout"]["default"] == 30
