@@ -875,9 +875,14 @@ _register(InstrumentSpec(
                   "(0=track_up, 1=north_up). Empty = fixed"),
         Prop("touch_gestures", "boolean", default=True,
              label="Touch gestures",
-             help="pinch to zoom the range (two-finger pan is tracked in "
-                  "#99); mouse wheel mirrors zoom on desktop. Off = "
-                  "touch/wheel input ignored"),
+             help="two-finger pinch=zoom, drag=pan, twist=rotate; mouse wheel "
+                  "zooms and left-drag pans / Shift-drag rotates on desktop, "
+                  "and a tap re-centres. Off = touch/wheel/drag input ignored"),
+        Prop("gesture_timeout", "number", default=30, minimum=0, maximum=600,
+             label="Gesture auto-revert (s)",
+             help="seconds after a two-finger pan/rotate before the view "
+                  "re-locks to ownship and the configured orientation. "
+                  "0 = stay where left until a tap or an HMI recenter"),
         Prop("ownship_position", "number", default=50, minimum=0,
              maximum=100, label="Ownship position (%)",
              help="ownship anchor, percent up from the bottom "
