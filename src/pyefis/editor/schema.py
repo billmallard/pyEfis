@@ -303,6 +303,31 @@ _ACTIONS = [
      "arg": {"kind": "string"}, "help": "switch the EGT gauge display mode"},
     {"verb": "set instrument units", "label": "Set instrument units", "group": "mode",
      "arg": {"kind": "string"}, "help": "switch an instrument's units"},
+    # --- interactive checklist (P1.1) ---
+    # The argument is the target checklist group (its `hmi_group` option); blank
+    # drives every checklist on the screen.
+    {"verb": "checklist next item", "label": "Checklist: next item",
+     "group": "checklist", "arg": {"kind": "string"},
+     "help": "move the checklist cursor to the next item (blank arg = all "
+             "checklists; else a target group)"},
+    {"verb": "checklist previous item", "label": "Checklist: previous item",
+     "group": "checklist", "arg": {"kind": "string"},
+     "help": "move the checklist cursor to the previous item"},
+    {"verb": "checklist toggle item", "label": "Checklist: toggle item",
+     "group": "checklist", "arg": {"kind": "string"},
+     "help": "acknowledge / un-acknowledge the current checklist item"},
+    {"verb": "checklist next unacked", "label": "Checklist: next unacknowledged",
+     "group": "checklist", "arg": {"kind": "string"},
+     "help": "jump to the next un-acknowledged checklist item"},
+    {"verb": "checklist next list", "label": "Checklist: next list",
+     "group": "checklist", "arg": {"kind": "string"},
+     "help": "switch to the next checklist in the set"},
+    {"verb": "checklist previous list", "label": "Checklist: previous list",
+     "group": "checklist", "arg": {"kind": "string"},
+     "help": "switch to the previous checklist in the set"},
+    {"verb": "checklist reset", "label": "Checklist: reset",
+     "group": "checklist", "arg": {"kind": "string"},
+     "help": "clear every acknowledgement in the active checklist"},
     # --- HMI menu navigation ---
     {"verb": "activate menu", "label": "Activate menu", "group": "menu",
      "arg": {"kind": "string"}, "help": "open an HMI menu"},
