@@ -24,6 +24,7 @@ Live workstream state lives outside the repo in the workspace ledger
 | [avionics_reference.md](avionics_reference.md) | Page-cited FAA standards basis for the instrument-verification workstream |
 | [instrument_spec.md](instrument_spec.md) | Instrument definition specification (active pilot) |
 | [adding_an_instrument.md](adding_an_instrument.md) | How-to: add/change an instrument + its configurator twin without drift |
+| [checklist_widget.md](checklist_widget.md) | Interactive checklist instrument (CAP-115 Phase 1): inline config, encoder + HMI control |
 | [screenbuilder.md](screenbuilder.md) | Screen YAML / screenbuilder reference (upstream-origin) |
 | [requirements.md](requirements.md) | pyEfis display requirements (upstream-origin) |
 | [wiki/Headless-Linux-Appliance.md](wiki/Headless-Linux-Appliance.md) | x86-64 headless Linux source install + boot-to-EFIS kiosk notes/gotchas (eglfs-vs-wheel, X/xcb, systemd) — published to the wiki |
