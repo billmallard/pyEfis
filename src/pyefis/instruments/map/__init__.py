@@ -358,7 +358,11 @@ class MovingMap(LiveBindingMixin, QWidget):
                     d = g.centerPoint() - g.lastCenterPoint()
                     self.pan_by(d.x(), d.y())
                 if flags & CF.RotationAngleChanged:
-                    self.rotate_by(g.rotationAngle() - g.lastRotationAngle())
+                    # Negate: a positive _rot_offset rotates the map content
+                    # counter-clockwise (see MapTransform.to_screen), so the raw
+                    # pinch delta must be inverted for the map to FOLLOW the
+                    # fingers -- clockwise twist -> clockwise map (#114).
+                    self.rotate_by(-(g.rotationAngle() - g.lastRotationAngle()))
                 return True
         return super().event(e)
 
@@ -382,7 +386,9 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._drag_total += math.hypot(d.x(), d.y())
         if e.modifiers() & (Qt.KeyboardModifier.ShiftModifier
                             | Qt.KeyboardModifier.ControlModifier):
-            self.rotate_by(d.x() * _ROTATE_DEG_PER_PX)
+            # Same convention as the touch path (#114): negate so drag-right
+            # rotates the map clockwise -- content follows the gesture.
+            self.rotate_by(-d.x() * _ROTATE_DEG_PER_PX)
         else:
             self.pan_by(d.x(), d.y())
         e.accept()
