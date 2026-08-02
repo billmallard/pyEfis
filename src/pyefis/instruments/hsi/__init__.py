@@ -417,14 +417,16 @@ class HSI(QGraphicsView):
         p.setBrush(QColor(Qt.GlobalColor.transparent))
         # Outer ring
         p.drawEllipse(QRectF(self.cx-self.r, self.cy-self.r, self.r*2.0, self.r*2.0))
-        # Depth (P5a iter2): two fainter concentric rings inside the outer ring so
-        # the rose reads layered/recessed rather than flat. Alpha-only -> the
-        # transparent (bg_opacity) face over the map is preserved.
-        for _rad, _af in ((self.r * 0.78, 0.35), (self.r * 0.52, 0.22)):
-            _rc = QColor(self.fg_color); _rc.setAlphaF(_af)
-            p.setPen(QPen(_rc, max(1.0, self.fontSize * 0.02)))
-            p.setBrush(QColor(Qt.GlobalColor.transparent))
-            p.drawEllipse(QRectF(self.cx - _rad, self.cy - _rad, _rad * 2.0, _rad * 2.0))
+        # Depth rings (P5a iter2): faint concentric rings inside the outer ring.
+        # A light STRUCTURAL cue only -- NOT true depth (real depth comes from the
+        # translucent disc over the live map + rim treatment). Config-gated so the
+        # look can be compared with/without them (Bill 2026-08-02).
+        if getattr(self, "depth_rings", True):
+            for _rad, _af in ((self.r * 0.78, 0.35), (self.r * 0.52, 0.22)):
+                _rc = QColor(self.fg_color); _rc.setAlphaF(_af)
+                p.setPen(QPen(_rc, max(1.0, self.fontSize * 0.02)))
+                p.setBrush(QColor(Qt.GlobalColor.transparent))
+                p.drawEllipse(QRectF(self.cx - _rad, self.cy - _rad, _rad * 2.0, _rad * 2.0))
         # Draw the pointer marks
         # Fixed top lubber-line triangle, points down at the rose. Replaces the
         # four yellow cardinal pointer marks (Bill 2026-08-02: remove the yellow

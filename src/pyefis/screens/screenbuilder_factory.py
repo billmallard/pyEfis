@@ -654,6 +654,10 @@ _register(InstrumentSpec(
              step=0.1, label="Numeral size",
              help="compass-rose numeral/letter size as a multiple of the base "
                   "tick font (larger = bigger rose numbers)"),
+        Prop("depth_rings", "boolean", default=False, label="Depth rings",
+             help="faint concentric rings inside the rose (a light structural "
+                  "cue; real depth comes from the translucent face over the map, "
+                  "so these are off by default)"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
 ))
