@@ -268,12 +268,8 @@ class HSI(QGraphicsView):
         # Everything downstream derives from cx/cy/r, so the whole instrument
         # follows (Bill 2026-08-02).
         self._gutter = 0.0
-        _rl = getattr(self, "readout_layout", "left_column")
-        if _rl == "left_column":
-            self._gutter = self.width() * 0.24
-            self.r = min(self.width() - self._gutter, self.height()) / 2.0 - 5.0
-            self.cx = self._gutter + (self.width() - self._gutter) / 2.0
-        elif _rl == "aspen":
+        _rl = getattr(self, "readout_layout", "top_panel")
+        if _rl in ("top_panel", "split"):
             self._gutter = self.height() * 0.16
             self.r = min(self.width(), self.height() - self._gutter) / 2.0 - 5.0
             self.cy = self._gutter + (self.height() - self._gutter) / 2.0
@@ -835,30 +831,25 @@ class HSI(QGraphicsView):
         W = self.width(); H = self.height()
         m = self.fontSize * 0.5
         bh = self.fontSize * 2.4
-        if layout == "left_column":
-            # One sectioned panel in the left gutter, OUTSIDE the rose (Bill
-            # 2026-08-02). The rose was shrunk/shifted right in resizeEvent.
-            g = getattr(self, "_gutter", 0.0) or (W * 0.24)
-            pw = g - m * 1.6
-            ph = self.fontSize * 8.1
-            self._draw_readout_panel(c, m * 0.6, H / 2.0 - ph / 2.0, pw, ph, "v",
-                [("MAG", hdg, white), ("HDG", sel, cyan), ("CRS", crs, crscol)])
-        elif layout == "aspen":
-            # One sectioned panel across the top gutter, OUTSIDE the rose.
+        if layout == "top_panel":
+            # One sectioned panel across the top gutter, OUTSIDE the rose (Bill's
+            # pick, 2026-08-02). The rose was shrunk/shifted down in resizeEvent.
             g = getattr(self, "_gutter", 0.0) or (H * 0.16)
             ph = g - m * 1.2
             pw = self.fontSize * 12.0
             self._draw_readout_panel(c, W / 2.0 - pw / 2.0, m * 0.5, pw, ph, "h",
                 [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
-        elif layout == "garmin":
+        elif layout == "corners":
             # selected-heading (cyan) top-left, course (source) top-right; actual
             # heading read from the rose.
             self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
             self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
-        elif layout == "dynon":
-            self._draw_readout_box(c, W / 2.0, m, "ct", "", hdg, white)       # actual, top-centre
-            self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)      # course, bottom-left
-            self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)    # sel-hdg, bottom-right
+        elif layout == "split":
+            # Actual-heading box ABOVE the rose (top gutter, outside), course +
+            # selected heading in the bottom corners (Bill 2026-08-02).
+            self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, white)
+            self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
+            self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
 
     def _draw_readout_panel(self, c, x, y, w, h, orientation, segments):
         """One sectioned readout panel (P5a iter4b): a single rounded container

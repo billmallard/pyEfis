@@ -642,11 +642,14 @@ _register(InstrumentSpec(
              help="fixed ownship symbol at the rose centre; 'aircraft' is a "
                   "silhouette (deliberately not a triangle -- a triangle reads "
                   "as the TO/FROM / course indicator)"),
-        Prop("readout_layout", "enum", default="left_column",
-             enum=["garmin", "dynon", "aspen", "left_column", "none"],
+        Prop("readout_layout", "enum", default="top_panel",
+             enum=["top_panel", "corners", "split", "none"],
              label="Readout layout",
              help="placement of the integral actual-heading (HEAD), selected-"
-                  "heading (HEADBUG) and course (COURSE) readout boxes"),
+                  "heading (HEADBUG) and course (COURSE) readouts. top_panel = one "
+                  "sectioned panel across the top (outside the rose); corners = "
+                  "selected-heading + course boxes in the top corners; split = "
+                  "heading box above the rose, course/bug in the bottom corners"),
         Prop("numeral_scale", "number", default=1.5, minimum=0.5, maximum=3.0,
              step=0.1, label="Numeral size",
              help="compass-rose numeral/letter size as a multiple of the base "
