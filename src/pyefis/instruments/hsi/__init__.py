@@ -294,6 +294,12 @@ class HSI(QGraphicsView):
         f = QFont(self.font_family)
         f.setPixelSize(self.fontSize)
 
+        # (count, text) for numerals drawn screen-upright in paintEvent. The
+        # scene label items (self.labels) are still built below -- kept for the
+        # fail/opacity contract the tests assert -- but hidden during the rose
+        # bake so only the upright paintEvent numerals show (Bill 2026-08-02).
+        self._rose_labels = []
+
         for count in range(0, 360, 5):
             angle = (count) * math.pi / 180.0
             cosa = math.cos(angle)
@@ -333,6 +339,7 @@ class HSI(QGraphicsView):
                 y3 = (iy3*cosa + ix3*sina) + self.cy
                 t.setPos(x3, y3)
                 self.labels.append(t)
+                self._rose_labels.append((count, self.cardinal[int(count / 90)]))
             elif count % 30 == 0:
                 text = str(int(count / 10))
                 t = self.scene.addSimpleText(text, f)
@@ -348,6 +355,7 @@ class HSI(QGraphicsView):
                 y3 = (iy3*cosa + ix3*sina) + self.cy
                 t.setPos(x3, y3)
                 self.labels.append(t)
+                self._rose_labels.append((count, text))
 
         # Course pointer (driven by COURSE): the selected-course triangle,
         # coloured by source (magenta GPS / green VLOC) when source_auto_color is
@@ -560,8 +568,11 @@ class HSI(QGraphicsView):
         img = QImage(w * ss, hgt * ss,
                      QImage.Format.Format_ARGB32_Premultiplied)
         img.fill(0)
+        # Hide the dynamic card items AND the scene numeral labels during the
+        # bake: numerals are drawn screen-upright in paintEvent, not baked into
+        # the rotating rose (they must stay horizontal as the card turns).
         dyn = [i for i in (self.hdg_bug_item, self.track_item)
-               if i is not None]
+               if i is not None] + list(self.labels)
         vis = [i.isVisible() for i in dyn]
         for i in dyn:
             i.setVisible(False)
@@ -611,6 +622,25 @@ class HSI(QGraphicsView):
 
         # Put the static overlay image on the view
         c.drawImage(self.rect(), self.overlay)
+
+        # Compass numerals/letters drawn screen-upright at their (count - heading)
+        # positions so they stay HORIZONTAL as the card rotates (Bill 2026-08-02),
+        # instead of being baked into the rotating rose. Size is configurable via
+        # numeral_scale. Hidden on fail, matching changeFail's label opacity.
+        if not self.isFail():
+            nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
+            nf = QFont(self.font_family)
+            nf.setPixelSize(nsize)
+            c.setFont(nf)
+            c.setPen(QPen(QColor(self.fg_color)))
+            _Rlbl = self.r - self.tickSize * 1.5 - nsize * 0.55
+            _bw = nsize * 3.0; _bh = nsize * 1.6
+            for _cnt, _txt in getattr(self, "_rose_labels", ()):
+                _th = (_cnt - self._heading) * math.pi / 180.0
+                _lx = self.cx + _Rlbl * math.sin(_th)
+                _ly = self.cy - _Rlbl * math.cos(_th)
+                c.drawText(QRectF(_lx - _bw / 2, _ly - _bh / 2, _bw, _bh),
+                           int(Qt.AlignmentFlag.AlignCenter), _txt)
 
 
         compassPen = QPen(QColor(self.fg_color))

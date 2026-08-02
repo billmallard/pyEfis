@@ -647,6 +647,10 @@ _register(InstrumentSpec(
              label="Readout layout",
              help="placement of the integral actual-heading (HEAD), selected-"
                   "heading (HEADBUG) and course (COURSE) readout boxes"),
+        Prop("numeral_scale", "number", default=1.5, minimum=0.5, maximum=3.0,
+             step=0.1, label="Numeral size",
+             help="compass-rose numeral/letter size as a multiple of the base "
+                  "tick font (larger = bigger rose numbers)"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
 ))
