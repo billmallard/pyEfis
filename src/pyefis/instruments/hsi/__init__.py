@@ -299,14 +299,26 @@ class HSI(QGraphicsView):
             cosa = math.cos(angle)
             sina = math.sin(angle)
             iy1 = -self.r
-            iy2 = -self.r + self.tickSize
-            if count % 10 != 0:
-                iy2 -= self.tickSize/2
+            # Tick weight + length hierarchy (P5a iter2): 30deg heaviest/longest,
+            # 10deg medium, 5deg fine. Gives the rose structure vs one hairline.
+            if count % 90 == 0:
+                iy2 = -self.r + self.tickSize * 1.25
+                _tw = self.fontSize * 0.055
+            elif count % 30 == 0:
+                iy2 = -self.r + self.tickSize * 1.15
+                _tw = self.fontSize * 0.045
+            elif count % 10 == 0:
+                iy2 = -self.r + self.tickSize
+                _tw = self.fontSize * 0.03
+            else:
+                iy2 = -self.r + self.tickSize * 0.5
+                _tw = self.fontSize * 0.018
+            tickPen = QPen(QColor(self.fg_color), max(1.0, _tw))
             x1 = (-iy1*sina) + self.cx # (ix*cosa - iy*sina) ix factor removed Since x is 0
             y1 = iy1*cosa + self.cy # (iy*cosa + ix*sina)
             x2 = (-iy2*sina) + self.cx
             y2 = iy2*cosa + self.cy
-            self.scene.addLine(x1, y1, x2, y2, compassPen)
+            self.scene.addLine(x1, y1, x2, y2, tickPen)
             if count % 90 == 0:
                 t = self.scene.addSimpleText(self.cardinal[int(count / 90)], f)
                 br = t.sceneBoundingRect()
@@ -387,6 +399,14 @@ class HSI(QGraphicsView):
         p.setBrush(QColor(Qt.GlobalColor.transparent))
         # Outer ring
         p.drawEllipse(QRectF(self.cx-self.r, self.cy-self.r, self.r*2.0, self.r*2.0))
+        # Depth (P5a iter2): two fainter concentric rings inside the outer ring so
+        # the rose reads layered/recessed rather than flat. Alpha-only -> the
+        # transparent (bg_opacity) face over the map is preserved.
+        for _rad, _af in ((self.r * 0.78, 0.35), (self.r * 0.52, 0.22)):
+            _rc = QColor(self.fg_color); _rc.setAlphaF(_af)
+            p.setPen(QPen(_rc, max(1.0, self.fontSize * 0.02)))
+            p.setBrush(QColor(Qt.GlobalColor.transparent))
+            p.drawEllipse(QRectF(self.cx - _rad, self.cy - _rad, _rad * 2.0, _rad * 2.0))
         # Draw the pointer marks
         # Fixed top lubber-line triangle, points down at the rose. Replaces the
         # four yellow cardinal pointer marks (Bill 2026-08-02: remove the yellow
@@ -400,6 +420,24 @@ class HSI(QGraphicsView):
         p.setPen(QPen(QColor(self.fg_color), max(1, int(self.fontSize * 0.05))))
         p.setBrush(QBrush(QColor(self.fg_color)))
         p.drawPolygon(_lubber)
+
+        # Center ownship symbol (P5a iter2). Fixed, points up (drawn in the
+        # un-rotated overlay). An AIRCRAFT silhouette, deliberately NOT a triangle:
+        # a triangle reads as the TO/FROM / course indicator on many HSIs
+        # (Bill 2026-08-02). center_symbol is config-selectable (default 'aircraft',
+        # 'none' to hide); more styles can be offered in the configurator later.
+        _sym = getattr(self, "center_symbol", "aircraft")
+        if _sym != "none":
+            s = self.r * 0.16
+            ac_pen = QPen(QColor(self.fg_color), max(1.5, self.fontSize * 0.05))
+            ac_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            ac_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(ac_pen)
+            p.setBrush(QColor(Qt.GlobalColor.transparent))
+            p.drawLine(QLineF(self.cx, self.cy - s, self.cx, self.cy + s))          # fuselage
+            p.drawLine(QLineF(self.cx - s, self.cy, self.cx + s, self.cy))          # wings
+            p.drawLine(QLineF(self.cx - s * 0.4, self.cy + s * 0.7,
+                              self.cx + s * 0.4, self.cy + s * 0.7))                 # tailplane
 
         self.overlay = self.map.toImage()
 
