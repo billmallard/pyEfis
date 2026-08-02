@@ -637,6 +637,16 @@ _register(InstrumentSpec(
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
              step=1, label="Track min speed (kt)",
              help="hide the track diamond below this groundspeed (kt)"),
+        Prop("center_symbol", "enum", default="aircraft",
+             enum=["aircraft", "none"], label="Center symbol",
+             help="fixed ownship symbol at the rose centre; 'aircraft' is a "
+                  "silhouette (deliberately not a triangle -- a triangle reads "
+                  "as the TO/FROM / course indicator)"),
+        Prop("readout_layout", "enum", default="garmin",
+             enum=["garmin", "dynon", "aspen", "left_column", "none"],
+             label="Readout layout",
+             help="placement of the integral actual-heading (HEAD), selected-"
+                  "heading (HEADBUG) and course (COURSE) readout boxes"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
 ))

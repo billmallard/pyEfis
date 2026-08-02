@@ -730,6 +730,88 @@ class HSI(QGraphicsView):
         if self._showGsFlag:
             self._draw_flag(c, "GS", self.cx + self.r * 0.72, self.cy)
 
+        # Integral heading/selected-heading/course readout boxes (P5a iter3),
+        # screen-fixed, placement selectable via readout_layout.
+        self._draw_readouts(c)
+
+    def _draw_readout_box(self, c, ax, ay, anchor, label, value, color):
+        """One boxed readout (small label + degree value) anchored at (ax, ay).
+        anchor = 2-char h/v code: h in l/c/r, v in t/m/b. Screen-fixed; a
+        translucent black fill keeps it legible over the map/terrain."""
+        bw = self.fontSize * 3.6
+        bh = self.fontSize * 2.4
+        x = ax if anchor[0] == 'l' else (ax - bw if anchor[0] == 'r' else ax - bw / 2.0)
+        y = ay if anchor[1] == 't' else (ay - bh if anchor[1] == 'b' else ay - bh / 2.0)
+        box = QRectF(x, y, bw, bh)
+        col = QColor(color)
+        fill = QColor(0, 0, 0); fill.setAlphaF(0.55)
+        c.setPen(QPen(col, max(1.0, self.fontSize * 0.06)))
+        c.setBrush(QBrush(fill))
+        rad = self.fontSize * 0.3
+        c.drawRoundedRect(box, rad, rad)
+        f = QFont(self.font_family)
+        if label:
+            f.setPixelSize(max(8, int(self.fontSize * 0.58)))
+            c.setFont(f); c.setPen(QPen(col))
+            c.drawText(QRectF(x, y + self.fontSize * 0.12, bw, self.fontSize * 0.8),
+                       int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                       label)
+            vy = y + self.fontSize * 0.85
+            vh = bh - self.fontSize * 0.95
+        else:
+            vy = y; vh = bh
+        f.setPixelSize(max(11, int(self.fontSize * 1.1)))
+        c.setFont(f); c.setPen(QPen(QColor(self.fg_color)))
+        c.drawText(QRectF(x, vy, bw, vh),
+                   int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                   value)
+
+    def _draw_readouts(self, c):
+        """Integral readout boxes: actual heading (HEAD), selected heading
+        (HEADBUG, cyan), selected course (COURSE, source-coloured). Placement is
+        config-selectable via readout_layout so the configurator can offer
+        vendor-style presets (Bill 2026-08-02)."""
+        layout = getattr(self, "readout_layout", "garmin")
+        if layout == "none":
+            return
+
+        def _deg(v):
+            try:
+                return "%03d°" % (int(round(float(v))) % 360)
+            except Exception:
+                return "---°"
+
+        hdg = _deg(self._heading)                                  # actual
+        crs = _deg(self._courseSelect)                             # selected course
+        sel = _deg(getattr(self, "_hdgBug", 0.0) or 0.0)          # selected heading (bug)
+        white = QColor(self.fg_color)
+        cyan = QColor(getattr(self, "heading_bug_color", "#00ffff"))
+        crscol = self._course_pointer_color()
+
+        W = self.width(); H = self.height()
+        m = self.fontSize * 0.5
+        bh = self.fontSize * 2.4
+        if layout == "garmin":
+            # selected-heading (cyan) top-left, course (source) top-right; actual
+            # heading read from the rose (Bill's default).
+            self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
+            self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
+        elif layout == "dynon":
+            self._draw_readout_box(c, W / 2.0, m, "ct", "", hdg, white)       # actual, top-centre
+            self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)      # course, bottom-left
+            self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)    # sel-hdg, bottom-right
+        elif layout == "aspen":
+            self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)            # row across the top
+            self._draw_readout_box(c, W / 2.0, m, "ct", "", hdg, white)
+            self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
+        elif layout == "left_column":
+            # Bill's idea: all three stacked vertically, left of the rose.
+            gap = self.fontSize * 0.35
+            y0 = H / 2.0 - (bh * 3 + gap * 2) / 2.0
+            self._draw_readout_box(c, m, y0, "lt", "MAG", hdg, white)
+            self._draw_readout_box(c, m, y0 + bh + gap, "lt", "HDG", sel, cyan)
+            self._draw_readout_box(c, m, y0 + 2 * (bh + gap), "lt", "CRS", crs, crscol)
+
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
         red). Black fill keeps it legible over the compass card."""
