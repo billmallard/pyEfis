@@ -642,7 +642,7 @@ _register(InstrumentSpec(
              help="fixed ownship symbol at the rose centre; 'aircraft' is a "
                   "silhouette (deliberately not a triangle -- a triangle reads "
                   "as the TO/FROM / course indicator)"),
-        Prop("readout_layout", "enum", default="garmin",
+        Prop("readout_layout", "enum", default="left_column",
              enum=["garmin", "dynon", "aspen", "left_column", "none"],
              label="Readout layout",
              help="placement of the integral actual-heading (HEAD), selected-"
