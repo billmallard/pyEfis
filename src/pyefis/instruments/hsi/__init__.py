@@ -310,7 +310,9 @@ class HSI(QGraphicsView):
             if count % 90 == 0:
                 t = self.scene.addSimpleText(self.cardinal[int(count / 90)], f)
                 br = t.sceneBoundingRect()
-                t.setRotation(count)
+                # Upright numerals (Bill 2026-08-02, Airhart): stay screen-level as
+                # the card rotates; position still rotates. Was t.setRotation(count).
+                t.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 t.setPen(compassPen)
                 t.setBrush(textBrush)
                 iy3 = -self.r + self.tickSize*1.1
@@ -323,7 +325,9 @@ class HSI(QGraphicsView):
                 text = str(int(count / 10))
                 t = self.scene.addSimpleText(text, f)
                 br = t.sceneBoundingRect()
-                t.setRotation(count)
+                # Upright numerals (Bill 2026-08-02, Airhart): stay screen-level as
+                # the card rotates; position still rotates. Was t.setRotation(count).
+                t.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 t.setPen(compassPen)
                 t.setBrush(textBrush)
                 iy3 = -self.r + self.tickSize*1.1
@@ -384,23 +388,18 @@ class HSI(QGraphicsView):
         # Outer ring
         p.drawEllipse(QRectF(self.cx-self.r, self.cy-self.r, self.r*2.0, self.r*2.0))
         # Draw the pointer marks
-        p.setPen(QPen(QColor(Qt.GlobalColor.yellow), 3))
-        if self.visiblePointers[0]:
-            # Top Pointer
-            p.drawLine(QLineF(self.cx, self.cy - self.r - 5,
-                              self.cx, self.cy - self.r + self.fontSize*2))
-        if self.visiblePointers[1]:
-            # Bottom Pointer
-            p.drawLine(QLineF(self.cx, self.cy + self.r + 5,
-                              self.cx, self.cy + self.r - self.fontSize*2))
-        if self.visiblePointers[2]:
-            # Right Pointer
-            p.drawLine(QLineF(self.cx + self.r + 5, self.cy,
-                              self.cx + self.r - self.fontSize*2, self.cy))
-        if self.visiblePointers[3]:
-            # Left Pointer
-            p.drawLine(QLineF(self.cx - self.r - 5, self.cy,
-                              self.cx - self.r + self.fontSize*2, self.cy))
+        # Fixed top lubber-line triangle, points down at the rose. Replaces the
+        # four yellow cardinal pointer marks (Bill 2026-08-02: remove the yellow
+        # cardinal lozenges; a single neutral top lubber reads cleaner/modern).
+        _lub = self.fontSize * 0.7
+        _lubber = QPolygonF([
+            QPointF(self.cx - _lub * 0.55, self.cy - self.r - _lub),
+            QPointF(self.cx + _lub * 0.55, self.cy - self.r - _lub),
+            QPointF(self.cx, self.cy - self.r + _lub * 0.35),
+        ])
+        p.setPen(QPen(QColor(self.fg_color), max(1, int(self.fontSize * 0.05))))
+        p.setBrush(QBrush(QColor(self.fg_color)))
+        p.drawPolygon(_lubber)
 
         self.overlay = self.map.toImage()
 
