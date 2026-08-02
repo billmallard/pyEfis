@@ -483,6 +483,86 @@ def test_rotate_by_accumulates_and_wraps(fix, qtbot):
     assert w.rotate_by("x") == pytest.approx(-160.0)   # bad ignored
 
 
+def test_rotate_offset_direction_to_screen():
+    """Transform convention (#114): a CLOCKWISE map turn corresponds to a
+    NEGATIVE _rot_offset -- a due-north world point then projects to the
+    upper-RIGHT; a positive offset (CCW) sends it upper-LEFT. This is the
+    direction the accumulation/wrap test never asserted."""
+    lat0, lon0 = 39.0, -106.0
+    north = lat0 + 5 * 1852.0 / 111139.0
+    cw = moving_map.MapTransform(lat0, lon0, 10.0, -20.0, 400, 400, 0.5)
+    p = cw.to_screen(north, lon0)
+    assert p.x() > cw.cx        # right of centre
+    assert p.y() < cw.cy        # above centre  (upper-right)
+    ccw = moving_map.MapTransform(lat0, lon0, 10.0, 20.0, 400, 400, 0.5)
+    q = ccw.to_screen(north, lon0)
+    assert q.x() < ccw.cx       # positive offset -> upper-LEFT
+
+
+class _FakePinch:
+    """Minimal QPinchGesture stand-in exercising event()'s sign logic. Qt
+    reports a clockwise finger twist as an INCREASING rotationAngle (the
+    convention #114 was found against)."""
+
+    def __init__(self, rot_from, rot_to):
+        self._rf, self._rt = rot_from, rot_to
+
+    def changeFlags(self):
+        from PyQt6.QtWidgets import QPinchGesture
+        return QPinchGesture.ChangeFlag.RotationAngleChanged
+
+    def rotationAngle(self):
+        return self._rt
+
+    def lastRotationAngle(self):
+        return self._rf
+
+
+class _FakeGestureEvent:
+    def __init__(self, g):
+        self._g = g
+
+    def type(self):
+        from PyQt6.QtCore import QEvent
+        return QEvent.Type.Gesture
+
+    def gesture(self, which):
+        return self._g
+
+
+def test_two_finger_rotate_follows_fingers(fix, qtbot):
+    """End-to-end input-layer guard (#114): a clockwise pinch delta must rotate
+    the map clockwise -- a due-north point projects upper-RIGHT. Guards the
+    sign in event(), the exact gap that shipped the inversion."""
+    w = _panmap(qtbot)                       # _track = 0 -> isolate _rot_offset
+    w.event(_FakeGestureEvent(_FakePinch(0.0, 20.0)))   # clockwise twist
+    assert w._rot_offset < 0.0               # clockwise map = negative offset
+    x = w._transform()
+    north = w._lat + 5 * 1852.0 / 111139.0
+    p = x.to_screen(north, w._lon)
+    assert p.x() > x.cx and p.y() < x.cy     # upper-right (map followed fingers)
+
+
+def test_desktop_shift_drag_rotate_direction(fix, qtbot):
+    """Desktop parity (#114): a Shift-drag to the RIGHT rotates the map
+    clockwise (negative offset), matching the touch path."""
+    from PyQt6.QtCore import QPointF, Qt
+    w = _panmap(qtbot)
+    w._drag_last = QPointF(100.0, 100.0)
+    w._drag_total = 0.0
+
+    class _FakeMouse:
+        def position(self):
+            return QPointF(140.0, 100.0)     # 40 px to the right
+        def modifiers(self):
+            return Qt.KeyboardModifier.ShiftModifier
+        def accept(self):
+            pass
+
+    w.mouseMoveEvent(_FakeMouse())
+    assert w._rot_offset < 0.0               # drag-right -> clockwise map
+
+
 def test_recenter_full_relock(fix, qtbot):
     """Full re-lock (decision C): recenter clears BOTH the pan offset and the
     rotation offset and stops the timer."""
