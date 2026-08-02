@@ -22,6 +22,7 @@ from pyefis.instruments import ai
 from pyefis.instruments import airspeed
 from pyefis.instruments import altimeter
 from pyefis.instruments import button
+from pyefis.instruments import checklist
 from pyefis.instruments import data_status
 from pyefis.instruments import gauges
 from pyefis.instruments import hsi
@@ -176,6 +177,19 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
         screen,
         lists=config["options"]["lists"],
         replace=replace,
+        font_family=font_family,
+    )
+
+
+def build_checklist(screen, config, font_percent=None, font_family=None, replace=None):
+    # The `checklists` option is an inline structured payload consumed here
+    # (apply="special"), not setattr'd onto the widget -- the button/listbox
+    # precedent. Absent/malformed config yields an empty "No checklist" widget
+    # (construct-never-raises), which is why this type builds in isolation.
+    opts = config.get("options", {}) or {}
+    return checklist.Checklist(
+        screen,
+        checklists=opts.get("checklists"),
         font_family=font_family,
     )
 
@@ -1057,6 +1071,46 @@ _register(InstrumentSpec(
         # config value until the Prop model grows an explicit list/object kind.
         Prop("lists", "string", required=True, apply="special",
              label="Lists", help="selectable lists -- list of {name, file} entries"),
+    ],
+))
+
+# Interactive checklist (CAP-115, backlog P1.1 -- Phase 1). Config is an inline
+# structured `checklists` payload (apply="special", consumed in build_checklist
+# like button/listbox); the appearance colours are plain apply="attr" knobs. The
+# widget reads NO FIX keys and constructs with no config (empty "No checklist"
+# state), so unlike button/listbox it builds in isolation. Phase 3 replaces the
+# inline payload with a `checklist_ref` binding -- the widget is unchanged.
+_register(InstrumentSpec(
+    type="checklist",
+    label="Checklist",
+    category="list",
+    builder=build_checklist,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    properties=[
+        Prop("checklists", "string", apply="special", label="Checklists",
+             help="inline checklist set: a list of checklist objects, each "
+                  "{id, title, category, sections|items} (challenge/response "
+                  "items). Phase 1 authors this by hand; later the configurator "
+                  "builds it per-aircraft"),
+        Prop("hmi_group", "string", default="", label="HMI group",
+             help="optional name so a Button's 'checklist ...' actions can "
+                  "target this checklist; blank = every checklist on the screen"),
+        Prop("text_color", "color", default="#ffffff", label="Item colour",
+             help="colour of an un-acknowledged item's challenge text"),
+        Prop("response_color", "color", default="#00ffff",
+             label="Response colour",
+             help="colour of the challenge-response value (the right-hand text)"),
+        Prop("done_color", "color", default="#00ff00",
+             label="Acknowledged colour",
+             help="colour of an item once it has been acknowledged"),
+        Prop("current_color", "color", default="#ffaa00",
+             label="Current-row colour",
+             help="highlight colour of the current row while the encoder is "
+                  "controlling the checklist"),
+        Prop("section_color", "color", default="#aaaaaa",
+             label="Section colour",
+             help="colour of section subheaders and the progress line"),
     ],
 ))
 

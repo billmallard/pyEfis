@@ -35,6 +35,16 @@ class ActionClass(QWidget):
     setInstUnits = pyqtSignal(object)
     doExit = pyqtSignal(object)
     # arg = <inst name>,<inst name>,<inst name>,..:<Command>
+    # Checklist instrument actions (backlog P1.1). The argument is the target
+    # checklist group (its `hmi_group` option); empty addresses every checklist
+    # on the screen, mirroring the `set airspeed mode` broadcast.
+    checklistNextItem = pyqtSignal(object)
+    checklistPrevItem = pyqtSignal(object)
+    checklistToggleItem = pyqtSignal(object)
+    checklistNextUnacked = pyqtSignal(object)
+    checklistNextList = pyqtSignal(object)
+    checklistPrevList = pyqtSignal(object)
+    checklistReset = pyqtSignal(object)
 
     def __init__(self):
         super(ActionClass, self).__init__()
@@ -54,6 +64,13 @@ class ActionClass(QWidget):
             "menu encoder": self.menuEncoder,
             "set menu focus": self.setMenuFocus,
             "set instrument units": self.setInstUnits,
+            "checklist next item": self.checklistNextItem,
+            "checklist previous item": self.checklistPrevItem,
+            "checklist toggle item": self.checklistToggleItem,
+            "checklist next unacked": self.checklistNextUnacked,
+            "checklist next list": self.checklistNextList,
+            "checklist previous list": self.checklistPrevList,
+            "checklist reset": self.checklistReset,
             "exit": self.doExit,
             "evaluate": eval,
         }
