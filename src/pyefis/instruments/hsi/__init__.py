@@ -83,6 +83,12 @@ class HSI(QGraphicsView):
         self.track_min_speed = 5.0
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
+        # P5a redesign option defaults (must match the InstrumentSpec Prop
+        # defaults; the screenbuilder overrides these from the config).
+        self.center_symbol = "aircraft"   # ownship glyph; 'none' hides
+        self.readout_layout = "top_panel"  # top_panel | corners | split | none
+        self.numeral_scale = 1.5           # rose numeral size multiplier
+        self.depth_rings = False           # faint inner rings (off by default)
         # List for tick mark visibility, Top, Bottom, Right, Left
         self.visiblePointers = [True, True, True, True]
 
