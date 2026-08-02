@@ -637,6 +637,27 @@ _register(InstrumentSpec(
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
              step=1, label="Track min speed (kt)",
              help="hide the track diamond below this groundspeed (kt)"),
+        Prop("center_symbol", "enum", default="aircraft",
+             enum=["aircraft", "none"], label="Center symbol",
+             help="fixed ownship symbol at the rose centre; 'aircraft' is a "
+                  "silhouette (deliberately not a triangle -- a triangle reads "
+                  "as the TO/FROM / course indicator)"),
+        Prop("readout_layout", "enum", default="top_panel",
+             enum=["top_panel", "corners", "split", "none"],
+             label="Readout layout",
+             help="placement of the integral actual-heading (HEAD), selected-"
+                  "heading (HEADBUG) and course (COURSE) readouts. top_panel = one "
+                  "sectioned panel across the top (outside the rose); corners = "
+                  "selected-heading + course boxes in the top corners; split = "
+                  "heading box above the rose, course/bug in the bottom corners"),
+        Prop("numeral_scale", "number", default=1.5, minimum=0.5, maximum=3.0,
+             step=0.1, label="Numeral size",
+             help="compass-rose numeral/letter size as a multiple of the base "
+                  "tick font (larger = bigger rose numbers)"),
+        Prop("depth_rings", "boolean", default=False, label="Depth rings",
+             help="faint concentric rings inside the rose (a light structural "
+                  "cue; real depth comes from the translucent face over the map, "
+                  "so these are off by default)"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
 ))

@@ -83,6 +83,12 @@ class HSI(QGraphicsView):
         self.track_min_speed = 5.0
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
+        # P5a redesign option defaults (must match the InstrumentSpec Prop
+        # defaults; the screenbuilder overrides these from the config).
+        self.center_symbol = "aircraft"   # ownship glyph; 'none' hides
+        self.readout_layout = "top_panel"  # top_panel | corners | split | none
+        self.numeral_scale = 1.5           # rose numeral size multiplier
+        self.depth_rings = False           # faint inner rings (off by default)
         # List for tick mark visibility, Top, Bottom, Right, Left
         self.visiblePointers = [True, True, True, True]
 
@@ -263,6 +269,16 @@ class HSI(QGraphicsView):
         self.cx = self.width() / 2.0
         self.cy = self.height() / 2.0
         self.r = self.height() / 2.0 - 5.0
+        # Readout gutter (P5a iter4b): layouts that place a single sectioned
+        # readout panel OUTSIDE the rose shrink + shift the rose to open room.
+        # Everything downstream derives from cx/cy/r, so the whole instrument
+        # follows (Bill 2026-08-02).
+        self._gutter = 0.0
+        _rl = getattr(self, "readout_layout", "top_panel")
+        if _rl in ("top_panel", "split"):
+            self._gutter = self.height() * 0.16
+            self.r = min(self.width(), self.height() - self._gutter) / 2.0 - 5.0
+            self.cy = self._gutter + (self.height() - self._gutter) / 2.0
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
@@ -294,23 +310,43 @@ class HSI(QGraphicsView):
         f = QFont(self.font_family)
         f.setPixelSize(self.fontSize)
 
+        # (count, text) for numerals drawn screen-upright in paintEvent. The
+        # scene label items (self.labels) are still built below -- kept for the
+        # fail/opacity contract the tests assert -- but hidden during the rose
+        # bake so only the upright paintEvent numerals show (Bill 2026-08-02).
+        self._rose_labels = []
+
         for count in range(0, 360, 5):
             angle = (count) * math.pi / 180.0
             cosa = math.cos(angle)
             sina = math.sin(angle)
             iy1 = -self.r
-            iy2 = -self.r + self.tickSize
-            if count % 10 != 0:
-                iy2 -= self.tickSize/2
+            # Tick weight + length hierarchy (P5a iter2): 30deg heaviest/longest,
+            # 10deg medium, 5deg fine. Gives the rose structure vs one hairline.
+            if count % 90 == 0:
+                iy2 = -self.r + self.tickSize * 1.25
+                _tw = self.fontSize * 0.055
+            elif count % 30 == 0:
+                iy2 = -self.r + self.tickSize * 1.15
+                _tw = self.fontSize * 0.045
+            elif count % 10 == 0:
+                iy2 = -self.r + self.tickSize
+                _tw = self.fontSize * 0.03
+            else:
+                iy2 = -self.r + self.tickSize * 0.5
+                _tw = self.fontSize * 0.018
+            tickPen = QPen(QColor(self.fg_color), max(1.0, _tw))
             x1 = (-iy1*sina) + self.cx # (ix*cosa - iy*sina) ix factor removed Since x is 0
             y1 = iy1*cosa + self.cy # (iy*cosa + ix*sina)
             x2 = (-iy2*sina) + self.cx
             y2 = iy2*cosa + self.cy
-            self.scene.addLine(x1, y1, x2, y2, compassPen)
+            self.scene.addLine(x1, y1, x2, y2, tickPen)
             if count % 90 == 0:
                 t = self.scene.addSimpleText(self.cardinal[int(count / 90)], f)
                 br = t.sceneBoundingRect()
-                t.setRotation(count)
+                # Upright numerals (Bill 2026-08-02, Airhart): stay screen-level as
+                # the card rotates; position still rotates. Was t.setRotation(count).
+                t.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 t.setPen(compassPen)
                 t.setBrush(textBrush)
                 iy3 = -self.r + self.tickSize*1.1
@@ -319,11 +355,14 @@ class HSI(QGraphicsView):
                 y3 = (iy3*cosa + ix3*sina) + self.cy
                 t.setPos(x3, y3)
                 self.labels.append(t)
+                self._rose_labels.append((count, self.cardinal[int(count / 90)]))
             elif count % 30 == 0:
                 text = str(int(count / 10))
                 t = self.scene.addSimpleText(text, f)
                 br = t.sceneBoundingRect()
-                t.setRotation(count)
+                # Upright numerals (Bill 2026-08-02, Airhart): stay screen-level as
+                # the card rotates; position still rotates. Was t.setRotation(count).
+                t.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 t.setPen(compassPen)
                 t.setBrush(textBrush)
                 iy3 = -self.r + self.tickSize*1.1
@@ -332,6 +371,7 @@ class HSI(QGraphicsView):
                 y3 = (iy3*cosa + ix3*sina) + self.cy
                 t.setPos(x3, y3)
                 self.labels.append(t)
+                self._rose_labels.append((count, text))
 
         # Course pointer (driven by COURSE): the selected-course triangle,
         # coloured by source (magenta GPS / green VLOC) when source_auto_color is
@@ -383,24 +423,47 @@ class HSI(QGraphicsView):
         p.setBrush(QColor(Qt.GlobalColor.transparent))
         # Outer ring
         p.drawEllipse(QRectF(self.cx-self.r, self.cy-self.r, self.r*2.0, self.r*2.0))
+        # Depth rings (P5a iter2): faint concentric rings inside the outer ring.
+        # A light STRUCTURAL cue only -- NOT true depth (real depth comes from the
+        # translucent disc over the live map + rim treatment). Config-gated so the
+        # look can be compared with/without them (Bill 2026-08-02).
+        if getattr(self, "depth_rings", True):
+            for _rad, _af in ((self.r * 0.78, 0.35), (self.r * 0.52, 0.22)):
+                _rc = QColor(self.fg_color); _rc.setAlphaF(_af)
+                p.setPen(QPen(_rc, max(1.0, self.fontSize * 0.02)))
+                p.setBrush(QColor(Qt.GlobalColor.transparent))
+                p.drawEllipse(QRectF(self.cx - _rad, self.cy - _rad, _rad * 2.0, _rad * 2.0))
         # Draw the pointer marks
-        p.setPen(QPen(QColor(Qt.GlobalColor.yellow), 3))
-        if self.visiblePointers[0]:
-            # Top Pointer
-            p.drawLine(QLineF(self.cx, self.cy - self.r - 5,
-                              self.cx, self.cy - self.r + self.fontSize*2))
-        if self.visiblePointers[1]:
-            # Bottom Pointer
-            p.drawLine(QLineF(self.cx, self.cy + self.r + 5,
-                              self.cx, self.cy + self.r - self.fontSize*2))
-        if self.visiblePointers[2]:
-            # Right Pointer
-            p.drawLine(QLineF(self.cx + self.r + 5, self.cy,
-                              self.cx + self.r - self.fontSize*2, self.cy))
-        if self.visiblePointers[3]:
-            # Left Pointer
-            p.drawLine(QLineF(self.cx - self.r - 5, self.cy,
-                              self.cx - self.r + self.fontSize*2, self.cy))
+        # Fixed top lubber-line triangle, points down at the rose. Replaces the
+        # four yellow cardinal pointer marks (Bill 2026-08-02: remove the yellow
+        # cardinal lozenges; a single neutral top lubber reads cleaner/modern).
+        _lub = self.fontSize * 0.7
+        _lubber = QPolygonF([
+            QPointF(self.cx - _lub * 0.55, self.cy - self.r - _lub),
+            QPointF(self.cx + _lub * 0.55, self.cy - self.r - _lub),
+            QPointF(self.cx, self.cy - self.r + _lub * 0.35),
+        ])
+        p.setPen(QPen(QColor(self.fg_color), max(1, int(self.fontSize * 0.05))))
+        p.setBrush(QBrush(QColor(self.fg_color)))
+        p.drawPolygon(_lubber)
+
+        # Center ownship symbol (P5a iter2). Fixed, points up (drawn in the
+        # un-rotated overlay). An AIRCRAFT silhouette, deliberately NOT a triangle:
+        # a triangle reads as the TO/FROM / course indicator on many HSIs
+        # (Bill 2026-08-02). center_symbol is config-selectable (default 'aircraft',
+        # 'none' to hide); more styles can be offered in the configurator later.
+        _sym = getattr(self, "center_symbol", "aircraft")
+        if _sym != "none":
+            s = self.r * 0.16
+            ac_pen = QPen(QColor(self.fg_color), max(1.5, self.fontSize * 0.05))
+            ac_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            ac_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(ac_pen)
+            p.setBrush(QColor(Qt.GlobalColor.transparent))
+            p.drawLine(QLineF(self.cx, self.cy - s, self.cx, self.cy + s))          # fuselage
+            p.drawLine(QLineF(self.cx - s, self.cy, self.cx + s, self.cy))          # wings
+            p.drawLine(QLineF(self.cx - s * 0.4, self.cy + s * 0.7,
+                              self.cx + s * 0.4, self.cy + s * 0.7))                 # tailplane
 
         self.overlay = self.map.toImage()
 
@@ -523,8 +586,11 @@ class HSI(QGraphicsView):
         img = QImage(w * ss, hgt * ss,
                      QImage.Format.Format_ARGB32_Premultiplied)
         img.fill(0)
+        # Hide the dynamic card items AND the scene numeral labels during the
+        # bake: numerals are drawn screen-upright in paintEvent, not baked into
+        # the rotating rose (they must stay horizontal as the card turns).
         dyn = [i for i in (self.hdg_bug_item, self.track_item)
-               if i is not None]
+               if i is not None] + list(self.labels)
         vis = [i.isVisible() for i in dyn]
         for i in dyn:
             i.setVisible(False)
@@ -574,6 +640,25 @@ class HSI(QGraphicsView):
 
         # Put the static overlay image on the view
         c.drawImage(self.rect(), self.overlay)
+
+        # Compass numerals/letters drawn screen-upright at their (count - heading)
+        # positions so they stay HORIZONTAL as the card rotates (Bill 2026-08-02),
+        # instead of being baked into the rotating rose. Size is configurable via
+        # numeral_scale. Hidden on fail, matching changeFail's label opacity.
+        if not self.isFail():
+            nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
+            nf = QFont(self.font_family)
+            nf.setPixelSize(nsize)
+            c.setFont(nf)
+            c.setPen(QPen(QColor(self.fg_color)))
+            _Rlbl = self.r - self.tickSize * 1.5 - nsize * 0.55
+            _bw = nsize * 3.0; _bh = nsize * 1.6
+            for _cnt, _txt in getattr(self, "_rose_labels", ()):
+                _th = (_cnt - self._heading) * math.pi / 180.0
+                _lx = self.cx + _Rlbl * math.sin(_th)
+                _ly = self.cy - _Rlbl * math.cos(_th)
+                c.drawText(QRectF(_lx - _bw / 2, _ly - _bh / 2, _bw, _bh),
+                           int(Qt.AlignmentFlag.AlignCenter), _txt)
 
 
         compassPen = QPen(QColor(self.fg_color))
@@ -692,6 +777,123 @@ class HSI(QGraphicsView):
                             and (self._GsiFail or self._GsiBad))
         if self._showGsFlag:
             self._draw_flag(c, "GS", self.cx + self.r * 0.72, self.cy)
+
+        # Integral heading/selected-heading/course readout boxes (P5a iter3),
+        # screen-fixed, placement selectable via readout_layout.
+        self._draw_readouts(c)
+
+    def _draw_readout_box(self, c, ax, ay, anchor, label, value, color):
+        """One boxed readout (small label + degree value) anchored at (ax, ay).
+        anchor = 2-char h/v code: h in l/c/r, v in t/m/b. Screen-fixed; a
+        translucent black fill keeps it legible over the map/terrain."""
+        bw = self.fontSize * 3.6
+        bh = self.fontSize * 2.4
+        x = ax if anchor[0] == 'l' else (ax - bw if anchor[0] == 'r' else ax - bw / 2.0)
+        y = ay if anchor[1] == 't' else (ay - bh if anchor[1] == 'b' else ay - bh / 2.0)
+        box = QRectF(x, y, bw, bh)
+        col = QColor(color)
+        fill = QColor(0, 0, 0); fill.setAlphaF(0.55)
+        c.setPen(QPen(col, max(1.0, self.fontSize * 0.06)))
+        c.setBrush(QBrush(fill))
+        rad = self.fontSize * 0.3
+        c.drawRoundedRect(box, rad, rad)
+        f = QFont(self.font_family)
+        if label:
+            f.setPixelSize(max(9, int(self.fontSize * 0.64)))
+            f.setBold(True)
+            c.setFont(f); c.setPen(QPen(col))
+            c.drawText(QRectF(x, y + self.fontSize * 0.12, bw, self.fontSize * 0.8),
+                       int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                       label)
+            vy = y + self.fontSize * 0.85
+            vh = bh - self.fontSize * 0.95
+        else:
+            vy = y; vh = bh
+        f.setPixelSize(max(12, int(self.fontSize * 1.18)))
+        c.setFont(f); c.setPen(QPen(QColor(self.fg_color)))
+        c.drawText(QRectF(x, vy, bw, vh),
+                   int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
+                   value)
+
+    def _draw_readouts(self, c):
+        """Integral readout boxes: actual heading (HEAD), selected heading
+        (HEADBUG, cyan), selected course (COURSE, source-coloured). Placement is
+        config-selectable via readout_layout so the configurator can offer
+        vendor-style presets (Bill 2026-08-02)."""
+        layout = getattr(self, "readout_layout", "garmin")
+        if layout == "none":
+            return
+
+        def _deg(v):
+            try:
+                return "%03d°" % (int(round(float(v))) % 360)
+            except Exception:
+                return "---°"
+
+        hdg = _deg(self._heading)                                  # actual
+        crs = _deg(self._courseSelect)                             # selected course
+        sel = _deg(getattr(self, "_hdgBug", 0.0) or 0.0)          # selected heading (bug)
+        white = QColor(self.fg_color)
+        cyan = QColor(getattr(self, "heading_bug_color", "#00ffff"))
+        crscol = self._course_pointer_color()
+
+        W = self.width(); H = self.height()
+        m = self.fontSize * 0.5
+        bh = self.fontSize * 2.4
+        if layout == "top_panel":
+            # One sectioned panel across the top gutter, OUTSIDE the rose (Bill's
+            # pick, 2026-08-02). The rose was shrunk/shifted down in resizeEvent.
+            g = getattr(self, "_gutter", 0.0) or (H * 0.16)
+            ph = g * 0.76
+            pw = self.fontSize * 12.5
+            self._draw_readout_panel(c, W / 2.0 - pw / 2.0, (g - ph) / 2.0, pw, ph, "h",
+                [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
+        elif layout == "corners":
+            # selected-heading (cyan) top-left, course (source) top-right; actual
+            # heading read from the rose.
+            self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
+            self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
+        elif layout == "split":
+            # Actual-heading box ABOVE the rose (top gutter, outside), course +
+            # selected heading in the bottom corners (Bill 2026-08-02).
+            self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, white)
+            self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
+            self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
+
+    def _draw_readout_panel(self, c, x, y, w, h, orientation, segments):
+        """One sectioned readout panel (P5a iter4b): a single rounded container
+        divided into equal cells, each a small label + degree value with hairline
+        dividers. orientation 'v' stacks cells, 'h' rows them. Translucent fill
+        for legibility over the map."""
+        border = QColor(self.fg_color); border.setAlphaF(0.85)
+        fill = QColor(0, 0, 0); fill.setAlphaF(0.62)
+        c.setPen(QPen(border, max(1.0, self.fontSize * 0.06)))
+        c.setBrush(QBrush(fill))
+        rad = self.fontSize * 0.35
+        c.drawRoundedRect(QRectF(x, y, w, h), rad, rad)
+        n = max(1, len(segments))
+        # Labels: bolder + a touch larger so the cyan/magenta read true at small
+        # sizes (Bill 2026-08-02: cyan HDG label read greenish when tiny).
+        lf = QFont(self.font_family); lf.setPixelSize(max(9, int(self.fontSize * 0.64)))
+        lf.setBold(True)
+        vf = QFont(self.font_family); vf.setPixelSize(max(12, int(self.fontSize * 1.18)))
+        for i, (label, value, color) in enumerate(segments):
+            if orientation == "v":
+                sx, sy, sw, sh = x, y + h * i / n, w, h / n
+                if i > 0:
+                    c.setPen(QPen(border))
+                    c.drawLine(QLineF(x + w * 0.14, sy, x + w * 0.86, sy))
+            else:
+                sx, sy, sw, sh = x + w * i / n, y, w / n, h
+                if i > 0:
+                    c.setPen(QPen(border))
+                    c.drawLine(QLineF(sx, y + h * 0.14, sx, y + h * 0.86))
+            c.setFont(lf); c.setPen(QPen(QColor(color)))
+            c.drawText(QRectF(sx, sy + sh * 0.12, sw, sh * 0.36),
+                       int(Qt.AlignmentFlag.AlignCenter), label)
+            c.setFont(vf); c.setPen(QPen(QColor(self.fg_color)))
+            c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
+                       int(Qt.AlignmentFlag.AlignCenter), value)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
