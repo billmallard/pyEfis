@@ -11,7 +11,9 @@ database. We use three of its CSV files:
     APT_RWY.csv      — one row per runway: dimensions, surface, lighting
     APT_RWY_END.csv  — two rows per runway (one per end): exact threshold
                        lat/lon, true alignment, marking type, displaced
-                       threshold offset, TDZ elevation, approach lighting
+                       threshold offset, TDZ elevation, approach lighting,
+                       VGSI type (PAPI/VASI) and published visual glide path
+                       angle
 
 Usage:
     python tools/build_airport_db.py [--nasr-dir DIR] [--output PATH]
@@ -86,6 +88,8 @@ CREATE TABLE IF NOT EXISTS runway_ends (
     end_lgts_flag        TEXT,            -- "Y" / "N"
     cntrln_lgts_flag     TEXT,
     tdz_lgt_flag         TEXT,
+    vgsi_code            TEXT,            -- VGSI type/box-count/side, e.g. "P4L"; NULL if none installed
+    visual_gpa           REAL,            -- published visual glide path angle (deg); NULL if not published
     PRIMARY KEY (site_no, rwy_id, end_id)
 );
 """
@@ -100,6 +104,13 @@ def _f(s: str) -> float | None:
         return float(s)
     except ValueError:
         return None
+
+
+def _s(s: str) -> str | None:
+    """Parse an optional NASR text field. Empty string → None, so a runway end
+    with no installed equipment reads as NULL rather than an empty string."""
+    s = (s or "").strip()
+    return s or None
 
 
 def _signed_mag_var(varn_str: str, hemis: str) -> float | None:
@@ -201,10 +212,12 @@ def build(nasr_dir: Path, out_path: Path) -> dict:
                 r.get("RWY_END_LGTS_FLAG", "").strip(),
                 r.get("CNTRLN_LGTS_AVBL_FLAG", "").strip(),
                 r.get("TDZ_LGT_AVBL_FLAG", "").strip(),
+                _s(r.get("VGSI_CODE", "")),
+                _f(r.get("VISUAL_GLIDE_PATH_ANGLE", "")),
             ))
         con.executemany(
             "INSERT OR REPLACE INTO runway_ends VALUES "
-            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         counts["runway_ends"] = len(rows)
 
     con.commit()

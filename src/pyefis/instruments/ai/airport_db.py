@@ -44,6 +44,16 @@ MARKING_NONPRECISION = "NPI"
 MARKING_BASIC = "BSC"
 
 
+def _row_get(row, key, default=None):
+    """Read an optional sqlite column, tolerating older airport packs built
+    before the column existed. ``sqlite3.Row`` raises IndexError for an unknown
+    key; construct-never-raises means a pre-VG1 pack must still read cleanly."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
 @dataclass
 class RunwayRecord:
     airport_id : str
@@ -68,6 +78,13 @@ class RunwayRecord:
     thr2_tdz_elev_ft  : float = 0.0
     thr1_apch_lgt   : str = ""   # "MALSR", "ALSF1", "P2L", ...
     thr2_apch_lgt   : str = ""
+    # VGSI (visual glidepath) — NASR-only, NULL where none is installed/published.
+    # None (not 0.0/"") distinguishes "no VGSI here" from a real value; no
+    # consumer reads these yet (VG1 tier 1 lands the data only).
+    thr1_vgsi_type  : str | None = None    # "P4L", "V2R", ... (type + boxes + side)
+    thr2_vgsi_type  : str | None = None
+    thr1_visual_gpa : float | None = None  # published visual glide path angle (deg)
+    thr2_visual_gpa : float | None = None
 
 
 @dataclass
@@ -196,6 +213,10 @@ class NASRAirportDB:
                 thr2_tdz_elev_ft=b["tdz_elev_ft"] or 0.0,
                 thr1_apch_lgt=(a["apch_lgt_code"] or "").strip(),
                 thr2_apch_lgt=(b["apch_lgt_code"] or "").strip(),
+                thr1_vgsi_type=_row_get(a, "vgsi_code"),
+                thr2_vgsi_type=_row_get(b, "vgsi_code"),
+                thr1_visual_gpa=_row_get(a, "visual_gpa"),
+                thr2_visual_gpa=_row_get(b, "visual_gpa"),
             )
 
 

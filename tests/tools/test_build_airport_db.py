@@ -58,10 +58,13 @@ RWY_END_HEADER = ["SITE_NO", "RWY_ID", "RWY_END_ID", "TRUE_ALIGNMENT",
                   "LAT_DISPLACED_THR_DECIMAL", "LONG_DISPLACED_THR_DECIMAL",
                   "DISPLACED_THR_LEN", "TDZ_ELEV", "RWY_MARKING_TYPE_CODE",
                   "APCH_LGT_SYSTEM_CODE", "RWY_END_LGTS_FLAG",
-                  "CNTRLN_LGTS_AVBL_FLAG", "TDZ_LGT_AVBL_FLAG"]
+                  "CNTRLN_LGTS_AVBL_FLAG", "TDZ_LGT_AVBL_FLAG",
+                  "VGSI_CODE", "VISUAL_GLIDE_PATH_ANGLE"]
 RWY_END_ROWS = [
-    ("0001", "07/25", "07", "70", "34.00", "-119.00", "100", "", "", "", "", "PIR", "MALSR", "Y", "Y", "Y"),
-    ("0001", "07/25", "25", "250", "34.01", "-119.01", "101", "", "", "", "", "PIR", "", "N", "N", "N"),
+    # end 07 has a 4-box PAPI on the left and a published 3.00-deg glidepath;
+    # end 25 has neither (both fields empty -> stored NULL).
+    ("0001", "07/25", "07", "70", "34.00", "-119.00", "100", "", "", "", "", "PIR", "MALSR", "Y", "Y", "Y", "P4L", "3.00"),
+    ("0001", "07/25", "25", "250", "34.01", "-119.01", "101", "", "", "", "", "PIR", "", "N", "N", "N", "", ""),
 ]
 
 # Pre-DPN vs post-DPN APT_RWY: post adds the PAVEMENT CLASSIFICATION column and
@@ -108,3 +111,13 @@ def test_build_reads_expected_rows(tmp_path):
     assert len(d["airports"]) == 2
     assert len(d["runways"]) == 1
     assert len(d["runway_ends"]) == 2
+
+
+def test_vgsi_fields_ingested(tmp_path):
+    """VG1 tier 1: the builder pulls VGSI_CODE + VISUAL_GLIDE_PATH_ANGLE from
+    APT_RWY_END, and an end with neither stores NULL (not "" or 0.0)."""
+    con = _build(tmp_path / "vgsi", RWY_PRE_HEADER, RWY_PRE_ROWS)
+    got = {end_id: (vgsi, gpa) for end_id, vgsi, gpa in con.execute(
+        "SELECT end_id, vgsi_code, visual_gpa FROM runway_ends")}
+    assert got["07"] == ("P4L", 3.00)      # installed PAPI + published GPA
+    assert got["25"] == (None, None)       # nothing installed -> NULL, not "" / 0.0
