@@ -791,7 +791,8 @@ class HSI(QGraphicsView):
         c.drawRoundedRect(box, rad, rad)
         f = QFont(self.font_family)
         if label:
-            f.setPixelSize(max(8, int(self.fontSize * 0.58)))
+            f.setPixelSize(max(9, int(self.fontSize * 0.64)))
+            f.setBold(True)
             c.setFont(f); c.setPen(QPen(col))
             c.drawText(QRectF(x, y + self.fontSize * 0.12, bw, self.fontSize * 0.8),
                        int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
@@ -800,7 +801,7 @@ class HSI(QGraphicsView):
             vh = bh - self.fontSize * 0.95
         else:
             vy = y; vh = bh
-        f.setPixelSize(max(11, int(self.fontSize * 1.1)))
+        f.setPixelSize(max(12, int(self.fontSize * 1.18)))
         c.setFont(f); c.setPen(QPen(QColor(self.fg_color)))
         c.drawText(QRectF(x, vy, bw, vh),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
@@ -835,9 +836,9 @@ class HSI(QGraphicsView):
             # One sectioned panel across the top gutter, OUTSIDE the rose (Bill's
             # pick, 2026-08-02). The rose was shrunk/shifted down in resizeEvent.
             g = getattr(self, "_gutter", 0.0) or (H * 0.16)
-            ph = g - m * 1.2
-            pw = self.fontSize * 12.0
-            self._draw_readout_panel(c, W / 2.0 - pw / 2.0, m * 0.5, pw, ph, "h",
+            ph = g * 0.76
+            pw = self.fontSize * 12.5
+            self._draw_readout_panel(c, W / 2.0 - pw / 2.0, (g - ph) / 2.0, pw, ph, "h",
                 [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
         elif layout == "corners":
             # selected-heading (cyan) top-left, course (source) top-right; actual
@@ -863,8 +864,11 @@ class HSI(QGraphicsView):
         rad = self.fontSize * 0.35
         c.drawRoundedRect(QRectF(x, y, w, h), rad, rad)
         n = max(1, len(segments))
-        lf = QFont(self.font_family); lf.setPixelSize(max(8, int(self.fontSize * 0.55)))
-        vf = QFont(self.font_family); vf.setPixelSize(max(11, int(self.fontSize * 1.05)))
+        # Labels: bolder + a touch larger so the cyan/magenta read true at small
+        # sizes (Bill 2026-08-02: cyan HDG label read greenish when tiny).
+        lf = QFont(self.font_family); lf.setPixelSize(max(9, int(self.fontSize * 0.64)))
+        lf.setBold(True)
+        vf = QFont(self.font_family); vf.setPixelSize(max(12, int(self.fontSize * 1.18)))
         for i, (label, value, color) in enumerate(segments):
             if orientation == "v":
                 sx, sy, sw, sh = x, y + h * i / n, w, h / n
