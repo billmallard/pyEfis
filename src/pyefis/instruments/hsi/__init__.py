@@ -263,6 +263,20 @@ class HSI(QGraphicsView):
         self.cx = self.width() / 2.0
         self.cy = self.height() / 2.0
         self.r = self.height() / 2.0 - 5.0
+        # Readout gutter (P5a iter4b): layouts that place a single sectioned
+        # readout panel OUTSIDE the rose shrink + shift the rose to open room.
+        # Everything downstream derives from cx/cy/r, so the whole instrument
+        # follows (Bill 2026-08-02).
+        self._gutter = 0.0
+        _rl = getattr(self, "readout_layout", "left_column")
+        if _rl == "left_column":
+            self._gutter = self.width() * 0.24
+            self.r = min(self.width() - self._gutter, self.height()) / 2.0 - 5.0
+            self.cx = self._gutter + (self.width() - self._gutter) / 2.0
+        elif _rl == "aspen":
+            self._gutter = self.height() * 0.16
+            self.r = min(self.width(), self.height() - self._gutter) / 2.0 - 5.0
+            self.cy = self._gutter + (self.height() - self._gutter) / 2.0
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
@@ -821,26 +835,62 @@ class HSI(QGraphicsView):
         W = self.width(); H = self.height()
         m = self.fontSize * 0.5
         bh = self.fontSize * 2.4
-        if layout == "garmin":
+        if layout == "left_column":
+            # One sectioned panel in the left gutter, OUTSIDE the rose (Bill
+            # 2026-08-02). The rose was shrunk/shifted right in resizeEvent.
+            g = getattr(self, "_gutter", 0.0) or (W * 0.24)
+            pw = g - m * 1.6
+            ph = self.fontSize * 8.1
+            self._draw_readout_panel(c, m * 0.6, H / 2.0 - ph / 2.0, pw, ph, "v",
+                [("MAG", hdg, white), ("HDG", sel, cyan), ("CRS", crs, crscol)])
+        elif layout == "aspen":
+            # One sectioned panel across the top gutter, OUTSIDE the rose.
+            g = getattr(self, "_gutter", 0.0) or (H * 0.16)
+            ph = g - m * 1.2
+            pw = self.fontSize * 12.0
+            self._draw_readout_panel(c, W / 2.0 - pw / 2.0, m * 0.5, pw, ph, "h",
+                [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
+        elif layout == "garmin":
             # selected-heading (cyan) top-left, course (source) top-right; actual
-            # heading read from the rose (Bill's default).
+            # heading read from the rose.
             self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
             self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
         elif layout == "dynon":
             self._draw_readout_box(c, W / 2.0, m, "ct", "", hdg, white)       # actual, top-centre
             self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)      # course, bottom-left
             self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)    # sel-hdg, bottom-right
-        elif layout == "aspen":
-            self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)            # row across the top
-            self._draw_readout_box(c, W / 2.0, m, "ct", "", hdg, white)
-            self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
-        elif layout == "left_column":
-            # Bill's idea: all three stacked vertically, left of the rose.
-            gap = self.fontSize * 0.35
-            y0 = H / 2.0 - (bh * 3 + gap * 2) / 2.0
-            self._draw_readout_box(c, m, y0, "lt", "MAG", hdg, white)
-            self._draw_readout_box(c, m, y0 + bh + gap, "lt", "HDG", sel, cyan)
-            self._draw_readout_box(c, m, y0 + 2 * (bh + gap), "lt", "CRS", crs, crscol)
+
+    def _draw_readout_panel(self, c, x, y, w, h, orientation, segments):
+        """One sectioned readout panel (P5a iter4b): a single rounded container
+        divided into equal cells, each a small label + degree value with hairline
+        dividers. orientation 'v' stacks cells, 'h' rows them. Translucent fill
+        for legibility over the map."""
+        border = QColor(self.fg_color); border.setAlphaF(0.85)
+        fill = QColor(0, 0, 0); fill.setAlphaF(0.62)
+        c.setPen(QPen(border, max(1.0, self.fontSize * 0.06)))
+        c.setBrush(QBrush(fill))
+        rad = self.fontSize * 0.35
+        c.drawRoundedRect(QRectF(x, y, w, h), rad, rad)
+        n = max(1, len(segments))
+        lf = QFont(self.font_family); lf.setPixelSize(max(8, int(self.fontSize * 0.55)))
+        vf = QFont(self.font_family); vf.setPixelSize(max(11, int(self.fontSize * 1.05)))
+        for i, (label, value, color) in enumerate(segments):
+            if orientation == "v":
+                sx, sy, sw, sh = x, y + h * i / n, w, h / n
+                if i > 0:
+                    c.setPen(QPen(border))
+                    c.drawLine(QLineF(x + w * 0.14, sy, x + w * 0.86, sy))
+            else:
+                sx, sy, sw, sh = x + w * i / n, y, w / n, h
+                if i > 0:
+                    c.setPen(QPen(border))
+                    c.drawLine(QLineF(sx, y + h * 0.14, sx, y + h * 0.86))
+            c.setFont(lf); c.setPen(QPen(QColor(color)))
+            c.drawText(QRectF(sx, sy + sh * 0.12, sw, sh * 0.36),
+                       int(Qt.AlignmentFlag.AlignCenter), label)
+            c.setFont(vf); c.setPen(QPen(QColor(self.fg_color)))
+            c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
+                       int(Qt.AlignmentFlag.AlignCenter), value)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
