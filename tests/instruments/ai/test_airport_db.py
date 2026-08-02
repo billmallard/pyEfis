@@ -9,7 +9,23 @@ from pathlib import Path
 from pyefis.instruments.ai.airport_db import (
     make_airport_db, NASRAirportDB, _MultiAirportDB)
 
+# Current schema (post-VG1): runway_ends carries vgsi_code + visual_gpa.
 SCHEMA = """
+CREATE TABLE airports (site_no TEXT PRIMARY KEY, icao TEXT NOT NULL, name TEXT,
+  lat REAL NOT NULL, lon REAL NOT NULL, elev_ft REAL, mag_var REAL, state TEXT, city TEXT);
+CREATE TABLE runways (site_no TEXT, rwy_id TEXT, length_ft REAL, width_ft REAL,
+  surface TEXT, lighting TEXT, PRIMARY KEY (site_no, rwy_id));
+CREATE TABLE runway_ends (site_no TEXT, rwy_id TEXT, end_id TEXT, true_alignment_deg REAL,
+  lat REAL, lon REAL, elev_ft REAL, displaced_thr_lat REAL, displaced_thr_lon REAL,
+  displaced_thr_len_ft REAL, tdz_elev_ft REAL, marking_type TEXT, apch_lgt_code TEXT,
+  end_lgts_flag TEXT, cntrln_lgts_flag TEXT, tdz_lgt_flag TEXT,
+  vgsi_code TEXT, visual_gpa REAL,
+  PRIMARY KEY (site_no, rwy_id, end_id));
+"""
+
+# Pre-VG1 schema (no vgsi_code/visual_gpa) — an older airport pack a device may
+# still have installed. The reader must tolerate it (construct-never-raises).
+SCHEMA_PRE_VGSI = """
 CREATE TABLE airports (site_no TEXT PRIMARY KEY, icao TEXT NOT NULL, name TEXT,
   lat REAL NOT NULL, lon REAL NOT NULL, elev_ft REAL, mag_var REAL, state TEXT, city TEXT);
 CREATE TABLE runways (site_no TEXT, rwy_id TEXT, length_ft REAL, width_ft REAL,
@@ -22,9 +38,12 @@ CREATE TABLE runway_ends (site_no TEXT, rwy_id TEXT, end_id TEXT, true_alignment
 """
 
 
-def _mkdb(path, rows):
+def _mkdb(path, rows, *, vgsi=None):
     """rows: (site_no, icao, lat, lon). Each gets one paved runway w/ 2 ends so
-    airports_in_range yields it (it skips runway-less airports)."""
+    airports_in_range yields it (it skips runway-less airports). ``vgsi`` maps an
+    end_id ("09"/"27") to a (vgsi_code, visual_gpa) pair; ends absent from it get
+    NULL."""
+    vgsi = vgsi or {}
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
@@ -34,9 +53,10 @@ def _mkdb(path, rows):
         con.execute("INSERT INTO runways VALUES (?,?,?,?,?,?)",
                     (site, "09/27", 5000, 100, "ASPH", "HIGH"))
         for end, dlon in (("09", -0.005), ("27", 0.005)):
-            con.execute("INSERT INTO runway_ends VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            vc, gpa = vgsi.get(end, (None, None))
+            con.execute("INSERT INTO runway_ends VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (site, "09/27", end, 90, lat, lon + dlon, 100,
-                         None, None, 0, None, "", "", "", "", ""))
+                         None, None, 0, None, "", "", "", "", "", vc, gpa))
     con.commit()
     con.close()
 
@@ -86,3 +106,40 @@ def test_no_data_is_empty_stub():
     db = make_airport_db({})
     assert db.ready is False
     assert list(db.airports_in_range(0, 0, 50)) == []
+
+
+def test_vgsi_surfaced_on_runway_record(tmp_path):
+    """VG1 tier 1: NASRAirportDB surfaces vgsi_code/visual_gpa per threshold, and
+    an end with none reads back as None (not "" / 0.0)."""
+    p = tmp_path / "navdata/current/airports.sqlite"
+    # end "09" has a PAPI + published 3.00 GPA; end "27" has neither.
+    _mkdb(p, [("1", "KABC", 42.3, -83.0)], vgsi={"09": ("P4L", 3.00)})
+    db = NASRAirportDB(str(p))
+    (ap,) = list(db.airports_in_range(42.3, -83.0, 20))
+    (rwy,) = ap.runways
+    # _runways_for sorts ends numerically, so thr1 == "09", thr2 == "27".
+    assert rwy.thr1_designator == "09" and rwy.thr2_designator == "27"
+    assert rwy.thr1_vgsi_type == "P4L" and rwy.thr1_visual_gpa == 3.00
+    assert rwy.thr2_vgsi_type is None and rwy.thr2_visual_gpa is None
+
+
+def test_old_pack_without_vgsi_columns_still_reads(tmp_path):
+    """A pre-VG1 pack (runway_ends lacks vgsi_code/visual_gpa) must still read —
+    construct-never-raises. The VGSI fields come back None."""
+    p = tmp_path / "old/current/airports.sqlite"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(p)
+    con.executescript(SCHEMA_PRE_VGSI)
+    con.execute("INSERT INTO airports VALUES ('1','KOLD','KOLD',42.3,-83.0,100,0,'ST','City')")
+    con.execute("INSERT INTO runways VALUES ('1','09/27',5000,100,'ASPH','HIGH')")
+    for end, dlon in (("09", -0.005), ("27", 0.005)):
+        con.execute("INSERT INTO runway_ends VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    ("1", "09/27", end, 90, 42.3, -83.0 + dlon, 100,
+                     None, None, 0, None, "", "", "", "", ""))
+    con.commit(); con.close()
+
+    db = NASRAirportDB(str(p))
+    (ap,) = list(db.airports_in_range(42.3, -83.0, 20))
+    (rwy,) = ap.runways
+    assert rwy.thr1_vgsi_type is None and rwy.thr1_visual_gpa is None
+    assert rwy.thr2_vgsi_type is None and rwy.thr2_visual_gpa is None
