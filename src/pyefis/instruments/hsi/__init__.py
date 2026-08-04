@@ -89,6 +89,15 @@ class HSI(QGraphicsView):
         self.readout_layout = "top_panel"  # top_panel | corners | split | none
         self.numeral_scale = 1.5           # rose numeral size multiplier
         self.depth_rings = False           # faint inner rings (off by default)
+        # HSI bearing pointers (P5b.2): two RMI-style needles (BRG1/BRG2), each
+        # pointing to a station/waypoint, source-selected via BRG1SRC/BRG2SRC
+        # (0=VOR1, 1=VOR2, 2=GPS). Off by default (not every panel has a bearing
+        # source). bearing_color is the generic fallback; a needle is coloured by
+        # its source (magenta GPS / green VOR, HSI-COLOR-001/-002) when the source
+        # is known.
+        self.bearing1_enabled = False
+        self.bearing2_enabled = False
+        self.bearing_color = "#00ffff"
         # List for tick mark visibility, Top, Bottom, Right, Left
         self.visiblePointers = [True, True, True, True]
 
@@ -246,6 +255,45 @@ class HSI(QGraphicsView):
             self.tofromdb.valueChanged[float].connect(self.setTofrom)
         except Exception:
             self.tofromdb = None
+
+        # Bearing pointers (P5b.2): BRG1/BRG2 needle bearings + BRG1SRC/BRG2SRC
+        # source selectors. Subscribed defensively (like TRACKM/NAVSRC) so a
+        # database without the keys can't break construction -- the needle then
+        # simply never shows. Per-pointer quality flags gate visibility
+        # (HSI-FAIL-001) alongside the heading flag (HSI-ANN-001).
+        self._brg = {1: 0.0, 2: 0.0}
+        self._brgOld = {1: True, 2: True}
+        self._brgBad = {1: True, 2: True}
+        self._brgFail = {1: True, 2: True}
+        self._brgSrc = {1: None, 2: None}
+        self.brgdb = {1: None, 2: None}
+        self.brgsrcdb = {1: None, 2: None}
+        for _n in (1, 2):
+            try:
+                _it = fix.db.get_item("BRG%d" % _n)
+                self.brgdb[_n] = _it
+                self._brg[_n] = _it.value or 0.0
+                self._brgOld[_n] = _it.old
+                self._brgBad[_n] = _it.bad
+                self._brgFail[_n] = _it.fail
+                _it.valueChanged[float].connect(
+                    lambda v, n=_n: self._setBrg(n, v))
+                _it.oldChanged[bool].connect(
+                    lambda b, n=_n: self._setBrgOld(n, b))
+                _it.badChanged[bool].connect(
+                    lambda b, n=_n: self._setBrgBad(n, b))
+                _it.failChanged[bool].connect(
+                    lambda b, n=_n: self._setBrgFail(n, b))
+            except Exception:
+                self.brgdb[_n] = None
+            try:
+                _si = fix.db.get_item("BRG%dSRC" % _n)
+                self.brgsrcdb[_n] = _si
+                self._brgSrc[_n] = _si.value
+                _si.valueChanged[float].connect(
+                    lambda v, n=_n: self._setBrgSrc(n, v))
+            except Exception:
+                self.brgsrcdb[_n] = None
 
         self._showCDI = not self.isOld()
         self._showGSI = not self.isOld()
@@ -661,6 +709,14 @@ class HSI(QGraphicsView):
                            int(Qt.AlignmentFlag.AlignCenter), _txt)
 
 
+        # Bearing pointers (P5b.2): RMI needles to the selected stations, drawn
+        # BEFORE the course/CDI assembly so the deviation bar is never overridden
+        # (visually separated by draw order, hsi_widget_spec sec 6.8). Each shows
+        # only when valid (heading + its own BRGn); source-coloured.
+        for _n in (1, 2):
+            if self._bearing_visible(_n):
+                self._draw_bearing_needle(c, _n)
+
         compassPen = QPen(QColor(self.fg_color))
         cdiPen = QPen(self._source_color() or QColor(self.needle_color))
         cdiPen.setWidth(int(getattr(self, "needle_width", 3)))
@@ -756,6 +812,43 @@ class HSI(QGraphicsView):
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2*pad,
                                            fm.height() + 2*pad)
+
+        # Per-pointer bearing-source labels (P5b.2), mirroring the tappable
+        # nav-source annunciation: pointer 1 bottom-left, pointer 2 bottom-right,
+        # source-coloured, tapping cycles BRGnSRC. A trailing "X" annunciates an
+        # invalid selected source (the pointer's own BRGn old/bad/fail), the
+        # §7 under-specified surface (source-selector requirement candidate --
+        # routed through instrument_verification, not authored here).
+        self._brg_label_rect = {1: None, 2: None}
+        for _n in (1, 2):
+            if not getattr(self, "bearing%d_enabled" % _n, False):
+                continue
+            if self.brgdb[_n] is None and self.brgsrcdb[_n] is None:
+                continue
+            txt = self._bearing_src_label(_n)
+            if not txt:
+                continue
+            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
+                       or self._brgBad[_n] or self._brgFail[_n])
+            if invalid:
+                txt = txt + " X"
+            lf = QFont(self.font_family)
+            lf.setPixelSize(int(self.fontSize * 0.85))
+            c.setFont(lf)
+            fm = c.fontMetrics()
+            tw = fm.horizontalAdvance(txt)
+            th = fm.height()
+            _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
+            c.setPen(QPen(_bc))
+            ly = qRound(self.height() - self.fontSize * 0.5)
+            if _n == 1:
+                lx = qRound(self.width() * 0.03)
+            else:
+                lx = qRound(self.width() * 0.97 - tw)
+            c.drawText(lx, ly, txt)
+            pad = int(self.fontSize * 0.5)
+            self._brg_label_rect[_n] = (lx - pad, ly - fm.ascent() - pad,
+                                        tw + 2 * pad, th + 2 * pad)
 
         # Warning flags (AC 25-11B: warnings red). A flag positively annunciates
         # an invalid signal, distinct from merely hiding an element -- see
@@ -1024,6 +1117,119 @@ class HSI(QGraphicsView):
             if self.isVisible():
                 self.update()
 
+    # -- Bearing pointers (P5b.2) ------------------------------------------
+    def _setBrg(self, n, value):
+        v = common.bounds(0, 360, value)
+        if v != self._brg[n]:
+            self._brg[n] = v
+            if self.isVisible():
+                self.update()
+
+    def _setBrgOld(self, n, old):
+        self._brgOld[n] = old
+        if self.isVisible():
+            self.update()
+
+    def _setBrgBad(self, n, bad):
+        self._brgBad[n] = bad
+        if self.isVisible():
+            self.update()
+
+    def _setBrgFail(self, n, fail):
+        self._brgFail[n] = fail
+        if self.isVisible():
+            self.update()
+
+    def _setBrgSrc(self, n, value):
+        if value != self._brgSrc[n]:
+            self._brgSrc[n] = value
+            if self.isVisible():
+                self.update()
+
+    def _bearing_angle_deg(self, n):
+        """On-screen needle angle for pointer n on the heading-up card:
+        (BRGn - heading), normalised to [0, 360). 0 = straight up (lubber)."""
+        return (self._brg[n] - self._heading) % 360.0
+
+    def _bearing_color(self, n):
+        """Source colour for pointer n (HSI-COLOR-001/-002): magenta for GPS,
+        green (vloc_color) for a VOR, the generic bearing_color when the source
+        is unknown."""
+        src = self._brgSrc[n]
+        if src is None:
+            return QColor(self.bearing_color)
+        s = int(round(src))
+        if s == 2:                                  # GPS
+            return QColor(self.course_color)
+        if s in (0, 1):                             # VOR1 / VOR2
+            return QColor(self.vloc_color)
+        return QColor(self.bearing_color)
+
+    def _bearing_visible(self, n):
+        """A bearing needle shows only when enabled, its key exists, the heading
+        is valid (HSI-ANN-001 -- a bearing is heading-referenced), and its own
+        BRGn is valid (HSI-FAIL-001)."""
+        if not getattr(self, "bearing%d_enabled" % n, False):
+            return False
+        if self.brgdb[n] is None:
+            return False
+        if self._HeadFail or self._HeadBad:
+            return False
+        if self._brgOld[n] or self._brgBad[n] or self._brgFail[n]:
+            return False
+        return True
+
+    def _draw_bearing_needle(self, c, n):
+        """Draw the RMI bearing needle for pointer n in viewport space, rotated
+        to (BRGn - heading). Head (arrowhead) points at the station; a centre gap
+        keeps the ownship symbol clear; the tail is the reciprocal. Pointer 1 is
+        a single bar, pointer 2 a double bar (classic RMI). Source-coloured."""
+        color = self._bearing_color(n)
+        ang = self._bearing_angle_deg(n) * math.pi / 180.0
+        ca = math.cos(ang)
+        sa = math.sin(ang)
+
+        def _p(lx, ly):
+            return QPointF(self.cx + lx * ca - ly * sa, self.cy + ly * ca + lx * sa)
+
+        ho = self.r * 0.80          # head tip radius (short of the numerals)
+        to = self.r * 0.80          # tail end radius
+        inner = self.r * 0.24       # centre gap half-length
+        arr = self.tickSize         # arrowhead size
+        w = max(2, int(getattr(self, "needle_width", 3)))
+        pen = QPen(color, w)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        c.setPen(pen)
+        c.setBrush(QBrush(color))
+        offs = [0.0] if n == 1 else [-arr * 0.35, arr * 0.35]
+        for off in offs:
+            c.drawLine(_p(off, -inner), _p(off, -ho + arr))     # head shaft
+            c.drawLine(_p(off, inner), _p(off, to))             # tail shaft
+        # Single centred arrowhead at the head end (points to the station).
+        c.drawPolygon(QPolygonF([_p(0.0, -ho), _p(arr * 0.55, -ho + arr),
+                                 _p(-arr * 0.55, -ho + arr)]))
+
+    def _bearing_src_label(self, n):
+        """Bearing-source annunciation text for pointer n: "1 GPS" / "2 VOR1"
+        etc. The leading digit ties the label to its needle (single/double bar).
+        Empty when the source is unknown."""
+        src = self._brgSrc[n]
+        if src is None:
+            return ""
+        name = {0: "VOR1", 1: "VOR2", 2: "GPS"}.get(int(round(src)), "")
+        if not name:
+            return ""
+        return "%d %s" % (n, name)
+
+    def _cycle_bearing_src(self, n):
+        """Cycle pointer n's source selector VOR1 -> VOR2 -> GPS -> VOR1
+        (BRGnSRC 0/1/2), writing the FIX key so the fix-gateway select re-routes
+        the canonical BRGn (one-key-one-writer)."""
+        if self.brgsrcdb[n] is None:
+            return
+        cur = int(round(self._brgSrc[n])) if self._brgSrc[n] is not None else 2
+        fix.db.set_value("BRG%dSRC" % n, float((cur + 1) % 3))
+
     def mousePressEvent(self, event):
         # Tapping the nav-source annunciation cycles the source: GPS -> NAV1 ->
         # NAV2 -> GPS (NAVSRC 2/0/1). Anywhere else, default handling.
@@ -1033,6 +1239,17 @@ class HSI(QGraphicsView):
             if r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]:
                 cur = int(round(self._navsrc)) if self._navsrc is not None else 2
                 fix.db.set_value("NAVSRC", float((cur + 1) % 3))
+                event.accept()
+                return
+        # Tapping a bearing-source label cycles that pointer's source (mirrors
+        # the nav-source tap; BRGnSRC 0->1->2->0).
+        br = getattr(self, "_brg_label_rect", None) or {}
+        px, py = event.pos().x(), event.pos().y()
+        for _n in (1, 2):
+            rr = br.get(_n)
+            if rr is not None and rr[0] <= px <= rr[0] + rr[2] \
+                    and rr[1] <= py <= rr[1] + rr[3]:
+                self._cycle_bearing_src(_n)
                 event.accept()
                 return
         super(HSI, self).mousePressEvent(event)

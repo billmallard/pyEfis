@@ -55,7 +55,7 @@ def test_dbkeys_come_from_registry():
     s = eschema.build_schema()
     assert s["instruments"]["airspeed_tape"]["dbkeys"] == ["IAS"]
     assert s["instruments"]["horizontal_situation_indicator"]["dbkeys"] == [
-        "COURSE", "CDI", "GSI", "HEAD"]
+        "COURSE", "CDI", "GSI", "HEAD", "BRG1", "BRG2", "BRG1SRC", "BRG2SRC"]
     # A type with no declared defaults gets an empty list, never missing.
     assert s["instruments"]["static_text"]["dbkeys"] == []
 

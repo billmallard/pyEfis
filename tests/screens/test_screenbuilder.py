@@ -1540,7 +1540,7 @@ class TestScreenBuilderPreferencesAndOptions:
         assert screen.get_instrument_defaults("airspeed_dial") == ["IAS"]
         assert screen.get_instrument_defaults("altimeter_trend_tape") == ["VS"]
         assert screen.get_instrument_defaults("atitude_indicator") == ["PITCH", "ROLL", "ALAT", "TAS"]
-        assert screen.get_instrument_defaults("horizontal_situation_indicator") == ["COURSE", "CDI", "GSI", "HEAD"]
+        assert screen.get_instrument_defaults("horizontal_situation_indicator") == ["COURSE", "CDI", "GSI", "HEAD", "BRG1", "BRG2", "BRG1SRC", "BRG2SRC"]
         assert screen.get_instrument_defaults("heading_tape") == ["HEAD"]
         assert screen.get_instrument_defaults("turn_coordinator") == ["ROT", "ALAT"]
         assert screen.get_instrument_defaults("vsi_pfd") == ["VS"]
