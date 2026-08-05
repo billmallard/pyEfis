@@ -588,7 +588,8 @@ _register(InstrumentSpec(
              replace=None: hsi.HSI(screen, font_percent=font_percent,
                                     cdi_enabled=True, gsi_enabled=True,
                                     font_family=font_family)),
-    dbkeys=["COURSE", "CDI", "GSI", "HEAD"],
+    dbkeys=["COURSE", "CDI", "GSI", "HEAD",
+            "BRG1", "BRG2", "BRG1SRC", "BRG2SRC"],
     keep_aspect=True,
     # The factory enables CDI+GSI at construction; the editor toggles honour
     # self.cdi_enabled / self.gsi_enabled at paint time. COURSE/CDI/GSI/HEAD are
@@ -658,8 +659,22 @@ _register(InstrumentSpec(
              help="faint concentric rings inside the rose (a light structural "
                   "cue; real depth comes from the translucent face over the map, "
                   "so these are off by default)"),
+        Prop("bearing1_enabled", "boolean", default=False,
+             label="Bearing pointer 1",
+             help="show the single-bar RMI bearing needle (BRG1), pointing to "
+                  "the pointer-1 source (VOR1/VOR2/GPS via BRG1SRC)"),
+        Prop("bearing2_enabled", "boolean", default=False,
+             label="Bearing pointer 2",
+             help="show the double-bar RMI bearing needle (BRG2), pointing to "
+                  "the pointer-2 source (VOR1/VOR2/GPS via BRG2SRC)"),
+        Prop("bearing_color", "color", default="#00ffff",
+             label="Bearing pointer color",
+             help="generic bearing-needle colour used when the source is "
+                  "unknown; a needle with a known source is coloured by it "
+                  "(magenta GPS / green VOR)"),
     ],
-    preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
+    preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
+             "brg1": 30, "brg2": 250},
 ))
 
 _register(InstrumentSpec(
