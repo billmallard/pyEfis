@@ -659,6 +659,13 @@ _register(InstrumentSpec(
              help="faint concentric rings inside the rose (a light structural "
                   "cue; real depth comes from the translucent face over the map, "
                   "so these are off by default)"),
+        Prop("orientation", "enum", default="heading_up",
+             enum=["heading_up", "north_up", "track_up", "arc"],
+             label="Orientation",
+             help="compass presentation. heading_up/north_up/track_up show the "
+                  "full 360 rotating rose (today's look); arc shows an expanded "
+                  "forward ~120 sector (finer resolution on the tracked heading, "
+                  "decluttered of the rear rose)"),
         Prop("bearing1_enabled", "boolean", default=False,
              label="Bearing pointer 1",
              help="show the single-bar RMI bearing needle (BRG1), pointing to "
