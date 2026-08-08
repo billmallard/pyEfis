@@ -588,7 +588,8 @@ _register(InstrumentSpec(
              replace=None: hsi.HSI(screen, font_percent=font_percent,
                                     cdi_enabled=True, gsi_enabled=True,
                                     font_family=font_family)),
-    dbkeys=["COURSE", "CDI", "GSI", "HEAD"],
+    dbkeys=["COURSE", "CDI", "GSI", "HEAD",
+            "BRG1", "BRG2", "BRG1SRC", "BRG2SRC"],
     keep_aspect=True,
     # The factory enables CDI+GSI at construction; the editor toggles honour
     # self.cdi_enabled / self.gsi_enabled at paint time. COURSE/CDI/GSI/HEAD are
@@ -637,8 +638,50 @@ _register(InstrumentSpec(
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
              step=1, label="Track min speed (kt)",
              help="hide the track diamond below this groundspeed (kt)"),
+        Prop("center_symbol", "enum", default="aircraft",
+             enum=["aircraft", "none"], label="Center symbol",
+             help="fixed ownship symbol at the rose centre; 'aircraft' is a "
+                  "silhouette (deliberately not a triangle -- a triangle reads "
+                  "as the TO/FROM / course indicator)"),
+        Prop("readout_layout", "enum", default="top_panel",
+             enum=["top_panel", "corners", "split", "none"],
+             label="Readout layout",
+             help="placement of the integral actual-heading (HEAD), selected-"
+                  "heading (HEADBUG) and course (COURSE) readouts. top_panel = one "
+                  "sectioned panel across the top (outside the rose); corners = "
+                  "selected-heading + course boxes in the top corners; split = "
+                  "heading box above the rose, course/bug in the bottom corners"),
+        Prop("numeral_scale", "number", default=1.5, minimum=0.5, maximum=3.0,
+             step=0.1, label="Numeral size",
+             help="compass-rose numeral/letter size as a multiple of the base "
+                  "tick font (larger = bigger rose numbers)"),
+        Prop("depth_rings", "boolean", default=False, label="Depth rings",
+             help="faint concentric rings inside the rose (a light structural "
+                  "cue; real depth comes from the translucent face over the map, "
+                  "so these are off by default)"),
+        Prop("orientation", "enum", default="heading_up",
+             enum=["heading_up", "north_up", "track_up", "arc"],
+             label="Orientation",
+             help="compass presentation. heading_up/north_up/track_up show the "
+                  "full 360 rotating rose (today's look); arc shows an expanded "
+                  "forward ~120 sector (finer resolution on the tracked heading, "
+                  "decluttered of the rear rose)"),
+        Prop("bearing1_enabled", "boolean", default=False,
+             label="Bearing pointer 1",
+             help="show the single-bar RMI bearing needle (BRG1), pointing to "
+                  "the pointer-1 source (VOR1/VOR2/GPS via BRG1SRC)"),
+        Prop("bearing2_enabled", "boolean", default=False,
+             label="Bearing pointer 2",
+             help="show the double-bar RMI bearing needle (BRG2), pointing to "
+                  "the pointer-2 source (VOR1/VOR2/GPS via BRG2SRC)"),
+        Prop("bearing_color", "color", default="#00ffff",
+             label="Bearing pointer color",
+             help="generic bearing-needle colour used when the source is "
+                  "unknown; a needle with a known source is coloured by it "
+                  "(magenta GPS / green VOR)"),
     ],
-    preview={"heading": 87, "course": 110, "track": 78, "gs": 120},
+    preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
+             "brg1": 30, "brg2": 250},
 ))
 
 _register(InstrumentSpec(
