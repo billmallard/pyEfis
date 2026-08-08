@@ -89,6 +89,13 @@ class HSI(QGraphicsView):
         self.readout_layout = "top_panel"  # top_panel | corners | split | none
         self.numeral_scale = 1.5           # rose numeral size multiplier
         self.depth_rings = False           # faint inner rings (off by default)
+        # Compass orientation (P5b.3). north_up/heading_up/track_up all render the
+        # existing full-360 rotating rose UNCHANGED (their distinct behaviours are
+        # a separate item; today the single rotating card serves all three). "arc"
+        # selects a PARALLEL paint path (_paint_arc): the forward ~120 sector
+        # spread across the width at an expanded angular scale, decluttered of the
+        # rear rose. Default heading_up = today's behaviour.
+        self.orientation = "heading_up"
         # HSI bearing pointers (P5b.2): two RMI-style needles (BRG1/BRG2), each
         # pointing to a station/waypoint, source-selected via BRG1SRC/BRG2SRC
         # (0=VOR1, 1=VOR2, 2=GPS). Off by default (not every panel has a bearing
@@ -655,6 +662,11 @@ class HSI(QGraphicsView):
         return img
 
     def paintEvent(self, event):
+        # Arc orientation (P5b.3) is a parallel paint path; every other
+        # orientation renders the full 360 rose below, byte-for-byte unchanged.
+        if getattr(self, "orientation", "heading_up") == "arc":
+            self._paint_arc(event)
+            return
         # The rose is static art on a rotating card: blit the cached
         # unrotated bake through the heading rotation instead of having
         # QGraphicsView re-render ~84 items per frame (#94 -- the HSI
@@ -1220,6 +1232,315 @@ class HSI(QGraphicsView):
         if not name:
             return ""
         return "%d %s" % (n, name)
+
+    # -- Arc orientation mode (P5b.3) --------------------------------------
+    # The forward heading sector (+/- ARC_HALF_DEG, so 120 deg total) is spread
+    # LINEARLY across the widget width at an expanded angular scale, bowed down
+    # at the edges so it reads as a compass arc. Every heading-referenced element
+    # (ticks, numerals, heading bug, track diamond, bearing needles, course/CDI)
+    # is placed through _arc_band_point / _arc_in_sector so they all share the one
+    # scale. This is a SEPARATE paint path -- it never touches the rose bake or
+    # the view rotation, so the north_up/heading_up/track_up rose is unchanged.
+    ARC_HALF_DEG = 60.0
+
+    @staticmethod
+    def _rel_angle(a, b):
+        """Shortest signed (a - b) in (-180, 180]."""
+        d = (a - b) % 360.0
+        if d > 180.0:
+            d -= 360.0
+        return d
+
+    def _arc_params(self):
+        """Arc screen geometry, cached by (w, h, fontSize):
+        (cx, top_y, own_y, half_w, sag). The forward +/-ARC_HALF_DEG sector maps
+        linearly onto x in [cx-half_w, cx+half_w] (so the scale is half_w /
+        ARC_HALF_DEG px per heading degree -- larger than the full rose's
+        r*pi/180, the expansion), and the band bows down by sag*frac^2."""
+        w = self.width()
+        h = self.height()
+        key = (w, h, float(self.fontSize))
+        cached = getattr(self, "_arc_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        cx = w / 2.0
+        half_w = 0.94 * cx
+        top_y = self.fontSize * 1.7          # band y at the lubber (rel=0)
+        # Clear the top-panel/split integral readouts: resizeEvent set a top
+        # gutter for those layouts, so drop the band below it.
+        g = getattr(self, "_gutter", 0.0) or 0.0
+        if g > 0.0:
+            top_y = g + self.fontSize * 0.9
+        sag = min(h * 0.16, half_w * 0.34)   # downward bow at the sector edges
+        own_y = h * 0.82                      # ownship near lower centre
+        params = (cx, top_y, own_y, half_w, sag)
+        self._arc_cache = (key, params)
+        return params
+
+    def _arc_scale(self):
+        """The arc angular-scale factor: screen px per heading degree along the
+        band. This is the 'new scale factor' arc mode adds; it exceeds the full
+        rose's edge scale (r * pi/180) so the forward sector reads expanded."""
+        cx, top_y, own_y, half_w, sag = self._arc_params()
+        return half_w / self.ARC_HALF_DEG
+
+    def _arc_in_sector(self, bearing):
+        """True when `bearing` falls inside the shown forward sector."""
+        return abs(self._rel_angle(bearing, self._heading)) <= self.ARC_HALF_DEG + 1e-9
+
+    def _arc_band_point(self, bearing):
+        """Screen (x, y) on the compass band for a world `bearing` at the current
+        heading. rel=0 (straight ahead) sits at the top lubber (cx, top_y);
+        +rel goes right, -rel left, linearly; y bows down by sag*frac^2."""
+        cx, top_y, own_y, half_w, sag = self._arc_params()
+        frac = self._rel_angle(bearing, self._heading) / self.ARC_HALF_DEG
+        return cx + frac * half_w, top_y + sag * frac * frac
+
+    def _paint_arc(self, event):
+        """Expanded forward-arc HSI. A decluttered forward-sector compass, drawn
+        directly in viewport space (no rose bake, no view rotation)."""
+        c = QPainter(self.viewport())
+        c.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        cx, top_y, own_y, half_w, sag = self._arc_params()
+        fg = QColor(self.fg_color)
+        fail = self.isFail()
+
+        # 1. Compass band ticks (every 5 deg in-sector), weight/length hierarchy
+        # matching the rose; each tick fans slightly toward ownship.
+        base = int(round(self._heading))
+        span = int(self.ARC_HALF_DEG) + 5
+        for d in range(base - span, base + span + 1, 5):
+            cnt = d % 360
+            if not self._arc_in_sector(cnt):
+                continue
+            if cnt % 90 == 0:
+                tlen = self.tickSize * 1.25; tw = self.fontSize * 0.055
+            elif cnt % 30 == 0:
+                tlen = self.tickSize * 1.15; tw = self.fontSize * 0.045
+            elif cnt % 10 == 0:
+                tlen = self.tickSize; tw = self.fontSize * 0.03
+            else:
+                tlen = self.tickSize * 0.5; tw = self.fontSize * 0.018
+            bx, by = self._arc_band_point(cnt)
+            dx = cx - bx; dy = own_y - by
+            dl = math.hypot(dx, dy) or 1.0
+            ix = bx + dx / dl * tlen
+            iy = by + dy / dl * tlen
+            c.setPen(QPen(fg, max(1.0, tw)))
+            c.drawLine(QLineF(bx, by, ix, iy))
+
+        # 2. Numerals (screen-upright) at 30-deg, cardinal letters at 90-deg,
+        # just inside the band. Hidden on fail (matches the rose label opacity).
+        if not fail:
+            nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
+            nf = QFont(self.font_family); nf.setPixelSize(nsize)
+            c.setFont(nf); c.setPen(QPen(fg))
+            _bw = nsize * 3.0; _bh = nsize * 1.6
+            for d in range(base - span, base + span + 1, 5):
+                cnt = d % 360
+                if cnt % 30 != 0 or not self._arc_in_sector(cnt):
+                    continue
+                txt = self.cardinal[cnt // 90] if cnt % 90 == 0 else str(cnt // 10)
+                bx, by = self._arc_band_point(cnt)
+                dx = cx - bx; dy = own_y - by
+                dl = math.hypot(dx, dy) or 1.0
+                lx = bx + dx / dl * (self.tickSize * 1.4 + nsize * 0.7)
+                ly = by + dy / dl * (self.tickSize * 1.4 + nsize * 0.7)
+                c.drawText(QRectF(lx - _bw / 2, ly - _bh / 2, _bw, _bh),
+                           int(Qt.AlignmentFlag.AlignCenter), txt)
+
+        # 3. Top lubber triangle at (cx, top_y), pointing UP at the band.
+        _lub = self.fontSize * 0.7
+        lubber = QPolygonF([
+            QPointF(cx - _lub * 0.55, top_y - _lub),
+            QPointF(cx + _lub * 0.55, top_y - _lub),
+            QPointF(cx, top_y + _lub * 0.35),
+        ])
+        c.setPen(QPen(fg, max(1, int(self.fontSize * 0.05))))
+        c.setBrush(QBrush(fg))
+        c.drawPolygon(lubber)
+
+        # 4. Bearing needles (P5b.2) + course/CDI, drawn from ownship toward the
+        # band. Bearing needles first so the deviation bar is never overridden.
+        for _n in (1, 2):
+            if self._bearing_visible(_n):
+                self._draw_arc_bearing_needle(c, _n, cx, own_y)
+
+        self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad)
+        self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
+            and not (self._GsiOld or self._GsiBad or self._GsiFail)
+        if self.cdi_enabled or self.gsi_enabled:
+            self._draw_arc_course(c, cx, own_y)
+
+        # 5. Heading bug + track diamond as band markers (in-sector only).
+        if getattr(self, "heading_bug_enabled", False) and not (self._HeadFail or self._HeadBad):
+            if self._arc_in_sector(self._hdgBug):
+                self._draw_arc_band_marker(c, self._hdgBug,
+                                           QColor(self.heading_bug_color), "bug")
+        if self._track_visible() and self._arc_in_sector(self._track):
+            self._draw_arc_band_marker(c, self._track, QColor(self.track_color), "diamond")
+
+        # 6. Ownship symbol at (cx, own_y), pointing up.
+        _sym = getattr(self, "center_symbol", "aircraft")
+        if _sym != "none":
+            s = min(half_w, own_y - top_y) * 0.10
+            ac_pen = QPen(fg, max(1.5, self.fontSize * 0.05))
+            ac_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            ac_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            c.setPen(ac_pen); c.setBrush(QColor(Qt.GlobalColor.transparent))
+            c.drawLine(QLineF(cx, own_y - s, cx, own_y + s))
+            c.drawLine(QLineF(cx - s, own_y, cx + s, own_y))
+            c.drawLine(QLineF(cx - s * 0.4, own_y + s * 0.7, cx + s * 0.4, own_y + s * 0.7))
+
+        # 7. Nav-source + bearing-source labels (same annunciations + tap targets
+        # as the rose path), then the integral readouts.
+        self._draw_arc_source_labels(c)
+        self._draw_readouts(c)
+
+        # 8. Warning flags (same rules as the rose path).
+        self._showHdgFlag = self._HeadFail or self._HeadBad
+        if self._showHdgFlag:
+            self._draw_flag(c, "HDG", cx, top_y)
+        self._showNavFlag = self._CdiFail or self._CdiBad
+        if self._showNavFlag:
+            self._draw_flag(c, "NAV", cx, own_y - self.fontSize * 2.0)
+        self._showGsFlag = (self.gsi_enabled and self._gsv is not None
+                            and self._gsv >= 0.5 and (self._GsiFail or self._GsiBad))
+        if self._showGsFlag:
+            self._draw_flag(c, "GS", self.width() - self.fontSize * 1.5, own_y)
+
+    def _draw_arc_bearing_needle(self, c, n, ox, oy):
+        """Arc bearing needle: a line from ownship (ox, oy) to the band point of
+        BRGn with an arrowhead at the band; hidden when out of the forward
+        sector (forward clip). Single bar for pointer 1, double for pointer 2."""
+        if not self._arc_in_sector(self._brg[n]):
+            return
+        color = self._bearing_color(n)
+        bx, by = self._arc_band_point(self._brg[n])
+        dx = bx - ox; dy = by - oy
+        dl = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / dl, dy / dl
+        px, py = -uy, ux                       # unit perpendicular
+        w = max(2, int(getattr(self, "needle_width", 3)))
+        pen = QPen(color, w); pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        c.setPen(pen); c.setBrush(QBrush(color))
+        gap = min(dl * 0.28, self.tickSize * 2.0)   # centre gap past the ownship
+        arr = self.tickSize
+        offs = [0.0] if n == 1 else [-arr * 0.35, arr * 0.35]
+        for off in offs:
+            sx = ox + px * off; sy = oy + py * off
+            c.drawLine(QLineF(sx + ux * gap, sy + uy * gap,
+                              bx - ux * arr, by - uy * arr))
+        tip = QPointF(bx, by)
+        l = QPointF(bx - ux * arr + px * arr * 0.55, by - uy * arr + py * arr * 0.55)
+        r = QPointF(bx - ux * arr - px * arr * 0.55, by - uy * arr - py * arr * 0.55)
+        c.drawPolygon(QPolygonF([tip, l, r]))
+
+    def _draw_arc_course(self, c, ox, oy):
+        """Arc course pointer + lateral CDI: the pointer runs from ownship toward
+        the COURSE band point (when in sector); the deviation dots and CDI bar sit
+        at ownship, perpendicular to the course line, so the CDI angle tracks the
+        arc scale. GS is the screen-fixed right-side scale, shared with the rose."""
+        if self.cdi_enabled and self._arc_in_sector(self._courseSelect):
+            bx, by = self._arc_band_point(self._courseSelect)
+            dx = bx - ox; dy = by - oy
+            dl = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / dl, dy / dl
+            px, py = -uy, ux
+            bar = min(self._arc_params()[3], oy - self._arc_params()[1]) * 0.22
+            # deviation dots
+            c.setPen(QPen(QColor(self.fg_color))); c.setBrush(QBrush(QColor(self.fg_color)))
+            dotr = max(1.5, self.tickSize * 0.16)
+            for dev in (-1.0, -2.0/3.0, -1.0/3.0, 1.0/3.0, 2.0/3.0, 1.0):
+                c.drawEllipse(QPointF(ox + px * dev * bar, oy + py * dev * bar), dotr, dotr)
+            cpc = self._course_pointer_color()
+            cw = max(2, int(getattr(self, "needle_width", 3)))
+            c.setPen(QPen(cpc, cw)); c.setBrush(QBrush(cpc))
+            arr = self.tickSize
+            c.drawLine(QLineF(ox + ux * bar, oy + uy * bar, bx - ux * arr, by - uy * arr))
+            tip = QPointF(bx, by)
+            l = QPointF(bx - ux * arr + px * arr * 0.55, by - uy * arr + py * arr * 0.55)
+            r = QPointF(bx - ux * arr - px * arr * 0.55, by - uy * arr - py * arr * 0.55)
+            c.drawPolygon(QPolygonF([tip, l, r]))
+            if self._showCDI:
+                off = self._courseDeviation * bar
+                c.drawLine(QLineF(ox + px * off - ux * bar, oy + py * off - uy * bar,
+                                  ox + px * off + ux * bar, oy + py * off + uy * bar))
+        if self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5):
+            gx = self.width() - self.fontSize * 1.5
+            gy0 = self._arc_params()[2]                 # own_y
+            grange = min(self.width(), self.height()) * 0.16
+            c.setPen(QPen(QColor(self.fg_color))); c.setBrush(QBrush(QColor(self.fg_color)))
+            gdot = max(1.5, self.tickSize * 0.16)
+            c.drawLine(QLineF(gx - self.tickSize * 0.55, gy0, gx + self.tickSize * 0.55, gy0))
+            for dev in (-1.0, -0.5, 0.5, 1.0):
+                c.drawEllipse(QPointF(gx, gy0 - dev * grange), gdot, gdot)
+            if self._showGSI:
+                gsc = self._source_color() or QColor(self.needle_color)
+                c.setPen(QPen(gsc)); c.setBrush(QBrush(gsc))
+                gy = gy0 - self._glideSlopeIndicator * grange
+                ds = self.tickSize * 0.6
+                c.drawPolygon(QPolygonF([QPointF(gx, gy - ds), QPointF(gx + ds, gy),
+                                         QPointF(gx, gy + ds), QPointF(gx - ds, gy)]))
+
+    def _draw_arc_band_marker(self, c, bearing, color, shape):
+        """A small marker (heading 'bug' or track 'diamond') on the arc band at
+        `bearing`."""
+        bx, by = self._arc_band_point(bearing)
+        s = self.tickSize * 0.55
+        c.setPen(QPen(color)); c.setBrush(QBrush(color))
+        if shape == "diamond":
+            c.drawPolygon(QPolygonF([QPointF(bx, by - s), QPointF(bx + s, by),
+                                     QPointF(bx, by + s), QPointF(bx - s, by)]))
+        else:                                            # heading bug (notched)
+            w = s * 1.1; h = s * 1.6
+            c.drawPolygon(QPolygonF([
+                QPointF(bx - w, by + h), QPointF(bx - w, by),
+                QPointF(bx - w * 0.35, by), QPointF(bx - w * 0.35, by + h * 0.5),
+                QPointF(bx + w * 0.35, by + h * 0.5), QPointF(bx + w * 0.35, by),
+                QPointF(bx + w, by), QPointF(bx + w, by + h)]))
+
+    def _draw_arc_source_labels(self, c):
+        """Nav-source annunciation (top-left) + per-pointer bearing-source labels
+        (bottom corners) with the same tap targets as the rose path."""
+        self._source_label_rect = None
+        if getattr(self, "source_label_enabled", True):
+            label = self._source_label()
+            if label:
+                c.setPen(QPen(self._source_color() or QColor(self.course_color)))
+                lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize))
+                c.setFont(lf)
+                lx = qRound(self.width() * 0.03); ly = qRound(self.fontSize * 1.2)
+                c.drawText(lx, ly, label)
+                fm = c.fontMetrics(); pad = int(self.fontSize * 0.5)
+                self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
+                                           fm.horizontalAdvance(label) + 2 * pad,
+                                           fm.height() + 2 * pad)
+        self._brg_label_rect = {1: None, 2: None}
+        for _n in (1, 2):
+            if not getattr(self, "bearing%d_enabled" % _n, False):
+                continue
+            if self.brgdb[_n] is None and self.brgsrcdb[_n] is None:
+                continue
+            txt = self._bearing_src_label(_n)
+            if not txt:
+                continue
+            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
+                       or self._brgBad[_n] or self._brgFail[_n])
+            if invalid:
+                txt = txt + " X"
+            lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize * 0.85))
+            c.setFont(lf); fm = c.fontMetrics()
+            tw = fm.horizontalAdvance(txt); th = fm.height()
+            _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
+            c.setPen(QPen(_bc))
+            ly = qRound(self.height() - self.fontSize * 0.5)
+            lx = qRound(self.width() * 0.03) if _n == 1 else qRound(self.width() * 0.97 - tw)
+            c.drawText(lx, ly, txt)
+            pad = int(self.fontSize * 0.5)
+            self._brg_label_rect[_n] = (lx - pad, ly - fm.ascent() - pad,
+                                        tw + 2 * pad, th + 2 * pad)
 
     def _cycle_bearing_src(self, n):
         """Cycle pointer n's source selector VOR1 -> VOR2 -> GPS -> VOR1

@@ -813,3 +813,138 @@ def test_bearing_construct_and_paint_never_raises_without_keys(fix, qtbot):
     widget.paintEvent(event)                       # must not raise
     assert widget._bearing_visible(1) is False
     assert widget._bearing_visible(2) is False
+
+
+# --- HSI arc orientation mode (P5b.3) ----------------------------------------
+
+def test_hsi_orientation_default_is_heading_up(fix, qtbot):
+    """Default orientation renders the existing rose (non-arc), so every existing
+    rotation/paint test exercises the unchanged path."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    assert widget.orientation == "heading_up"
+
+
+def test_arc_rel_angle_wraps_shortest(fix, qtbot):
+    """_rel_angle is the shortest signed delta in (-180, 180]."""
+    f = hsi.HSI._rel_angle
+    assert f(90, 0) == 90
+    assert f(0, 30) == -30
+    assert f(10, 350) == 20            # wrap forward
+    assert f(350, 10) == -20           # wrap back
+    assert f(0, 180) == 180
+
+
+def test_arc_geometry_lubber_symmetry_and_scale(fix, qtbot):
+    """Arc band: rel=0 sits at the top lubber; +/-rel are mirror images; the
+    forward sector is clipped at +/-ARC_HALF_DEG; and the arc angular scale is
+    EXPANDED relative to the full rose (proof of the 'new scale factor')."""
+    import math
+    widget = hsi.HSI()                             # default font -> fontSize 15
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._heading = 0.0
+
+    cx, top_y, own_y, half_w, sag = widget._arc_params()
+    # straight ahead -> top lubber
+    x0, y0 = widget._arc_band_point(0.0)
+    assert abs(x0 - cx) < 1e-6 and abs(y0 - top_y) < 1e-6
+    # symmetry about the lubber
+    xr, yr = widget._arc_band_point(30.0)
+    xl, yl = widget._arc_band_point(330.0)          # -30
+    assert abs((xr - cx) + (xl - cx)) < 1e-6        # mirror in x
+    assert abs(yr - yl) < 1e-6                        # same bow
+    assert xr > cx > xl                              # +rel right, -rel left
+    # monotonic x across the sector
+    assert widget._arc_band_point(10.0)[0] < widget._arc_band_point(50.0)[0]
+    # forward clip: edge in, just past out, rear out
+    assert widget._arc_in_sector(60.0) is True
+    assert widget._arc_in_sector(61.0) is False
+    assert widget._arc_in_sector(180.0) is False
+    assert widget._arc_in_sector(300.0) is True     # -60
+    # expanded scale: arc px/deg exceeds the rose's edge scale (r * pi/180)
+    assert widget._arc_scale() > widget.r * math.pi / 180.0
+
+
+def test_arc_band_point_tracks_heading(fix, qtbot):
+    """The band is heading-referenced: a fixed world bearing moves across the arc
+    as heading changes, and a bearing at the current heading stays at the lubber."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    cx = widget._arc_params()[0]
+    widget._heading = 90.0
+    x_ahead, _ = widget._arc_band_point(90.0)       # dead ahead
+    assert abs(x_ahead - cx) < 1e-6
+    x_right, _ = widget._arc_band_point(120.0)      # 30 deg right of nose
+    assert x_right > cx
+    assert widget._arc_in_sector(200.0) is False    # behind-ish, clipped
+
+
+def test_arc_paint_never_raises_full_panel(fix, qtbot):
+    """Arc paint with CDI+GSI, both bearing needles, heading bug and track diamond
+    all live must not raise, and the source tap rect is still set (tappable)."""
+    _define_bearing_keys(fix, brg1=45.0, src1=2.0, brg2=330.0, src2=0.0)
+    widget = hsi.HSI(cdi_enabled=True, gsi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.heading_bug_enabled = True
+    widget.resize(320, 320)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._HeadFail = widget._HeadBad = False
+    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
+    for n in (1, 2):
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+    widget.setGsv(1)
+    widget._hdgBug = 20.0
+    widget._track = 350.0
+    widget._TrackOld = widget._TrackBad = widget._TrackFail = False
+    widget.navsrcdb = object()
+    widget._navsrc = 2
+    widget.paintEvent(QPaintEvent(widget.rect()))    # must not raise
+    assert widget._showCDI is True
+    assert widget._source_label_rect is not None      # nav-source tap target set
+
+
+def test_arc_paint_never_raises_on_fail(fix, qtbot):
+    """Arc paint annunciates a failed heading (red HDG flag) and does not raise;
+    numerals are suppressed on fail, matching the rose path."""
+    widget = hsi.HSI(cdi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.setHeadFail(True)
+    widget.paintEvent(QPaintEvent(widget.rect()))    # must not raise
+    assert widget._showHdgFlag is True
+
+
+def test_arc_forward_clip_hides_rear_bearing(fix, qtbot):
+    """A bearing needle whose station is behind the aircraft is clipped out of the
+    arc (forward sector only), while a forward one is shown."""
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=180.0, src2=2.0)
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._HeadFail = widget._HeadBad = False
+    for n in (1, 2):
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+    widget._heading = 0.0
+    assert widget._arc_in_sector(widget._brg[1]) is True     # 10 deg ahead
+    assert widget._arc_in_sector(widget._brg[2]) is False    # 180 behind
+    widget.paintEvent(QPaintEvent(widget.rect()))            # must not raise
