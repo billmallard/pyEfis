@@ -667,3 +667,284 @@ def test_hdg_cat_tape_invalid_annunciation(fix, qtbot):
     with track_calls(QPen, "__init__") as tracker:
         widget.paintEvent(event)
     assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))   # red flag
+
+
+# --- HSI bearing pointers (P5b.2) --------------------------------------------
+
+def _define_bearing_keys(fix, brg1=None, brg2=None, src1=None, src2=None):
+    """Define the P5b.1 bearing keys on the mock db so an enabled pointer's
+    defensive subscribe finds them. Values optional; flags cleared."""
+    for key, val in (("BRG1", brg1), ("BRG2", brg2),
+                     ("BRG1SRC", src1), ("BRG2SRC", src2)):
+        if val is None:
+            continue
+        fix.db.define_item(key, key, "float", 0.0, 359.9, "deg", 50000, "")
+        fix.db.set_value(key, val)
+        fix.db.get_item(key).old = False
+        fix.db.get_item(key).bad = False
+        fix.db.get_item(key).fail = False
+
+
+def test_bearing_angle_tracks_heading_and_wraps(fix, qtbot):
+    """The needle sits at (BRGn - heading) on the heading-up card, wrapped to
+    [0, 360). This is the gap the widget must get right; unit-level, no paint."""
+    _define_bearing_keys(fix, brg1=90.0, src1=2.0)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+
+    widget._heading = 0.0
+    widget._brg[1] = 90.0
+    assert widget._bearing_angle_deg(1) == 90.0
+    widget._heading = 30.0
+    assert widget._bearing_angle_deg(1) == 60.0
+    # wrap: 10 - 350 = -340 -> 20
+    widget._heading = 350.0
+    widget._brg[1] = 10.0
+    assert widget._bearing_angle_deg(1) == 20.0
+
+
+def test_bearing_visibility_gated_by_enable_heading_and_quality(fix, qtbot):
+    _define_bearing_keys(fix, brg1=120.0, src1=2.0)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.bearing1_enabled = True
+    # good state -> visible
+    widget._HeadFail = widget._HeadBad = False
+    widget._brgOld[1] = widget._brgBad[1] = widget._brgFail[1] = False
+    assert widget._bearing_visible(1) is True
+    # disabled -> hidden
+    widget.bearing1_enabled = False
+    assert widget._bearing_visible(1) is False
+    widget.bearing1_enabled = True
+    # heading invalid hides all heading-referenced needles (HSI-ANN-001)
+    widget._HeadBad = True
+    assert widget._bearing_visible(1) is False
+    widget._HeadBad = False
+    widget._HeadFail = True
+    assert widget._bearing_visible(1) is False
+    widget._HeadFail = False
+    # the pointer's own BRGn quality hides just that needle (HSI-FAIL-001)
+    for flag in ("_brgOld", "_brgBad", "_brgFail"):
+        getattr(widget, flag)[1] = True
+        assert widget._bearing_visible(1) is False
+        getattr(widget, flag)[1] = False
+    assert widget._bearing_visible(1) is True
+    # pointer 2 absent (BRG2 never defined) -> never visible even if enabled
+    widget.bearing2_enabled = True
+    assert widget._bearing_visible(2) is False
+
+
+def test_bearing_color_follows_source(fix, qtbot):
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=20.0, src2=0.0)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget._brgSrc[1] = 2.0                       # GPS -> magenta (course_color)
+    assert widget._bearing_color(1) == QColor(widget.course_color)
+    widget._brgSrc[1] = 0.0                       # VOR1 -> green (vloc_color)
+    assert widget._bearing_color(1) == QColor(widget.vloc_color)
+    widget._brgSrc[1] = 1.0                       # VOR2 -> green
+    assert widget._bearing_color(1) == QColor(widget.vloc_color)
+    widget._brgSrc[1] = None                      # unknown -> generic bearing_color
+    assert widget._bearing_color(1) == QColor(widget.bearing_color)
+
+
+def test_bearing_source_cycle_writes_key(fix, qtbot):
+    _define_bearing_keys(fix, brg1=10.0, src1=0.0)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget._brgSrc[1] = 0.0
+    widget._cycle_bearing_src(1)                  # VOR1 -> VOR2
+    assert fix.db.get_item("BRG1SRC").value == 1.0
+    widget._brgSrc[1] = 1.0
+    widget._cycle_bearing_src(1)                  # VOR2 -> GPS
+    assert fix.db.get_item("BRG1SRC").value == 2.0
+    widget._brgSrc[1] = 2.0
+    widget._cycle_bearing_src(1)                  # GPS -> VOR1 (wrap)
+    assert fix.db.get_item("BRG1SRC").value == 0.0
+
+
+def test_bearing_source_label_text(fix, qtbot):
+    _define_bearing_keys(fix, brg1=10.0, src1=0.0)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget._brgSrc[1] = 0.0
+    assert widget._bearing_src_label(1) == "1 VOR1"
+    widget._brgSrc[1] = 1.0
+    assert widget._bearing_src_label(1) == "1 VOR2"
+    widget._brgSrc[2] = 2.0
+    assert widget._bearing_src_label(2) == "2 GPS"
+    widget._brgSrc[1] = None
+    assert widget._bearing_src_label(1) == ""
+
+
+def test_bearing_enabled_paint_never_raises_with_keys(fix, qtbot):
+    """Both needles enabled with valid keys: construct + paint must not raise
+    and the needles must be drawable (a source-coloured pen is created)."""
+    _define_bearing_keys(fix, brg1=45.0, src1=2.0, brg2=250.0, src2=0.0)
+    widget = hsi.HSI(font_percent=0.1, cdi_enabled=True, gsi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._HeadFail = widget._HeadBad = False
+    for n in (1, 2):
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+    event = QPaintEvent(widget.rect())
+    widget.paintEvent(event)                       # must not raise
+    assert widget._bearing_visible(1) is True
+    assert widget._bearing_visible(2) is True
+
+
+def test_bearing_construct_and_paint_never_raises_without_keys(fix, qtbot):
+    """Pointers enabled but BRG keys undefined (a panel whose fix-gateway lacks
+    the P5b.1 data layer): construct + paint must not raise and no needle shows
+    (construct-never-raises)."""
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    assert widget.brgdb[1] is None and widget.brgdb[2] is None
+    event = QPaintEvent(widget.rect())
+    widget.paintEvent(event)                       # must not raise
+    assert widget._bearing_visible(1) is False
+    assert widget._bearing_visible(2) is False
+
+
+# --- HSI arc orientation mode (P5b.3) ----------------------------------------
+
+def test_hsi_orientation_default_is_heading_up(fix, qtbot):
+    """Default orientation renders the existing rose (non-arc), so every existing
+    rotation/paint test exercises the unchanged path."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    assert widget.orientation == "heading_up"
+
+
+def test_arc_rel_angle_wraps_shortest(fix, qtbot):
+    """_rel_angle is the shortest signed delta in (-180, 180]."""
+    f = hsi.HSI._rel_angle
+    assert f(90, 0) == 90
+    assert f(0, 30) == -30
+    assert f(10, 350) == 20            # wrap forward
+    assert f(350, 10) == -20           # wrap back
+    assert f(0, 180) == 180
+
+
+def test_arc_geometry_lubber_symmetry_and_scale(fix, qtbot):
+    """Arc band: rel=0 sits at the top lubber; +/-rel are mirror images; the
+    forward sector is clipped at +/-ARC_HALF_DEG; and the arc angular scale is
+    EXPANDED relative to the full rose (proof of the 'new scale factor')."""
+    import math
+    widget = hsi.HSI()                             # default font -> fontSize 15
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._heading = 0.0
+
+    cx, top_y, own_y, half_w, sag = widget._arc_params()
+    # straight ahead -> top lubber
+    x0, y0 = widget._arc_band_point(0.0)
+    assert abs(x0 - cx) < 1e-6 and abs(y0 - top_y) < 1e-6
+    # symmetry about the lubber
+    xr, yr = widget._arc_band_point(30.0)
+    xl, yl = widget._arc_band_point(330.0)          # -30
+    assert abs((xr - cx) + (xl - cx)) < 1e-6        # mirror in x
+    assert abs(yr - yl) < 1e-6                        # same bow
+    assert xr > cx > xl                              # +rel right, -rel left
+    # monotonic x across the sector
+    assert widget._arc_band_point(10.0)[0] < widget._arc_band_point(50.0)[0]
+    # forward clip: edge in, just past out, rear out
+    assert widget._arc_in_sector(60.0) is True
+    assert widget._arc_in_sector(61.0) is False
+    assert widget._arc_in_sector(180.0) is False
+    assert widget._arc_in_sector(300.0) is True     # -60
+    # expanded scale: arc px/deg exceeds the rose's edge scale (r * pi/180)
+    assert widget._arc_scale() > widget.r * math.pi / 180.0
+
+
+def test_arc_band_point_tracks_heading(fix, qtbot):
+    """The band is heading-referenced: a fixed world bearing moves across the arc
+    as heading changes, and a bearing at the current heading stays at the lubber."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    cx = widget._arc_params()[0]
+    widget._heading = 90.0
+    x_ahead, _ = widget._arc_band_point(90.0)       # dead ahead
+    assert abs(x_ahead - cx) < 1e-6
+    x_right, _ = widget._arc_band_point(120.0)      # 30 deg right of nose
+    assert x_right > cx
+    assert widget._arc_in_sector(200.0) is False    # behind-ish, clipped
+
+
+def test_arc_paint_never_raises_full_panel(fix, qtbot):
+    """Arc paint with CDI+GSI, both bearing needles, heading bug and track diamond
+    all live must not raise, and the source tap rect is still set (tappable)."""
+    _define_bearing_keys(fix, brg1=45.0, src1=2.0, brg2=330.0, src2=0.0)
+    widget = hsi.HSI(cdi_enabled=True, gsi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.heading_bug_enabled = True
+    widget.resize(320, 320)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._HeadFail = widget._HeadBad = False
+    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
+    for n in (1, 2):
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+    widget.setGsv(1)
+    widget._hdgBug = 20.0
+    widget._track = 350.0
+    widget._TrackOld = widget._TrackBad = widget._TrackFail = False
+    widget.navsrcdb = object()
+    widget._navsrc = 2
+    widget.paintEvent(QPaintEvent(widget.rect()))    # must not raise
+    assert widget._showCDI is True
+    assert widget._source_label_rect is not None      # nav-source tap target set
+
+
+def test_arc_paint_never_raises_on_fail(fix, qtbot):
+    """Arc paint annunciates a failed heading (red HDG flag) and does not raise;
+    numerals are suppressed on fail, matching the rose path."""
+    widget = hsi.HSI(cdi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.setHeadFail(True)
+    widget.paintEvent(QPaintEvent(widget.rect()))    # must not raise
+    assert widget._showHdgFlag is True
+
+
+def test_arc_forward_clip_hides_rear_bearing(fix, qtbot):
+    """A bearing needle whose station is behind the aircraft is clipped out of the
+    arc (forward sector only), while a forward one is shown."""
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=180.0, src2=2.0)
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._HeadFail = widget._HeadBad = False
+    for n in (1, 2):
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+    widget._heading = 0.0
+    assert widget._arc_in_sector(widget._brg[1]) is True     # 10 deg ahead
+    assert widget._arc_in_sector(widget._brg[2]) is False    # 180 behind
+    widget.paintEvent(QPaintEvent(widget.rect()))            # must not raise
