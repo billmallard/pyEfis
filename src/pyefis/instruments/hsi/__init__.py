@@ -897,11 +897,16 @@ class HSI(QGraphicsView):
         y = ay if anchor[1] == 't' else (ay - bh if anchor[1] == 'b' else ay - bh / 2.0)
         box = QRectF(x, y, bw, bh)
         col = QColor(color)
-        fill = QColor(0, 0, 0); fill.setAlphaF(0.55)
-        c.setPen(QPen(col, max(1.0, self.fontSize * 0.06)))
-        c.setBrush(QBrush(fill))
-        rad = self.fontSize * 0.3
-        c.drawRoundedRect(box, rad, rad)
+        # Shared house style (helpers.READOUT_*) -- the same primitive the tape
+        # readout boxes draw through (P5c), so the two cannot drift. This
+        # variant keeps its own fill/border alphas: the border is the value's
+        # own colour at full strength, which is what distinguishes the cyan
+        # selected-heading box from the source-coloured course box.
+        helpers.draw_readout_panel(
+            c, box, self.fontSize * 0.3, col,
+            pen_width=self.fontSize * helpers.READOUT_PEN_RATIO,
+            fill_alpha=0.55, border_alpha=1.0,
+        )
         f = QFont(self.font_family)
         if label:
             f.setPixelSize(max(9, int(self.fontSize * 0.64)))
@@ -970,12 +975,16 @@ class HSI(QGraphicsView):
         divided into equal cells, each a small label + degree value with hairline
         dividers. orientation 'v' stacks cells, 'h' rows them. Translucent fill
         for legibility over the map."""
-        border = QColor(self.fg_color); border.setAlphaF(0.85)
-        fill = QColor(0, 0, 0); fill.setAlphaF(0.62)
-        c.setPen(QPen(border, max(1.0, self.fontSize * 0.06)))
-        c.setBrush(QBrush(fill))
-        rad = self.fontSize * 0.35
-        c.drawRoundedRect(QRectF(x, y, w, h), rad, rad)
+        # Shared house style (helpers.READOUT_*): this panel is where the look
+        # was established, and the tape readout boxes now draw through the same
+        # primitive (P5c) so the two cannot drift.
+        _pen, _brush = helpers.draw_readout_panel(
+            c, QRectF(x, y, w, h),
+            self.fontSize * helpers.READOUT_RADIUS_RATIO,
+            QColor(self.fg_color),
+            pen_width=self.fontSize * helpers.READOUT_PEN_RATIO,
+        )
+        border = _pen.color()
         n = max(1, len(segments))
         # Labels: bolder + a touch larger so the cyan/magenta read true at small
         # sizes (Bill 2026-08-02: cyan HDG label read greenish when tiny).

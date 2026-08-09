@@ -1,5 +1,87 @@
+from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
+
+#: Shared readout-panel design tokens.
+#:
+#: The HSI's integral readout panel (P5a) established the house look for a
+#: value read off a moving background: a rounded container over a translucent
+#: black fill, bordered in the foreground colour. P5c extends the same look to
+#: the airspeed/altitude tape readout boxes, which previously used a solid
+#: white-on-black rectangle with bracket "arms" and an opaque black triangle.
+#: Every instrument that draws one goes through the two functions below, so the
+#: HSI panel and the tape boxes cannot drift apart.
+#:
+#: The fill is deliberately translucent rather than solid: these boxes sit over
+#: the SVS/attitude background, and a solid block reads as a hole punched in
+#: the scene. 0.62 keeps a white value well above the WCAG 4.5:1 contrast floor
+#: even over a fully-lit sky (see tests/instruments/test_readout_panel.py).
+READOUT_FILL_ALPHA = 0.62
+READOUT_BORDER_ALPHA = 0.85
+#: Corner radius and border width, both as a fraction of the readout's font
+#: size, so the panel scales with the instrument instead of with the screen.
+READOUT_RADIUS_RATIO = 0.35
+READOUT_PEN_RATIO = 0.06
+
+
+def readout_panel_pen_brush(border_color, pen_width=1.0,
+                            fill_alpha=READOUT_FILL_ALPHA,
+                            border_alpha=READOUT_BORDER_ALPHA):
+    """Pen + brush for the shared rounded readout container.
+
+    Returned rather than drawn so the QGraphicsScene-based readouts
+    (NumericalDisplay) and the QPainter-based ones (HSI) share one definition
+    of the look. `border_color` is anything QColor accepts.
+    """
+    border = QColor(border_color)
+    border.setAlphaF(max(0.0, min(1.0, float(border_alpha))))
+    fill = QColor(0, 0, 0)
+    fill.setAlphaF(max(0.0, min(1.0, float(fill_alpha))))
+    return QPen(border, max(1.0, float(pen_width))), QBrush(fill)
+
+
+def draw_readout_panel(painter, rect, radius, border_color, pen_width=1.0,
+                       fill_alpha=READOUT_FILL_ALPHA,
+                       border_alpha=READOUT_BORDER_ALPHA):
+    """Draw the shared rounded readout container into `rect` (QRectF-able).
+
+    QPainter convenience wrapper over readout_panel_pen_brush(); leaves the
+    pen/brush set so a caller can keep drawing dividers in the same style.
+    """
+    pen, brush = readout_panel_pen_brush(
+        border_color, pen_width, fill_alpha, border_alpha)
+    painter.setPen(pen)
+    painter.setBrush(brush)
+    painter.drawRoundedRect(QRectF(rect), radius, radius)
+    return pen, brush
+
+
+def draw_readout_notch(painter, x, y, size, side, border_color,
+                       pen_width=1.0, fill_alpha=READOUT_FILL_ALPHA,
+                       border_alpha=READOUT_BORDER_ALPHA):
+    """Draw the small read-line notch that points from a tape readout box at
+    the tape scale.
+
+    This replaces the tapes' old opaque black triangle: same job (mark exactly
+    where on the scale the boxed value is read), but in the readout panel's own
+    fill and border so the two read as one object. `(x, y)` is the midpoint of
+    the notch's base on the box edge; `side` is 'left' or 'right' (the
+    direction the apex points). Only the two slanted edges are stroked -- the
+    base is left open so the box's own border runs through unbroken.
+    """
+    depth = -float(size) if side == "left" else float(size)
+    apex = QPointF(x + depth, y)
+    base_top = QPointF(x, y - float(size))
+    base_bottom = QPointF(x, y + float(size))
+    pen, brush = readout_panel_pen_brush(
+        border_color, pen_width, fill_alpha, border_alpha)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(brush)
+    painter.drawPolygon(QPolygonF([base_top, apex, base_bottom]))
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawPolyline(QPolygonF([base_top, apex, base_bottom]))
+
 
 def fit_to_mask(width,height,mask,font,units_mask=None, units_ratio=0.8, numeric=False):
     font_size = 100
