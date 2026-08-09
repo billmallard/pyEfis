@@ -28,6 +28,9 @@ __pycache__/
 *.jpg
 # ...except the golden regression images (see docs/svs_structural_plan.md P0)
 !tests/golden/*.png
+# ...and the committed before/after renders that document a widget's look
+# (tools/render_instrument.py output, referenced from PRs and docs/)
+!docs/images/**/*.png
 
 # C extensions
 *.so
