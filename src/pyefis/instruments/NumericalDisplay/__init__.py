@@ -18,6 +18,15 @@ from PyQt6.QtGui import *
 from PyQt6.QtCore import *
 from PyQt6.QtWidgets import *
 
+from pyefis.instruments import helpers
+
+#: Horizontal padding inside the rounded readout panel, as a fraction of the
+#: widget width -- keeps the outermost digit clear of the corner arc.
+_READOUT_PAD_X = 0.045
+#: Panel height as a multiple of the digit height, so the value sits inside the
+#: border with a little air rather than touching it top and bottom.
+_READOUT_PANEL_H = 1.20
+
 
 class NumericalDisplay(QGraphicsView):
     def __init__(
@@ -29,7 +38,14 @@ class NumericalDisplay(QGraphicsView):
         font_size=15,
     ):
         super(NumericalDisplay, self).__init__(parent)
-        self.setStyleSheet("border: 0px")
+        # Transparent so the rounded readout panel's translucent fill reveals
+        # the tape (and whatever is behind it) instead of a widget-shaped block.
+        self.setStyleSheet("background: transparent; border: 0px")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setBackgroundBrush(QBrush(Qt.BrushStyle.NoBrush))
+        #: Readout panel geometry in widget coordinates, set in resizeEvent.
+        #: None until the first resize (the tapes fall back to their own width).
+        self.readout_rect = None
         self.font_family = font_family
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -50,11 +66,16 @@ class NumericalDisplay(QGraphicsView):
         self.w = self.width()
         self.h = self.height()
 
+        # Fit the digits inside the panel's padded interior, not edge-to-edge:
+        # the rounded corners (P5c) would otherwise clip the outermost glyph.
+        pad_x = self.w * _READOUT_PAD_X
+        avail = max(1.0, self.w - 2 * pad_x)
+
         t = QGraphicsSimpleTextItem("9")
         t.setFont(self.f)
         font_width = t.boundingRect().width()
         font_height = t.boundingRect().height()
-        while font_width * (self.total_decimals) >= self.w - 0.1:
+        while font_width * (self.total_decimals) >= avail - 0.1:
             self.font_size -= 0.1
             self.f.setPointSizeF(self.font_size)
             t.setFont(self.f)
@@ -62,7 +83,7 @@ class NumericalDisplay(QGraphicsView):
             font_width = rect.width()
             font_height = rect.height()
 
-        while font_width * (self.total_decimals) <= self.w - 0.1:
+        while font_width * (self.total_decimals) <= avail - 0.1:
             self.font_size += 0.1
             self.f.setPointSizeF(self.font_size)
             t.setFont(self.f)
@@ -73,24 +94,43 @@ class NumericalDisplay(QGraphicsView):
         self.f = QFont(self.font_family, self.font_size)
 
         self.scene = QGraphicsScene(0, 0, self.w, self.h)
-        border_width = 1
-        top = (self.h - font_height) / 2
-        rect_pen = QPen(QColor(Qt.GlobalColor.white))
-        rect_pen.setWidth(border_width)
-        self.scene.addRect(
-            0, top, self.w, font_height, rect_pen, QBrush(QColor(Qt.GlobalColor.black))
+        # The readout container (P5c): one rounded, translucent panel in the
+        # shared house style (helpers.READOUT_*), replacing the old solid
+        # white-on-black rectangle plus the bracket "arms" that used to frame
+        # the scrolling column out to the widget edges. Geometry is published
+        # as readout_rect so the tapes can size their read notch off the box
+        # rather than off their own width.
+        border_width = max(1.0, font_height * helpers.READOUT_PEN_RATIO)
+        panel_h = font_height * _READOUT_PANEL_H
+        top = (self.h - panel_h) / 2.0
+        text_top = (self.h - font_height) / 2.0
+        radius = font_height * helpers.READOUT_RADIUS_RATIO
+        rect_pen, rect_brush = helpers.readout_panel_pen_brush(
+            QColor(Qt.GlobalColor.white), border_width
         )
+        inset = border_width / 2.0
+        self.readout_rect = QRectF(
+            inset, top, max(1.0, self.w - border_width), panel_h
+        )
+        panel = QPainterPath()
+        panel.addRoundedRect(self.readout_rect, radius, radius)
+        self.scene.addPath(panel, rect_pen, rect_brush)
         self.setScene(self.scene)
         self.scrolling_area = NumericalScrollDisplay(
             self, self.scroll_decimal, self.font_family, self.font_size
         )
         self.scene.addWidget(self.scrolling_area)
         self.digit_vertical_spacing = font_height
+        # Clip the scrolling drum to one digit height: it used to be the full
+        # widget height, so the neighbouring digits spilled out above and below
+        # the box entirely. One digit tall, the drum shows only the value at
+        # rest and rolls its neighbour in through the panel as the value moves.
         self.scrolling_area.resize(
-            qRound(font_width * self.scroll_decimal + border_width), self.h
+            max(1, qRound(font_width * self.scroll_decimal + border_width)),
+            max(1, qRound(font_height)),
         )
-        sax = qRound(self.w - font_width * self.scroll_decimal - border_width)
-        self.scrolling_area.move(sax, 0)
+        sax = qRound(self.w - pad_x - font_width * self.scroll_decimal)
+        self.scrolling_area.move(sax, qRound(text_top))
         prest = "0" * (self.total_decimals - self.scroll_decimal)
         if self._bad or self._old:
             prest = ""
@@ -98,24 +138,19 @@ class NumericalDisplay(QGraphicsView):
         self.pre_scroll_text.setPen(QPen(QColor(Qt.GlobalColor.white)))
         self.pre_scroll_text.setBrush(QBrush(QColor(Qt.GlobalColor.white)))
 
-        self.pre_scroll_text.setX(0)
-        self.pre_scroll_text.setY((self.h - font_height) / 2.0)
+        self.pre_scroll_text.setX(pad_x)
+        self.pre_scroll_text.setY(text_top)
 
-        x = sax - border_width / 2
-        l = self.scene.addLine(x, 0, x, top)
-        l.setPen(rect_pen)
-        top += font_height
-        l = self.scene.addLine(x, top, x, self.h)
-        l.setPen(rect_pen)
-        l = self.scene.addLine(x, 0, self.w, 0)
-        l.setPen(rect_pen)
-        l = self.scene.addLine(x, self.h, self.w, self.h)
-        l.setPen(rect_pen)
-
-        # Get a failure scene ready in case it's needed
+        # Get a failure scene ready in case it's needed. Same rounded panel so
+        # the box does not change shape when the source fails -- only its fill
+        # (solid grey, an annunciation rather than a value) and the red XXX.
         self.fail_scene = QGraphicsScene(0, 0, self.w, self.h)
-        self.fail_scene.addRect(
-            0, 0, self.w, self.h, QPen(QColor(Qt.GlobalColor.white)), QBrush(QColor(50, 50, 50))
+        fail_path = QPainterPath()
+        fail_path.addRoundedRect(self.readout_rect, radius, radius)
+        self.fail_scene.addPath(
+            fail_path,
+            QPen(QColor(Qt.GlobalColor.white), border_width),
+            QBrush(QColor(50, 50, 50)),
         )
         warn_font = QFont(self.font_family, 10, QFont.Weight.Bold)
         t = self.fail_scene.addSimpleText("XXX", warn_font)
@@ -228,7 +263,11 @@ class NumericalDisplay(QGraphicsView):
 class NumericalScrollDisplay(QGraphicsView):
     def __init__(self, parent=None, scroll_decimal=1, font_family="Sans", font_size=10):
         super(NumericalScrollDisplay, self).__init__()
-        self.setStyleSheet("border: 0px")
+        # Transparent: the drum sits inside the readout panel and takes its
+        # tint from the panel's translucent fill. Its own opaque black plate
+        # would punch a solid block back through it.
+        self.setStyleSheet("background: transparent; border: 0px")
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -245,12 +284,13 @@ class NumericalScrollDisplay(QGraphicsView):
         t.setFont(self.f)
         font_width = t.boundingRect().width()
         font_height = t.boundingRect().height()
-        self.digit_vertical_spacing = font_height * 0.8
+        # One digit height per step (was 0.8, which left ~20% of the next digit
+        # showing under the value at rest -- tolerable when the drum bled past
+        # the old box, clutter now that it is clipped inside the panel).
+        self.digit_vertical_spacing = font_height
         nsh = self.digit_vertical_spacing * 12 + self.h
         self.scene = QGraphicsScene(0, 0, self.w, nsh)
-        self.scene.addRect(
-            0, 0, self.w, nsh, QPen(QColor(Qt.GlobalColor.black)), QBrush(QColor(Qt.GlobalColor.black))
-        )
+        self.setBackgroundBrush(QBrush(Qt.BrushStyle.NoBrush))
         for i in range(20):
             y = self.y_offset(i) - font_height / 2
             if y < 0:
