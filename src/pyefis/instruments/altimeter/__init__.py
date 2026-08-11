@@ -408,6 +408,16 @@ class Altimeter_Tape(QGraphicsView):
             else:
                 self.numerical_display.value = self._altimeter
 
+    def _readout_notch_size(self):
+        """Half-height (and depth) of the read notch, taken from the readout
+        panel so the notch scales with the box. Falls back to a width-derived
+        size when the numeric box is switched off (numeric_box=False)."""
+        rect = getattr(getattr(self, "numerical_display", None),
+                       "readout_rect", None)
+        if rect is not None and rect.height() > 0:
+            return rect.height() * 0.42
+        return self.width() / 12.0
+
     #  Index Line that doesn't move to make it easy to read the altimeter.
     def paintEvent(self, event):
         # edge_fade (percent of height, 0 = off): melt the scrolling
@@ -422,19 +432,15 @@ class Altimeter_Tape(QGraphicsView):
         p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        marks = QPen(Qt.GlobalColor.white, 1)
+        # Read notch (P5c): the old opaque-black triangle is now a small notch
+        # in the readout panel's own fill/border, sized off the panel so the
+        # two read as one object. Drawn whether or not the numeric box is shown
+        # -- without it the tape has nothing marking the read line.
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
-        p.setPen(marks)
-        p.setBrush(QBrush(Qt.GlobalColor.black))
-        triangle_size = w / 8
-        p.drawConvexPolygon(
-            QPolygonF(
-                [
-                    QPointF(0, -triangle_size),
-                    QPointF(0, triangle_size),
-                    QPointF(triangle_size, 0),
-                ]
-            )
+        triangle_size = self._readout_notch_size()
+        helpers.draw_readout_notch(
+            p, 0, 0, triangle_size, "right", QColor(Qt.GlobalColor.white),
+            pen_width=max(1.0, triangle_size * 2 * helpers.READOUT_PEN_RATIO),
         )
 
         # Altitude-trend vector (AC 23.1311-1C sec 17.8.b) -- a cyan look-ahead
