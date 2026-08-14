@@ -58,7 +58,11 @@ class WaterPolygon:
     id        : int
     kind      : str          # 'ocean', 'lake', 'river', ...
     elev_ft   : float | None # known water-surface elev; None = sample SRTM
-    vertices  : list = field(default_factory=list)  # [(lat, lon), ...]
+    # (n, 2) float64 ndarray of (lat, lon) rows (#125); may be a
+    # read-only view of the storage blob. Iterates/unpacks like the
+    # old list-of-tuples. Cached queries (#124) share one array —
+    # treat as immutable.
+    vertices  : object = field(default_factory=list)
     # Pre-tessellated triangle indices (flat list of ints, 3 per
     # triangle, into the ``vertices`` list). Bytes blob in storage,
     # decoded to a Python list at load time so the GPU renderer can
@@ -79,9 +83,10 @@ class WaterPolygon:
         return self.kind == "ocean"
 
     @property
-    def outer_vertices(self) -> list:
-        """The outer ring alone — the whole ``vertices`` list for a
-        single-ring polygon."""
+    def outer_vertices(self):
+        """The outer ring alone — the whole ``vertices`` array for a
+        single-ring polygon. An ndarray view, same shape rules as
+        ``vertices``."""
         if self.rings:
             return self.vertices[:self.rings[0]]
         return self.vertices
@@ -319,8 +324,9 @@ class WaterDB:
             yield poly
 
 
-def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
-    """Unpack a struct-packed <dd... bytes blob into [(lat, lon), ...].
+def _decode_vertices(blob: bytes, max_vertices: int | None = None):
+    """Unpack a struct-packed <dd... bytes blob into an ``(n, 2)``
+    float64 ndarray of (lat, lon) rows.
 
     When ``max_vertices`` is set and the polygon has more vertices than
     that, stride-decimate uniformly down to the cap (always preserving
@@ -330,23 +336,24 @@ def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
     the per-load CPU when the screen can't resolve the difference at
     typical SVS distances.
 
-    Uses numpy.frombuffer for the bulk decode — at ~200 polygons /
-    frame in the GPU water path each saved millisecond shows up in
-    the visible frame rate, and the Python ``struct.unpack_from``
-    loop was visible in the profile."""
-    if not blob:
-        return []
+    Returns the ndarray directly (#125) — the old list-of-tuples
+    materialization was itself the hottest decode line in flight
+    profiling, and both consumers go straight back to numpy anyway
+    (the SVS collector via ``asarray(dtype=float32)``, which copies;
+    the map layer via vectorised projection). Iteration still unpacks
+    like the old list (``for lat, lon in poly.vertices``). The
+    undecimated array is a READ-ONLY view of the blob — deliberate,
+    since cached polygons (#124) share it between query results."""
     import numpy as _np
+    if not blob:
+        return _np.empty((0, 2), dtype=_np.float64)
     pts = _np.frombuffer(blob, dtype="<f8").reshape(-1, 2)
     n = pts.shape[0]
     if max_vertices and n > max_vertices:
         # Even-stride decimation preserving indices 0 and n-1.
         idx = _np.round(_np.linspace(0, n - 1, max_vertices)).astype(int)
         pts = pts[idx]
-    # Return as a list of plain Python tuples — the GPU collector
-    # immediately re-wraps them with np.asarray, but the rest of the
-    # codebase (and tests) treats vertices as a list-of-tuples.
-    return [tuple(row) for row in pts.tolist()]
+    return pts
 
 
 def encode_vertices(vertices) -> bytes:

@@ -532,7 +532,7 @@ class TestWaterDB:
         poly = polys[0]
         assert poly.rings == [4, 8]
         assert len(poly.vertices) == 8
-        assert poly.outer_vertices == outer
+        assert np.array_equal(poly.outer_vertices, outer)
 
     def test_pre_rings_db_reads_with_rings_none(self, tmp_path):
         """A pre-#44 database (no rings column) stays readable; every
@@ -548,7 +548,7 @@ class TestWaterDB:
         polys = list(db.polygons_in_range(34.4, -119.8, 30.0))
         assert len(polys) == 1
         assert polys[0].rings is None
-        assert polys[0].outer_vertices == polys[0].vertices
+        assert polys[0].outer_vertices is polys[0].vertices
 
     def test_polygon_cache_shares_decoded_objects(self, tmp_path):
         """#124: repeat queries yield the SAME decoded WaterPolygon
