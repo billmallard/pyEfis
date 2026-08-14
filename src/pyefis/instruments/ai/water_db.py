@@ -44,6 +44,7 @@ import logging
 import math
 import sqlite3
 import struct
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -97,13 +98,30 @@ class WaterDB:
     # for users who want denser coastlines on larger displays.
     DEFAULT_MAX_VERTICES = 32
 
+    # Decoded-polygon cache budget, in TOTAL cached vertices (#124).
+    # The DB is static, so a row's decode is deterministic per instance
+    # (the cap is fixed at construction) and repeat queries near a dense
+    # coastline — every SVS collect cycle and every map tile re-render —
+    # were re-decoding the same island polygons each time. Vertex count
+    # is the bound (not entry count) because multi-ring coastline cells
+    # are never capped and dwarf the 32-vertex inland rows.
+    DEFAULT_CACHE_VERTEX_BUDGET = 500_000
+
     def __init__(self, sqlite_path: str | Path | None,
-                 max_vertices: int | None = None):
+                 max_vertices: int | None = None,
+                 cache_vertex_budget: int | None = None):
         self._path = Path(sqlite_path) if sqlite_path else None
         self._con: sqlite3.Connection | None = None
         self._max_vertices = (max_vertices
                               if max_vertices is not None
                               else self.DEFAULT_MAX_VERTICES)
+        # id -> (WaterPolygon, vertex_count), LRU order. Confined to
+        # this instance's worker thread like the connection itself.
+        self._poly_cache: OrderedDict[int, tuple] = OrderedDict()
+        self._cache_verts = 0
+        self._cache_vertex_budget = (cache_vertex_budget
+                                     if cache_vertex_budget is not None
+                                     else self.DEFAULT_CACHE_VERTEX_BUDGET)
         # True when an R-Tree spatial index virtual table is present;
         # we then use it for bbox queries instead of the plain B-tree
         # index on min/max columns. R-Tree is ~50x faster on KSBA-
@@ -258,7 +276,19 @@ class WaterDB:
                 params = params + (min_d2,)
             cur = self._con.execute(sql, params)
         cap = self._max_vertices
+        cache = self._poly_cache
+        budget = self._cache_vertex_budget
         for r in cur:
+            # Decoded-polygon cache (#124): the yielded WaterPolygon is
+            # SHARED with the cache — consumers must treat it as
+            # immutable (both in-tree consumers only read; the SVS
+            # collector's np.asarray(..., dtype=float32) copies).
+            pid = r["id"]
+            hit = cache.get(pid)
+            if hit is not None:
+                cache.move_to_end(pid)
+                yield hit[0]
+                continue
             # The stored vertex count picks the triangle/ring index
             # dtype (uint16 <= 65535 vertices, uint32 beyond) — dense
             # multi-ring cells overflow uint16 and the builder mirrors
@@ -269,14 +299,24 @@ class WaterDB:
             # decimation across concatenated rings would corrupt the
             # ring topology AND the pre-tessellated triangle indices.
             # The build-time per-ring cap is the bound for these rows.
-            yield WaterPolygon(
-                id=r["id"],
+            poly = WaterPolygon(
+                id=pid,
                 kind=(r["kind"] or "").strip().lower(),
                 elev_ft=r["elev_ft"],
                 vertices=_decode_vertices(r["vertices"],
                                           None if rings else cap),
                 triangles=_decode_triangles(r["triangles"], n_verts),
                 rings=rings)
+            nv = len(poly.vertices)
+            cache[pid] = (poly, nv)
+            self._cache_verts += nv
+            # Evict LRU-first, but never the entry just inserted: a
+            # single dense coastline cell can exceed the whole budget
+            # by itself, and it is exactly the row worth keeping.
+            while self._cache_verts > budget and len(cache) > 1:
+                _, (_old, old_nv) = cache.popitem(last=False)
+                self._cache_verts -= old_nv
+            yield poly
 
 
 def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:

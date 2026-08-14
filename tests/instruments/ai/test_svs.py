@@ -550,6 +550,51 @@ class TestWaterDB:
         assert polys[0].rings is None
         assert polys[0].outer_vertices == polys[0].vertices
 
+    def test_polygon_cache_shares_decoded_objects(self, tmp_path):
+        """#124: repeat queries yield the SAME decoded WaterPolygon
+        objects instead of re-decoding the blobs each cycle."""
+        from pyefis.instruments.ai.water_db import WaterDB
+        path = self._build_db(tmp_path, [
+            ("ocean", None, [(34.0, -120.5), (34.0, -119.5),
+                             (34.5, -119.5), (34.5, -120.5)]),
+        ])
+        db = WaterDB(path)
+        first = list(db.polygons_in_range(34.4, -119.8, 30.0))
+        second = list(db.polygons_in_range(34.4, -119.8, 30.0))
+        assert len(first) == len(second) == 1
+        assert second[0] is first[0]
+
+    def test_polygon_cache_evicts_lru_on_vertex_budget(self, tmp_path):
+        from pyefis.instruments.ai.water_db import WaterDB
+        path = self._build_db(tmp_path, [
+            ("lake", 10.0, [(34.0, -120.5), (34.0, -119.5),
+                            (34.5, -119.5), (34.5, -120.5)]),
+            ("lake", 20.0, [(44.0, -120.5), (44.0, -119.5),
+                            (44.5, -119.5), (44.5, -120.5)]),
+        ])
+        # A 4-vertex budget holds exactly one of the 4-vertex polygons.
+        db = WaterDB(path, cache_vertex_budget=4)
+        a1 = list(db.polygons_in_range(34.2, -120.0, 30.0))[0]
+        list(db.polygons_in_range(44.2, -120.0, 30.0))    # evicts a1
+        a2 = list(db.polygons_in_range(34.2, -120.0, 30.0))[0]
+        assert a2 is not a1
+        assert a2.elev_ft == a1.elev_ft
+        assert len(db._poly_cache) == 1
+        assert db._cache_verts == 4
+
+    def test_polygon_cache_keeps_oversized_newest_entry(self, tmp_path):
+        """A single polygon larger than the whole budget stays cached --
+        it is exactly the expensive row worth keeping."""
+        from pyefis.instruments.ai.water_db import WaterDB
+        verts = [(34.0 + 0.001 * i, -120.0 + 0.001 * (i % 3))
+                 for i in range(10)]
+        path = self._build_db(tmp_path, [("lake", 10.0, verts)])
+        db = WaterDB(path, cache_vertex_budget=4)
+        p1 = list(db.polygons_in_range(34.005, -120.0, 30.0))[0]
+        p2 = list(db.polygons_in_range(34.005, -120.0, 30.0))[0]
+        assert p2 is p1
+        assert len(db._poly_cache) == 1
+
 
 class TestSVSWaterRendering:
     """``_draw_water`` overlays water polygons on top of the terrain
