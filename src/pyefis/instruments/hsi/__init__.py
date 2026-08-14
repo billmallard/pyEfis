@@ -661,30 +661,79 @@ class HSI(QGraphicsView):
         self._rose_cache = (scene, key, img)
         return img
 
+    # Pre-rotated rose blit cache (#126) tuning: heading quantization step
+    # and how many rotated frames to retain (a few entries absorb heading
+    # jitter dithering across a step boundary).
+    _ROSE_ROT_STEP_DEG = 0.5
+    _ROSE_ROT_CACHE_MAX = 4
+
+    def _rotated_rose_image(self):
+        """The rose pre-rotated to the current heading, widget-sized, cached
+        by heading quantized to _ROSE_ROT_STEP_DEG (#126). The per-frame
+        smooth-filtered rotate+downscale of the 2x bake was the hottest
+        paint leaf in flight profiling (8.2% of GIL-held samples on the
+        N150); caching the rotated result makes the frame cost an unscaled
+        drawImage, and the filter runs only when the heading crosses a step
+        (~6/s in a standard-rate turn, ~never in cruise). Max card error is
+        a quarter degree -- about one pixel at the rose rim at typical
+        sizes; the heading bug, track diamond, needles and numerals still
+        use the exact heading. Keyed on the bake's cacheKey() so scene
+        rebuilds (resize) invalidate this cache exactly when they
+        invalidate the bake."""
+        base = self._rose_image()
+        step = self._ROSE_ROT_STEP_DEG
+        q = (round(self._heading / step) * step) % 360.0
+        dpr = float(self.devicePixelRatioF())
+        key = (q, base.cacheKey(), dpr)
+        cache = getattr(self, "_rot_rose_cache", None)
+        if cache is None:
+            cache = self._rot_rose_cache = {}
+        img = cache.get(key)
+        if img is not None:
+            return img
+        w, hgt = self.width(), self.height()
+        img = QImage(max(1, int(round(w * dpr))),
+                     max(1, int(round(hgt * dpr))),
+                     QImage.Format.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(dpr)
+        img.fill(0)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.translate(self.cx, self.cy)
+        p.rotate(-q)
+        p.drawImage(QRectF(-self.cx, -self.cy, w, hgt), base)
+        p.end()
+        cache[key] = img
+        while len(cache) > self._ROSE_ROT_CACHE_MAX:
+            del cache[next(iter(cache))]
+        return img
+
     def paintEvent(self, event):
         # Arc orientation (P5b.3) is a parallel paint path; every other
         # orientation renders the full 360 rose below, byte-for-byte unchanged.
         if getattr(self, "orientation", "heading_up") == "arc":
             self._paint_arc(event)
             return
-        # The rose is static art on a rotating card: blit the cached
-        # unrotated bake through the heading rotation instead of having
-        # QGraphicsView re-render ~84 items per frame (#94 -- the HSI
-        # was ~24% of all GIL time in flight). The heading bug and
+        # The rose is static art on a rotating card: blit a cached
+        # pre-rotated bake instead of having QGraphicsView re-render
+        # ~84 items per frame (#94 -- the HSI was ~24% of all GIL time
+        # in flight) or smooth-filtering the rotation every frame
+        # (#126 -- see _rotated_rose_image). The heading bug and
         # track diamond are the only dynamic card items; they are drawn
-        # here under the same rotation, in scene coordinates, exactly
-        # as their scene polygons are computed. setHeading still
+        # here under the exact-heading rotation, in scene coordinates,
+        # exactly as their scene polygons are computed. setHeading still
         # rotates the (now unpainted) view so scene-item updates keep
         # scheduling repaints.
         c = QPainter(self.viewport())
         c.setRenderHint(QPainter.RenderHint.Antialiasing)
         c.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # 1:1 blit of the pre-rotated rose (#126); the rotation filter cost
+        # lives in _rotated_rose_image and is paid only on step crossings.
+        c.drawImage(self.rect(), self._rotated_rose_image())
         c.save()
         c.translate(self.cx, self.cy)
         c.rotate(-self._heading)
-        c.drawImage(QRectF(-self.cx, -self.cy,
-                           self.width(), self.height()),
-                    self._rose_image())
         c.translate(-self.cx, -self.cy)
         if self.hdg_bug_item is not None:
             _hbc = QColor(self.heading_bug_color)
