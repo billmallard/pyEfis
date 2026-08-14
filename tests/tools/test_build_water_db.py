@@ -282,7 +282,7 @@ class TestShapefileImport:
         poly = polys[0]
         assert poly.rings == [4, 8]
         assert len(poly.vertices) == 8           # never re-decimated
-        assert poly.outer_vertices == poly.vertices[:4]
+        assert poly.outer_vertices.tolist() == poly.vertices[:4].tolist()
         assert poly.triangles is not None
         assert max(poly.triangles) < len(poly.vertices)
         assert not _covered_by_triangles(*ISLAND_PT, poly.vertices,
