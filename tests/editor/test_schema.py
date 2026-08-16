@@ -122,6 +122,21 @@ def test_options_are_well_formed():
             assert "type" in spec
 
 
+def test_containers_are_well_formed():
+    """Category-4 container slots (a property whose value is a subtree, not a
+    leaf -- e.g. tab_section's `tabs`) carry a name + label, and every entry
+    has the key even when empty, matching the uniform-shape rule the other
+    three categories follow."""
+    s = eschema.build_schema()
+    for t, entry in s["instruments"].items():
+        assert "containers" in entry, f"{t}: missing 'containers' key"
+        for slot in entry["containers"]:
+            assert slot.get("name"), f"{t}: container slot missing name"
+            assert slot.get("label"), f"{t}: container slot missing label"
+    tabs = s["instruments"]["tab_section"]["containers"]
+    assert [c["name"] for c in tabs] == ["tabs"]
+
+
 def test_schema_is_json_serialisable():
     text = eschema.to_json()
     reparsed = json.loads(text)

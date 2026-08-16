@@ -35,7 +35,7 @@ from pyefis.instruments import weston
 from pyefis.instruments import wind
 from pyefis.instruments.ai.VirtualVfr import VirtualVfr
 from pyefis.screens.instrument_spec import (
-    Binding, InstrumentSpec, Prop, FixValue)
+    Binding, ContainerSlot, InstrumentSpec, Prop, FixValue)
 
 
 def build_weston(screen, config, font_percent=None, font_family=None, replace=None):
@@ -135,6 +135,19 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
     raise ValueError(
         "button needs options: either 'config:' (an external YAML) or inline "
         "fields including 'dbkey:'")
+
+
+def build_tab_section(
+    screen, config, font_percent=None, font_family=None, replace=None
+):
+    from pyefis.instruments.tab_section import TabSection
+    opts = config.get("options", {}) or {}
+    return TabSection(
+        screen,
+        tabs=config.get("tabs") or [],
+        default_tab=opts.get("default_tab", 0),
+        font_family=font_family,
+    )
 
 
 def build_static_text(
@@ -1254,6 +1267,33 @@ _register(InstrumentSpec(
              help="background-box fill colour"),
         _bg_opacity_prop(),
     ],
+))
+
+_register(InstrumentSpec(
+    type="tab_section",
+    label="Tab Section",
+    category="container",
+    builder=build_tab_section,
+    properties=[
+        Prop("default_tab", "integer", default=0, minimum=0,
+             label="Default tab",
+             help="tab index shown on screen load/power-up -- always this "
+                  "fixed tab, never the last one selected (v1, see "
+                  "pyEfis#131 open question 2)"),
+    ],
+    containers=[
+        ContainerSlot(
+            name="tabs", label="Tabs",
+            help="ordered list of {label, layout, instruments} tab pages; "
+                 "each tab is built as its own nested screen (same "
+                 "layout+instruments shape as a top-level screen) laid out "
+                 "against this container's own box, not the screen's"),
+    ],
+    # Building real nested content recurses create_instrument() through a
+    # full nested Screen (FIX subscriptions, config_path, preferences) --
+    # needs the real enclosing screen, like weston/button's external config:
+    # path. See instrument_spec.py's builds_in_isolation docstring.
+    builds_in_isolation=False,
 ))
 
 
