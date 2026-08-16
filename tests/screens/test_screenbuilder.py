@@ -2416,3 +2416,137 @@ class TestScreenBuilderClose:
         qtbot.addWidget(screen)
 
         screen.closeEvent(None)
+
+
+class TestTabSection:
+    """tab_section (pyEfis#131 / AER-172): a container instrument whose tabs
+    are built through the exact same Screen/create_instrument() path a
+    top-level screen uses, recursed against the container's own box."""
+
+    def _build(self, qtbot, tabs, default_tab=0):
+        config = _config_with_instruments([
+            {
+                "type": "tab_section",
+                "row": 0,
+                "column": 0,
+                "span": {"rows": 10, "columns": 10},
+                "options": {"default_tab": default_tab},
+                "tabs": tabs,
+            },
+        ])
+        parent = _TestParent(config)
+        screen = Screen(parent)
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+        screen.init_screen()
+        return screen
+
+    def test_tab_section_instrument_loaded(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "Engine", "layout": {"rows": 4, "columns": 4},
+             "instruments": []},
+            {"label": "Nav", "layout": {"rows": 4, "columns": 4},
+             "instruments": []},
+        ])
+        assert 0 in screen.instruments
+        tab_section = screen.instruments[0]
+        assert tab_section.tab_bar.count() == 2
+        assert tab_section.tab_bar.tabText(0) == "Engine"
+        assert tab_section.tab_bar.tabText(1) == "Nav"
+
+    def test_nested_instruments_are_built_through_the_same_pipeline(
+        self, fix, qtbot
+    ):
+        """The real engineering lift: a tab's nested `instruments:` list is
+        built via create_instrument(), same as a top-level screen."""
+        screen = self._build(qtbot, [
+            {"label": "Engine", "layout": {"rows": 4, "columns": 4},
+             "instruments": [
+                 {"type": "static_text", "row": 0, "column": 0,
+                  "options": {"text": "OIL"}},
+                 {"type": "static_text", "row": 1, "column": 0,
+                  "options": {"text": "CHT"}},
+             ]},
+        ])
+        tab_section = screen.instruments[0]
+        page = tab_section._pages[0]
+        assert isinstance(page, Screen)
+        assert page.init is True
+        assert len(page.instruments) == 2
+
+    def test_nested_instruments_are_positioned_against_the_container_box(
+        self, fix, qtbot
+    ):
+        """Nested instruments are laid out against the tab section's own
+        width/height, not the enclosing screen's -- the coordinate-space
+        recursion pyEfis#131 calls out as the real lift."""
+        screen = self._build(qtbot, [
+            {"label": "Engine", "layout": {"rows": 1, "columns": 1},
+             "instruments": [
+                 {"type": "static_text", "row": 0, "column": 0,
+                  "span": {"rows": 1, "columns": 1},
+                  "options": {"text": "OIL"}},
+             ]},
+        ])
+        tab_section = screen.instruments[0]
+        page = tab_section._pages[0]
+        inst = page.instruments[0]
+        # A single 1x1-grid instrument fills the whole tab content area
+        # (below the tab bar), i.e. the container's box -- not the 800x480
+        # enclosing screen.
+        assert inst.width() == tab_section.stack.width()
+        assert inst.height() == tab_section.stack.height()
+        # The tab bar eats into the container's height, not its width -- the
+        # content area is narrower vertically than the 800x480 enclosing
+        # screen, proving the recursion uses the container's own box.
+        assert tab_section.stack.width() == 800
+        assert tab_section.stack.height() < 480
+
+    def test_default_tab_selects_initial_page(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+            {"label": "B", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+            {"label": "C", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ], default_tab=2)
+        tab_section = screen.instruments[0]
+        assert tab_section.tab_bar.currentIndex() == 2
+        assert tab_section.stack.currentIndex() == 2
+
+    def test_default_tab_out_of_range_falls_back_to_zero(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ], default_tab=5)
+        tab_section = screen.instruments[0]
+        assert tab_section.tab_bar.currentIndex() == 0
+
+    def test_empty_tabs_list_gets_one_default_tab(self, fix, qtbot):
+        """Never an unrenderable state: a container with no authored tabs
+        still shows one placeholder tab (matches the configurator's
+        "starts with one default tab" convention, AER-173)."""
+        screen = self._build(qtbot, [])
+        tab_section = screen.instruments[0]
+        assert tab_section.tab_bar.count() == 1
+
+    def test_clicking_tab_bar_switches_the_visible_page(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+            {"label": "B", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+        tab_section.tab_bar.setCurrentIndex(1)
+        assert tab_section.stack.currentIndex() == 1
+
+    def test_close_event_closes_every_tab_page(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+            {"label": "B", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+        pages = list(tab_section._pages)
+        closed = []
+        for page in pages:
+            page.close = lambda p=page: closed.append(p)
+
+        tab_section.closeEvent(None)
+
+        assert closed == pages

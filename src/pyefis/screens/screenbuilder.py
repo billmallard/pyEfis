@@ -41,6 +41,11 @@ class Screen(QWidget):
     def __init__(self, parent=None, config=None):
         super(Screen, self).__init__(parent)
         self.parent = parent
+        # A top-level named screen is looked up via self.parent.get_config_item()
+        # (gui.Main keyed by nodeID -- see get_config_item() below). A nested
+        # screen built directly from a dict -- e.g. one tab_section page, which
+        # has no entry in gui.screens -- carries its own config here instead.
+        self.config = config
         p = self.parent.palette()
         self.screenColor = (0, 0, 0)
         self.encoder = None
@@ -314,6 +319,15 @@ class Screen(QWidget):
                 self.move_resize_inst(
                     i, qRound(x), qRound(y), qRound(r_width), qRound(r_height)
                 )
+                # Container instruments (tab_section) size their nested
+                # Screens from their OWN geometry, which is only known now
+                # (post-resize) -- and .resize() above does not reliably
+                # deliver a synchronous resizeEvent for a widget with no
+                # shown top-level window (headless build / not on screen
+                # yet). Mirror gui.Main's own "force it to build now instead
+                # of waiting for first show" hook, one level down.
+                if callable(getattr(self.instruments[i], "initScreen", None)):
+                    self.instruments[i].initScreen()
 
             try:
                 # Gauges need this run to set them up
@@ -337,6 +351,8 @@ class Screen(QWidget):
             self.grid_layout()
 
     def get_config_item(self, key):
+        if self.config is not None:
+            return self.config.get(key)
         return self.parent.get_config_item(self, key)
 
     def get_bounding_box(self, width, height, x, y, ratio):
