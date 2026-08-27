@@ -1299,6 +1299,23 @@ class HSI(QGraphicsView):
     # is placed through _arc_band_point / _arc_in_sector so they all share the one
     # scale. This is a SEPARATE paint path -- it never touches the rose bake or
     # the view rotation, so the north_up/heading_up/track_up rose is unchanged.
+    #
+    # DECISION (pyEfis#133, 2026-08-23): this widget is an HSI, and its arc
+    # mode's CDI stays COURSE-BOUND -- the deviation bar and dots are drawn at
+    # ownship, perpendicular to the course line, so the whole CDI rotates with
+    # the course pointer as heading/course change. That is _draw_arc_course's
+    # behaviour today and it is staying. Precedent: Garmin G1000/G3X Touch PFD
+    # HSI, both of which keep the CDI bound to the course arrow in ARC mode.
+    #
+    # This was flagged because it borrows the arc idiom from transport-category
+    # Navigation Displays (Boeing 737 ND, Airbus ND), which instead show a
+    # SCREEN-FIXED deviation scale at the display edge -- confirmed against
+    # authoritative 737 avionics material (see #133). That is a genuinely
+    # different idiom, not a variant of this one, so it does not belong here:
+    # it is scoped to a separate Navigation Display mode on the moving-map
+    # instrument (pyEfis#134), which this HSI widget does not implement and
+    # must not grow toward. If a screen-fixed deviation scale is ever wanted
+    # on THIS widget, that is a reopening of #133, not a tweak to arc mode.
     ARC_HALF_DEG = 60.0
 
     @staticmethod
@@ -1499,7 +1516,10 @@ class HSI(QGraphicsView):
         """Arc course pointer + lateral CDI: the pointer runs from ownship toward
         the COURSE band point (when in sector); the deviation dots and CDI bar sit
         at ownship, perpendicular to the course line, so the CDI angle tracks the
-        arc scale. GS is the screen-fixed right-side scale, shared with the rose."""
+        arc scale. GS is the screen-fixed right-side scale, shared with the rose.
+        Course-bound by decision, not by default -- see pyEfis#133; a
+        screen-fixed lateral scale is the Navigation Display idiom and belongs
+        on the moving-map ND mode (pyEfis#134), not here."""
         if self.cdi_enabled and self._arc_in_sector(self._courseSelect):
             bx, by = self._arc_band_point(self._courseSelect)
             dx = bx - ox; dy = by - oy
@@ -1581,11 +1601,18 @@ class HSI(QGraphicsView):
                 continue
             if self.brgdb[_n] is None and self.brgsrcdb[_n] is None:
                 continue
+            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
+                       or self._brgBad[_n] or self._brgFail[_n])
+            # A valid pointer clipped outside the forward sector draws no
+            # needle (_draw_arc_bearing_needle); its label must not outlive
+            # it, or the annunciation reads as "on screen" when it is not.
+            # Invalid pointers keep the label regardless of sector -- the
+            # failure is real regardless of where the stale bearing points.
+            if not invalid and not self._arc_in_sector(self._brg[_n]):
+                continue
             txt = self._bearing_src_label(_n)
             if not txt:
                 continue
-            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
-                       or self._brgBad[_n] or self._brgFail[_n])
             if invalid:
                 txt = txt + " X"
             lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize * 0.85))

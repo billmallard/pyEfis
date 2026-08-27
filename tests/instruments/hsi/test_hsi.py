@@ -948,3 +948,94 @@ def test_arc_forward_clip_hides_rear_bearing(fix, qtbot):
     assert widget._arc_in_sector(widget._brg[1]) is True     # 10 deg ahead
     assert widget._arc_in_sector(widget._brg[2]) is False    # 180 behind
     widget.paintEvent(QPaintEvent(widget.rect()))            # must not raise
+
+
+# --- Arc-mode CDI: course-bound, not screen-fixed (decision record, #133) ----
+
+def test_arc_cdi_is_course_bound_not_screen_fixed(fix, qtbot):
+    """Decision record for #133: this widget is an HSI, so its arc-mode CDI
+    stays COURSE-BOUND (the deviation bar runs parallel to the course line and
+    rotates with it) rather than adopting the Navigation Display idiom of a
+    screen-fixed scale at the display edge. A screen-fixed scale would draw the
+    same bar orientation regardless of the selected course; a course-bound one
+    rotates the bar as COURSE changes. Assert the latter -- if arc mode is ever
+    made screen-fixed, this test must be deliberately changed, not silently
+    broken."""
+    import math
+    widget = hsi.HSI(cdi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._heading = 0.0
+    widget._CdiOld = widget._CdiBad = False
+    widget._courseDeviation = 0.5
+    widget._showCDI = True
+    ox, oy = widget._arc_params()[0], widget._arc_params()[2]
+
+    def cdi_bar_angle(course):
+        widget.coursePointer = course
+        painter = mock.Mock()
+        widget._draw_arc_course(painter, ox, oy)
+        # The CDI bar is the second drawLine call: the first is the course
+        # pointer shaft, the second (when _showCDI) is the deviation bar --
+        # both share _draw_arc_course's local (ux, uy)/(px, py) frame.
+        line = painter.drawLine.call_args_list[1].args[0]
+        return math.atan2(line.y2() - line.y1(), line.x2() - line.x1())
+
+    angle_ahead = cdi_bar_angle(0.0)     # course dead ahead
+    angle_right = cdi_bar_angle(30.0)    # course 30 deg right of nose
+    # A screen-fixed ND-style scale would hold this angle constant across a
+    # COURSE change; course-bound HSI behaviour rotates it with the course.
+    assert abs(angle_ahead - angle_right) > 0.1
+
+
+def test_arc_bearing_label_hidden_when_pointer_clipped_out_of_sector(fix, qtbot):
+    """Regression for #133: a valid bearing pointer clipped outside the
+    forward sector must not leave its source label lit -- the label used to be
+    gated only on the pointer being enabled and its data healthy, never on
+    _arc_in_sector, so the display could read e.g. "1 GPS" with no pointer 1
+    anywhere on screen. The label should disappear with its needle."""
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=180.0, src2=2.0)
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._HeadFail = widget._HeadBad = False
+    for n in (1, 2):
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+    widget._heading = 0.0
+    assert widget._arc_in_sector(widget._brg[1]) is True      # pointer 1: on screen
+    assert widget._arc_in_sector(widget._brg[2]) is False     # pointer 2: clipped, valid data
+
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
+
+    assert widget._brg_label_rect[1] is not None     # in-sector pointer keeps its label
+    assert widget._brg_label_rect[2] is None          # clipped-but-valid pointer: no label
+
+
+def test_arc_bearing_label_stays_when_invalid_regardless_of_sector(fix, qtbot):
+    """Invalid bearing data still annunciates ("... X") even when the stale
+    bearing happens to fall outside the forward sector -- the failure is real
+    regardless of where a stale value points, so it must not be suppressed by
+    the clipping fix above."""
+    _define_bearing_keys(fix, brg1=180.0, src1=2.0)
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._heading = 0.0
+    widget._brgOld[1] = True                          # stale -- invalid
+    assert widget._arc_in_sector(widget._brg[1]) is False
+
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
+
+    assert widget._brg_label_rect[1] is not None
