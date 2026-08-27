@@ -363,7 +363,22 @@ covers annunciation, but a pure-fail CDI is not yet removed) and confirming
 **HSI-SRC-001.** The active nav source is annunciated on the face at all times (e.g.
 "GPS", "VOR1", "LOC1"), coloured per HSI-COLOR-001, so the crew always knows what drives
 lateral/vertical guidance (14 CFR §23.2605(b); `avionics_reference.md` §4.1).
-*Status: implemented — the tappable source label.*
+*Status: implemented. In `readout_layout: top_panel` (the default), the annunciation is
+a coloured tab (`HSI._draw_source_tab`, pyEfis#140) on the left edge of the HDG | MAG |
+CRS panel, in line with those readouts: fill = active source colour (moving
+HSI-COLOR-001's colour from glyphs to fill), text white and centred, height = panel
+height less both corner radii (the panel's left-edge straight run), left corners rounded
+on `helpers.READOUT_RADIUS_RATIO`, right edge square and flush with the panel (no seam).
+The whole tab is the tap target; `mousePressEvent` still cycles NAVSRC GPS→NAV1→NAV2
+unchanged. `corners` / `split` / `none` draw no such panel and keep the prior floating
+top-left label. Two open items from the #140 fit/contrast pass, both explicitly Bill's
+call rather than something this change decides unilaterally: (1) at `font_percent: 0.07`
+(the `sixpack*` screens) the tab overflows past the widget's left edge for every source
+label, including the shortest ("GPS") — the panel already consumes ~87% of the widget
+width at that ratio, and per the hard boundary the panel is not resized/moved to make
+room; (2) white-on-source-colour measures ~3.1:1 for magenta (GPS) and ~1.4:1 for green
+(VLOC/VOR/LOC) against the WCAG 4.5:1 floor — text stays white per Bill's direction, so
+the fix, if any, is a darker fill, not the text colour.*
 
 ### 7.5 Deviation scaling (HSI-DEV)
 
