@@ -672,6 +672,10 @@ _register(InstrumentSpec(
              help="faint concentric rings inside the rose (a light structural "
                   "cue; real depth comes from the translucent face over the map, "
                   "so these are off by default)"),
+        Prop("shadow_enabled", "boolean", default=False, label="Drop shadow",
+             help="soft drop shadow on the static elements -- the rose disc "
+                  "and the readout panel -- for a raised, layered look; off "
+                  "by default"),
         Prop("orientation", "enum", default="heading_up",
              enum=["heading_up", "north_up", "track_up", "arc"],
              label="Orientation",
