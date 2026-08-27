@@ -408,10 +408,11 @@ class Altimeter_Tape(QGraphicsView):
             else:
                 self.numerical_display.value = self._altimeter
 
-    def _readout_notch_size(self):
-        """Half-height (and depth) of the read notch, taken from the readout
-        panel so the notch scales with the box. Falls back to a width-derived
-        size when the numeric box is switched off (numeric_box=False)."""
+    def _trend_offset_base(self):
+        """Base unit for the trend vector's horizontal offset from the tape
+        edge, taken from the readout panel so it scales with the box. Falls
+        back to a width-derived size when the numeric box is switched off
+        (numeric_box=False)."""
         rect = getattr(getattr(self, "numerical_display", None),
                        "readout_rect", None)
         if rect is not None and rect.height() > 0:
@@ -432,16 +433,7 @@ class Altimeter_Tape(QGraphicsView):
         p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Read notch (P5c): the old opaque-black triangle is now a small notch
-        # in the readout panel's own fill/border, sized off the panel so the
-        # two read as one object. Drawn whether or not the numeric box is shown
-        # -- without it the tape has nothing marking the read line.
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
-        triangle_size = self._readout_notch_size()
-        helpers.draw_readout_notch(
-            p, 0, 0, triangle_size, "right", QColor(Qt.GlobalColor.white),
-            pen_width=max(1.0, triangle_size * 2 * helpers.READOUT_PEN_RATIO),
-        )
 
         # Altitude-trend vector (AC 23.1311-1C sec 17.8.b) -- a cyan look-ahead
         # from the read pointer: up when climbing, down when descending. Only
@@ -455,7 +447,7 @@ class Altimeter_Tape(QGraphicsView):
                 p.setBrush(QBrush(trend_color))
                 max_trend_px = qRound(h * 0.45)
                 trend_y = max(-max_trend_px, min(max_trend_px, qRound(-self._trend_px)))
-                x0 = qRound(triangle_size * 1.3)
+                x0 = qRound(self._trend_offset_base() * 1.3)
                 p.drawLine(x0, 0, x0, trend_y)
                 arrow = max(3, qRound(w / 14))
                 if trend_y < 0:      # climbing

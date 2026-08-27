@@ -97,9 +97,7 @@ class NumericalDisplay(QGraphicsView):
         # The readout container (P5c): one rounded, translucent panel in the
         # shared house style (helpers.READOUT_*), replacing the old solid
         # white-on-black rectangle plus the bracket "arms" that used to frame
-        # the scrolling column out to the widget edges. Geometry is published
-        # as readout_rect so the tapes can size their read notch off the box
-        # rather than off their own width.
+        # the scrolling column out to the widget edges.
         border_width = max(1.0, font_height * helpers.READOUT_PEN_RATIO)
         panel_h = font_height * _READOUT_PANEL_H
         top = (self.h - panel_h) / 2.0

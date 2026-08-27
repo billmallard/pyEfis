@@ -459,15 +459,6 @@ class Airspeed_Tape(QGraphicsView):
         self.centerOn(self.scene.width() / 2, -self._airspeed * self.pph + tape_start)
         self.numerical_display.value = self._airspeed
 
-    def _readout_notch_size(self):
-        """Half-height (and depth) of the read notch, taken from the readout
-        panel so the notch scales with the box, not with the tape width."""
-        rect = getattr(getattr(self, "numerical_display", None),
-                       "readout_rect", None)
-        if rect is not None and rect.height() > 0:
-            return rect.height() * 0.42
-        return self.width() / 12.0
-
     #  Index Line that doesn't move to make it easy to read the airspeed.
     def paintEvent(self, event):
         # edge_fade (percent of height, 0 = off): melt the scrolling
@@ -523,16 +514,8 @@ class Airspeed_Tape(QGraphicsView):
             p.drawText(QRectF(0, box_y + lbl_px + 2, w, val_px + 4),
                        int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), tas_str)
 
-        # Read notch and trend — translated to tape/box boundary midpoint.
-        # P5c: the old opaque-black triangle is now a small notch in the
-        # readout panel's own fill/border (helpers.draw_readout_notch), sized
-        # off the panel so the two read as one object.
+        # Trend — translated to tape/box boundary midpoint.
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
-        notch_size = self._readout_notch_size()
-        helpers.draw_readout_notch(
-            p, 0, 0, notch_size, "left", QColor(Qt.GlobalColor.white),
-            pen_width=max(1.0, notch_size * 2 * helpers.READOUT_PEN_RATIO),
-        )
 
         # Airspeed trend indicator
         if self.show_trend:
