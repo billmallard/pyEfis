@@ -20,8 +20,36 @@ READOUT_FILL_ALPHA = 0.62
 READOUT_BORDER_ALPHA = 0.85
 #: Corner radius and border width, both as a fraction of the readout's font
 #: size, so the panel scales with the instrument instead of with the screen.
+#: This is the HSI's own token (its top_panel readout uses it directly against
+#: `self.fontSize`) -- do not repoint the tape boxes at it, see
+#: TAPE_READOUT_RADIUS_RATIO below.
 READOUT_RADIUS_RATIO = 0.35
 READOUT_PEN_RATIO = 0.06
+#: Tape readout box (airspeed/altitude) corner radius, as a fraction of the
+#: box's OWN base quantity: `font_height`, the fitted digit glyph height in
+#: NumericalDisplay (panel height there is 1.20 * font_height). This is a
+#: separate token from READOUT_RADIUS_RATIO on purpose (AER-386, Bill
+#: 2026-08-27: "the roundedness of the airspeed and altitude boxes is too
+#: much"): READOUT_RADIUS_RATIO is keyed to the HSI's `fontSize`, a different
+#: base quantity, and the tape box is much shorter relative to its own font
+#: than the HSI panel is to its own fontSize -- reusing 0.35 against
+#: font_height ate ~29% of the tape box's height (near the geometric max
+#: before QPainter clamps a rounded rect to a full stadium/pill -- confirmed
+#: by rendering, see below) versus ~14.5% for the HSI's panel.
+#:
+#: Calibrated by rendering both at the sizes they occupy on a real PFD
+#: (virtual_vfr.yaml's grid, at 1920x1080): the HSI top_panel panel there is
+#: 950x950 (font_percent 0.05 -> fontSize 48 -> radius 48*0.35 = 16.8px,
+#: 14.5% of its 115.52px panel height). Reusing that ABSOLUTE 16.8px on the
+#: tape box (font_percent 0.25/0.24 -> font_height 22.0, panel height
+#: 1.20*22.0 = 26.4px) exceeds half the panel height, so QPainter clamps it to
+#: a full pill -- visually indistinguishable from the too-round original and
+#: not a fix (rendered and compared to confirm). Matching the HSI's
+#: *proportion* instead -- radius = 14.5% of panel height = 0.145 * 26.4 =
+#: 3.84px -- reads as the same restrained, boxy corner as the HSI. As a
+#: fraction of font_height that is 3.84 / 22.0 = 0.1745, rounded to 0.17
+#: (3.74px at that font_height).
+TAPE_READOUT_RADIUS_RATIO = 0.17
 
 
 def readout_panel_pen_brush(border_color, pen_width=1.0,
