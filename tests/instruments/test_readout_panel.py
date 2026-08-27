@@ -14,9 +14,11 @@ rather than a cosmetic one:
     is clipped to the panel instead of bleeding past it.
 """
 
+import math
+
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QGraphicsLineItem, QGraphicsPathItem, QGraphicsRectItem, QWidget,
 )
@@ -91,6 +93,59 @@ def test_readout_value_stays_legible_over_sky_and_ground(background, alpha):
     """
     composited = _over((0, 0, 0), alpha, background)
     assert _contrast((255, 255, 255), composited) >= 4.5
+
+
+# --------------------------------------------------------------------------
+# Shared static-element drop-shadow tokens (AER-392 / pyEfis#142)
+# --------------------------------------------------------------------------
+
+def test_drop_shadow_effect_defaults_to_zero_offset(qtbot):
+    """Zero offset is the rotation-safe default (AER-392 gotcha #1) -- a
+    caller must opt IN to an offset, not opt out of one."""
+    effect = helpers.drop_shadow_effect(12.0)
+    assert effect.blurRadius() == 12.0
+    assert effect.xOffset() == 0.0
+    assert effect.yOffset() == 0.0
+    assert effect.color().alphaF() == pytest.approx(
+        helpers.SHADOW_ALPHA, abs=_ALPHA_TOL)
+
+
+def test_drop_shadow_effect_clamps_negative_blur(qtbot):
+    effect = helpers.drop_shadow_effect(-5.0)
+    assert effect.blurRadius() == 0.0
+
+
+def test_bake_blurred_silhouette_pads_the_canvas(qtbot):
+    """The bake canvas must be bigger than the widget-sized target -- see
+    SHADOW_CANVAS_PAD_RATIO -- or the Gaussian falloff clips into a hard
+    edge before it can fully resolve (gotcha #2)."""
+    def paint_dot(p):
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(0, 0, 0)))
+        p.drawEllipse(QRectF(40, 40, 20, 20))
+
+    blur = 10.0
+    img, pad = helpers.bake_blurred_silhouette(100, 100, paint_dot, blur)
+    assert pad == int(math.ceil(blur * helpers.SHADOW_CANVAS_PAD_RATIO))
+    assert img.width() == 100 + 2 * pad
+    assert img.height() == 100 + 2 * pad
+    # The shape's own centre is opaque-ish; a corner far from it is empty --
+    # proof the bake actually drew (and didn't just return a blank canvas).
+    assert img.pixelColor(pad + 50, pad + 50).alpha() > 0
+    assert img.pixelColor(0, 0).alpha() == 0
+
+
+def test_bake_blurred_silhouette_uses_the_requested_colour(qtbot):
+    def paint_square(p):
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(0, 0, 0)))
+        p.drawRect(QRectF(10, 10, 30, 30))
+
+    img, pad = helpers.bake_blurred_silhouette(
+        60, 60, paint_square, 2.0, color=QColor(255, 0, 0), alpha=1.0)
+    centre = img.pixelColor(pad + 25, pad + 25)
+    assert centre.red() > centre.green()
+    assert centre.red() > centre.blue()
 
 
 # --------------------------------------------------------------------------
