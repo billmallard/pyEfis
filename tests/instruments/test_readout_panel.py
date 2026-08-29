@@ -129,9 +129,12 @@ def test_bake_blurred_silhouette_pads_the_canvas(qtbot):
     assert pad == int(math.ceil(blur * helpers.SHADOW_CANVAS_PAD_RATIO))
     assert img.width() == 100 + 2 * pad
     assert img.height() == 100 + 2 * pad
-    # The shape's own centre is opaque-ish; a corner far from it is empty --
-    # proof the bake actually drew (and didn't just return a blank canvas).
-    assert img.pixelColor(pad + 50, pad + 50).alpha() > 0
+    # The shape's own centre is punched back out (AER-415) -- zero, not
+    # opaque; the falloff just past the shape's edge is where the halo
+    # actually lives, and a corner far from either is still empty -- proof
+    # the bake drew a halo (not a blank canvas) without filling the shape.
+    assert img.pixelColor(pad + 50, pad + 50).alpha() == 0
+    assert img.pixelColor(pad + 60, pad + 50).alpha() > 0
     assert img.pixelColor(0, 0).alpha() == 0
 
 
@@ -143,9 +146,12 @@ def test_bake_blurred_silhouette_uses_the_requested_colour(qtbot):
 
     img, pad = helpers.bake_blurred_silhouette(
         60, 60, paint_square, 2.0, color=QColor(255, 0, 0), alpha=1.0)
-    centre = img.pixelColor(pad + 25, pad + 25)
-    assert centre.red() > centre.green()
-    assert centre.red() > centre.blue()
+    # The shape's own interior is punched out (AER-415), so sample the
+    # falloff right at the square's edge rather than its centre.
+    edge = img.pixelColor(pad + 40, pad + 25)
+    assert edge.alpha() > 0
+    assert edge.red() > edge.green()
+    assert edge.red() > edge.blue()
 
 
 # --------------------------------------------------------------------------
