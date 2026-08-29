@@ -89,6 +89,11 @@ class HSI(QGraphicsView):
         self.readout_layout = "top_panel"  # top_panel | corners | split | none
         self.numeral_scale = 1.5           # rose numeral size multiplier
         self.depth_rings = False           # faint inner rings (off by default)
+        # Soft drop shadow on the static elements -- rose disc, readout panel,
+        # and (once #140 lands) the nav-source tab -- via the shared
+        # helpers.SHADOW_* tokens (AER-392 / pyEfis#142). Off by default, same
+        # as depth_rings above.
+        self.shadow_enabled = False
         # Compass orientation (P5b.3). north_up/heading_up/track_up all render the
         # existing full-360 rotating rose UNCHANGED (their distinct behaviours are
         # a separate item; today the single rotating card serves all three). "arc"
@@ -334,6 +339,18 @@ class HSI(QGraphicsView):
             self._gutter = self.height() * 0.16
             self.r = min(self.width(), self.height() - self._gutter) / 2.0 - 5.0
             self.cy = self._gutter + (self.height() - self._gutter) / 2.0
+        # Reserve clearance for the rose drop shadow (AER-392): the disc sat
+        # only 5px from the widget edge, nowhere near enough room for a
+        # blurred halo to resolve without hard-clipping against the widget
+        # bounds (gotcha #2). Shrinking the rose itself when the shadow is on
+        # -- instead of clamping the blur radius after the fact -- guarantees
+        # the halo always has the room bake_blurred_silhouette/the drop-shadow
+        # effect actually needs (SHADOW_CANVAS_PAD_RATIO), at the cost of a
+        # slightly smaller rose. No-op (0px) when shadows are off.
+        self._rose_shadow_blur = 0.0
+        if getattr(self, "shadow_enabled", False):
+            self._rose_shadow_blur = self.fontSize * helpers.SHADOW_BLUR_RATIO
+            self.r -= self._rose_shadow_blur * helpers.SHADOW_CANVAS_PAD_RATIO
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
@@ -350,6 +367,17 @@ class HSI(QGraphicsView):
                 self.cx - self.r, self.cy - self.r, self.r * 2.0, self.r * 2.0,
                 QPen(Qt.PenStyle.NoPen), QBrush(_disc))
             _bgitem.setZValue(-1)
+            # Rose drop shadow (Option 2, AER-392): a QGraphicsDropShadowEffect
+            # on this scene item, captured for free by the existing rose bake
+            # (_rose_image -- rendered once per resize, then pre-rotated and
+            # cached by _rotated_rose_image). Zero offset matters here
+            # specifically: the disc is circular and the bake gets ROTATED per
+            # heading, so a symmetric halo is the only shadow that looks
+            # identical at every heading (gotcha #1) -- an offset one would
+            # make the implied light source appear to orbit as the card turns.
+            if getattr(self, "shadow_enabled", False):
+                _bgitem.setGraphicsEffect(
+                    helpers.drop_shadow_effect(self._rose_shadow_blur))
 
         # Setup Pens
         compassPen = QPen(QColor(self.fg_color), self.fontSize * 0.02)
@@ -940,6 +968,53 @@ class HSI(QGraphicsView):
         # screen-fixed, placement selectable via readout_layout.
         self._draw_readouts(c)
 
+    def _readout_shadow_image(self, rect, radius):
+        """Cached blurred silhouette of one readout-panel/box shell (Option 4,
+        AER-392): the shell is static geometry -- position/size change only on
+        resize -- and a shadow silhouette is colour-independent, so ONE bake
+        serves every NAVSRC state and every value the panel shows, at zero
+        per-frame cost (gotcha #3). Keyed on the rect + widget size, so a
+        resize (or a readout_layout change, which moves the rect) rebuilds it.
+
+        The blur radius is capped to the actual on-screen clearance around
+        `rect` -- gotcha #2's other case: this panel can sit close to the
+        widget edge (the top_panel layout's gutter is thin), and baking a
+        halo bigger than that clearance would clip it into a hard edge at the
+        real widget boundary. Returns None when there isn't enough clearance
+        to draw a shadow at all worth showing.
+        """
+        margin = min(rect.y(), self.height() - rect.bottom(),
+                     rect.x(), self.width() - rect.right())
+        blur = min(self.fontSize * helpers.SHADOW_BLUR_RATIO,
+                   max(0.0, margin) / helpers.SHADOW_CANVAS_PAD_RATIO)
+        if blur < 1.0:
+            return None
+        key = (round(rect.x(), 1), round(rect.y(), 1),
+               round(rect.width(), 1), round(rect.height(), 1),
+               round(radius, 1), round(blur, 1), self.width(), self.height())
+        cache = getattr(self, "_readout_shadow_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+
+        def _paint_shape(p):
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(Qt.GlobalColor.black))
+            p.drawRoundedRect(rect, radius, radius)
+
+        result = helpers.bake_blurred_silhouette(
+            self.width(), self.height(), _paint_shape, blur)
+        self._readout_shadow_cache = (key, result)
+        return result
+
+    def _draw_readout_shadow(self, c, rect, radius):
+        if not getattr(self, "shadow_enabled", False):
+            return
+        baked = self._readout_shadow_image(rect, radius)
+        if baked is None:
+            return
+        img, pad = baked
+        c.drawImage(QPointF(-pad, -pad), img)
+
     def _draw_readout_box(self, c, ax, ay, anchor, label, value, color):
         """One boxed readout (small label + degree value) anchored at (ax, ay).
         anchor = 2-char h/v code: h in l/c/r, v in t/m/b. Screen-fixed; a
@@ -950,6 +1025,7 @@ class HSI(QGraphicsView):
         y = ay if anchor[1] == 't' else (ay - bh if anchor[1] == 'b' else ay - bh / 2.0)
         box = QRectF(x, y, bw, bh)
         col = QColor(color)
+        self._draw_readout_shadow(c, box, self.fontSize * 0.3)
         # Shared house style (helpers.READOUT_*) -- the same primitive the tape
         # readout boxes draw through (P5c), so the two cannot drift. This
         # variant keeps its own fill/border alphas: the border is the value's
@@ -1037,9 +1113,11 @@ class HSI(QGraphicsView):
         # Shared house style (helpers.READOUT_*): this panel is where the look
         # was established, and the tape readout boxes now draw through the same
         # primitive (P5c) so the two cannot drift.
+        _panel_rect = QRectF(x, y, w, h)
+        _panel_radius = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        self._draw_readout_shadow(c, _panel_rect, _panel_radius)
         _pen, _brush = helpers.draw_readout_panel(
-            c, QRectF(x, y, w, h),
-            self.fontSize * helpers.READOUT_RADIUS_RATIO,
+            c, _panel_rect, _panel_radius,
             QColor(self.fg_color),
             pen_width=self.fontSize * helpers.READOUT_PEN_RATIO,
         )

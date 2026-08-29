@@ -102,7 +102,7 @@ class NumericalDisplay(QGraphicsView):
         panel_h = font_height * _READOUT_PANEL_H
         top = (self.h - panel_h) / 2.0
         text_top = (self.h - font_height) / 2.0
-        radius = font_height * helpers.READOUT_RADIUS_RATIO
+        radius = font_height * helpers.TAPE_READOUT_RADIUS_RATIO
         rect_pen, rect_brush = helpers.readout_panel_pen_brush(
             QColor(Qt.GlobalColor.white), border_width
         )
