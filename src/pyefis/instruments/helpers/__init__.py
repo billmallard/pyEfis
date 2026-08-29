@@ -161,7 +161,13 @@ def bake_blurred_silhouette(width, height, paint_shape, blur_radius,
     `paint_shape(painter)` draws the OPAQUE shape at its normal (widget)
     position/size -- e.g. `painter.drawRoundedRect(rect, radius, radius)`.
     Only the painted coverage matters; this function flattens it to
-    `color`/`alpha` and blurs it.
+    `color`/`alpha`, blurs it, then punches `paint_shape`'s own coverage
+    back OUT of the blurred result (AER-415) -- the interior is zero, and
+    only the falloff that extends past the shape's edge survives. Without
+    this, the halo is a solid filled silhouette under the shape's own
+    footprint, and a caller that blits it under a translucent fill (e.g.
+    the readout panel's `READOUT_FILL_ALPHA`) gets that solid fill reading
+    straight through, tinting the whole interior instead of just its edge.
 
     Returns `(image, pad)`. `image` is sized `(width + 2*pad, height +
     2*pad)` -- the pad reserves room for the Gaussian to fully resolve
@@ -208,6 +214,23 @@ def bake_blurred_silhouette(width, height, paint_shape, blur_radius,
     op.setRenderHint(QPainter.RenderHint.Antialiasing)
     scene.render(op, QRectF(0, 0, w, h), QRectF(0, 0, w, h))
     op.end()
+
+    # Punch the original opaque shape back out of its own blurred halo
+    # (AER-415): the blur above smears the FULL filled silhouette outward,
+    # so without this the baked image still carries a solid, flat-colour
+    # fill everywhere the shape itself covers. Blitted under a panel whose
+    # own fill is translucent by design (READOUT_FILL_ALPHA), that filled
+    # interior reads straight through and tints the whole panel body, not
+    # just the edge falloff. DestinationOut with the SAME path at the SAME
+    # position removes exactly the shape's own coverage, leaving only the
+    # soft falloff that extends past its edge.
+    punch = QPainter(out)
+    punch.setRenderHint(QPainter.RenderHint.Antialiasing)
+    punch.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
+    punch.translate(pad, pad)
+    paint_shape(punch)
+    punch.end()
+
     return out, pad
 
 

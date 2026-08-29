@@ -1340,6 +1340,62 @@ def test_shadow_readout_panel_shadow_none_without_clearance(fix, qtbot):
     assert flush is None
 
 
+def test_shadow_baked_silhouette_leaves_shape_interior_unchanged(qtbot):
+    """AER-415: bake_blurred_silhouette must punch its own shape back out of
+    the blurred halo. An unpunched (filled) silhouette blits a flat second
+    layer under the readout panel's translucent fill (READOUT_FILL_ALPHA =
+    0.62) and reads straight through, tinting the WHOLE interior instead of
+    only the edge falloff -- exactly the regression Bill's PR-render
+    arithmetic found (AER-412: shadow-on interior backed out to a second
+    black layer at alpha 0.597 ~= SHADOW_ALPHA across the entire panel body).
+
+    Composite the baked shadow under a translucent stand-in of the exact
+    shape it was baked for and assert the interior is byte-for-byte
+    unchanged from the no-shadow case -- only the halo OUTSIDE the shape's
+    own edge may differ. Fails on the pre-punch-out bake, passes after.
+    """
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QImage, QPainter
+    from pyefis.instruments import helpers
+
+    W, H = 200, 100
+    rect = QRectF(10, 10, 160, 60)
+    radius = 10.0
+    blur = 8.0
+
+    def paint_shape(p):
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(Qt.GlobalColor.black))
+        p.drawRoundedRect(rect, radius, radius)
+
+    img, pad = helpers.bake_blurred_silhouette(W, H, paint_shape, blur)
+
+    def render(with_shadow):
+        canvas = QImage(W, H, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(QColor(150, 190, 235))     # opaque "sky" stand-in
+        p = QPainter(canvas)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if with_shadow:
+            p.drawImage(QPointF(-pad, -pad), img)
+        helpers.draw_readout_panel(p, rect, radius, QColor("white"),
+                                    fill_alpha=helpers.READOUT_FILL_ALPHA)
+        p.end()
+        return canvas
+
+    no_shadow = render(False)
+    with_shadow = render(True)
+
+    cx, cy = int(rect.center().x()), int(rect.center().y())
+    for dx in (-60, -30, 0, 30, 60):
+        for dy in (-15, 0, 15):
+            x, y = cx + dx, cy + dy
+            assert no_shadow.pixelColor(x, y) == with_shadow.pixelColor(x, y), (
+                f"interior pixel ({x},{y}) changed by the baked shadow: "
+                f"{no_shadow.pixelColor(x, y).getRgb()} -> "
+                f"{with_shadow.pixelColor(x, y).getRgb()}"
+            )
+
+
 @pytest.mark.parametrize("layout", ["top_panel", "corners", "split"])
 def test_shadow_enabled_paint_never_raises_any_readout_layout(fix, qtbot, layout):
     widget = hsi.HSI(cdi_enabled=True, gsi_enabled=True)
