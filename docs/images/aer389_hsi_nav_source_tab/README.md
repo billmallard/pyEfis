@@ -46,6 +46,29 @@ widest of the source strings and the fit worst case. "before" is
   panel resize/move, no shrink-to-fit, no silent text clipping) -- it is
   reported for Bill's call. See the pyEfis#140 comment thread / AER-389 for
   the writeup; docs/hsi_widget_spec.md sec 7.4 also carries the finding.
+- `sixpack_screen_before_after.png` -- **the same finding, but in situ**: the
+  actual `SIXPACK` preset screen (six gauges on a 200x110 grid, `move: {shrink:
+  11, justify: [bottom]}` applied to the HSI cell), rendered whole and cropped
+  to the HSI, at real screen resolution (1280x720; the render harness at
+  `tests/screenshots/generate_screenshots.py::test_generate_preset_screen`).
+  Produced with `GENERATE_SCREENSHOTS=1 python -m pytest
+  tests/screenshots/generate_screenshots.py -k sixpack --no-cov -q` on
+  `origin/dev` (before) and this branch (after).
+
+  This shows something the isolated-widget render above doesn't: **the
+  sixpack HSI is already too tight for the source label on `origin/dev`,
+  before this PR touches anything.** "before" shows the old floating label
+  ("VLOC1") with its last three characters hidden *underneath* the opaque
+  HDG|MAG|CRS panel -- the label and panel already overlap today, just
+  silently, because the label is painted first and the panel paints over it.
+  "after" turns that same crowding into a visible clip at the widget's own
+  left edge (only "1" of "VLOC1" survives) instead of a hidden one. Same root
+  cause both times -- the sixpack HSI cell is only a few hundred px square at
+  this grid span, and the panel alone (`pw = fontSize * 12.5`) is ~87-88% of
+  that width regardless of the screen's absolute resolution (this ratio held
+  at both 1920x1080 and 1280x720 test renders) -- there has never been enough
+  room to the panel's left for the full label at `font_percent: 0.07`. This
+  PR does not introduce the crowding; it changes which failure mode it takes.
 
 ## Contrast (pyEfis#140 acceptance #9)
 

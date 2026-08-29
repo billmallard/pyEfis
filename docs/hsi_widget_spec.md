@@ -376,7 +376,11 @@ call rather than something this change decides unilaterally: (1) at `font_percen
 (the `sixpack*` screens) the tab overflows past the widget's left edge for every source
 label, including the shortest ("GPS") — the panel already consumes ~87% of the widget
 width at that ratio, and per the hard boundary the panel is not resized/moved to make
-room; (2) white-on-source-colour measures ~3.1:1 for magenta (GPS) and ~1.4:1 for green
+room. This crowding predates this change: on `origin/dev`, the sixpack HSI's old
+floating label already overlaps the panel at this ratio, just hidden underneath it
+(the panel paints on top) rather than clipped at the widget edge — see the
+`sixpack_screen_before_after.png` render in `docs/images/aer389_hsi_nav_source_tab/`;
+(2) white-on-source-colour measures ~3.1:1 for magenta (GPS) and ~1.4:1 for green
 (VLOC/VOR/LOC) against the WCAG 4.5:1 floor — text stays white per Bill's direction, so
 the fix, if any, is a darker fill, not the text colour.*
 
