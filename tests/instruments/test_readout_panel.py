@@ -162,7 +162,8 @@ def test_fail_scene_keeps_the_panel_shape(readout):
 
 
 # --------------------------------------------------------------------------
-# The tapes: read notch replaces the opaque black triangle
+# The tapes: the read arrow is gone (Bill, 2026-08-27) -- not shrunk, not
+# replaced by a tick/caret/hairline. Deleted for good.
 # --------------------------------------------------------------------------
 
 def _paint_over(qtbot, widget, size, background=(255, 255, 255)):
@@ -185,69 +186,53 @@ def _paint_over(qtbot, widget, size, background=(255, 255, 255)):
     return host.grab().toImage()
 
 
+def test_readout_notch_helper_is_gone():
+    """draw_readout_notch() and its sizing helpers must not exist -- if this
+    fails, the arrow (or something with the same job) has crept back."""
+    assert not hasattr(helpers, "draw_readout_notch")
+    assert not hasattr(airspeed.Airspeed_Tape, "_readout_notch_size")
+    assert not hasattr(altimeter.Altimeter_Tape, "_readout_notch_size")
+
+
 @pytest.fixture
-def notch_calls(monkeypatch):
+def polygon_calls(monkeypatch):
+    """Spy on every QPainter.drawPolygon call app-wide. The read-notch
+    triangle was the only drawPolygon() call the tapes made outside the
+    (disabled-here) trend indicator, so any call caught here means something
+    is drawing a triangle marker again -- pixel-colour sampling can't
+    distinguish that from ordinary antialiasing bleed off the box border, so
+    this spies on the draw call itself instead."""
+    from PyQt6.QtGui import QPainter
     calls = []
-    real = helpers.draw_readout_notch
+    real = QPainter.drawPolygon
 
-    def spy(painter, x, y, size, side, border_color, **kwargs):
-        calls.append({"x": x, "y": y, "size": size, "side": side,
-                      "kwargs": kwargs})
-        return real(painter, x, y, size, side, border_color, **kwargs)
+    def spy(self, *args, **kwargs):
+        calls.append(args)
+        return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(helpers, "draw_readout_notch", spy)
+    monkeypatch.setattr(QPainter, "drawPolygon", spy)
     return calls
 
 
-def test_airspeed_tape_notch_points_at_the_scale(fix, qtbot, notch_calls):
-    widget = airspeed.Airspeed_Tape()
+def test_airspeed_tape_draws_no_arrow(fix, qtbot, polygon_calls):
+    widget = airspeed.Airspeed_Tape(show_trend=False)
     _paint_over(qtbot, widget, (160, 480))
-    assert notch_calls, "airspeed tape drew no read notch"
-    call = notch_calls[-1]
-    # The IAS box is on the RIGHT of the tape, so its notch points left.
-    assert call["side"] == "left"
-    # Sized off the readout panel, not off the tape width.
-    assert call["size"] == pytest.approx(
-        widget.numerical_display.readout_rect.height() * 0.42)
+    assert not polygon_calls, "airspeed tape drew a polygon -- the arrow is back"
 
 
-def test_altimeter_tape_notch_points_at_the_scale(fix, qtbot, notch_calls):
-    widget = altimeter.Altimeter_Tape()
+def test_altimeter_tape_draws_no_arrow(fix, qtbot, polygon_calls):
+    widget = altimeter.Altimeter_Tape(show_trend=False)
     _paint_over(qtbot, widget, (200, 480))
-    assert notch_calls, "altimeter tape drew no read notch"
-    # The altitude box is on the LEFT of the tape, so its notch points right.
-    assert notch_calls[-1]["side"] == "right"
+    assert not polygon_calls, "altimeter tape drew a polygon -- the arrow is back"
 
 
-def test_altimeter_tape_notch_survives_numeric_box_off(fix, qtbot, notch_calls):
-    """numeric_box=False removes the readout panel but must keep the read
-    notch -- otherwise nothing marks where on the scale the value is read."""
-    widget = altimeter.Altimeter_Tape(numeric_box=False)
+def test_altimeter_tape_draws_no_arrow_with_numeric_box_off(fix, qtbot, polygon_calls):
+    """numeric_box=False used to fall back to a width-derived notch. It must
+    now draw nothing at that site either -- no replacement mark in this PR."""
+    widget = altimeter.Altimeter_Tape(numeric_box=False, show_trend=False)
     _paint_over(qtbot, widget, (200, 480))
     assert widget.numerical_display is None
-    assert notch_calls and notch_calls[-1]["side"] == "right"
-    assert notch_calls[-1]["size"] == pytest.approx(200 / 12.0)
-
-
-@pytest.mark.parametrize(
-    "kind,width,pointer_side",
-    [("airspeed", 160, "left"), ("altimeter", 200, "right")],
-)
-def test_tape_read_notch_is_translucent_not_an_opaque_slab(
-        fix, qtbot, kind, width, pointer_side):
-    """Painted over white, the notch must land between the two extremes: not
-    the untouched background (it IS drawn) and not an opaque black triangle
-    (the pre-P5c look, which read as a hole punched in the sky)."""
-    widget = (airspeed.Airspeed_Tape() if kind == "airspeed"
-              else altimeter.Altimeter_Tape())
-    img = _paint_over(qtbot, widget, (width, 480))
-    step = -1 if pointer_side == "left" else 1
-    x = int(widget.numeric_box_pos.x() + step * max(2, width // 40))
-    y = int(widget.numeric_box_pos.y())
-    pixel = img.pixelColor(x, y)
-    assert 15 < pixel.red() < 200, (
-        f"notch pixel at ({x}, {y}) is {pixel.red()} -- expected a translucent "
-        "fill, not an opaque slab or an unpainted background")
+    assert not polygon_calls, "altimeter tape drew a polygon -- the arrow is back"
 
 
 def test_airspeed_tas_panel_is_translucent(fix, qtbot):
