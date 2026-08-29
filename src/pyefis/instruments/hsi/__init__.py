@@ -363,21 +363,42 @@ class HSI(QGraphicsView):
         if _op > 0.0:
             _disc = QColor(self.bg_color)
             _disc.setAlphaF(_op)
+            # Rose drop shadow (AER-439 rewrite of Option 2, AER-392): a
+            # QGraphicsDropShadowEffect draws the item's own source (here,
+            # the disc's OWN possibly-translucent fill) back on top of an
+            # unpunched blurred halo at zero offset -- Qt's compositor never
+            # removes the shape's own footprint from its own shadow layer,
+            # so on anything less than fully opaque that halo reads straight
+            # through and tints the whole disc interior. Same defect class,
+            # same fix as AER-415's `bake_blurred_silhouette` punch-out --
+            # bake the disc's halo with that already-punched primitive and
+            # add it as its own scene item strictly BEHIND the disc fill
+            # (z=-2 vs the fill's z=-1) instead of attaching a
+            # QGraphicsDropShadowEffect to the fill item itself. Both are
+            # captured for free by the existing rose bake (_rose_image --
+            # rendered once per resize, then pre-rotated and cached by
+            # _rotated_rose_image). Zero offset matters here specifically:
+            # the disc is circular and the bake gets ROTATED per heading, so
+            # a symmetric halo is the only shadow that looks identical at
+            # every heading (gotcha #1) -- an offset one would make the
+            # implied light source appear to orbit as the card turns.
+            if getattr(self, "shadow_enabled", False):
+                _diameter = int(math.ceil(self.r * 2.0))
+
+                def _paint_disc(p, _d=_diameter):
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QBrush(QColor(Qt.GlobalColor.black)))
+                    p.drawEllipse(0, 0, _d, _d)
+
+                _halo, _pad = helpers.bake_blurred_silhouette(
+                    _diameter, _diameter, _paint_disc, self._rose_shadow_blur)
+                _haloitem = self.scene.addPixmap(QPixmap.fromImage(_halo))
+                _haloitem.setPos(self.cx - self.r - _pad, self.cy - self.r - _pad)
+                _haloitem.setZValue(-2)
             _bgitem = self.scene.addEllipse(
                 self.cx - self.r, self.cy - self.r, self.r * 2.0, self.r * 2.0,
                 QPen(Qt.PenStyle.NoPen), QBrush(_disc))
             _bgitem.setZValue(-1)
-            # Rose drop shadow (Option 2, AER-392): a QGraphicsDropShadowEffect
-            # on this scene item, captured for free by the existing rose bake
-            # (_rose_image -- rendered once per resize, then pre-rotated and
-            # cached by _rotated_rose_image). Zero offset matters here
-            # specifically: the disc is circular and the bake gets ROTATED per
-            # heading, so a symmetric halo is the only shadow that looks
-            # identical at every heading (gotcha #1) -- an offset one would
-            # make the implied light source appear to orbit as the card turns.
-            if getattr(self, "shadow_enabled", False):
-                _bgitem.setGraphicsEffect(
-                    helpers.drop_shadow_effect(self._rose_shadow_blur))
 
         # Setup Pens
         compassPen = QPen(QColor(self.fg_color), self.fontSize * 0.02)
