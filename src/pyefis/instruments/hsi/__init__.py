@@ -1135,7 +1135,9 @@ class HSI(QGraphicsView):
         # was established, and the tape readout boxes now draw through the same
         # primitive (P5c) so the two cannot drift.
         _panel_rect = QRectF(x, y, w, h)
-        _panel_radius = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        # Corner radius keyed to the panel's OWN height (AER-413), the one house
+        # token every readout box shares -- not to fontSize.
+        _panel_radius = h * helpers.READOUT_RADIUS_RATIO
         self._draw_readout_shadow(c, _panel_rect, _panel_radius)
         _pen, _brush = helpers.draw_readout_panel(
             c, _panel_rect, _panel_radius,
@@ -1207,7 +1209,10 @@ class HSI(QGraphicsView):
         label = self._source_label()
         if not label:
             return
-        rr = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        # Same corner radius the panel itself uses (_draw_readout_panel keys it
+        # to the panel's own height, AER-413), so the tab's left corners match
+        # the panel's and `th` is the straight run of the panel's left edge.
+        rr = ph * helpers.READOUT_RADIUS_RATIO
         th = ph - 2.0 * rr
         if th <= 0:
             return

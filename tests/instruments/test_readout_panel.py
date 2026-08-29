@@ -207,6 +207,79 @@ def test_fail_scene_keeps_the_panel_shape(readout):
 
 
 # --------------------------------------------------------------------------
+# Corner radius: ONE height-based token (AER-413)
+#
+# The corner radius is READOUT_RADIUS_RATIO of the container's OWN panel
+# height, for every readout box -- so the HSI HDG|MAG|CRS panel and the tape
+# box share one corner from one number. These pin that invariant on both, so a
+# change to _READOUT_PANEL_H or to the token fails loudly instead of letting
+# the two silently drift apart (which is exactly what the earlier
+# font_height-based TAPE_READOUT_RADIUS_RATIO allowed).
+# --------------------------------------------------------------------------
+
+def test_token_is_the_measured_invariant():
+    """The one token is 0.145 -- 16.8px on the HSI's 115.52px panel, the
+    proportion the AER-386 derivation actually measured -- not the 0.17 it
+    first encoded (which had the 1.20 panel-height multiplier baked in)."""
+    assert helpers.READOUT_RADIUS_RATIO == pytest.approx(0.145)
+    assert not hasattr(helpers, "TAPE_READOUT_RADIUS_RATIO")
+
+
+def test_tape_readout_radius_is_a_fraction_of_panel_height(readout):
+    """The tape box corner is READOUT_RADIUS_RATIO of the panel's own height.
+    Keyed to panel height, not font_height: changing _READOUT_PANEL_H moves the
+    panel and its corner together, so the corner stays this fraction and keeps
+    matching the HSI panel."""
+    panel_h = readout.readout_rect.height()
+    assert panel_h > 0
+    assert readout.readout_radius == pytest.approx(
+        panel_h * helpers.READOUT_RADIUS_RATIO)
+    assert readout.readout_radius / panel_h == pytest.approx(
+        helpers.READOUT_RADIUS_RATIO)
+
+
+def test_hsi_panel_radius_is_the_same_fraction_of_panel_height(fix, qtbot, monkeypatch):
+    """The HSI HDG|MAG|CRS panel corner is the SAME fraction of its OWN height
+    as the tape box -- one token, one corner. Capture the radius the panel
+    hands QPainter and check it is READOUT_RADIUS_RATIO of the panel height it
+    was drawn at, independent of fontSize (the base it used to key to)."""
+    from PyQt6.QtGui import QImage, QPainter
+    from pyefis.instruments import hsi
+
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    captured = {}
+    real = helpers.draw_readout_panel
+
+    def spy(painter, rect, radius, *a, **k):
+        captured["radius"] = radius
+        captured["h"] = QRectF(rect).height()
+        return real(painter, rect, radius, *a, **k)
+
+    monkeypatch.setattr(helpers, "draw_readout_panel", spy)
+
+    img = QImage(400, 400, QImage.Format.Format_ARGB32)
+    painter = QPainter(img)
+    panel_h = 120.0
+    widget._draw_readout_panel(
+        painter, 40.0, 40.0, 200.0, panel_h, "h",
+        [("HDG", "270", QColor("cyan")),
+         ("MAG", "268", QColor("white")),
+         ("CRS", "265", QColor("magenta"))])
+    painter.end()
+
+    assert captured["h"] == pytest.approx(panel_h)
+    assert captured["radius"] == pytest.approx(
+        panel_h * helpers.READOUT_RADIUS_RATIO)
+    assert captured["radius"] / captured["h"] == pytest.approx(
+        helpers.READOUT_RADIUS_RATIO)
+
+
+# --------------------------------------------------------------------------
 # The tapes: the read arrow is gone (Bill, 2026-08-27) -- not shrunk, not
 # replaced by a tick/caret/hairline. Deleted for good.
 # --------------------------------------------------------------------------

@@ -496,7 +496,7 @@ class Airspeed_Tape(QGraphicsView):
             # knocks the scale back to a texture without going solid.
             helpers.draw_readout_panel(
                 p, QRectF(margin, box_y, w - 2 * margin, box_h),
-                val_px * helpers.READOUT_RADIUS_RATIO, white,
+                box_h * helpers.READOUT_RADIUS_RATIO, white,
                 pen_width=max(1.0, val_px * helpers.READOUT_PEN_RATIO),
                 fill_alpha=0.85,
             )

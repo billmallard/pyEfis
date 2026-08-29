@@ -20,38 +20,36 @@ from PyQt6.QtGui import *
 #: even over a fully-lit sky (see tests/instruments/test_readout_panel.py).
 READOUT_FILL_ALPHA = 0.62
 READOUT_BORDER_ALPHA = 0.85
-#: Corner radius and border width, both as a fraction of the readout's font
-#: size, so the panel scales with the instrument instead of with the screen.
-#: This is the HSI's own token (its top_panel readout uses it directly against
-#: `self.fontSize`) -- do not repoint the tape boxes at it, see
-#: TAPE_READOUT_RADIUS_RATIO below.
-READOUT_RADIUS_RATIO = 0.35
-READOUT_PEN_RATIO = 0.06
-#: Tape readout box (airspeed/altitude) corner radius, as a fraction of the
-#: box's OWN base quantity: `font_height`, the fitted digit glyph height in
-#: NumericalDisplay (panel height there is 1.20 * font_height). This is a
-#: separate token from READOUT_RADIUS_RATIO on purpose (AER-386, Bill
-#: 2026-08-27: "the roundedness of the airspeed and altitude boxes is too
-#: much"): READOUT_RADIUS_RATIO is keyed to the HSI's `fontSize`, a different
-#: base quantity, and the tape box is much shorter relative to its own font
-#: than the HSI panel is to its own fontSize -- reusing 0.35 against
-#: font_height ate ~29% of the tape box's height (near the geometric max
-#: before QPainter clamps a rounded rect to a full stadium/pill -- confirmed
-#: by rendering, see below) versus ~14.5% for the HSI's panel.
+#: Corner radius of a rounded readout container, as a fraction of the
+#: container's OWN panel height -- so every readout box in the house style gets
+#: the same corner from ONE number, with no per-widget arithmetic: the HSI's
+#: HDG|MAG|CRS panel, the airspeed/altitude tape boxes, the airspeed TAS box,
+#: and any future rounded container (the nav-source tab, #143). Keyed to panel
+#: HEIGHT -- not to a font size, and not to a panel-height multiplier -- on
+#: purpose (AER-386/AER-413; Bill 2026-08-27: "we will likely be using it some
+#: more").
 #:
-#: Calibrated by rendering both at the sizes they occupy on a real PFD
-#: (virtual_vfr.yaml's grid, at 1920x1080): the HSI top_panel panel there is
-#: 950x950 (font_percent 0.05 -> fontSize 48 -> radius 48*0.35 = 16.8px,
-#: 14.5% of its 115.52px panel height). Reusing that ABSOLUTE 16.8px on the
-#: tape box (font_percent 0.25/0.24 -> font_height 22.0, panel height
-#: 1.20*22.0 = 26.4px) exceeds half the panel height, so QPainter clamps it to
-#: a full pill -- visually indistinguishable from the too-round original and
-#: not a fix (rendered and compared to confirm). Matching the HSI's
-#: *proportion* instead -- radius = 14.5% of panel height = 0.145 * 26.4 =
-#: 3.84px -- reads as the same restrained, boxy corner as the HSI. As a
-#: fraction of font_height that is 3.84 / 22.0 = 0.1745, rounded to 0.17
-#: (3.74px at that font_height).
-TAPE_READOUT_RADIUS_RATIO = 0.17
+#: Why height, and why 0.145 -- the derivation is kept because it is the reason
+#: absolute-pixel matching fails. Calibrated by rendering both containers at
+#: the sizes they occupy on a real PFD (virtual_vfr.yaml's grid, at 1920x1080):
+#: the HSI top_panel panel there is 950x950 (font_percent 0.05 -> fontSize 48),
+#: and its sectioned readout panel is 115.52px tall with a 16.8px corner --
+#: 16.8 / 115.52 = 0.145 of its own height. Reusing that ABSOLUTE 16.8px on the
+#: much shorter tape box (font_percent 0.25/0.24 -> font_height 22.0, panel
+#: height 1.20 * 22.0 = 26.4px) exceeds half the panel height, so QPainter
+#: clamps it to a full pill -- visually indistinguishable from the too-round
+#: original and not a fix (rendered and compared to confirm). Matching the
+#: HSI's *proportion* instead -- 0.145 * 26.4 = 3.84px -- reads as the same
+#: restrained, boxy corner as the HSI.
+#:
+#: The earlier TAPE_READOUT_RADIUS_RATIO folded the 1.20 panel-height
+#: multiplier (_READOUT_PANEL_H in NumericalDisplay) into the token: 0.145 *
+#: 1.20 = 0.174 against font_height. Keying to panel height directly means a
+#: change to that multiplier moves the panel and its corner together instead of
+#: silently breaking the HSI match -- pinned by test_readout_panel.py (AER-413).
+READOUT_RADIUS_RATIO = 0.145
+#: Border width as a fraction of the readout's font size.
+READOUT_PEN_RATIO = 0.06
 
 
 def readout_panel_pen_brush(border_color, pen_width=1.0,
@@ -139,8 +137,8 @@ def darken_to_contrast(color, target_ratio=SOURCE_LABEL_MIN_CONTRAST, step=0.01)
 #:
 #: A soft drop shadow under a static instrument element (the HSI rose, the
 #: readout panel, and -- once #140 lands -- the nav-source tab) reads as a
-#: house depth treatment, same precedent as READOUT_RADIUS_RATIO/
-#: TAPE_READOUT_RADIUS_RATIO above. Config-gated per widget (default OFF);
+#: house depth treatment, same precedent as READOUT_RADIUS_RATIO above.
+#: Config-gated per widget (default OFF);
 #: these tokens are only the shared LOOK, not the per-frame cost decision --
 #: see bake_blurred_silhouette() below for how it is applied without paying
 #: per-frame blur cost.
