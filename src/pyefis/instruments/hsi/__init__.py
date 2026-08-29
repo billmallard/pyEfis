@@ -882,11 +882,15 @@ class HSI(QGraphicsView):
                     c.drawPolygon(QPolygonF([QPointF(gx, gy - ds), QPointF(gx + ds, gy),
                                              QPointF(gx, gy + ds), QPointF(gx - ds, gy)]))
 
-        # Nav-source annunciation (top-left), coloured to match the active source.
-        # Its bounding box is stored as a tap target -- tapping it cycles NAVSRC
-        # (see mousePressEvent).
+        # Nav-source annunciation, coloured to match the active source. In
+        # `readout_layout: top_panel` this is drawn as a tab on the HDG | MAG |
+        # CRS panel's left edge instead (_draw_source_tab, via _draw_readouts
+        # below) -- pyEfis#140. Other layouts (corners/split/none) draw no such
+        # panel, so they keep this plain top-left label. Its bounding box is
+        # stored as a tap target -- tapping it cycles NAVSRC (mousePressEvent).
         self._source_label_rect = None
-        if getattr(self, "source_label_enabled", True):
+        if getattr(self, "readout_layout", "top_panel") != "top_panel" \
+                and getattr(self, "source_label_enabled", True):
             label = self._source_label()
             if label:
                 c.setPen(QPen(self._source_color() or QColor(self.course_color)))
@@ -1081,7 +1085,13 @@ class HSI(QGraphicsView):
             g = getattr(self, "_gutter", 0.0) or (H * 0.16)
             ph = g * 0.76
             pw = self.fontSize * 12.5
-            self._draw_readout_panel(c, W / 2.0 - pw / 2.0, (g - ph) / 2.0, pw, ph, "h",
+            px = W / 2.0 - pw / 2.0
+            py = (g - ph) / 2.0
+            # Tab drawn BEFORE the panel: the panel's own left border (drawn on
+            # top, next) is what defines the crisp shared edge, so there is no
+            # separate seam/stroke to align by hand (pyEfis#140).
+            self._draw_source_tab(c, px, py, ph)
+            self._draw_readout_panel(c, px, py, pw, ph, "h",
                 [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
         elif layout == "corners":
             # selected-heading (cyan) top-left, course (source) top-right; actual
@@ -1135,6 +1145,65 @@ class HSI(QGraphicsView):
             c.setFont(vf); c.setPen(QPen(QColor(self.fg_color)))
             c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
                        int(Qt.AlignmentFlag.AlignCenter), value)
+
+    def _draw_source_tab(self, c, px, py, ph):
+        """Nav-source annunciation as a coloured tab hanging off the left edge
+        of the HDG | MAG | CRS panel, `readout_layout: top_panel` only
+        (pyEfis#140). Fill = active source colour (magenta GPS / green VLOC,
+        `_source_color()`); text white, centred both axes. Height is the
+        panel height less both corner radii -- the straight run of the
+        panel's left edge -- so it sits a few pixels shorter than the panel
+        top and bottom, which is what reads as a tab rather than a bolted-on
+        box. Left corners rounded on the shared READOUT_RADIUS_RATIO token
+        (clamped to half the tab height); right edge square and flush at
+        `px`. The whole tab rect becomes the tap target (_source_label_rect;
+        mousePressEvent cycles NAVSRC unchanged).
+
+        Fit is not guaranteed at every shipped font_percent -- see
+        docs/hsi_widget_spec.md sec 7.4. The panel is never moved or resized
+        to make room; nothing here truncates the label to hide an overflow."""
+        self._source_label_rect = None
+        if not getattr(self, "source_label_enabled", True):
+            return
+        label = self._source_label()
+        if not label:
+            return
+        rr = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        th = ph - 2.0 * rr
+        if th <= 0:
+            return
+        tab_r = min(rr, th / 2.0)
+        lf = QFont(self.font_family)
+        lf.setPixelSize(int(self.fontSize))
+        c.setFont(lf)
+        fm = c.fontMetrics()
+        pad = self.fontSize * 0.35
+        tab_w = fm.horizontalAdvance(label) + 2.0 * pad
+        top = py + rr
+        right = px
+        left = right - tab_w
+
+        # Extend the fill a hair past the shared edge; the panel border,
+        # drawn on top right after this call, paints over the sliver and
+        # owns the crisp boundary -- avoids an anti-aliasing gap/seam between
+        # two independently-stroked shapes without doubling the stroke.
+        overlap = max(1.0, self.fontSize * helpers.READOUT_PEN_RATIO * 0.5)
+        path = QPainterPath()
+        path.moveTo(right + overlap, top)
+        path.lineTo(left + tab_r, top)
+        path.arcTo(left, top, tab_r * 2.0, tab_r * 2.0, 90, 90)
+        path.lineTo(left, top + th - tab_r)
+        path.arcTo(left, top + th - tab_r * 2.0, tab_r * 2.0, tab_r * 2.0, 180, 90)
+        path.lineTo(right + overlap, top + th)
+        path.closeSubpath()
+        c.setPen(Qt.PenStyle.NoPen)
+        c.setBrush(QBrush(self._source_color() or QColor(self.course_color)))
+        c.drawPath(path)
+
+        c.setPen(QPen(QColor(Qt.GlobalColor.white)))
+        c.drawText(QRectF(left, top, tab_w, th),
+                   int(Qt.AlignmentFlag.AlignCenter), label)
+        self._source_label_rect = (left, top, tab_w, th)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
@@ -1658,10 +1727,13 @@ class HSI(QGraphicsView):
                 QPointF(bx + w, by), QPointF(bx + w, by + h)]))
 
     def _draw_arc_source_labels(self, c):
-        """Nav-source annunciation (top-left) + per-pointer bearing-source labels
-        (bottom corners) with the same tap targets as the rose path."""
+        """Nav-source annunciation (top-left, unless `readout_layout: top_panel`
+        draws it as a tab via _draw_source_tab -- pyEfis#140) + per-pointer
+        bearing-source labels (bottom corners), with the same tap targets as
+        the rose path."""
         self._source_label_rect = None
-        if getattr(self, "source_label_enabled", True):
+        if getattr(self, "readout_layout", "top_panel") != "top_panel" \
+                and getattr(self, "source_label_enabled", True):
             label = self._source_label()
             if label:
                 c.setPen(QPen(self._source_color() or QColor(self.course_color)))

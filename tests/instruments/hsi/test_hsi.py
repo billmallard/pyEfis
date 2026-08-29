@@ -2,7 +2,7 @@ import math
 from unittest import mock
 
 import pytest
-from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtCore import Qt, QRectF, qRound
 from PyQt6.QtGui import QColor, QPaintEvent, QPen
 from PyQt6.QtWidgets import QApplication, QGraphicsEllipseItem
 
@@ -1040,6 +1040,145 @@ def test_arc_bearing_label_stays_when_invalid_regardless_of_sector(fix, qtbot):
     widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
 
     assert widget._brg_label_rect[1] is not None
+
+
+# --- Nav-source tab on the HDG | MAG | CRS panel (pyEfis#140) ---------------
+
+def _wcag_contrast(fg_rgb, bg_rgb):
+    """Same WCAG 2.x formula as tests/instruments/test_readout_panel.py,
+    duplicated locally (both fill colours here are opaque, so no source-over
+    compositing step is needed)."""
+    def _linear(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    def _luminance(rgb):
+        r, g, b = (_linear(c) for c in rgb)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    l1, l2 = _luminance(fg_rgb), _luminance(bg_rgb)
+    if l1 < l2:
+        l1, l2 = l2, l1
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+def _expected_tab_rect(widget):
+    """Recompute the pyEfis#140 geometry table independently of
+    HSI._draw_source_tab, from the same inputs _draw_readouts uses."""
+    from pyefis.instruments import helpers
+    W = widget.width()
+    g = widget._gutter
+    ph = g * 0.76
+    pw = widget.fontSize * 12.5
+    px = W / 2.0 - pw / 2.0
+    py = (g - ph) / 2.0
+    rr = widget.fontSize * helpers.READOUT_RADIUS_RATIO
+    top = py + rr
+    height = ph - 2.0 * rr
+    return px, top, height
+
+
+def test_hsi_source_tab_geometry_matches_panel(fix, qtbot):
+    """pyEfis#140 acceptance #2/#3: in the default `top_panel` layout the tab's
+    height is the panel height less both corner radii, its top is the bottom
+    of the panel's top-left arc, and its right edge sits flush at the panel's
+    left edge (`px`) -- the formulas in HSI._draw_source_tab must match the
+    #140 geometry table, not just "look right"."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.navsrcdb = object()
+    widget._navsrc = 2                              # GPS
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    px, top, height = _expected_tab_rect(widget)
+    r = widget._source_label_rect
+    assert r is not None
+    left, rtop, rw, rh = r
+    assert rtop == pytest.approx(top)
+    assert rh == pytest.approx(height)
+    assert left + rw == pytest.approx(px)            # right edge flush, square
+
+
+def test_hsi_source_tab_geometry_also_applies_in_arc_mode(fix, qtbot):
+    """The tab is drawn by _draw_readouts, which both paint paths call -- the
+    arc orientation must get the same tab, not the old floating label."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.orientation = "arc"
+    widget.navsrcdb = object()
+    widget._navsrc = 0                               # VLOC1
+    widget._navtype = None
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    px, top, height = _expected_tab_rect(widget)
+    r = widget._source_label_rect
+    assert r is not None
+    left, rtop, rw, rh = r
+    assert rtop == pytest.approx(top)
+    assert rh == pytest.approx(height)
+    assert left + rw == pytest.approx(px)
+
+
+@pytest.mark.parametrize("layout", ["corners", "split", "none"])
+def test_hsi_non_top_panel_layouts_keep_floating_label(fix, qtbot, layout):
+    """pyEfis#140 acceptance #6: corners/split/none draw no HDG | MAG | CRS
+    panel, so they keep today's plain top-left label (not a tab) -- verified
+    by checking the tap-target rect against the OLD label formula, distinct
+    from the tab's panel-derived geometry."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.readout_layout = layout
+    widget.navsrcdb = object()
+    widget._navsrc = 2
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    r = widget._source_label_rect
+    assert r is not None
+    pad = int(widget.fontSize * 0.5)
+    expected_x = qRound(widget.width() * 0.03) - pad
+    assert r[0] == expected_x
+
+
+def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
+    """pyEfis#140 acceptance #5: the whole tab rect (not just the glyphs) is
+    the tap target, and mousePressEvent still cycles NAVSRC unchanged."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.navsrcdb = object()
+    widget._navsrc = 2                               # GPS
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    r = widget._source_label_rect
+    assert r is not None
+
+    written = []
+    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+
+    class _P:
+        def __init__(s, x, y): s._x, s._y = x, y
+        def x(s): return s._x
+        def y(s): return s._y
+
+    class _Ev:
+        def __init__(s, x, y): s._p = _P(x, y)
+        def pos(s): return s._p
+        def accept(s): pass
+
+    # A point near the tab's rounded-left edge (not just its text glyphs).
+    widget.mousePressEvent(_Ev(r[0] + 2, r[1] + r[3] / 2))
+    assert written == [("NAVSRC", 0.0)]
+
+
+def test_hsi_source_tab_white_on_source_colour_contrast(fix, qtbot):
+    """pyEfis#140 acceptance #9: MEASURE (not just assert-pass) the white-on-
+    magenta and white-on-green ratios against the WCAG 4.5:1 floor, the same
+    pattern tests/instruments/test_readout_panel.py uses for the translucent
+    readout fill. Both measure poor per the #140 fit/contrast note in
+    docs/hsi_widget_spec.md sec 7.4 -- white text stands (Bill's call); if this
+    is ever fixed, it will be via a darker fill, and this test's numbers are
+    the ones that should move. Locked as a value assertion (not just `< 4.5`)
+    so a silent fill-colour change gets caught here first."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    white = (255, 255, 255)
+    magenta = QColor(widget.course_color).getRgb()[:3]
+    green = QColor(widget.vloc_color).getRgb()[:3]
+    gps_contrast = _wcag_contrast(white, magenta)
+    vloc_contrast = _wcag_contrast(white, green)
+    assert gps_contrast == pytest.approx(3.14, abs=0.02)
+    assert vloc_contrast == pytest.approx(1.37, abs=0.02)
+    assert gps_contrast < 4.5 and vloc_contrast < 4.5      # both fail the floor
 
 
 # --------------------------------------------------------------------------
