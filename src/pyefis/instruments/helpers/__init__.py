@@ -1,3 +1,5 @@
+import math
+
 from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
@@ -82,6 +84,131 @@ def draw_readout_panel(painter, rect, radius, border_color, pen_width=1.0,
     painter.setBrush(brush)
     painter.drawRoundedRect(QRectF(rect), radius, radius)
     return pen, brush
+
+
+#: Shared static-element drop-shadow tokens (AER-392 / pyEfis#142).
+#:
+#: A soft drop shadow under a static instrument element (the HSI rose, the
+#: readout panel, and -- once #140 lands -- the nav-source tab) reads as a
+#: house depth treatment, same precedent as READOUT_RADIUS_RATIO/
+#: TAPE_READOUT_RADIUS_RATIO above. Config-gated per widget (default OFF);
+#: these tokens are only the shared LOOK, not the per-frame cost decision --
+#: see drop_shadow_effect() and bake_blurred_silhouette() below for the two
+#: zero-per-frame-cost ways to apply it.
+#:
+#: HARD CONSTRAINT: no per-frame gaussian blur. The HSI was ~24% of GIL time
+#: in flight before its rose bake landed (#94); a QGraphicsEffect applied to
+#: a live view undoes that. Both helpers below exist to bake the blur exactly
+#: once, into a cached image, so a shadow costs one blit per frame like the
+#: rose/overlay caches it sits beside.
+SHADOW_COLOR = QColor(0, 0, 0)
+SHADOW_ALPHA = 0.6
+#: Blur radius as a fraction of the shadowed element's own characteristic
+#: size (the HSI passes its own fontSize, the same base unit READOUT_*
+#: above uses) -- so the shadow scales with the instrument, not the screen.
+SHADOW_BLUR_RATIO = 0.12
+#: A drop shadow implies a FIXED light source. Content that gets baked once
+#: and then rotated per-frame (the HSI rose card turns with heading) must
+#: not carry a directional offset, or the implied light appears to swing
+#: with heading (AER-392 gotcha #1) -- a symmetric, zero-offset blur halo is
+#: the only offset that is rotation-safe. Screen-fixed content (the readout
+#: panel, the nav-source tab) is free to use a real offset if a later pass
+#: wants one; today both offsets are 0 for a consistent house look.
+SHADOW_OFFSET_X = 0.0
+SHADOW_OFFSET_Y = 0.0
+#: A Gaussian blur needs room past the shadowed shape's own edge to fully
+#: resolve. Baking directly into a canvas sized to just the shape (or to the
+#: shape's on-screen position with no margin) clips the falloff into a hard,
+#: rectangular edge partway through the halo -- it reads as a rendering bug,
+#: not a soft shadow (AER-392 gotcha #2). This is the margin, as a multiple
+#: of the blur radius, reserved on every side: both for the bake canvas
+#: itself (see bake_blurred_silhouette) and for callers deciding how much
+#: on-screen clearance a shadow needs before it is safe to draw at all
+#: (see the HSI's rose-radius reservation and its readout-panel margin cap).
+SHADOW_CANVAS_PAD_RATIO = 3.0
+
+
+def drop_shadow_effect(blur_radius, color=SHADOW_COLOR, alpha=SHADOW_ALPHA,
+                       x_offset=SHADOW_OFFSET_X, y_offset=SHADOW_OFFSET_Y):
+    """A configured QGraphicsDropShadowEffect (Option 2, AER-392): attach to
+    a QGraphicsItem that lives in a scene baked ONCE and blitted every frame
+    (e.g. the HSI's compass-disc background item, captured by its rose
+    bake) so the blur is paid once, not per paintEvent.
+
+    Do not attach this to an item in a scene that is rendered live every
+    frame -- see the no-per-frame-blur constraint on the tokens above.
+    """
+    fill = QColor(color)
+    fill.setAlphaF(max(0.0, min(1.0, float(alpha))))
+    effect = QGraphicsDropShadowEffect()
+    effect.setBlurRadius(max(0.0, float(blur_radius)))
+    effect.setColor(fill)
+    effect.setXOffset(x_offset)
+    effect.setYOffset(y_offset)
+    return effect
+
+
+def bake_blurred_silhouette(width, height, paint_shape, blur_radius,
+                            color=SHADOW_COLOR, alpha=SHADOW_ALPHA):
+    """Bake a blurred, flat-colour silhouette of a shape into a QImage ONCE
+    (Option 4, AER-392): for static screen-fixed geometry that is painted
+    fresh every frame with a QPainter (the HSI's readout-panel/box shells,
+    and -- once #140 lands -- the nav-source tab), so a soft shadow still
+    costs zero per-frame blur work. The silhouette is colour- and
+    content-independent, so one bake serves every value/state the shape's
+    live content can take (AER-392 gotcha #3).
+
+    `paint_shape(painter)` draws the OPAQUE shape at its normal (widget)
+    position/size -- e.g. `painter.drawRoundedRect(rect, radius, radius)`.
+    Only the painted coverage matters; this function flattens it to
+    `color`/`alpha` and blurs it.
+
+    Returns `(image, pad)`. `image` is sized `(width + 2*pad, height +
+    2*pad)` -- the pad reserves room for the Gaussian to fully resolve
+    before the canvas edge (SHADOW_CANVAS_PAD_RATIO; omitting it clips the
+    falloff into a hard square edge, gotcha #2). Blit the result at
+    `(-pad, -pad)` in the caller's own widget-sized target so the
+    silhouette lines up with the shape as `paint_shape` drew it.
+    """
+    pad = int(math.ceil(max(0.0, float(blur_radius)) * SHADOW_CANVAS_PAD_RATIO))
+    w, h = int(width) + 2 * pad, int(height) + 2 * pad
+
+    shape = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+    shape.fill(0)
+    sp = QPainter(shape)
+    sp.setRenderHint(QPainter.RenderHint.Antialiasing)
+    sp.translate(pad, pad)
+    paint_shape(sp)
+    sp.end()
+
+    # Flatten the shape's coverage (its alpha channel) to one flat shadow
+    # colour -- SourceIn keeps only the destination fill where the source
+    # (the shape we just painted) was opaque.
+    silhouette = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+    silhouette.fill(0)
+    tp = QPainter(silhouette)
+    tp.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+    tp.drawImage(0, 0, shape)
+    tp.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    fill = QColor(color)
+    fill.setAlphaF(max(0.0, min(1.0, float(alpha))))
+    tp.fillRect(0, 0, w, h, fill)
+    tp.end()
+
+    scene = QGraphicsScene(0, 0, w, h)
+    item = scene.addPixmap(QPixmap.fromImage(silhouette))
+    blur = QGraphicsBlurEffect()
+    blur.setBlurRadius(blur_radius)
+    blur.setBlurHints(QGraphicsBlurEffect.BlurHint.QualityHint)
+    item.setGraphicsEffect(blur)
+
+    out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(0)
+    op = QPainter(out)
+    op.setRenderHint(QPainter.RenderHint.Antialiasing)
+    scene.render(op, QRectF(0, 0, w, h), QRectF(0, 0, w, h))
+    op.end()
+    return out, pad
 
 
 def fit_to_mask(width,height,mask,font,units_mask=None, units_ratio=0.8, numeric=False):

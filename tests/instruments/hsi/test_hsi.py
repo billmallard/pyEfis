@@ -1,9 +1,10 @@
+import math
 from unittest import mock
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QColor, QPaintEvent, QPen
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QGraphicsEllipseItem
 
 from pyefis.instruments import hsi
 from tests.utils import track_calls
@@ -1039,3 +1040,175 @@ def test_arc_bearing_label_stays_when_invalid_regardless_of_sector(fix, qtbot):
     widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
 
     assert widget._brg_label_rect[1] is not None
+
+
+# --------------------------------------------------------------------------
+# Static-element drop shadow (AER-392 / pyEfis#142)
+# --------------------------------------------------------------------------
+
+def test_shadow_disabled_by_default(fix, qtbot):
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    assert widget.shadow_enabled is False
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    assert widget._rose_shadow_blur == 0.0
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
+
+
+def test_shadow_reserves_rose_margin_and_configures_effect(fix, qtbot):
+    """Enabling the shadow shrinks the rose (clearance for the halo, gotcha
+    #2) and attaches a QGraphicsDropShadowEffect to the disc background item
+    with ZERO offset -- an offset would make the implied light source appear
+    to swing with heading once this bake is rotated (gotcha #1)."""
+    from PyQt6.QtWidgets import QGraphicsDropShadowEffect
+
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(400, 400)
+    plain.show()
+    qtbot.waitExposed(plain)
+
+    shadowed = hsi.HSI()
+    qtbot.addWidget(shadowed)
+    shadowed.shadow_enabled = True
+    shadowed.resize(400, 400)
+    shadowed.show()
+    qtbot.waitExposed(shadowed)
+
+    assert shadowed._rose_shadow_blur > 0.0
+    assert shadowed.r < plain.r                       # room reserved for the halo
+
+    bgitems = [i for i in shadowed.scene.items()
+               if isinstance(i, QGraphicsEllipseItem)]
+    assert bgitems, "expected the compass-disc background item"
+    effect = bgitems[0].graphicsEffect()
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert effect.xOffset() == 0.0
+    assert effect.yOffset() == 0.0
+    assert effect.blurRadius() == shadowed._rose_shadow_blur
+
+
+def test_shadow_rose_halo_is_radially_symmetric(fix, qtbot, monkeypatch):
+    """The disc shadow is baked into the SAME layer _rotated_rose_image()
+    rotates per heading. A halo with any directional offset would make the
+    implied light source appear to orbit as the card turns; sampling the
+    halo ring at several angles around the UNROTATED bake and finding them
+    alike proves it is symmetric, so any later rotation leaves it looking
+    identical -- the two-heading acceptance criterion, made deterministic.
+
+    The production blur ratio is subtle by design (a soft accent, not a
+    heavy vignette); scaled up here via monkeypatch purely so the halo is
+    a few pixels wide and trivially sampled -- the symmetry property being
+    tested does not depend on the exact ratio.
+    """
+    from pyefis.instruments import helpers
+    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    img = widget._rose_image()                        # unrotated 2x bake
+    ss = 2
+    cx, cy = widget.cx * ss, widget.cy * ss
+    sample_r = widget.r * ss + widget._rose_shadow_blur * ss * 0.15
+
+    alphas = []
+    for deg in range(0, 360, 15):
+        th = math.radians(deg)
+        x = int(cx + sample_r * math.cos(th))
+        y = int(cy + sample_r * math.sin(th))
+        alphas.append(img.pixelColor(x, y).alpha())
+
+    assert max(alphas) > 0                             # the halo is actually there
+    assert max(alphas) - min(alphas) <= 10              # uniform within AA noise
+
+
+def test_shadow_rotated_rose_matches_unrotated_in_halo_band(fix, qtbot, monkeypatch):
+    """Direct two-heading check: the pre-rotated rose blit (what paintEvent
+    actually draws) sampled in the halo band is the same at two headings
+    45+ degrees apart -- the light does not appear to move. Blur scaled up
+    for the same reason as the symmetry test above."""
+    from pyefis.instruments import helpers
+    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    sample_r = widget.r + widget._rose_shadow_blur * 0.25
+
+    def halo_alphas(heading):
+        widget._heading = heading
+        img = widget._rotated_rose_image()
+        alphas = []
+        for deg in range(0, 360, 15):
+            th = math.radians(deg)
+            x = int(widget.cx + sample_r * math.cos(th))
+            y = int(widget.cy + sample_r * math.sin(th))
+            alphas.append(img.pixelColor(x, y).alpha())
+        return alphas
+
+    a0 = halo_alphas(0.0)
+    a1 = halo_alphas(87.0)                              # > 45 deg apart
+    assert max(a0) > 0 and max(a1) > 0
+    for x, y in zip(sorted(a0), sorted(a1)):
+        assert abs(x - y) <= 3                          # same halo, any heading
+
+
+def test_shadow_readout_panel_shadow_bakes_once_and_caches(fix, qtbot):
+    """Option 4: the panel shell shadow is baked ONCE and reused -- same rect
+    -> same cached (image, pad); a geometry change invalidates it."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    rect = QRectF(100, 100, 150, 60)
+    radius = 10.0
+    first = widget._readout_shadow_image(rect, radius)
+    second = widget._readout_shadow_image(rect, radius)
+    assert first is not None
+    assert first is second                              # cache hit, no rebake
+
+    moved = widget._readout_shadow_image(QRectF(90, 100, 150, 60), radius)
+    assert moved is not None
+    assert moved is not first
+
+
+def test_shadow_readout_panel_shadow_none_without_clearance(fix, qtbot):
+    """A rect flush against the widget edge has no room for the halo to
+    resolve without hard-clipping (gotcha #2) -- no shadow is baked rather
+    than clipping it into a square edge."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    flush = widget._readout_shadow_image(QRectF(0, 0, 150, 60), 10.0)
+    assert flush is None
+
+
+@pytest.mark.parametrize("layout", ["top_panel", "corners", "split"])
+def test_shadow_enabled_paint_never_raises_any_readout_layout(fix, qtbot, layout):
+    widget = hsi.HSI(cdi_enabled=True, gsi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.readout_layout = layout
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
