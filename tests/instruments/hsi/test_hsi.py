@@ -4,7 +4,9 @@ from unittest import mock
 import pytest
 from PyQt6.QtCore import Qt, QRectF, qRound
 from PyQt6.QtGui import QColor, QPaintEvent, QPen
-from PyQt6.QtWidgets import QApplication, QGraphicsEllipseItem
+from PyQt6.QtWidgets import (
+    QApplication, QGraphicsEllipseItem, QGraphicsPixmapItem,
+)
 
 from pyefis.instruments import hsi
 from tests.utils import track_calls
@@ -1196,13 +1198,15 @@ def test_shadow_disabled_by_default(fix, qtbot):
     widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
 
 
-def test_shadow_reserves_rose_margin_and_configures_effect(fix, qtbot):
+def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
     """Enabling the shadow shrinks the rose (clearance for the halo, gotcha
-    #2) and attaches a QGraphicsDropShadowEffect to the disc background item
-    with ZERO offset -- an offset would make the implied light source appear
-    to swing with heading once this bake is rotated (gotcha #1)."""
-    from PyQt6.QtWidgets import QGraphicsDropShadowEffect
-
+    #2) and bakes the halo via helpers.bake_blurred_silhouette (AER-439 --
+    replaced a QGraphicsDropShadowEffect attached directly to the disc item,
+    which had no way to punch its own shape back out of its own shadow, see
+    test_shadow_rose_disc_translucent_fill_unchanged_by_shadow below) as its
+    OWN scene item strictly behind the disc fill: z=-2 for the halo vs z=-1
+    for the disc, so the disc's own fill is never composited over its own
+    unpunched shadow."""
     plain = hsi.HSI()
     qtbot.addWidget(plain)
     plain.resize(400, 400)
@@ -1222,11 +1226,59 @@ def test_shadow_reserves_rose_margin_and_configures_effect(fix, qtbot):
     bgitems = [i for i in shadowed.scene.items()
                if isinstance(i, QGraphicsEllipseItem)]
     assert bgitems, "expected the compass-disc background item"
-    effect = bgitems[0].graphicsEffect()
-    assert isinstance(effect, QGraphicsDropShadowEffect)
-    assert effect.xOffset() == 0.0
-    assert effect.yOffset() == 0.0
-    assert effect.blurRadius() == shadowed._rose_shadow_blur
+    assert bgitems[0].graphicsEffect() is None         # no per-item Qt effect anymore
+    assert bgitems[0].zValue() == -1
+
+    haloitems = [i for i in shadowed.scene.items()
+                 if isinstance(i, QGraphicsPixmapItem)]
+    assert haloitems, "expected a baked halo pixmap item behind the disc"
+    assert haloitems[0].zValue() < bgitems[0].zValue()
+
+    plain_haloitems = [i for i in plain.scene.items()
+                       if isinstance(i, QGraphicsPixmapItem)]
+    assert not plain_haloitems, "no halo item should exist with shadows off"
+
+
+def test_shadow_rose_disc_translucent_fill_unchanged_by_shadow(fix, qtbot):
+    """AER-439: the rose-disc shadow used a QGraphicsDropShadowEffect
+    attached directly to the disc background item. Qt's effect draws the
+    item's own source back on top of an UNPUNCHED blurred halo at zero
+    offset, so on a translucent disc fill (bg_opacity between 0 and 100)
+    that halo reads straight through and darkens the whole disc interior --
+    the identical defect class AER-415 fixed in bake_blurred_silhouette,
+    just via Qt's compositor instead of pyEfis's own. It does not show at
+    bg_opacity 0 (no background item is even created) or bg_opacity 100
+    (the opaque fill fully occludes the halo underneath it) -- only a
+    partial opacity exercises it, per the AER-415 rose-disc probe
+    (interior (160,180,202) shadow-off vs (137,151,167) shadow-on at
+    bg_opacity 50, a uniform ~14% darkening).
+
+    Fails on the pre-AER-439 QGraphicsDropShadowEffect-on-the-disc-item
+    code (interior darkens), passes once the halo is baked+punched via
+    bake_blurred_silhouette and drawn as its own item strictly behind the
+    disc fill.
+    """
+    def _disc_interior_pixel(shadow_enabled):
+        widget = hsi.HSI(font_percent=0.1, bg_color="#aaaaaa")
+        qtbot.addWidget(widget)
+        widget.bg_opacity = 50
+        widget.shadow_enabled = shadow_enabled
+        widget.resize(400, 400)
+        widget.show()
+        qtbot.waitExposed(widget)
+        img = widget._rose_image()                    # unrotated 2x bake
+        ss = 2
+        # A point well inside the disc, away from ticks/labels/needles.
+        x = int(widget.cx * ss + widget.r * ss * 0.5)
+        y = int(widget.cy * ss)
+        return img.pixelColor(x, y)
+
+    off = _disc_interior_pixel(False)
+    on = _disc_interior_pixel(True)
+    assert (off.red(), off.green(), off.blue()) == (on.red(), on.green(), on.blue()), (
+        f"disc interior tinted by its own shadow: shadow-off {off.getRgb()} "
+        f"-> shadow-on {on.getRgb()}"
+    )
 
 
 def test_shadow_rose_halo_is_radially_symmetric(fix, qtbot, monkeypatch):

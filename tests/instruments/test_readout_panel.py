@@ -99,22 +99,6 @@ def test_readout_value_stays_legible_over_sky_and_ground(background, alpha):
 # Shared static-element drop-shadow tokens (AER-392 / pyEfis#142)
 # --------------------------------------------------------------------------
 
-def test_drop_shadow_effect_defaults_to_zero_offset(qtbot):
-    """Zero offset is the rotation-safe default (AER-392 gotcha #1) -- a
-    caller must opt IN to an offset, not opt out of one."""
-    effect = helpers.drop_shadow_effect(12.0)
-    assert effect.blurRadius() == 12.0
-    assert effect.xOffset() == 0.0
-    assert effect.yOffset() == 0.0
-    assert effect.color().alphaF() == pytest.approx(
-        helpers.SHADOW_ALPHA, abs=_ALPHA_TOL)
-
-
-def test_drop_shadow_effect_clamps_negative_blur(qtbot):
-    effect = helpers.drop_shadow_effect(-5.0)
-    assert effect.blurRadius() == 0.0
-
-
 def test_bake_blurred_silhouette_pads_the_canvas(qtbot):
     """The bake canvas must be bigger than the widget-sized target -- see
     SHADOW_CANVAS_PAD_RATIO -- or the Gaussian falloff clips into a hard
