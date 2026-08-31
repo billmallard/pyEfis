@@ -30,10 +30,6 @@ instruments:
               encoder_order: 100014
           -
             options:
-              config: buttons/screen-sixpack-pfd.yaml
-              encoder_order: 100015
-          -
-            options:
               config: buttons/units.yaml
               encoder_order: 100016
 
