@@ -228,7 +228,7 @@ returns to its `continue_screen` (default `PFD`). See
 
 The pilot moves between screens using the **side button bar** that most flight
 screens include via `BUTTON_GROUP1`
-(`includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-SIXPACK-Units.yaml`).
+(`includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-Units.yaml`).
 There is also a horizontal variant (`BUTTON_GROUP2` /
 `includes/buttons/horizontal/...`). The bar is a `ganged_button` group whose
 members each point at a screen-change button config in `config/buttons/`:
