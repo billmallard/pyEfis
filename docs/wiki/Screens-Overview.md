@@ -46,7 +46,6 @@ includes:
 ```yaml
 include:
   - SCREEN_DATA_STATUS   # screens/datastatus.yaml
-  - SCREEN_SIXPACK       # screens/sixpack.yaml
   - SCREEN_PFD           # screens/pfd.yaml
   - SCREEN_PFD_AI_ONLY   # screens/pfd_ai_only.yaml
   - SCREEN_RADIO         # screens/radio.yaml
@@ -61,7 +60,7 @@ screen, edit this list (in your `preferences.yaml.custom` or your own
 mapping (this is how the portrait variants are enabled — see
 [Layout variants](#layout-variants)).
 
-- **The shipped default set loads seven screens.** Note that **Android is *not*
+- **The shipped default set loads six screens.** Note that **Android is *not*
   in the default list** even though a side-button to reach it exists — the
   `SCREEN_ANDROID` mapping is defined in `preferences.yaml`, but
   `default_list.yaml` does not include it. Add `SCREEN_ANDROID` to the list to
@@ -100,11 +99,18 @@ button mechanics in
 | **AI-only PFD** | `screens/pfd_ai_only.yaml` | Full-width attitude/SVS, no engine or radio | AHRS bundle stretched to full width + navdata flag |
 | **EMS** | `screens/ems.yaml` | Engine monitoring with attitude | AHRS bundle + arc columns + EGT/CHT strips + power bars + EGT-mode buttons |
 | **EMS2** | `screens/ems2.yaml` | Dedicated engine page (no AHRS) | RPM/MAP arcs, oil bars, EGT/CHT/Power/Fuel strips, EGT-mode buttons |
-| **Six-Pack** | `screens/sixpack.yaml` | Traditional steam-gauge panel | round airspeed, AI, altimeter, turn coordinator, HSI, VSI |
 | **Radio** | `screens/radio.yaml` | Radio control | AHRS bundle + arc columns + combined MGL V16 radio panel + listbox |
 | **Android** | `screens/android.yaml` | Embedded Android app | `weston`/waydroid panel + arc column + button bar *(not in the default list)* |
 
-> **Screenshots:** Six-Pack, EMS2, and Data Status are rendered by the screenshot
+> **Migrating from Six-Pack:** the traditional steam-gauge screen
+> (`screens/sixpack.yaml` and its portrait / left-buttons variants) has been
+> removed — it was a legacy layout, and the same round-gauge arrangement is a
+> few minutes' work in the [Screen Builder](Screen-Builder#worked-example-classic-six-instrument-panel),
+> sized to taste with `span` / `move` / `font_percent`. A custom config that
+> still maps `SCREEN_SIXPACK` to the deleted file will get a clear error on
+> load, not a silent failure.
+
+> **Screenshots:** EMS2 and Data Status are rendered by the screenshot
 > harness on a PC (`tests/screenshots/`, run with `GENERATE_SCREENSHOTS=1`). The
 > Virtual-VFR screens (PFD, AI-only PFD, EMS, Radio) use a GL widget that won't
 > initialise under the offscreen platform, so they are captured on the Pi via
@@ -114,8 +120,8 @@ button mechanics in
 > data, not a live aircraft.
 
 Every flight screen uses `module: pyefis.screens.screenbuilder` and a virtual
-grid (most are `110 × 200`; Data Status is `100 × 100`). All except EMS2,
-Six-Pack and Android pull `screens/virtualvfr_db.yaml` (the CIFP data paths for
+grid (most are `110 × 200`; Data Status is `100 × 100`). All except EMS2
+and Android pull `screens/virtualvfr_db.yaml` (the CIFP data paths for
 the AHRS/SVS) and all flight screens pull `HMI_ENCODER_BUTTONS` (the encoder
 input wiring). The recurring "AHRS bundle" is the
 `includes/ahrs/virtual_vfr.yaml` include, described under PFD below.
@@ -185,17 +191,6 @@ during run-up or leaning) when attitude is shown on another display.
 
 ![EMS2 engine page](../images/screen_ems2.png)
 
-### Six-Pack
-
-The traditional six-instrument "steam gauge" panel, built from round analog
-widgets rather than tapes: `airspeed_dial`, `atitude_indicator`,
-`altimeter_dial` across the top; `turn_coordinator`,
-`horizontal_situation_indicator` (with a `heading_display`), and `vsi_dial`
-across the bottom. It pulls only the encoder wiring and the side button bar — no
-AHRS bundle, no engine column. Use it as a familiar backup-instrument layout.
-
-![Six-Pack screen](../images/screen_sixpack.png)
-
 ### Radio
 
 A radio-tuning screen. It runs the AHRS bundle and the two engine arc columns
@@ -244,7 +239,6 @@ members each point at a screen-change button config in `config/buttons/`:
 | `screen-ems2-pfd.yaml` | EMS2 ↔ PFD | `TSBTN{id}20` |
 | `screen-android-pfd.yaml` | Android ↔ PFD | `TSBTN{id}19` |
 | `screen-radio-pfd.yaml` | Radio ↔ PFD | `TSBTN{id}14` |
-| `screen-sixpack-pfd.yaml` | Six-Pack ↔ PFD | `TSBTN{id}18` |
 | `screen-map-pfd.yaml` | Android (map) ↔ PFD | `TSBTN{id}13` |
 | `units.yaml` | toggles instrument units / shows hidden bar | `TSBTN{id}15` |
 
@@ -284,13 +278,13 @@ pointing the `SCREEN_*` include at a different file (no need to edit the screen
 itself):
 
 - **`*-portrait.yaml`** — portrait-oriented re-layouts (`pfd-portrait.yaml`,
-  `ems-portrait.yaml`, `ems2-portrait.yaml`, `sixpack-portrait.yaml`,
+  `ems-portrait.yaml`, `ems2-portrait.yaml`,
   `radio-portrait.yaml`, `android-portrait.yaml`) for tall displays. The
   `includes:` comments in `preferences.yaml` show the swap, e.g.
   `SCREEN_PFD: screens/pfd.yaml   # screens/pfd-portrait.yaml`.
 - **`*-left-buttons.yaml`** — the same screen with the side button bar / columns
   moved to the **left** edge (`pfd-left-buttons.yaml`, `ems-left-buttons.yaml`,
-  `ems2-left-buttons.yaml`, `sixpack-left-buttons.yaml`,
+  `ems2-left-buttons.yaml`,
   `radio-left-buttons.yaml`, `android-left-buttons.yaml`) — useful when the
   pilot sits on the right, or for a co-pilot display.
 
