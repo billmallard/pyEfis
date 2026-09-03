@@ -1323,5 +1323,5 @@ enabled:
 The includes section is used to change what screen builder config file is used for a specific include. An example of using this is to replace the set of buttons on the right side of the screen.  That include is used within many screen builder configs, instead of editing each of the config files we can simply define the include with a key name, then in the includes section define that key and the name of the actual file you want to load. 
 ```
 includes:
-  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-SIXPACK-Units.yaml
+  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-Units.yaml
 ```

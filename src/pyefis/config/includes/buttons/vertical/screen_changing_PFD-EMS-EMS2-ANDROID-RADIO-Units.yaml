@@ -1,14 +1,14 @@
 instruments:
   - type: ganged_button
-    gang_type: horizontal
+    gang_type: vertical
     row: 0
     column: 0
     span:
-      rows: 9
-      columns: 200
+      rows: 70
+      columns: 14.5
     groups:
       - name: Side Buttons
-        gap: 1
+        gap: 6
         common_options:
             font_mask: "ANDROID"
         instruments:
@@ -28,10 +28,6 @@ instruments:
             options:
               config: buttons/screen-radio-pfd.yaml
               encoder_order: 100014
-          -
-            options:
-              config: buttons/screen-sixpack-pfd.yaml
-              encoder_order: 100015
           -
             options:
               config: buttons/units.yaml

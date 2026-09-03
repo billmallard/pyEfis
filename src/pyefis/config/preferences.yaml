@@ -118,13 +118,12 @@ includes:
   # The screens setion of the configuration:
   SCREENS_CONFIG: screens/default_list.yaml
   # The include for the main navigations buttons:
-  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-SIXPACK-Units.yaml
-  BUTTON_GROUP2: includes/buttons/horizontal/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-SIXPACK-Units.yaml
+  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-Units.yaml
+  BUTTON_GROUP2: includes/buttons/horizontal/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-Units.yaml
 
   # The include for the encoder button control feature
   HMI_ENCODER_BUTTONS: hmi/encoder_input.yaml
   # The screen config files to load for the various default screens:
-  SCREEN_SIXPACK: screens/sixpack.yaml       # screens/sixpack-portrait.yaml
   SCREEN_ANDROID: screens/android.yaml       # screens/android-portrait.yaml
   SCREEN_PFD: screens/pfd.yaml               # screens/pfd-portrait.yaml
   SCREEN_PFD_AI_ONLY: screens/pfd_ai_only.yaml   # AI/SVS-only PFD, no engine/radio columns
