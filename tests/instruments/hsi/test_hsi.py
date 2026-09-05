@@ -1270,20 +1270,12 @@ def test_shadow_disabled_by_default(fix, qtbot):
     widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
 
 
-def test_shadow_bakes_halo_behind_disc_without_shrinking_the_rose(fix, qtbot):
-    """Enabling the shadow bakes the halo via helpers.bake_blurred_silhouette
-    (AER-439 -- replaced a QGraphicsDropShadowEffect attached directly to the
-    disc item, which had no way to punch its own shape back out of its own
-    shadow, see test_shadow_rose_disc_translucent_fill_unchanged_by_shadow
-    below) as its OWN scene item strictly behind the disc fill: z=-2 for the
-    halo vs z=-1 for the disc, so the disc's own fill is never composited over
-    its own unpunched shadow.
-
-    pyEfis#158: it must do that WITHOUT shrinking the rose at ordinary panel
-    sizes. The old code reserved blur * SHADOW_CANVAS_PAD_RATIO -- the bake
-    canvas pad, 3x what the visible falloff can reach -- and ignored the
-    ROSE_EDGE_MARGIN already in hand, so ticking the option cost 6.3% of the
-    rose's area and was the only part of it anyone could see."""
+def test_shadow_draws_the_glow_ring_behind_the_disc(fix, qtbot):
+    """The glow is its OWN scene item strictly behind the disc fill: z=-2 for
+    the glow vs z=-1 for the disc, never a QGraphicsDropShadowEffect attached
+    to the disc item (AER-439 -- Qt's effect draws the item's own source back
+    over an unpunched halo, so it tints a translucent disc; see
+    test_shadow_rose_disc_translucent_fill_unchanged_by_shadow below)."""
     plain = hsi.HSI()
     qtbot.addWidget(plain)
     plain.resize(400, 400)
@@ -1298,9 +1290,6 @@ def test_shadow_bakes_halo_behind_disc_without_shrinking_the_rose(fix, qtbot):
     qtbot.waitExposed(shadowed)
 
     assert shadowed._rose_glow_width > 0.0
-    # The halo fits inside ROSE_EDGE_MARGIN at this size, so it costs nothing.
-    assert shadowed._rose_glow_width <= hsi.ROSE_EDGE_MARGIN
-    assert shadowed.r == plain.r
 
     bgitems = [i for i in shadowed.scene.items()
                if isinstance(i, QGraphicsEllipseItem)]
@@ -1316,6 +1305,69 @@ def test_shadow_bakes_halo_behind_disc_without_shrinking_the_rose(fix, qtbot):
     plain_glowitems = [i for i in plain.scene.items()
                        if isinstance(i, QGraphicsPathItem)]
     assert not plain_glowitems, "no glow item should exist with shadows off"
+
+
+def test_rim_glow_costs_no_radius_while_it_fits_the_edge_margin(fix, qtbot,
+                                                                monkeypatch):
+    """A glow narrower than ROSE_EDGE_MARGIN is free: the gap the rose already
+    holds to the widget edge absorbs it, so the rose keeps its full radius.
+
+    This is the pyEfis#158 guarantee, and it is what makes the reservation
+    HONEST -- the rose gives up radius only when the glow genuinely has
+    nowhere else to go, never as a fixed tax on enabling the option (the old
+    code charged blur * SHADOW_CANVAS_PAD_RATIO unconditionally, 6.3% of the
+    rose's area, for a halo nobody could see)."""
+    monkeypatch.setattr(hsi, "ROSE_GLOW_WIDTH_RATIO", 0.02)
+
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(400, 400)
+    plain.show()
+    qtbot.waitExposed(plain)
+
+    shadowed = hsi.HSI()
+    qtbot.addWidget(shadowed)
+    shadowed.shadow_enabled = True
+    shadowed.resize(400, 400)
+    shadowed.show()
+    qtbot.waitExposed(shadowed)
+
+    assert 0.0 < shadowed._rose_glow_width <= hsi.ROSE_EDGE_MARGIN
+    assert shadowed.r == plain.r
+
+
+def test_shipped_rim_glow_width_is_wider_than_the_edge_margin(fix, qtbot):
+    """The width actually shipped (ROSE_GLOW_WIDTH_RATIO, ~10px at panel
+    scale) is DELIBERATELY wider than ROSE_EDGE_MARGIN, so it does cost the
+    rose some radius -- a trade Bill accepted on the bench display, not an
+    oversight. Pinned so that reading the two constants together cannot
+    silently become a no-op again: if someone narrows the glow back under the
+    margin, the sizing tests above still describe the truth but this one says
+    the shipped look changed.
+
+    At real panel geometry the rose is edge-constrained, so a wider glow
+    cannot extend outward -- it grows inward and both widths end at the same
+    outer edge. That is the whole content of the trade."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(528, 402)                    # the HSI's real size on the panel
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    assert widget._rose_glow_width > hsi.ROSE_EDGE_MARGIN
+    # ...and the reservation it triggers is exactly the overflow, no more.
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(528, 402)
+    plain.show()
+    qtbot.waitExposed(plain)
+    overflow = widget._rose_glow_width - hsi.ROSE_EDGE_MARGIN
+    assert widget.r == pytest.approx(plain.r - overflow)
+    # Both roses' glows still end at the same outer edge -- the rose is
+    # edge-constrained, so widening only moves the glow's INNER limit.
+    assert widget.r + widget._rose_glow_width == pytest.approx(
+        plain.r + hsi.ROSE_EDGE_MARGIN)
 
 
 def test_rim_glow_is_a_ring_that_never_covers_the_disc_interior(fix, qtbot):
@@ -1365,11 +1417,15 @@ def test_rim_glow_width_scales_with_the_rose_not_the_label_font(fix, qtbot):
     small_font.show()
     qtbot.waitExposed(small_font)
 
-    # Same widget size, 4x the font: the halo must not move.
+    # Same widget size, 4x the font: the glow must not move.
     assert big_font.fontSize != small_font.fontSize
     assert big_font._rose_glow_width == small_font._rose_glow_width
+    # The width is taken from the rose radius BEFORE the clearance reservation
+    # subtracts from it, so reconstruct that radius rather than asserting
+    # against the final one -- at the shipped width the two differ.
+    reserved = max(0.0, big_font._rose_glow_width - hsi.ROSE_EDGE_MARGIN)
     assert big_font._rose_glow_width == pytest.approx(
-        big_font.r * hsi.ROSE_GLOW_WIDTH_RATIO)
+        (big_font.r + reserved) * hsi.ROSE_GLOW_WIDTH_RATIO)
 
     # ...and it must scale with the rose itself.
     larger = hsi.HSI()
