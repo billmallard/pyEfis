@@ -285,9 +285,17 @@ class TerrainLayer(MapLayer):
             for poly in self._water.polygons_in_range(
                     lat0, lon0, range_nm, min_bbox_diag_deg=min_diag,
                     drop_ocean=wide):
-                pts = [QPointF((lo - lon0) * px_per_deg_lon + half_px,
-                               (lat0 - la) * px_per_deg_lat + half_px)
-                       for la, lo in poly.vertices]
+                # Vectorised deg->px projection (#125): vertices arrive
+                # as an (n, 2) ndarray, so the per-vertex Python
+                # arithmetic (the measured hot line here) collapses to
+                # two array ops; only the QPointF construction remains
+                # per-vertex.
+                v = np.asarray(poly.vertices, dtype=np.float64)
+                if v.shape[0] == 0:
+                    continue
+                xs = ((v[:, 1] - lon0) * px_per_deg_lon + half_px).tolist()
+                ys = ((lat0 - v[:, 0]) * px_per_deg_lat + half_px).tolist()
+                pts = [QPointF(x, y) for x, y in zip(xs, ys)]
                 rings = getattr(poly, "rings", None)
                 if rings:
                     # Multi-ring row (outer + island holes, #44):

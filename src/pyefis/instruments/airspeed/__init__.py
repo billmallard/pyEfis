@@ -474,23 +474,36 @@ class Airspeed_Tape(QGraphicsView):
         p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # TAS box — solid white at the bottom of the tape, full width
+        # TAS box at the bottom of the tape. P5c: the same rounded, translucent
+        # readout panel the boxed IAS uses (it used to be a solid-white slab
+        # with dark text -- the brightest thing on the PFD, for the least
+        # time-critical number on it).
         if self.show_tas:
             lbl_px = max(7, qRound(w * 0.13))
             val_px = max(9, qRound(w * 0.20))
             lbl_font = QFont(self.font_family)
             lbl_font.setPixelSize(lbl_px)
+            lbl_font.setBold(True)
             val_font = QFont(self.font_family)
             val_font.setPixelSize(val_px)
-            row_h = qRound(lbl_px * 1.3)
             box_h = lbl_px + val_px + qRound(lbl_px * 0.6)
-            box_y = h - box_h
-            p.fillRect(QRect(0, box_y, w, box_h), QColor(Qt.GlobalColor.white))
-            dark = QColor(30, 30, 30)
-            p.setPen(QPen(dark))
+            margin = max(1.0, w * 0.02)
+            box_y = h - box_h - margin
+            white = QColor(Qt.GlobalColor.white)
+            # Same panel, one deviation from the shared fill alpha: unlike the
+            # IAS box (which sits beside the scale) this one sits ON it, so at
+            # 0.62 the tick labels read straight through the TAS value. 0.85
+            # knocks the scale back to a texture without going solid.
+            helpers.draw_readout_panel(
+                p, QRectF(margin, box_y, w - 2 * margin, box_h),
+                val_px * helpers.READOUT_RADIUS_RATIO, white,
+                pen_width=max(1.0, val_px * helpers.READOUT_PEN_RATIO),
+                fill_alpha=0.85,
+            )
+            p.setPen(QPen(white))
             p.setFont(lbl_font)
-            p.drawText(QRect(0, box_y + 2, w, lbl_px + 2),
-                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, "TAS")
+            p.drawText(QRectF(0, box_y + 2, w, lbl_px + 2),
+                       int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), "TAS")
             p.setFont(val_font)
             if self.tas_item.fail:
                 tas_str = "---"
@@ -498,23 +511,11 @@ class Airspeed_Tape(QGraphicsView):
                 tas_str = "---"
             else:
                 tas_str = str(int(round(self._tas)))
-            p.drawText(QRect(0, box_y + lbl_px + 2, w, val_px + 4),
-                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, tas_str)
+            p.drawText(QRectF(0, box_y + lbl_px + 2, w, val_px + 4),
+                       int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), tas_str)
 
-        # Pointer triangle and trend — translated to tape/box boundary midpoint
+        # Trend — translated to tape/box boundary midpoint.
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
-        p.setPen(QPen(Qt.GlobalColor.white, 1))
-        p.setBrush(QBrush(Qt.GlobalColor.black))
-        triangle_size = w / 8
-        p.drawConvexPolygon(
-            QPolygon(
-                [
-                    QPoint(0, qRound(-triangle_size - 3)),
-                    QPoint(0, qRound(triangle_size - 2)),
-                    QPoint(qRound(-triangle_size), -1),
-                ]
-            )
-        )
 
         # Airspeed trend indicator
         if self.show_trend:

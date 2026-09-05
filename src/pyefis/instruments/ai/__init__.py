@@ -1101,7 +1101,6 @@ class AI(QGraphicsView):
         if scene is None:
             return
         self.resetTransform()
-        _avoid = getattr(self, "pitch_ladder_avoid_bank", False)
         # Raise the whole attitude reference per horizon_position. The view
         # rotates roll about the viewport CENTRE, so a plain vertical centre
         # offset would make the raised horizon swing around the centre (the
@@ -1118,9 +1117,13 @@ class AI(QGraphicsView):
             + self._pitchAngle * self.pixelsPerDeg * -1.0)
         self.rotate(self._rollAngle * -1.0)
 
-# We use the paintEvent to draw on the viewport the parts that aren't moving.
-        if _avoid:
-            self.setPitchItems()
+        # Pitch-item visibility tracks the pose applied above. This is
+        # the ONLY steady-state caller (#127): the FIX pitch slot just
+        # stores + marks the frame dirty, so the ladder walk runs at
+        # most once per changed frame regardless of FIX burst rate.
+        # (Previously run here only under pitch_ladder_avoid_bank, with
+        # the FIX slot double-covering every other config.)
+        self.setPitchItems()
 
     def paintEvent(self, event):
         # Wall-clock-bound paintEvent timing for perf debugging. When
@@ -1337,9 +1340,13 @@ class AI(QGraphicsView):
         return self._pitchAngle
 
     def setPitchAngle(self, angle):
+        # P4 decoupling (#127): store only; the 30 Hz _frame_tick ->
+        # redraw applies the pitch-item visibility on the next frame,
+        # like the sibling slots. Calling setPitchItems here walked the
+        # whole ladder again on every FIX attitude burst on top of the
+        # frame clock's own pass.
         if angle != self._pitchAngle and not self.getAIFail():
             self._pitchAngle = common.bounds(-90, 90, angle)
-            self.setPitchItems()
             self._frame_dirty = True
 
     pitchAngle = property(getPitchAngle, setPitchAngle)

@@ -24,7 +24,7 @@ three "mirrors" derive from, so they can no longer drift apart:
   2. the editor schema exporter (:mod:`pyefis.editor.schema` -> ``schema.json``),
   3. the web configurator's instrument "twin" (renders the live preview).
 
-An instrument has THREE distinct kinds of input; keeping them separate is the
+An instrument has FOUR distinct kinds of input; keeping them separate is the
 whole point of this module (see ``docs/instrument_spec.md``):
 
   1. Config properties (:attr:`InstrumentSpec.properties`, list of :class:`Prop`)
@@ -43,6 +43,14 @@ whole point of this module (see ``docs/instrument_spec.md``):
   3. Preview hints (:attr:`InstrumentSpec.preview`, dict)
      Representative sample data so the configurator twin can draw a realistic
      instrument with no live FIX connection. Never written to a device.
+
+  4. Container slots (:attr:`InstrumentSpec.containers`, list of
+     :class:`ContainerSlot`)
+     A property whose value is a *subtree* -- an ordered list of named,
+     instrument-holding tabs -- rather than a leaf value. ``Prop`` is
+     deliberately scalar-only (``__post_init__`` assumes a scalar default and,
+     for ``enum``, a flat list), so a subtree isn't a leaf value with a longer
+     enum; it needs its own category. e.g. ``tab_section``'s ``tabs``.
 
 This module is intentionally **Qt-free** so the catalog can be validated and
 the schema exported in CI without a display or the GL stack. The Qt-dependent
@@ -184,6 +192,21 @@ class FixValue:
 
 
 @dataclass
+class ContainerSlot:
+    """One property whose value is a list of named instrument-holding tabs
+    (category 4). Its value is a subtree, not a leaf -- Prop's scalar-default
+    invariant doesn't apply here, which is exactly why this isn't a Prop."""
+
+    name: str            # e.g. "tabs" -- the YAML key
+    label: str = ""
+    help: str = ""
+
+    def __post_init__(self):
+        if not self.label:
+            self.label = self.name.replace("_", " ").capitalize()
+
+
+@dataclass
 class InstrumentSpec:
     """The single source of truth for one instrument type.
 
@@ -199,6 +222,7 @@ class InstrumentSpec:
     properties: list = field(default_factory=list)    # category 1: list[Prop]
     fix_values: list = field(default_factory=list)    # category 2: list[FixValue]
     preview: dict = field(default_factory=dict)       # category 3: twin sample data
+    containers: list = field(default_factory=list)    # category 4: list[ContainerSlot]
     keep_aspect: bool = False
     offscreen_renderable: bool = True
     svs_capable: bool = False
@@ -224,6 +248,18 @@ class InstrumentSpec:
         if dupes:
             raise ValueError(
                 f"InstrumentSpec {self.type!r}: duplicate property names {dupes}")
+        container_names = [c.name for c in self.containers]
+        container_dupes = sorted(
+            {n for n in container_names if container_names.count(n) > 1})
+        if container_dupes:
+            raise ValueError(
+                f"InstrumentSpec {self.type!r}: duplicate container names "
+                f"{container_dupes}")
+        overlap = sorted(set(names) & set(container_names))
+        if overlap:
+            raise ValueError(
+                f"InstrumentSpec {self.type!r}: names used as both a "
+                f"property and a container slot {overlap}")
 
     def prop(self, name):
         """Return the :class:`Prop` named *name*, or ``None``."""

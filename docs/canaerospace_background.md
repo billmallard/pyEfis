@@ -176,7 +176,9 @@ slow environment, owning the vocabulary beats renting a bigger one.
   CAN FD story. If that ever matters, add a second transport bridged
   at fix-gateway — not a protocol migration.
 - **Keep two bridge plugins on the roadmap:** CANaerospace-in (Rotax
-  iS), DroneCAN-in (commodity sensors).
+  iS), DroneCAN-in (commodity sensors). Implementation specs:
+  [fixgw_canaerospace_in_spec.md](fixgw_canaerospace_in_spec.md),
+  [fixgw_dronecan_in_spec.md](fixgw_dronecan_in_spec.md).
 
 One-sentence version: the architecture already made the wire protocol
 swappable, so standardizing on CAN-FIX costs little even if wrong —

@@ -150,7 +150,7 @@ each screen. This is also how the top-level config resolves its big sections.
 
 ```yaml
 includes:
-  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-SIXPACK-Units.yaml
+  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-Units.yaml
   SCREENS_CONFIG: screens/default_list.yaml
   MAIN_CONFIG:    main/default.yaml
 ```

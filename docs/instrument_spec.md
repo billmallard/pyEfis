@@ -22,9 +22,9 @@ checks the record against the factory, the schema, and the real widget.
 
 ---
 
-## 1. The three kinds of instrument input
+## 1. The four kinds of instrument input
 
-The central idea. An instrument has **three distinct kinds of input**, and they
+The central idea. An instrument has **four distinct kinds of input**, and they
 must never be conflated:
 
 | # | Kind | Source of truth | In the panel editor? | Drives the twin? | Examples |
@@ -32,6 +32,7 @@ must never be conflated:
 | 1 | **Config properties** | the registry record (`properties`) | **yes** — the inspector panel | yes | `aircraft_symbol`, `show_tas`, `segments`, `name_location`, `decimal_places` |
 | 2 | **FIX-database values** | fix-gateway (item `min`/`max`/`aux`) — described in the record (`fix_values`) | **no** (issue #64) | only as preview | V-speeds (Vne…), gauge warn/alarm bands, range |
 | 3 | **Preview hints** | the registry record (`preview`) | no — never written to a device | yes — representative sample data | sample needle value, sample bands, sample pitch/roll |
+| 4 | **Container slots** | the registry record (`containers`, list of `ContainerSlot`) | **yes** — a drop-target, not a properties field | yes — recursively | `tab_section`'s `tabs` |
 
 Why it matters:
 - **Category 1** is panel *layout/appearance/feature* configuration. It is what
@@ -43,6 +44,12 @@ Why it matters:
   editor only reads them (as preview).
 - **Category 3** lets the browser twin draw a realistic instrument with no live
   FIX connection. It is sample data only.
+- **Category 4** is for a property whose *value is a subtree* -- an ordered
+  list of named, instrument-holding tabs -- rather than a leaf value.
+  `Prop`/`PROP_KINDS` is deliberately scalar-only (`Prop.__post_init__`
+  assumes a scalar `default` and, for `enum`, a flat list), so this needed its
+  own category rather than a `Prop` special case (pyEfis#131). `tab_section`
+  is the only category-4 instrument today.
 
 When you add a configurable knob, decide which category it is **first**. If it is
 something a pilot/builder sets for the panel → category 1. If it is aircraft data
@@ -66,6 +73,7 @@ InstrumentSpec(
     properties:  list[Prop] = [],       # category 1
     fix_values:  list[FixValue] = [],   # category 2
     preview:     dict = {},             # category 3 (twin sample data)
+    containers:  list[ContainerSlot] = [],  # category 4
     keep_aspect:          bool = False, # round/square -> editor letterboxes it
     offscreen_renderable: bool = True,  # False for GL/compositor widgets
     svs_capable:          bool = False, # can host the GL SVS overlay
@@ -106,6 +114,25 @@ FixValue(
 
 The panel editor does not set these; they are aircraft data in fix-gateway.
 
+### `ContainerSlot` — one category-4 container slot
+
+```python
+ContainerSlot(
+    name:  str,       # the YAML key holding the subtree, e.g. "tabs"
+    label: str = "",
+    help:  str = "",
+)
+```
+
+A container slot describes "this instrument has a property whose value is a
+list of named, instrument-holding tabs," not a leaf value -- there is no
+`default`, because the value is a subtree the panel editor builds by dragging
+instruments into a drop-target, not a scalar the editor seeds. The exporter
+emits a `containers: [...]` block per instrument (parallel to, and separate
+from, its flat `options:` block) so the editor knows to render a drop-target
+instead of a properties field. See `tab_section` (`docs/screenbuilder.md`) for
+the one instrument that uses this today, including the `tabs:` wire shape.
+
 ---
 
 ## 3. How the three mirrors derive from the record
@@ -129,7 +156,7 @@ The panel editor does not set these; they are aircraft data in fix-gateway.
 - **Schema:** `build_schema()` uses `_entry_from_spec()` for any type in
   `REGISTRY`, else `_entry_from_curation()` (the transitional curated metadata).
   Every entry carries `options`, `dbkeys`, `required_options`, flags, plus
-  `preview` and `fix_values`. `SCHEMA_VERSION` is **3**.
+  `preview`, `fix_values`, and `containers`. `SCHEMA_VERSION` is **3**.
 - **Twin:** each `build*(inst)` in `editor.html` reads `inst.options` and the
   instrument's `preview` from the loaded schema. It must not invent appearance.
 

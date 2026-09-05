@@ -408,6 +408,17 @@ class Altimeter_Tape(QGraphicsView):
             else:
                 self.numerical_display.value = self._altimeter
 
+    def _trend_offset_base(self):
+        """Base unit for the trend vector's horizontal offset from the tape
+        edge, taken from the readout panel so it scales with the box. Falls
+        back to a width-derived size when the numeric box is switched off
+        (numeric_box=False)."""
+        rect = getattr(getattr(self, "numerical_display", None),
+                       "readout_rect", None)
+        if rect is not None and rect.height() > 0:
+            return rect.height() * 0.42
+        return self.width() / 12.0
+
     #  Index Line that doesn't move to make it easy to read the altimeter.
     def paintEvent(self, event):
         # edge_fade (percent of height, 0 = off): melt the scrolling
@@ -422,20 +433,7 @@ class Altimeter_Tape(QGraphicsView):
         p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        marks = QPen(Qt.GlobalColor.white, 1)
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
-        p.setPen(marks)
-        p.setBrush(QBrush(Qt.GlobalColor.black))
-        triangle_size = w / 8
-        p.drawConvexPolygon(
-            QPolygonF(
-                [
-                    QPointF(0, -triangle_size),
-                    QPointF(0, triangle_size),
-                    QPointF(triangle_size, 0),
-                ]
-            )
-        )
 
         # Altitude-trend vector (AC 23.1311-1C sec 17.8.b) -- a cyan look-ahead
         # from the read pointer: up when climbing, down when descending. Only
@@ -449,7 +447,7 @@ class Altimeter_Tape(QGraphicsView):
                 p.setBrush(QBrush(trend_color))
                 max_trend_px = qRound(h * 0.45)
                 trend_y = max(-max_trend_px, min(max_trend_px, qRound(-self._trend_px)))
-                x0 = qRound(triangle_size * 1.3)
+                x0 = qRound(self._trend_offset_base() * 1.3)
                 p.drawLine(x0, 0, x0, trend_y)
                 arrow = max(3, qRound(w / 14))
                 if trend_y < 0:      # climbing

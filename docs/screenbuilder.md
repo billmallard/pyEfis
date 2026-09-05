@@ -984,6 +984,59 @@ Options:
   * text
   * alignment
 
+## tab_section
+
+An in-screen **container** instrument (pyEfis#131 / AER-172): placed on the
+grid like any other instrument, it holds an ordered set of named tabs, each
+with its own nested `instruments:` list, and lets the pilot/config switch
+between them with a touch/click tab bar. Distinct from and orthogonal to the
+whole-**screen** switching described under `main` (pyEfis#72) -- this is one
+container among many instruments on a *single* screen; whole-screen switching
+still jumps between entirely separate authored screens.
+
+```yaml
+- type: tab_section
+  row: 0
+  column: 0
+  span: {rows: 40, columns: 100}
+  options:
+    default_tab: 0
+  tabs:
+    - label: Engine
+      layout: {rows: 4, columns: 4}
+      instruments:
+        - type: arc_gauge
+          row: 0
+          column: 0
+          options: {dbkey: OILP, name: OIL}
+    - label: Nav
+      layout: {rows: 2, columns: 2}
+      instruments:
+        - type: static_text
+          row: 0
+          column: 0
+          options: {text: NAV}
+```
+
+Each tab entry carries its own `label`, `layout` (`rows`/`columns`, same shape
+as a screen's top-level `layout:`), and `instruments:` -- the exact same list
+shape a screen's own YAML uses. A tab's instruments are positioned against
+*that tab's* grid, which is itself laid out against the `tab_section`'s own
+box, never the enclosing screen's -- each tab is built through the same
+`Screen`/`create_instrument()` path a top-level screen uses (see
+`instrument_spec.md` §"container slots" for the `containers`/`ContainerSlot`
+exporter contract this relies on).
+
+Options:
+  * default_tab - integer, default 0. Which tab is shown on screen load /
+    power-up. Always resets to this configured tab -- the last tab the pilot
+    had selected is **not** remembered across a reload.
+
+v1 scope (tracked as non-goals, not yet implemented):
+  * touch/click tab bar only -- no hardware-button tab switching yet.
+  * a `tab_section` cannot be nested inside another `tab_section`.
+  * no FIX-key-driven automatic tab switching.
+
 ## turn_coordinator
 
 ![Turn Coordinator](/docs/images/turn_coordinator.png)
@@ -1270,5 +1323,5 @@ enabled:
 The includes section is used to change what screen builder config file is used for a specific include. An example of using this is to replace the set of buttons on the right side of the screen.  That include is used within many screen builder configs, instead of editing each of the config files we can simply define the include with a key name, then in the includes section define that key and the name of the actual file you want to load. 
 ```
 includes:
-  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-SIXPACK-Units.yaml
+  BUTTON_GROUP1: includes/buttons/vertical/screen_changing_PFD-EMS-EMS2-ANDROID-RADIO-Units.yaml
 ```

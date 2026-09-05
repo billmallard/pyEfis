@@ -256,7 +256,12 @@ Each item: what it does, the input(s), the convention.
    phase — FAA-H-8083-15B), not by the widget: the display renders the dots it is
    given and never scales. Hidden/flagged when the signal is invalid (see 11). An
    optional `NAVPHASE` annunciation (ENR/TERM/APR) is display-only text from the
-   navigator.
+   navigator. **In arc orientation (P6) the CDI stays course-bound** — the
+   deviation bar rotates with the course pointer, same as the rose — because
+   this widget is an HSI (precedent: G1000/G3X ARC mode), not a Navigation
+   Display. A screen-fixed edge scale is the transport-category ND idiom
+   (Boeing 737 / Airbus) and is scoped to a separate ND mode on the moving-map
+   instrument, not this widget. Decision record: issue #133; ND mode: #134.
 4. **TO/FROM** — for VOR sources; hidden for LOC and (typically) GPS.
 5. **Glideslope / glidepath (VDI)** — vertical deviation scale + diamond from
    `GSI`; shown on ILS/LPV/approach. **An ILS glideslope requires a valid
@@ -358,7 +363,26 @@ covers annunciation, but a pure-fail CDI is not yet removed) and confirming
 **HSI-SRC-001.** The active nav source is annunciated on the face at all times (e.g.
 "GPS", "VOR1", "LOC1"), coloured per HSI-COLOR-001, so the crew always knows what drives
 lateral/vertical guidance (14 CFR §23.2605(b); `avionics_reference.md` §4.1).
-*Status: implemented — the tappable source label.*
+*Status: implemented. In `readout_layout: top_panel` (the default), the annunciation is
+a coloured tab (`HSI._draw_source_tab`, pyEfis#140) on the left edge of the HDG | MAG |
+CRS panel, in line with those readouts: fill = active source colour (moving
+HSI-COLOR-001's colour from glyphs to fill), text white and centred, height = panel
+height less both corner radii (the panel's left-edge straight run), left corners rounded
+on `helpers.READOUT_RADIUS_RATIO`, right edge square and flush with the panel (no seam).
+The whole tab is the tap target; `mousePressEvent` still cycles NAVSRC GPS→NAV1→NAV2
+unchanged. `corners` / `split` / `none` draw no such panel and keep the prior floating
+top-left label. Two open items from the #140 fit/contrast pass, both explicitly Bill's
+call rather than something this change decides unilaterally: (1) at `font_percent: 0.07`
+(the `sixpack*` screens) the tab overflows past the widget's left edge for every source
+label, including the shortest ("GPS") — the panel already consumes ~87% of the widget
+width at that ratio, and per the hard boundary the panel is not resized/moved to make
+room. This crowding predates this change: on `origin/dev`, the sixpack HSI's old
+floating label already overlaps the panel at this ratio, just hidden underneath it
+(the panel paints on top) rather than clipped at the widget edge — see the
+`sixpack_screen_before_after.png` render in `docs/images/aer389_hsi_nav_source_tab/`;
+(2) white-on-source-colour measures ~3.1:1 for magenta (GPS) and ~1.4:1 for green
+(VLOC/VOR/LOC) against the WCAG 4.5:1 floor — text stays white per Bill's direction, so
+the fix, if any, is a darker fill, not the text colour.*
 
 ### 7.5 Deviation scaling (HSI-DEV)
 
@@ -387,7 +411,9 @@ Ordered by impact-per-effort; each phase is shippable and testable on its own.
   cyan needles with source labels and the heading-invalid hide rule.
 - **P5 — OBS control + mode.** Add an OBS/CRS control (encoder or button writing
   `COURSE`; `OBSMODE`/`SUSP` flags) and the OBS/SUSP annunciations.
-- **P6 — orientation modes.** Heading-up / track-up / arc (120°) expanded HSI.
+- **P6 — orientation modes. [DONE, arc]** Heading-up / track-up / arc (120°)
+  expanded HSI. Arc mode's CDI is course-bound by decision (#133), not a gap —
+  see §6.3 and §11.5.
 
 Each phase: implement widget + factory `Prop`s, regenerate `schema.json` →
 R2, update the `editor.html` twin to match (fidelity rule), add unit tests and a
@@ -485,6 +511,27 @@ source, expected appearance):
 4. **Control and interaction (scoped — see §12).** Both physical knob controllers
    and on-screen touch-select are needed; this is a panel-wide interaction model,
    not an HSI-only concern.
+5. **Arc-mode CDI: course-bound, not screen-fixed (resolved — issue #133).**
+   The arc orientation's deviation dots and CDI bar sit at ownship,
+   perpendicular to the course line, and rotate with the course pointer as
+   heading/course change — matching the rose HSI's CDI, not a Navigation
+   Display's fixed edge scale. This was flagged because arc mode borrows its
+   compass idiom from transport-category NDs (Boeing 737, Airbus), which
+   instead show deviation on a **screen-fixed** scale at the display edge —
+   confirmed against authoritative 737 avionics material. The resolution is a
+   split by instrument, not a redesign of this widget: **this HSI keeps
+   course-bound deviation in every orientation, including arc**, because it is
+   an HSI (precedent: Garmin G1000/G3X Touch PFD HSI ARC mode also keep the
+   CDI bound to the course arrow). The screen-fixed ND idiom is scoped to a
+   new **Navigation Display mode on the moving-map instrument** (issue #134),
+   which this widget does not implement. If a screen-fixed lateral scale is
+   ever wanted on the HSI itself, that reopens #133 rather than extending arc
+   mode. A bearing-pointer label defect found while confirming this — a
+   pointer clipped outside the forward sector kept its source label lit
+   (`_draw_arc_source_labels` never checked `_arc_in_sector`) — is fixed
+   alongside this decision: the label now suppresses with its needle unless
+   the pointer's own data is invalid, in which case the "X" annunciation
+   stays regardless of sector.
 
 ## 12. Control and interaction (OBS and beyond)
 

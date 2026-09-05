@@ -44,6 +44,7 @@ import logging
 import math
 import sqlite3
 import struct
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,7 +58,11 @@ class WaterPolygon:
     id        : int
     kind      : str          # 'ocean', 'lake', 'river', ...
     elev_ft   : float | None # known water-surface elev; None = sample SRTM
-    vertices  : list = field(default_factory=list)  # [(lat, lon), ...]
+    # (n, 2) float64 ndarray of (lat, lon) rows (#125); may be a
+    # read-only view of the storage blob. Iterates/unpacks like the
+    # old list-of-tuples. Cached queries (#124) share one array —
+    # treat as immutable.
+    vertices  : object = field(default_factory=list)
     # Pre-tessellated triangle indices (flat list of ints, 3 per
     # triangle, into the ``vertices`` list). Bytes blob in storage,
     # decoded to a Python list at load time so the GPU renderer can
@@ -78,9 +83,10 @@ class WaterPolygon:
         return self.kind == "ocean"
 
     @property
-    def outer_vertices(self) -> list:
-        """The outer ring alone — the whole ``vertices`` list for a
-        single-ring polygon."""
+    def outer_vertices(self):
+        """The outer ring alone — the whole ``vertices`` array for a
+        single-ring polygon. An ndarray view, same shape rules as
+        ``vertices``."""
         if self.rings:
             return self.vertices[:self.rings[0]]
         return self.vertices
@@ -97,13 +103,30 @@ class WaterDB:
     # for users who want denser coastlines on larger displays.
     DEFAULT_MAX_VERTICES = 32
 
+    # Decoded-polygon cache budget, in TOTAL cached vertices (#124).
+    # The DB is static, so a row's decode is deterministic per instance
+    # (the cap is fixed at construction) and repeat queries near a dense
+    # coastline — every SVS collect cycle and every map tile re-render —
+    # were re-decoding the same island polygons each time. Vertex count
+    # is the bound (not entry count) because multi-ring coastline cells
+    # are never capped and dwarf the 32-vertex inland rows.
+    DEFAULT_CACHE_VERTEX_BUDGET = 500_000
+
     def __init__(self, sqlite_path: str | Path | None,
-                 max_vertices: int | None = None):
+                 max_vertices: int | None = None,
+                 cache_vertex_budget: int | None = None):
         self._path = Path(sqlite_path) if sqlite_path else None
         self._con: sqlite3.Connection | None = None
         self._max_vertices = (max_vertices
                               if max_vertices is not None
                               else self.DEFAULT_MAX_VERTICES)
+        # id -> (WaterPolygon, vertex_count), LRU order. Confined to
+        # this instance's worker thread like the connection itself.
+        self._poly_cache: OrderedDict[int, tuple] = OrderedDict()
+        self._cache_verts = 0
+        self._cache_vertex_budget = (cache_vertex_budget
+                                     if cache_vertex_budget is not None
+                                     else self.DEFAULT_CACHE_VERTEX_BUDGET)
         # True when an R-Tree spatial index virtual table is present;
         # we then use it for bbox queries instead of the plain B-tree
         # index on min/max columns. R-Tree is ~50x faster on KSBA-
@@ -258,7 +281,19 @@ class WaterDB:
                 params = params + (min_d2,)
             cur = self._con.execute(sql, params)
         cap = self._max_vertices
+        cache = self._poly_cache
+        budget = self._cache_vertex_budget
         for r in cur:
+            # Decoded-polygon cache (#124): the yielded WaterPolygon is
+            # SHARED with the cache — consumers must treat it as
+            # immutable (both in-tree consumers only read; the SVS
+            # collector's np.asarray(..., dtype=float32) copies).
+            pid = r["id"]
+            hit = cache.get(pid)
+            if hit is not None:
+                cache.move_to_end(pid)
+                yield hit[0]
+                continue
             # The stored vertex count picks the triangle/ring index
             # dtype (uint16 <= 65535 vertices, uint32 beyond) — dense
             # multi-ring cells overflow uint16 and the builder mirrors
@@ -269,18 +304,29 @@ class WaterDB:
             # decimation across concatenated rings would corrupt the
             # ring topology AND the pre-tessellated triangle indices.
             # The build-time per-ring cap is the bound for these rows.
-            yield WaterPolygon(
-                id=r["id"],
+            poly = WaterPolygon(
+                id=pid,
                 kind=(r["kind"] or "").strip().lower(),
                 elev_ft=r["elev_ft"],
                 vertices=_decode_vertices(r["vertices"],
                                           None if rings else cap),
                 triangles=_decode_triangles(r["triangles"], n_verts),
                 rings=rings)
+            nv = len(poly.vertices)
+            cache[pid] = (poly, nv)
+            self._cache_verts += nv
+            # Evict LRU-first, but never the entry just inserted: a
+            # single dense coastline cell can exceed the whole budget
+            # by itself, and it is exactly the row worth keeping.
+            while self._cache_verts > budget and len(cache) > 1:
+                _, (_old, old_nv) = cache.popitem(last=False)
+                self._cache_verts -= old_nv
+            yield poly
 
 
-def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
-    """Unpack a struct-packed <dd... bytes blob into [(lat, lon), ...].
+def _decode_vertices(blob: bytes, max_vertices: int | None = None):
+    """Unpack a struct-packed <dd... bytes blob into an ``(n, 2)``
+    float64 ndarray of (lat, lon) rows.
 
     When ``max_vertices`` is set and the polygon has more vertices than
     that, stride-decimate uniformly down to the cap (always preserving
@@ -290,23 +336,24 @@ def _decode_vertices(blob: bytes, max_vertices: int | None = None) -> list:
     the per-load CPU when the screen can't resolve the difference at
     typical SVS distances.
 
-    Uses numpy.frombuffer for the bulk decode — at ~200 polygons /
-    frame in the GPU water path each saved millisecond shows up in
-    the visible frame rate, and the Python ``struct.unpack_from``
-    loop was visible in the profile."""
-    if not blob:
-        return []
+    Returns the ndarray directly (#125) — the old list-of-tuples
+    materialization was itself the hottest decode line in flight
+    profiling, and both consumers go straight back to numpy anyway
+    (the SVS collector via ``asarray(dtype=float32)``, which copies;
+    the map layer via vectorised projection). Iteration still unpacks
+    like the old list (``for lat, lon in poly.vertices``). The
+    undecimated array is a READ-ONLY view of the blob — deliberate,
+    since cached polygons (#124) share it between query results."""
     import numpy as _np
+    if not blob:
+        return _np.empty((0, 2), dtype=_np.float64)
     pts = _np.frombuffer(blob, dtype="<f8").reshape(-1, 2)
     n = pts.shape[0]
     if max_vertices and n > max_vertices:
         # Even-stride decimation preserving indices 0 and n-1.
         idx = _np.round(_np.linspace(0, n - 1, max_vertices)).astype(int)
         pts = pts[idx]
-    # Return as a list of plain Python tuples — the GPU collector
-    # immediately re-wraps them with np.asarray, but the rest of the
-    # codebase (and tests) treats vertices as a list-of-tuples.
-    return [tuple(row) for row in pts.tolist()]
+    return pts
 
 
 def encode_vertices(vertices) -> bytes:
