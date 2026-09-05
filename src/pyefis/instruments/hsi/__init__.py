@@ -35,11 +35,11 @@ from pyefis.instruments import helpers
 #: before reserving any more (pyEfis#158) -- the two must not drift apart.
 ROSE_EDGE_MARGIN = 5.0
 #: Width of the rose's rim glow, as a fraction of the rose's own radius --
-#: about 5 px at the panel sizes this instrument is flown at. Deliberately NOT
+#: about 10 px at the panel sizes this instrument is flown at. Deliberately NOT
 #: helpers.SHADOW_BLUR_RATIO: that one is a fraction of the label font, which
 #: is right for the readout boxes (they are font-sized) and wrong for the rose
 #: (it is widget-sized). See the reservation in resizeEvent.
-ROSE_GLOW_WIDTH_RATIO = 0.03
+ROSE_GLOW_WIDTH_RATIO = 0.06
 #: Peak opacity of the rim glow, at the disc's own edge, fading to nothing over
 #: ROSE_GLOW_WIDTH_RATIO by helpers.RIM_GLOW_FALLOFF. Kept separate from
 #: helpers.SHADOW_ALPHA, which the readout boxes share: those are small shapes
