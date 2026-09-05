@@ -193,9 +193,14 @@ class TerrainLayer(MapLayer):
                 continue
             try:
                 img, meta = self._render(job)
+                # Publish unconditionally, even if self._job moved on
+                # while this render was in flight: paint() already
+                # blits a stale image by its own meta and re-requests
+                # on key mismatch, and the loop renders the newer job
+                # next -- discarding a finished result here just makes
+                # a superseded gesture repost from scratch (AER-588).
                 with self._lock:
-                    if self._job == job:      # latest wins
-                        self._img = (img, job[0], meta)
+                    self._img = (img, job[0], meta)
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception(

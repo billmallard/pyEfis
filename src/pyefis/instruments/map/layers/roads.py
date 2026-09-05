@@ -170,9 +170,11 @@ class RoadsLayer(MapLayer):
                 continue
             try:
                 img, meta = self._render(job)
+                # Publish unconditionally, even if self._job moved on
+                # while this render was in flight (AER-588) -- see
+                # terrain.py's _worker_loop for the rationale.
                 with self._lock:
-                    if self._job == job:      # latest wins
-                        self._img = (img, job[0], meta)
+                    self._img = (img, job[0], meta)
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception(
