@@ -957,6 +957,12 @@ _register(InstrumentSpec(
              help="seconds after a two-finger pan/rotate before the view "
                   "re-locks to ownship and the configured orientation. "
                   "0 = stay where left until a tap or an HMI recenter"),
+        Prop("gesture_frame_rate", "number", default=30, minimum=10,
+             maximum=60, label="Gesture frame rate (Hz)",
+             help="repaint clock rate while a pinch/pan/rotate gesture is "
+                  "live (zoom_by/pan_by/rotate_by mark a frame dirty rather "
+                  "than repainting per event); the normal frame rate "
+                  "applies the rest of the time"),
         Prop("ownship_position", "number", default=50, minimum=0,
              maximum=100, label="Ownship position (%)",
              help="ownship anchor, percent up from the bottom "
