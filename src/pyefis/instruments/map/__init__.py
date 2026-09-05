@@ -5,6 +5,7 @@
 #  screen anchor. Plain QWidget/QPainter: renders offscreen, no GL.
 
 import math
+import time
 
 from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
@@ -14,6 +15,7 @@ import pyavtools.fix as fix
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map import layers as map_layers
+from pyefis.instruments.map.perf import MapPerfStats
 from pyefis.instruments.live_binding import LiveBind, LiveBindingMixin
 
 NM_M = 1852.0
@@ -168,6 +170,18 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._frame_timer = QTimer(self)
         self._frame_timer.timeout.connect(self._frame_tick)
         self._frame_timer.start(int(round(1000.0 / self._frame_rate)))
+
+        # --- MP6 perf instrumentation (map_gesture_perf_plan.md section 4) --
+        # MapPerfStats is always created (a few counters, cheap); the
+        # GUI-thread probe timer only runs while map_perf_log or
+        # map_perf_overlay is on (both default False -- no behaviour change
+        # unless a screen opts in).
+        self.perf = MapPerfStats()
+        self._map_perf_log = False
+        self._map_perf_overlay = False
+        self._perf_last_gesture_ns = None
+        self._perf_settle_pending = False
+
         for key, attr in (("LAT", "_lat"), ("LONG", "_lon"),
                           ("TRACKM", "_track"), ("ALT", "_alt_ft")):
             try:
@@ -216,6 +230,48 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._gesture_active = active
         hz = self._gesture_frame_rate if active else self._frame_rate
         self._frame_timer.start(int(round(1000.0 / hz)))
+
+    # --- MP6 perf instrumentation -------------------------------------------
+    @property
+    def map_perf_log(self):
+        return self._map_perf_log
+
+    @map_perf_log.setter
+    def map_perf_log(self, on):
+        """Screenbuilder option: print a MapPerfStats summary every 2s
+        (mirrors ``svs_perf_log``). Default False."""
+        self._map_perf_log = bool(on)
+        self._sync_perf_probe()
+
+    @property
+    def map_perf_overlay(self):
+        return self._map_perf_overlay
+
+    @map_perf_overlay.setter
+    def map_perf_overlay(self, on):
+        """Screenbuilder option: draw a small on-screen stats chip (dev
+        only). Default False."""
+        self._map_perf_overlay = bool(on)
+        self._sync_perf_probe()
+
+    def _sync_perf_probe(self):
+        """The GUI-thread responsiveness probe (brief section 4) only
+        needs to run while its numbers are actually consumed -- start/stop
+        it as map_perf_log/map_perf_overlay are (de)activated so a screen
+        that never opts in pays nothing."""
+        want = bool(self._map_perf_log or self._map_perf_overlay)
+        if want and not self.perf.probe.running:
+            self.perf.probe.start(self)
+        elif not want and self.perf.probe.running:
+            self.perf.probe.stop()
+
+    def _perf_mark_gesture_event(self):
+        """Settle latency (brief section 4) = last gesture/pan/zoom/rotate
+        event -> first paint where every enabled layer's cached render
+        matches the current transform. Called from the same three entry
+        points MP3 routes through the frame clock."""
+        self._perf_last_gesture_ns = time.perf_counter_ns()
+        self._perf_settle_pending = True
 
     @property
     def defer_render(self):
@@ -337,6 +393,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         lo, hi = self._range_bounds()
         self.range_nm = max(lo, min(hi, float(self.range_nm) / factor))
         self._frame_dirty = True
+        self._perf_mark_gesture_event()
         return self.range_nm
 
     # --- decoupled pan / rotate (#99 / #111) ------------------------------
@@ -384,6 +441,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._pan_n += (dx * s + dy * c) / px
         self._restart_revert_timer()
         self._frame_dirty = True   # MP3: repaint via the frame clock
+        self._perf_mark_gesture_event()
         return (self._pan_e, self._pan_n)
 
     def rotate_by(self, deg):
@@ -399,6 +457,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._rot_offset = _wrap180(self._rot_offset + deg)
         self._restart_revert_timer()
         self._frame_dirty = True   # MP3: repaint via the frame clock
+        self._perf_mark_gesture_event()
         return self._rot_offset
 
     def recenter(self):
@@ -519,6 +578,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         return x
 
     def paintEvent(self, event):
+        _perf_t0 = time.perf_counter()
         if not self._layers_built:
             self._build_layers()
             # Options are applied by now; wire runtime control bindings once, but
@@ -591,6 +651,52 @@ class MovingMap(LiveBindingMixin, QWidget):
             p.drawRoundedRect(box, 4.0, 4.0)
             p.setPen(QPen(QColor(255, 190, 60)))
             p.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
+
+        # --- MP6 perf accounting -------------------------------------------
+        self.perf.record_paint_ms((time.perf_counter() - _perf_t0) * 1000.0)
+        if self._perf_settle_pending and self._perf_last_gesture_ns is not None:
+            if all(not layer.enabled or layer.is_settled(x)
+                   for layer in self._layers):
+                self.perf.settle_latency_ms = (
+                    (time.perf_counter_ns() - self._perf_last_gesture_ns)
+                    / 1e6)
+                self._perf_settle_pending = False
+        if self._map_perf_overlay:
+            self._paint_perf_overlay(p)
+        if self._map_perf_log:
+            self.perf.maybe_report()
+
+    def _paint_perf_overlay(self, p):
+        """map_perf_overlay: true (dev only) -- a small bottom-left stats
+        chip so a bench run can be eyeballed without grepping the log
+        (brief section 4)."""
+        p50, p95, _mx, n = self.perf.paint_ms.stats()
+        gp = self.perf.probe.stats()
+        lines = [
+            "paint p50/p95 %.1f/%.1f ms (n=%d)" % (p50, p95, n),
+            "gui gap p95 %.1f ms >%dms:%d" % (
+                gp["p95_ms"], int(self.perf.probe.gap_warn_ms),
+                gp["over_count"]),
+        ]
+        if self.perf.settle_latency_ms is not None:
+            lines.append("settle %.0f ms" % self.perf.settle_latency_ms)
+        f = QFont(self.font_family)
+        f.setPixelSize(max(8, int(self.width() * 0.022)))
+        p.setFont(f)
+        pad = 4.0
+        lh = f.pixelSize() + 3
+        bw = max(p.fontMetrics().horizontalAdvance(s) for s in lines) \
+            + 2 * pad
+        bh = lh * len(lines) + 2 * pad
+        box = QRectF(6.0, self.height() - bh - 6.0, bw, bh)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(20, 20, 20, 170)))
+        p.drawRoundedRect(box, 4.0, 4.0)
+        p.setPen(QPen(QColor(120, 255, 120)))
+        for i, s in enumerate(lines):
+            p.drawText(QRectF(box.x() + pad, box.y() + pad + i * lh,
+                              bw - 2 * pad, lh),
+                       Qt.AlignmentFlag.AlignLeft, s)
 
     def _init_live_bindings_once(self):
         self.init_live_bindings(self._live_binding_specs())

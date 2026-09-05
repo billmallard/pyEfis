@@ -12,6 +12,7 @@
 import math
 import sqlite3
 import threading
+import time
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
@@ -44,6 +45,14 @@ class _DbLayer(MapLayer):
         return (round(x.lat0 * 60.0 / snap), round(x.lon0 * 60.0 / snap),
                 range_bucket(x.range_nm))
 
+    def is_settled(self, x):
+        if not self._path or x.range_nm > self._MAX_RANGE:
+            return True
+        key = self._key(x)
+        with self._lock:
+            snap = self._snap
+        return snap is not None and snap[0] == key
+
     def _snapshot(self, x, max_range):
         if not self._path or x.range_nm > max_range:
             return None
@@ -60,6 +69,9 @@ class _DbLayer(MapLayer):
             # snapshot every time the aircraft is moving (#89).
             if self._job is None or self._job[0] != key:
                 self._job = (key, x.lat0, x.lon0, x.range_nm)
+                perf = getattr(self._owner, "perf", None)
+                if perf is not None:
+                    perf.layer(self.id).jobs_requested += 1
             if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._worker_loop,
@@ -68,7 +80,6 @@ class _DbLayer(MapLayer):
         return snap[1] if snap else None
 
     def _worker_loop(self):
-        import time
         last = None
         con = None
         while True:
@@ -77,25 +88,47 @@ class _DbLayer(MapLayer):
             if job is None or job == last:
                 time.sleep(0.05)
                 continue
-            try:
-                if con is None:
-                    con = sqlite3.connect(self._path)
-                rows = self._query(con, *job[1:])
-                with self._lock:
-                    if self._job == job:
-                        self._snap = (job[0], rows)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "map %s collect failed", self.id)
-                with self._lock:
-                    if self._job == job:
-                        self._job = None   # let the next paint re-request
+            con = self._process_job(job, con)
             last = job
             try:
                 self._owner.update()
             except RuntimeError:
                 return
+
+    def _process_job(self, job, con):
+        """MP6 instrumentation around the same latest-wins collect/publish
+        the other layers use (brief section 2, R2). Returns the sqlite
+        connection so the loop can keep reusing it."""
+        perf = getattr(self._owner, "perf", None)
+        ls = perf.layer(self.id) if perf is not None else None
+        if ls is not None:
+            ls.jobs_started += 1
+        t0 = time.perf_counter()
+        try:
+            if con is None:
+                con = sqlite3.connect(self._path)
+            rows = self._query(con, *job[1:])
+            ms = (time.perf_counter() - t0) * 1000.0
+            with self._lock:
+                if self._job == job:
+                    self._snap = (job[0], rows)
+                    published = True
+                else:
+                    published = False
+            if ls is not None:
+                ls.record_render_ms(ms)
+                if published:
+                    ls.jobs_published += 1
+                else:
+                    ls.jobs_superseded += 1
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map %s collect failed", self.id)
+            with self._lock:
+                if self._job == job:
+                    self._job = None   # let the next paint re-request
+        return con
 
     @staticmethod
     def _bbox(lat0, lon0, range_nm):
@@ -110,6 +143,7 @@ class NavaidsLayer(_DbLayer):
     label = "Navaids"
     z = 40
     default_on = True
+    _MAX_RANGE = 160.0
 
     def _query(self, con, lat0, lon0, range_nm):
         a, b, c, d = self._bbox(lat0, lon0, range_nm)
@@ -119,7 +153,7 @@ class NavaidsLayer(_DbLayer):
             (a, b, c, d)).fetchall()
 
     def paint(self, p, x):
-        rows = self._snapshot(x, 160.0)
+        rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
             return
         r = max(5.0, min(12.0, x.w * 0.014))
@@ -169,6 +203,7 @@ class FixesLayer(_DbLayer):
     label = "Waypoints"
     z = 38
     default_on = False
+    _MAX_RANGE = 20.0           # range-gated: fixes are dense
 
     def _query(self, con, lat0, lon0, range_nm):
         a, b, c, d = self._bbox(lat0, lon0, range_nm)
@@ -178,7 +213,7 @@ class FixesLayer(_DbLayer):
             "LIMIT 400", (a, b, c, d)).fetchall()
 
     def paint(self, p, x):
-        rows = self._snapshot(x, 20.0)     # range-gated: fixes are dense
+        rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
             return
         s = max(3.0, x.w * 0.008)
@@ -207,6 +242,7 @@ class AirwaysLayer(_DbLayer):
     label = "Airways"
     z = 25
     default_on = False
+    _MAX_RANGE = 160.0
 
     def _query(self, con, lat0, lon0, range_nm):
         a, b, c, d = self._bbox(lat0, lon0, range_nm)
@@ -217,7 +253,7 @@ class AirwaysLayer(_DbLayer):
             (a, b, c, d, a, b, c, d)).fetchall()
 
     def paint(self, p, x):
-        rows = self._snapshot(x, 160.0)
+        rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
             return
         pen = QPen(QColor(90, 130, 210, 170))

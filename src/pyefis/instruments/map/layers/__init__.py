@@ -62,6 +62,14 @@ class MapLayer:
     def on_toggle(self, on):
         self.enabled = on
 
+    def is_settled(self, xform):
+        """MP6 (settle latency, brief section 4): True once this layer's
+        cached render matches *xform*'s key, so it would blit exact
+        content rather than a stale scaled image. Default True for
+        layers with no async render (e.g. range rings) -- they never
+        block the settle measurement."""
+        return True
+
 
 @register_layer
 class RangeRingsLayer(MapLayer):
