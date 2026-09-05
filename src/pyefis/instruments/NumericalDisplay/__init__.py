@@ -102,7 +102,7 @@ class NumericalDisplay(QGraphicsView):
         panel_h = font_height * _READOUT_PANEL_H
         top = (self.h - panel_h) / 2.0
         text_top = (self.h - font_height) / 2.0
-        radius = font_height * helpers.TAPE_READOUT_RADIUS_RATIO
+        radius = panel_h * helpers.READOUT_RADIUS_RATIO
         rect_pen, rect_brush = helpers.readout_panel_pen_brush(
             QColor(Qt.GlobalColor.white), border_width
         )
@@ -110,6 +110,9 @@ class NumericalDisplay(QGraphicsView):
         self.readout_rect = QRectF(
             inset, top, max(1.0, self.w - border_width), panel_h
         )
+        #: Published for tests: the corner radius is READOUT_RADIUS_RATIO of the
+        #: panel's own height, the same invariant the HSI panel uses (AER-413).
+        self.readout_radius = radius
         panel = QPainterPath()
         panel.addRoundedRect(self.readout_rect, radius, radius)
         self.scene.addPath(panel, rect_pen, rect_brush)

@@ -1074,7 +1074,8 @@ def _expected_tab_rect(widget):
     pw = widget.fontSize * 12.5
     px = W / 2.0 - pw / 2.0
     py = (g - ph) / 2.0
-    rr = widget.fontSize * helpers.READOUT_RADIUS_RATIO
+    # Corner radius is keyed to the panel's OWN height (AER-413), not fontSize.
+    rr = ph * helpers.READOUT_RADIUS_RATIO
     top = py + rr
     height = ph - 2.0 * rr
     return px, top, height
