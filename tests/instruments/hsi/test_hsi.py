@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QApplication, QGraphicsEllipseItem, QGraphicsPixmapItem,
 )
 
-from pyefis.instruments import hsi
+from pyefis.instruments import helpers, hsi
 from tests.utils import track_calls
 
 
@@ -1270,15 +1270,20 @@ def test_shadow_disabled_by_default(fix, qtbot):
     widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
 
 
-def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
-    """Enabling the shadow shrinks the rose (clearance for the halo, gotcha
-    #2) and bakes the halo via helpers.bake_blurred_silhouette (AER-439 --
-    replaced a QGraphicsDropShadowEffect attached directly to the disc item,
-    which had no way to punch its own shape back out of its own shadow, see
-    test_shadow_rose_disc_translucent_fill_unchanged_by_shadow below) as its
-    OWN scene item strictly behind the disc fill: z=-2 for the halo vs z=-1
-    for the disc, so the disc's own fill is never composited over its own
-    unpunched shadow."""
+def test_shadow_bakes_halo_behind_disc_without_shrinking_the_rose(fix, qtbot):
+    """Enabling the shadow bakes the halo via helpers.bake_blurred_silhouette
+    (AER-439 -- replaced a QGraphicsDropShadowEffect attached directly to the
+    disc item, which had no way to punch its own shape back out of its own
+    shadow, see test_shadow_rose_disc_translucent_fill_unchanged_by_shadow
+    below) as its OWN scene item strictly behind the disc fill: z=-2 for the
+    halo vs z=-1 for the disc, so the disc's own fill is never composited over
+    its own unpunched shadow.
+
+    pyEfis#158: it must do that WITHOUT shrinking the rose at ordinary panel
+    sizes. The old code reserved blur * SHADOW_CANVAS_PAD_RATIO -- the bake
+    canvas pad, 3x what the visible falloff can reach -- and ignored the
+    ROSE_EDGE_MARGIN already in hand, so ticking the option cost 6.3% of the
+    rose's area and was the only part of it anyone could see."""
     plain = hsi.HSI()
     qtbot.addWidget(plain)
     plain.resize(400, 400)
@@ -1293,7 +1298,9 @@ def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
     qtbot.waitExposed(shadowed)
 
     assert shadowed._rose_shadow_blur > 0.0
-    assert shadowed.r < plain.r                       # room reserved for the halo
+    # The halo fits inside ROSE_EDGE_MARGIN at this size, so it costs nothing.
+    assert shadowed._rose_shadow_blur <= hsi.ROSE_EDGE_MARGIN
+    assert shadowed.r == plain.r
 
     bgitems = [i for i in shadowed.scene.items()
                if isinstance(i, QGraphicsEllipseItem)]
@@ -1309,6 +1316,72 @@ def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
     plain_haloitems = [i for i in plain.scene.items()
                        if isinstance(i, QGraphicsPixmapItem)]
     assert not plain_haloitems, "no halo item should exist with shadows off"
+
+
+def test_shadow_blur_scales_with_the_rose_not_the_label_font(fix, qtbot):
+    """pyEfis#158 root cause: the rose blur was self.fontSize *
+    SHADOW_BLUR_RATIO. That ratio is calibrated for the readout boxes, whose
+    geometry really is font-derived; the rose is a widget-sized disc, so a
+    font-derived blur came out around 1.75px against a ~160px radius and was
+    invisible (<=1.7/255 outside the disc, and still invisible at 8x the
+    font). Blur must track the rose's radius and ignore the label font."""
+    big_font = hsi.HSI()
+    qtbot.addWidget(big_font)
+    big_font.shadow_enabled = True
+    big_font.font_percent = 0.08
+    big_font.resize(400, 400)
+    big_font.show()
+    qtbot.waitExposed(big_font)
+
+    small_font = hsi.HSI()
+    qtbot.addWidget(small_font)
+    small_font.shadow_enabled = True
+    small_font.font_percent = 0.02
+    small_font.resize(400, 400)
+    small_font.show()
+    qtbot.waitExposed(small_font)
+
+    # Same widget size, 4x the font: the halo must not move.
+    assert big_font.fontSize != small_font.fontSize
+    assert big_font._rose_shadow_blur == small_font._rose_shadow_blur
+    assert big_font._rose_shadow_blur == pytest.approx(
+        big_font.r * hsi.ROSE_SHADOW_BLUR_RATIO)
+
+    # ...and it must scale with the rose itself.
+    larger = hsi.HSI()
+    qtbot.addWidget(larger)
+    larger.shadow_enabled = True
+    larger.font_percent = 0.02
+    larger.resize(800, 800)
+    larger.show()
+    qtbot.waitExposed(larger)
+    assert larger._rose_shadow_blur > small_font._rose_shadow_blur
+
+
+def test_shadow_reserves_only_the_overflow_past_the_edge_margin(fix, qtbot):
+    """When the rose is large enough that its halo outgrows ROSE_EDGE_MARGIN,
+    the reservation is exactly the overflow -- not the whole falloff, and not
+    the bake canvas pad (pyEfis#158). Guards the 3x over-reservation from
+    coming back via SHADOW_CANVAS_PAD_RATIO."""
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(800, 800)
+    plain.show()
+    qtbot.waitExposed(plain)
+
+    shadowed = hsi.HSI()
+    qtbot.addWidget(shadowed)
+    shadowed.shadow_enabled = True
+    shadowed.resize(800, 800)
+    shadowed.show()
+    qtbot.waitExposed(shadowed)
+
+    blur = plain.r * hsi.ROSE_SHADOW_BLUR_RATIO
+    overflow = blur * helpers.SHADOW_VISIBLE_FALLOFF_RATIO - hsi.ROSE_EDGE_MARGIN
+    assert overflow > 0, "pick a size where the halo actually outgrows the margin"
+    assert shadowed.r == pytest.approx(plain.r - overflow)
+    # Strictly cheaper than the pre-#158 reservation it replaces.
+    assert shadowed.r > plain.r - blur * helpers.SHADOW_CANVAS_PAD_RATIO
 
 
 def test_shadow_rose_disc_translucent_fill_unchanged_by_shadow(fix, qtbot):
@@ -1365,9 +1438,13 @@ def test_shadow_rose_halo_is_radially_symmetric(fix, qtbot, monkeypatch):
     heavy vignette); scaled up here via monkeypatch purely so the halo is
     a few pixels wide and trivially sampled -- the symmetry property being
     tested does not depend on the exact ratio.
+
+    pyEfis#158 moved the knob: the rose sizes its halo from its own radius
+    (ROSE_SHADOW_BLUR_RATIO), not from the label font, so scaling
+    helpers.SHADOW_BLUR_RATIO here no longer widens it -- that patch was
+    silently inert and left this sampling the steep edge of a ~2px halo.
     """
-    from pyefis.instruments import helpers
-    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+    monkeypatch.setattr(hsi, "ROSE_SHADOW_BLUR_RATIO", 0.5)
 
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
@@ -1396,9 +1473,9 @@ def test_shadow_rotated_rose_matches_unrotated_in_halo_band(fix, qtbot, monkeypa
     """Direct two-heading check: the pre-rotated rose blit (what paintEvent
     actually draws) sampled in the halo band is the same at two headings
     45+ degrees apart -- the light does not appear to move. Blur scaled up
-    for the same reason as the symmetry test above."""
-    from pyefis.instruments import helpers
-    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+    via the rose's own ratio, for the same reason as the symmetry test
+    above (and see its note on pyEfis#158 moving that knob)."""
+    monkeypatch.setattr(hsi, "ROSE_SHADOW_BLUR_RATIO", 0.5)
 
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
