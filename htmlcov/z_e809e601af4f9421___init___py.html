@@ -66,8 +66,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_e809e601af4f9421_airports_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-08 16:13 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
+            created at 2026-09-05 00:45 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -91,7 +91,7 @@
     <p class="run"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="key">from</span> <span class="nam">PyQt6</span><span class="op">.</span><span class="nam">QtCore</span> <span class="key">import</span> <span class="nam">QPointF</span><span class="op">,</span> <span class="nam">QRectF</span><span class="op">,</span> <span class="nam">Qt</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="key">from</span> <span class="nam">PyQt6</span><span class="op">.</span><span class="nam">QtGui</span> <span class="key">import</span> <span class="nam">QColor</span><span class="op">,</span> <span class="nam">QFont</span><span class="op">,</span> <span class="nam">QPen</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="com">#: id -> layer class. Out-of-tree layers register here too.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="com">#: id -&gt; layer class. Out-of-tree layers register here too.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="nam">LAYER_REGISTRY</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -101,17 +101,17 @@
     <p class="pln"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t"><span class="key">class</span> <span class="nam">MapLayer</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t">    <span class="str">"""One toggleable information layer.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t">    <span class="str">&quot;&quot;&quot;One toggleable information layer.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t"><span class="str">    Contract (spec section 4): ``collect()`` runs on a worker thread,</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t"><span class="str">    serialised with the SVS collectors; it must leave an immutable</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="str">    snapshot for ``paint()``, which runs on the GUI thread and may only</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="str">    blit/draw prepared data. Phase A layers are cheap enough to skip</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="str">    collect entirely.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="str">    &quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="nam">id</span> <span class="op">=</span> <span class="str">"base"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">    <span class="nam">label</span> <span class="op">=</span> <span class="str">"Layer"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="nam">id</span> <span class="op">=</span> <span class="str">&quot;base&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">    <span class="nam">label</span> <span class="op">=</span> <span class="str">&quot;Layer&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="nam">z</span> <span class="op">=</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">    <span class="nam">default_on</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -133,12 +133,12 @@
     <p class="pln"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t50" href="#t50">50</a></span><span class="t"><span class="op">@</span><span class="nam">register_layer</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t51" href="#t51">51</a></span><span class="t"><span class="key">class</span> <span class="nam">RangeRingsLayer</span><span class="op">(</span><span class="nam">MapLayer</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t">    <span class="str">"""Concentric rings at half and full range around ownship, with</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Concentric rings at half and full range around ownship, with</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t53" href="#t53">53</a></span><span class="t"><span class="str">    distance labels -- trivial by design: it proves the provider</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="str">    seam end to end (registry, config, toggle, paint contract)."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="str">    seam end to end (registry, config, toggle, paint contract).&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t">    <span class="nam">id</span> <span class="op">=</span> <span class="str">"range_rings"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t">    <span class="nam">label</span> <span class="op">=</span> <span class="str">"Range rings"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t">    <span class="nam">id</span> <span class="op">=</span> <span class="str">&quot;range_rings&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t">    <span class="nam">label</span> <span class="op">=</span> <span class="str">&quot;Range rings&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t">    <span class="nam">z</span> <span class="op">=</span> <span class="num">20</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t">    <span class="nam">default_on</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -153,7 +153,7 @@
     <p class="run"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">        <span class="key">for</span> <span class="nam">frac</span> <span class="key">in</span> <span class="op">(</span><span class="num">0.5</span><span class="op">,</span> <span class="num">1.0</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">            <span class="nam">r_px</span> <span class="op">=</span> <span class="nam">x</span><span class="op">.</span><span class="nam">nm_to_px</span><span class="op">(</span><span class="nam">x</span><span class="op">.</span><span class="nam">range_nm</span> <span class="op">*</span> <span class="nam">frac</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">            <span class="nam">p</span><span class="op">.</span><span class="nam">drawEllipse</span><span class="op">(</span><span class="nam">QPointF</span><span class="op">(</span><span class="nam">x</span><span class="op">.</span><span class="nam">cx</span><span class="op">,</span> <span class="nam">x</span><span class="op">.</span><span class="nam">cy</span><span class="op">)</span><span class="op">,</span> <span class="nam">r_px</span><span class="op">,</span> <span class="nam">r_px</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">            <span class="nam">lbl</span> <span class="op">=</span> <span class="op">(</span><span class="str">"%g"</span> <span class="op">%</span> <span class="op">(</span><span class="nam">x</span><span class="op">.</span><span class="nam">range_nm</span> <span class="op">*</span> <span class="nam">frac</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">            <span class="nam">lbl</span> <span class="op">=</span> <span class="op">(</span><span class="str">&quot;%g&quot;</span> <span class="op">%</span> <span class="op">(</span><span class="nam">x</span><span class="op">.</span><span class="nam">range_nm</span> <span class="op">*</span> <span class="nam">frac</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">            <span class="nam">p</span><span class="op">.</span><span class="nam">drawText</span><span class="op">(</span><span class="nam">QRectF</span><span class="op">(</span><span class="nam">x</span><span class="op">.</span><span class="nam">cx</span> <span class="op">+</span> <span class="num">4</span><span class="op">,</span> <span class="nam">x</span><span class="op">.</span><span class="nam">cy</span> <span class="op">-</span> <span class="nam">r_px</span><span class="op">,</span> <span class="num">80</span><span class="op">,</span> <span class="nam">f</span><span class="op">.</span><span class="nam">pixelSize</span><span class="op">(</span><span class="op">)</span> <span class="op">+</span> <span class="num">6</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">                       <span class="nam">Qt</span><span class="op">.</span><span class="nam">AlignmentFlag</span><span class="op">.</span><span class="nam">AlignLeft</span><span class="op">,</span> <span class="nam">lbl</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
@@ -164,8 +164,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_e809e601af4f9421_airports_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-08 16:13 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
+            created at 2026-09-05 00:45 +0000
         </p>
     </div>
 </footer>
