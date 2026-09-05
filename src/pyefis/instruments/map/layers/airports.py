@@ -18,7 +18,7 @@ import threading
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
 
-from pyefis.instruments.map.layers import MapLayer, register_layer
+from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
 
 MAGENTA = QColor(197, 36, 125)
 
@@ -56,7 +56,7 @@ class AirportsLayer(MapLayer):
     def _key(self, x):
         snap = max(1.0, x.range_nm * self._SNAP_FRAC)
         return (round(x.lat0 * 60.0 / snap), round(x.lon0 * 60.0 / snap),
-                round(x.range_nm, 1))
+                range_bucket(x.range_nm))
 
     def paint(self, p, x):
         if self._db_all is None or not self._db_all.ready \
@@ -66,7 +66,7 @@ class AirportsLayer(MapLayer):
         with self._lock:
             snap = self._snap
             have = snap is not None and snap[0] == key
-        if not have:
+        if not have and not getattr(x, "defer_render", False):
             with self._lock:
                 # Same-key reposts must not refresh the in-flight job:
                 # the raw pose in the tuple would make the worker's

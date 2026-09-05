@@ -16,7 +16,7 @@ import threading
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
 
-from pyefis.instruments.map.layers import MapLayer, register_layer
+from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
 
 BLUE = QColor(70, 110, 200)
 DARKBLUE = QColor(40, 60, 130)
@@ -42,7 +42,7 @@ class _DbLayer(MapLayer):
     def _key(self, x):
         snap = max(1.0, x.range_nm * self._SNAP_FRAC)
         return (round(x.lat0 * 60.0 / snap), round(x.lon0 * 60.0 / snap),
-                round(x.range_nm, 1))
+                range_bucket(x.range_nm))
 
     def _snapshot(self, x, max_range):
         if not self._path or x.range_nm > max_range:
@@ -52,6 +52,8 @@ class _DbLayer(MapLayer):
             snap = self._snap
             if snap is not None and snap[0] == key:
                 return snap[1]
+            if getattr(x, "defer_render", False):
+                return snap[1] if snap else None
             # Don't refresh an in-flight job for the same window: the
             # tuple carries the raw pose, so a same-key repost makes
             # the worker's latest-wins check discard the finished

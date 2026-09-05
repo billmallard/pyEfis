@@ -4,11 +4,27 @@
 #  (the provider-model proof). Terrain/airports/navaids follow in
 #  phases B-D.
 
+import math
+
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPen
 
 #: id -> layer class. Out-of-tree layers register here too.
 LAYER_REGISTRY = {}
+
+#: geometric ratio between adjacent range buckets (MP1, brief section 4):
+#: a render key built from round(range_nm, N) posts a new worker job on
+#: almost every gesture event during a continuous pinch/wheel zoom, even
+#: though the window is barely different -- the worker never gets to
+#: publish before the key moves on again. Bucketing on log(range)/log(base)
+#: instead means a window key survives a +-6% range change (half the 12%
+#: bucket width); the paint-side blit rescales the stale image to fit.
+_RANGE_BUCKET_BASE = 1.12
+
+
+def range_bucket(range_nm):
+    """Geometric range-bucket index for a layer's window/snapshot key."""
+    return round(math.log(max(1e-6, float(range_nm))) / math.log(_RANGE_BUCKET_BASE))
 
 
 def register_layer(cls):

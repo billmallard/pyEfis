@@ -19,7 +19,7 @@ from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPolygonF)
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
-from pyefis.instruments.map.layers import MapLayer, register_layer
+from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
 
 # Hypsometric stops: (elevation ft, r, g, b) -- sectional-inspired.
 _STOPS = [
@@ -128,7 +128,7 @@ class TerrainLayer(MapLayer):
                     if self._mode == "caution" else 0)
         return (round(x.lat0 * M_PER_DEG_LAT / snap),
                 round(x.lon0 * M_PER_DEG_LAT / snap),
-                round(x.range_nm, 2), round(x.w), round(x.h),
+                range_bucket(x.range_nm), round(x.w), round(x.h),
                 self._mode, alt_band)
 
     def paint(self, p, x):
@@ -139,7 +139,7 @@ class TerrainLayer(MapLayer):
         with self._lock:
             img = self._img
             have = img is not None and img[1] == key
-        if not have:
+        if not have and not getattr(x, "defer_render", False):
             self._request(key, x)
         if img is None:
             return
