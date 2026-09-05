@@ -3,7 +3,7 @@ from unittest import mock
 
 import pytest
 from PyQt6.QtCore import Qt, QRectF, qRound
-from PyQt6.QtGui import QColor, QPaintEvent, QPen
+from PyQt6.QtGui import QColor, QImage, QPaintEvent, QPainter, QPen
 from PyQt6.QtWidgets import (
     QApplication, QGraphicsEllipseItem, QGraphicsPixmapItem,
 )
@@ -1163,24 +1163,95 @@ def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
     assert written == [("NAVSRC", 0.0)]
 
 
-def test_hsi_source_tab_white_on_source_colour_contrast(fix, qtbot):
-    """pyEfis#140 acceptance #9: MEASURE (not just assert-pass) the white-on-
-    magenta and white-on-green ratios against the WCAG 4.5:1 floor, the same
-    pattern tests/instruments/test_readout_panel.py uses for the translucent
-    readout fill. Both measure poor per the #140 fit/contrast note in
-    docs/hsi_widget_spec.md sec 7.4 -- white text stands (Bill's call); if this
-    is ever fixed, it will be via a darker fill, and this test's numbers are
-    the ones that should move. Locked as a value assertion (not just `< 4.5`)
-    so a silent fill-colour change gets caught here first."""
+def _painted_source_label_pen(widget, px, py, ph):
+    """Drive HSI._draw_source_tab directly against a real QPainter (needed for
+    real fontMetrics(), unlike the bare mock.Mock() used for _draw_arc_course
+    elsewhere in this file) and return the pen colour it left set -- drawText
+    for the label is the method's last painter call, so painter.pen() after
+    the call is exactly the label colour it used."""
+    image = QImage(400, 400, QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        widget._draw_source_tab(painter, px, py, ph)
+        return QColor(painter.pen().color())
+    finally:
+        painter.end()
+
+
+def test_hsi_source_tab_label_colour_is_derived_and_clears_wcag_floor(fix, qtbot):
+    """pyEfis#147 (AER-473): white-on-source-colour used to measure 3.14:1
+    (GPS/magenta) and 1.37:1 (VLOC/green) -- both WCAG AA fails, previously
+    accepted as "Bill's call" pending a fix (superseded #140-era test). The
+    label is now darkened from the tab's own fill via
+    helpers.darken_to_contrast(), independently reproduced here, so both
+    stock colours clear helpers.SOURCE_LABEL_MIN_CONTRAST (4.5:1)."""
+    from pyefis.instruments import helpers
     widget = _mk_hsi(qtbot, font_percent=0.08)
-    white = (255, 255, 255)
-    magenta = QColor(widget.course_color).getRgb()[:3]
-    green = QColor(widget.vloc_color).getRgb()[:3]
-    gps_contrast = _wcag_contrast(white, magenta)
-    vloc_contrast = _wcag_contrast(white, green)
-    assert gps_contrast == pytest.approx(3.14, abs=0.02)
-    assert vloc_contrast == pytest.approx(1.37, abs=0.02)
-    assert gps_contrast < 4.5 and vloc_contrast < 4.5      # both fail the floor
+    px, top, height = _expected_tab_rect(widget)
+
+    for fill_hex, navsrc, navtype in (
+        (widget.course_color, 2, None),      # GPS
+        (widget.vloc_color, 0, None),        # VLOC1
+    ):
+        widget._navsrc, widget._navtype = navsrc, navtype
+        painted = _painted_source_label_pen(widget, px, top, height)
+        fill = QColor(fill_hex)
+        expected = helpers.darken_to_contrast(fill)
+        assert painted.getRgb()[:3] == expected.getRgb()[:3]
+        assert painted.getRgb()[:3] != (255, 255, 255)     # no longer hardcoded white
+        contrast = _wcag_contrast(painted.getRgb()[:3], fill.getRgb()[:3])
+        assert contrast >= helpers.SOURCE_LABEL_MIN_CONTRAST
+
+
+def test_hsi_source_tab_label_colour_tracks_custom_source_colour(fix, qtbot):
+    """The derivation must be parametric, not two hardcoded dark hexes --
+    vloc_color/course_color are config-selectable (pyEfis#147 anchor #1), so a
+    custom source colour must still clear the same WCAG floor."""
+    from pyefis.instruments import helpers
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.vloc_color = "#00ccff"
+    px, top, height = _expected_tab_rect(widget)
+    widget._navsrc, widget._navtype = 0, None
+    painted = _painted_source_label_pen(widget, px, top, height)
+    fill = QColor(widget.vloc_color)
+    assert _wcag_contrast(painted.getRgb()[:3], fill.getRgb()[:3]) >= helpers.SOURCE_LABEL_MIN_CONTRAST
+
+
+def test_hsi_source_tab_fill_is_not_darkened(fix, qtbot):
+    """HSI-COLOR-001: darkening is for the LABEL only -- the fill (the source
+    annunciation itself) must stay at the configured, full-brightness colour
+    so it still reads at a glance."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget._navsrc, widget._navtype = 2, None          # GPS
+    assert widget._source_color() == QColor(widget.course_color)
+
+
+def test_hsi_source_tab_width_is_constant_across_labels(fix, qtbot):
+    """pyEfis#148 (AER-473): tab width must not track the current label -- it
+    is the widest of GPS/VOR{n}/LOC{n}/VLOC{n} at the tab font, so the tab
+    doesn't breathe as NAVSRC cycles and the label centring falls out for
+    free (drawText already uses AlignCenter into (left, top, tab_w, th))."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    px, top, height = _expected_tab_rect(widget)
+
+    def tab_width(navsrc, navtype=None):
+        widget._navsrc, widget._navtype = navsrc, navtype
+        image = QImage(400, 400, QImage.Format.Format_ARGB32)
+        painter = QPainter(image)
+        try:
+            widget._draw_source_tab(painter, px, top, height)
+        finally:
+            painter.end()
+        return widget._source_label_rect[2]
+
+    widths = {
+        "GPS": tab_width(2),
+        "VOR1": tab_width(0, 1),
+        "LOC1": tab_width(0, 2),
+        "VLOC1": tab_width(0, None),
+        "VLOC2": tab_width(1, None),
+    }
+    assert len(set(widths.values())) == 1, widths
 
 
 # --------------------------------------------------------------------------

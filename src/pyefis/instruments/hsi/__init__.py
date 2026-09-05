@@ -1167,18 +1167,36 @@ class HSI(QGraphicsView):
             c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
                        int(Qt.AlignmentFlag.AlignCenter), value)
 
+    #: Every label _source_label() can produce (GPS, VOR/LOC/VLOC x NAV1/NAV2)
+    #: -- the full candidate set the constant tab width is measured against,
+    #: so the tab neither breathes as the source cycles nor special-cases the
+    #: slot digit (pyEfis#148).
+    _SOURCE_TAB_LABELS = ("GPS", "VOR1", "VOR2", "LOC1", "LOC2", "VLOC1", "VLOC2")
+
     def _draw_source_tab(self, c, px, py, ph):
         """Nav-source annunciation as a coloured tab hanging off the left edge
         of the HDG | MAG | CRS panel, `readout_layout: top_panel` only
         (pyEfis#140). Fill = active source colour (magenta GPS / green VLOC,
-        `_source_color()`); text white, centred both axes. Height is the
-        panel height less both corner radii -- the straight run of the
-        panel's left edge -- so it sits a few pixels shorter than the panel
-        top and bottom, which is what reads as a tab rather than a bolted-on
-        box. Left corners rounded on the shared READOUT_RADIUS_RATIO token
-        (clamped to half the tab height); right edge square and flush at
-        `px`. The whole tab rect becomes the tap target (_source_label_rect;
-        mousePressEvent cycles NAVSRC unchanged).
+        `_source_color()`), always at full brightness -- it IS the source
+        annunciation (HSI-COLOR-001) and must stay legible at a glance. Label
+        is a darkened tint of that same fill (pyEfis#147): `vloc_color`/
+        `course_color` are config-selectable, so a hardcoded label colour
+        would go unreadable for a custom source colour the same way white on
+        the stock green/magenta measured 1.37:1 / 3.14:1 -- both WCAG AA
+        fails. helpers.darken_to_contrast() walks the fill's own hue/sat down
+        in HSV value until it clears helpers.SOURCE_LABEL_MIN_CONTRAST
+        against the (undarkened) fill, so any config colour lands on an
+        AA-clearing label automatically. Width is a CONSTANT -- the widest of
+        _SOURCE_TAB_LABELS -- rather than tracking the current label, so the
+        tab doesn't breathe as the source cycles; centring (AlignCenter
+        below) falls out of that for free. Height is the panel height less
+        both corner radii -- the straight run of the panel's left edge -- so
+        it sits a few pixels shorter than the panel top and bottom, which is
+        what reads as a tab rather than a bolted-on box. Left corners rounded
+        on the shared READOUT_RADIUS_RATIO token (clamped to half the tab
+        height); right edge square and flush at `px`. The whole tab rect
+        becomes the tap target (_source_label_rect; mousePressEvent cycles
+        NAVSRC unchanged).
 
         Fit is not guaranteed at every shipped font_percent -- see
         docs/hsi_widget_spec.md sec 7.4. The panel is never moved or resized
@@ -1199,7 +1217,8 @@ class HSI(QGraphicsView):
         c.setFont(lf)
         fm = c.fontMetrics()
         pad = self.fontSize * 0.35
-        tab_w = fm.horizontalAdvance(label) + 2.0 * pad
+        tab_w = max(fm.horizontalAdvance(candidate)
+                    for candidate in self._SOURCE_TAB_LABELS) + 2.0 * pad
         top = py + rr
         right = px
         left = right - tab_w
@@ -1217,11 +1236,12 @@ class HSI(QGraphicsView):
         path.arcTo(left, top + th - tab_r * 2.0, tab_r * 2.0, tab_r * 2.0, 180, 90)
         path.lineTo(right + overlap, top + th)
         path.closeSubpath()
+        fill = self._source_color() or QColor(self.course_color)
         c.setPen(Qt.PenStyle.NoPen)
-        c.setBrush(QBrush(self._source_color() or QColor(self.course_color)))
+        c.setBrush(QBrush(fill))
         c.drawPath(path)
 
-        c.setPen(QPen(QColor(Qt.GlobalColor.white)))
+        c.setPen(QPen(helpers.darken_to_contrast(fill)))
         c.drawText(QRectF(left, top, tab_w, th),
                    int(Qt.AlignmentFlag.AlignCenter), label)
         self._source_label_rect = (left, top, tab_w, th)
