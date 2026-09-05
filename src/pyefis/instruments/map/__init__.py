@@ -23,6 +23,10 @@ _ROTATE_DEG_PER_PX = 0.5
 #: a press/release with less than this much travel is a tap (-> recenter),
 #: not a drag.
 _TAP_PX = 4.0
+#: gesture-settle debounce (MP1): render is deferred until this long after
+#: the last gesture/wheel/drag event, so a continuous pinch/wheel/drag
+#: coalesces into one worker render instead of one per event.
+_SETTLE_MS = 150
 
 
 def _wrap180(deg):
@@ -48,6 +52,11 @@ class MapTransform:
         # range_nm = ownship anchor -> top edge
         self._px_per_m = max(1.0, self.cy) / max(1.0, range_nm * NM_M)
         self._coslat = math.cos(math.radians(lat))
+        # MP1: True while a gesture is live or its settle timer is running
+        # (MovingMap.defer_render). Layers skip _request/collect while set
+        # and keep blitting the last image scaled -- the settle debounce
+        # that stops a pinch from churning the worker on every event.
+        self.defer_render = False
 
     def nm_to_px(self, nm):
         return nm * NM_M * self._px_per_m
@@ -122,6 +131,19 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._revert_timer.setSingleShot(True)
         self._revert_timer.timeout.connect(self.recenter)
 
+        # --- gesture-phase gating + settle debounce (MP1) --------------------
+        # A continuous pinch/wheel/drag turns every input event into a new
+        # render key; the worker never gets to publish before the key moves
+        # on again (brief map_gesture_perf_plan.md section 2, R2). While
+        # _gesture_active or the settle timer is running, defer_render is
+        # True and every layer skips _request/collect, blitting the stale
+        # scaled image instead; the timer firing repaints once, after the
+        # gesture settles, so exactly one render lands.
+        self._gesture_active = False
+        self._settle_timer = QTimer(self)
+        self._settle_timer.setSingleShot(True)
+        self._settle_timer.timeout.connect(self.update)
+
         self._lat = self._lon = 0.0
         self._track = 0.0
         self._alt_ft = 0.0
@@ -162,6 +184,13 @@ class MovingMap(LiveBindingMixin, QWidget):
         """Screenbuilder option: map repaint clock in Hz (clamped 1-30)."""
         self._frame_rate = max(1.0, min(30.0, float(fps)))
         self._frame_timer.start(int(round(1000.0 / self._frame_rate)))
+
+    @property
+    def defer_render(self):
+        """True while a gesture is live or its settle timer is still
+        running -- layers read this off the MapTransform (below) rather
+        than reaching back into the widget."""
+        return self._gesture_active or self._settle_timer.isActive()
 
     def _frame_tick(self):
         """Repaint at most at the clock rate, and only when the pose
@@ -345,11 +374,26 @@ class MovingMap(LiveBindingMixin, QWidget):
         if changed:
             self.update()
 
+    def _gesture_phase(self, state):
+        """(Re)arm the settle debounce off a QGesture's state (MP1). Fake
+        gesture objects in tests that don't implement ``state()`` are
+        treated as phase-less: they exercise the touch math without
+        engaging the gating."""
+        GS = Qt.GestureState
+        if state in (GS.GestureStarted, GS.GestureUpdated):
+            self._gesture_active = True
+        elif state in (GS.GestureFinished, GS.GestureCanceled):
+            self._gesture_active = False
+            self._settle_timer.start(_SETTLE_MS)
+
     def event(self, e):
         if (e.type() == QEvent.Type.Gesture
                 and getattr(self, "touch_gestures", True)):
             g = e.gesture(Qt.GestureType.PinchGesture)
             if g is not None:
+                state_fn = getattr(g, "state", None)
+                if state_fn is not None:
+                    self._gesture_phase(state_fn())
                 flags = g.changeFlags()
                 CF = QPinchGesture.ChangeFlag
                 if flags & CF.ScaleFactorChanged:
@@ -372,6 +416,7 @@ class MovingMap(LiveBindingMixin, QWidget):
                 and e.button() == Qt.MouseButton.LeftButton):
             self._drag_last = e.position()
             self._drag_total = 0.0
+            self._gesture_active = True   # brackets the drag path (MP1)
             e.accept()
             return
         super().mousePressEvent(e)
@@ -397,6 +442,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         if self._drag_last is not None:
             tap = self._drag_total < _TAP_PX
             self._drag_last = None
+            self._gesture_active = False
+            self._settle_timer.start(_SETTLE_MS)
             if tap:
                 self.recenter()          # click/tap with no drag re-locks
             e.accept()
@@ -409,6 +456,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         if getattr(self, "touch_gestures", True):
             dy = e.angleDelta().y()
             if dy:
+                self._settle_timer.start(_SETTLE_MS)   # (re)start (MP1)
                 self.zoom_by(1.25 ** (dy / 120.0))
         e.accept()
 
@@ -425,9 +473,11 @@ class MovingMap(LiveBindingMixin, QWidget):
         coslat = math.cos(math.radians(self._lat)) or 1e-6
         vlat = self._lat + self._pan_n / M_PER_DEG_LAT
         vlon = self._lon + self._pan_e / (M_PER_DEG_LAT * coslat)
-        return MapTransform(vlat, vlon, float(self.range_nm),
-                            rot, self.width(), self.height(), anchor,
-                            self.font_family)
+        x = MapTransform(vlat, vlon, float(self.range_nm),
+                         rot, self.width(), self.height(), anchor,
+                         self.font_family)
+        x.defer_render = self.defer_render
+        return x
 
     def paintEvent(self, event):
         if not self._layers_built:
