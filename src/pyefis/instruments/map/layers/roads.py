@@ -19,6 +19,7 @@
 
 import math
 import threading
+import time
 
 import numpy as np
 from PyQt6.QtCore import QPointF, QRectF
@@ -119,6 +120,15 @@ class RoadsLayer(MapLayer):
                 round(x.lon0 * M_PER_DEG_LAT / snap),
                 range_bucket(x.range_nm), round(x.w), round(x.h))
 
+    def is_settled(self, x):
+        if self._db is None or not self._db.ready \
+                or self._classes_for_range(x.range_nm) is None:
+            return True
+        key = self._key(x)
+        with self._lock:
+            img = self._img
+        return img is not None and img[1] == key
+
     def paint(self, p, x):
         if self._db is None or not self._db.ready \
                 or self._classes_for_range(x.range_nm) is None:
@@ -153,6 +163,9 @@ class RoadsLayer(MapLayer):
             if self._job is not None and self._job[0] == key:
                 return
             self._job = job
+            perf = getattr(self._owner, "perf", None)
+            if perf is not None:
+                perf.layer(self.id).jobs_requested += 1
             if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._worker_loop, name="map-" + self.id,
@@ -160,7 +173,6 @@ class RoadsLayer(MapLayer):
                 self._worker.start()
 
     def _worker_loop(self):
-        import time
         last = None
         while True:
             with self._lock:
@@ -168,25 +180,43 @@ class RoadsLayer(MapLayer):
             if job is None or job == last:
                 time.sleep(0.05)
                 continue
-            try:
-                img, meta = self._render(job)
-                # Publish unconditionally, even if self._job moved on
-                # while this render was in flight (AER-588) -- see
-                # terrain.py's _worker_loop for the rationale.
-                with self._lock:
-                    self._img = (img, job[0], meta)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "map %s render failed", self.id)
-                with self._lock:
-                    if self._job == job:
-                        self._job = None   # let the next paint re-request
+            self._process_job(job)
             last = job
             try:
                 self._owner.update()
             except RuntimeError:
                 return                        # widget destroyed
+
+    def _process_job(self, job):
+        """MP6 instrumentation around the newest-wins render/publish the
+        terrain layer uses (AER-588): a finished render is always
+        published, even if a newer job replaced ``_job`` while it ran --
+        see terrain.py's ``_process_job`` for the rationale. That race is
+        still counted as ``jobs_superseded`` (published, but already
+        stale by the time it landed)."""
+        perf = getattr(self._owner, "perf", None)
+        ls = perf.layer(self.id) if perf is not None else None
+        if ls is not None:
+            ls.jobs_started += 1
+        t0 = time.perf_counter()
+        try:
+            img, meta = self._render(job)
+            ms = (time.perf_counter() - t0) * 1000.0
+            with self._lock:
+                superseded = self._job != job
+                self._img = (img, job[0], meta)
+            if ls is not None:
+                ls.record_render_ms(ms)
+                ls.jobs_published += 1
+                if superseded:
+                    ls.jobs_superseded += 1
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map %s render failed", self.id)
+            with self._lock:
+                if self._job == job:
+                    self._job = None   # let the next paint re-request
 
     def _pens(self):
         """Build one QPen per tier from the layer colour (cached per render)."""

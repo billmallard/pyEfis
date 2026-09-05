@@ -12,6 +12,7 @@
 
 import math
 import threading
+import time
 
 import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, Qt
@@ -131,6 +132,14 @@ class TerrainLayer(MapLayer):
                 range_bucket(x.range_nm), round(x.w), round(x.h),
                 self._mode, alt_band)
 
+    def is_settled(self, x):
+        if self._cache is None:
+            return True
+        key = self._key(x)
+        with self._lock:
+            img = self._img
+        return img is not None and img[1] == key
+
     def paint(self, p, x):
         if self._cache is None:
             return
@@ -176,6 +185,9 @@ class TerrainLayer(MapLayer):
             if self._job is not None and self._job[0] == key:
                 return
             self._job = job
+            perf = getattr(self._owner, "perf", None)
+            if perf is not None:
+                perf.layer(self.id).jobs_requested += 1
             if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._worker_loop, name="map-terrain",
@@ -183,7 +195,6 @@ class TerrainLayer(MapLayer):
                 self._worker.start()
 
     def _worker_loop(self):
-        import time
         last = None
         while True:
             with self._lock:
@@ -191,28 +202,44 @@ class TerrainLayer(MapLayer):
             if job is None or job == last:
                 time.sleep(0.05)
                 continue
-            try:
-                img, meta = self._render(job)
-                # Publish unconditionally, even if self._job moved on
-                # while this render was in flight: paint() already
-                # blits a stale image by its own meta and re-requests
-                # on key mismatch, and the loop renders the newer job
-                # next -- discarding a finished result here just makes
-                # a superseded gesture repost from scratch (AER-588).
-                with self._lock:
-                    self._img = (img, job[0], meta)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "map terrain render failed")
-                with self._lock:
-                    if self._job == job:
-                        self._job = None   # let the next paint re-request
+            self._process_job(job)
             last = job
             try:
                 self._owner.update()
             except RuntimeError:
                 return                        # widget destroyed
+
+    def _process_job(self, job):
+        """Render *job* and publish it unconditionally -- MP6
+        instrumentation around the newest-wins publish rule (AER-588):
+        paint() already blits a stale image by its own meta and
+        re-requests on key mismatch, so a finished render is always
+        used even if a newer job replaced ``_job`` while it ran. That
+        race is still counted as ``jobs_superseded`` (published, but
+        already stale by the time it landed)."""
+        perf = getattr(self._owner, "perf", None)
+        ls = perf.layer(self.id) if perf is not None else None
+        if ls is not None:
+            ls.jobs_started += 1
+        t0 = time.perf_counter()
+        try:
+            img, meta = self._render(job)
+            ms = (time.perf_counter() - t0) * 1000.0
+            with self._lock:
+                superseded = self._job != job
+                self._img = (img, job[0], meta)
+            if ls is not None:
+                ls.record_render_ms(ms)
+                ls.jobs_published += 1
+                if superseded:
+                    ls.jobs_superseded += 1
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map terrain render failed")
+            with self._lock:
+                if self._job == job:
+                    self._job = None   # let the next paint re-request
 
     def _render(self, job):
         key, lat0, lon0, range_nm, w, h, cy = job
@@ -286,21 +313,30 @@ class TerrainLayer(MapLayer):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(QColor(60, 110, 160)))
+        # MP6: polygons/vertices seen (== "before" until MP4 decimates) and
+        # the QPointF count actually constructed (0 once MP5 replaces this
+        # with the numpy scanline fill) -- brief section 4.
+        n_polys = 0
+        n_verts = 0
+        n_qpointf = 0
         try:
             for poly in self._water.polygons_in_range(
                     lat0, lon0, range_nm, min_bbox_diag_deg=min_diag,
                     drop_ocean=wide):
+                n_polys += 1
                 # Vectorised deg->px projection (#125): vertices arrive
                 # as an (n, 2) ndarray, so the per-vertex Python
                 # arithmetic (the measured hot line here) collapses to
                 # two array ops; only the QPointF construction remains
                 # per-vertex.
                 v = np.asarray(poly.vertices, dtype=np.float64)
+                n_verts += v.shape[0]
                 if v.shape[0] == 0:
                     continue
                 xs = ((v[:, 1] - lon0) * px_per_deg_lon + half_px).tolist()
                 ys = ((lat0 - v[:, 0]) * px_per_deg_lat + half_px).tolist()
                 pts = [QPointF(x, y) for x, y in zip(xs, ys)]
+                n_qpointf += len(pts)
                 rings = getattr(poly, "rings", None)
                 if rings:
                     # Multi-ring row (outer + island holes, #44):
@@ -325,6 +361,10 @@ class TerrainLayer(MapLayer):
                 "map water rasterize failed")
         finally:
             p.end()
+        perf = getattr(self._owner, "perf", None)
+        if perf is not None:
+            # No decimation yet (MP4): after == before.
+            perf.water.record(n_polys, n_verts, n_polys, n_verts, n_qpointf)
 
     def _sample(self, lats, lons, mip):
         """Vectorised elevation sampling straight off the TileCache.

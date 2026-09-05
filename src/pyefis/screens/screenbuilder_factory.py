@@ -1043,6 +1043,15 @@ _register(InstrumentSpec(
              maximum=1024, step=16, label="Water vertex cap",
              help="per-polygon vertex cap for map water rasterization "
                   "(higher = more coastline/lake detail per rebuild)"),
+        Prop("map_perf_log", "boolean", default=False,
+             label="Perf: log summary",
+             help="print a MapPerfStats summary every 2s (frames, paint "
+                  "ms p50/p95/max, per-layer job counts, water counts, "
+                  "settle latency, GUI-thread gap probe) -- mirrors "
+                  "svs_perf_log. Dev/bench diagnostic; off by default"),
+        Prop("map_perf_overlay", "boolean", default=False,
+             label="Perf: overlay chip",
+             help="draw a small on-screen perf stats chip (dev only)"),
     ],
 ))
 
