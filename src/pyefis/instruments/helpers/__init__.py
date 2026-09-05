@@ -178,19 +178,24 @@ SHADOW_BLUR_RATIO = 0.12
 #: on-screen clearance a shadow needs before it is safe to draw at all
 #: (see the HSI's readout-panel margin cap).
 SHADOW_CANVAS_PAD_RATIO = 3.0
-#: How far past the shape's own edge the halo is still VISIBLE, as a multiple
-#: of the blur radius. This is NOT SHADOW_CANVAS_PAD_RATIO: that one sizes the
-#: bake canvas so the Gaussian resolves before the QImage edge, and is
-#: deliberately generous because clipping *inside* the bake is what produces
-#: the hard rectangular edge of gotcha #2. What survives on screen is far
-#: shorter -- bake_blurred_silhouette punches the shape's own footprint back
-#: out (AER-415), so only the outward falloff remains, and that is under one
-#: blur radius by the time it reaches SHADOW_ALPHA-scaled invisibility.
-#: Callers reserving on-screen room should reserve THIS, not the canvas pad:
-#: reserving the canvas pad costs 3x the space the halo can actually use
-#: (pyEfis#158, where it cost the HSI rose 6.3% of its area for a halo
-#: measured at <=1.7/255).
-SHADOW_VISIBLE_FALLOFF_RATIO = 1.0
+#: Alpha profile of a rim glow, as (distance across the glow band, fraction of
+#: peak alpha). Distance 0.0 is the shape's own edge, 1.0 is the outer limit of
+#: the glow. A rim glow is a symmetric, zero-offset halo -- it reads as a drop
+#: shadow cast by a light source at infinite distance, which is the intended
+#: look for the HSI rose (an offset shadow could not be, since the rose bake
+#: is rotated per heading; AER-392 gotcha #1).
+#:
+#: Why a gradient and not a blur (pyEfis#158 follow-up): blurring a filled
+#: silhouette and punching the shape back out gives no direct control over
+#: either the glow's width or its peak opacity. A Gaussian step edge lands at
+#: only ~50% of the fill alpha right at the shape's edge, and its tail runs far
+#: wider than the nominal blur radius -- so the rose's halo came out both too
+#: faint and too diffuse to read as a shadow. Stating the profile outright
+#: makes both properties exact and costs no blur pass.
+#:
+#: Eased rather than linear so the outer limit fades out instead of ending on
+#: a visible edge.
+RIM_GLOW_FALLOFF = ((0.0, 1.0), (0.35, 0.55), (0.65, 0.25), (1.0, 0.0))
 
 
 def bake_blurred_silhouette(width, height, paint_shape, blur_radius,

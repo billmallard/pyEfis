@@ -34,11 +34,18 @@ from pyefis.instruments import helpers
 #: the drop-shadow clearance below has to know how much room already exists
 #: before reserving any more (pyEfis#158) -- the two must not drift apart.
 ROSE_EDGE_MARGIN = 5.0
-#: Rose halo blur radius, as a fraction of the rose's own radius. Deliberately
-#: NOT helpers.SHADOW_BLUR_RATIO: that one is a fraction of the label font,
-#: which is right for the readout boxes (they are font-sized) and wrong for the
-#: rose (it is widget-sized). See the reservation in resizeEvent.
-ROSE_SHADOW_BLUR_RATIO = 0.03
+#: Width of the rose's rim glow, as a fraction of the rose's own radius --
+#: about 5 px at the panel sizes this instrument is flown at. Deliberately NOT
+#: helpers.SHADOW_BLUR_RATIO: that one is a fraction of the label font, which
+#: is right for the readout boxes (they are font-sized) and wrong for the rose
+#: (it is widget-sized). See the reservation in resizeEvent.
+ROSE_GLOW_WIDTH_RATIO = 0.03
+#: Peak opacity of the rim glow, at the disc's own edge, fading to nothing over
+#: ROSE_GLOW_WIDTH_RATIO by helpers.RIM_GLOW_FALLOFF. Kept separate from
+#: helpers.SHADOW_ALPHA, which the readout boxes share: those are small shapes
+#: read at close range, the rose is a large disc read at a glance, and the two
+#: do not want the same strength.
+ROSE_SHADOW_ALPHA = 0.45
 
 
 class HSI(QGraphicsView):
@@ -350,34 +357,32 @@ class HSI(QGraphicsView):
             self.r = (min(self.width(), self.height() - self._gutter) / 2.0
                       - ROSE_EDGE_MARGIN)
             self.cy = self._gutter + (self.height() - self._gutter) / 2.0
-        # Reserve clearance for the rose drop shadow (AER-392, corrected here
-        # for pyEfis#158). Two things were wrong, and they compounded:
+        # Reserve clearance for the rose's rim glow (AER-392, corrected for
+        # pyEfis#158, then re-cut as a gradient here). The history is worth
+        # keeping, because both mistakes are easy to make again:
         #
         #  * the blur came from self.fontSize. SHADOW_BLUR_RATIO is calibrated
         #    for the readout boxes, whose size genuinely tracks the label font.
         #    The rose does not: it is a ~160px-radius disc sized by the widget.
         #    A font-derived blur came out at ~1.75px, which cannot read against
-        #    a shape that large -- measured at <=1.7/255 outside the disc, and
-        #    still invisible at 8x the font. The halo now scales off the rose's
-        #    own radius, so it stays proportional to the shape casting it.
-        #  * the clearance reserved was blur * SHADOW_CANVAS_PAD_RATIO. That
-        #    constant sizes the BAKE CANVAS (room for the Gaussian to resolve
-        #    before the QImage edge); the halo that actually survives on screen
-        #    reaches ~1 blur radius past the disc, because the bake punches the
-        #    disc's own footprint back out (AER-415). Reserving 3x surrendered
-        #    triple the room the halo could use, and ignored the ROSE_EDGE_MARGIN
-        #    the rose already holds -- together 5.2px of radius, 6.3% of AREA,
-        #    which was the only visible effect of ticking the option.
+        #    a shape that large -- and was still invisible at 8x the font.
+        #  * the clearance reserved was blur * SHADOW_CANVAS_PAD_RATIO, the
+        #    BAKE CANVAS pad (room for a Gaussian to resolve before the QImage
+        #    edge), not anything the glow could use on screen. That surrendered
+        #    5.2px of radius -- 6.3% of the rose's AREA -- and ignored the
+        #    ROSE_EDGE_MARGIN already in hand. It was the only visible effect
+        #    of ticking the option.
         #
-        # Reserve only the visible falloff, and only the part the existing
-        # margin does not already cover. No-op (0px) when shadows are off, and
-        # typically still 0px when they are on -- ROSE_EDGE_MARGIN absorbs the
-        # halo at normal panel sizes.
-        self._rose_shadow_blur = 0.0
+        # The glow is now a radial gradient rather than a blurred bake, so its
+        # width is exact: ROSE_GLOW_WIDTH_RATIO IS how far it reaches, with no
+        # Gaussian tail to estimate. Reserve only the part ROSE_EDGE_MARGIN
+        # does not already cover -- 0px when shadows are off, and typically
+        # still 0px when they are on, since the margin absorbs a ~5px glow at
+        # normal panel sizes.
+        self._rose_glow_width = 0.0
         if getattr(self, "shadow_enabled", False):
-            self._rose_shadow_blur = self.r * ROSE_SHADOW_BLUR_RATIO
-            _visible = self._rose_shadow_blur * helpers.SHADOW_VISIBLE_FALLOFF_RATIO
-            self.r -= max(0.0, _visible - ROSE_EDGE_MARGIN)
+            self._rose_glow_width = self.r * ROSE_GLOW_WIDTH_RATIO
+            self.r -= max(0.0, self._rose_glow_width - ROSE_EDGE_MARGIN)
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
@@ -390,38 +395,55 @@ class HSI(QGraphicsView):
         if _op > 0.0:
             _disc = QColor(self.bg_color)
             _disc.setAlphaF(_op)
-            # Rose drop shadow (AER-439 rewrite of Option 2, AER-392): a
-            # QGraphicsDropShadowEffect draws the item's own source (here,
-            # the disc's OWN possibly-translucent fill) back on top of an
-            # unpunched blurred halo at zero offset -- Qt's compositor never
-            # removes the shape's own footprint from its own shadow layer,
-            # so on anything less than fully opaque that halo reads straight
-            # through and tints the whole disc interior. Same defect class,
-            # same fix as AER-415's `bake_blurred_silhouette` punch-out --
-            # bake the disc's halo with that already-punched primitive and
-            # add it as its own scene item strictly BEHIND the disc fill
-            # (z=-2 vs the fill's z=-1) instead of attaching a
-            # QGraphicsDropShadowEffect to the fill item itself. Both are
-            # captured for free by the existing rose bake (_rose_image --
-            # rendered once per resize, then pre-rotated and cached by
-            # _rotated_rose_image). Zero offset matters here specifically:
-            # the disc is circular and the bake gets ROTATED per heading, so
-            # a symmetric halo is the only shadow that looks identical at
-            # every heading (gotcha #1) -- an offset one would make the
-            # implied light source appear to orbit as the card turns.
+            # Rose rim glow (AER-392 -> AER-439 -> pyEfis#158 -> here). A
+            # symmetric, zero-offset black halo around the disc: it reads as a
+            # drop shadow cast from an infinitely distant light source, which
+            # is the intended look. It is also the ONLY shadow that can be
+            # correct here, because this item is captured by the rose bake
+            # (_rose_image, then pre-rotated per heading by
+            # _rotated_rose_image) -- an offset one would make the implied
+            # light appear to orbit as the card turns (AER-392 gotcha #1).
+            #
+            # Drawn as a radial gradient rather than a blurred silhouette
+            # bake. The bake could not hit a stated width or opacity: a
+            # Gaussian step edge lands at only ~50% of its fill alpha at the
+            # shape's edge and trails off far past the nominal blur radius, so
+            # the glow came out simultaneously too faint and too diffuse to
+            # read (pyEfis#158 follow-up -- it measured ~6% mean contrast and
+            # was reported invisible on the bench display). A gradient states
+            # the profile outright: ROSE_SHADOW_ALPHA at the disc edge, zero
+            # at ROSE_GLOW_WIDTH_RATIO out, shaped by helpers.RIM_GLOW_FALLOFF
+            # -- and costs no blur pass.
+            #
+            # Still its own scene item strictly BEHIND the disc fill (z=-2 vs
+            # the fill's z=-1), never a QGraphicsDropShadowEffect on the fill
+            # item: Qt's effect draws the item's own possibly-translucent
+            # source back over an unpunched halo, which tints the disc
+            # interior (AER-439).
             if getattr(self, "shadow_enabled", False):
-                _diameter = int(math.ceil(self.r * 2.0))
-
-                def _paint_disc(p, _d=_diameter):
-                    p.setPen(Qt.PenStyle.NoPen)
-                    p.setBrush(QBrush(QColor(Qt.GlobalColor.black)))
-                    p.drawEllipse(0, 0, _d, _d)
-
-                _halo, _pad = helpers.bake_blurred_silhouette(
-                    _diameter, _diameter, _paint_disc, self._rose_shadow_blur)
-                _haloitem = self.scene.addPixmap(QPixmap.fromImage(_halo))
-                _haloitem.setPos(self.cx - self.r - _pad, self.cy - self.r - _pad)
-                _haloitem.setZValue(-2)
+                _centre = QPointF(self.cx, self.cy)
+                _outer = self.r + self._rose_glow_width
+                _grad = QRadialGradient(_centre, _outer)
+                _edge = self.r / _outer          # the disc's edge, in gradient units
+                for _t, _frac in helpers.RIM_GLOW_FALLOFF:
+                    _col = QColor(helpers.SHADOW_COLOR)
+                    _col.setAlphaF(ROSE_SHADOW_ALPHA * _frac)
+                    _grad.setColorAt(_edge + (1.0 - _edge) * _t, _col)
+                # Paint the RING only, never the interior. The disc's fill is
+                # translucent at any bg_opacity below 100, so a glow painted
+                # under the whole disc reads straight through and tints the
+                # rose interior -- the defect AER-415 fixed by punching the
+                # shape out of its own baked halo. Clipping to an annulus is
+                # the same guarantee, stated geometrically: there is nothing
+                # inside self.r to read through.
+                _ring = QPainterPath()
+                _ring.addEllipse(_centre, _outer, _outer)
+                _hole = QPainterPath()
+                _hole.addEllipse(_centre, self.r, self.r)
+                _glowitem = self.scene.addPath(_ring.subtracted(_hole),
+                                               QPen(Qt.PenStyle.NoPen),
+                                               QBrush(_grad))
+                _glowitem.setZValue(-2)
             _bgitem = self.scene.addEllipse(
                 self.cx - self.r, self.cy - self.r, self.r * 2.0, self.r * 2.0,
                 QPen(Qt.PenStyle.NoPen), QBrush(_disc))
