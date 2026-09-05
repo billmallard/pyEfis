@@ -155,6 +155,15 @@ class MovingMap(LiveBindingMixin, QWidget):
         # every update through QWidget.update() repainted the whole
         # map (rotated terrain blit included) at the data rate.
         self._frame_rate = 10.0
+        # MP3: gesture-driven view changes (zoom_by/pan_by/rotate_by) also
+        # route through this clock instead of calling update() per event --
+        # a touch panel or a fast pinch can deliver 60-120 events/s, and the
+        # gesture callers just flip this flag; the tick below repaints it at
+        # most once per clock period. The clock itself runs faster
+        # (gesture_frame_rate) while a gesture is live so panning/rotating
+        # still feels responsive.
+        self._gesture_frame_rate = 30.0
+        self._frame_dirty = False
         self._frame_last_pose = None
         self._frame_timer = QTimer(self)
         self._frame_timer.timeout.connect(self._frame_tick)
@@ -183,7 +192,30 @@ class MovingMap(LiveBindingMixin, QWidget):
     def frame_rate(self, fps):
         """Screenbuilder option: map repaint clock in Hz (clamped 1-30)."""
         self._frame_rate = max(1.0, min(30.0, float(fps)))
-        self._frame_timer.start(int(round(1000.0 / self._frame_rate)))
+        if not self._gesture_active:
+            self._frame_timer.start(int(round(1000.0 / self._frame_rate)))
+
+    @property
+    def gesture_frame_rate(self):
+        return self._gesture_frame_rate
+
+    @gesture_frame_rate.setter
+    def gesture_frame_rate(self, fps):
+        """Screenbuilder option (MP3): frame-clock rate in Hz while a
+        gesture is active (clamped 10-60); ``frame_rate`` applies the rest
+        of the time."""
+        self._gesture_frame_rate = max(10.0, min(60.0, float(fps)))
+        if self._gesture_active:
+            self._frame_timer.start(int(round(1000.0 / self._gesture_frame_rate)))
+
+    def _set_gesture_active(self, active):
+        """(De)activate the gesture phase and switch the frame clock
+        between ``gesture_frame_rate`` (a gesture is live) and
+        ``frame_rate`` (MP3) -- the clock is what actually repaints while
+        zoom_by/pan_by/rotate_by only mark a frame dirty."""
+        self._gesture_active = active
+        hz = self._gesture_frame_rate if active else self._frame_rate
+        self._frame_timer.start(int(round(1000.0 / hz)))
 
     @property
     def defer_render(self):
@@ -195,8 +227,9 @@ class MovingMap(LiveBindingMixin, QWidget):
     def _frame_tick(self):
         """Repaint at most at the clock rate, and only when the pose
         changed enough to move pixels: position by ~half a screen px,
-        track by 0.25 deg (rotation), altitude by 100 ft (caution
-        tint). Explicit UI actions (range, orientation, layer toggles)
+        track by 0.25 deg (rotation), altitude by 100 ft (caution tint),
+        or a gesture call (zoom_by/pan_by/rotate_by, MP3) marked a frame
+        dirty. Explicit UI actions (range, orientation, layer toggles)
         and async layer completions still call update() directly."""
         if not self.isVisible():
             return
@@ -207,9 +240,10 @@ class MovingMap(LiveBindingMixin, QWidget):
                 self.orientation, float(self.range_nm),
                 round(self._pan_e), round(self._pan_n),
                 round(self._rot_offset * 4.0))
-        if pose == self._frame_last_pose:
+        if pose == self._frame_last_pose and not self._frame_dirty:
             return
         self._frame_last_pose = pose
+        self._frame_dirty = False
         self.update()
 
     # --- layer plumbing ---------------------------------------------------
@@ -288,7 +322,12 @@ class MovingMap(LiveBindingMixin, QWidget):
         """Scale the view continuously by ``factor`` (>1 = zoom IN = smaller
         ``range_nm``). Pinch-spread and wheel-up both zoom in. Clamped to the
         range-ladder span; ``range_up``/``range_down`` still do the discrete
-        button/knob stepping. Returns the new range."""
+        button/knob stepping. Returns the new range.
+
+        MP3: marks a frame dirty instead of calling update() directly -- a
+        pinch or fast wheel can call this tens/hundreds of times a second;
+        the frame clock (_frame_tick) is what actually repaints, at most
+        once per clock period."""
         try:
             factor = float(factor)
         except (TypeError, ValueError):
@@ -297,7 +336,7 @@ class MovingMap(LiveBindingMixin, QWidget):
             return self.range_nm
         lo, hi = self._range_bounds()
         self.range_nm = max(lo, min(hi, float(self.range_nm) / factor))
-        self.update()
+        self._frame_dirty = True
         return self.range_nm
 
     # --- decoupled pan / rotate (#99 / #111) ------------------------------
@@ -344,7 +383,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._pan_e += (-dx * c + dy * s) / px
         self._pan_n += (dx * s + dy * c) / px
         self._restart_revert_timer()
-        self.update()
+        self._frame_dirty = True   # MP3: repaint via the frame clock
         return (self._pan_e, self._pan_n)
 
     def rotate_by(self, deg):
@@ -359,7 +398,7 @@ class MovingMap(LiveBindingMixin, QWidget):
             return self._rot_offset
         self._rot_offset = _wrap180(self._rot_offset + deg)
         self._restart_revert_timer()
-        self.update()
+        self._frame_dirty = True   # MP3: repaint via the frame clock
         return self._rot_offset
 
     def recenter(self):
@@ -381,9 +420,9 @@ class MovingMap(LiveBindingMixin, QWidget):
         engaging the gating."""
         GS = Qt.GestureState
         if state in (GS.GestureStarted, GS.GestureUpdated):
-            self._gesture_active = True
+            self._set_gesture_active(True)
         elif state in (GS.GestureFinished, GS.GestureCanceled):
-            self._gesture_active = False
+            self._set_gesture_active(False)
             self._settle_timer.start(_SETTLE_MS)
 
     def event(self, e):
@@ -416,7 +455,7 @@ class MovingMap(LiveBindingMixin, QWidget):
                 and e.button() == Qt.MouseButton.LeftButton):
             self._drag_last = e.position()
             self._drag_total = 0.0
-            self._gesture_active = True   # brackets the drag path (MP1)
+            self._set_gesture_active(True)   # brackets the drag path (MP1)
             e.accept()
             return
         super().mousePressEvent(e)
@@ -442,7 +481,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         if self._drag_last is not None:
             tap = self._drag_total < _TAP_PX
             self._drag_last = None
-            self._gesture_active = False
+            self._set_gesture_active(False)
             self._settle_timer.start(_SETTLE_MS)
             if tap:
                 self.recenter()          # click/tap with no drag re-locks
