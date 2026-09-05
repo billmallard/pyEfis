@@ -257,3 +257,78 @@ The selectable widgets are the gauges, `numeric_display`, `button`, and
 for digit-by-digit radio tuning, `encoder_set_key`, …) is described in
 [Concepts §6](Concepts#6-encoder-interaction), with the per-widget specifics on
 each [Widget Reference](Widget-Reference) page.
+
+---
+
+## Worked example: classic six-instrument panel
+
+pyEFIS no longer ships a Six-Pack screen (see
+[Screens Overview](Screens-Overview) — build one to taste in the editor
+instead). Here is the classic steam-gauge arrangement — round airspeed,
+attitude, and altimeter across the top; turn coordinator, HSI, and VSI across
+the bottom; a MAVMSG message strip along the bottom edge — as a complete,
+self-contained screen you can drop in as a starting point and resize with
+`span` / `move` / `font_percent`:
+
+```yaml
+SixPackNew:
+  module: pyefis.screens.screenbuilder
+  title: Standard Instrument Panel
+  include:
+    - HMI_ENCODER_BUTTONS
+  layout:
+    rows: 110
+    columns: 200
+    draw_grid: false
+  instruments:
+    - type: airspeed_dial
+      row: 0
+      column: 0
+      span: {rows: 50, columns: 62}
+      options:
+        bg_color: "#00000000"
+    - type: atitude_indicator
+      row: 0
+      column: 62
+      span: {rows: 50, columns: 62}
+    - type: altimeter_dial
+      row: 0
+      column: 124
+      span: {rows: 50, columns: 62}
+      options:
+        altitude: true
+    - type: turn_coordinator
+      row: 50
+      column: 0
+      span: {rows: 50, columns: 62}
+    - type: horizontal_situation_indicator
+      row: 50
+      column: 62
+      span: {rows: 50, columns: 62}
+      move:
+        shrink: 11
+        justify:
+          - bottom
+      options:
+        gsi_enabled: true
+        cdi_enabled: true
+    - type: heading_display
+      row: 50
+      column: 86
+      span: {rows: 5, columns: 14}
+    - type: vsi_dial
+      row: 50
+      column: 124
+      span: {rows: 50, columns: 62}
+    - type: value_text
+      row: 100
+      column: 60
+      span: {rows: 10, columns: 140}
+      options:
+        dbkey: MAVMSG
+        font_percent: 0.9
+```
+
+Size the HSI cell to fit your grid rather than copying a fixed `font_percent`
+for the nav-source label — a cramped HSI cell truncates it (see
+[Attitude & SVS](Widgets-Attitude-and-SVS) for the HSI's own sizing notes).

@@ -89,6 +89,11 @@ class HSI(QGraphicsView):
         self.readout_layout = "top_panel"  # top_panel | corners | split | none
         self.numeral_scale = 1.5           # rose numeral size multiplier
         self.depth_rings = False           # faint inner rings (off by default)
+        # Soft drop shadow on the static elements -- rose disc, readout panel,
+        # and (once #140 lands) the nav-source tab -- via the shared
+        # helpers.SHADOW_* tokens (AER-392 / pyEfis#142). Off by default, same
+        # as depth_rings above.
+        self.shadow_enabled = False
         # Compass orientation (P5b.3). north_up/heading_up/track_up all render the
         # existing full-360 rotating rose UNCHANGED (their distinct behaviours are
         # a separate item; today the single rotating card serves all three). "arc"
@@ -334,6 +339,18 @@ class HSI(QGraphicsView):
             self._gutter = self.height() * 0.16
             self.r = min(self.width(), self.height() - self._gutter) / 2.0 - 5.0
             self.cy = self._gutter + (self.height() - self._gutter) / 2.0
+        # Reserve clearance for the rose drop shadow (AER-392): the disc sat
+        # only 5px from the widget edge, nowhere near enough room for a
+        # blurred halo to resolve without hard-clipping against the widget
+        # bounds (gotcha #2). Shrinking the rose itself when the shadow is on
+        # -- instead of clamping the blur radius after the fact -- guarantees
+        # the halo always has the room bake_blurred_silhouette/the drop-shadow
+        # effect actually needs (SHADOW_CANVAS_PAD_RATIO), at the cost of a
+        # slightly smaller rose. No-op (0px) when shadows are off.
+        self._rose_shadow_blur = 0.0
+        if getattr(self, "shadow_enabled", False):
+            self._rose_shadow_blur = self.fontSize * helpers.SHADOW_BLUR_RATIO
+            self.r -= self._rose_shadow_blur * helpers.SHADOW_CANVAS_PAD_RATIO
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
@@ -346,6 +363,38 @@ class HSI(QGraphicsView):
         if _op > 0.0:
             _disc = QColor(self.bg_color)
             _disc.setAlphaF(_op)
+            # Rose drop shadow (AER-439 rewrite of Option 2, AER-392): a
+            # QGraphicsDropShadowEffect draws the item's own source (here,
+            # the disc's OWN possibly-translucent fill) back on top of an
+            # unpunched blurred halo at zero offset -- Qt's compositor never
+            # removes the shape's own footprint from its own shadow layer,
+            # so on anything less than fully opaque that halo reads straight
+            # through and tints the whole disc interior. Same defect class,
+            # same fix as AER-415's `bake_blurred_silhouette` punch-out --
+            # bake the disc's halo with that already-punched primitive and
+            # add it as its own scene item strictly BEHIND the disc fill
+            # (z=-2 vs the fill's z=-1) instead of attaching a
+            # QGraphicsDropShadowEffect to the fill item itself. Both are
+            # captured for free by the existing rose bake (_rose_image --
+            # rendered once per resize, then pre-rotated and cached by
+            # _rotated_rose_image). Zero offset matters here specifically:
+            # the disc is circular and the bake gets ROTATED per heading, so
+            # a symmetric halo is the only shadow that looks identical at
+            # every heading (gotcha #1) -- an offset one would make the
+            # implied light source appear to orbit as the card turns.
+            if getattr(self, "shadow_enabled", False):
+                _diameter = int(math.ceil(self.r * 2.0))
+
+                def _paint_disc(p, _d=_diameter):
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QBrush(QColor(Qt.GlobalColor.black)))
+                    p.drawEllipse(0, 0, _d, _d)
+
+                _halo, _pad = helpers.bake_blurred_silhouette(
+                    _diameter, _diameter, _paint_disc, self._rose_shadow_blur)
+                _haloitem = self.scene.addPixmap(QPixmap.fromImage(_halo))
+                _haloitem.setPos(self.cx - self.r - _pad, self.cy - self.r - _pad)
+                _haloitem.setZValue(-2)
             _bgitem = self.scene.addEllipse(
                 self.cx - self.r, self.cy - self.r, self.r * 2.0, self.r * 2.0,
                 QPen(Qt.PenStyle.NoPen), QBrush(_disc))
@@ -661,30 +710,79 @@ class HSI(QGraphicsView):
         self._rose_cache = (scene, key, img)
         return img
 
+    # Pre-rotated rose blit cache (#126) tuning: heading quantization step
+    # and how many rotated frames to retain (a few entries absorb heading
+    # jitter dithering across a step boundary).
+    _ROSE_ROT_STEP_DEG = 0.5
+    _ROSE_ROT_CACHE_MAX = 4
+
+    def _rotated_rose_image(self):
+        """The rose pre-rotated to the current heading, widget-sized, cached
+        by heading quantized to _ROSE_ROT_STEP_DEG (#126). The per-frame
+        smooth-filtered rotate+downscale of the 2x bake was the hottest
+        paint leaf in flight profiling (8.2% of GIL-held samples on the
+        N150); caching the rotated result makes the frame cost an unscaled
+        drawImage, and the filter runs only when the heading crosses a step
+        (~6/s in a standard-rate turn, ~never in cruise). Max card error is
+        a quarter degree -- about one pixel at the rose rim at typical
+        sizes; the heading bug, track diamond, needles and numerals still
+        use the exact heading. Keyed on the bake's cacheKey() so scene
+        rebuilds (resize) invalidate this cache exactly when they
+        invalidate the bake."""
+        base = self._rose_image()
+        step = self._ROSE_ROT_STEP_DEG
+        q = (round(self._heading / step) * step) % 360.0
+        dpr = float(self.devicePixelRatioF())
+        key = (q, base.cacheKey(), dpr)
+        cache = getattr(self, "_rot_rose_cache", None)
+        if cache is None:
+            cache = self._rot_rose_cache = {}
+        img = cache.get(key)
+        if img is not None:
+            return img
+        w, hgt = self.width(), self.height()
+        img = QImage(max(1, int(round(w * dpr))),
+                     max(1, int(round(hgt * dpr))),
+                     QImage.Format.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(dpr)
+        img.fill(0)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.translate(self.cx, self.cy)
+        p.rotate(-q)
+        p.drawImage(QRectF(-self.cx, -self.cy, w, hgt), base)
+        p.end()
+        cache[key] = img
+        while len(cache) > self._ROSE_ROT_CACHE_MAX:
+            del cache[next(iter(cache))]
+        return img
+
     def paintEvent(self, event):
         # Arc orientation (P5b.3) is a parallel paint path; every other
         # orientation renders the full 360 rose below, byte-for-byte unchanged.
         if getattr(self, "orientation", "heading_up") == "arc":
             self._paint_arc(event)
             return
-        # The rose is static art on a rotating card: blit the cached
-        # unrotated bake through the heading rotation instead of having
-        # QGraphicsView re-render ~84 items per frame (#94 -- the HSI
-        # was ~24% of all GIL time in flight). The heading bug and
+        # The rose is static art on a rotating card: blit a cached
+        # pre-rotated bake instead of having QGraphicsView re-render
+        # ~84 items per frame (#94 -- the HSI was ~24% of all GIL time
+        # in flight) or smooth-filtering the rotation every frame
+        # (#126 -- see _rotated_rose_image). The heading bug and
         # track diamond are the only dynamic card items; they are drawn
-        # here under the same rotation, in scene coordinates, exactly
-        # as their scene polygons are computed. setHeading still
+        # here under the exact-heading rotation, in scene coordinates,
+        # exactly as their scene polygons are computed. setHeading still
         # rotates the (now unpainted) view so scene-item updates keep
         # scheduling repaints.
         c = QPainter(self.viewport())
         c.setRenderHint(QPainter.RenderHint.Antialiasing)
         c.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # 1:1 blit of the pre-rotated rose (#126); the rotation filter cost
+        # lives in _rotated_rose_image and is paid only on step crossings.
+        c.drawImage(self.rect(), self._rotated_rose_image())
         c.save()
         c.translate(self.cx, self.cy)
         c.rotate(-self._heading)
-        c.drawImage(QRectF(-self.cx, -self.cy,
-                           self.width(), self.height()),
-                    self._rose_image())
         c.translate(-self.cx, -self.cy)
         if self.hdg_bug_item is not None:
             _hbc = QColor(self.heading_bug_color)
@@ -805,11 +903,15 @@ class HSI(QGraphicsView):
                     c.drawPolygon(QPolygonF([QPointF(gx, gy - ds), QPointF(gx + ds, gy),
                                              QPointF(gx, gy + ds), QPointF(gx - ds, gy)]))
 
-        # Nav-source annunciation (top-left), coloured to match the active source.
-        # Its bounding box is stored as a tap target -- tapping it cycles NAVSRC
-        # (see mousePressEvent).
+        # Nav-source annunciation, coloured to match the active source. In
+        # `readout_layout: top_panel` this is drawn as a tab on the HDG | MAG |
+        # CRS panel's left edge instead (_draw_source_tab, via _draw_readouts
+        # below) -- pyEfis#140. Other layouts (corners/split/none) draw no such
+        # panel, so they keep this plain top-left label. Its bounding box is
+        # stored as a tap target -- tapping it cycles NAVSRC (mousePressEvent).
         self._source_label_rect = None
-        if getattr(self, "source_label_enabled", True):
+        if getattr(self, "readout_layout", "top_panel") != "top_panel" \
+                and getattr(self, "source_label_enabled", True):
             label = self._source_label()
             if label:
                 c.setPen(QPen(self._source_color() or QColor(self.course_color)))
@@ -887,6 +989,53 @@ class HSI(QGraphicsView):
         # screen-fixed, placement selectable via readout_layout.
         self._draw_readouts(c)
 
+    def _readout_shadow_image(self, rect, radius):
+        """Cached blurred silhouette of one readout-panel/box shell (Option 4,
+        AER-392): the shell is static geometry -- position/size change only on
+        resize -- and a shadow silhouette is colour-independent, so ONE bake
+        serves every NAVSRC state and every value the panel shows, at zero
+        per-frame cost (gotcha #3). Keyed on the rect + widget size, so a
+        resize (or a readout_layout change, which moves the rect) rebuilds it.
+
+        The blur radius is capped to the actual on-screen clearance around
+        `rect` -- gotcha #2's other case: this panel can sit close to the
+        widget edge (the top_panel layout's gutter is thin), and baking a
+        halo bigger than that clearance would clip it into a hard edge at the
+        real widget boundary. Returns None when there isn't enough clearance
+        to draw a shadow at all worth showing.
+        """
+        margin = min(rect.y(), self.height() - rect.bottom(),
+                     rect.x(), self.width() - rect.right())
+        blur = min(self.fontSize * helpers.SHADOW_BLUR_RATIO,
+                   max(0.0, margin) / helpers.SHADOW_CANVAS_PAD_RATIO)
+        if blur < 1.0:
+            return None
+        key = (round(rect.x(), 1), round(rect.y(), 1),
+               round(rect.width(), 1), round(rect.height(), 1),
+               round(radius, 1), round(blur, 1), self.width(), self.height())
+        cache = getattr(self, "_readout_shadow_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+
+        def _paint_shape(p):
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(Qt.GlobalColor.black))
+            p.drawRoundedRect(rect, radius, radius)
+
+        result = helpers.bake_blurred_silhouette(
+            self.width(), self.height(), _paint_shape, blur)
+        self._readout_shadow_cache = (key, result)
+        return result
+
+    def _draw_readout_shadow(self, c, rect, radius):
+        if not getattr(self, "shadow_enabled", False):
+            return
+        baked = self._readout_shadow_image(rect, radius)
+        if baked is None:
+            return
+        img, pad = baked
+        c.drawImage(QPointF(-pad, -pad), img)
+
     def _draw_readout_box(self, c, ax, ay, anchor, label, value, color):
         """One boxed readout (small label + degree value) anchored at (ax, ay).
         anchor = 2-char h/v code: h in l/c/r, v in t/m/b. Screen-fixed; a
@@ -897,11 +1046,17 @@ class HSI(QGraphicsView):
         y = ay if anchor[1] == 't' else (ay - bh if anchor[1] == 'b' else ay - bh / 2.0)
         box = QRectF(x, y, bw, bh)
         col = QColor(color)
-        fill = QColor(0, 0, 0); fill.setAlphaF(0.55)
-        c.setPen(QPen(col, max(1.0, self.fontSize * 0.06)))
-        c.setBrush(QBrush(fill))
-        rad = self.fontSize * 0.3
-        c.drawRoundedRect(box, rad, rad)
+        self._draw_readout_shadow(c, box, self.fontSize * 0.3)
+        # Shared house style (helpers.READOUT_*) -- the same primitive the tape
+        # readout boxes draw through (P5c), so the two cannot drift. This
+        # variant keeps its own fill/border alphas: the border is the value's
+        # own colour at full strength, which is what distinguishes the cyan
+        # selected-heading box from the source-coloured course box.
+        helpers.draw_readout_panel(
+            c, box, self.fontSize * 0.3, col,
+            pen_width=self.fontSize * helpers.READOUT_PEN_RATIO,
+            fill_alpha=0.55, border_alpha=1.0,
+        )
         f = QFont(self.font_family)
         if label:
             f.setPixelSize(max(9, int(self.fontSize * 0.64)))
@@ -951,7 +1106,13 @@ class HSI(QGraphicsView):
             g = getattr(self, "_gutter", 0.0) or (H * 0.16)
             ph = g * 0.76
             pw = self.fontSize * 12.5
-            self._draw_readout_panel(c, W / 2.0 - pw / 2.0, (g - ph) / 2.0, pw, ph, "h",
+            px = W / 2.0 - pw / 2.0
+            py = (g - ph) / 2.0
+            # Tab drawn BEFORE the panel: the panel's own left border (drawn on
+            # top, next) is what defines the crisp shared edge, so there is no
+            # separate seam/stroke to align by hand (pyEfis#140).
+            self._draw_source_tab(c, px, py, ph)
+            self._draw_readout_panel(c, px, py, pw, ph, "h",
                 [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
         elif layout == "corners":
             # selected-heading (cyan) top-left, course (source) top-right; actual
@@ -970,12 +1131,18 @@ class HSI(QGraphicsView):
         divided into equal cells, each a small label + degree value with hairline
         dividers. orientation 'v' stacks cells, 'h' rows them. Translucent fill
         for legibility over the map."""
-        border = QColor(self.fg_color); border.setAlphaF(0.85)
-        fill = QColor(0, 0, 0); fill.setAlphaF(0.62)
-        c.setPen(QPen(border, max(1.0, self.fontSize * 0.06)))
-        c.setBrush(QBrush(fill))
-        rad = self.fontSize * 0.35
-        c.drawRoundedRect(QRectF(x, y, w, h), rad, rad)
+        # Shared house style (helpers.READOUT_*): this panel is where the look
+        # was established, and the tape readout boxes now draw through the same
+        # primitive (P5c) so the two cannot drift.
+        _panel_rect = QRectF(x, y, w, h)
+        _panel_radius = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        self._draw_readout_shadow(c, _panel_rect, _panel_radius)
+        _pen, _brush = helpers.draw_readout_panel(
+            c, _panel_rect, _panel_radius,
+            QColor(self.fg_color),
+            pen_width=self.fontSize * helpers.READOUT_PEN_RATIO,
+        )
+        border = _pen.color()
         n = max(1, len(segments))
         # Labels: bolder + a touch larger so the cyan/magenta read true at small
         # sizes (Bill 2026-08-02: cyan HDG label read greenish when tiny).
@@ -999,6 +1166,65 @@ class HSI(QGraphicsView):
             c.setFont(vf); c.setPen(QPen(QColor(self.fg_color)))
             c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
                        int(Qt.AlignmentFlag.AlignCenter), value)
+
+    def _draw_source_tab(self, c, px, py, ph):
+        """Nav-source annunciation as a coloured tab hanging off the left edge
+        of the HDG | MAG | CRS panel, `readout_layout: top_panel` only
+        (pyEfis#140). Fill = active source colour (magenta GPS / green VLOC,
+        `_source_color()`); text white, centred both axes. Height is the
+        panel height less both corner radii -- the straight run of the
+        panel's left edge -- so it sits a few pixels shorter than the panel
+        top and bottom, which is what reads as a tab rather than a bolted-on
+        box. Left corners rounded on the shared READOUT_RADIUS_RATIO token
+        (clamped to half the tab height); right edge square and flush at
+        `px`. The whole tab rect becomes the tap target (_source_label_rect;
+        mousePressEvent cycles NAVSRC unchanged).
+
+        Fit is not guaranteed at every shipped font_percent -- see
+        docs/hsi_widget_spec.md sec 7.4. The panel is never moved or resized
+        to make room; nothing here truncates the label to hide an overflow."""
+        self._source_label_rect = None
+        if not getattr(self, "source_label_enabled", True):
+            return
+        label = self._source_label()
+        if not label:
+            return
+        rr = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        th = ph - 2.0 * rr
+        if th <= 0:
+            return
+        tab_r = min(rr, th / 2.0)
+        lf = QFont(self.font_family)
+        lf.setPixelSize(int(self.fontSize))
+        c.setFont(lf)
+        fm = c.fontMetrics()
+        pad = self.fontSize * 0.35
+        tab_w = fm.horizontalAdvance(label) + 2.0 * pad
+        top = py + rr
+        right = px
+        left = right - tab_w
+
+        # Extend the fill a hair past the shared edge; the panel border,
+        # drawn on top right after this call, paints over the sliver and
+        # owns the crisp boundary -- avoids an anti-aliasing gap/seam between
+        # two independently-stroked shapes without doubling the stroke.
+        overlap = max(1.0, self.fontSize * helpers.READOUT_PEN_RATIO * 0.5)
+        path = QPainterPath()
+        path.moveTo(right + overlap, top)
+        path.lineTo(left + tab_r, top)
+        path.arcTo(left, top, tab_r * 2.0, tab_r * 2.0, 90, 90)
+        path.lineTo(left, top + th - tab_r)
+        path.arcTo(left, top + th - tab_r * 2.0, tab_r * 2.0, tab_r * 2.0, 180, 90)
+        path.lineTo(right + overlap, top + th)
+        path.closeSubpath()
+        c.setPen(Qt.PenStyle.NoPen)
+        c.setBrush(QBrush(self._source_color() or QColor(self.course_color)))
+        c.drawPath(path)
+
+        c.setPen(QPen(QColor(Qt.GlobalColor.white)))
+        c.drawText(QRectF(left, top, tab_w, th),
+                   int(Qt.AlignmentFlag.AlignCenter), label)
+        self._source_label_rect = (left, top, tab_w, th)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
@@ -1241,6 +1467,23 @@ class HSI(QGraphicsView):
     # is placed through _arc_band_point / _arc_in_sector so they all share the one
     # scale. This is a SEPARATE paint path -- it never touches the rose bake or
     # the view rotation, so the north_up/heading_up/track_up rose is unchanged.
+    #
+    # DECISION (pyEfis#133, 2026-08-23): this widget is an HSI, and its arc
+    # mode's CDI stays COURSE-BOUND -- the deviation bar and dots are drawn at
+    # ownship, perpendicular to the course line, so the whole CDI rotates with
+    # the course pointer as heading/course change. That is _draw_arc_course's
+    # behaviour today and it is staying. Precedent: Garmin G1000/G3X Touch PFD
+    # HSI, both of which keep the CDI bound to the course arrow in ARC mode.
+    #
+    # This was flagged because it borrows the arc idiom from transport-category
+    # Navigation Displays (Boeing 737 ND, Airbus ND), which instead show a
+    # SCREEN-FIXED deviation scale at the display edge -- confirmed against
+    # authoritative 737 avionics material (see #133). That is a genuinely
+    # different idiom, not a variant of this one, so it does not belong here:
+    # it is scoped to a separate Navigation Display mode on the moving-map
+    # instrument (pyEfis#134), which this HSI widget does not implement and
+    # must not grow toward. If a screen-fixed deviation scale is ever wanted
+    # on THIS widget, that is a reopening of #133, not a tweak to arc mode.
     ARC_HALF_DEG = 60.0
 
     @staticmethod
@@ -1441,7 +1684,10 @@ class HSI(QGraphicsView):
         """Arc course pointer + lateral CDI: the pointer runs from ownship toward
         the COURSE band point (when in sector); the deviation dots and CDI bar sit
         at ownship, perpendicular to the course line, so the CDI angle tracks the
-        arc scale. GS is the screen-fixed right-side scale, shared with the rose."""
+        arc scale. GS is the screen-fixed right-side scale, shared with the rose.
+        Course-bound by decision, not by default -- see pyEfis#133; a
+        screen-fixed lateral scale is the Navigation Display idiom and belongs
+        on the moving-map ND mode (pyEfis#134), not here."""
         if self.cdi_enabled and self._arc_in_sector(self._courseSelect):
             bx, by = self._arc_band_point(self._courseSelect)
             dx = bx - ox; dy = by - oy
@@ -1502,10 +1748,13 @@ class HSI(QGraphicsView):
                 QPointF(bx + w, by), QPointF(bx + w, by + h)]))
 
     def _draw_arc_source_labels(self, c):
-        """Nav-source annunciation (top-left) + per-pointer bearing-source labels
-        (bottom corners) with the same tap targets as the rose path."""
+        """Nav-source annunciation (top-left, unless `readout_layout: top_panel`
+        draws it as a tab via _draw_source_tab -- pyEfis#140) + per-pointer
+        bearing-source labels (bottom corners), with the same tap targets as
+        the rose path."""
         self._source_label_rect = None
-        if getattr(self, "source_label_enabled", True):
+        if getattr(self, "readout_layout", "top_panel") != "top_panel" \
+                and getattr(self, "source_label_enabled", True):
             label = self._source_label()
             if label:
                 c.setPen(QPen(self._source_color() or QColor(self.course_color)))
@@ -1523,11 +1772,18 @@ class HSI(QGraphicsView):
                 continue
             if self.brgdb[_n] is None and self.brgsrcdb[_n] is None:
                 continue
+            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
+                       or self._brgBad[_n] or self._brgFail[_n])
+            # A valid pointer clipped outside the forward sector draws no
+            # needle (_draw_arc_bearing_needle); its label must not outlive
+            # it, or the annunciation reads as "on screen" when it is not.
+            # Invalid pointers keep the label regardless of sector -- the
+            # failure is real regardless of where the stale bearing points.
+            if not invalid and not self._arc_in_sector(self._brg[_n]):
+                continue
             txt = self._bearing_src_label(_n)
             if not txt:
                 continue
-            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
-                       or self._brgBad[_n] or self._brgFail[_n])
             if invalid:
                 txt = txt + " X"
             lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize * 0.85))

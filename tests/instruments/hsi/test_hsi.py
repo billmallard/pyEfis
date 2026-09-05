@@ -1,9 +1,12 @@
+import math
 from unittest import mock
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QRectF, qRound
 from PyQt6.QtGui import QColor, QPaintEvent, QPen
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import (
+    QApplication, QGraphicsEllipseItem, QGraphicsPixmapItem,
+)
 
 from pyefis.instruments import hsi
 from tests.utils import track_calls
@@ -948,3 +951,511 @@ def test_arc_forward_clip_hides_rear_bearing(fix, qtbot):
     assert widget._arc_in_sector(widget._brg[1]) is True     # 10 deg ahead
     assert widget._arc_in_sector(widget._brg[2]) is False    # 180 behind
     widget.paintEvent(QPaintEvent(widget.rect()))            # must not raise
+
+
+# --- Arc-mode CDI: course-bound, not screen-fixed (decision record, #133) ----
+
+def test_arc_cdi_is_course_bound_not_screen_fixed(fix, qtbot):
+    """Decision record for #133: this widget is an HSI, so its arc-mode CDI
+    stays COURSE-BOUND (the deviation bar runs parallel to the course line and
+    rotates with it) rather than adopting the Navigation Display idiom of a
+    screen-fixed scale at the display edge. A screen-fixed scale would draw the
+    same bar orientation regardless of the selected course; a course-bound one
+    rotates the bar as COURSE changes. Assert the latter -- if arc mode is ever
+    made screen-fixed, this test must be deliberately changed, not silently
+    broken."""
+    import math
+    widget = hsi.HSI(cdi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._heading = 0.0
+    widget._CdiOld = widget._CdiBad = False
+    widget._courseDeviation = 0.5
+    widget._showCDI = True
+    ox, oy = widget._arc_params()[0], widget._arc_params()[2]
+
+    def cdi_bar_angle(course):
+        widget.coursePointer = course
+        painter = mock.Mock()
+        widget._draw_arc_course(painter, ox, oy)
+        # The CDI bar is the second drawLine call: the first is the course
+        # pointer shaft, the second (when _showCDI) is the deviation bar --
+        # both share _draw_arc_course's local (ux, uy)/(px, py) frame.
+        line = painter.drawLine.call_args_list[1].args[0]
+        return math.atan2(line.y2() - line.y1(), line.x2() - line.x1())
+
+    angle_ahead = cdi_bar_angle(0.0)     # course dead ahead
+    angle_right = cdi_bar_angle(30.0)    # course 30 deg right of nose
+    # A screen-fixed ND-style scale would hold this angle constant across a
+    # COURSE change; course-bound HSI behaviour rotates it with the course.
+    assert abs(angle_ahead - angle_right) > 0.1
+
+
+def test_arc_bearing_label_hidden_when_pointer_clipped_out_of_sector(fix, qtbot):
+    """Regression for #133: a valid bearing pointer clipped outside the
+    forward sector must not leave its source label lit -- the label used to be
+    gated only on the pointer being enabled and its data healthy, never on
+    _arc_in_sector, so the display could read e.g. "1 GPS" with no pointer 1
+    anywhere on screen. The label should disappear with its needle."""
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=180.0, src2=2.0)
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.bearing2_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._HeadFail = widget._HeadBad = False
+    for n in (1, 2):
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+    widget._heading = 0.0
+    assert widget._arc_in_sector(widget._brg[1]) is True      # pointer 1: on screen
+    assert widget._arc_in_sector(widget._brg[2]) is False     # pointer 2: clipped, valid data
+
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
+
+    assert widget._brg_label_rect[1] is not None     # in-sector pointer keeps its label
+    assert widget._brg_label_rect[2] is None          # clipped-but-valid pointer: no label
+
+
+def test_arc_bearing_label_stays_when_invalid_regardless_of_sector(fix, qtbot):
+    """Invalid bearing data still annunciates ("... X") even when the stale
+    bearing happens to fall outside the forward sector -- the failure is real
+    regardless of where a stale value points, so it must not be suppressed by
+    the clipping fix above."""
+    _define_bearing_keys(fix, brg1=180.0, src1=2.0)
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.orientation = "arc"
+    widget.bearing1_enabled = True
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget._heading = 0.0
+    widget._brgOld[1] = True                          # stale -- invalid
+    assert widget._arc_in_sector(widget._brg[1]) is False
+
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
+
+    assert widget._brg_label_rect[1] is not None
+
+
+# --- Nav-source tab on the HDG | MAG | CRS panel (pyEfis#140) ---------------
+
+def _wcag_contrast(fg_rgb, bg_rgb):
+    """Same WCAG 2.x formula as tests/instruments/test_readout_panel.py,
+    duplicated locally (both fill colours here are opaque, so no source-over
+    compositing step is needed)."""
+    def _linear(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    def _luminance(rgb):
+        r, g, b = (_linear(c) for c in rgb)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    l1, l2 = _luminance(fg_rgb), _luminance(bg_rgb)
+    if l1 < l2:
+        l1, l2 = l2, l1
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+def _expected_tab_rect(widget):
+    """Recompute the pyEfis#140 geometry table independently of
+    HSI._draw_source_tab, from the same inputs _draw_readouts uses."""
+    from pyefis.instruments import helpers
+    W = widget.width()
+    g = widget._gutter
+    ph = g * 0.76
+    pw = widget.fontSize * 12.5
+    px = W / 2.0 - pw / 2.0
+    py = (g - ph) / 2.0
+    rr = widget.fontSize * helpers.READOUT_RADIUS_RATIO
+    top = py + rr
+    height = ph - 2.0 * rr
+    return px, top, height
+
+
+def test_hsi_source_tab_geometry_matches_panel(fix, qtbot):
+    """pyEfis#140 acceptance #2/#3: in the default `top_panel` layout the tab's
+    height is the panel height less both corner radii, its top is the bottom
+    of the panel's top-left arc, and its right edge sits flush at the panel's
+    left edge (`px`) -- the formulas in HSI._draw_source_tab must match the
+    #140 geometry table, not just "look right"."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.navsrcdb = object()
+    widget._navsrc = 2                              # GPS
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    px, top, height = _expected_tab_rect(widget)
+    r = widget._source_label_rect
+    assert r is not None
+    left, rtop, rw, rh = r
+    assert rtop == pytest.approx(top)
+    assert rh == pytest.approx(height)
+    assert left + rw == pytest.approx(px)            # right edge flush, square
+
+
+def test_hsi_source_tab_geometry_also_applies_in_arc_mode(fix, qtbot):
+    """The tab is drawn by _draw_readouts, which both paint paths call -- the
+    arc orientation must get the same tab, not the old floating label."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.orientation = "arc"
+    widget.navsrcdb = object()
+    widget._navsrc = 0                               # VLOC1
+    widget._navtype = None
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    px, top, height = _expected_tab_rect(widget)
+    r = widget._source_label_rect
+    assert r is not None
+    left, rtop, rw, rh = r
+    assert rtop == pytest.approx(top)
+    assert rh == pytest.approx(height)
+    assert left + rw == pytest.approx(px)
+
+
+@pytest.mark.parametrize("layout", ["corners", "split", "none"])
+def test_hsi_non_top_panel_layouts_keep_floating_label(fix, qtbot, layout):
+    """pyEfis#140 acceptance #6: corners/split/none draw no HDG | MAG | CRS
+    panel, so they keep today's plain top-left label (not a tab) -- verified
+    by checking the tap-target rect against the OLD label formula, distinct
+    from the tab's panel-derived geometry."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.readout_layout = layout
+    widget.navsrcdb = object()
+    widget._navsrc = 2
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    r = widget._source_label_rect
+    assert r is not None
+    pad = int(widget.fontSize * 0.5)
+    expected_x = qRound(widget.width() * 0.03) - pad
+    assert r[0] == expected_x
+
+
+def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
+    """pyEfis#140 acceptance #5: the whole tab rect (not just the glyphs) is
+    the tap target, and mousePressEvent still cycles NAVSRC unchanged."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.navsrcdb = object()
+    widget._navsrc = 2                               # GPS
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    r = widget._source_label_rect
+    assert r is not None
+
+    written = []
+    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+
+    class _P:
+        def __init__(s, x, y): s._x, s._y = x, y
+        def x(s): return s._x
+        def y(s): return s._y
+
+    class _Ev:
+        def __init__(s, x, y): s._p = _P(x, y)
+        def pos(s): return s._p
+        def accept(s): pass
+
+    # A point near the tab's rounded-left edge (not just its text glyphs).
+    widget.mousePressEvent(_Ev(r[0] + 2, r[1] + r[3] / 2))
+    assert written == [("NAVSRC", 0.0)]
+
+
+def test_hsi_source_tab_white_on_source_colour_contrast(fix, qtbot):
+    """pyEfis#140 acceptance #9: MEASURE (not just assert-pass) the white-on-
+    magenta and white-on-green ratios against the WCAG 4.5:1 floor, the same
+    pattern tests/instruments/test_readout_panel.py uses for the translucent
+    readout fill. Both measure poor per the #140 fit/contrast note in
+    docs/hsi_widget_spec.md sec 7.4 -- white text stands (Bill's call); if this
+    is ever fixed, it will be via a darker fill, and this test's numbers are
+    the ones that should move. Locked as a value assertion (not just `< 4.5`)
+    so a silent fill-colour change gets caught here first."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    white = (255, 255, 255)
+    magenta = QColor(widget.course_color).getRgb()[:3]
+    green = QColor(widget.vloc_color).getRgb()[:3]
+    gps_contrast = _wcag_contrast(white, magenta)
+    vloc_contrast = _wcag_contrast(white, green)
+    assert gps_contrast == pytest.approx(3.14, abs=0.02)
+    assert vloc_contrast == pytest.approx(1.37, abs=0.02)
+    assert gps_contrast < 4.5 and vloc_contrast < 4.5      # both fail the floor
+
+
+# --------------------------------------------------------------------------
+# Static-element drop shadow (AER-392 / pyEfis#142)
+# --------------------------------------------------------------------------
+
+def test_shadow_disabled_by_default(fix, qtbot):
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    assert widget.shadow_enabled is False
+    widget.resize(300, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    assert widget._rose_shadow_blur == 0.0
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
+
+
+def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
+    """Enabling the shadow shrinks the rose (clearance for the halo, gotcha
+    #2) and bakes the halo via helpers.bake_blurred_silhouette (AER-439 --
+    replaced a QGraphicsDropShadowEffect attached directly to the disc item,
+    which had no way to punch its own shape back out of its own shadow, see
+    test_shadow_rose_disc_translucent_fill_unchanged_by_shadow below) as its
+    OWN scene item strictly behind the disc fill: z=-2 for the halo vs z=-1
+    for the disc, so the disc's own fill is never composited over its own
+    unpunched shadow."""
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(400, 400)
+    plain.show()
+    qtbot.waitExposed(plain)
+
+    shadowed = hsi.HSI()
+    qtbot.addWidget(shadowed)
+    shadowed.shadow_enabled = True
+    shadowed.resize(400, 400)
+    shadowed.show()
+    qtbot.waitExposed(shadowed)
+
+    assert shadowed._rose_shadow_blur > 0.0
+    assert shadowed.r < plain.r                       # room reserved for the halo
+
+    bgitems = [i for i in shadowed.scene.items()
+               if isinstance(i, QGraphicsEllipseItem)]
+    assert bgitems, "expected the compass-disc background item"
+    assert bgitems[0].graphicsEffect() is None         # no per-item Qt effect anymore
+    assert bgitems[0].zValue() == -1
+
+    haloitems = [i for i in shadowed.scene.items()
+                 if isinstance(i, QGraphicsPixmapItem)]
+    assert haloitems, "expected a baked halo pixmap item behind the disc"
+    assert haloitems[0].zValue() < bgitems[0].zValue()
+
+    plain_haloitems = [i for i in plain.scene.items()
+                       if isinstance(i, QGraphicsPixmapItem)]
+    assert not plain_haloitems, "no halo item should exist with shadows off"
+
+
+def test_shadow_rose_disc_translucent_fill_unchanged_by_shadow(fix, qtbot):
+    """AER-439: the rose-disc shadow used a QGraphicsDropShadowEffect
+    attached directly to the disc background item. Qt's effect draws the
+    item's own source back on top of an UNPUNCHED blurred halo at zero
+    offset, so on a translucent disc fill (bg_opacity between 0 and 100)
+    that halo reads straight through and darkens the whole disc interior --
+    the identical defect class AER-415 fixed in bake_blurred_silhouette,
+    just via Qt's compositor instead of pyEfis's own. It does not show at
+    bg_opacity 0 (no background item is even created) or bg_opacity 100
+    (the opaque fill fully occludes the halo underneath it) -- only a
+    partial opacity exercises it, per the AER-415 rose-disc probe
+    (interior (160,180,202) shadow-off vs (137,151,167) shadow-on at
+    bg_opacity 50, a uniform ~14% darkening).
+
+    Fails on the pre-AER-439 QGraphicsDropShadowEffect-on-the-disc-item
+    code (interior darkens), passes once the halo is baked+punched via
+    bake_blurred_silhouette and drawn as its own item strictly behind the
+    disc fill.
+    """
+    def _disc_interior_pixel(shadow_enabled):
+        widget = hsi.HSI(font_percent=0.1, bg_color="#aaaaaa")
+        qtbot.addWidget(widget)
+        widget.bg_opacity = 50
+        widget.shadow_enabled = shadow_enabled
+        widget.resize(400, 400)
+        widget.show()
+        qtbot.waitExposed(widget)
+        img = widget._rose_image()                    # unrotated 2x bake
+        ss = 2
+        # A point well inside the disc, away from ticks/labels/needles.
+        x = int(widget.cx * ss + widget.r * ss * 0.5)
+        y = int(widget.cy * ss)
+        return img.pixelColor(x, y)
+
+    off = _disc_interior_pixel(False)
+    on = _disc_interior_pixel(True)
+    assert (off.red(), off.green(), off.blue()) == (on.red(), on.green(), on.blue()), (
+        f"disc interior tinted by its own shadow: shadow-off {off.getRgb()} "
+        f"-> shadow-on {on.getRgb()}"
+    )
+
+
+def test_shadow_rose_halo_is_radially_symmetric(fix, qtbot, monkeypatch):
+    """The disc shadow is baked into the SAME layer _rotated_rose_image()
+    rotates per heading. A halo with any directional offset would make the
+    implied light source appear to orbit as the card turns; sampling the
+    halo ring at several angles around the UNROTATED bake and finding them
+    alike proves it is symmetric, so any later rotation leaves it looking
+    identical -- the two-heading acceptance criterion, made deterministic.
+
+    The production blur ratio is subtle by design (a soft accent, not a
+    heavy vignette); scaled up here via monkeypatch purely so the halo is
+    a few pixels wide and trivially sampled -- the symmetry property being
+    tested does not depend on the exact ratio.
+    """
+    from pyefis.instruments import helpers
+    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    img = widget._rose_image()                        # unrotated 2x bake
+    ss = 2
+    cx, cy = widget.cx * ss, widget.cy * ss
+    sample_r = widget.r * ss + widget._rose_shadow_blur * ss * 0.15
+
+    alphas = []
+    for deg in range(0, 360, 15):
+        th = math.radians(deg)
+        x = int(cx + sample_r * math.cos(th))
+        y = int(cy + sample_r * math.sin(th))
+        alphas.append(img.pixelColor(x, y).alpha())
+
+    assert max(alphas) > 0                             # the halo is actually there
+    assert max(alphas) - min(alphas) <= 10              # uniform within AA noise
+
+
+def test_shadow_rotated_rose_matches_unrotated_in_halo_band(fix, qtbot, monkeypatch):
+    """Direct two-heading check: the pre-rotated rose blit (what paintEvent
+    actually draws) sampled in the halo band is the same at two headings
+    45+ degrees apart -- the light does not appear to move. Blur scaled up
+    for the same reason as the symmetry test above."""
+    from pyefis.instruments import helpers
+    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    sample_r = widget.r + widget._rose_shadow_blur * 0.25
+
+    def halo_alphas(heading):
+        widget._heading = heading
+        img = widget._rotated_rose_image()
+        alphas = []
+        for deg in range(0, 360, 15):
+            th = math.radians(deg)
+            x = int(widget.cx + sample_r * math.cos(th))
+            y = int(widget.cy + sample_r * math.sin(th))
+            alphas.append(img.pixelColor(x, y).alpha())
+        return alphas
+
+    a0 = halo_alphas(0.0)
+    a1 = halo_alphas(87.0)                              # > 45 deg apart
+    assert max(a0) > 0 and max(a1) > 0
+    for x, y in zip(sorted(a0), sorted(a1)):
+        assert abs(x - y) <= 3                          # same halo, any heading
+
+
+def test_shadow_readout_panel_shadow_bakes_once_and_caches(fix, qtbot):
+    """Option 4: the panel shell shadow is baked ONCE and reused -- same rect
+    -> same cached (image, pad); a geometry change invalidates it."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    rect = QRectF(100, 100, 150, 60)
+    radius = 10.0
+    first = widget._readout_shadow_image(rect, radius)
+    second = widget._readout_shadow_image(rect, radius)
+    assert first is not None
+    assert first is second                              # cache hit, no rebake
+
+    moved = widget._readout_shadow_image(QRectF(90, 100, 150, 60), radius)
+    assert moved is not None
+    assert moved is not first
+
+
+def test_shadow_readout_panel_shadow_none_without_clearance(fix, qtbot):
+    """A rect flush against the widget edge has no room for the halo to
+    resolve without hard-clipping (gotcha #2) -- no shadow is baked rather
+    than clipping it into a square edge."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    flush = widget._readout_shadow_image(QRectF(0, 0, 150, 60), 10.0)
+    assert flush is None
+
+
+def test_shadow_baked_silhouette_leaves_shape_interior_unchanged(qtbot):
+    """AER-415: bake_blurred_silhouette must punch its own shape back out of
+    the blurred halo. An unpunched (filled) silhouette blits a flat second
+    layer under the readout panel's translucent fill (READOUT_FILL_ALPHA =
+    0.62) and reads straight through, tinting the WHOLE interior instead of
+    only the edge falloff -- exactly the regression Bill's PR-render
+    arithmetic found (AER-412: shadow-on interior backed out to a second
+    black layer at alpha 0.597 ~= SHADOW_ALPHA across the entire panel body).
+
+    Composite the baked shadow under a translucent stand-in of the exact
+    shape it was baked for and assert the interior is byte-for-byte
+    unchanged from the no-shadow case -- only the halo OUTSIDE the shape's
+    own edge may differ. Fails on the pre-punch-out bake, passes after.
+    """
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QImage, QPainter
+    from pyefis.instruments import helpers
+
+    W, H = 200, 100
+    rect = QRectF(10, 10, 160, 60)
+    radius = 10.0
+    blur = 8.0
+
+    def paint_shape(p):
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(Qt.GlobalColor.black))
+        p.drawRoundedRect(rect, radius, radius)
+
+    img, pad = helpers.bake_blurred_silhouette(W, H, paint_shape, blur)
+
+    def render(with_shadow):
+        canvas = QImage(W, H, QImage.Format.Format_ARGB32_Premultiplied)
+        canvas.fill(QColor(150, 190, 235))     # opaque "sky" stand-in
+        p = QPainter(canvas)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if with_shadow:
+            p.drawImage(QPointF(-pad, -pad), img)
+        helpers.draw_readout_panel(p, rect, radius, QColor("white"),
+                                    fill_alpha=helpers.READOUT_FILL_ALPHA)
+        p.end()
+        return canvas
+
+    no_shadow = render(False)
+    with_shadow = render(True)
+
+    cx, cy = int(rect.center().x()), int(rect.center().y())
+    for dx in (-60, -30, 0, 30, 60):
+        for dy in (-15, 0, 15):
+            x, y = cx + dx, cy + dy
+            assert no_shadow.pixelColor(x, y) == with_shadow.pixelColor(x, y), (
+                f"interior pixel ({x},{y}) changed by the baked shadow: "
+                f"{no_shadow.pixelColor(x, y).getRgb()} -> "
+                f"{with_shadow.pixelColor(x, y).getRgb()}"
+            )
+
+
+@pytest.mark.parametrize("layout", ["top_panel", "corners", "split"])
+def test_shadow_enabled_paint_never_raises_any_readout_layout(fix, qtbot, layout):
+    widget = hsi.HSI(cdi_enabled=True, gsi_enabled=True)
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.readout_layout = layout
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise

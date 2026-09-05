@@ -187,6 +187,16 @@ def _setup_fix():
         it.bad = it.fail = it.old = False
 
 
+def _parse_color(value):
+    """QColor from either a pyEfis '(r,g,b)' triple or anything QColor takes."""
+    text = str(value).strip()
+    body = text.strip("()")
+    parts = [p.strip() for p in body.split(",")]
+    if len(parts) == 3 and all(p.lstrip("-").isdigit() for p in parts):
+        return QColor(*(int(p) for p in parts))
+    return QColor(text)
+
+
 def _placeholder(text, width, height, out_path):
     """Write a labelled placeholder PNG (for GL/SVS/unknown/error cases)."""
     img = QImage(width, height, QImage.Format.Format_ARGB32)
@@ -227,9 +237,16 @@ def _placeholder_reason(instrument_type, options):
 
 
 def render_instrument(instrument_type, options=None, seed=None,
-                      width=320, height=320, out_path="instrument.png"):
+                      width=320, height=320, out_path="instrument.png",
+                      screen_color="(0,0,0)"):
     """Render one instrument to `out_path`. Returns ("render"|"placeholder",
-    out_path)."""
+    out_path).
+
+    `screen_color` is the screen background the instrument is composited over.
+    Widgets with translucent fills (the tape readout panels, the HSI readout
+    panels) look different over a lit sky than over terrain, so a legibility
+    check needs both -- pass e.g. "(150,190,235)" for a sky background.
+    """
     options = dict(options or {})
     app = QApplication.instance() or QApplication(sys.argv[:1])
     _load_fonts()
@@ -258,7 +275,7 @@ def render_instrument(instrument_type, options=None, seed=None,
     if options:
         instrument["options"] = options
     config = {
-        "main": {"screenColor": "(0,0,0)", "screenWidth": width,
+        "main": {"screenColor": screen_color, "screenWidth": width,
                  "screenHeight": height, "nodeID": 1},
         "screens": {"TEST": {
             "module": "pyefis.screens.screenbuilder",
@@ -272,6 +289,12 @@ def render_instrument(instrument_type, options=None, seed=None,
     try:
         gui.initialize(config, _REPO_ROOT, {}, fullscreen=False)
         screen = gui.mainWindow.scr.object
+        # screenbuilder.Screen hardcodes its own black background, so setting
+        # main.screenColor alone does not reach the grab -- repaint the palette
+        # directly (this is what makes --screen-color visible).
+        palette = screen.palette()
+        palette.setColor(screen.backgroundRole(), _parse_color(screen_color))
+        screen.setPalette(palette)
         screen.resize(width, height)
         for _ in range(40):  # ~400 ms: let layout + first paint settle
             app.processEvents()
@@ -389,13 +412,15 @@ def _write_fallback_png(out_path, width, height,
 
 
 def safe_render(instrument_type, options=None, seed=None, width=320,
-                height=320, out_path="instrument.png", timeout=45):
+                height=320, out_path="instrument.png", timeout=45,
+                screen_color="(0,0,0)"):
     """Render in an isolated subprocess so even a hard (C++/GL) crash in a
     widget degrades to a placeholder instead of taking down the caller. This is
     the entry point a render backend should use. Returns
     ("render"|"placeholder"|"fallback", out_path)."""
     cmd = [sys.executable, os.path.abspath(__file__), instrument_type,
-           "-o", out_path, "--width", str(width), "--height", str(height)]
+           "-o", out_path, "--width", str(width), "--height", str(height),
+           "--screen-color", str(screen_color)]
     if options:
         cmd += ["--options", json.dumps(options)]
     if seed:
@@ -426,6 +451,11 @@ def main(argv=None):
                         help="JSON object of FIX key -> value to set")
     parser.add_argument("--width", type=int, default=320)
     parser.add_argument("--height", type=int, default=320)
+    parser.add_argument("--screen-color", default="(0,0,0)",
+                        help="screen background the instrument is composited "
+                             "over, e.g. '(150,190,235)' to check a "
+                             "translucent readout panel against a lit sky "
+                             "(PNG paths only; ignored by --svg)")
     parser.add_argument("--safe", action="store_true",
                         help="render in an isolated subprocess; a crash/timeout "
                              "degrades to a placeholder")
@@ -437,15 +467,15 @@ def main(argv=None):
     seed = json.loads(args.seed) if args.seed else {}
     out = args.out or f"render_{args.type}.{'svg' if args.svg else 'png'}"
 
+    kwargs = {}
     if args.svg:
         renderer = render_instrument_svg
-    elif args.safe:
-        renderer = safe_render
     else:
-        renderer = render_instrument
+        renderer = safe_render if args.safe else render_instrument
+        kwargs["screen_color"] = args.screen_color
     kind, path = renderer(
         args.type, options=options, seed=seed,
-        width=args.width, height=args.height, out_path=out)
+        width=args.width, height=args.height, out_path=out, **kwargs)
     size = os.path.getsize(path) if os.path.exists(path) else 0
     print(f"{kind}: wrote {path} ({args.width}x{args.height}, {size} bytes)")
 

@@ -228,6 +228,9 @@ def _entry_from_spec(spec):
             {"name": fv.name, "source": fv.source, "label": fv.label,
              "dbkey": fv.dbkey, "units": fv.units, "help": fv.help}
             for fv in spec.fix_values],
+        "containers": [
+            {"name": c.name, "label": c.label, "help": c.help}
+            for c in spec.containers],
     }
 
 
@@ -250,6 +253,7 @@ def _entry_from_curation(instrument_type):
         "hidden": False,
         "preview": {},
         "fix_values": [],
+        "containers": [],
     }
 
 

@@ -541,3 +541,23 @@ def test_ai_cat_pitch_limit_indication(fix, qtbot):
     event = _show_ai(qtbot, widget)
     widget.paintEvent(event)
     assert widget._show_pitch_limit is True
+
+
+def test_pitch_slot_stores_only_frame_path_applies_items(fix, qtbot):
+    """#127: the FIX pitch slot stores the value and marks the frame
+    dirty; the pitch-ladder visibility walk (setPitchItems) runs in
+    redraw -- the frame-clock path -- at most once per changed frame,
+    for every config (not only pitch_ladder_avoid_bank). Previously the
+    slot walked the whole ladder again on every FIX attitude burst."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    calls = []
+    orig = widget.setPitchItems
+    widget.setPitchItems = lambda: (calls.append(True), orig())[1]
+    widget.setPitchAngle(30.0)
+    assert widget.pitchAngle == 30.0
+    assert widget._frame_dirty is True
+    assert calls == []               # slot no longer walks the ladder
+    widget.redraw()
+    assert len(calls) == 1           # the frame path does, exactly once

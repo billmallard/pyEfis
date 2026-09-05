@@ -75,7 +75,7 @@ CONFIG_FILES = sorted(glob.glob(os.path.join(CONFIG_DIR, "*.yaml")))
 # Real shipped config tree, for capturing assembled preset screens.
 REAL_CONFIG = os.path.normpath(
     os.path.join(HERE, "..", "..", "src", "pyefis", "config"))
-PRESET_SCREENS = ["SIXPACK", "EMS", "EMS2", "RADIO", "PFD", "PFD_AI_ONLY",
+PRESET_SCREENS = ["EMS", "EMS2", "RADIO", "PFD", "PFD_AI_ONLY",
                   "DataStatus"]
 
 

@@ -107,6 +107,8 @@ def test_schema_entry_matches_record():
         assert entry["offscreen_renderable"] == spec.offscreen_renderable
         assert entry["hidden"] == spec.hidden
         assert entry["preview"] == spec.preview
+        assert [c["name"] for c in entry["containers"]] == [
+            c.name for c in spec.containers]
         # Options are exactly the declared properties, in order.
         assert list(entry["options"]) == [p.name for p in spec.properties]
         for p in spec.properties:
