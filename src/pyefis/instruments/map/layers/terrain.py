@@ -210,10 +210,13 @@ class TerrainLayer(MapLayer):
                 return                        # widget destroyed
 
     def _process_job(self, job):
-        """Render *job* and publish it, or drop it as superseded if a
-        newer job replaced ``_job`` while this one rendered -- MP6
-        instrumentation only, same latest-wins publish rule as before
-        (brief section 2, R2)."""
+        """Render *job* and publish it unconditionally -- MP6
+        instrumentation around the newest-wins publish rule (AER-588):
+        paint() already blits a stale image by its own meta and
+        re-requests on key mismatch, so a finished render is always
+        used even if a newer job replaced ``_job`` while it ran. That
+        race is still counted as ``jobs_superseded`` (published, but
+        already stale by the time it landed)."""
         perf = getattr(self._owner, "perf", None)
         ls = perf.layer(self.id) if perf is not None else None
         if ls is not None:
@@ -223,16 +226,12 @@ class TerrainLayer(MapLayer):
             img, meta = self._render(job)
             ms = (time.perf_counter() - t0) * 1000.0
             with self._lock:
-                if self._job == job:      # latest wins
-                    self._img = (img, job[0], meta)
-                    published = True
-                else:
-                    published = False
+                superseded = self._job != job
+                self._img = (img, job[0], meta)
             if ls is not None:
                 ls.record_render_ms(ms)
-                if published:
-                    ls.jobs_published += 1
-                else:
+                ls.jobs_published += 1
+                if superseded:
                     ls.jobs_superseded += 1
         except Exception:
             import logging

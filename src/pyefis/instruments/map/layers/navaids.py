@@ -97,8 +97,12 @@ class _DbLayer(MapLayer):
 
     def _process_job(self, job, con):
         """MP6 instrumentation around the same latest-wins collect/publish
-        the other layers use (brief section 2, R2). Returns the sqlite
-        connection so the loop can keep reusing it."""
+        the other layers use (AER-588): a finished collect is always
+        published, even if a newer job replaced ``_job`` while it ran --
+        see terrain.py's ``_process_job`` for the rationale. That race is
+        still counted as ``jobs_superseded`` (published, but already
+        stale by the time it landed). Returns the sqlite connection so
+        the loop can keep reusing it."""
         perf = getattr(self._owner, "perf", None)
         ls = perf.layer(self.id) if perf is not None else None
         if ls is not None:
@@ -110,16 +114,12 @@ class _DbLayer(MapLayer):
             rows = self._query(con, *job[1:])
             ms = (time.perf_counter() - t0) * 1000.0
             with self._lock:
-                if self._job == job:
-                    self._snap = (job[0], rows)
-                    published = True
-                else:
-                    published = False
+                superseded = self._job != job
+                self._snap = (job[0], rows)
             if ls is not None:
                 ls.record_render_ms(ms)
-                if published:
-                    ls.jobs_published += 1
-                else:
+                ls.jobs_published += 1
+                if superseded:
                     ls.jobs_superseded += 1
         except Exception:
             import logging

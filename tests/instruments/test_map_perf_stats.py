@@ -149,9 +149,9 @@ def test_terrain_process_job_publishes_and_counts(qapp):
 
 
 def test_terrain_process_job_supersede_when_job_moves_on(qapp, monkeypatch):
-    """Brief section 2, R2: a render that finishes after a newer job
-    replaced ``_job`` is thrown away, not published -- MP6 counts it as
-    superseded rather than published."""
+    """AER-588: a render that finishes after a newer job replaced
+    ``_job`` is still published (newest-wins) -- MP6 counts it as both
+    published and superseded, since it was already stale on arrival."""
     lay = TerrainLayer()
     lay._cache = _FakeCache()
 
@@ -177,9 +177,9 @@ def test_terrain_process_job_supersede_when_job_moves_on(qapp, monkeypatch):
 
     ls = Owner.perf.layer("terrain")
     assert ls.jobs_started == 1
-    assert ls.jobs_published == 0
+    assert ls.jobs_published == 1
     assert ls.jobs_superseded == 1
-    assert lay._img is None
+    assert lay._img is not None and lay._img[1] == key
 
 
 def test_terrain_request_counts_once_for_same_key_repost(qapp, qtbot):
@@ -280,7 +280,8 @@ def test_navaids_process_job_publish_and_supersede(qapp, monkeypatch):
     assert ls.jobs_started == 1 and ls.jobs_published == 1
     assert lay._snap[0] == key
 
-    # A second job that "moves on" during the query is superseded.
+    # A second job that "moves on" during the query is still published
+    # (newest-wins, AER-588), but counted as superseded too.
     key2 = (key[0] + 1, key[1], key[2])
     job2 = (key2, x.lat0, x.lon0, x.range_nm)
     lay._job = job2
@@ -292,8 +293,9 @@ def test_navaids_process_job_publish_and_supersede(qapp, monkeypatch):
     monkeypatch.setattr(lay, "_query", fake_query)
     lay._process_job(job2, con)
     assert ls.jobs_started == 2
-    assert ls.jobs_published == 1
+    assert ls.jobs_published == 2
     assert ls.jobs_superseded == 1
+    assert lay._snap[0] == key2
 
 
 def test_airports_process_job_publish_and_supersede(qapp, monkeypatch):
