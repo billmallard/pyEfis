@@ -50,15 +50,32 @@ of a ~2 px halo. They now scale `hsi.ROSE_SHADOW_BLUR_RATIO`.
 528x402 px -- the HSI's real size on the bench panel (55x41 cells of the
 200x110 grid on 1920x1080), with that panel's actual options.
 
-| | rose disc radius | halo just outside the disc |
+| | rose disc radius | glow just outside the disc |
 |---|---|---|
 | shadow off | 163.9 px | -- |
-| shadow on, before | 158.5 px (**-5.4**, 6.3% of area) | **0.0 / 255** |
-| shadow on, after | 163.8 px (-0.1, AA noise) | **19.2 / 255**, 0 by R+7 px |
+| shadow on, before | 158.5 px (**-5.4**, 6.3% of area) | none measurable |
+| shadow on, after | 163.8 px (-0.1, AA noise) | present, ~6% mean local contrast |
 
-Halo strength is the mean darkening against the composited sky background,
-sampled in annuli outside the *unshadowed* rose edge so all three share one
-reference circle.
+Method note, and a correction. An earlier revision of this file quoted
+"19.2/255 just outside the disc, 0 by R+7px". Those figures were measured
+against a reference circle derived from a brightness-threshold centroid, which
+the rose's tick marks and labels skew -- the annuli were not where the caption
+said they were, and the numbers are not reproducible. The sound comparison is a
+DIFFERENCE against the unshadowed render, which is valid here precisely because
+the fix leaves the rose radius alone, so the only thing that differs IS the
+glow:
+
+- pixels displaced by the rose moving: **11,090 -> 439** (i.e. the rose stops
+  moving; 439 is antialiasing)
+- zero difference anywhere inside r~155 px -- the AER-415 no-fill-through
+  guarantee still holds
+- the glow itself: peak 62/255, mean 4.8/255 across its band
+
+That mean is ~6% of background luminance, which is measurable but reads as a
+soft edge rather than as depth. **On the bench display it was reported as
+extremely subtle and hard to observe** -- correctly. Fixing the scaling was
+necessary but not sufficient; see
+`docs/images/hsi_rim_glow/README.md` for what actually made it read.
 
 ## `rose_shadow_scale_comparison.png`
 
