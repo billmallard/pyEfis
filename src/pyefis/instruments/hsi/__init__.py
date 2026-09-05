@@ -30,6 +30,16 @@ from pyefis.instruments import helpers
 # TODO: Add CDI and Glide Slope indicators and tick marks but make them
 #       configurable.
 
+#: Gap held between the compass rose and the widget edge, in px. Named because
+#: the drop-shadow clearance below has to know how much room already exists
+#: before reserving any more (pyEfis#158) -- the two must not drift apart.
+ROSE_EDGE_MARGIN = 5.0
+#: Rose halo blur radius, as a fraction of the rose's own radius. Deliberately
+#: NOT helpers.SHADOW_BLUR_RATIO: that one is a fraction of the label font,
+#: which is right for the readout boxes (they are font-sized) and wrong for the
+#: rose (it is widget-sized). See the reservation in resizeEvent.
+ROSE_SHADOW_BLUR_RATIO = 0.03
+
 
 class HSI(QGraphicsView):
     def __init__(self, parent=None, font_size=15, font_percent=None, fg_color=Qt.GlobalColor.white, bg_color=Qt.GlobalColor.black, gsi_enabled=False, cdi_enabled=False, font_family="DejaVu Sans Condensed"):
@@ -328,7 +338,7 @@ class HSI(QGraphicsView):
         self.scene = QGraphicsScene(0, 0, self.width(), self.height())
         self.cx = self.width() / 2.0
         self.cy = self.height() / 2.0
-        self.r = self.height() / 2.0 - 5.0
+        self.r = self.height() / 2.0 - ROSE_EDGE_MARGIN
         # Readout gutter (P5a iter4b): layouts that place a single sectioned
         # readout panel OUTSIDE the rose shrink + shift the rose to open room.
         # Everything downstream derives from cx/cy/r, so the whole instrument
@@ -337,20 +347,37 @@ class HSI(QGraphicsView):
         _rl = getattr(self, "readout_layout", "top_panel")
         if _rl in ("top_panel", "split"):
             self._gutter = self.height() * 0.16
-            self.r = min(self.width(), self.height() - self._gutter) / 2.0 - 5.0
+            self.r = (min(self.width(), self.height() - self._gutter) / 2.0
+                      - ROSE_EDGE_MARGIN)
             self.cy = self._gutter + (self.height() - self._gutter) / 2.0
-        # Reserve clearance for the rose drop shadow (AER-392): the disc sat
-        # only 5px from the widget edge, nowhere near enough room for a
-        # blurred halo to resolve without hard-clipping against the widget
-        # bounds (gotcha #2). Shrinking the rose itself when the shadow is on
-        # -- instead of clamping the blur radius after the fact -- guarantees
-        # the halo always has the room bake_blurred_silhouette/the drop-shadow
-        # effect actually needs (SHADOW_CANVAS_PAD_RATIO), at the cost of a
-        # slightly smaller rose. No-op (0px) when shadows are off.
+        # Reserve clearance for the rose drop shadow (AER-392, corrected here
+        # for pyEfis#158). Two things were wrong, and they compounded:
+        #
+        #  * the blur came from self.fontSize. SHADOW_BLUR_RATIO is calibrated
+        #    for the readout boxes, whose size genuinely tracks the label font.
+        #    The rose does not: it is a ~160px-radius disc sized by the widget.
+        #    A font-derived blur came out at ~1.75px, which cannot read against
+        #    a shape that large -- measured at <=1.7/255 outside the disc, and
+        #    still invisible at 8x the font. The halo now scales off the rose's
+        #    own radius, so it stays proportional to the shape casting it.
+        #  * the clearance reserved was blur * SHADOW_CANVAS_PAD_RATIO. That
+        #    constant sizes the BAKE CANVAS (room for the Gaussian to resolve
+        #    before the QImage edge); the halo that actually survives on screen
+        #    reaches ~1 blur radius past the disc, because the bake punches the
+        #    disc's own footprint back out (AER-415). Reserving 3x surrendered
+        #    triple the room the halo could use, and ignored the ROSE_EDGE_MARGIN
+        #    the rose already holds -- together 5.2px of radius, 6.3% of AREA,
+        #    which was the only visible effect of ticking the option.
+        #
+        # Reserve only the visible falloff, and only the part the existing
+        # margin does not already cover. No-op (0px) when shadows are off, and
+        # typically still 0px when they are on -- ROSE_EDGE_MARGIN absorbs the
+        # halo at normal panel sizes.
         self._rose_shadow_blur = 0.0
         if getattr(self, "shadow_enabled", False):
-            self._rose_shadow_blur = self.fontSize * helpers.SHADOW_BLUR_RATIO
-            self.r -= self._rose_shadow_blur * helpers.SHADOW_CANVAS_PAD_RATIO
+            self._rose_shadow_blur = self.r * ROSE_SHADOW_BLUR_RATIO
+            _visible = self._rose_shadow_blur * helpers.SHADOW_VISIBLE_FALLOFF_RATIO
+            self.r -= max(0.0, _visible - ROSE_EDGE_MARGIN)
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
