@@ -154,10 +154,15 @@ def test_hmi_actions_still_paint_immediately(fix, qtbot):
 # --- DoD: paint counts -------------------------------------------------------
 
 def test_lone_rotate_by_outside_gesture_paints_within_one_tick(fix, qtbot):
-    """DoD: a lone rotate_by outside a gesture paints within one tick."""
+    """DoD: a lone rotate_by outside a gesture paints within one tick.
+    _frame_tick no-ops while the widget isn't visible (matches
+    test_pose_tuple_tracks_offsets in test_moving_map.py), so show() it
+    first."""
     w = moving_map.MovingMap()
     qtbot.addWidget(w)
     w.resize(300, 300)
+    w.show()
+    qtbot.waitExposed(w)
     paints = []
     w.update = lambda: paints.append(1)
     w.rotate_by(5.0)
@@ -174,6 +179,8 @@ def test_rotate_by_burst_in_gesture_paints_at_most_4_in_100ms(fix, qtbot):
     w = moving_map.MovingMap()
     qtbot.addWidget(w)
     w.resize(300, 300)
+    w.show()
+    qtbot.waitExposed(w)
     assert w.gesture_frame_rate == 30.0
     paints = []
     w.update = lambda: paints.append(1)
