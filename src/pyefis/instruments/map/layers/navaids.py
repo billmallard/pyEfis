@@ -81,9 +81,11 @@ class _DbLayer(MapLayer):
                 if con is None:
                     con = sqlite3.connect(self._path)
                 rows = self._query(con, *job[1:])
+                # Publish unconditionally, even if self._job moved on
+                # while this collect was in flight (AER-588) -- see
+                # terrain.py's _worker_loop for the rationale.
                 with self._lock:
-                    if self._job == job:
-                        self._snap = (job[0], rows)
+                    self._snap = (job[0], rows)
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception(
