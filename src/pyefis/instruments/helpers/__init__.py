@@ -86,6 +86,55 @@ def draw_readout_panel(painter, rect, radius, border_color, pen_width=1.0,
     return pen, brush
 
 
+#: WCAG 2.x contrast floor for text/label colour derived from a bright,
+#: config-selectable fill (AER-473 / pyEfis#147). Named so a caller can cite
+#: the standard being met rather than a bare number, and so the target can be
+#: tightened/loosened in one place.
+SOURCE_LABEL_MIN_CONTRAST = 4.5
+
+
+def _srgb_to_linear(channel):
+    c = channel / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(rgb):
+    r, g, b = (_srgb_to_linear(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(fg_color, bg_color):
+    """WCAG 2.x contrast ratio between two QColor-able values."""
+    fg, bg = QColor(fg_color), QColor(bg_color)
+    l1 = _relative_luminance((fg.red(), fg.green(), fg.blue()))
+    l2 = _relative_luminance((bg.red(), bg.green(), bg.blue()))
+    if l1 < l2:
+        l1, l2 = l2, l1
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+def darken_to_contrast(color, target_ratio=SOURCE_LABEL_MIN_CONTRAST, step=0.01):
+    """Darken `color` (same hue/saturation) until its contrast against its
+    OWN original value clears `target_ratio`, without changing hue.
+
+    Built for a label drawn in a darkened tint of the same bright fill it
+    sits on (the nav-source tab, AER-473): the fill IS the background, so
+    darkening always increases contrast monotonically down to black. Walks
+    HSV value down in `step` increments rather than solving analytically --
+    the contrast formula isn't trivially invertible through sRGB gamma, and a
+    coarse deterministic walk is easier to reason about than a solver here.
+    """
+    bg = QColor(color)
+    h, s, v, a = bg.getHsvF()
+    vv = v
+    while vv > 0.0:
+        candidate = QColor.fromHsvF(h, s, vv, a)
+        if contrast_ratio(candidate, bg) >= target_ratio:
+            return candidate
+        vv -= step
+    return QColor.fromHsvF(h, s, 0.0, a)
+
+
 #: Shared static-element drop-shadow tokens (AER-392 / pyEfis#142).
 #:
 #: A soft drop shadow under a static instrument element (the HSI rose, the
