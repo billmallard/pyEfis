@@ -391,7 +391,7 @@ def _svs_props():
         # only change the look. Per-class width table (svs_road_widths_m,
         # metres per OSM way) is config-only (a dict has no simple editor
         # widget); see docs/wiki/Widgets-Attitude-and-SVS.md.
-        Prop("svs_road_color", "color", default="#4a4a4a", apply="special",
+        Prop("svs_road_color", "color", default="#535353", apply="special",
              label="Road colour", help="ribbon fill colour" + dev),
         Prop("svs_road_casing_color", "color", default="#4a4a4a",
              apply="special", label="Road casing colour",
