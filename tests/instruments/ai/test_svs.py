@@ -1027,9 +1027,11 @@ class TestSVSGLFallback:
 # ---------------------------------------------------------------------------
 
 class _StubPolyline:
-    def __init__(self, vertices, fclass="motorway"):
+    def __init__(self, vertices, fclass="motorway", flags=0, ref=None):
         self.vertices = np.asarray(vertices, dtype=np.float64)
         self.fclass = fclass
+        self.flags = flags
+        self.ref = ref
 
 
 class _StubHighwayDB:
@@ -1130,3 +1132,80 @@ class TestHighwayOcclusion:
         masked = r._los_masked_batch(39.0, -107.0, 500.0,
                                      t_lats, t_lons, t_alts, lat_cos)
         assert list(map(bool, masked)) == [False, True, False]
+
+
+# ---------------------------------------------------------------------------
+# Tunnel/bridge flags (RD3a, AER-640)
+# ---------------------------------------------------------------------------
+
+class TestTunnelBridgeFlags:
+    """A tunnel is underground -- it never becomes a ribbon at all. A
+    bridge is a straight span between piers -- it must not be
+    subdivided (subdividing and draping each new vertex to the sampled
+    terrain elevation would sink the deck into the valley/river it
+    spans). Both come from ``HighwayLine.flags`` (highway_db.FLAG_*),
+    which is ``0`` on an old pack -- see TestHighwayOcclusion for the
+    LOS-masking tests this class doesn't repeat."""
+
+    AC_LAT, AC_LON, AC_ALT = 39.0, -107.0, 12000.0
+    # ~1.1 NM apart -> long enough to subdivide at the default 150 m.
+    VERTS = [(39.00, -107.0), (39.02, -107.0)]
+    PPD = 1_000_000.0
+
+    def _renderer(self, polylines):
+        r = SVSRenderer({})
+        r.highway_db = _StubHighwayDB(polylines)
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        r._los_masked_batch = (
+            lambda ac_lat, ac_lon, ac_alt, t_lats, t_lons, t_alts, lat_cos:
+            np.zeros(len(t_lats), dtype=bool))          # nothing occluded
+        return r
+
+    def test_tunnel_polyline_yields_no_vertices(self):
+        from pyefis.instruments.ai.highway_db import FLAG_TUNNEL
+        r = self._renderer(
+            [_StubPolyline(self.VERTS, flags=FLAG_TUNNEL)])
+        result = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert result is None
+
+    def test_tunnel_dropped_but_sibling_road_still_drawn(self):
+        from pyefis.instruments.ai.highway_db import FLAG_TUNNEL
+        other = [(39.00, -106.9), (39.02, -106.9)]
+        r = self._renderer([
+            _StubPolyline(self.VERTS, flags=FLAG_TUNNEL),
+            _StubPolyline(other, flags=0),
+        ])
+        casing, fill = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert fill is not None
+        # every surviving vertex belongs to the non-tunnel polyline (allow
+        # the ribbon's own lateral half-width offset, well under 1e-3 deg)
+        assert np.allclose(fill[:, 1], -106.9, atol=1e-3)
+
+    def test_bridge_is_not_subdivided(self):
+        from pyefis.instruments.ai.highway_db import FLAG_BRIDGE
+        r = self._renderer([_StubPolyline(self.VERTS, flags=FLAG_BRIDGE)])
+        casing, fill = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        # unsubdivided: exactly one segment (2 vertices) -> 2 triangles
+        assert fill.shape[0] == 6
+        assert casing.shape[0] == 6
+
+    def test_plain_road_of_same_length_is_subdivided(self):
+        r = self._renderer([_StubPolyline(self.VERTS, flags=0)])
+        casing, fill = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        # same geometry, no bridge flag -> more than one segment survives
+        assert fill.shape[0] > 6
+
+    def test_bridge_and_tunnel_bits_are_independent(self):
+        from pyefis.instruments.ai.highway_db import (
+            FLAG_BRIDGE, FLAG_TUNNEL)
+        r = self._renderer(
+            [_StubPolyline(self.VERTS, flags=FLAG_BRIDGE | FLAG_TUNNEL)])
+        result = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        # tunnel wins -- dropped entirely regardless of the bridge bit
+        assert result is None

@@ -139,6 +139,7 @@ import numpy as np
 from PyQt6.QtGui import QColor, QPainter
 
 from pyefis.instruments.ai import road_ribbon
+from pyefis.instruments.ai.highway_db import FLAG_BRIDGE, FLAG_TUNNEL
 
 log = logging.getLogger(__name__)
 
@@ -1758,8 +1759,15 @@ class SVSRenderer:
         lines = []
         fclasses = []
         is_far = []
+        is_bridge = []
         for hl in self.highway_db.polylines_in_range(
                 ac_lat, ac_lon, rng):
+            # RD3a (AER-640): a tunnel is underground -- draping it on the
+            # terrain surface (or through a ridge) is wrong at any LOD, so
+            # it never becomes a ribbon at all. flags is 0 on an old pack
+            # (HighwayDB fallback), so this is a no-op there.
+            if hl.flags & FLAG_TUNNEL:
+                continue
             v = hl.vertices
             if len(v) < 2:
                 continue
@@ -1775,6 +1783,7 @@ class SVSRenderer:
             lines.append(v)
             fclasses.append(hl.fclass)
             is_far.append(far)
+            is_bridge.append(bool(hl.flags & FLAG_BRIDGE))
         if not lines:
             return None
 
@@ -1782,11 +1791,14 @@ class SVSRenderer:
         # terrain (brief section 3.1), then apply the hard vertex-count
         # cap by dropping whole far-tier polylines (links first, then
         # trunks — never near-tier or motorway) before the expensive
-        # per-vertex elevation/LOS/extrusion work runs on them.
+        # per-vertex elevation/LOS/extrusion work runs on them. Bridges are
+        # excluded from subdivision (AER-640) -- they're a straight span
+        # between piers, not terrain-following pavement.
         all_pts, offsets = road_ribbon.subdivide_polylines(
             lines, ac_lat, ac_lon,
             subdivide_m=self._road_subdivide_m,
-            subdivide_nm=self._road_subdivide_nm)
+            subdivide_nm=self._road_subdivide_nm,
+            no_subdivide=np.asarray(is_bridge, dtype=bool))
         lengths = np.diff(offsets)
         keep_mask = road_ribbon.trim_to_vertex_budget(
             lengths, fclasses, np.asarray(is_far, dtype=bool),

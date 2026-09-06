@@ -331,6 +331,71 @@ def test_highwaydb_class_filter(tmp_path):
     assert list(db.polylines_in_range(34.5, -120.5, 50, classes=())) == []
 
 
+def test_highwaydb_old_pack_has_no_flags_or_ref(tmp_path):
+    """RD3a (AER-640): a pack built before AER-623 lands has no
+    flags/ref columns at all. HighwayDB must not raise -- every
+    HighwayLine falls back to flags=0, ref=None."""
+    import sqlite3
+    from pyefis.instruments.ai.highway_db import HighwayDB, encode_vertices
+    p = tmp_path / "old_pack.sqlite"
+    con = sqlite3.connect(str(p))
+    con.executescript(
+        "CREATE TABLE highway_lines (id INTEGER PRIMARY KEY, fclass TEXT,"
+        " min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL, verts BLOB);"
+        "CREATE VIRTUAL TABLE highway_rtree USING rtree(id, min_lat, max_lat,"
+        " min_lon, max_lon);")
+    verts = encode_vertices(np.array([[34.5, -120.5], [34.6, -120.4]]))
+    con.execute("INSERT INTO highway_lines VALUES (?,?,?,?,?,?,?)",
+                (1, "motorway", 34.5, 34.6, -120.5, -120.4, verts))
+    con.execute("INSERT INTO highway_rtree VALUES (?,?,?,?,?)",
+                (1, 34.5, 34.6, -120.5, -120.4))
+    con.commit(); con.close()
+
+    db = HighwayDB(str(p))
+    assert db.ready
+    lines = list(db.polylines_in_range(34.5, -120.5, 50))
+    assert len(lines) == 1
+    assert lines[0].flags == 0
+    assert lines[0].ref is None
+
+
+def test_highwaydb_new_pack_reads_flags_and_ref(tmp_path):
+    """A pack with the AER-640 columns yields the real flags/ref."""
+    import sqlite3
+    from pyefis.instruments.ai.highway_db import (
+        FLAG_BRIDGE, FLAG_TUNNEL, HighwayDB, encode_vertices)
+    p = tmp_path / "new_pack.sqlite"
+    con = sqlite3.connect(str(p))
+    con.executescript(
+        "CREATE TABLE highway_lines (id INTEGER PRIMARY KEY, fclass TEXT,"
+        " min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,"
+        " verts BLOB, flags INTEGER NOT NULL DEFAULT 0, ref TEXT);"
+        "CREATE VIRTUAL TABLE highway_rtree USING rtree(id, min_lat, max_lat,"
+        " min_lon, max_lon);")
+    verts = encode_vertices(np.array([[34.5, -120.5], [34.6, -120.4]]))
+    rows = [
+        (1, "motorway", 34.5, 34.6, -120.5, -120.4, verts, 0, "I-5"),
+        (2, "motorway", 34.5, 34.6, -120.5, -120.4, verts, FLAG_TUNNEL, None),
+        (3, "motorway", 34.5, 34.6, -120.5, -120.4, verts, FLAG_BRIDGE, None),
+    ]
+    for row in rows:
+        con.execute("INSERT INTO highway_lines VALUES (?,?,?,?,?,?,?,?,?)",
+                    row)
+        con.execute("INSERT INTO highway_rtree VALUES (?,?,?,?,?)",
+                    (row[0], row[2], row[3], row[4], row[5]))
+    con.commit(); con.close()
+
+    db = HighwayDB(str(p))
+    assert db.ready
+    lines = sorted(db.polylines_in_range(34.5, -120.5, 50),
+                   key=lambda l: (l.flags, l.ref or ""))
+    assert [l.ref for l in lines if l.flags == 0] == ["I-5"]
+    tunnel = [l for l in lines if l.flags & FLAG_TUNNEL]
+    bridge = [l for l in lines if l.flags & FLAG_BRIDGE]
+    assert len(tunnel) == 1 and tunnel[0].ref is None
+    assert len(bridge) == 1 and bridge[0].ref is None
+
+
 def test_terrain_orientation_north_up(qapp):
     """North-up: land (north) paints on the TOP half."""
     left, right, top, bottom = _painted_water_fraction(0.0)

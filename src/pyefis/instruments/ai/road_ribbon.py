@@ -95,7 +95,8 @@ def _enu_to_latlon(enu: np.ndarray, ac_lat: float, ac_lon: float,
 
 def subdivide_polylines(lines, ac_lat: float, ac_lon: float,
                         subdivide_m: float = DEFAULT_SUBDIVIDE_M,
-                        subdivide_nm: float = DEFAULT_SUBDIVIDE_NM):
+                        subdivide_nm: float = DEFAULT_SUBDIVIDE_NM,
+                        no_subdivide=None):
     """Subdivide segments longer than *subdivide_m* whose midpoint is
     within *subdivide_nm* of the aircraft, so the ribbon follows
     rolling terrain instead of floating/sinking on a long chord.
@@ -104,6 +105,13 @@ def subdivide_polylines(lines, ac_lat: float, ac_lon: float,
 
     *lines* is a list of ``(k_i, 2)`` float64 ``(lat, lon)`` arrays,
     each ``k_i >= 2``.
+
+    ``no_subdivide`` is an optional ``(len(lines),)`` boolean mask —
+    ``True`` polylines are never subdivided regardless of segment length
+    or distance (RD3a, AER-640: OSM bridges. A bridge is a straight
+    structure between two piers; interpolating extra vertices along its
+    chord and draping each to the sampled terrain elevation would sink
+    the deck into the valley/river it spans instead of spanning it).
 
     Returns ``(new_pts, new_offsets)``: a single concatenated
     ``(N, 2)`` array and an ``(len(lines) + 1,)`` int64 offsets array
@@ -144,6 +152,9 @@ def subdivide_polylines(lines, ac_lat: float, ac_lon: float,
     mid_n = (enu[seg_start, 1] + enu[seg_end, 1]) * 0.5
     mid_dist_nm = np.hypot(mid_e, mid_n) / 1852.0
     near = mid_dist_nm <= subdivide_nm
+    if no_subdivide is not None:
+        no_subdivide = np.asarray(no_subdivide, dtype=bool)
+        near = near & ~no_subdivide[seg_poly_id]
 
     count = np.where(
         near,
