@@ -1437,8 +1437,10 @@ class SVSGLRenderer:
 
             # Highways (issue #35, extruded to true-scale ribbons for
             # RD1 / issue #161): decimated OSM motorway/trunk polylines
-            # draped at terrain elevation, drawn as a dark casing then a
-            # light fill (both GL_TRIANGLES) instead of a 1 px hairline.
+            # draped at terrain elevation, drawn as a casing then a fill
+            # of the same grey (both GL_TRIANGLES) instead of a 1 px
+            # hairline — the casing still reads as a mitred edge because
+            # it's wider than the fill, not because of a colour split.
             # Ground features: full haze, drawn between water and the
             # symbology layers.
             if (getattr(p, "highway_db", None) is not None

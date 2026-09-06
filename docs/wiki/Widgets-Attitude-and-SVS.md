@@ -221,7 +221,7 @@ reaching the renderer, same as `water_db_path`/`highway_db_path` above.
 
 | `svs:` key | Default | Meaning |
 |------------|---------|---------|
-| `road_color` | `#b8b4ad` | ribbon fill colour (warm light grey — reads as pavement) |
+| `road_color` | `#4a4a4a` | ribbon fill colour (matches the casing grey — Bill's call on AER-637, the two-tone look read as an odd light stripe on the bench) |
 | `road_casing_color` | `#4a4a4a` | darker casing colour drawn under the fill |
 | `road_casing_m` | `2.5` | casing half-width add-on over the class width, metres |
 | `road_min_px` | `1.5` | screen-space width floor — distant ribbons never drop below this many pixels |
