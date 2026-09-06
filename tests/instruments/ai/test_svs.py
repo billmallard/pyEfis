@@ -155,6 +155,59 @@ class TestTileCache:
 
 
 # ---------------------------------------------------------------------------
+# _sample_elevations tile dedup (AER-621 perf fix): the tile-coordinate
+# dedup used to call np.unique(..., axis=0), which profiled 30x+ slower
+# than a packed-scalar 1-D np.unique for the same handful of distinct
+# tiles -- it dominated the highways worker's wall time on the LOS
+# sample grid. These pin the CORRECTNESS of the packed-int replacement
+# (every point still samples from its own tile, across tile and
+# hemisphere boundaries), not just its speed.
+# ---------------------------------------------------------------------------
+
+class TestSampleElevationsTileDedup:
+    def test_points_across_two_tiles_sample_correct_tile(self, tmp_path):
+        _make_tile_dir(tmp_path, 32, -97, elevation=1000)
+        _make_tile_dir(tmp_path, 33, -97, elevation=2000)
+        root = tmp_path / "srtm3"
+        r = SVSRenderer({"tile_path": str(root)})
+        assert r.cache is not None
+        lat_grid = np.array([[32.5, 33.5]])
+        lon_grid = np.array([[-96.5, -96.5]])
+        elev_m, is_water = r._sample_elevations(lat_grid, lon_grid)
+        assert abs(float(elev_m[0, 0]) - 1000.0) < 1.0
+        assert abs(float(elev_m[0, 1]) - 2000.0) < 1.0
+        assert not is_water[0, 0] and not is_water[0, 1]
+
+    def test_negative_longitude_tiles_pack_and_unpack_correctly(
+            self, tmp_path):
+        # Negative lon (western hemisphere) exercises the packing
+        # offset -- a regression here would have shown up as scrambled
+        # (lat, lon) tile keys west of the prime meridian.
+        _make_tile_dir(tmp_path, 32, -118, elevation=300)
+        _make_tile_dir(tmp_path, 32, -117, elevation=900)
+        root = tmp_path / "srtm3"
+        r = SVSRenderer({"tile_path": str(root)})
+        lat_grid = np.array([[32.5, 32.5]])
+        lon_grid = np.array([[-117.5, -116.5]])
+        elev_m, _ = r._sample_elevations(lat_grid, lon_grid)
+        assert abs(float(elev_m[0, 0]) - 300.0) < 1.0
+        assert abs(float(elev_m[0, 1]) - 900.0) < 1.0
+
+    def test_many_duplicate_points_same_tile_still_correct(self, tmp_path):
+        # A grid that repeats the same handful of tile keys thousands of
+        # times (the LOS sample-grid shape that motivated the fix).
+        _make_tile_dir(tmp_path, 32, -97, elevation=555)
+        root = tmp_path / "srtm3"
+        r = SVSRenderer({"tile_path": str(root)})
+        rng = np.random.default_rng(0)
+        lat_grid = 32.0 + rng.random((500, 23)) * 0.9
+        lon_grid = -97.0 + rng.random((500, 23)) * 0.9
+        elev_m, is_water = r._sample_elevations(lat_grid, lon_grid)
+        assert np.all(np.abs(elev_m - 555.0) < 1.0)
+        assert not is_water.any()
+
+
+# ---------------------------------------------------------------------------
 # SVSRenderer configuration
 # ---------------------------------------------------------------------------
 
@@ -992,15 +1045,21 @@ class _StubHighwayDB:
 class TestHighwayOcclusion:
     """Issue #73: a road behind a ridge (no line of sight) must be DROPPED, not
     drawn over the near slope (the SVS has no depth test). Verifies the
-    per-vertex LOS filtering in ``_collect_highways_sync`` — a GL_LINES pair is
-    emitted only where both endpoints are visible. The LOS math itself
-    (``_los_masked``) is stubbed so the segment-selection logic is tested
-    deterministically without terrain tiles."""
+    per-vertex LOS filtering in ``_collect_highways_sync`` — a segment's
+    casing/fill quad is emitted only where both endpoints are visible (RD1,
+    issue #161: the output is now two GL_TRIANGLES arrays, not a GL_LINES
+    pair, but "occluded vertex drops its segments" is unchanged). The LOS
+    math itself (``_los_masked``) is stubbed so the segment-selection logic
+    is tested deterministically without terrain tiles."""
 
     AC_LAT, AC_LON, AC_ALT = 39.0, -107.0, 12000.0
     # five vertices marching north, ~0.6 NM apart, midpoint within HWY_NEAR_NM
     # so no LOD decimation kicks in.
     VERTS = [(39.00 + 0.01 * i, -107.0) for i in range(5)]
+    # Huge pixels_per_deg so the RD1 screen-space width floor never
+    # overrides the class width — these tests are about LOS segment
+    # selection, not ribbon geometry (see test_road_ribbon.py for that).
+    PPD = 1_000_000.0
 
     def _renderer(self, los_fn):
         r = SVSRenderer({})
@@ -1017,29 +1076,40 @@ class TestHighwayOcclusion:
                              float(al), lat_cos))
                  for la, lo, al in zip(t_lats, t_lons, t_alts)], dtype=bool)
         r._los_masked_batch = _batch
+        # Disable subdivision so the vertex set matches VERTS exactly --
+        # subdivision itself is covered by test_road_ribbon.py.
+        r._road_subdivide_m = 1e9
         return r
 
     def test_occluded_middle_segment_dropped(self):
         # mask only the middle vertex (lat 39.02) -> a ridge hides it
         masked = lambda *a: 39.015 < a[3] < 39.025
-        arr = self._renderer(masked)._collect_highways_sync(
-            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
-        assert arr is not None
-        # segments (v0,v1) and (v3,v4) survive; both touching v2 are gone
-        assert arr.shape[0] == 4
-        lats = {round(float(x), 2) for x in arr[:, 0]}
+        casing, fill = self._renderer(masked)._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert fill is not None
+        # segments (v0,v1) and (v3,v4) survive; both touching v2 are gone.
+        # 6 vertices (2 triangles) per surviving segment.
+        assert fill.shape[0] == 2 * 6
+        assert casing.shape[0] == fill.shape[0]
+        # The ribbon is a straight north-south line, so mitre offsets are
+        # purely east-west -- every corner's latitude still matches its
+        # source vertex's latitude exactly.
+        lats = {round(float(x), 2) for x in fill[:, 0]}
         assert 39.02 not in lats                 # the occluded vertex
         assert {39.00, 39.01, 39.03, 39.04} <= lats
 
     def test_all_visible_keeps_every_segment(self):
-        arr = self._renderer(lambda *a: False)._collect_highways_sync(
-            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
-        assert arr.shape[0] == 2 * (len(self.VERTS) - 1)   # 4 segments -> 8 verts
+        casing, fill = self._renderer(
+            lambda *a: False)._collect_highways_sync(
+                self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        n_segments = len(self.VERTS) - 1
+        assert fill.shape[0] == 6 * n_segments
+        assert casing.shape[0] == 6 * n_segments
 
     def test_all_occluded_returns_none(self):
-        arr = self._renderer(lambda *a: True)._collect_highways_sync(
-            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
-        assert arr is None
+        result = self._renderer(lambda *a: True)._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert result is None
 
     def test_los_batch_masks_behind_ridge(self):
         """_los_masked_batch (issue #74) — the vectorised LOS that replaced
