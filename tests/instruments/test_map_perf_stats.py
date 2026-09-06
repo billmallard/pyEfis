@@ -226,7 +226,10 @@ def test_terrain_water_counters_recorded(qapp):
     w = Owner.perf.water
     assert w.polygons_before == 1
     assert w.vertices_before == 4
-    # No decimation until MP4: after == before.
+    # MP4 decimation is a per-pixel dedup; this fixture's 4 corners are
+    # all on distinct pixels, so nothing collapses -- after == before.
+    # (test_moving_map.py's decimation-counters test exercises the case
+    # where vertices DO collapse.)
     assert w.polygons_after == w.polygons_before
     assert w.vertices_after == w.vertices_before
     # No numpy fill until MP5: one QPointF per vertex, same as today.

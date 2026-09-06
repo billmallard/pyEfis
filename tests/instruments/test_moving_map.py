@@ -190,6 +190,196 @@ def test_terrain_water_island_hole_stays_land(qapp):
                 and outside.blue() > outside.green())
 
 
+class _FakeDenseCoastWaterDB:
+    """Stub WaterDB: one multi-ring lake (outer ring + island hole,
+    #44) where every edge is oversampled to *pts_per_edge* vertices --
+    far more than the ~90 m/px image can resolve, like a real OSM
+    coastline (~30 m spacing) against a wide-range window. MP4's
+    decimation should collapse most of these without moving the
+    rasterized shape."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0, pts_per_edge=1500):
+        d, hd = 0.03, 0.01              # outer / island half-sides
+
+        def edge(a, b, n):
+            t = np.linspace(0.0, 1.0, n, endpoint=False)
+            return [(a[0] + (b[0] - a[0]) * ti,
+                     a[1] + (b[1] - a[1]) * ti) for ti in t]
+
+        def ring(half, n):
+            corners = [(lat0 - half, lon0 - half), (lat0 - half, lon0 + half),
+                       (lat0 + half, lon0 + half), (lat0 + half, lon0 - half)]
+            pts = []
+            for i in range(4):
+                pts.extend(edge(corners[i], corners[(i + 1) % 4], n))
+            return pts
+
+        outer = ring(d, pts_per_edge)
+        hole = ring(hd, pts_per_edge)
+        self._poly = type("P", (), {})()
+        self._poly.vertices = outer + hole
+        self._poly.rings = [len(outer), len(outer) + len(hole)]
+        self._poly.kind = "lake"
+
+    def polygons_in_range(self, lat, lon, range_nm,
+                          min_bbox_diag_deg=None, drop_ocean=False):
+        yield self._poly
+
+
+def _draw_water_undecimated(qimg, lat0, lon0, mpp, n, lat_cos, water_db):
+    """Reference rasterizer identical to _draw_water before MP4 --
+    every projected vertex becomes a QPointF, no per-pixel decimation.
+    Used only to compute the "before" baseline MP4's DoD (water
+    fraction within 0.5% of the undecimated path) compares against."""
+    from PyQt6.QtCore import QPointF, Qt as _Qt
+    from PyQt6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPolygonF
+    from pyefis.instruments.ai.camera import M_PER_DEG_LAT
+
+    half_px = (n - 1) / 2.0
+    px_per_deg_lat = M_PER_DEG_LAT / mpp
+    px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
+    p = QPainter(qimg)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(_Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor(60, 110, 160)))
+    for poly in water_db.polygons_in_range(lat0, lon0, 1e9):
+        v = np.asarray(poly.vertices, dtype=np.float64)
+        if v.shape[0] == 0:
+            continue
+        xs = ((v[:, 1] - lon0) * px_per_deg_lon + half_px).tolist()
+        ys = ((lat0 - v[:, 0]) * px_per_deg_lat + half_px).tolist()
+        pts = [QPointF(x, y) for x, y in zip(xs, ys)]
+        rings = getattr(poly, "rings", None)
+        if rings:
+            path = QPainterPath()
+            path.setFillRule(_Qt.FillRule.OddEvenFill)
+            start = 0
+            for end in rings:
+                ring_pts = pts[start:end]
+                if len(ring_pts) >= 3:
+                    path.addPolygon(QPolygonF(ring_pts))
+                    path.closeSubpath()
+                start = end
+            p.drawPath(path)
+        elif len(pts) >= 3:
+            p.drawPolygon(QPolygonF(pts))
+    p.end()
+
+
+def _water_mask(img, n):
+    buf = img.constBits()
+    buf.setsize(img.sizeInBytes())
+    px = np.frombuffer(buf, np.uint8).reshape(n, img.bytesPerLine() // 4, 4)
+    px = px[:, :n, :]
+    return (px[..., 0] > px[..., 1]) & (px[..., 0] > px[..., 2])  # BGRA: blue
+
+
+def test_terrain_water_decimation_matches_undecimated_fraction(qapp):
+    """MP4 DoD: rasterized water fraction per screen quadrant must stay
+    within 0.5% of the undecimated path on a densely oversampled
+    coast/lake fixture."""
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+    lay._owner = Owner
+
+    decimated = QImage(n, n, QImage.Format.Format_RGB32)
+    decimated.fill(0xFFFFFFFF)
+    lay._draw_water(decimated, lat0, lon0, mpp, n, lat_cos)
+
+    reference = QImage(n, n, QImage.Format.Format_RGB32)
+    reference.fill(0xFFFFFFFF)
+    _draw_water_undecimated(reference, lat0, lon0, mpp, n, lat_cos, water)
+
+    wd = _water_mask(decimated, n)
+    wr = _water_mask(reference, n)
+    h2, w2 = n // 2, n // 2
+    quadrants = ((slice(None), slice(0, w2)), (slice(None), slice(w2, n)),
+                 (slice(0, h2), slice(None)), (slice(h2, n), slice(None)))
+    for sl in quadrants:
+        assert abs(wd[sl].mean() - wr[sl].mean()) < 0.005
+
+
+def test_terrain_water_decimation_preserves_island_hole(qapp):
+    """#44 + MP4: a densely oversampled multi-ring polygon still leaves
+    the island hole unpainted after vertex decimation."""
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+    lay._owner = Owner
+
+    qimg = QImage(n, n, QImage.Format.Format_RGB32)
+    qimg.fill(0xFFFFFFFF)
+    lay._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
+
+    def px(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = (lo - lon0) * M * np.cos(np.radians(lat0)) / mpp + half
+        cy = (lat0 - la) * M / mpp + half
+        return qimg.pixelColor(int(round(cx)), int(round(cy)))
+
+    water_pt = px(lat0, lon0 + 0.02)      # between hole and outer ring
+    island = px(lat0, lon0)               # island centre
+    outside = px(lat0, lon0 + 0.05)       # beyond the outer ring
+    assert water_pt.blue() > water_pt.red() and water_pt.blue() > water_pt.green()
+    assert not (island.blue() > island.red()
+                and island.blue() > island.green())
+    assert not (outside.blue() > outside.red()
+                and outside.blue() > outside.green())
+
+
+def test_terrain_water_decimation_counters(qapp):
+    """MP4 DoD: the MP6 water counters expose before/after vertex
+    counts, and a densely oversampled fixture shows a real reduction
+    (932k -> well under 100k is the brief's 160 NM real-world number;
+    here just assert the counter wiring and that decimation actually
+    dropped most of the redundant vertices, with both rings and the
+    polygon surviving)."""
+    from pyefis.instruments.map.perf import MapPerfStats
+
+    lat0, lon0 = 34.5, -120.5
+    pts_per_edge = 1500
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=pts_per_edge)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+        perf = MapPerfStats()
+    lay._owner = Owner
+
+    qimg = QImage(n, n, QImage.Format.Format_RGB32)
+    qimg.fill(0xFFFFFFFF)
+    lay._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
+
+    w = Owner.perf.water
+    assert w.polygons_before == 1
+    assert w.polygons_after == 1
+    assert w.vertices_before == pts_per_edge * 4 * 2   # outer + hole rings
+    assert 0 < w.vertices_after < w.vertices_before * 0.5
+    assert w.qpointf_count == w.vertices_after
+
+
 class _FakeHighwayDB:
     """Stub HighwayDB: one motorway segment strictly NORTH of the
     ownship (so orientation tests can discriminate sides -- a through
