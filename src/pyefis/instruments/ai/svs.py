@@ -516,7 +516,7 @@ class SVSRenderer:
             config.get("road_max_vertices",
                       road_ribbon.DEFAULT_MAX_VERTICES))
         self._road_color = road_ribbon.hex_to_rgba01(
-            config.get("road_color", "#b8b4ad"))
+            config.get("road_color", "#535353"))
         self._road_casing_color = road_ribbon.hex_to_rgba01(
             config.get("road_casing_color", "#4a4a4a"))
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
