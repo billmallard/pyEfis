@@ -279,7 +279,9 @@ def _water_mask(img, n):
 def test_terrain_water_decimation_matches_undecimated_fraction(qapp):
     """MP4 DoD: rasterized water fraction per screen quadrant must stay
     within 0.5% of the undecimated path on a densely oversampled
-    coast/lake fixture."""
+    coast/lake fixture. Exercises the legacy Qt path directly (kept
+    behind water_raster: qt for MP5's A/B window) -- the decimation
+    step itself is shared with the numpy path (MP5)."""
     lat0, lon0 = 34.5, -120.5
     water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
     n, mpp = 400, 20.0
@@ -294,7 +296,7 @@ def test_terrain_water_decimation_matches_undecimated_fraction(qapp):
 
     decimated = QImage(n, n, QImage.Format.Format_RGB32)
     decimated.fill(0xFFFFFFFF)
-    lay._draw_water(decimated, lat0, lon0, mpp, n, lat_cos)
+    lay._draw_water_qt(decimated, lat0, lon0, mpp, n, lat_cos)
 
     reference = QImage(n, n, QImage.Format.Format_RGB32)
     reference.fill(0xFFFFFFFF)
@@ -311,7 +313,9 @@ def test_terrain_water_decimation_matches_undecimated_fraction(qapp):
 
 def test_terrain_water_decimation_preserves_island_hole(qapp):
     """#44 + MP4: a densely oversampled multi-ring polygon still leaves
-    the island hole unpainted after vertex decimation."""
+    the island hole unpainted after vertex decimation. Legacy Qt path
+    (see test_terrain_water_numpy_preserves_island_hole for MP5's
+    numpy path on the same fixture)."""
     lat0, lon0 = 34.5, -120.5
     water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
     n, mpp = 400, 20.0
@@ -326,7 +330,7 @@ def test_terrain_water_decimation_preserves_island_hole(qapp):
 
     qimg = QImage(n, n, QImage.Format.Format_RGB32)
     qimg.fill(0xFFFFFFFF)
-    lay._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
+    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos)
 
     def px(la, lo):
         half = (n - 1) / 2.0
@@ -351,7 +355,9 @@ def test_terrain_water_decimation_counters(qapp):
     (932k -> well under 100k is the brief's 160 NM real-world number;
     here just assert the counter wiring and that decimation actually
     dropped most of the redundant vertices, with both rings and the
-    polygon surviving)."""
+    polygon surviving). Legacy Qt path -- qpointf_count tracks real
+    QPointF construction there; MP5's numpy path drives it to 0 (see
+    test_terrain_water_numpy_zero_qpointf)."""
     from pyefis.instruments.map.perf import MapPerfStats
 
     lat0, lon0 = 34.5, -120.5
@@ -370,7 +376,7 @@ def test_terrain_water_decimation_counters(qapp):
 
     qimg = QImage(n, n, QImage.Format.Format_RGB32)
     qimg.fill(0xFFFFFFFF)
-    lay._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
+    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos)
 
     w = Owner.perf.water
     assert w.polygons_before == 1
@@ -378,6 +384,128 @@ def test_terrain_water_decimation_counters(qapp):
     assert w.vertices_before == pts_per_edge * 4 * 2   # outer + hole rings
     assert 0 < w.vertices_after < w.vertices_before * 0.5
     assert w.qpointf_count == w.vertices_after
+
+
+def _rgbx_water_mask(rgbx):
+    """Water fraction helper for an (n, n, 4) R,G,B,X uint8 array (the
+    format TerrainLayer._render builds and _draw_water_numpy mutates in
+    place -- see terrain.py's rgbx assembly)."""
+    return ((rgbx[..., 2] > rgbx[..., 0])
+            & (rgbx[..., 2] > rgbx[..., 1]))
+
+
+def test_terrain_water_numpy_preserves_island_hole(qapp):
+    """#44 + MP5: fill_even_odd, wired through _draw_water_numpy on the
+    same densely oversampled multi-ring fixture as the Qt path's
+    equivalent test, must also leave the island hole unpainted."""
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+    lay._owner = Owner
+
+    rgbx = np.zeros((n, n, 4), np.uint8)
+    rgbx[..., :3] = 255
+    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
+
+    def is_water(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = int(round((lo - lon0) * M * np.cos(np.radians(lat0)) / mpp
+                       + half))
+        cy = int(round((lat0 - la) * M / mpp + half))
+        px = rgbx[cy, cx]
+        return px[2] > px[0] and px[2] > px[1]
+
+    assert is_water(lat0, lon0 + 0.02)      # between hole and outer ring
+    assert not is_water(lat0, lon0)         # island centre
+    assert not is_water(lat0, lon0 + 0.05)  # beyond the outer ring
+
+
+def test_terrain_water_numpy_zero_qpointf(qapp):
+    """MP5 DoD: the numpy path never constructs a QPointF -- the MP6
+    counter reads 0 regardless of vertex count, unlike the Qt path
+    (test_terrain_water_decimation_counters)."""
+    from pyefis.instruments.map.perf import MapPerfStats
+
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+        perf = MapPerfStats()
+    lay._owner = Owner
+
+    rgbx = np.zeros((n, n, 4), np.uint8)
+    rgbx[..., :3] = 255
+    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
+
+    w = Owner.perf.water
+    assert w.polygons_before == 1
+    assert w.polygons_after == 1
+    assert w.vertices_after > 0
+    assert w.qpointf_count == 0
+
+
+def test_terrain_water_numpy_matches_qt_iou(qapp):
+    """MP5 DoD: pixel comparison of the numpy fill against the legacy
+    Qt rasterization, IoU >= 0.985 / 0.98. Until MP8's real fixture pack
+    exists, this uses the synthetic densely-oversampled coast/lake
+    fixture already in this file (_FakeDenseCoastWaterDB, the same one
+    MP4's DoD tests use), swept over three pixel densities (mpp) as a
+    stand-in for the brief's 10/80/160 NM cases -- the fixture's real
+    extent is a few km, so the mpp values are chosen to reproduce the
+    LOD regime (near-1:1 vs heavily decimated) each range implies,
+    not to be a literal NM-accurate render."""
+    lat0, lon0 = 34.5, -120.5
+    lat_cos = np.cos(np.radians(lat0))
+    n = 400
+
+    # (mpp, stands in for, min IoU) -- per the brief's DoD thresholds:
+    # the fine/near-1:1 case stands in for 10 NM (0.98 floor); the two
+    # coarser, heavily-decimated cases stand in for 80/160 NM (0.985
+    # floor -- more total area makes edge/AA disagreement proportionally
+    # smaller despite more decimation).
+    cases = [(4.0, "fine (~10 NM stand-in)", 0.98),
+             (20.0, "moderate (~80 NM stand-in)", 0.985),
+             (60.0, "coarse (~160 NM stand-in)", 0.985)]
+    for mpp, label, min_iou in cases:
+        water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+
+        class Owner:
+            _alt_ft = 0.0
+
+        lay_qt = TerrainLayer()
+        lay_qt._water = water
+        lay_qt._owner = Owner
+        qt_img = QImage(n, n, QImage.Format.Format_RGB32)
+        qt_img.fill(0xFFFFFFFF)
+        lay_qt._draw_water_qt(qt_img, lat0, lon0, mpp, n, lat_cos)
+        wq = _water_mask(qt_img, n)
+
+        lay_np = TerrainLayer()
+        lay_np._water = water
+        lay_np._owner = Owner
+        rgbx = np.zeros((n, n, 4), np.uint8)
+        rgbx[..., :3] = 255
+        lay_np._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
+        wn = _rgbx_water_mask(rgbx)
+
+        inter = int((wq & wn).sum())
+        union = int((wq | wn).sum())
+        iou = (inter / union) if union else 1.0
+        assert iou >= min_iou, "%s: iou=%.4f < %.4f" % (label, iou, min_iou)
 
 
 class _FakeHighwayDB:

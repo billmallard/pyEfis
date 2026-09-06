@@ -96,11 +96,13 @@ class LayerStats:
 class WaterStats:
     """Water-rasterization counters (brief section 4: "water polygons and
     vertices before/after decimation"; "QPointF count in the water
-    path"). A snapshot of the most recent ``TerrainLayer._draw_water``
-    call. Until MP4 (vertex decimation) and MP5 (numpy scanline fill)
-    land, ``*_after`` mirrors ``*_before`` and ``qpointf_count`` equals
-    ``vertices_after`` -- today's per-vertex QPointF path; MP4 will make
-    ``*_after`` smaller and MP5 will drive ``qpointf_count`` to 0."""
+    path"). A snapshot of the most recent ``TerrainLayer._draw_water_qt``
+    / ``_draw_water_numpy`` call. MP4 (vertex decimation) makes
+    ``*_after`` <= ``*_before``. MP5 (numpy scanline fill,
+    ``water_raster: numpy``, the default) drives ``qpointf_count`` to 0;
+    the legacy ``water_raster: qt`` path still reports
+    ``qpointf_count == vertices_after``, one QPointF per surviving
+    vertex."""
 
     def __init__(self):
         self.polygons_before = 0

@@ -232,8 +232,10 @@ def test_terrain_water_counters_recorded(qapp):
     # where vertices DO collapse.)
     assert w.polygons_after == w.polygons_before
     assert w.vertices_after == w.vertices_before
-    # No numpy fill until MP5: one QPointF per vertex, same as today.
-    assert w.qpointf_count == 4
+    # MP5: water_raster defaults to numpy, which never constructs a
+    # QPointF (test_moving_map.py's test_terrain_water_decimation_counters
+    # exercises the legacy water_raster: qt path, where this is still 4).
+    assert w.qpointf_count == 0
 
 
 # --- roads / navaids / airports reuse the same accounting ---------------

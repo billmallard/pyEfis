@@ -1082,6 +1082,11 @@ _register(InstrumentSpec(
              maximum=1024, step=16, label="Water vertex cap",
              help="per-polygon vertex cap for map water rasterization "
                   "(higher = more coastline/lake detail per rebuild)"),
+        Prop("water_raster", "enum", default="numpy",
+             enum=["numpy", "qt"], label="Water raster path",
+             help="numpy = vectorised even-odd scanline fill (MP5, "
+                  "default); qt = legacy per-vertex QPointF/QPolygonF/"
+                  "drawPath path, kept for one release of A/B"),
         Prop("map_perf_log", "boolean", default=False,
              label="Perf: log summary",
              help="print a MapPerfStats summary every 2s (frames, paint "

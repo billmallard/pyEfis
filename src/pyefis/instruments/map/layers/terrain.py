@@ -20,6 +20,7 @@ from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPolygonF)
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
+from pyefis.instruments.map import raster
 from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
 
 # Hypsometric stops: (elevation ft, r, g, b) -- sectional-inspired.
@@ -328,19 +329,94 @@ class TerrainLayer(MapLayer):
         rgbx[..., 1] = g
         rgbx[..., 2] = b
         rgbx[..., 3] = 255
+        have_water = self._water is not None and self._water.ready
+        # MP5: numpy is the default -- the mask lands directly on rgbx
+        # BEFORE the QImage exists, after the caution tint (water is
+        # not a TAWS surface). `water_raster: qt` keeps the legacy
+        # QPointF/QPolygonF/drawPath path for one release of A/B (brief
+        # section 4 MP5 guardrail).
+        raster_mode = str(getattr(self._owner, "water_raster", "numpy")
+                          or "numpy")
+        if have_water and raster_mode != "qt":
+            self._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
         qimg = QImage(rgbx.data, n, n, 4 * n,
                       QImage.Format.Format_RGBX8888).copy()
-        if self._water is not None and self._water.ready:
-            self._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
+        if have_water and raster_mode == "qt":
+            self._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos)
         return qimg, (lat0, lon0, mpp)
 
-    def _draw_water(self, qimg, lat0, lon0, mpp, n, lat_cos):
-        """Rasterize water-pack polygons (lakes + coastline) into the
-        north-up window image -- on the worker thread, so per-frame
-        cost is zero: the paint path still blits one image (#91).
-        Painted AFTER the caution tint on purpose: water is not a
-        TAWS threat surface. The elevation-derived water (void-tile
-        ocean) stays underneath as the backstop."""
+    def _draw_water_numpy(self, rgbx, lat0, lon0, mpp, n, lat_cos):
+        """MP5 (brief section 4): numpy even-odd scanline fill, replacing
+        the Qt QPointF/QPolygonF/drawPath path. Every ring of every
+        polygon in range is collected first; ONE raster.fill_even_odd()
+        call over the whole set then handles island holes (#44) and
+        disjoint/nested lakes for free via the even-odd rule -- no
+        per-polygon special-casing. Mutates *rgbx* in place; the caller
+        builds the QImage from it afterwards, so this never constructs a
+        QPointF/QPolygonF and touches the raster only once."""
+        half_px = (n - 1) / 2.0
+        range_nm = (half_px * mpp) / 1852.0
+        wide = range_nm > self._WATER_FULL_MAX_NM
+        min_diag = (min(self._WATER_WIDE_DIAG_MAX,
+                        range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
+                    else 3.0 * mpp / M_PER_DEG_LAT)
+        px_per_deg_lat = M_PER_DEG_LAT / mpp
+        px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
+        n_polys = 0
+        n_polys_after = 0
+        n_verts = 0
+        n_verts_after = 0
+        rings = []
+        try:
+            for poly in self._water.polygons_in_range(
+                    lat0, lon0, range_nm, min_bbox_diag_deg=min_diag,
+                    drop_ocean=wide):
+                n_polys += 1
+                v = np.asarray(poly.vertices, dtype=np.float64)
+                n_verts += v.shape[0]
+                if v.shape[0] == 0:
+                    continue
+                xs = (v[:, 1] - lon0) * px_per_deg_lon + half_px
+                ys = (lat0 - v[:, 0]) * px_per_deg_lat + half_px
+                poly_rings = getattr(poly, "rings", None)
+                ring_ends = (np.asarray(poly_rings, dtype=np.int64)
+                             if poly_rings
+                             else np.array([v.shape[0]], dtype=np.int64))
+                xs, ys, ring_ends = _decimate_to_pixel_grid(
+                    xs, ys, ring_ends)
+                n_verts_after += xs.shape[0]
+                if xs.shape[0] == 0:
+                    continue
+                n_polys_after += 1
+                start = 0
+                for end in ring_ends.tolist():
+                    if end - start >= 3:
+                        rings.append(np.stack(
+                            (xs[start:end], ys[start:end]), axis=1))
+                    start = end
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map water rasterize failed")
+            rings = []
+        if rings:
+            mask = raster.fill_even_odd(rings, n)
+            rgbx[mask] = (60, 110, 160, 255)
+        perf = getattr(self._owner, "perf", None)
+        if perf is not None:
+            perf.water.record(n_polys, n_verts, n_polys_after,
+                               n_verts_after, 0)
+
+    def _draw_water_qt(self, qimg, lat0, lon0, mpp, n, lat_cos):
+        """Legacy per-vertex QPointF/QPolygonF/drawPath rasterizer, kept
+        behind ``water_raster: qt`` for one release of A/B against MP5's
+        numpy path (brief section 4 MP5 guardrail). Rasterize water-pack
+        polygons (lakes + coastline) into the north-up window image --
+        on the worker thread, so per-frame cost is zero: the paint path
+        still blits one image (#91). Painted AFTER the caution tint on
+        purpose: water is not a TAWS threat surface. The
+        elevation-derived water (void-tile ocean) stays underneath as
+        the backstop."""
         half_px = (n - 1) / 2.0
         range_nm = (half_px * mpp) / 1852.0
         # Wide zoom: drop the ocean coastline (terrain void-water already shows

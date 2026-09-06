@@ -99,6 +99,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.terrain_mode = "relief"           # or "caution"
         self.water_db_path = ""                # water.sqlite (#91)
         self.water_max_vertices = 512          # per-polygon raster cap
+        # MP5 (#98): numpy even-odd scanline fill is the default; "qt"
+        # keeps the legacy QPointF/QPolygonF/drawPath path for one
+        # release of A/B (brief map_gesture_perf_plan.md section 4).
+        self.water_raster = "numpy"            # or "qt"
         self.layer_roads = True
         self.highway_db_path = ""              # highways.sqlite (SVS pack)
         self.road_color = "#c0c0c0"
