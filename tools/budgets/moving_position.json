@@ -1,0 +1,7 @@
+{
+  "_comment": "AER-679 moving-position pass threshold. 50 ms is PROBE_GAP_WARN_MS from src/pyefis/instruments/map/perf.py -- the project's existing GUI-thread-stall gate (MP6), reused here so the map and SVS share one canonical frame-gap number. Cross-checked against AER-677's own measurement: healthy SVS gap ~25 ms (40 fps) vs the reproduced defect's ~699 ms (1.4 fps); 50 ms sits with clean margin above healthy and two orders of magnitude below the defect. See docs/moving_map_spec.md section 9.2.",
+  "moving_position": [
+    {"path": "svs.frame_gap_ms.p95", "max": 50},
+    {"path": "map.frame_gap_ms.p95", "max": 50}
+  ]
+}
