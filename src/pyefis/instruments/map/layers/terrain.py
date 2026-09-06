@@ -41,6 +41,51 @@ _STOP_G = np.array([s[2] for s in _STOPS], np.float64)
 _STOP_B = np.array([s[3] for s in _STOPS], np.float64)
 
 
+def _decimate_to_pixel_grid(xs, ys, ring_ends):
+    """MP4 (brief section 4): drop water-ring vertices that round to the
+    same image pixel as the previously KEPT vertex, per ring; drop a
+    ring outright if fewer than 3 vertices survive. *xs*/*ys* are the
+    already-projected image-pixel float coordinates for one polygon's
+    concatenated rings; *ring_ends* are cumulative END offsets (the
+    WaterPolygon.rings convention -- a single-ring polygon passes
+    ``[len(xs)]``).
+
+    Fully vectorised, no per-vertex or per-ring Python loop: a run of
+    consecutive vertices sharing a rounded pixel collapses to its first
+    member (equivalent to comparing against the previous KEPT vertex,
+    since every vertex in the run shares the same rounded value as the
+    run's first/kept member); ring starts are forced to survive so
+    decimation never bridges across a ring boundary; ring membership
+    for the "keep >= 3" rule comes from `searchsorted` against
+    *ring_ends* rather than a Python loop over rings -- the Florida
+    Keys #44 cell carries 3,322 island rings in one row."""
+    n = xs.shape[0]
+    ring_ends = np.asarray(ring_ends, dtype=np.int64)
+    if n == 0 or ring_ends.size == 0:
+        return (xs[:0], ys[:0], ring_ends[:0])
+    ring_starts = np.concatenate(([0], ring_ends[:-1]))
+
+    px = np.round(xs).astype(np.int64)
+    py = np.round(ys).astype(np.int64)
+
+    is_ring_start = np.zeros(n, dtype=bool)
+    is_ring_start[ring_starts] = True
+
+    changed = np.ones(n, dtype=bool)
+    changed[1:] = (px[1:] != px[:-1]) | (py[1:] != py[:-1])
+    keep = changed | is_ring_start
+
+    idx = np.arange(n)
+    ring_id = np.searchsorted(ring_ends, idx, side="right")
+
+    counts = np.bincount(ring_id[keep], minlength=ring_ends.size)
+    good_ring = counts >= 3
+    keep &= good_ring[ring_id]
+
+    new_ring_ends = np.cumsum(counts[good_ring])
+    return xs[keep], ys[keep], new_ring_ends
+
+
 def _palette(elev_ft):
     """Vectorised hypsometric colour lookup (elev in FEET).
 
@@ -313,11 +358,14 @@ class TerrainLayer(MapLayer):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(QColor(60, 110, 160)))
-        # MP6: polygons/vertices seen (== "before" until MP4 decimates) and
-        # the QPointF count actually constructed (0 once MP5 replaces this
-        # with the numpy scanline fill) -- brief section 4.
+        # MP6 counters: polygons/vertices before vs after MP4's per-pixel
+        # decimation, and the QPointF count actually constructed (0 once
+        # MP5 replaces this with the numpy scanline fill) -- brief
+        # section 4.
         n_polys = 0
+        n_polys_after = 0
         n_verts = 0
+        n_verts_after = 0
         n_qpointf = 0
         try:
             for poly in self._water.polygons_in_range(
@@ -333,11 +381,23 @@ class TerrainLayer(MapLayer):
                 n_verts += v.shape[0]
                 if v.shape[0] == 0:
                     continue
-                xs = ((v[:, 1] - lon0) * px_per_deg_lon + half_px).tolist()
-                ys = ((lat0 - v[:, 0]) * px_per_deg_lat + half_px).tolist()
-                pts = [QPointF(x, y) for x, y in zip(xs, ys)]
-                n_qpointf += len(pts)
+                xs = (v[:, 1] - lon0) * px_per_deg_lon + half_px
+                ys = (lat0 - v[:, 0]) * px_per_deg_lat + half_px
                 rings = getattr(poly, "rings", None)
+                ring_ends = (np.asarray(rings, dtype=np.int64) if rings
+                             else np.array([v.shape[0]], dtype=np.int64))
+                # MP4: drop vertices that round to the same image pixel
+                # as the previous kept vertex, per ring; a ring that
+                # decimates below 3 vertices is dropped outright (#98,
+                # brief section 4 MP4).
+                xs, ys, ring_ends = _decimate_to_pixel_grid(
+                    xs, ys, ring_ends)
+                n_verts_after += xs.shape[0]
+                if xs.shape[0] == 0:
+                    continue
+                n_polys_after += 1
+                pts = [QPointF(x, y) for x, y in zip(xs.tolist(), ys.tolist())]
+                n_qpointf += len(pts)
                 if rings:
                     # Multi-ring row (outer + island holes, #44):
                     # even-odd fill leaves the hole rings — islands —
@@ -346,7 +406,7 @@ class TerrainLayer(MapLayer):
                     path = QPainterPath()
                     path.setFillRule(Qt.FillRule.OddEvenFill)
                     start = 0
-                    for end in rings:
+                    for end in ring_ends.tolist():
                         ring_pts = pts[start:end]
                         if len(ring_pts) >= 3:
                             path.addPolygon(QPolygonF(ring_pts))
@@ -363,8 +423,8 @@ class TerrainLayer(MapLayer):
             p.end()
         perf = getattr(self._owner, "perf", None)
         if perf is not None:
-            # No decimation yet (MP4): after == before.
-            perf.water.record(n_polys, n_verts, n_polys, n_verts, n_qpointf)
+            perf.water.record(n_polys, n_verts, n_polys_after,
+                               n_verts_after, n_qpointf)
 
     def _sample(self, lats, lons, mip):
         """Vectorised elevation sampling straight off the TileCache.
