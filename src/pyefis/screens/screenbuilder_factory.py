@@ -385,6 +385,45 @@ def _svs_props():
         Prop("svs_highway_db_path", "string", default="", apply="special",
              label="Highway DB path",
              help="highway database on the device (optional)"),
+        # Road ribbons (RD1, issue #161): the highways overlay draws as an
+        # extruded true-scale casing + fill ribbon instead of a 1 px line.
+        # Defaults reproduce today's class/tier/20 NM behaviour -- these
+        # only change the look. Per-class width table (svs_road_widths_m,
+        # metres per OSM way) is config-only (a dict has no simple editor
+        # widget); see docs/wiki/Widgets-Attitude-and-SVS.md.
+        Prop("svs_road_color", "color", default="#b8b4ad", apply="special",
+             label="Road colour", help="ribbon fill colour" + dev),
+        Prop("svs_road_casing_color", "color", default="#4a4a4a",
+             apply="special", label="Road casing colour",
+             help="darker outline drawn under the fill" + dev),
+        Prop("svs_road_casing_m", "number", default=2.5, minimum=0.0,
+             maximum=20.0, apply="special", label="Road casing width (m)",
+             help="casing half-width add-on over the class width" + dev),
+        Prop("svs_road_min_px", "number", default=1.5, minimum=0.5,
+             maximum=10.0, step=0.1, apply="special",
+             label="Road minimum width (px)",
+             help="screen-space floor so distant ribbons never drop below "
+                  "this many pixels wide" + dev),
+        Prop("svs_road_subdivide_m", "number", default=150.0, minimum=20.0,
+             maximum=1000.0, apply="special",
+             label="Road subdivide length (m)",
+             help="segments longer than this, within subdivide range, are "
+                  "split so the ribbon follows rolling terrain" + dev),
+        Prop("svs_road_subdivide_nm", "number", default=4.0, minimum=0.0,
+             maximum=20.0, apply="special",
+             label="Road subdivide range (NM)",
+             help="subdivision only applies this close to the aircraft" +
+                  dev),
+        Prop("svs_road_lift_ft", "number", default=2.0, minimum=0.0,
+             maximum=50.0, apply="special", label="Road lift (ft)",
+             help="height above sampled terrain the ribbon is drawn at" +
+                  dev),
+        Prop("svs_road_max_vertices", "integer", default=400_000,
+             minimum=10_000, maximum=1_000_000, apply="special",
+             label="Road vertex cap",
+             help="hard cap on extruded vertices per array (casing/fill "
+                  "each); over the cap, far-tier ramps are dropped first, "
+                  "then far-tier trunks" + dev),
     ]
 
 

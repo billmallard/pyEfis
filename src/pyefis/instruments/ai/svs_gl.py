@@ -1435,22 +1435,33 @@ class SVSGLRenderer:
                                 "water", tris, color,
                                 gl.GL_TRIANGLES, fog_strength=1.0)
 
-            # Highways (issue #35): decimated OSM motorway/trunk
-            # polylines draped at terrain elevation. Ground features:
-            # full haze, drawn between water and the symbology layers.
+            # Highways (issue #35, extruded to true-scale ribbons for
+            # RD1 / issue #161): decimated OSM motorway/trunk polylines
+            # draped at terrain elevation, drawn as a dark casing then a
+            # light fill (both GL_TRIANGLES) instead of a 1 px hairline.
+            # Ground features: full haze, drawn between water and the
+            # symbology layers.
             if (getattr(p, "highway_db", None) is not None
                     and p.highway_db.ready
                     and range_nm is not None):
                 with p._perf.time("highways"):
                     with p._perf.time("highways.collect"):
                         hwy = p._collect_highways(
-                            ac_lat, ac_lon, ac_alt_ft, range_nm)
-                    if hwy is not None and hwy.size:
+                            ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            pixels_per_deg)
+                    if hwy is not None:
+                        casing, fill = hwy
                         with p._perf.time("highways.gl_draw"):
-                            self._draw_overlay_cached(
-                                "highways", hwy,
-                                (0.10, 0.10, 0.10, 1.0),
-                                gl.GL_LINES, fog_strength=1.0)
+                            if casing is not None and casing.size:
+                                self._draw_overlay_cached(
+                                    "highways_casing", casing,
+                                    p._road_casing_color,
+                                    gl.GL_TRIANGLES, fog_strength=1.0)
+                            if fill is not None and fill.size:
+                                self._draw_overlay_cached(
+                                    "highways", fill,
+                                    p._road_color,
+                                    gl.GL_TRIANGLES, fog_strength=1.0)
 
             # Obstacles: world-scaled FAA-symbol billboards (the
             # Garmin/ForeFlight SVS convention) — one screen-facing

@@ -49,6 +49,13 @@ class _SVSPerfLog:
         self._accum: dict[str, int] = {}    # ns total since last report
         self._count: dict[str, int] = {}
         self._last_report = time.perf_counter() if enabled else 0.0
+        self._gauges: dict[str, float] = {}  # last-value counters (not ns)
+        # Every add_ns()/set_gauge() call used to come from the render
+        # thread only. RD1's highways.worker_ms/segments/vertices are
+        # recorded from the highway collect worker thread while the
+        # render thread concurrently reports/times -- guard the shared
+        # dicts so that isn't a data race.
+        self._lock = threading.Lock()
 
     def time(self, name: str):
         """Context manager that times the with-block and adds it to
@@ -60,8 +67,17 @@ class _SVSPerfLog:
     def add_ns(self, name: str, ns: int):
         if not self.enabled:
             return
-        self._accum[name] = self._accum.get(name, 0) + ns
-        self._count[name] = self._count.get(name, 0) + 1
+        with self._lock:
+            self._accum[name] = self._accum.get(name, 0) + ns
+            self._count[name] = self._count.get(name, 0) + 1
+
+    def set_gauge(self, name: str, value: float):
+        """Record a non-time count (e.g. ``highways.segments``) — the
+        most recent value is reported each interval, not a total."""
+        if not self.enabled:
+            return
+        with self._lock:
+            self._gauges[name] = value
 
     def maybe_report(self, extra_lines=None):
         if not self.enabled:
@@ -70,22 +86,28 @@ class _SVSPerfLog:
         if now - self._last_report < self.REPORT_INTERVAL_S:
             return False
         elapsed = now - self._last_report
+        with self._lock:
+            accum = dict(self._accum)
+            count = dict(self._count)
+            gauges = dict(self._gauges)
+            self._accum.clear()
+            self._count.clear()
         lines = [f"SVS perf (last {elapsed:.1f}s):"]
-        for name in sorted(self._accum, key=lambda k: -self._accum[k]):
-            n = self._count[name]
-            total_ms = self._accum[name] / 1e6
+        for name in sorted(accum, key=lambda k: -accum[k]):
+            n = count[name]
+            total_ms = accum[name] / 1e6
             per_call_ms = total_ms / n if n else 0
-            pct = 100.0 * (self._accum[name] / 1e9) / elapsed
+            pct = 100.0 * (accum[name] / 1e9) / elapsed
             lines.append(
                 f"  {name:<30} {n:>5} calls  "
                 f"{total_ms:>8.1f}ms total  "
                 f"{per_call_ms:>7.2f}ms/call  "
                 f"{pct:>5.1f}%")
+        for name in sorted(gauges):
+            lines.append(f"  {name:<30} {gauges[name]:>8.0f}")
         if extra_lines:
             lines.extend(extra_lines)
         log.info("\n".join(lines))
-        self._accum.clear()
-        self._count.clear()
         self._last_report = now
         return True
 
@@ -115,6 +137,8 @@ class _NoopTimer:
 
 import numpy as np
 from PyQt6.QtGui import QColor, QPainter
+
+from pyefis.instruments.ai import road_ribbon
 
 log = logging.getLogger(__name__)
 
@@ -466,6 +490,34 @@ class SVSRenderer:
         from pyefis.instruments.ai.highway_db import HighwayDB
         self.highway_db = HighwayDB(
             config.get("highway_db_path", "") or None)
+        # Road ribbon appearance (RD1, issue #161, brief section 3.1).
+        # Every default reproduces today's class/tier/20 NM behaviour —
+        # only the drawn shape changes, from a 1 px GL_LINES hairline to
+        # an extruded true-scale casing + fill ribbon. Editor-facing option
+        # names carry the "svs_road_*" prefix (screenbuilder_factory.py's
+        # _svs_props()); build_virtual_vfr strips "svs_" before this config
+        # dict is built (same convention as water_db_path/highway_db_path
+        # above), so the keys read here are unprefixed.
+        self._road_width_m = dict(road_ribbon.DEFAULT_WIDTH_M)
+        self._road_width_m.update(config.get("road_widths_m", {}) or {})
+        self._road_casing_m = float(
+            config.get("road_casing_m", road_ribbon.DEFAULT_CASING_M))
+        self._road_min_px = float(
+            config.get("road_min_px", road_ribbon.DEFAULT_MIN_PX))
+        self._road_subdivide_m = float(
+            config.get("road_subdivide_m", road_ribbon.DEFAULT_SUBDIVIDE_M))
+        self._road_subdivide_nm = float(
+            config.get("road_subdivide_nm",
+                      road_ribbon.DEFAULT_SUBDIVIDE_NM))
+        self._road_lift_ft = float(
+            config.get("road_lift_ft", road_ribbon.DEFAULT_LIFT_FT))
+        self._road_max_vertices = int(
+            config.get("road_max_vertices",
+                      road_ribbon.DEFAULT_MAX_VERTICES))
+        self._road_color = road_ribbon.hex_to_rgba01(
+            config.get("road_color", "#b8b4ad"))
+        self._road_casing_color = road_ribbon.hex_to_rgba01(
+            config.get("road_casing_color", "#4a4a4a"))
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         # Terrain colour palette: copy the named band colours onto the instance
@@ -1615,15 +1667,18 @@ class SVSRenderer:
         return np.concatenate(all_tris, axis=0)
 
     # ------------------------------------------------------------------
-    # Highways (issue #35): decimated OSM polylines draped on the
-    # terrain — per-vertex SRTM elevation, expanded to GL_LINES pairs.
-    # Collected asynchronously (same pattern as water): the sqlite
-    # walk + elevation sampling never blocks a frame.
+    # Highways (issue #35, extruded to true-scale ribbons for RD1 /
+    # issue #161): decimated OSM polylines draped on the terrain,
+    # extruded into mitred casing + fill triangle lists (road_ribbon.py)
+    # instead of a 1 px GL_LINES hairline. Collected asynchronously
+    # (same pattern as water): the sqlite walk + elevation sampling +
+    # extrusion never blocks a frame.
     # ------------------------------------------------------------------
     _HWY_CACHE_TTL_S = 1.0
     _HWY_CACHE_POS_STEP_DEG = 0.01
 
-    def _collect_highways(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _collect_highways(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                          pixels_per_deg):
         if (getattr(self, "highway_db", None) is None
                 or not self.highway_db.ready):
             return None
@@ -1634,7 +1689,9 @@ class SVSRenderer:
         # position change (~1 s), so the occlusion stays current without an
         # altitude bucket. An altitude bucket here re-ran the costly query on
         # every 200 ft of descent -- a worker-thread burst that stalled the
-        # render loop on final approach (the #73 perf regression).
+        # render loop on final approach (the #73 perf regression). Screen-space
+        # width floor uses whatever pixels_per_deg the CURRENT collection sees
+        # for the same reason -- it changes only on a widget resize.
         key = (round(ac_lat / step) * step,
                round(ac_lon / step) * step,
                round(range_nm / 5.0) * 5.0)
@@ -1656,16 +1713,27 @@ class SVSRenderer:
             if not busy and self._collect_slot.acquire(blocking=False):
                 self._hwy_worker = threading.Thread(
                     target=self._hwy_collect_worker,
-                    args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm),
+                    args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                         pixels_per_deg),
                     daemon=True)
                 self._hwy_worker.start()
         return self._hwy_cache
 
-    def _hwy_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _hwy_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            pixels_per_deg):
         try:
-            arr = self._collect_highways_sync(ac_lat, ac_lon, ac_alt_ft, range_nm)
+            t0 = time.perf_counter_ns()
+            result = self._collect_highways_sync(
+                ac_lat, ac_lon, ac_alt_ft, range_nm, pixels_per_deg)
+            self._perf.add_ns("highways.worker_ms",
+                              time.perf_counter_ns() - t0)
+            if self._perf.enabled:
+                fill = result[1] if result is not None else None
+                n_vertices = 0 if fill is None else int(fill.shape[0])
+                self._perf.set_gauge("highways.vertices", n_vertices)
+                self._perf.set_gauge("highways.segments", n_vertices / 6.0)
             with self._hwy_worker_lock:
-                self._hwy_result = (key, arr)
+                self._hwy_result = (key, result)
         except Exception:
             log.warning("highway collect worker failed", exc_info=True)
         finally:
@@ -1679,11 +1747,17 @@ class SVSRenderer:
     _HWY_MAX_NM = 20.0
     _HWY_NEAR_NM = 8.0
 
-    def _collect_highways_sync(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _collect_highways_sync(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                               pixels_per_deg):
+        """Returns ``(casing_tris, fill_tris)`` — see
+        :func:`road_ribbon.extrude_ribbons` — or ``None`` when nothing
+        in range survives class/tier/LOS filtering."""
         rng = min(range_nm, self._HWY_MAX_NM)
         lat_cos = math.cos(math.radians(ac_lat))
         near_deg2 = (self._HWY_NEAR_NM / 60.0) ** 2
         lines = []
+        fclasses = []
+        is_far = []
         for hl in self.highway_db.polylines_in_range(
                 ac_lat, ac_lon, rng):
             v = hl.vertices
@@ -1692,16 +1766,38 @@ class SVSRenderer:
             mid = v[len(v) // 2]
             d2 = ((mid[0] - ac_lat) ** 2
                   + ((mid[1] - ac_lon) * lat_cos) ** 2)
-            if d2 > near_deg2:
+            far = d2 > near_deg2
+            if far:
                 if hl.fclass != "motorway":
                     continue
                 if len(v) > 3:
                     v = np.vstack([v[::2], v[-1:]])
             lines.append(v)
+            fclasses.append(hl.fclass)
+            is_far.append(far)
         if not lines:
             return None
-        # Batched SRTM elevation for every vertex of every polyline.
-        all_pts = np.concatenate(lines, axis=0)
+
+        # Subdivide long near-field segments so the ribbon follows rolling
+        # terrain (brief section 3.1), then apply the hard vertex-count
+        # cap by dropping whole far-tier polylines (links first, then
+        # trunks — never near-tier or motorway) before the expensive
+        # per-vertex elevation/LOS/extrusion work runs on them.
+        all_pts, offsets = road_ribbon.subdivide_polylines(
+            lines, ac_lat, ac_lon,
+            subdivide_m=self._road_subdivide_m,
+            subdivide_nm=self._road_subdivide_nm)
+        lengths = np.diff(offsets)
+        keep_mask = road_ribbon.trim_to_vertex_budget(
+            lengths, fclasses, np.asarray(is_far, dtype=bool),
+            self._road_max_vertices)
+        if not keep_mask.all():
+            all_pts, offsets, fclasses = road_ribbon.apply_keep_mask(
+                all_pts, offsets, fclasses, keep_mask)
+        if all_pts.shape[0] == 0:
+            return None
+
+        # Batched SRTM elevation for every (now denser) vertex.
         elev_m, _ = self._sample_elevations(
             all_pts[:, 0][None, :], all_pts[:, 1][None, :])
         elev_ft = (elev_m[0] * 3.28084).astype(np.float32)
@@ -1709,33 +1805,21 @@ class SVSRenderer:
         # vertex at once (issue #74): the per-vertex sight-line loop was the
         # biggest GIL-held burst on the highway worker at low altitude. With no
         # depth test a road behind a ridge would draw over the near slope, so a
-        # GL_LINES pair is emitted only where BOTH endpoints have a clear line
-        # of sight -- the road disappears behind a ridge and reappears beyond.
+        # segment is emitted only where BOTH endpoints have a clear line of
+        # sight -- the road disappears behind a ridge and reappears beyond.
         masked_all = self._los_masked_batch(
             ac_lat, ac_lon, ac_alt_ft,
             all_pts[:, 0], all_pts[:, 1], elev_ft, lat_cos)
         vis_all = ~masked_all
-        out = []
-        i = 0
-        for v in lines:
-            k = len(v)
-            seg = np.empty((k, 3), dtype=np.float32)
-            seg[:, 0:2] = v
-            seg[:, 2] = elev_ft[i:i + k]
-            vis = vis_all[i:i + k]
-            i += k
-            seg_ok = vis[:-1] & vis[1:]      # per-segment: both ends visible
-            if not seg_ok.any():
-                continue
-            starts = seg[:-1][seg_ok]
-            ends = seg[1:][seg_ok]
-            pairs = np.empty((2 * starts.shape[0], 3), dtype=np.float32)
-            pairs[0::2] = starts
-            pairs[1::2] = ends
-            out.append(pairs)
-        if not out:
+
+        casing, fill = road_ribbon.extrude_ribbons(
+            all_pts, offsets, fclasses, elev_ft, vis_all,
+            ac_lat, ac_lon, pixels_per_deg,
+            width_m=self._road_width_m, casing_m=self._road_casing_m,
+            min_px=self._road_min_px, lift_ft=self._road_lift_ft)
+        if fill is None:
             return None
-        return np.concatenate(out, axis=0)
+        return casing, fill
 
     # Obstacle color groups (RGBA in [0, 1]) — match the QPen colors
     # the CPU path used in pre-Phase-2 commits.
@@ -2113,10 +2197,20 @@ class SVSRenderer:
         tile_lat_grid = np.floor(lat_grid).astype(np.int32)
         tile_lon_grid = np.floor(lon_grid).astype(np.int32)
 
-        keys = np.unique(
-            np.stack([tile_lat_grid.ravel(), tile_lon_grid.ravel()], axis=1),
-            axis=0
-        )
+        # Dedup tile coordinates by packing (lat, lon) into one int64 and
+        # calling 1-D np.unique, NOT np.unique(..., axis=0): the axis=0 path
+        # takes a generic row-wise-compare sort that measured 30x+ slower
+        # here than the packed-scalar path for the same handful of distinct
+        # tiles (AER-621 baseline profiling — this dominated the highways
+        # worker's wall time on the LOS sample grid, ~350ms down to ~11ms
+        # at DFW-metro vertex counts). Offsets keep both fields non-negative
+        # (lat in [-90, 90], lon in [-180, 180]) so the packing is exact.
+        lat_off = tile_lat_grid.ravel().astype(np.int64) + 90
+        lon_off = tile_lon_grid.ravel().astype(np.int64) + 200
+        packed = lat_off * 401 + lon_off
+        uniq_packed = np.unique(packed)
+        keys = np.stack([(uniq_packed // 401) - 90,
+                          (uniq_packed % 401) - 200], axis=1)
 
         for tile_lat, tile_lon in keys:
             tile = self.cache.get(int(tile_lat), int(tile_lon))
