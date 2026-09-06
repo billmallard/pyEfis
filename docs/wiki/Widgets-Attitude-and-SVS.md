@@ -210,6 +210,34 @@ renderer where to find terrain and feature data:
 `frame_rate`, `z_value`, … — but those are the **SVS renderer's** options and are
 documented separately, not here.)
 
+### Road ribbons (RD1, issue #161)
+
+The highways layer draws as an extruded true-scale ribbon — a darker casing
+under a lighter fill, both `GL_TRIANGLES` — instead of a 1 px `GL_LINES`
+hairline. Every default below reproduces the pre-RD1 class/tier/20 NM
+behaviour; only the drawn shape changes. Screen-builder Prop names carry an
+`svs_` prefix (`svs_road_color`, …) and are stripped to the keys below before
+reaching the renderer, same as `water_db_path`/`highway_db_path` above.
+
+| `svs:` key | Default | Meaning |
+|------------|---------|---------|
+| `road_color` | `#b8b4ad` | ribbon fill colour (warm light grey — reads as pavement) |
+| `road_casing_color` | `#4a4a4a` | darker casing colour drawn under the fill |
+| `road_casing_m` | `2.5` | casing half-width add-on over the class width, metres |
+| `road_min_px` | `1.5` | screen-space width floor — distant ribbons never drop below this many pixels |
+| `road_subdivide_m` | `150` | segments longer than this, within subdivide range, are split so the ribbon follows rolling terrain |
+| `road_subdivide_nm` | `4` | subdivision only applies this close to the aircraft |
+| `road_lift_ft` | `2` | height above sampled terrain the ribbon is drawn at |
+| `road_max_vertices` | `400000` | hard cap on extruded vertices per array (casing/fill each); over the cap, far-tier ramps are dropped first, then far-tier trunks |
+| `road_widths_m` | see below | per-OSM-class width table, metres per carriageway (config-only — no simple editor widget for a dict) |
+
+`road_widths_m` defaults: `motorway: 16, trunk: 13, primary: 11, secondary: 8,
+motorway_link: 7, trunk_link: 7, primary_link: 6, secondary_link: 6`; any other
+class draws at `7`. Override any subset via YAML, e.g.
+`road_widths_m: {motorway: 18}` — unlisted classes keep their default. Widths
+are per OSM way (== per carriageway; OSM maps a dual carriageway as two
+separate one-way ways), not per whole freeway.
+
 ### Example
 
 ```yaml
