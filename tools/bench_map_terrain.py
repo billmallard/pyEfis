@@ -38,7 +38,10 @@ def main(argv=None):
     ap.add_argument("--repeat", type=int, default=1,
                     help="render N times per cell, report the fastest")
     ap.add_argument("--water", default="",
-                    help="water db path (enables the _draw_water overlay)")
+                    help="water db path (enables the water overlay)")
+    ap.add_argument("--water-raster", default="numpy", choices=["numpy", "qt"],
+                    help="MP5: numpy scanline fill (default) or the legacy "
+                         "Qt QPointF/QPolygonF/drawPath path, for A/B")
     args = ap.parse_args(argv)
 
     from PyQt6.QtGui import QGuiApplication
@@ -52,6 +55,7 @@ def main(argv=None):
         terrain_mode = "relief"
         water_db_path = args.water              # "" skips the water overlay
         water_max_vertices = 512
+        water_raster = args.water_raster
 
     layer = tmod.TerrainLayer()
     layer.configure(Owner())
@@ -113,7 +117,8 @@ def main(argv=None):
         return total, acc["sample"], acc["palette"]
 
     print(f"tiles={args.tiles}  centre=({args.lat},{args.lon})  "
-          f"screen={args.w}x{args.h}\n")
+          f"screen={args.w}x{args.h}  water={args.water or '(off)'}  "
+          f"water_raster={args.water_raster}\n")
     hdr = (f"{'range':>6} {'n':>5} {'mip':>3} {'tiles':>6} "
            f"{'cold_s':>8} {'warm_s':>8} {'sample_s':>9} {'palette_s':>9} {'rest_s':>7}")
     print(hdr)
