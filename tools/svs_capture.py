@@ -327,7 +327,7 @@ def main(argv=None):
             "water_max_vertices": args.water_max_vertices,
             "highway_db_path": args.highways,
             "paved_only": True,
-            "svs_perf_log": False,
+            "perf_log": False,
             "haze": not args.flat,
             "haze_distance_nm": 40.0,
             "msaa_samples": args.msaa,

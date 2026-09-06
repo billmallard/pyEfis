@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 import pyefis.hmi as hmi
 from pyefis.screens import screenbuilder
+from pyefis.screens import screenbuilder_factory
 from pyefis.screens.screenbuilder import Screen
+from pyefis.instruments.ai import svs as svs_module
 
 
 # ── Minimal QWidget parent ────────────────────────────────────────────────────
@@ -2550,3 +2552,52 @@ class TestTabSection:
         tab_section.closeEvent(None)
 
         assert closed == pages
+
+
+# ── Flat svs_* editor props reach the renderer under the stripped name ────────
+#
+# AER-680: build_virtual_vfr strips the "svs_" prefix off every flat editor
+# prop before handing the dict to SVSRenderer (svs_range_nm -> range_nm).
+# svs_perf_log was declared/documented as a flat prop but svs.py kept reading
+# it WITH the prefix (config.get("svs_perf_log", ...)), so the prop silently
+# did nothing -- the only way to enable it was a literally double-prefixed
+# key inside the legacy nested `svs:` block. apply_options/set_svs_config
+# setattr raw and never flag an unknown key, so nothing else catches this
+# class of mismatch. This test walks the declared prop table so a future
+# rename on either side fails the build instead of surfacing on a bench
+# months later.
+
+class TestFlatSvsPropsReachRenderer:
+    def _svs_prop_names(self):
+        props = screenbuilder_factory.REGISTRY["virtual_vfr"].properties
+        names = [p.name for p in props if p.name.startswith("svs_")]
+        assert names, "virtual_vfr declared no svs_* props -- test is stale"
+        return names
+
+    def test_every_declared_prop_strips_to_a_key_svs_reads(self, qtbot):
+        source = Path(svs_module.__file__).read_text()
+        missing = []
+        for name in self._svs_prop_names():
+            stripped = name[len("svs_"):]
+            read_forms = (
+                f'config.get("{stripped}"', f"config.get('{stripped}'",
+                f'config["{stripped}"]', f"config['{stripped}']",
+            )
+            if not any(form in source for form in read_forms):
+                missing.append((name, stripped))
+        assert not missing, (
+            "these svs_* editor props strip to a key svs.py never reads "
+            f"(inert prop -- see AER-680): {missing}"
+        )
+
+    def test_build_svs_cfg_strips_prefix_for_every_declared_prop(self, qtbot):
+        # Cross-check the other half of the pipeline: the flat-options ->
+        # svs_cfg merge itself (screenbuilder_factory._build_svs_cfg) must
+        # actually strip each declared name, not just the well-behaved ones.
+        for name in self._svs_prop_names():
+            stripped = name[len("svs_"):]
+            sentinel = object()
+            cfg = screenbuilder_factory._build_svs_cfg({name: sentinel})
+            assert cfg.get(stripped) is sentinel, (
+                f"{name!r} did not arrive in svs_cfg as {stripped!r}"
+            )

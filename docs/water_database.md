@@ -213,7 +213,7 @@ svs:
     ...
     water_db_path: /home/wpballard/pyEfis/water/water_capped.sqlite
     water_max_vertices: 32          # optional, defaults to 32
-    svs_perf_log: true              # optional, default false
+    perf_log: true                  # optional, default false
 ```
 
 WaterDB construction is "missing file means disabled" — there is no
@@ -221,7 +221,7 @@ fatal failure if the path is wrong, just no water overlay.
 
 ## Perf notes (KSBA flight test, 2026-06-02)
 
-Profiler (svs_perf_log: true) at KSBA looking out over the Pacific
+Profiler (perf_log: true) at KSBA looking out over the Pacific
 on the GL renderer tier with the FULL un-decimated 1.45 GB OSM DB:
 
 | segment | per-frame | % budget |

@@ -99,6 +99,17 @@ def build_atitude_indicator(
     return widget
 
 
+def _build_svs_cfg(opts):
+    """Merge the legacy nested ``svs:`` dict with the flat ``svs_*`` editor
+    options (svs_<key> -> <key>). Pulled out of build_virtual_vfr so a test
+    can walk the declared svs_* prop table and confirm the stripped name it
+    produces here is the same name svs.py's config.get() actually reads --
+    see AER-680 (svs_perf_log was declared/documented but read unstripped)."""
+    svs_cfg = dict(opts.get("svs") or {})
+    svs_cfg.update({k[4:]: v for k, v in opts.items() if k.startswith("svs_")})
+    return svs_cfg
+
+
 def build_virtual_vfr(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
@@ -112,8 +123,7 @@ def build_virtual_vfr(
     # editor options (svs_<key> -> <key>). Only configure SVS when it is
     # actually enabled (or a legacy block is present), so panels that don't use
     # synthetic vision are untouched.
-    svs_cfg = dict(opts.get("svs") or {})
-    svs_cfg.update({k[4:]: v for k, v in opts.items() if k.startswith("svs_")})
+    svs_cfg = _build_svs_cfg(opts)
     if opts.get("svs") or svs_cfg.get("enabled"):
         widget.set_svs_config(svs_cfg)
     return widget
@@ -424,6 +434,11 @@ def _svs_props():
              help="hard cap on extruded vertices per array (casing/fill "
                   "each); over the cap, far-tier ramps are dropped first, "
                   "then far-tier trunks" + dev),
+        Prop("svs_perf_log", "boolean", default=False, apply="special",
+             label="Perf: log summary",
+             help="print an SVS per-frame profiler summary every 2s "
+                  "(collector/draw timings) to the log -- mirrors "
+                  "map_perf_log. Dev/bench diagnostic; off by default" + dev),
     ]
 
 

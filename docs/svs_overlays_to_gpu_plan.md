@@ -267,7 +267,7 @@ areas with dense obstacles).
 - **Unit tests** for tessellation (golden output for a known polygon).
 - **Visual harness** runs already cover the rendering; add A/B screenshots
   in the harness comparing CPU-path and GPU-path output for the same pose.
-- **Pi end-to-end**: keep `svs_perf_log` on during phased rollout, monitor
+- **Pi end-to-end**: keep `perf_log` on during phased rollout, monitor
   `frame.svs_total` after each phase lands.
 - **Quality controller** behavior unchanged — it consumes `frame.svs_total`
   and doesn't care which renderer produced it. Tests stay green.

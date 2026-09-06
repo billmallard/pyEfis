@@ -37,7 +37,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Lightweight per-frame profiler. Each named segment accumulates wall-clock
 # time and a call count; once the report interval elapses we log a single
-# summary line and reset. Enabled via ``svs_perf_log: true`` in the SVS
+# summary line and reset. Enabled via ``perf_log: true`` in the SVS
 # config block; zero overhead when disabled (the methods check a flag
 # before doing any timing math).
 # ---------------------------------------------------------------------------
@@ -556,12 +556,12 @@ class SVSRenderer:
         # cached alongside the boolean; None when not near one.
         self._near_airport_elev_ft = None
 
-        # Per-frame profiler. ``svs_perf_log: true`` in the SVS config
+        # Per-frame profiler. ``perf_log: true`` in the SVS config
         # turns on a lightweight per-segment timing pass that prints a
         # summary line every couple of seconds. Off by default; zero
         # overhead when disabled.
         self._perf = _SVSPerfLog(
-            enabled=bool(config.get("svs_perf_log", False)))
+            enabled=bool(config.get("perf_log", False)))
         if self._perf.enabled:
             log.info("SVS perf logging enabled")
 

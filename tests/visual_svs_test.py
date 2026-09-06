@@ -183,7 +183,7 @@ widget.set_svs_config({
     "nasr_db_path":       NASR_PATH,    # preferred — Tier C surface markings
     "dof_db_path":        DOF_PATH,     # FAA DOF obstacles (towers, antennas)
     "water_db_path":      WATER_PATH,   # OSM/NE water polygons
-    "svs_perf_log":       PERF_LOG,
+    "perf_log":           PERF_LOG,
     "haze":               os.environ.get("SVS_HAZE", "1").lower()
                           not in ("0", "false", "no"),
     "haze_distance_nm":   float(os.environ.get("SVS_HAZE_NM", "40")),
