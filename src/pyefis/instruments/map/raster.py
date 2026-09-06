@@ -75,6 +75,10 @@ def fill_even_odd(rings, n):
     x_at = x0[edge_id] + (yc - y0[edge_id]) * dx / dy
     c = np.clip(np.ceil(x_at - 0.5).astype(np.int64), 0, n)
 
-    acc = np.zeros((n, n + 1), dtype=np.int32)
-    np.add.at(acc, (j, c), 1)
+    # AER-681: bincount over the flattened (row, col) index is the buffered
+    # scatter-add idiom, vs. np.add.at's unbuffered (GIL-held) ufunc path.
+    # Correctness-neutral swap; see the PR for why it did not move the
+    # measured 160 NM regression (add.at was not the dominant cost there).
+    flat = j * (n + 1) + c
+    acc = np.bincount(flat, minlength=n * (n + 1)).reshape(n, n + 1)
     return (np.cumsum(acc, axis=1)[:, :n] & 1).astype(bool)
