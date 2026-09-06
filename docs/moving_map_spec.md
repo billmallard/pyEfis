@@ -196,6 +196,72 @@ for 3 s after any action (so button UX works blind of the menu).
 - Memory: tile cache capped (~150 MB), navaids/airports queries
   windowed by view.
 
+### 9.1 Gesture benchmark harness (MP7) JSON schema
+
+`tools/bench_map_gestures.py` (briefs/map_gesture_perf_plan.md section 4,
+pyEfis #98) builds a real `MovingMap` offscreen against the mock FIX db
+`conftest.py` uses for the unit tests and drives it through a named
+scenario (`pinch_out`, `pinch_in`, `rotate`, `pan`, `ladder`, or `all`),
+pumping the Qt event loop at 1 kHz so the widget's own gesture gating
+(MP1), worker publication (MP2), frame clock (MP3) and MP6 perf counters
+all run as they would live. Output is always a JSON **array** (one
+element per scenario run, so `--scenario all` and a single `--scenario
+pinch_out` share one schema) written to `--out` or stdout; progress/
+summary lines go to stderr so stdout stays pipeable. Each element:
+
+```jsonc
+{
+  "schema_version": 1,
+  "rev": "b4d3349",            // git short SHA, "" outside a checkout
+  "host": "beelinkpyefis",     // socket.gethostname()
+  "scenario": "pinch_out",
+  "widget": {"w": 650, "h": 1040},
+  "lat": 35.8, "lon": -78.8,
+  "duration_s": 6.48,          // wall-clock time the scenario itself took
+  "params": {"range_from_nm": 10.0, "range_to_nm": 160.0,
+             "range_actual_nm": 160.0, "events": 90, "event_hz": 60.0,
+             "hold_s": 5.0},   // scenario-specific inputs, for repro
+  "counters": {                // MapPerfStats.snapshot() -- every MP6 counter
+    "frames_painted": 50,
+    "paint_ms": {"p50": 0.7, "p95": 1.0, "max": 5.5, "count": 50},
+    "layers": {                // keyed by layer id; a layer with no jobs
+      "terrain": {"jobs_requested": 1, "jobs_started": 1,
+                  "jobs_published": 1, "jobs_superseded": 0,
+                  "last_render_ms": 12.3, "max_render_ms": 12.3}
+    },                        // (omitted entirely) never appears here
+    "water": {"polygons_before": 0, "vertices_before": 0,
+              "polygons_after": 0, "vertices_after": 0,
+              "qpointf_count": 0},
+    "settle_latency_ms": 97.0, // null if no gesture completed a settle
+    "probe": {"p50_ms": 10.7, "p95_ms": 10.8, "max_ms": 11.0,
+              "count": 256, "over_count": 0}
+  },
+  "summary": "pinch_out: 6.48s, 50 paints (p50=0.7 p95=1.0 max=5.5 ms), "
+             "settle=97ms, gui gap p95=10.8ms max=11.0ms >50ms=0; "
+             "terrain req=1 pub=1 superseded=0"
+}
+```
+
+`--budget <path>` loads a JSON map of `{scenario: [{"path": "a.b.c",
+"max": x} | {"min": x}, ...]}`, evaluates each dotted `path` against that
+scenario's `counters` (e.g. `"layers.terrain.jobs_requested"`,
+`"settle_latency_ms"`, `"probe.max_ms"`), and exits non-zero if any bound
+is violated (a `path` absent from a run -- e.g. a layer with no data
+configured -- is skipped with a warning, not a failure). Example
+budgets file matching the acceptance table in section 5 of the brief:
+
+```json
+{
+  "pinch_out": [
+    {"path": "layers.terrain.jobs_requested", "max": 1},
+    {"path": "layers.terrain.jobs_superseded", "max": 0},
+    {"path": "settle_latency_ms", "max": 600},
+    {"path": "probe.max_ms", "max": 50}
+  ],
+  "rotate": [{"path": "frames_painted", "max": 90}]
+}
+```
+
 ## 10. Phases
 
 - **A — skeleton**: widget + MapTransform + ownship + range rings
