@@ -231,7 +231,19 @@ def main():
         fms = importlib.import_module ("FixIntf")
         fms.start(config["FMS"]["aircraft_config"])
 
-    gui.initialize(config,config_path,preferences)
+    try:
+        gui.initialize(config,config_path,preferences)
+    except Exception:
+        # fix.initialize()/hmi.initialize() above have already started
+        # non-daemon background threads that block forever waiting on the
+        # FIX bus. If we let this exception unwind normally, the main
+        # thread dies but those threads keep the process alive (0% CPU,
+        # stuck in the interpreter's non-daemon-thread join at shutdown) --
+        # a permanently black display that no supervisor can see or
+        # restart. os._exit() skips that join and kills the process
+        # outright so systemd's Restart=always can actually fire.
+        log.critical("Fatal error initializing GUI - exiting", exc_info=True)
+        os._exit(1)
 
     # Do this after the widgets subscribe to the item
     pyefis_ver.value = __version__
