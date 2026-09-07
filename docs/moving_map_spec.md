@@ -262,6 +262,86 @@ budgets file matching the acceptance table in section 5 of the brief:
 }
 ```
 
+### 9.2 Moving-position mode (AER-679) JSON schema
+
+`tools/bench_map_gestures.py --moving-position` (briefs/
+map_gesture_perf_plan.md section 5, AER-679) drives LAT/LONG continuously
+at `--gs`/`--heading`/`--position-hz` for `--duration` seconds, instead of
+running a static `--scenario` -- every gesture scenario above pins LAT/
+LONG, a regime AER-677 found the aircraft is never actually in (the SVS
+frame gap collapses from ~25 ms to ~699 ms only once real position motion
+is driven). One result record, appended to the same JSON array the
+gesture scenarios use (`"scenario": "moving_position"`):
+
+```jsonc
+{
+  "schema_version": 1,
+  "rev": "b4d3349", "host": "beelinkpyefis",
+  "scenario": "moving_position",
+  "target": "both",              // "map" | "svs" | "both"
+  "widget": {"w": 650, "h": 1040},
+  "lat": 35.8, "lon": -78.8,
+  "duration_s": 40.02,
+  "params": {"gs_kt": 130.0, "heading_deg": 280.0,
+             "position_hz": 20.0, "duration_s": 40.0},
+  "counters": {
+    "svs": {                     // present when --target is svs|both
+      "frame_gap_ms": {"p50": 24.1, "p95": 698.9, "p99": 701.2,
+                       "max": 705.0, "count": 799},
+      "frame_total_ms": {"p50": 5.9, "p95": 6.8, "p99": 7.4,
+                         "max": 9.1, "count": 799},
+      "collectors": {           // hit/miss per SVS collector cache
+        "water": {"hit": 40, "miss": 759, "hit_rate": 0.05},
+        "highways": {"hit": 612, "miss": 187, "hit_rate": 0.766},
+        "obstacles": {"hit": 799, "miss": 0, "hit_rate": 1.0},
+        "airports": {"hit": 799, "miss": 0, "hit_rate": 1.0}
+      }
+    },
+    "map": {                     // present when --target is map|both;
+                                 // every MP6 counter (see 9.1) plus:
+      "frame_gap_ms": {"p50": 30.1, "p95": 33.5, "p99": 40.0,
+                       "max": 55.2, "count": 799},
+      "frames_painted": 799, "paint_ms": {...}, "layers": {...},
+      "water": {...}, "settle_latency_ms": null, "probe": {...}
+    }
+  },
+  "summary": "moving_position: 40.0s @ 130 kt hdg 280, 20 Hz -- "
+             "svs gap p50=24.1 p95=698.9 p99=701.2 max=705.0 ms (n=799); "
+             "map gap p50=30.1 p95=33.5 p99=40.0 max=55.2 ms (n=799)",
+  "caveat": "the 20 Hz LAT/LONG bus writer driving this run is itself "
+           "Python load, comparable to X-Plane's own update rate but "
+           "not present in a pure-pyEfis idle measurement -- read these "
+           "numbers as \"pyEfis under motion comparable to X-Plane,\" "
+           "not a pure-pyEfis figure (AER-677)."
+}
+```
+
+`frame_gap_ms`/`frame_total_ms` are the SVS analogue of
+`ai/svs.py`'s own `frame.gap_between_svs`/`frame.svs_total` perf-log
+lines, captured from OUTSIDE the renderer (that profiler has no public,
+non-self-clearing read API -- see `_install_svs_hooks`'s docstring) so no
+production code changes were needed. `collectors` distinguishes "renderer
+slow" (`frame_total_ms` high) from "renderer starved" (`frame_gap_ms`
+high while `frame_total_ms` stays low and collector `miss` counts are
+high) -- the exact distinction that diagnosed AER-677. A collector
+"miss" means that call started a new background collect-worker thread
+(the only event that puts new GIL-held work in flight under this
+architecture); anything else -- an exact cache hit, or promoting an
+already-finished worker's result -- is a "hit," since both cost ~0 on the
+render thread.
+
+**Pass threshold: `frame_gap_ms.p95 <= 50` (both `svs` and `map`).**
+Sourced from `PROBE_GAP_WARN_MS` in `map/perf.py` -- the project's own
+existing GUI-thread-stall gate (MP6) -- reused here so the map and SVS
+share one canonical "is the screen still redrawing" number instead of
+two independently invented ones. Cross-checked against AER-677's own
+measurement: healthy SVS gap ~25 ms (40 fps) vs the reproduced defect's
+~699 ms (1.4 fps) -- 50 ms sits with clean margin above the healthy
+baseline and two orders of magnitude below the defect, so it separates
+the two without being tuned to this specific bug. See
+`tools/budgets/moving_position.json` for a ready-to-use `--budget` file
+encoding this threshold.
+
 ## 10. Phases
 
 - **A — skeleton**: widget + MapTransform + ownship + range rings

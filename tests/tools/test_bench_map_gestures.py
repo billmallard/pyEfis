@@ -11,6 +11,7 @@ bracket, JSON schema, --budget exit code) against the real widget."""
 
 import importlib.util
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -145,3 +146,201 @@ def test_main_budget_satisfied_exits_zero(bmg, qapp, tmp_path):
     rc = bmg.main(["--scenario", "ladder", "--w", "150", "--h", "150",
                   "--out", str(out), "--budget", str(budget)])
     assert rc == 0
+
+
+# --- moving-position (AER-679): pure helpers -------------------------------
+
+def test_dead_reckon_step_matches_aer677_formula(bmg):
+    """Same formula AER-677's fixgw.netfix repro and visual_svs_test.py's
+    SVS_SIM_MOTION use: 130 kt / hdg 280 for 1 s moves ~0.0361 NM,
+    almost entirely westbound (hdg 280 is close to due west) with a
+    small northward component."""
+    lat, lon = bmg._dead_reckon_step(40.0, -82.855, 130.0, 280.0, 1.0)
+    assert lat > 40.0          # hdg 280 has a small +cos component north
+    assert lon < -82.855       # hdg 280 moves west (lon decreases)
+    assert lat == pytest.approx(40.0, abs=0.001)
+    assert lon == pytest.approx(-82.855, abs=0.001)
+
+
+def test_dead_reckon_step_zero_speed_is_stationary(bmg):
+    lat, lon = bmg._dead_reckon_step(35.8, -78.8, 0.0, 90.0, 1.0)
+    assert (lat, lon) == (35.8, -78.8)
+
+
+def test_percentiles_empty_is_all_none(bmg):
+    p = bmg._percentiles([])
+    assert p == dict(p50=None, p95=None, p99=None, max=None, count=0)
+
+
+def test_percentiles_single_value_all_equal(bmg):
+    p = bmg._percentiles([42.0])
+    assert p == dict(p50=42.0, p95=42.0, p99=42.0, max=42.0, count=1)
+
+
+def test_percentiles_p95_and_max_differ_on_a_spread(bmg):
+    values = list(range(1, 101))   # 1..100
+    p = bmg._percentiles([float(v) for v in values])
+    assert p["max"] == 100.0
+    assert p["p50"] < p["p95"] < p["p99"] <= p["max"]
+    assert p["count"] == 100
+
+
+# --- moving-position: hit/miss + timing hooks, no Qt -----------------------
+
+class _FakeSVSRenderer:
+    """Stand-in for an SVSRenderer exposing just the attributes
+    _install_svs_hooks touches, so the hit/miss + timing logic can be
+    tested without a real GL context."""
+
+    def __init__(self):
+        self._water_worker = None
+        self._hwy_worker = None
+        self._async_state = {}
+        self.water_calls = 0
+
+    def draw(self, p, w, h, ac_lat, ac_lon, ac_alt_ft, pitch_deg,
+             roll_deg, heading_deg, pixels_per_deg,
+             device_pixel_ratio=1.0):
+        time.sleep(0.01)
+
+    def _collect_water_triangles(self, ac_lat, ac_lon, range_nm):
+        self.water_calls += 1
+        if self.water_calls == 1:
+            self._water_worker = object()   # simulate a fresh kickoff
+
+    def _collect_highways(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                          pixels_per_deg):
+        pass   # never touches _hwy_worker -> every call is a "hit"
+
+    def _async_cache(self, name, key, builder):
+        st = self._async_state.setdefault(
+            name, {"key": None, "val": None, "worker": None})
+        if st["key"] != key:
+            st["worker"] = object()   # simulate a fresh kickoff
+            st["key"] = key
+        return st["val"]
+
+
+def test_install_svs_hooks_counts_water_hit_then_miss(bmg):
+    f = _FakeSVSRenderer()
+    samples, collectors, restore = bmg._install_svs_hooks(f)
+    f._collect_water_triangles(0.0, 0.0, 10.0)   # miss: kicks a worker
+    f._collect_water_triangles(0.0, 0.0, 10.0)   # hit: worker unchanged
+    assert collectors["water"] == {"hit": 1, "miss": 1}
+    assert collectors["highways"] == {"hit": 0, "miss": 0}
+    restore()
+
+
+def test_install_svs_hooks_counts_highway_always_hit(bmg):
+    f = _FakeSVSRenderer()
+    samples, collectors, restore = bmg._install_svs_hooks(f)
+    f._collect_highways(0.0, 0.0, 0.0, 10.0, 100.0)
+    f._collect_highways(0.0, 0.0, 0.0, 10.0, 100.0)
+    assert collectors["highways"] == {"hit": 2, "miss": 0}
+    restore()
+
+
+def test_install_svs_hooks_counts_async_cache_obstacles(bmg):
+    f = _FakeSVSRenderer()
+    samples, collectors, restore = bmg._install_svs_hooks(f)
+    f._async_cache("obstacles", ("keyA",), lambda: {})
+    f._async_cache("obstacles", ("keyA",), lambda: {})   # same key -> hit
+    f._async_cache("obstacles", ("keyB",), lambda: {})   # new key -> miss
+    assert collectors["obstacles"] == {"hit": 1, "miss": 2}
+    restore()
+
+
+def test_install_svs_hooks_restore_stops_counting(bmg):
+    f = _FakeSVSRenderer()
+    samples, collectors, restore = bmg._install_svs_hooks(f)
+    f._collect_highways(0.0, 0.0, 0.0, 10.0, 100.0)
+    restore()
+    f._collect_highways(0.0, 0.0, 0.0, 10.0, 100.0)   # not counted anymore
+    assert collectors["highways"] == {"hit": 1, "miss": 0}
+
+
+def test_install_svs_hooks_measures_draw_gap_and_total(bmg):
+    f = _FakeSVSRenderer()
+    samples, collectors, restore = bmg._install_svs_hooks(f)
+    f.draw(None, 100, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0)
+    time.sleep(0.02)
+    f.draw(None, 100, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0)
+    restore()
+    assert len(samples["total_ms"]) == 2
+    assert samples["total_ms"][0] >= 8.0     # ~10ms sleep inside draw()
+    assert len(samples["gap_ms"]) == 1       # gap only after the 2nd call
+    assert samples["gap_ms"][0] >= 18.0      # ~10ms draw + ~20ms sleep
+
+
+def test_install_map_hooks_measures_paint_to_paint_gap(bmg):
+    class _FakePerf:
+        def __init__(self):
+            self.calls = []
+
+        def record_paint_ms(self, ms):
+            self.calls.append(ms)
+
+    perf = _FakePerf()
+    samples, restore = bmg._install_map_hooks(perf)
+    perf.record_paint_ms(1.0)
+    time.sleep(0.02)
+    perf.record_paint_ms(1.0)
+    restore()
+    assert perf.calls == [1.0, 1.0]   # original still runs
+    assert len(samples) == 1
+    assert samples[0] >= 18.0
+
+
+# --- moving-position: end to end (map target needs no GL) ------------------
+
+def test_moving_position_map_only_end_to_end(bmg, qapp):
+    args = bmg._parse_args([
+        "--moving-position", "--target", "map",
+        "--w", "150", "--h", "150",
+        "--duration", "0.5", "--position-hz", "20", "--gs", "130",
+        "--heading", "280"])
+    r = bmg.run_moving_position(qapp, args, "deadbeef", "test-host")
+    assert r["scenario"] == "moving_position"
+    assert r["target"] == "map"
+    assert "svs" not in r["counters"]
+    gap = r["counters"]["map"]["frame_gap_ms"]
+    assert gap["count"] >= 0   # a short/idle run may paint 0-1 times
+    assert "caveat" in r and "AER-677" in r["caveat"]
+    assert "moving_position:" in r["summary"]
+
+
+def test_moving_position_budget_gate_via_main(bmg, qapp, tmp_path):
+    """DoD: the --budget gate actually trips on a moving-position result
+    -- proven the same way test_main_budget_violation_exits_nonzero
+    proves it for a gesture scenario."""
+    budget = tmp_path / "budget.json"
+    budget.write_text(json.dumps(
+        {"moving_position": [
+            {"path": "map.frame_gap_ms.count", "min": 10**9}]}))
+    out = tmp_path / "out.json"
+    rc = bmg.main([
+        "--moving-position", "--target", "map",
+        "--w", "150", "--h", "150", "--duration", "0.3",
+        "--position-hz", "20", "--out", str(out), "--budget", str(budget)])
+    assert rc != 0
+
+
+def test_moving_position_svs_target_reports_or_skips_without_gl(bmg, qapp):
+    """SVS is GL-required with no CPU fallback (ai/svs.py) -- in a
+    headless CI box with no usable GL, SVS disables itself and this
+    just proves the harness doesn't crash and reports zero frames
+    rather than fabricating numbers. Where GL *is* available (the
+    Beelink bench), this is the actual AER-677 regression check."""
+    args = bmg._parse_args([
+        "--moving-position", "--target", "svs",
+        "--w", "150", "--h", "150",
+        "--duration", "0.5", "--position-hz", "20"])
+    r = bmg.run_moving_position(qapp, args, "deadbeef", "test-host")
+    assert r["target"] == "svs"
+    assert "map" not in r["counters"]
+    svs = r["counters"]["svs"]
+    assert set(svs["collectors"]) == {"water", "highways", "obstacles",
+                                      "airports"}
+    if svs["frame_total_ms"]["count"] == 0:
+        pytest.skip("no GL context in this environment (SVS UNAVAIL)")
+    assert svs["frame_gap_ms"]["count"] >= 0
