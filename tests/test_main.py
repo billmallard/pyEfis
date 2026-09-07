@@ -341,6 +341,31 @@ def test_main_systemd_continues_when_auto_start_is_enabled(
     main_module.fix.initialize.assert_called_once_with(config)
 
 
+def test_main_exits_process_when_gui_initialize_fails(
+    monkeypatch, config_files, patched_runtime
+):
+    # fix.initialize()/hmi.initialize() have already started non-daemon
+    # background threads by the time gui.initialize() runs; if that failure
+    # were allowed to unwind as a normal exception, those threads would
+    # keep the process alive forever (AER-762). main() must instead force
+    # an immediate process exit so a supervisor sees the death and can act.
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value={"hooks": {}}))
+    monkeypatch.setattr(
+        main_module.gui, "initialize", mock.Mock(side_effect=RuntimeError("no display"))
+    )
+    monkeypatch.setattr(main_module.os, "_exit", mock.Mock(side_effect=SystemExit(1)))
+
+    with pytest.raises(SystemExit) as exc:
+        main_module.main()
+
+    assert exc.value.code == 1
+    main_module.os._exit.assert_called_once_with(1)
+    # app.exec() must never be reached once GUI init has failed terminally.
+    assert FakeApp.instances[0].exec.called is False
+
+
 def test_create_config_dir_copies_new_changed_and_user_modified_files(
     monkeypatch, tmp_path
 ):

@@ -79,6 +79,17 @@ class Main(QMainWindow):
             # screenWidth and screenHeight are not defined in the config file
             # go full screen
             pscreen = QApplication.primaryScreen()
+            if pscreen is None:
+                # The platform plugin (eglfs) found no connected output --
+                # e.g. a sleeping/disconnected HDMI panel drops hotplug
+                # detect. Fail loudly here rather than dereferencing None;
+                # the caller is responsible for making this failure
+                # terminal so a process supervisor can see it and restart.
+                raise RuntimeError(
+                    "No display available: QApplication.primaryScreen() "
+                    "returned None (platform plugin found no connected "
+                    "output)"
+                )
             screensize = pscreen.size()
             self.screenWidth = screensize.width()
             self.screenHeight = screensize.height()

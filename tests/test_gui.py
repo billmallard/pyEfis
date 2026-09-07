@@ -247,6 +247,16 @@ def test_main_uses_primary_screen_when_size_not_configured(app, qtbot, monkeypat
     assert window.nodeID == 99
 
 
+def test_main_raises_when_no_display_available(app, monkeypatch):
+    _screen_module("tests.fake_gui_screen_no_display")
+    _add_screen("FIRST", "tests.fake_gui_screen_no_display", {}, True)
+    monkeypatch.setattr(gui.QApplication, "primaryScreen", mock.Mock(return_value=None))
+
+    config = _config(width=0, height=0, default=0)
+    with pytest.raises(RuntimeError, match="No display available"):
+        gui.Main(config, ".", {})
+
+
 def test_main_events_running_screen_and_exit(app, qtbot, monkeypatch):
     _screen_module("tests.fake_gui_screen_events")
     _add_screen("FIRST", "tests.fake_gui_screen_events", {}, True)
