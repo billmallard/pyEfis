@@ -1425,7 +1425,7 @@ class SVSGLRenderer:
                 with p._perf.time("water"):
                     with p._perf.time("water.collect"):
                         tris = p._collect_water_triangles(
-                            ac_lat, ac_lon, range_nm)
+                            ac_lat, ac_lon, ac_alt_ft, range_nm)
                     if tris is not None and tris.size > 0:
                         # COLOR_WATER from svs.py = (20, 80, 150).
                         color = (20 / 255.0, 80 / 255.0,
