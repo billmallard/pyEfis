@@ -61,6 +61,24 @@ Usage::
     # symbology only, terrain suppressed -- for judging a constant attitude
     # bias, which a terrain-and-symbology frame can hide
     python tools/svs_capture.py ... --symbology-only
+
+``--offscreen`` (AER-763): capturing needs a window today (a ``QMainWindow``
+that gets ``.show()``n so its ``QOpenGLWidget`` viewport can initialise). Under
+eglfs that window needs a screen, and eglfs hands out at most one -- so this
+tool cannot run at all while pyEfis is already on the glass and holding DRM
+master ("Cannot create window: no screens available"). ``--offscreen`` avoids
+that by never creating a window: it drives a ``QOffscreenSurface`` +
+``QOpenGLContext`` + ``QOpenGLFramebufferObject`` directly, which eglfs can
+grant without a free screen (probed and confirmed working alongside a running
+pyEfis; see AER-763). The AI widget is used exactly as before for pose,
+config and the scene graph, but rendering goes through
+``QGraphicsView.render()`` onto the FBO's paint device instead of through the
+widget's own (window-bound) viewport compositing --
+``AI._paint_overlays()`` is the extracted half of ``paintEvent`` that isn't
+scene items (the bank cluster, FPM, chevrons, ...) and gets driven the same
+way. Not yet validated against a real eglfs+DRM-contention rig or diffed
+pixel-for-pixel against the windowed path -- see the AER-763 issue thread
+before trusting this as a second golden source.
 """
 
 import argparse
@@ -83,8 +101,8 @@ sys.modules["pyavtools.fix.client"] = mock_db.client
 sys.modules["pyavtools.scheduler"] = mock_db.scheduler
 
 import pyavtools.fix as fix  # noqa: E402
-from PyQt6.QtCore import Qt, QTimer  # noqa: E402
-from PyQt6.QtGui import QImage  # noqa: E402
+from PyQt6.QtCore import Qt, QRectF, QTimer  # noqa: E402
+from PyQt6.QtGui import QImage, QPainter  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMainWindow  # noqa: E402
 
 from pyefis.instruments.ai import AI  # noqa: E402
@@ -129,6 +147,16 @@ def parse_args(argv=None):
     )
     view.add_argument("--width", type=int, default=800)
     view.add_argument("--height", type=int, default=600)
+    view.add_argument(
+        "--offscreen",
+        action="store_true",
+        help="render into a QOffscreenSurface + FBO instead of opening a window. "
+        "Use this when another process (pyEfis) already holds the display -- a "
+        "second on-screen window has nowhere to go there, but an offscreen "
+        "surface does not contend for it. See the module docstring for how "
+        "this differs from the default path and what is not yet verified "
+        "about it (AER-763)",
+    )
 
     look = p.add_argument_group("appearance")
     look.add_argument(
@@ -189,6 +217,14 @@ def parse_args(argv=None):
     if args.terrain_only and args.symbology_only:
         p.error("--terrain-only and --symbology-only are mirror images of "
                  "each other; pick one")
+    if args.offscreen and args.msaa != 1:
+        # Same constraint the windowed path already has (see --msaa's help):
+        # glReadPixels on a multisample FBO is invalid. The offscreen FBO is
+        # always allocated with 0 samples, so a non-default --msaa here would
+        # silently be ignored rather than failing at readback -- reject it
+        # up front instead.
+        p.error("--offscreen always renders at 1 sample; --msaa must be 1 "
+                "(or omitted)")
     return args
 
 
@@ -220,13 +256,10 @@ class CapturingAI(AI):
         self.capture_ok = _readback(self.viewport(), path)
 
 
-def _readback(viewport, path):
-    """Read the widget's FBO. Must run with the GL context current, i.e. in paint."""
+def _readback_pixels(w, h, path):
+    """Read the currently bound framebuffer. Must run with the GL context
+    current and the framebuffer to be read already bound."""
     from OpenGL import GL as gl
-
-    dpr = viewport.devicePixelRatioF()
-    w = int(round(viewport.width() * dpr))
-    h = int(round(viewport.height() * dpr))
 
     gl.glPixelStorei(gl.GL_PACK_ALIGNMENT, 1)
     buf = gl.glReadPixels(0, 0, w, h, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE)
@@ -234,6 +267,95 @@ def _readback(viewport, path):
     # GL's origin is bottom-left; QImage's is top-left. copy() detaches from buf.
     img = QImage(bytes(buf), w, h, QImage.Format.Format_RGBA8888)
     return bool(img.mirrored(False, True).copy().save(path, "PNG"))
+
+
+def _readback(viewport, path):
+    """Read the widget's FBO. Must run with the GL context current, i.e. in paint."""
+    dpr = viewport.devicePixelRatioF()
+    w = int(round(viewport.width() * dpr))
+    h = int(round(viewport.height() * dpr))
+    return _readback_pixels(w, h, path)
+
+
+def make_offscreen_target(width, height):
+    """Build a render target that needs no platform window: a
+    QOffscreenSurface + QOpenGLContext + QOpenGLFramebufferObject.
+
+    This is the AER-763 unlock -- unlike a QOpenGLWidget/QGraphicsView
+    viewport (which under eglfs needs a real, screen-backed platform window,
+    the exact resource pyEfis already holds), a QOffscreenSurface does not
+    contend for the display. Returns ``None`` on any failure so the caller
+    can report EXIT_GL_FAILED instead of dereferencing a half-built target.
+    """
+    from PyQt6.QtGui import QOffscreenSurface, QOpenGLContext, QSurfaceFormat
+    from PyQt6.QtOpenGL import (
+        QOpenGLFramebufferObject,
+        QOpenGLFramebufferObjectFormat,
+        QOpenGLPaintDevice,
+    )
+
+    fmt = QSurfaceFormat()
+    fmt.setSamples(0)  # glReadPixels on a multisample FBO is invalid
+
+    surface = QOffscreenSurface()
+    surface.setFormat(fmt)
+    surface.create()
+    if not surface.isValid():
+        return None
+
+    ctx = QOpenGLContext()
+    ctx.setFormat(fmt)
+    if not ctx.create():
+        return None
+    if not ctx.makeCurrent(surface):
+        return None
+
+    fbo_fmt = QOpenGLFramebufferObjectFormat()
+    fbo_fmt.setSamples(0)
+    fbo_fmt.setAttachment(
+        QOpenGLFramebufferObject.Attachment.CombinedDepthStencil)
+    fbo = QOpenGLFramebufferObject(width, height, fbo_fmt)
+    if not fbo.isValid():
+        return None
+    fbo.bind()
+
+    paint_device = QOpenGLPaintDevice(width, height)
+    # surface and ctx are returned only to keep them alive (Qt does not hold
+    # a reference for us); this tool is short-lived and never tears them
+    # down, letting process exit reclaim the context/surface.
+    return surface, ctx, fbo, paint_device
+
+
+def render_offscreen_frame(widget, fbo, paint_device):
+    """Paint one frame of ``widget`` directly into ``fbo``.
+
+    Stands in for ``AI.paintEvent`` in the offscreen path: ``paintEvent``
+    itself is unreachable without a live QOpenGLWidget viewport, which in
+    turn needs the real platform window this path exists to avoid.
+    ``QGraphicsView.render()`` reproduces the scene compositing
+    ``super().paintEvent()`` does -- including the view's roll-rotation and
+    pitch-offset transform applied by ``redraw()`` -- onto an arbitrary
+    QPainter, with no dependency on the viewport widget's own paint device.
+    ``AI._paint_overlays()`` is the extracted non-scene half of paintEvent
+    (bank cluster, FPM, chevrons, ...); it takes a QPainter directly for
+    exactly this reason.
+    """
+    widget._update_land_brush()
+    fbo.bind()
+    painter = QPainter(paint_device)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    rect = QRectF(0, 0, widget.width(), widget.height())
+    if widget.terrain_only:
+        hl = getattr(widget, "_horizon_line", None)
+        if hl is not None:
+            hl.setOpacity(0.0)
+        for _i, _item in widget.pitchItems:
+            _item.setOpacity(0.0)
+        widget.render(painter, rect)
+    else:
+        widget.render(painter, rect)
+        widget._paint_overlays(painter)
+    painter.end()
 
 
 def settled(svs, expect_layers, require_terrain=True):
@@ -365,48 +487,59 @@ def main(argv=None):
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication([])
 
-    win = QMainWindow()
-    win.resize(args.width, args.height)
+    svs_config = {
+        # --symbology-only disables the SVS outright rather than hiding its
+        # output: make_svs_item's paint() no-ops on `not ready` (svs.py), so
+        # the terrain layer never touches the framebuffer and the AI's own
+        # land-brush fallback (flat brown/blue, no data files involved) is
+        # what's left below the horizon. This is the cheaper mirror of
+        # --terrain-only asked for in AER-707 -- no new suppression path in
+        # ai/__init__.py or svs.py.
+        "enabled": not args.symbology_only,
+        "tile_path": args.tiles,
+        "renderer": "opengl",
+        "range_nm": args.range_nm,
+        "auto_range": args.auto_range,
+        "clearance_green_ft": 1000,
+        "clearance_yellow_ft": 500,
+        "cifp_path": cifp,
+        "nasr_db_path": nasr,
+        "dof_db_path": dof,
+        "water_db_path": water,
+        "water_max_vertices": args.water_max_vertices,
+        "highway_db_path": highways,
+        "paved_only": True,
+        "perf_log": False,
+        "haze": not args.flat,
+        "haze_distance_nm": 40.0,
+        "msaa_samples": 0 if args.offscreen else args.msaa,
+        "safe_gradient": not args.flat,
+        "terrain_texture": 0.0 if args.flat else 0.35,
+        "terrain_grid": 0.0 if args.flat else 0.35,
+    }
 
     # show_fpm follows terrain_only today; --symbology-only leaves it True
     # (the same as the plain default capture) because the FPM is real
     # symbology and, unlike position, isn't dead-reckoned -- it's drawn
     # straight from the pinned GS/TRACK/HEAD FIX values set above, so it's
     # exactly as deterministic as the horizon line and pitch ladder.
-    widget = CapturingAI(win, show_fpm=not args.terrain_only)
+    win = None
+    offscreen_target = None
+    if args.offscreen:
+        offscreen_target = make_offscreen_target(args.width, args.height)
+        if offscreen_target is None:
+            print("SVS: could not create an offscreen GL surface/context",
+                  file=sys.stderr)
+            return EXIT_GL_FAILED
+        _surface, _ctx, fbo, paint_device = offscreen_target
+        widget = AI(None, show_fpm=not args.terrain_only)
+    else:
+        win = QMainWindow()
+        win.resize(args.width, args.height)
+        widget = CapturingAI(win, show_fpm=not args.terrain_only)
+
     widget.terrain_only = args.terrain_only
-    widget.set_svs_config(
-        {
-            # --symbology-only disables the SVS outright rather than hiding
-            # its output: make_svs_item's paint() no-ops on `not ready`
-            # (svs.py), so the terrain layer never touches the framebuffer
-            # and the AI's own land-brush fallback (flat brown/blue, no
-            # data files involved) is what's left below the horizon. This
-            # is the cheaper mirror of --terrain-only asked for in AER-707
-            # -- no new suppression path in ai/__init__.py or svs.py.
-            "enabled": not args.symbology_only,
-            "tile_path": args.tiles,
-            "renderer": "opengl",
-            "range_nm": args.range_nm,
-            "auto_range": args.auto_range,
-            "clearance_green_ft": 1000,
-            "clearance_yellow_ft": 500,
-            "cifp_path": cifp,
-            "nasr_db_path": nasr,
-            "dof_db_path": dof,
-            "water_db_path": water,
-            "water_max_vertices": args.water_max_vertices,
-            "highway_db_path": highways,
-            "paved_only": True,
-            "perf_log": False,
-            "haze": not args.flat,
-            "haze_distance_nm": 40.0,
-            "msaa_samples": args.msaa,
-            "safe_gradient": not args.flat,
-            "terrain_texture": 0.0 if args.flat else 0.35,
-            "terrain_grid": 0.0 if args.flat else 0.35,
-        }
-    )
+    widget.set_svs_config(svs_config)
 
     # Pin the pose. PoseSource dead-reckons from the seeded GS/TRACK, so without
     # this the frame renders ~124 m downtrack of the commanded position -- and then
@@ -414,10 +547,18 @@ def main(argv=None):
     # freezes the existing goldens half-loaded.
     widget._pose.extrap_cap_s = 0.0
 
-    win.setCentralWidget(widget)
-    win.show()
+    if args.offscreen:
+        # Triggers resizeEvent -> builds the scene and calls redraw() once,
+        # establishing the view's roll/pitch transform from the pose already
+        # seeded above. No show() -- that's the one call this path exists to
+        # avoid, and geometry/paint-to-image both work without it (see
+        # tools/render_instrument.py for the same pattern on the raster side).
+        widget.resize(args.width, args.height)
+    else:
+        win.setCentralWidget(widget)
+        win.show()
 
-    state = {"confirmed": 0, "elapsed_ms": 0, "requested": False}
+    state = {"confirmed": 0, "elapsed_ms": 0, "requested": False, "done": False}
     timeout_ms = args.timeout * 1000.0
 
     def pump():
@@ -428,7 +569,10 @@ def main(argv=None):
             app.exit(EXIT_GL_FAILED)
             return
 
-        if widget.capture_ok is not None:
+        if args.offscreen:
+            if state["done"]:
+                return
+        elif widget.capture_ok is not None:
             if widget.capture_ok:
                 print(f"captured {args.out}")
                 app.exit(EXIT_OK)
@@ -446,20 +590,39 @@ def main(argv=None):
             app.exit(EXIT_NOT_SETTLED)
             return
 
+        if args.offscreen:
+            # There is no window to dispatch a real paintEvent, so this path
+            # drives its own render each tick instead of the widget.update()
+            # below -- see render_offscreen_frame's docstring.
+            render_offscreen_frame(widget, fbo, paint_device)
+
         if not state["requested"]:
             if settled(svs, expect_layers, require_terrain=not args.symbology_only):
                 state["confirmed"] += 1
                 if state["confirmed"] >= CONFIRM_FRAMES:
+                    if args.offscreen:
+                        state["done"] = True
+                        fbo.bind()
+                        ok = _readback_pixels(args.width, args.height, args.out)
+                        if ok:
+                            print(f"captured {args.out}")
+                            app.exit(EXIT_OK)
+                        else:
+                            print(f"failed to write {args.out}", file=sys.stderr)
+                            app.exit(EXIT_SAVE_FAILED)
+                        return
                     widget.capture_to = args.out
                     state["requested"] = True
             else:
                 state["confirmed"] = 0
 
-        # Nothing else will repaint us: _frame_tick short-circuits on an unchanged
-        # pose, and the pose is now pinned. Collectors only promote on a paint, so
-        # without this the scene can never finish loading.
-        widget._frame_dirty = True
-        widget.update()
+        if not args.offscreen:
+            # Nothing else will repaint us: _frame_tick short-circuits on an
+            # unchanged pose, and the pose is now pinned. Collectors only
+            # promote on a paint, so without this the scene can never finish
+            # loading.
+            widget._frame_dirty = True
+            widget.update()
         state["elapsed_ms"] += PUMP_INTERVAL_MS
 
     timer = QTimer()
@@ -467,7 +630,7 @@ def main(argv=None):
     timer.start(PUMP_INTERVAL_MS)
 
     if args.verbose:
-        print(f"pose   : {args.lat}, {args.lon} @ {args.alt} ft, hdg {heading}")
+        print(f"pose   : {args.lat}, {args.lon} @ {args.alt} ft, hdg {args.heading}")
         print(f"range  : {args.range_nm} NM (auto_range={args.auto_range})")
         print(f"layers : {sorted(expect_layers) or 'none'}  water={bool(water)}")
 
