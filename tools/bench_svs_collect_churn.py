@@ -101,12 +101,20 @@ def drive(lat0, lon0, alt_ft, heading_deg, speed_kt, hz, duration_s, ppd,
         last = now
 
         range_nm = r._auto_range_nm(lat, lon, alt)
-        range_keys.add(range_nm)
         if hasattr(r, "_collect_key"):
-            collect_keys.add(r._collect_key(lat, lon, range_nm))
+            # _auto_range_nm returns the RAW, continuously-varying
+            # rendered extent (AER-678 review) -- it is _collect_range_nm,
+            # the hysteresis bucket _auto_range_nm stashes as a side
+            # effect, that actually feeds every collector's cache key.
+            # Measure that, not the raw return value, or this tool would
+            # report the fixed build as if it still churned.
+            key_range_nm = r._collect_range_nm
+            range_keys.add(key_range_nm)
+            collect_keys.add(r._collect_key(lat, lon, key_range_nm))
         else:
             # Pre-fix idiom (AER-678), inlined so this same script can
             # measure the "before" side without the shared helper.
+            range_keys.add(range_nm)
             step = max(0.01, range_nm / 2000.0)
             collect_keys.add((round(lat / step) * step,
                               round(lon / step) * step,

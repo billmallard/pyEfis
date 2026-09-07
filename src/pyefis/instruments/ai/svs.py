@@ -677,11 +677,14 @@ class SVSRenderer:
         Shared by the polar/CPU rasterisation path and the GL overlay
         path so both honour the same auto-scale rule.
 
-        The returned value also feeds every collector's cache key
-        (via _collect_key), so it is run through a hysteresis bucket
-        before returning (AER-678) — a raw, continuously-varying
-        range hovering near a bucket edge would otherwise invalidate
-        all eight collector caches on alternating frames."""
+        Returns the RAW range — this is the actual terrain extent
+        drawn (svs_gl.draw's far edge), so it must track AGL
+        continuously with no hysteresis of its own; bucketing this
+        return value previously silently overrode a user's configured
+        range_nm/min_range_nm and made the rendered far edge pop in
+        5 NM steps under climb (AER-678 review). A hysteresis-smoothed
+        copy for collector cache keys only is stashed on
+        self._collect_range_nm as a side effect — see _collect_key."""
         _agl_elev, _ = self._sample_elevations(
             np.array([[ac_lat]]), np.array([[ac_lon]]))
         ac_ground_m = float(_agl_elev[0, 0])
@@ -701,7 +704,8 @@ class SVSRenderer:
                             max(self.min_range_nm, horizon_range))
         else:
             raw_range = self.range_nm
-        return self._update_collect_range_nm(raw_range)
+        self._update_collect_range_nm(raw_range)
+        return raw_range
 
     # Hysteresis (Schmitt-trigger) bucketing for the collect-cache
     # range term (AER-678 root cause). round(range_nm / STEP) * STEP
@@ -712,6 +716,16 @@ class SVSRenderer:
     # "vibrating" SVS under motion. The bucket only moves once the
     # raw range has drifted HYSTERESIS_NM past the edge of its
     # current bucket, not merely across the edge.
+    #
+    # This state has exactly one writer (_auto_range_nm, called once
+    # per frame from draw()) and must stay that way: it exists only
+    # to smooth the auto-scaled render range for the six collectors
+    # that key off it (runway polygons/markings, water, highways,
+    # obstacles, flags). The airports collector keys off self.range_nm
+    # instead (a static config value with no jitter to smooth) — do
+    # not route it through this bucket, or the two unrelated range
+    # domains will thrash the same state against each other every
+    # frame (AER-678 review).
     _COLLECT_RANGE_STEP_NM = 5.0
     _COLLECT_RANGE_HYSTERESIS_NM = 1.5
 
@@ -734,11 +748,14 @@ class SVSRenderer:
         collector caches invalidate together, only on real movement
         or a real range change — never on cache-key churn.
 
-        ``range_nm`` must already be hysteresis-smoothed (i.e. come
-        from ``_auto_range_nm`` / ``_update_collect_range_nm``), not
-        a raw per-frame reading — the position step below is derived
-        from it, so an unsmoothed range reproduces AER-678 even if
-        the range term in the key looks quantized."""
+        ``range_nm`` must already be jitter-free: pass
+        ``self._collect_range_nm`` (the hysteresis bucket stashed by
+        ``_auto_range_nm``) for the six auto-scaled collectors, or
+        ``self.range_nm`` for the airports collector, which is keyed
+        on the static configured range instead. Never pass the raw
+        per-frame auto-range value directly — the position step below
+        is derived from it, so an unsmoothed range reproduces AER-678
+        even if the range term in the key looks quantized."""
         step = max(0.01, range_nm / 2000.0)
         return (round(ac_lat / step) * step,
                 round(ac_lon / step) * step,
@@ -886,7 +903,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        key = self._collect_key(ac_lat, ac_lon, range_nm)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         lat_cos = math.cos(math.radians(ac_lat))
 
         if (self._runway_polys_cache is not None
@@ -1212,7 +1229,7 @@ class SVSRenderer:
                 or not self.airport_db.ready):
             return None
         now = time.perf_counter()
-        key = self._collect_key(ac_lat, ac_lon, range_nm,
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
                                 round(self.detail_distance_nm, 2))
         if (self._runway_markings_cache is not None
                 and self._runway_markings_cache_key == key):
@@ -1552,7 +1569,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        key = self._collect_key(ac_lat, ac_lon, range_nm)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         # Purely key-based: the key encodes coarsened position and
         # range, which fully determine the result — a TTL on top only
         # forced an identical rebuild every second, and the worker's
@@ -1734,7 +1751,7 @@ class SVSRenderer:
         # render loop on final approach (the #73 perf regression). Screen-space
         # width floor uses whatever pixels_per_deg the CURRENT collection sees
         # for the same reason -- it changes only on a widget resize.
-        key = self._collect_key(ac_lat, ac_lon, range_nm)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         # Purely key-based — see the water collector note.
         if (self._hwy_cache is not None
                 and self._hwy_cache_key == key):
@@ -1905,7 +1922,7 @@ class SVSRenderer:
             return {}
 
         now = time.perf_counter()
-        key = self._collect_key(ac_lat, ac_lon, range_nm,
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
                                 round(ac_alt_ft / 200.0) * 200.0)  # 200 ft alt bucket
         return self._async_cache(
             "obstacles", key,
@@ -2087,7 +2104,8 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        key = self._collect_key(ac_lat, ac_lon, range_nm, round(ppd, 1))
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
+                                round(ppd, 1))
         if (self._flags_cache is not None
                 and self._flags_cache_key == key):
             return self._flags_cache
