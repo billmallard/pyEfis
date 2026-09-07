@@ -109,6 +109,15 @@ def parse_args(argv=None):
     pose.add_argument("--heading", type=float, default=0.0, help="degrees")
     pose.add_argument("--pitch", type=float, default=0.0, help="degrees")
     pose.add_argument("--roll", type=float, default=0.0, help="degrees")
+    pose.add_argument(
+        "--magvar",
+        type=float,
+        default=0.0,
+        help="magnetic variation, degrees, west-positive (FAA 'West is best': "
+        "MAG = TRUE + W_VAR). HEAD is magnetic; the AI widget derives true "
+        "heading as HEAD - MAGVAR. Default 0.0 reproduces every existing "
+        "capture byte-for-byte",
+    )
 
     view = p.add_argument_group("view")
     view.add_argument("--range", type=float, default=30.0, dest="range_nm")
@@ -281,6 +290,53 @@ def settled(svs, expect_layers, require_terrain=True):
     return True
 
 
+def seed_mock_fix(args):
+    """Define and populate the mock FIX keys the AI widget reads.
+
+    Isolated from ``main`` so it can be exercised without a GL context: it
+    touches only ``fix.db``, never Qt/GL. Returns the pose values actually
+    written, keyed by FIX name, so a test can assert on them directly.
+    """
+    fix.initialize({"main": {"FixServer": "localhost", "FixPort": "3490"}})
+    for key, desc, lo, hi, units in (
+        ("PITCH", "Pitch", -90.0, 90.0, "deg"),
+        ("ROLL", "Roll", -180.0, 180.0, "deg"),
+        ("ALAT", "LatAccel", -30.0, 30.0, "g"),
+        ("TAS", "TAS", 0.0, 2000.0, "knots"),
+        ("HEAD", "Heading", 0.0, 359.9, "deg"),
+        ("VS", "VS", -30000, 30000, "ft/min"),
+        ("GS", "GS", 0.0, 2000.0, "knots"),
+        ("TRACK", "Track", 0.0, 359.9, "deg"),
+        ("LAT", "Lat", -90.0, 90.0, "deg"),
+        ("LONG", "Lon", -180.0, 180.0, "deg"),
+        ("ALT", "Alt", -2000, 60000, "ft"),
+        ("MAGVAR", "MagVar", -30.0, 30.0, "deg"),
+    ):
+        fix.db.define_item(key, desc, "float", lo, hi, units, 50000, "")
+        item = fix.db.get_item(key)
+        item.bad = False
+        item.fail = False
+
+    heading = args.heading % 360.0  # HEAD's range is 0..359.9; 360 would clamp
+    values = {
+        "PITCH": args.pitch,
+        "ROLL": args.roll,
+        "ALAT": 0.0,
+        "TAS": 120.0,
+        "HEAD": heading,
+        "VS": 0.0,
+        "GS": 120.0,
+        "TRACK": heading,
+        "LAT": args.lat,
+        "LONG": args.lon,
+        "ALT": args.alt,
+        "MAGVAR": args.magvar,
+    }
+    for key, value in values.items():
+        fix.db.set_value(key, value)
+    return values
+
+
 def main(argv=None):
     args = parse_args(argv)
 
@@ -304,40 +360,7 @@ def main(argv=None):
     if dof:
         expect_layers.add("obstacles")
 
-    fix.initialize({"main": {"FixServer": "localhost", "FixPort": "3490"}})
-    for key, desc, lo, hi, units in (
-        ("PITCH", "Pitch", -90.0, 90.0, "deg"),
-        ("ROLL", "Roll", -180.0, 180.0, "deg"),
-        ("ALAT", "LatAccel", -30.0, 30.0, "g"),
-        ("TAS", "TAS", 0.0, 2000.0, "knots"),
-        ("HEAD", "Heading", 0.0, 359.9, "deg"),
-        ("VS", "VS", -30000, 30000, "ft/min"),
-        ("GS", "GS", 0.0, 2000.0, "knots"),
-        ("TRACK", "Track", 0.0, 359.9, "deg"),
-        ("LAT", "Lat", -90.0, 90.0, "deg"),
-        ("LONG", "Lon", -180.0, 180.0, "deg"),
-        ("ALT", "Alt", -2000, 60000, "ft"),
-    ):
-        fix.db.define_item(key, desc, "float", lo, hi, units, 50000, "")
-        item = fix.db.get_item(key)
-        item.bad = False
-        item.fail = False
-
-    heading = args.heading % 360.0  # HEAD's range is 0..359.9; 360 would clamp
-    for key, value in (
-        ("PITCH", args.pitch),
-        ("ROLL", args.roll),
-        ("ALAT", 0.0),
-        ("TAS", 120.0),
-        ("HEAD", heading),
-        ("VS", 0.0),
-        ("GS", 120.0),
-        ("TRACK", heading),
-        ("LAT", args.lat),
-        ("LONG", args.lon),
-        ("ALT", args.alt),
-    ):
-        fix.db.set_value(key, value)
+    seed_mock_fix(args)
 
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication([])
