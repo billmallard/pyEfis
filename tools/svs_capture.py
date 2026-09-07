@@ -57,6 +57,10 @@ Usage::
 
     # flat, unlit terrain -- for automated pixel classification
     python tools/svs_capture.py ... --flat --terrain-only
+
+    # symbology only, terrain suppressed -- for judging a constant attitude
+    # bias, which a terrain-and-symbology frame can hide
+    python tools/svs_capture.py ... --symbology-only
 """
 
 import argparse
@@ -131,6 +135,16 @@ def parse_args(argv=None):
         help="terrain and sky only, no symbology",
     )
     look.add_argument(
+        "--symbology-only",
+        action="store_true",
+        help="mirror of --terrain-only: horizon line, pitch ladder, bank "
+        "scale, aircraft symbol and FPM, against the flat two-tone "
+        "sky/ground background -- terrain is disabled outright (svs.enabled "
+        "= False), not merely hidden, so nothing terrain-derived can leak "
+        "into a symbology-bias judgement. Mutually exclusive with "
+        "--terrain-only",
+    )
+    look.add_argument(
         "--msaa",
         type=int,
         default=1,
@@ -162,7 +176,11 @@ def parse_args(argv=None):
         help="seconds to wait for the scene to settle before failing",
     )
     p.add_argument("--verbose", action="store_true")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.terrain_only and args.symbology_only:
+        p.error("--terrain-only and --symbology-only are mirror images of "
+                 "each other; pick one")
+    return args
 
 
 def _default(path, *parts):
@@ -209,7 +227,7 @@ def _readback(viewport, path):
     return bool(img.mirrored(False, True).copy().save(path, "PNG"))
 
 
-def settled(svs, expect_layers):
+def settled(svs, expect_layers, require_terrain=True):
     """True once every asynchronous collector has finished and been promoted.
 
     Each layer parks its result in ``_async_state[name]["res"]`` and nothing wakes
@@ -220,8 +238,17 @@ def settled(svs, expect_layers):
 
     ``expect_layers`` is the set of layers whose data source was configured. Without
     it a cold first frame looks settled purely because no collector has run yet.
+
+    ``require_terrain`` gates the ``drew_terrain`` check. ``--symbology-only``
+    runs with ``svs.enabled = False``, so the SVS graphics item's ``paint()``
+    is a no-op (``not self._renderer.ready``, svs.py's ``make_svs_item``) --
+    ``drew_terrain`` never becomes True and never will, by design. There are
+    also no terrain-side collectors to wait for in that mode, so the caller
+    passes ``expect_layers=set()`` alongside ``require_terrain=False``.
     """
-    if svs is None or svs.gl_failed or not svs.drew_terrain:
+    if svs is None:
+        return False
+    if require_terrain and (svs.gl_failed or not svs.drew_terrain):
         return False
 
     for name in expect_layers:
@@ -257,10 +284,19 @@ def settled(svs, expect_layers):
 def main(argv=None):
     args = parse_args(argv)
 
-    water = args.water if args.water is not None else _default_water()
-    nasr = _default(args.nasr, "nasr", "airports.sqlite")
-    cifp = _default(args.cifp, "cifp", "FAACIFP18")
-    dof = _default(args.dof, "dof", "obstacles.sqlite")
+    highways = args.highways
+    if args.symbology_only:
+        # Terrain is disabled outright below (svs.enabled = False), so none
+        # of the terrain-side data sources are ever queried -- the async
+        # collectors they'd feed never run and never record a cache key.
+        # Forcing every source off here keeps settled()'s bookkeeping empty
+        # instead of waiting forever on state that will never arrive.
+        water = nasr = cifp = dof = highways = ""
+    else:
+        water = args.water if args.water is not None else _default_water()
+        nasr = _default(args.nasr, "nasr", "airports.sqlite")
+        cifp = _default(args.cifp, "cifp", "FAACIFP18")
+        dof = _default(args.dof, "dof", "obstacles.sqlite")
 
     expect_layers = set()
     if nasr or cifp:
@@ -309,11 +345,23 @@ def main(argv=None):
     win = QMainWindow()
     win.resize(args.width, args.height)
 
+    # show_fpm follows terrain_only today; --symbology-only leaves it True
+    # (the same as the plain default capture) because the FPM is real
+    # symbology and, unlike position, isn't dead-reckoned -- it's drawn
+    # straight from the pinned GS/TRACK/HEAD FIX values set above, so it's
+    # exactly as deterministic as the horizon line and pitch ladder.
     widget = CapturingAI(win, show_fpm=not args.terrain_only)
     widget.terrain_only = args.terrain_only
     widget.set_svs_config(
         {
-            "enabled": True,
+            # --symbology-only disables the SVS outright rather than hiding
+            # its output: make_svs_item's paint() no-ops on `not ready`
+            # (svs.py), so the terrain layer never touches the framebuffer
+            # and the AI's own land-brush fallback (flat brown/blue, no
+            # data files involved) is what's left below the horizon. This
+            # is the cheaper mirror of --terrain-only asked for in AER-707
+            # -- no new suppression path in ai/__init__.py or svs.py.
+            "enabled": not args.symbology_only,
             "tile_path": args.tiles,
             "renderer": "opengl",
             "range_nm": args.range_nm,
@@ -325,7 +373,7 @@ def main(argv=None):
             "dof_db_path": dof,
             "water_db_path": water,
             "water_max_vertices": args.water_max_vertices,
-            "highway_db_path": args.highways,
+            "highway_db_path": highways,
             "paved_only": True,
             "perf_log": False,
             "haze": not args.flat,
@@ -376,7 +424,7 @@ def main(argv=None):
             return
 
         if not state["requested"]:
-            if settled(svs, expect_layers):
+            if settled(svs, expect_layers, require_terrain=not args.symbology_only):
                 state["confirmed"] += 1
                 if state["confirmed"] >= CONFIRM_FRAMES:
                     widget.capture_to = args.out
