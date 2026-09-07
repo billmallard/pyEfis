@@ -77,6 +77,35 @@ def test_numerical_display_decimals(qtbot):
     assert widget.pre_scroll_text.text() == "-00"
 
 
+def test_numerical_display_setters_before_first_resize(qtbot):
+    """AER-745 regression: altimeter/airspeed construct a NumericalDisplay,
+    call .resize()/.value=, then immediately call .old=/.bad=/.fail= in the
+    same resizeEvent body. QWidget.resize() does not guarantee a synchronous
+    resizeEvent before the widget has a native window/is shown, so on some
+    Qt/platform combinations these setters run before NumericalDisplay's own
+    resizeEvent has ever built pre_scroll_text/scrolling_area/fail_scene --
+    they used to raise AttributeError: 'NumericalDisplay' object has no
+    attribute 'pre_scroll_text'.
+    """
+    widget = NumericalDisplay(total_decimals=4, scroll_decimal=1)
+    qtbot.addWidget(widget)
+    # No resize()/show() yet: resizeEvent has not run, so the lazily-built
+    # scene does not exist. None of this should raise.
+    widget.setValue(5)
+    widget.setOld(True)
+    widget.setBad(True)
+    widget.setFail(True)
+    assert widget.getOld() is True
+    assert widget.getBad() is True
+    assert widget.getFail() is True
+
+    # The pending first resizeEvent must apply that state without crashing.
+    widget.resize(100, 40)
+    widget.show()
+    qtbot.waitExposed(widget)
+    assert widget.getFail() is True
+
+
 # Not sure why line 270 is not showing as covered
 # when this calls the getValue function:
 def test_numerical_get_value(qtbot):
