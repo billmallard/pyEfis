@@ -782,7 +782,7 @@ class TestSVSWaterRendering:
             "enabled": True, "tile_path": str(root),
             "water_db_path": str(path),
         })
-        tris = r._collect_water_sync(24.5, -81.7, 30.0)
+        tris = r._collect_water_sync(24.5, -81.7, 5000.0, 30.0)
         assert tris is not None
         # Every emitted vertex comes from the outer ring; the hole's
         # vertices never appear in the fan. (Coordinates ride through
@@ -1020,6 +1020,100 @@ class TestSVSGLFallback:
         assert non_bg > 5, (
             f"expected polar mesh pixels below horizon; only {non_bg} "
             f"non-background samples in scan row")
+
+
+# ---------------------------------------------------------------------------
+# Water terrain occlusion (issue #102 -- the missing twin of #73)
+# ---------------------------------------------------------------------------
+
+class _StubWaterPolygon:
+    def __init__(self, vertices, triangles, is_ocean=True, elev_ft=None):
+        self.vertices = vertices
+        self.triangles = triangles
+        self.is_ocean = is_ocean
+        self.elev_ft = elev_ft
+        self.rings = None
+
+
+class _StubWaterDB:
+    ready = True
+
+    def __init__(self, polygons):
+        self._polygons = polygons
+
+    def polygons_in_range(self, ac_lat, ac_lon, range_nm,
+                          min_bbox_diag_deg=None):
+        return list(self._polygons)
+
+
+class TestWaterOcclusion:
+    """Issue #102: a water triangle behind a ridge (no line of sight) must
+    be DROPPED, not painted through the near slope -- the SVS overlay pass
+    disables depth testing before this draw, so with no masking a lake or
+    river triangle projects onto its pixels regardless of what terrain is
+    in front of it. Verifies the per-triangle LOS filtering in
+    ``_collect_water_sync``: a triangle is emitted only where ALL THREE
+    vertices have a clear line of sight. Unlike a highway polyline (which
+    can end a segment exactly at the ridge line and resume beyond it), a
+    triangle straddling a ridge has no correct partial fill, so occlusion
+    of ANY one vertex drops the whole triangle. The LOS math itself
+    (``_los_masked_batch``) is stubbed so triangle-selection logic is
+    tested deterministically without terrain tiles."""
+
+    AC_LAT, AC_LON, AC_ALT = 39.0, -107.0, 12000.0
+    # A small square lake split into two triangles across a shared
+    # diagonal (vertices 0 and 2), so masking a non-shared vertex (1 or 3)
+    # drops only the triangle that owns it, while masking a shared vertex
+    # (0 or 2) drops both.
+    SQUARE = [(39.00, -107.00), (39.00, -106.99),
+              (39.01, -106.99), (39.01, -107.00)]
+    TRIS = [0, 1, 2, 0, 2, 3]
+
+    def _renderer(self, masked_verts):
+        r = SVSRenderer({})
+        r.water_db = _StubWaterDB(
+            [_StubWaterPolygon(self.SQUARE, self.TRIS, is_ocean=True)])
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+
+        def _batch(ac_lat, ac_lon, ac_alt, t_lats, t_lons, t_alts, lat_cos):
+            return np.array(
+                [(round(float(la), 5), round(float(lo), 5)) in masked_verts
+                 for la, lo in zip(t_lats, t_lons)], dtype=bool)
+        r._los_masked_batch = _batch
+        return r
+
+    def test_all_visible_keeps_every_triangle(self):
+        tris = self._renderer(set())._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is not None
+        assert tris.shape[0] == 6   # 2 triangles * 3 vertices
+
+    def test_occluded_vertex_drops_only_the_triangle_containing_it(self):
+        # vertex 1 (39.00, -106.99) belongs only to triangle (0, 1, 2).
+        masked = {(39.00, -106.99)}
+        tris = self._renderer(masked)._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is not None
+        assert tris.shape[0] == 3   # only triangle (0, 2, 3) survives
+        surviving = {(round(float(la), 2), round(float(lo), 2))
+                     for la, lo in tris[:, :2]}
+        assert (39.00, -106.99) not in surviving
+        assert surviving == {(39.00, -107.00), (39.01, -106.99),
+                             (39.01, -107.00)}
+
+    def test_occluded_shared_vertex_drops_both_triangles_sharing_it(self):
+        # vertex 2 (39.01, -106.99) is shared by both triangles.
+        masked = {(39.01, -106.99)}
+        tris = self._renderer(masked)._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is None
+
+    def test_all_occluded_returns_none(self):
+        masked = {(round(la, 5), round(lo, 5)) for la, lo in self.SQUARE}
+        tris = self._renderer(masked)._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is None
 
 
 # ---------------------------------------------------------------------------

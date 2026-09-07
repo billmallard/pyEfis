@@ -1549,7 +1549,7 @@ class SVSRenderer:
     # threshold for visible churn is closer to range_nm * 0.1.
     _WATER_TRIS_CACHE_POS_STEP_DEG = 0.01
 
-    def _collect_water_triangles(self, ac_lat, ac_lon, range_nm):
+    def _collect_water_triangles(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
         """Collect every visible water polygon, look up its surface
         elevation, and expand its pre-tessellated triangles into a
         single Nx3 float32 numpy array of (lat, lon, elev_ft) vertex
@@ -1597,14 +1597,14 @@ class SVSRenderer:
             if not busy and self._collect_slot.acquire(blocking=False):
                 self._water_worker = threading.Thread(
                     target=self._water_collect_worker,
-                    args=(key, ac_lat, ac_lon, range_nm),
+                    args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm),
                     daemon=True)
                 self._water_worker.start()
         return self._water_tris_cache
 
-    def _water_collect_worker(self, key, ac_lat, ac_lon, range_nm):
+    def _water_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm):
         try:
-            arr = self._collect_water_sync(ac_lat, ac_lon, range_nm)
+            arr = self._collect_water_sync(ac_lat, ac_lon, ac_alt_ft, range_nm)
             with self._water_worker_lock:
                 self._water_result = (key, arr)
         except Exception:
@@ -1612,7 +1612,7 @@ class SVSRenderer:
         finally:
             self._collect_slot.release()
 
-    def _collect_water_sync(self, ac_lat, ac_lon, range_nm):
+    def _collect_water_sync(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
 
         # Sentinel mapped to sea level. Same convention the previous
         # CPU path used.
@@ -1724,7 +1724,28 @@ class SVSRenderer:
 
         if not all_tris:
             return None
-        return np.concatenate(all_tris, axis=0)
+        verts = np.concatenate(all_tris, axis=0)
+
+        # Terrain line-of-sight masking (issue #102 -- the missing twin of
+        # the highway fix, issue #73/#74). The SVS overlay pass disables
+        # depth testing before this draw, so a water triangle behind a
+        # ridge would otherwise paint straight through the near slope
+        # regardless of what terrain is in front of it. Batch the same
+        # sight-line test highways use (_los_masked_batch) over every
+        # triangle vertex at once, then drop a triangle if ANY of its
+        # three vertices lacks a clear line of sight. Unlike a highway
+        # polyline (which can end a segment exactly at the ridge line and
+        # keep going beyond it), a triangle straddling a ridge has no
+        # correct partial fill, so the whole triangle goes rather than
+        # just the occluded vertex.
+        lat_cos = math.cos(math.radians(ac_lat))
+        masked = self._los_masked_batch(
+            ac_lat, ac_lon, ac_alt_ft,
+            verts[:, 0], verts[:, 1], verts[:, 2], lat_cos)
+        tri_ok = ~masked.reshape(-1, 3).any(axis=1)
+        if not tri_ok.any():
+            return None
+        return verts.reshape(-1, 3, 3)[tri_ok].reshape(-1, 3)
 
     # ------------------------------------------------------------------
     # Highways (issue #35, extruded to true-scale ribbons for RD1 /
