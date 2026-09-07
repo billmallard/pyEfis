@@ -15,7 +15,7 @@
 #  along with this program; if not, write to the Free Software
 #  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtCore import QTimer, qRound
 from PyQt6.QtWidgets import QWidget
 
@@ -37,6 +37,38 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _parse_screen_color(value):
+    """Coerce a ``main.screenColor`` config value into an (r, g, b) int tuple.
+
+    The YAML config stores it as the literal string ``"(0,0,0)"`` -- parens
+    have no special meaning to YAML, so it always comes back as a plain
+    string, never a real tuple (see gui.py's own unparsed use of it). A
+    missing/malformed value falls back to black, matching the historical
+    hardcoded default so an un-configured panel is unchanged.
+    """
+    if isinstance(value, (tuple, list)) and len(value) == 3:
+        try:
+            return tuple(int(c) for c in value)
+        except (TypeError, ValueError):
+            return (0, 0, 0)
+    if isinstance(value, str):
+        parts = value.strip().strip("()").split(",")
+        if len(parts) == 3:
+            try:
+                return tuple(int(p.strip()) for p in parts)
+            except ValueError:
+                return (0, 0, 0)
+    return (0, 0, 0)
+
+
+def _legible_foreground(rgb):
+    """Black or white text, whichever reads on a screenColor background --
+    ITU-R BT.601 luma, the usual quick-and-good-enough legibility threshold."""
+    r, g, b = rgb
+    luma = 0.299 * r + 0.587 * g + 0.114 * b
+    return QColor(0, 0, 0) if luma >= 128 else QColor(255, 255, 255)
+
+
 class Screen(QWidget):
     def __init__(self, parent=None, config=None):
         super(Screen, self).__init__(parent)
@@ -47,7 +79,13 @@ class Screen(QWidget):
         # has no entry in gui.screens -- carries its own config here instead.
         self.config = config
         p = self.parent.palette()
-        self.screenColor = (0, 0, 0)
+        # self.parent is gui.Main for a top-level screen, and the SAME Main
+        # instance for a nested tab-page Screen (tab_section passes its own
+        # `screen.parent` through as config_parent) -- reading it here means
+        # both cases resolve the identical screenColor without extra plumbing.
+        self.screenColor = _parse_screen_color(
+            getattr(self.parent, "screenColor", None)
+        )
         self.encoder = None
         self.encoder_input = None
         self.encoder_button = None
@@ -64,6 +102,15 @@ class Screen(QWidget):
         )
         self.encoder_controller = screenbuilder_encoder.EncoderController(self)
         p.setColor(self.backgroundRole(), QColor(*self.screenColor))
+        # A legible floor for any stock Qt control that relies on the
+        # inherited palette instead of its own stylesheet (pyEfis#139) --
+        # tab_section is the only one today. Every other stock-control
+        # widget already sets its own colours via setStyleSheet(), which
+        # takes precedence over the palette, so this is a no-op for them.
+        foreground = _legible_foreground(self.screenColor)
+        p.setColor(QPalette.ColorRole.WindowText, foreground)
+        p.setColor(QPalette.ColorRole.ButtonText, foreground)
+        p.setColor(QPalette.ColorRole.Button, QColor(*self.screenColor))
         self.setPalette(p)
         self.setAutoFillBackground(True)
 

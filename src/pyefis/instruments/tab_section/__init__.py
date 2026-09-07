@@ -39,6 +39,7 @@ nothing tab_section-specific about how a tab's contents get built or resized.
 
 import logging
 
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QTabBar, QStackedWidget
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,15 @@ logger = logging.getLogger(__name__)
 # design doc, makerplane-data#38 section 4a).
 _EMPTY_TAB_LABEL = "Tab 1"
 _EMPTY_TAB_LAYOUT = {"rows": 1, "columns": 1}
+
+# tab_position -> QTabBar.Shape. West/East also rotate the tab labels
+# vertically -- a side effect of the shape, not something set separately.
+_TAB_BAR_SHAPE = {
+    "top": QTabBar.Shape.RoundedNorth,
+    "bottom": QTabBar.Shape.RoundedSouth,
+    "left": QTabBar.Shape.RoundedWest,
+    "right": QTabBar.Shape.RoundedEast,
+}
 
 
 class TabSection(QWidget):
@@ -63,10 +73,17 @@ class TabSection(QWidget):
         from pyefis.screens.screenbuilder import Screen as ScreenBuilder
 
         self._font_family = font_family
+        self._fg_color = None
+        self._bg_color = None
+        self.tab_position = "top"
         self._pages = []
         self.tab_bar = QTabBar(self)
         self.tab_bar.setExpanding(False)
         self.tab_bar.setDrawBase(True)
+        if font_family:
+            font = QFont(self.tab_bar.font())
+            font.setFamily(font_family)
+            self.tab_bar.setFont(font)
         self.stack = QStackedWidget(self)
 
         config_parent = screen.parent
@@ -95,18 +112,76 @@ class TabSection(QWidget):
         self.tab_bar.blockSignals(False)
         self.stack.setCurrentIndex(index)
 
+    @property
+    def fg_color(self):
+        return self._fg_color
+
+    @fg_color.setter
+    def fg_color(self, value):
+        self._fg_color = value
+        self._apply_tab_bar_style()
+
+    @property
+    def bg_color(self):
+        return self._bg_color
+
+    @bg_color.setter
+    def bg_color(self, value):
+        self._bg_color = value
+        self._apply_tab_bar_style()
+
+    def _apply_tab_bar_style(self):
+        """Panel-designer override on top of the inherited (screenbuilder.py
+        central-palette) legibility floor. Unset (None, the default) means
+        no override -- the tab bar keeps reading the inherited palette."""
+        rules = []
+        if self._fg_color:
+            rules.append(f"color: {self._fg_color};")
+        if self._bg_color:
+            rules.append(f"background: {self._bg_color};")
+        self.tab_bar.setStyleSheet(
+            "QTabBar::tab { %s }" % " ".join(rules) if rules else ""
+        )
+
     def _layout_pages(self):
         """Position the tab bar + content area against THIS widget's own
-        box, then size every page (current tab or not) to that content
-        area -- the coordinate-space recursion pyEfis#131 calls out as the
-        real lift: a tab's instruments are laid out against the container's
-        box, never the enclosing screen's."""
-        bar_height = self.tab_bar.sizeHint().height()
-        self.tab_bar.setGeometry(0, 0, self.width(), bar_height)
-        content_height = max(0, self.height() - bar_height)
-        self.stack.setGeometry(0, bar_height, self.width(), content_height)
+        box, on whichever edge ``tab_position`` names, then size every page
+        (current tab or not) to that content area -- the coordinate-space
+        recursion pyEfis#131 calls out as the real lift: a tab's instruments
+        are laid out against the container's box, never the enclosing
+        screen's.
+
+        West/East bars are sized off ``sizeHint().width()`` -- rotating the
+        bar to a side shape rotates the tab labels too, but Qt keeps
+        reporting the bar's "thickness" (the dimension we need to reserve)
+        on the width axis of its sizeHint, not the height."""
+        tab_position = self.tab_position if self.tab_position in _TAB_BAR_SHAPE \
+            else "top"
+        self.tab_bar.setShape(_TAB_BAR_SHAPE[tab_position])
+        if tab_position in ("top", "bottom"):
+            bar_size = self.tab_bar.sizeHint().height()
+            content_w = self.width()
+            content_h = max(0, self.height() - bar_size)
+            if tab_position == "top":
+                bar_geom = (0, 0, self.width(), bar_size)
+                stack_geom = (0, bar_size, content_w, content_h)
+            else:
+                bar_geom = (0, content_h, self.width(), bar_size)
+                stack_geom = (0, 0, content_w, content_h)
+        else:
+            bar_size = self.tab_bar.sizeHint().width()
+            content_w = max(0, self.width() - bar_size)
+            content_h = self.height()
+            if tab_position == "left":
+                bar_geom = (0, 0, bar_size, self.height())
+                stack_geom = (bar_size, 0, content_w, content_h)
+            else:
+                bar_geom = (content_w, 0, bar_size, self.height())
+                stack_geom = (0, 0, content_w, content_h)
+        self.tab_bar.setGeometry(*bar_geom)
+        self.stack.setGeometry(*stack_geom)
         for page in self._pages:
-            page.setGeometry(0, 0, self.width(), content_height)
+            page.setGeometry(0, 0, content_w, content_h)
 
     def initScreen(self):
         """Called by the enclosing Screen's grid_layout(), right after this
