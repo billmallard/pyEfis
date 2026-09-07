@@ -237,6 +237,22 @@ class MapPerfStats:
                 int(self.probe.gap_warn_ms), gp["over_count"]))
         return "\n".join(lines)
 
+    def snapshot(self):
+        """Every MP6 counter as one JSON-serialisable dict (MP7, brief
+        section 4: "JSON out carrying ... every MP6 counter"). Layers are
+        keyed by id so a scenario that never touches e.g. ``navaids``
+        just omits that key rather than reporting zeros for a layer that
+        was never built."""
+        p50, p95, mx, n = self.paint_ms.stats()
+        return dict(
+            frames_painted=self.frames_painted,
+            paint_ms=dict(p50=p50, p95=p95, max=mx, count=n),
+            layers={lid: ls.as_dict() for lid, ls in self.layers.items()},
+            water=self.water.as_dict(),
+            settle_latency_ms=self.settle_latency_ms,
+            probe=self.probe.stats(),
+        )
+
     def maybe_report(self, now=None):
         """Log a summary at most every REPORT_INTERVAL_S (mirrors
         ai/svs.py's _SVSPerfLog.maybe_report). Returns True when it

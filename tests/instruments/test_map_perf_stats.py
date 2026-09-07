@@ -86,6 +86,24 @@ def test_water_stats_record_round_trips():
     assert d["qpointf_count"] == 200
 
 
+def test_map_perf_stats_snapshot_contains_every_counter():
+    """MP7 (briefs/map_gesture_perf_plan.md section 4): the gesture bench
+    harness's JSON output is this dict verbatim -- every field it reads
+    (layers by id, water, settle_latency_ms, probe) has to round-trip."""
+    stats = MapPerfStats()
+    stats.record_paint_ms(3.5)
+    stats.layer("terrain").jobs_requested += 2
+    stats.water.record(3, 40, 3, 40, 0)
+    stats.settle_latency_ms = 88.0
+    snap = stats.snapshot()
+    assert snap["frames_painted"] == 1
+    assert snap["paint_ms"]["count"] == 1
+    assert snap["layers"]["terrain"]["jobs_requested"] == 2
+    assert snap["water"]["vertices_before"] == 40
+    assert snap["settle_latency_ms"] == 88.0
+    assert "p50_ms" in snap["probe"]
+
+
 def test_map_perf_stats_summary_text_contains_key_fields():
     stats = MapPerfStats()
     stats.record_paint_ms(5.0)
