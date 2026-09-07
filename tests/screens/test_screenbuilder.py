@@ -12,8 +12,8 @@ The pyavtools.fix mock from conftest.py is used so no FIX server is needed.
 import pytest
 import time
 from pathlib import Path
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QColor, QPalette, QPixmap
+from PyQt6.QtWidgets import QApplication, QTabBar, QWidget
 
 import pyefis.hmi as hmi
 from pyefis.screens import screenbuilder
@@ -468,6 +468,86 @@ class TestScreenBuilderInit:
 
         assert screen.instruments[0].active_list == "Radio"
         assert screen.instruments[0].rows > 0
+
+
+class TestScreenColorPalette:
+    """pyEfis#139 root cause (AER-664): Screen.__init__ hardcoded a black
+    screenColor and never set a foreground role, so any stock Qt control
+    relying on the inherited palette (rather than its own stylesheet) drew
+    invisible text. The fix reads screenColor from config and derives
+    WindowText/ButtonText/Button from it centrally."""
+
+    def test_default_screen_color_is_unchanged_black(self, fix, qtbot):
+        """No screenColor on the parent -> the historical (0, 0, 0) default,
+        so an existing panel with no configured screenColor is unchanged."""
+        screen = Screen(_TestParent(_config_with_instruments([])))
+        qtbot.addWidget(screen)
+
+        assert screen.screenColor == (0, 0, 0)
+        assert screen.palette().color(QPalette.ColorRole.Window) == QColor(0, 0, 0)
+
+    def test_default_black_background_gets_white_foreground(self, fix, qtbot):
+        """The legibility floor: black (or any dark) screenColor must not
+        leave WindowText/ButtonText at the invisible default."""
+        screen = Screen(_TestParent(_config_with_instruments([])))
+        qtbot.addWidget(screen)
+
+        palette = screen.palette()
+        assert palette.color(QPalette.ColorRole.WindowText) == QColor(255, 255, 255)
+        assert palette.color(QPalette.ColorRole.ButtonText) == QColor(255, 255, 255)
+
+    def test_screen_color_read_from_parent_config_string_form(self, fix, qtbot):
+        """main.screenColor is stored as the literal string "(r,g,b)" (see
+        config/main/default.yaml) -- Screen must parse that form, not just a
+        real tuple."""
+        parent = _TestParent(_config_with_instruments([]))
+        parent.screenColor = "(240, 240, 240)"
+        screen = Screen(parent)
+        qtbot.addWidget(screen)
+
+        assert screen.screenColor == (240, 240, 240)
+        palette = screen.palette()
+        assert palette.color(QPalette.ColorRole.Window) == QColor(240, 240, 240)
+        assert palette.color(QPalette.ColorRole.Button) == QColor(240, 240, 240)
+        # Light background -> black text/buttons, the other side of the
+        # legibility floor.
+        assert palette.color(QPalette.ColorRole.WindowText) == QColor(0, 0, 0)
+        assert palette.color(QPalette.ColorRole.ButtonText) == QColor(0, 0, 0)
+
+    def test_malformed_screen_color_falls_back_to_black(self, fix, qtbot):
+        parent = _TestParent(_config_with_instruments([]))
+        parent.screenColor = "not-a-color"
+        screen = Screen(parent)
+        qtbot.addWidget(screen)
+
+        assert screen.screenColor == (0, 0, 0)
+
+    def test_nested_tab_page_screen_inherits_the_same_screen_color(self, fix, qtbot):
+        """tab_section builds each tab's page as its own Screen, sharing the
+        SAME parent as the enclosing screen (config_parent = screen.parent)
+        -- the resolved screenColor must match, not silently fall back to
+        black for the nested case."""
+        parent = _TestParent(_config_with_instruments([
+            {
+                "type": "tab_section",
+                "row": 0, "column": 0,
+                "span": {"rows": 10, "columns": 10},
+                "options": {"default_tab": 0},
+                "tabs": [
+                    {"label": "A", "layout": {"rows": 1, "columns": 1},
+                     "instruments": []},
+                ],
+            },
+        ]))
+        parent.screenColor = "(240, 240, 240)"
+        screen = Screen(parent)
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+        screen.init_screen()
+
+        tab_section = screen.instruments[0]
+        page = tab_section._pages[0]
+        assert page.screenColor == (240, 240, 240)
 
 
 class TestScreenBuilderIncludes:
