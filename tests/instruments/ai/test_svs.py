@@ -1209,3 +1209,223 @@ class TestTunnelBridgeFlags:
             self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
         # tunnel wins -- dropped entirely regardless of the bridge bit
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Collect-cache key stability under range/position noise (AER-678).
+#
+# Seven collectors (runway polygons/markings, airports, water, highways,
+# obstacles, flags) share one cache-key idiom keyed on coarsened aircraft
+# position + range_nm, where the position step ITSELF is derived from
+# range_nm. Feeding that idiom a raw, continuously-varying auto-range
+# reading made the position-quantization grid move independently of the
+# aircraft's actual position -- a cache key that changes as a function of
+# something other than the thing it is caching is self-invalidating, and
+# with all eight collectors sharing the pattern they went hot together
+# (measured: frame.gap_between_svs collapsed from ~25 ms to ~699 ms/call
+# under a moving-position drive, with frame.svs_total unchanged at ~6 ms --
+# the renderer was starved, not slow). NOTE: that 698.78 ms/call figure, and
+# the "vibrating under motion" framing, were later found to be contaminated
+# by an unrelated demo plugin driving the bench (see AER-677/AER-678 review
+# thread) -- the mechanism below is real and independently reproduced by
+# tools/bench_svs_collect_churn.py's synthetic drive, but Bill's reported
+# fault was a config issue, not this one.
+#
+# The fix is _update_collect_range_nm (a Schmitt-trigger bucket) feeding
+# the shared _collect_key builder for cache-key purposes ONLY -- it must
+# never be handed to the renderer as the rendered terrain extent (see
+# TestAutoRangeRenderedExtent below; a first version of this fix did
+# exactly that and silently overrode a user's configured range_nm). These
+# tests pin the invariant that regressed, not just "N tests pass" on it.
+# ---------------------------------------------------------------------------
+
+class TestCollectRangeHysteresis:
+    AC_LAT, AC_LON = 39.0, -107.0
+
+    def _renderer(self, **config):
+        r = SVSRenderer(dict(config))
+        # Flat, zero-elevation ground under the aircraft so agl_ft ==
+        # ac_alt_ft exactly -- makes the horizon-range formula in
+        # _auto_range_nm fully predictable from ac_alt_ft alone.
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        return r
+
+    @staticmethod
+    def _agl_for_horizon_range(range_nm: float) -> float:
+        """Inverse of the horizon_range = 1.22 * sqrt(agl_ft) formula in
+        _auto_range_nm -- the AGL (here == MSL, flat ground) that makes
+        the RAW auto-range land at ``range_nm``."""
+        return (range_nm / 1.22) ** 2
+
+    def test_range_bucket_stable_for_noise_straddling_a_boundary(self):
+        # Bucket edges sit at 2.5, 7.5, 12.5, ... (round(x/5)*5). 22.5 is
+        # the edge between the 20 and 25 buckets -- pick AGL values just
+        # either side of it, simulating sensor/demo-animation jitter, and
+        # confirm the bucketed range stashed for collector cache keys
+        # does not flip between them the way naive round(range_nm/5)*5
+        # would on every other call. _auto_range_nm's RETURN value (the
+        # rendered extent) is deliberately NOT asserted here -- it is
+        # supposed to track the raw AGL continuously; see
+        # TestAutoRangeRenderedExtent.
+        r = self._renderer()
+        agl_below = self._agl_for_horizon_range(22.49)
+        agl_above = self._agl_for_horizon_range(22.51)
+        seen = set()
+        for i in range(20):
+            agl = agl_below if i % 2 == 0 else agl_above
+            r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+            seen.add(r._collect_range_nm)
+        assert len(seen) == 1, (
+            f"collect-key range bucket chattered across a boundary: {seen}")
+
+    def test_collect_key_stable_for_stationary_aircraft_under_alt_jitter(
+            self):
+        # The reported anomaly directly: position pinned, only altitude
+        # varies by a small amount (altimeter/ADC-scale noise, not a
+        # real climb) around the same 22.5 NM boundary as above -- the
+        # assembled collect key for every sample must be identical,
+        # because a stationary aircraft's collector inputs have not
+        # actually changed. +-10 ft of AGL jitter swings the raw
+        # horizon_range by well under 1 NM, safely inside the
+        # hysteresis dead zone (+-4 NM) on either side of the boundary.
+        r = self._renderer()
+        base_agl = self._agl_for_horizon_range(22.5)
+        rng = np.random.default_rng(0)
+        keys = set()
+        for _ in range(50):
+            agl = base_agl + float(rng.uniform(-10.0, 10.0))
+            r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+            keys.add(r._collect_key(self.AC_LAT, self.AC_LON,
+                                     r._collect_range_nm))
+        assert len(keys) == 1, (
+            f"collect key chattered for a stationary aircraft: {keys}")
+
+    def test_range_bucket_does_track_a_real_altitude_change(self):
+        # The hysteresis must not wedge the bucket permanently -- a
+        # genuine, sustained altitude change well past the dead zone
+        # still moves it.
+        r = self._renderer()
+        r._auto_range_nm(
+            self.AC_LAT, self.AC_LON, self._agl_for_horizon_range(10.0))
+        low = r._collect_range_nm
+        r._auto_range_nm(
+            self.AC_LAT, self.AC_LON, self._agl_for_horizon_range(45.0))
+        high = r._collect_range_nm
+        assert low != high
+
+    def test_key_change_rate_bounded_for_moving_aircraft_at_cruise(self):
+        # A moving aircraft at a fixed altitude/range (no range-bucket
+        # noise in play) must still see its collect key roll over at a
+        # bounded rate tied to actual distance travelled -- the fix must
+        # not (over-)throttle real position-based invalidation. At 40
+        # NM range the position step is max(0.01, 40/2000) = 0.02 deg
+        # ~= 1.2 NM, so covering 30 NM of straight-line flight should
+        # produce on the order of 30 / 1.2 ~= 25 key changes, not one
+        # per sample (250 samples) and not zero.
+        r = self._renderer()
+        agl = self._agl_for_horizon_range(40.0)
+        r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+        range_nm = r._collect_range_nm
+        lat_per_nm = 1.0 / 60.0
+        n_samples = 250
+        track_nm = 30.0
+        last_key = None
+        changes = 0
+        for i in range(n_samples):
+            lat = self.AC_LAT + (i / (n_samples - 1)) * track_nm * lat_per_nm
+            key = r._collect_key(lat, self.AC_LON, range_nm)
+            if key != last_key:
+                changes += 1
+                last_key = key
+        assert 5 <= changes <= 60, (
+            f"key changed {changes} times over {track_nm} NM "
+            f"({n_samples} samples) -- expected a bounded rate tied to "
+            f"actual distance, not per-sample or never")
+
+    def test_airports_key_domain_unaffected_by_auto_range_bucket_churn(
+            self):
+        # The airports collector keys off self.range_nm (a static config
+        # value), not the auto-scaled render range -- it must NOT share
+        # _collect_range_nm's hysteresis state, or two unrelated range
+        # domains updating the same bucket would thrash against each
+        # other every frame (flagged in AER-678 review as a hazard of a
+        # more aggressive fix shape). Drive the auto-range bucket through
+        # several different values and confirm the airports-domain key
+        # (built from the untouched self.range_nm) never moves.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        keys = set()
+        for horizon_nm in (8.0, 15.0, 22.5, 30.0, 45.0):
+            r._auto_range_nm(
+                self.AC_LAT, self.AC_LON,
+                self._agl_for_horizon_range(horizon_nm))
+            keys.add(r._collect_key(self.AC_LAT, self.AC_LON, r.range_nm))
+        assert len(keys) == 1, (
+            f"airports key moved with the unrelated auto-range bucket: "
+            f"{keys}")
+
+
+# ---------------------------------------------------------------------------
+# _auto_range_nm's return value is the RENDERED terrain extent, not just a
+# cache-key input (AER-678 review finding). It feeds straight into
+# SVSGLRenderer.draw's far edge, so it must track the raw, continuous
+# AGL-derived range -- an earlier version of the AER-678 fix ran this
+# return value through the same hysteresis bucket used for collector cache
+# keys, which silently overrode auto_range=False's configured range_nm
+# (8 NM in -> 10 NM rendered) and made the far edge pop in 5 NM steps
+# under climb instead of scaling smoothly. These tests pin the return
+# value directly against the un-bucketed formula so a regression fails
+# loudly instead of only showing up as a visual artifact on the bench.
+# ---------------------------------------------------------------------------
+
+class TestAutoRangeRenderedExtent:
+    AC_LAT, AC_LON = 39.0, -107.0
+
+    def _renderer(self, **config):
+        r = SVSRenderer(dict(config))
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        return r
+
+    def test_returns_raw_value_not_the_bucket(self):
+        # horizon_range for this AGL is exactly 22.5 NM -- a bucket edge,
+        # nowhere near a 5 NM multiple. The rendered extent must be the
+        # raw 22.5, not a bucketed 20.0 or 25.0.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        agl_ft = (22.5 / 1.22) ** 2
+        rendered = r._auto_range_nm(self.AC_LAT, self.AC_LON, agl_ft)
+        assert rendered == pytest.approx(22.5, abs=1e-6)
+        # The bucket, meanwhile, IS quantized -- that's a separate value.
+        assert r._collect_range_nm != pytest.approx(22.5, abs=1e-6)
+
+    def test_configured_range_not_overridden_when_auto_range_disabled(self):
+        # A user who turns auto-range off gets exactly the range_nm they
+        # configured -- not the nearest 5 NM bucket.
+        for configured in (3.0, 8.0, 12.0, 22.0):
+            r = self._renderer(range_nm=configured, auto_range=False)
+            rendered = r._auto_range_nm(self.AC_LAT, self.AC_LON, 5000.0)
+            assert rendered == pytest.approx(configured), (
+                f"configured range_nm={configured} rendered as "
+                f"{rendered} instead")
+
+    def test_min_range_nm_floor_is_exact(self):
+        # At very low AGL the horizon range collapses below the
+        # configured floor -- the floor itself must not get bucketed.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        rendered = r._auto_range_nm(self.AC_LAT, self.AC_LON, 1.0)
+        assert rendered == pytest.approx(8.0)
+
+    def test_rendered_extent_varies_smoothly_through_a_bucket_edge(self):
+        # Climbing steadily through a bucket boundary must not make the
+        # rendered far edge jump in a 5 NM step -- each successive sample
+        # should differ from the last by a small amount tied to the AGL
+        # step, not by a whole bucket width.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        agls = [((20.0 + 0.1 * i) / 1.22) ** 2 for i in range(60)]
+        rendered = [r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+                    for agl in agls]
+        deltas = [abs(b - a) for a, b in zip(rendered, rendered[1:])]
+        assert max(deltas) < 1.0, (
+            f"rendered extent jumped {max(deltas):.2f} NM between "
+            f"consecutive samples -- expected smooth tracking, not a "
+            f"bucket-sized step: {rendered}")

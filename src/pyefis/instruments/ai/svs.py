@@ -530,6 +530,9 @@ class SVSRenderer:
         self.terrain_fill  = config.get("terrain_fill", True)
         self.auto_range    = config.get("auto_range", True)
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
+        # Hysteresis state for the collect-cache range bucket (AER-678).
+        # See _update_collect_range_nm.
+        self._collect_range_nm = None
 
         # OpenGL tier state — see docs/svs_opengl_plan.md. The renderer
         # is lazy-constructed inside draw(), so we can probe Qt's OpenGL
@@ -672,7 +675,16 @@ class SVSRenderer:
         """Compute the effective rendered range in NM, scaling down from
         ``range_nm`` based on AGL and MSL when ``auto_range`` is on.
         Shared by the polar/CPU rasterisation path and the GL overlay
-        path so both honour the same auto-scale rule."""
+        path so both honour the same auto-scale rule.
+
+        Returns the RAW range — this is the actual terrain extent
+        drawn (svs_gl.draw's far edge), so it must track AGL
+        continuously with no hysteresis of its own; bucketing this
+        return value previously silently overrode a user's configured
+        range_nm/min_range_nm and made the rendered far edge pop in
+        5 NM steps under climb (AER-678 review). A hysteresis-smoothed
+        copy for collector cache keys only is stashed on
+        self._collect_range_nm as a side effect — see _collect_key."""
         _agl_elev, _ = self._sample_elevations(
             np.array([[ac_lat]]), np.array([[ac_lon]]))
         ac_ground_m = float(_agl_elev[0, 0])
@@ -688,9 +700,66 @@ class SVSRenderer:
             # when each polar quad was Python work; with the GPU
             # path the extra reach is essentially free.
             horizon_range = 1.22 * math.sqrt(max(0.0, agl_ft))
-            return min(self.range_nm,
-                       max(self.min_range_nm, horizon_range))
-        return self.range_nm
+            raw_range = min(self.range_nm,
+                            max(self.min_range_nm, horizon_range))
+        else:
+            raw_range = self.range_nm
+        self._update_collect_range_nm(raw_range)
+        return raw_range
+
+    # Hysteresis (Schmitt-trigger) bucketing for the collect-cache
+    # range term (AER-678 root cause). round(range_nm / STEP) * STEP
+    # alone still flips on every frame where the raw range hovers
+    # near a bucket edge, and because the SAME bucketed range also
+    # sets _collect_key's position-quantization step, one noisy
+    # reading invalidated every collector's cache together — the
+    # "vibrating" SVS under motion. The bucket only moves once the
+    # raw range has drifted HYSTERESIS_NM past the edge of its
+    # current bucket, not merely across the edge.
+    #
+    # This state has exactly one writer (_auto_range_nm, called once
+    # per frame from draw()) and must stay that way: it exists only
+    # to smooth the auto-scaled render range for the six collectors
+    # that key off it (runway polygons/markings, water, highways,
+    # obstacles, flags). The airports collector keys off self.range_nm
+    # instead (a static config value with no jitter to smooth) — do
+    # not route it through this bucket, or the two unrelated range
+    # domains will thrash the same state against each other every
+    # frame (AER-678 review).
+    _COLLECT_RANGE_STEP_NM = 5.0
+    _COLLECT_RANGE_HYSTERESIS_NM = 1.5
+
+    def _update_collect_range_nm(self, range_nm: float) -> float:
+        step = self._COLLECT_RANGE_STEP_NM
+        bucket = self._collect_range_nm
+        half = step / 2.0 + self._COLLECT_RANGE_HYSTERESIS_NM
+        if (bucket is None
+                or range_nm < bucket - half
+                or range_nm > bucket + half):
+            bucket = round(range_nm / step) * step
+            self._collect_range_nm = bucket
+        return bucket
+
+    def _collect_key(self, ac_lat, ac_lon, range_nm, *extra):
+        """Single cache-key builder shared by every SVS collector
+        (runway polygons/markings, airports, water, highways,
+        obstacles, flags). Coarsens aircraft position by a step
+        derived from ``range_nm`` so all eight independent per-
+        collector caches invalidate together, only on real movement
+        or a real range change — never on cache-key churn.
+
+        ``range_nm`` must already be jitter-free: pass
+        ``self._collect_range_nm`` (the hysteresis bucket stashed by
+        ``_auto_range_nm``) for the six auto-scaled collectors, or
+        ``self.range_nm`` for the airports collector, which is keyed
+        on the static configured range instead. Never pass the raw
+        per-frame auto-range value directly — the position step below
+        is derived from it, so an unsmoothed range reproduces AER-678
+        even if the range term in the key looks quantized."""
+        step = max(0.01, range_nm / 2000.0)
+        return (round(ac_lat / step) * step,
+                round(ac_lon / step) * step,
+                range_nm) + extra
 
     def _clearance_color(self, clearance_ft: float) -> QColor:
         # Use the selected palette's band colours; fall back to the module
@@ -834,10 +903,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         lat_cos = math.cos(math.radians(ac_lat))
 
         if (self._runway_polys_cache is not None
@@ -1163,11 +1229,8 @@ class SVSRenderer:
                 or not self.airport_db.ready):
             return None
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0,
-               round(self.detail_distance_nm, 2))
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
+                                round(self.detail_distance_nm, 2))
         if (self._runway_markings_cache is not None
                 and self._runway_markings_cache_key == key):
             return self._runway_markings_cache
@@ -1413,8 +1476,7 @@ class SVSRenderer:
         # Position step scales with range (jet speeds crossed the old
         # fixed 0.6 NM step every ~6 s, rebuilding 100 NM datasets
         # whose content had barely changed).
-        step = max(0.01, self.range_nm / 2000.0)
-        key = (round(ac_lat / step) * step, round(ac_lon / step) * step)
+        key = self._collect_key(ac_lat, ac_lon, self.range_nm)
         return self._async_cache(
             "airports", key,
             lambda: list(self._airports_in_range(ac_lat, ac_lon))) or []
@@ -1507,10 +1569,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         # Purely key-based: the key encodes coarsened position and
         # range, which fully determine the result — a TTL on top only
         # forced an identical rebuild every second, and the worker's
@@ -1684,8 +1743,7 @@ class SVSRenderer:
                 or not self.highway_db.ready):
             return None
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        # Position-only key. The LOS masking (#73) uses the CURRENT altitude when
+        # The LOS masking (#73) uses the CURRENT altitude when
         # the collection runs, and a moving aircraft already refreshes this on
         # position change (~1 s), so the occlusion stays current without an
         # altitude bucket. An altitude bucket here re-ran the costly query on
@@ -1693,9 +1751,7 @@ class SVSRenderer:
         # render loop on final approach (the #73 perf regression). Screen-space
         # width floor uses whatever pixels_per_deg the CURRENT collection sees
         # for the same reason -- it changes only on a widget resize.
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         # Purely key-based — see the water collector note.
         if (self._hwy_cache is not None
                 and self._hwy_cache_key == key):
@@ -1866,11 +1922,8 @@ class SVSRenderer:
             return {}
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(ac_alt_ft / 200.0) * 200.0,  # 200 ft alt bucket
-               round(range_nm / 5.0) * 5.0)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
+                                round(ac_alt_ft / 200.0) * 200.0)  # 200 ft alt bucket
         return self._async_cache(
             "obstacles", key,
             lambda: self._build_obstacles(
@@ -2051,10 +2104,8 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0, round(ppd, 1))
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
+                                round(ppd, 1))
         if (self._flags_cache is not None
                 and self._flags_cache_key == key):
             return self._flags_cache
