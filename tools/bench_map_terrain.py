@@ -13,6 +13,10 @@ change to see the effect in seconds instead of a two-day Pi deploy cycle.
 Run (Windows, deps on C:/pylib):
     PYTHONPATH="C:/pylib;src" python tools/bench_map_terrain.py \
         --tiles D:/EarthData/glo30hgt --lat 39 --lon -106
+
+On a shared bench box (e.g. the Beelink), a number scored against an absolute
+budget needs the box's load state recorded beside it -- see
+``docs/bench_measurement_convention.md``.
 """
 import argparse
 import math
