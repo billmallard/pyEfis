@@ -1358,6 +1358,21 @@ _register(InstrumentSpec(
              help="tab index shown on screen load/power-up -- always this "
                   "fixed tab, never the last one selected (v1, see "
                   "pyEfis#131 open question 2)"),
+        Prop("tab_position", "enum", default="top",
+             enum=["top", "bottom", "left", "right"], label="Tab bar edge",
+             help="which edge of the container the tab bar sits on; "
+                  "left/right also rotate the tab labels"),
+        # Unset (None) means no override -- the tab bar reads the inherited
+        # central-palette legibility floor (screenbuilder.py Screen.__init__)
+        # instead. Consistent with how HSI/tapes expose fg_color/bg_color,
+        # except those always carry a concrete default; here None lets a
+        # panel differ from the floor only when it chooses to.
+        Prop("fg_color", "color", default=None, label="Tab bar foreground",
+             help="tab label colour; unset inherits the screen's legible "
+                  "default"),
+        Prop("bg_color", "color", default=None, label="Tab bar background",
+             help="tab bar fill colour; unset inherits the screen's "
+                  "legible default"),
     ],
     containers=[
         ContainerSlot(

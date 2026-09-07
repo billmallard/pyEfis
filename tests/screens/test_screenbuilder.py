@@ -2505,14 +2505,16 @@ class TestTabSection:
     are built through the exact same Screen/create_instrument() path a
     top-level screen uses, recursed against the container's own box."""
 
-    def _build(self, qtbot, tabs, default_tab=0):
+    def _build(self, qtbot, tabs, default_tab=0, options=None):
+        opts = {"default_tab": default_tab}
+        opts.update(options or {})
         config = _config_with_instruments([
             {
                 "type": "tab_section",
                 "row": 0,
                 "column": 0,
                 "span": {"rows": 10, "columns": 10},
-                "options": {"default_tab": default_tab},
+                "options": opts,
                 "tabs": tabs,
             },
         ])
@@ -2632,6 +2634,134 @@ class TestTabSection:
         tab_section.closeEvent(None)
 
         assert closed == pages
+
+    def test_tab_label_is_actually_painted_pyefis_139(self, fix, qtbot):
+        """Regression for pyEfis#139: a tab page IS a Screen, so the old
+        hardcoded-black screenColor with no foreground role left the tab
+        bar's inherited WindowText the same colour as the Window it sits
+        on -- the label was present but invisible. Render the tab bar and
+        assert enough pixels differ sharply from the background, i.e. glyph
+        ink was actually painted, not merely the tab's own border/shadow
+        (the fusion style outlines each tab in a ~30/255 off-black shade
+        even with no fix at all -- a single differing pixel is that
+        border, not text, and would make this pass unconditionally)."""
+        screen = self._build(qtbot, [
+            {"label": "WWWWWW", "layout": {"rows": 1, "columns": 1},
+             "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+        bar = tab_section.tab_bar
+        bar.resize(max(bar.sizeHint().width(), 200), bar.sizeHint().height())
+
+        pixmap = QPixmap(bar.size())
+        pixmap.fill(QColor(0, 0, 0))
+        bar.render(pixmap)
+        image = pixmap.toImage()
+
+        background = image.pixelColor(1, 1)
+        mid_row = image.height() // 2
+        SHARP_DELTA = 100  # well above the ~30/255 border-shading artifact
+        glyph_pixels = sum(
+            1 for x in range(image.width())
+            if abs(image.pixelColor(x, mid_row).red() - background.red()) > SHARP_DELTA
+        )
+        assert glyph_pixels >= 5, (
+            "tab label was not painted distinctly from its background "
+            f"(only {glyph_pixels} sharply-differing pixels at the label's "
+            "mid-row)"
+        )
+
+    def test_font_family_is_applied_to_the_tab_bar(self, fix, qtbot):
+        """tab_section/__init__.py:65 assigned _font_family and read it
+        nowhere (AER-664 finding #2) -- the tab bar's QFont must actually
+        carry it."""
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        # Rebuild through create_instrument with an explicit font_family, the
+        # same path a real screen uses (screenbuilder_preferences reads it
+        # from options and passes it into every instrument builder).
+        config = screen.instrument_config[0]
+        config["options"]["font_family"] = "Liberation Mono"
+        tab_section = screenbuilder_factory.create_instrument(
+            screen, config, font_percent=None, font_family="Liberation Mono",
+        )
+        assert tab_section.tab_bar.font().family() == "Liberation Mono"
+
+    def test_fg_bg_color_override_the_inherited_default(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ], options={"fg_color": "#ff00ff", "bg_color": "#00ffff"})
+        tab_section = screen.instruments[0]
+
+        assert tab_section.fg_color == "#ff00ff"
+        assert tab_section.bg_color == "#00ffff"
+        style = tab_section.tab_bar.styleSheet()
+        assert "#ff00ff" in style
+        assert "#00ffff" in style
+
+    def test_fg_bg_color_unset_means_no_override(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+
+        assert tab_section.fg_color is None
+        assert tab_section.bg_color is None
+        assert tab_section.tab_bar.styleSheet() == ""
+
+    @pytest.mark.parametrize("position,shape", [
+        ("top", QTabBar.Shape.RoundedNorth),
+        ("bottom", QTabBar.Shape.RoundedSouth),
+        ("left", QTabBar.Shape.RoundedWest),
+        ("right", QTabBar.Shape.RoundedEast),
+    ])
+    def test_tab_position_places_the_bar_on_the_named_edge(
+        self, fix, qtbot, position, shape
+    ):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ], options={"tab_position": position})
+        tab_section = screen.instruments[0]
+        bar = tab_section.tab_bar.geometry()
+        stack = tab_section.stack.geometry()
+        w, h = tab_section.width(), tab_section.height()
+
+        assert tab_section.tab_bar.shape() == shape
+        # The bar sits flush against its named edge, and the stack fills
+        # everything else -- together they exactly cover the container with
+        # no overlap.
+        if position == "top":
+            assert bar.left() == 0 and bar.top() == 0 and bar.width() == w
+            assert stack.top() == bar.height() and stack.height() == h - bar.height()
+        elif position == "bottom":
+            assert bar.left() == 0 and bar.width() == w
+            assert bar.top() == h - bar.height()
+            assert stack.top() == 0 and stack.height() == h - bar.height()
+        elif position == "left":
+            assert bar.left() == 0 and bar.top() == 0 and bar.height() == h
+            assert stack.left() == bar.width() and stack.width() == w - bar.width()
+        else:  # right
+            assert bar.top() == 0 and bar.height() == h
+            assert bar.left() == w - bar.width()
+            assert stack.left() == 0 and stack.width() == w - bar.width()
+
+    def test_default_tab_position_is_pixel_identical_to_pre_aer664_layout(
+        self, fix, qtbot
+    ):
+        """Guardrail: default top plus no colour override must reproduce
+        the exact geometry the container used before this feature existed."""
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+        bar_height = tab_section.tab_bar.sizeHint().height()
+
+        assert tab_section.tab_bar.geometry().getRect() == (
+            0, 0, tab_section.width(), bar_height)
+        assert tab_section.stack.geometry().getRect() == (
+            0, bar_height, tab_section.width(),
+            tab_section.height() - bar_height)
 
 
 # ── Flat svs_* editor props reach the renderer under the stripped name ────────
