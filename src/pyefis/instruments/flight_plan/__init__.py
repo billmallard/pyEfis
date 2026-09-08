@@ -600,7 +600,7 @@ class FlightPlan(QWidget):
         footer_h = int(h * 0.10)
 
         self._paint_header(p, w, header_h, interactive)
-        self._paint_list(p, w, header_h, h - footer_h, interactive)
+        self._paint_list(p, w, header_h, h - footer_h, header_h, interactive)
         self._paint_footer(p, w, h - footer_h, footer_h, interactive)
 
         if self._row_menu_index is not None:
@@ -688,13 +688,13 @@ class FlightPlan(QWidget):
                                       QPointF(cx - r, cy + r)]))
         p.restore()
 
-    def _paint_list(self, p, w, top, bottom, interactive):
+    def _paint_list(self, p, w, top, bottom, max_row_h, interactive):
         rows = self._plan.waypoints
         n = len(rows)
         if n == 0:
             p.setPen(QPen(QColor("#808080")))
             f = QFont(self.font_family)
-            f.setPixelSize(max(10, int((bottom - top) * 0.08)))
+            f.setPixelSize(max(10, min(int((bottom - top) * 0.08), int(max_row_h * 0.5))))
             p.setFont(f)
             p.drawText(QRectF(0, top, w, bottom - top),
                        Qt.AlignmentFlag.AlignCenter, "NO WAYPOINTS")
@@ -705,7 +705,10 @@ class FlightPlan(QWidget):
         cols = [c.strip().upper() for c in (self.columns or "").split(",") if c.strip()]
         cols = [c for c in cols if c in COLUMN_CHOICES] or ["DTK", "DIS", "CUM"]
 
-        row_h = max(14, (bottom - top) / n)
+        # Cap the row height so a near-empty plan doesn't stretch one or two
+        # rows into a grotesquely oversized icon/font -- a real 50-slot plan
+        # is what sizes rows down to fit, not the list area's leftover space.
+        row_h = max(14, min((bottom - top) / n, max_row_h))
         f = QFont(self.font_family)
         f.setPixelSize(max(9, int(row_h * 0.5)))
         p.setFont(f)

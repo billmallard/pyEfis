@@ -339,6 +339,22 @@ def test_row_colors_active_past_future(fix, qtbot):
     assert w._row_color(2, active_idx) == w.future_color
 
 
+def test_single_waypoint_row_height_is_capped_not_full_list_height(fix, qtbot):
+    # Bench regression (AER-805): a 1-waypoint plan's row stretched to fill
+    # the whole list area, rendering a screen-filling icon and font.
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.resize(960, 1080)
+    w._plan = _plan(1)
+    w._commit()
+    header_h = int(w.height() * 0.16)
+    footer_h = int(w.height() * 0.10)
+    row_h = max(14, min((w.height() - footer_h - header_h) / 1, header_h))
+    assert row_h == pytest.approx(header_h)
+    w.grab()
+
+
 @pytest.mark.parametrize("state,badge", [(0, ""), (1, "LEG"), (2, "DIRECT"), (3, "SUSP")])
 def test_state_badge_follows_fplstate(fix, qtbot, state, badge):
     _define_all_fp1_keys(fix)
