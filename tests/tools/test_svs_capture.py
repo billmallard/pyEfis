@@ -101,3 +101,51 @@ def test_magvar_direction_matches_west_positive_convention(svs_capture):
     head_true = values["HEAD"] - values["MAGVAR"]
     assert head_true == pytest.approx(77.0)
     assert head_true < values["HEAD"]
+
+
+# ---------------------------------------------------------------------------
+# --offscreen (AER-763): svs_capture needs a window today (a QMainWindow it
+# shows so its QOpenGLWidget viewport can initialise), which eglfs refuses to
+# hand out a second one of while pyEfis already holds the display. These
+# tests only cover parse_args' validation -- the render path itself
+# (make_offscreen_target / render_offscreen_frame) needs a real GL context
+# and is not exercised by this suite; see the module docstring for what is
+# and is not verified about it.
+# ---------------------------------------------------------------------------
+
+def test_offscreen_flag_defaults_to_false(svs_capture):
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+    ])
+    assert args.offscreen is False
+
+
+def test_offscreen_flag_parses(svs_capture):
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+        "--offscreen",
+    ])
+    assert args.offscreen is True
+
+
+def test_offscreen_accepts_default_msaa(svs_capture):
+    """--msaa's default (1) is compatible with --offscreen -- only an
+    explicit, non-default sample count is rejected."""
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+        "--offscreen",
+    ])
+    assert args.msaa == 1
+
+
+def test_offscreen_rejects_non_default_msaa(svs_capture, capsys):
+    """The offscreen FBO is always allocated at 0 samples (glReadPixels on a
+    multisample FBO is invalid, same constraint the windowed path has) -- a
+    non-default --msaa would silently be ignored rather than failing at
+    readback, so parse_args rejects the combination up front."""
+    with pytest.raises(SystemExit):
+        svs_capture.parse_args([
+            "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+            "--offscreen", "--msaa", "4",
+        ])
+    assert "--offscreen" in capsys.readouterr().err

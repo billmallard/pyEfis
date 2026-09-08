@@ -1165,17 +1165,31 @@ class AI(QGraphicsView):
             super(AI, self).paintEvent(event)
             return
         super(AI, self).paintEvent(event)
+        p = QPainter(self.viewport())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._paint_overlays(p)
+
+        if _pe_t0:
+            perf.add_ns("frame.ai_paintEvent_total",
+                        _time.perf_counter_ns() - _pe_t0)
+
+    def _paint_overlays(self, p):
+        """Draw everything paintEvent adds on top of the composited scene:
+        the static overlay image, the SVS-unavailable annunciation, the bank
+        cluster, FPM, horizon heading scale and recovery chevrons.
+
+        Painted directly with a QPainter rather than as QGraphicsItems, so it
+        always lands in front of the SVS terrain (a low-z scene item added
+        inside ``super().paintEvent()``). Split out of ``paintEvent`` so an
+        offscreen capture path (``tools/svs_capture.py``, AER-763) can drive
+        the same overlay drawing against a manually bound paint device --
+        paintEvent itself is unreachable there since it needs a live
+        QOpenGLWidget viewport, which in turn needs a real platform window.
+        """
         w = self.width()
         h = self.height()
         r = self.bankAngleRadius
         m = self.bankMarkSize
-        p = QPainter(self.viewport())
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # SVS terrain is rendered as a QGraphicsItem inside super().paintEvent()
-        # above, at a low z-value (default -10). The pitch ladder (z=1) and any
-        # other scene items render on top. Overlay symbology below is painted
-        # directly onto the viewport, so it always lands in front of SVS.
 
         # Put the static overlay image on the view
         p.drawImage(self.rect(), self.overlay)
@@ -1300,10 +1314,6 @@ class AI(QGraphicsView):
         # last so they sit on top of the de-cluttered display.
         if self._show_recovery_chevrons:
             self._draw_recovery_chevrons(p, w, h)
-
-        if _pe_t0:
-            perf.add_ns("frame.ai_paintEvent_total",
-                        _time.perf_counter_ns() - _pe_t0)
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
