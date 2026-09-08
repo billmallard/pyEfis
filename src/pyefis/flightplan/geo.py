@@ -50,3 +50,18 @@ def cross_track_nm(lat: float, lon: float,
     delta13 = distance_nm(lat1, lon1, lat, lon) / EARTH_RADIUS_NM
     xte_rad = math.asin(math.sin(delta13) * math.sin(theta13 - dtk))
     return xte_rad * EARTH_RADIUS_NM
+
+
+def along_track_distance_nm(lat: float, lon: float,
+                             lat1: float, lon1: float,
+                             lat2: float, lon2: float) -> float:
+    """Along-track distance in nm from point 1 to the projection of
+    (lat, lon) onto the great-circle track running from point 1 to point 2.
+    Standard spherical-trig identity: ATD = acos(cos(delta13) / cos(xte)),
+    delta13 the angular distance from point 1 to (lat, lon)."""
+    dtk = _rad(initial_bearing(lat1, lon1, lat2, lon2))
+    theta13 = _rad(initial_bearing(lat1, lon1, lat, lon))
+    delta13 = distance_nm(lat1, lon1, lat, lon) / EARTH_RADIUS_NM
+    xte_rad = math.asin(math.sin(delta13) * math.sin(theta13 - dtk))
+    atd_rad = math.acos(math.cos(delta13) / math.cos(xte_rad))
+    return atd_rad * EARTH_RADIUS_NM

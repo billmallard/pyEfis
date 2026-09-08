@@ -60,6 +60,40 @@ quality flags, and aux values work.
 > [`change value wrap`](Widgets-Text-and-Interactive#actions) on `NAVSRC` cycles
 > the source.
 
+## Flight plan
+
+The flight-plan **engine lives in fix-gateway** (`flightplan` plugin, FP2);
+pyEFIS's `src/pyefis/flightplan/fixbridge.py` (FP4) publishes the route to
+these keys and reads the engine's guidance back. See
+`makerplane/briefs/flight_plan_plan.md` section 3.2 Appendix A and
+billmallard/pyEfis#181 for the full contract; this table covers what the
+bridge touches.
+
+| Key | Units | Meaning | Written by |
+|-----|-------|---------|------------|
+| `FPLfID` / `FPLfLAT` / `FPLfLON` (`f`=1..50) | str/deg/deg | Route slot ident + position | editor |
+| `FPLfTYPE` / `FPLfROLE` | int | Slot type (0 unk..6 map) / approach role (0 none..4 mahp) | editor |
+| `FPLCOUNT` | — | Slots in use (0..50) | editor |
+| `FPLNAME` | — | Route name | editor |
+| `FPLSEQ` | — | Commit counter — consumers act only on this changing, written last | editor |
+| `DTOID` / `DTOLAT` / `DTOLON` / `DTOTYPE` | — | Direct-to staging | editor |
+| `FPLCMD` | — | `"<seq> VERB [arg]"` (`ACT`/`DTO`/`DTOX`/`SUSP`/`RESUME`/`SCALE`) | editor |
+| `FPLCMDACK` / `FPLMSG` | — | Ack (negative = rejected) / last message | engine |
+| `FPLSTATE` / `FPLACTLEG` | — | 0 NONE/1 LEG/2 DIRECT/3 SUSP / slot of the TO waypoint | engine |
+| `FPLPHASE` / `FPLAPR` / `FPLINTEG` | — | Flight-phase annunciation / approach state / integrity gate | engine |
+| `CDISCALE` | nm | Full-scale CDI deflection (2.0 ENR, 1.0 TERM, ramps to 0.3 LNAV) | engine |
+| `FPLCRS` / `FPLXTK` / `FPLCDI` / `FPLTF` | deg/nm/−1..1/— | Desired track / cross-track / deviation / TO-FROM | engine |
+| `WPDIS` / `WPETE` | nm / s | Distance / time to the TO waypoint | engine |
+| `WPFROM` / `WPNEXT` | — | FROM / NEXT idents | engine |
+| `FPLREMDIS` / `FPLREMETE` | nm / s | Remaining distance / time to the end of the plan | engine |
+| `GPSSRC` | — | 0 = internal plan, 1 = external navigator | pilot |
+
+`WPLAT`/`WPLON`/`WPNAME` (existing keys, see Navigation & position above) are
+written by the engine while a plan is active. `GPSSRC` selects `{FPLCRS,
+EXTCRS} -> GPSCRS` etc. into the canonical `GPSCRS`/`GPSCDI`/`GPSTF`, which
+`NAVSRC` then carries on into `COURSE`/`CDI`/`TOFROM` as usual — the HSI is
+unmodified by this epic.
+
 ## Engine / EMS (representative)
 
 These are bound to gauges through [Preferences](Preferences-and-Styling)

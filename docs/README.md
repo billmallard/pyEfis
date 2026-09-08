@@ -55,6 +55,7 @@ specs with requirement IDs: [ai](ai_widget_spec.md) ·
 
 | Doc | Status |
 |---|---|
+| [flight_plan_widget.md](flight_plan_widget.md) | FP4 (2026-09-08) — data layer (`flightplan/{model,catalog,fixbridge}.py`) landed; `flight_plan` instrument is FP5a |
 | [svs_papi_plan.md](svs_papi_plan.md) | Open plan — VASI/PAPI adoption into GL SVS (#38) |
 | [map_layers_roadmap.md](map_layers_roadmap.md) | PLAN 2026-07-10 — roads/rivers LOD + FAA raster charts |
 | [map_wide_range_perf_plan.md](map_wide_range_perf_plan.md) | PLAN 2026-07-10 — largely executed by the mosaic/mip work; reconcile before acting |

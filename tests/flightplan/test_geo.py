@@ -23,6 +23,14 @@ XTE_CASES = [
     (34.70, -120.10, 3.246),
     (34.55, -120.25, -8.396),
 ]
+
+# Same probe points, along-track distance from KSBA (FP4 -- shares the table
+# fix-gateway FP2's engine asserts, brief section 3.3).
+ATD_CASES = [
+    (34.60, -120.10, 16.509),
+    (34.70, -120.10, 20.603),
+    (34.55, -120.25, 19.892),
+]
 KSBA = (34.42621, -119.84037)
 KSMX = (34.89892, -120.45758)
 
@@ -46,6 +54,22 @@ def test_cross_track_nm(lat, lon, xte_nm):
 def test_cross_track_nm_zero_on_track():
     got = geo.cross_track_nm(KSBA[0], KSBA[1], KSBA[0], KSBA[1], KSMX[0], KSMX[1])
     assert got == pytest.approx(0.0, abs=1e-9)
+
+
+@pytest.mark.parametrize("lat,lon,atd_nm", ATD_CASES)
+def test_along_track_distance_nm(lat, lon, atd_nm):
+    got = geo.along_track_distance_nm(lat, lon, KSBA[0], KSBA[1], KSMX[0], KSMX[1])
+    assert got == pytest.approx(atd_nm, abs=1e-3)
+
+
+def test_along_track_distance_nm_zero_at_start():
+    got = geo.along_track_distance_nm(KSBA[0], KSBA[1], KSBA[0], KSBA[1], KSMX[0], KSMX[1])
+    assert got == pytest.approx(0.0, abs=1e-6)
+
+
+def test_along_track_distance_nm_full_leg_at_end():
+    got = geo.along_track_distance_nm(KSMX[0], KSMX[1], KSBA[0], KSBA[1], KSMX[0], KSMX[1])
+    assert got == pytest.approx(geo.distance_nm(*KSBA, *KSMX), abs=1e-3)
 
 
 def test_initial_bearing_wraps_into_0_360():
