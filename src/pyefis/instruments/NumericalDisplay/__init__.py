@@ -180,6 +180,12 @@ class NumericalDisplay(QGraphicsView):
             self.old_text.hide()
         """
 
+        # A fail flagged before this first resize (readout_rect was still
+        # None, so setFail's scene switch was skipped) needs applying now
+        # that fail_scene exists.
+        if self._fail:
+            self.setScene(self.fail_scene)
+
     def redraw(self):
         prevalue = int(self._value / (10**self.scroll_decimal))
         scroll_value = self._value - (prevalue * (10**self.scroll_decimal))
@@ -210,6 +216,12 @@ class NumericalDisplay(QGraphicsView):
     value = property(getValue, setValue)
 
     def flagDisplay(self):
+        # readout_rect is None until the first resizeEvent builds the scene
+        # (pre_scroll_text/scrolling_area don't exist yet). A FIX item can flip
+        # old/bad/fail before that first resize fires -- record the flag (done
+        # by the callers) and let resizeEvent's own initial paint pick it up.
+        if self.readout_rect is None:
+            return
         if self._bad or self._old or self._fail:
             self.pre_scroll_text.setText("")
             self.scrolling_area.hide()
@@ -252,11 +264,12 @@ class NumericalDisplay(QGraphicsView):
     def setFail(self, b):
         if self._fail != b:
             self._fail = b
-            if b:
-                self.setScene(self.fail_scene)
-            else:
-                self.setScene(self.scene)
-                self.flagDisplay()
+            if self.readout_rect is not None:
+                if b:
+                    self.setScene(self.fail_scene)
+                else:
+                    self.setScene(self.scene)
+                    self.flagDisplay()
 
     fail = property(getFail, setFail)
 

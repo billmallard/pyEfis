@@ -77,6 +77,39 @@ def test_numerical_display_decimals(qtbot):
     assert widget.pre_scroll_text.text() == "-00"
 
 
+# AER-770: a FIX item can flip old/bad/fail before the widget's first
+# resizeEvent has ever run (pre_scroll_text/scrolling_area/fail_scene don't
+# exist yet). This used to raise AttributeError out of flagDisplay() and take
+# the whole process down -- reproduced live on the bench via a SIGUSR1
+# screenshot grab that forced a repaint before layout had settled.
+def test_numerical_display_flag_before_resize(qtbot):
+    widget = NumericalDisplay(total_decimals=4, scroll_decimal=0)
+    qtbot.addWidget(widget)
+    assert widget.readout_rect is None
+    widget.setOld(True)
+    widget.setBad(True)
+    widget.setFail(True)
+    widget.setFail(False)
+    widget.setBad(False)
+    widget.setOld(False)
+
+    # Once it does resize, it must come up clean and reflect the last state.
+    widget.resize(100, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+    assert widget.pre_scroll_text.text() != ""
+
+
+def test_numerical_display_fail_before_resize_applies_on_resize(qtbot):
+    widget = NumericalDisplay(total_decimals=4, scroll_decimal=0)
+    qtbot.addWidget(widget)
+    widget.setFail(True)
+    widget.resize(100, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+    assert widget.scene() is widget.fail_scene
+
+
 # Not sure why line 270 is not showing as covered
 # when this calls the getValue function:
 def test_numerical_get_value(qtbot):
