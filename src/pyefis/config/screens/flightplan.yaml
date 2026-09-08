@@ -1,0 +1,36 @@
+# Stock screen for the flight_plan instrument (FP5a, billmallard/pyEfis#185).
+# Moving map on the left, flight_plan on the right, the shipped 110x200 grid.
+# Reached from PFD via the FPL corner button (buttons/screen-flightplan-pfd.yaml).
+FLIGHTPLAN:
+  module: pyefis.screens.screenbuilder
+  title: Flight Plan
+  layout:
+    rows: 110
+    columns: 200
+  instruments:
+    - type: moving_map
+      row: 0
+      column: 0
+      span:
+        rows: 110
+        columns: 100
+
+    - type: flight_plan
+      row: 0
+      column: 100
+      span:
+        rows: 110
+        columns: 100
+      options:
+        columns: "DTK,DIS,CUM"
+
+    # Small corner overlay on the map side (the data_annunciation-on-virtual_vfr
+    # precedent in pfd.yaml) so it never shadows flight_plan's own footer.
+    - type: button
+      row: 0
+      column: 0
+      span:
+        rows: 10
+        columns: 15
+      options:
+        config: buttons/screen-flightplan-pfd.yaml

@@ -1,0 +1,20 @@
+type: simple
+text: ""
+dbkey: TSBTN{id}34
+conditions:
+  - when: "SCREEN eq 'FLIGHTPLAN'"
+    actions:
+      - set text: PFD
+      - set bg color: lightgray
+    continue: true
+  - when: "SCREEN ne 'FLIGHTPLAN'"
+    actions:
+      - set text: FPL
+      - set bg color: lightgray
+    continue: true
+  - when: "CLICKED eq true and SCREEN ne 'FLIGHTPLAN'"
+    actions:
+      - show screen: FLIGHTPLAN
+  - when: "CLICKED eq true and SCREEN eq 'FLIGHTPLAN'"
+    actions:
+      - show screen: PFD
