@@ -23,6 +23,9 @@ FLIGHTPLAN:
         columns: 100
       options:
         columns: "DTK,DIS,CUM"
+        nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
+        navaid_db_path: /data/makerplane-data/navaids/current/navaids.sqlite
+        flightplan_dir: ~/makerplane/pyefis/flightplans
 
     # Small corner overlay on the map side (the data_annunciation-on-virtual_vfr
     # precedent in pfd.yaml) so it never shadows flight_plan's own footer.

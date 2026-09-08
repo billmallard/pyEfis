@@ -23,6 +23,7 @@ pages render read-only (no tap targets are registered).
 """
 
 import logging
+import os
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
@@ -219,14 +220,18 @@ class FlightPlan(QWidget):
         return "%d:%02d" % (seconds // 3600, (seconds % 3600) // 60)
 
     # -- waypoint index / catalog (lazy; path options apply post-construction)
+    def _flightplan_dir(self):
+        return os.path.expanduser(self.flightplan_dir) if self.flightplan_dir else ""
+
     def _ensure_waypoint_index(self):
         key = (self.nasr_db_path, self.navaid_db_path, self.flightplan_dir)
         if self._waypoint_index is not None and self._waypoint_index_key == key:
             return self._waypoint_index
         user_file = recent_file = None
-        if self.flightplan_dir:
-            user_file = f"{self.flightplan_dir}/user_waypoints.json"
-            recent_file = f"{self.flightplan_dir}/recent.json"
+        flightplan_dir = self._flightplan_dir()
+        if flightplan_dir:
+            user_file = f"{flightplan_dir}/user_waypoints.json"
+            recent_file = f"{flightplan_dir}/recent.json"
         self._waypoint_index = fp_waypoints.WaypointIndex(
             airports_db_path=self.nasr_db_path or None,
             navaids_db_path=self.navaid_db_path or None,
@@ -236,7 +241,8 @@ class FlightPlan(QWidget):
 
     def _ensure_catalog(self):
         if self._catalog is None or self._catalog_dir_used != self.flightplan_dir:
-            directory = f"{self.flightplan_dir}/routes" if self.flightplan_dir else "routes"
+            flightplan_dir = self._flightplan_dir()
+            directory = f"{flightplan_dir}/routes" if flightplan_dir else "routes"
             self._catalog = fp_catalog.Catalog(directory)
             self._catalog_dir_used = self.flightplan_dir
         return self._catalog
