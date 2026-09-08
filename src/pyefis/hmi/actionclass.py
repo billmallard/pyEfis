@@ -45,6 +45,13 @@ class ActionClass(QWidget):
     checklistNextList = pyqtSignal(object)
     checklistPrevList = pyqtSignal(object)
     checklistReset = pyqtSignal(object)
+    # Flight-plan instrument actions (FP5a). The argument is "<payload> [group]":
+    # payload is a page name (flightplanPage) or a waypoint ident
+    # (flightplanDirectTo, blank = open the Entry page instead); the optional
+    # trailing word is the target instrument's `hmi_group`, blank/absent = every
+    # flight_plan instrument on the screen (the checklist broadcast precedent).
+    flightplanPage = pyqtSignal(object)
+    flightplanDirectTo = pyqtSignal(object)
 
     def __init__(self):
         super(ActionClass, self).__init__()
@@ -71,6 +78,8 @@ class ActionClass(QWidget):
             "checklist next list": self.checklistNextList,
             "checklist previous list": self.checklistPrevList,
             "checklist reset": self.checklistReset,
+            "flightplan page": self.flightplanPage,
+            "flightplan direct to": self.flightplanDirectTo,
             "exit": self.doExit,
             "evaluate": eval,
         }

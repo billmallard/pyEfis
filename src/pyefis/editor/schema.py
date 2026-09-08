@@ -332,6 +332,18 @@ _ACTIONS = [
     {"verb": "checklist reset", "label": "Checklist: reset",
      "group": "checklist", "arg": {"kind": "string"},
      "help": "clear every acknowledgement in the active checklist"},
+    # --- flight plan (FP5a) ---
+    # The argument is "<payload> [group]": payload first, an optional trailing
+    # word names the target flight_plan instrument's hmi_group (blank = every
+    # flight_plan instrument on the screen), mirroring the checklist broadcast.
+    {"verb": "flightplan page", "label": "Flight plan: show page",
+     "group": "flightplan", "arg": {"kind": "string"},
+     "help": "switch the flight_plan instrument's page ('fpl' now; 'dto'/"
+             "'catalog' are reserved for FP5b)"},
+    {"verb": "flightplan direct to", "label": "Flight plan: direct to",
+     "group": "flightplan", "arg": {"kind": "string"},
+     "help": "blank opens the Entry page for a direct-to; an ident stages "
+             "and activates direct-to that waypoint immediately"},
     # --- HMI menu navigation ---
     {"verb": "activate menu", "label": "Activate menu", "group": "menu",
      "arg": {"kind": "string"}, "help": "open an HMI menu"},

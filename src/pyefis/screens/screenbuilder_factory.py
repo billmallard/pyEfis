@@ -23,6 +23,7 @@ from pyefis.instruments import airspeed
 from pyefis.instruments import altimeter
 from pyefis.instruments import button
 from pyefis.instruments import checklist
+from pyefis.instruments import flight_plan
 from pyefis.instruments import data_status
 from pyefis.instruments import gauges
 from pyefis.instruments import hsi
@@ -215,6 +216,10 @@ def build_checklist(screen, config, font_percent=None, font_family=None, replace
         checklists=opts.get("checklists"),
         font_family=font_family,
     )
+
+
+def build_flight_plan(screen, config, font_percent=None, font_family=None, replace=None):
+    return flight_plan.FlightPlan(screen, font_family=font_family)
 
 
 # Every instrument type is migrated -- these legacy lookup tables are populated
@@ -1246,6 +1251,60 @@ _register(InstrumentSpec(
              label="Section colour",
              help="colour of section subheaders and the progress line"),
     ],
+))
+
+# `flight_plan` (FP5a, billmallard/pyEfis#185): an app-like instrument, same
+# "builds in isolation, construct-never-raises" shape as checklist, but reads
+# the FP1 route block via flightplan.fixbridge.FixBridge instead of taking its
+# state inline -- missing FIX keys just mean `available=False` (annunciate,
+# read-only), never a raise. Touch-only in this item; the physical-keyboard
+# path is FP5b and the encoder path is FP5c (neither is wired here, so no
+# `encoder_order` Prop yet -- it isn't declared for a type with no
+# `enc_selectable`, matching every other instrument's convention).
+_register(InstrumentSpec(
+    type="flight_plan",
+    label="Flight Plan",
+    category="navigation",
+    builder=build_flight_plan,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=["FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSTATE", "FPLACTLEG", "FPLAPR",
+            "FPLINTEG"],
+    properties=[
+        Prop("flightplan_dir", "string", default="", label="Flight plan directory",
+             help="directory for stored routes/user waypoints/recent list "
+                  "(<dir>/routes/*.json, user_waypoints.json, recent.json); "
+                  "blank disables catalog Store and FastFind's Recent/User tabs"),
+        Prop("nasr_db_path", "string", default="", label="Airport db path",
+             help="NASR airports.sqlite for FastFind/nearest airport lookup "
+                  "(same path as the moving map's nasr_db_path)"),
+        Prop("navaid_db_path", "string", default="", label="Navaid db path",
+             help="navaids.sqlite for FastFind/nearest navaid and fix lookup "
+                  "(same path as the moving map's navaid_db_path)"),
+        Prop("columns", "string", default="DTK,DIS,CUM", label="Columns",
+             help="comma-separated FPL page data columns, in order; choices "
+                  "DTK, DIS, CUM, ETE, ETA"),
+        Prop("keypad", "boolean", default=True, label="On-screen keypad",
+             help="show the gloved-finger on-screen keypad on the Entry page"),
+        Prop("keyboard", "boolean", default=False, label="Physical keyboard",
+             help="let a physical keyboard drive the Entry page while it is "
+                  "open; not yet implemented (FP5b)"),
+        Prop("default_page", "enum", default="fpl", enum=["fpl", "entry"],
+             label="Default page", help="page shown when the instrument first "
+                  "paints"),
+        Prop("hmi_group", "string", default="", label="HMI group",
+             help="optional name so 'flightplan page'/'flightplan direct to' "
+                  "HMI actions can target this instrument; blank = every "
+                  "flight_plan instrument on the screen"),
+        Prop("active_color", "color", default="#ff00ff", label="Active leg colour",
+             help="colour of the active (TO) leg's row"),
+        Prop("future_color", "color", default="#ffffff", label="Future leg colour",
+             help="colour of upcoming (not yet flown) legs"),
+        Prop("past_color", "color", default="#808080", label="Past leg colour",
+             help="colour of already-flown legs"),
+    ],
+    preview={"name": "KSBA-GVO-KSMX",
+             "waypoints": [{"id": "KSBA"}, {"id": "GVO"}, {"id": "KSMX"}]},
 ))
 
 _register(InstrumentSpec(
