@@ -54,6 +54,7 @@ Each also exists as `ganged_<type>` for grouped strips.
 | `value_text` | `misc.ValueDisplay` | *(set `dbkey`)* | Plain value readout (no gauge colors) |
 | `button` | `button.Button` | *(button config)* | Interactive button: state, conditions, actions |
 | `listbox` | `listbox.ListBox` | *(per list)* | Selectable list (radio freqs, waypoints) |
+| `flight_plan` | `flight_plan.FlightPlan` | `FPLCOUNT`,`FPLNAME`,`FPLSEQ`,`FPLSTATE`,`FPLACTLEG`,`FPLAPR`,`FPLINTEG` | App-like flight-plan editor: FPL/Entry pages, on-screen keypad, FastFind (touch; FP5a) |
 
 ## System & status — [Widgets-System](Widgets-System)
 

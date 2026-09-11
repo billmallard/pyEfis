@@ -12,6 +12,7 @@ model). This page documents only what is specific to each widget.
 | `value_text` | `misc.ValueDisplay` | a plain readout of one FIX key (dim on old/bad/fail, red on annunciate) | no |
 | `button` | `button.Button` | a stateful pushbutton driven by a per-button config file: shows data, changes color/text on conditions, and fires actions | yes (encoder-selectable) |
 | `listbox` | `listbox.ListBox` | a scrollable table of user-defined lists that writes FIX keys when an item is selected | yes (encoder-selectable) |
+| `flight_plan` | `flight_plan.FlightPlan` | an app-like flight-plan editor: FPL list + Entry page with FastFind and an on-screen keypad | yes (touch only; FP5a) |
 
 > The two text widgets are deliberately "dumb" — if you want a number that goes
 > yellow/red on its own thresholds, use [`numeric_display`](Widgets-Engine-Gauges#numeric_display)
@@ -425,6 +426,51 @@ replaced with that row's displayed cell text:
 - You may add **arbitrary keys** to a row that are not columns (so they are not
   displayed) and reference them in `set:`. For example a row with `type: Airport`
   and `set: { WPNAME: "{type} {Name}" }` writes `WPNAME` = `Airport <Name>`.
+
+---
+
+## `flight_plan`
+
+An app-like flight-plan editor (`category: navigation`), modelled on the
+`checklist` instrument: an FPL page (route list, header, row menu, footer
+menu) and an Entry page (FastFind ident field, on-screen keypad, Recent/
+Nearest/FPL/User tabs). Unlike the other widgets on this page it does not
+read/write one plain `dbkey` — it publishes a whole route through
+`flightplan.fixbridge.FixBridge` (see [flight_plan_widget.md](../flight_plan_widget.md)
+for the full page/option/HMI-verb reference; this entry is the index-page
+summary).
+
+**YAML `type:`** `flight_plan`
+
+**FIX keys:** the FP1 route block (`FPLCOUNT`, `FPLNAME`, `FPLSEQ`,
+`FPLfID`/`FPLfLAT`/`FPLfLON`/`FPLfTYPE`/`FPLfROLE`, `DTO*`, `FPLCMD`/
+`FPLCMDACK`/`FPLMSG`) and engine outputs (`FPLSTATE`, `FPLACTLEG`, `FPLAPR`,
+`FPLINTEG`, `WPETE`, `FPLREMDIS`/`FPLREMETE`, ...) — see
+[FIX-Database-Keys#flight-plan](FIX-Database-Keys#flight-plan). Missing keys
+never raise: the instrument annunciates and the pages render read-only.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `flightplan_dir` | `""` | directory for stored routes/user waypoints/recent list |
+| `nasr_db_path` / `navaid_db_path` | `""` | airport/navaid sqlite packs for FastFind (same names as `moving_map`'s) |
+| `columns` | `"DTK,DIS,CUM"` | FPL page data columns (DTK, DIS, CUM, ETE, ETA) |
+| `keypad` | `true` | show the on-screen keypad on the Entry page |
+| `keyboard` | `false` | physical-keyboard input on the Entry page (not yet implemented, FP5b) |
+| `default_page` | `"fpl"` | page shown when the instrument first paints |
+| `hmi_group` | `""` | targets this instance from the `flightplan page`/`flightplan direct to` HMI verbs |
+| `active_color` / `future_color` / `past_color` | `#ff00ff` / `#ffffff` / `#808080` | FPL page row colours by leg status |
+
+```yaml
+- type: flight_plan
+  row: 0
+  column: 100
+  span: {rows: 110, columns: 100}
+  options:
+    columns: "DTK,DIS,CUM"
+    nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
+    navaid_db_path: /data/makerplane-data/navaids/current/navaids.sqlite
+    flightplan_dir: /home/pyefis/makerplane/pyefis/flightplans
+```
 
 ---
 

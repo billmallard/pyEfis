@@ -25,6 +25,7 @@ Live workstream state lives outside the repo in the workspace ledger
 | [instrument_spec.md](instrument_spec.md) | Instrument definition specification (active pilot) |
 | [adding_an_instrument.md](adding_an_instrument.md) | How-to: add/change an instrument + its configurator twin without drift |
 | [checklist_widget.md](checklist_widget.md) | Interactive checklist instrument (CAP-115 Phase 1): inline config, encoder + HMI control |
+| [flight_plan_widget.md](flight_plan_widget.md) | `flight_plan` instrument (FP5a): FPL/Entry pages, on-screen keypad, touch; DTO/Catalog/WPT Info + keyboard (FP5b) and encoder (FP5c) still open |
 | [screenbuilder.md](screenbuilder.md) | Screen YAML / screenbuilder reference (upstream-origin) |
 | [requirements.md](requirements.md) | pyEfis display requirements (upstream-origin) |
 | [wiki/Headless-Linux-Appliance.md](wiki/Headless-Linux-Appliance.md) | x86-64 headless Linux source install + boot-to-EFIS kiosk notes/gotchas (eglfs-vs-wheel, X/xcb, systemd) — published to the wiki |
@@ -55,7 +56,6 @@ specs with requirement IDs: [ai](ai_widget_spec.md) ·
 
 | Doc | Status |
 |---|---|
-| [flight_plan_widget.md](flight_plan_widget.md) | FP4 (2026-09-08) — data layer (`flightplan/{model,catalog,fixbridge}.py`) landed; `flight_plan` instrument is FP5a |
 | [svs_papi_plan.md](svs_papi_plan.md) | Open plan — VASI/PAPI adoption into GL SVS (#38) |
 | [map_layers_roadmap.md](map_layers_roadmap.md) | PLAN 2026-07-10 — roads/rivers LOD + FAA raster charts |
 | [map_wide_range_perf_plan.md](map_wide_range_perf_plan.md) | PLAN 2026-07-10 — largely executed by the mosaic/mip work; reconcile before acting |

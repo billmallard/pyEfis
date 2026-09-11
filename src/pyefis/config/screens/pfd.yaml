@@ -59,4 +59,15 @@ PFD:
         columns: 18
       options:
         target_screen: DataStatus
+    # Reaches the flight_plan instrument's stock screen (FP5a, AER-805) so the
+    # bench boots into something testable. Toggles PFD <-> FLIGHTPLAN, the
+    # screen-map-pfd.yaml SCREEN-toggle pattern.
+    - type: button
+      row: 96
+      column: 184
+      span:
+        rows: 12
+        columns: 15
+      options:
+        config: buttons/screen-flightplan-pfd.yaml
 

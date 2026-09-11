@@ -5,4 +5,5 @@ include:
   - SCREEN_RADIO
   - SCREEN_EMS
   - SCREEN_EMS2
+  - SCREEN_FLIGHTPLAN
 
