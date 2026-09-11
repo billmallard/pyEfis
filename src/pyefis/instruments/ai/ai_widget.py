@@ -901,6 +901,7 @@ class AI(QGraphicsView):
         # FPM sits one local-mag-var off its real screen position
         # (same bug class as the pre-MAGVAR SVS projection).
         head_true = self._fpm_head - getattr(self, "_magvar", 0.0)
+        self._fpm_head_true = head_true  # observability contract: see tests/instruments/ai/test_magvar.py
         drift_deg = ((self._fpm_track - head_true) + 180.0) % 360.0 - 180.0
 
         ppd = getattr(self, 'pixelsPerDeg', self.height() / self.pitchDegreesShown)
