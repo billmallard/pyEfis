@@ -1,5 +1,6 @@
 #  SPDX-License-Identifier: GPL-2.0-or-later
-"""Tests for the `flight_plan` instrument (FP5a, billmallard/pyEfis#185).
+"""Tests for the `flight_plan` instrument (FP5a/b, billmallard/pyEfis#185,
+#187).
 
 Uses the repo's ``fix`` pytest fixture (``conftest.py``) and defines the
 Appendix A flight-plan keys on it directly, the same pattern
@@ -7,14 +8,20 @@ Appendix A flight-plan keys on it directly, the same pattern
 ``database/flightplan.yaml`` is not part of the shared fixture).
 """
 
+import json
+import os
 import sqlite3
 import time
 
 import pytest
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtTest import QTest
 
 import pyefis.hmi as hmi
 from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge
+from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import model as fp_model
 from pyefis.flightplan import waypoints as fp_waypoints
 from pyefis.instruments import flight_plan
@@ -423,3 +430,422 @@ def test_flightplan_page_verb_respects_hmi_group(fix, qtbot):
     assert w._page == "entry"
     hmi.actions.trigger("flightplan page", "fpl left")
     assert w._page == "fpl"
+
+
+# ---------------------------------------------------------------------------
+# Direct To (DTO) page (FP5b)
+# ---------------------------------------------------------------------------
+def test_dto_page_tabs_render_from_fixture_and_plan(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.resize(480, 320)
+    _install_index(w, _build_fixture_index(tmp_path))
+    w._plan = _plan(2)
+    w._commit()
+
+    w._open_dto_page()
+    assert w._page == "dto"
+    for tab in flight_plan.DTO_TABS:
+        w._select_dto_tab(tab)
+        w.grab()  # must not raise on any tab
+
+
+def test_dto_activate_from_fpl_tab_issues_dto_k(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w._plan = _plan(3)
+    w._commit()
+
+    w._open_dto_page()
+    w._select_dto_tab("FPL")
+    w._dto_select_fpl(1)
+    w._dto_activate()
+
+    assert fix.db.get_item("DTOID").value == "WP01"
+    assert fix.db.get_item("FPLCMD").value == "1 DTO 2"
+    assert w._page == "fpl"
+
+
+def test_dto_activate_from_nearest_stages_and_issues_plain_dto(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    fix.db.set_value("LAT", 34.4)
+    fix.db.set_value("LONG", -119.8)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_index(w, _build_fixture_index(tmp_path))
+
+    w._open_dto_page()
+    w._select_dto_tab("NRST APT")
+    results = w._ensure_waypoint_index().nearest(
+        *w._aircraft_position(), types=frozenset({"airport"}))
+    assert results
+    wp = results[0][0]
+    w._dto_select_nearest(wp)
+    w._dto_activate()
+
+    assert fix.db.get_item("DTOID").value == wp.id
+    assert fix.db.get_item("FPLCMD").value == "1 DTO"
+    assert w._page == "fpl"
+
+
+def test_dto_activate_from_waypoint_tab_via_entry(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_index(w, _build_fixture_index(tmp_path))
+
+    w._open_dto_page()
+    for ch in "KSBA":
+        w._entry_key(ch)
+    w._entry_enter()
+
+    assert fix.db.get_item("DTOID").value == "KSBA"
+    assert fix.db.get_item("FPLCMD").value == "1 DTO"
+    assert w._page == "fpl"
+
+
+def test_dto_button_reads_remove_and_issues_dtox_when_active(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    fix.db.set_value("FPLSTATE", 2)  # DIRECT
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+
+    w._open_dto_page()
+    w._dto_activate()
+
+    assert fix.db.get_item("FPLCMD").value == "1 DTOX"
+    assert w._page == "fpl"
+
+
+def test_dto_activate_without_a_target_shows_message(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+
+    w._open_dto_page()
+    w._select_dto_tab("FPL")
+    w._dto_activate()
+
+    assert w._message == "SELECT A WAYPOINT"
+    assert w._page == "dto"
+
+
+# ---------------------------------------------------------------------------
+# Catalog page (FP5b)
+# ---------------------------------------------------------------------------
+def test_catalog_list_sorted_nearest_modified_first(qtbot, tmp_path):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    cat = w._ensure_catalog()
+    older = cat.save(fp_model.FlightPlan(
+        name="OLDER", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0)]))
+    newer = cat.save(fp_model.FlightPlan(
+        name="NEWER", waypoints=[fp_model.Waypoint(id="B", type="fix", lat=0, lon=0)]))
+    now = time.time()
+    os.utime(tmp_path / f"{older}.json", (now - 100, now - 100))
+    os.utime(tmp_path / f"{newer}.json", (now, now))
+
+    entries = w._catalog_entries()
+    assert [e.name for e in entries] == ["NEWER", "OLDER"]
+
+
+def test_catalog_activate_replaces_plan(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    slug = w._ensure_catalog().save(fp_model.FlightPlan(
+        name="KSBA-KSMX",
+        waypoints=[fp_model.Waypoint(id="KSBA", type="airport", lat=34.4, lon=-119.8),
+                   fp_model.Waypoint(id="KSMX", type="airport", lat=34.9, lon=-120.5)]))
+
+    w._catalog_activate(slug)
+
+    assert [wp.id for wp in w._plan.waypoints] == ["KSBA", "KSMX"]
+    assert w._plan_dirty is False
+    assert w._page == "fpl"
+    assert fix.db.get_item("FPL1ID").value == "KSBA"
+
+
+def test_catalog_activate_confirms_when_plan_unsaved(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    w._plan = _plan(2)
+    w._plan_dirty = True
+    w._commit()
+    slug = w._ensure_catalog().save(fp_model.FlightPlan(
+        name="OTHER", waypoints=[fp_model.Waypoint(id="X", type="fix", lat=1, lon=1)]))
+
+    w._catalog_activate(slug)
+    assert w._catalog_confirm == {"kind": "activate", "slug": slug}
+    assert [wp.id for wp in w._plan.waypoints] == ["WP00", "WP01"]  # not yet replaced
+
+    w._catalog_confirm_yes()
+    assert [wp.id for wp in w._plan.waypoints] == ["X"]
+
+
+def test_catalog_invert_activate_does_not_persist(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    slug = w._ensure_catalog().save(fp_model.FlightPlan(
+        name="AB", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0),
+                               fp_model.Waypoint(id="B", type="fix", lat=1, lon=1)]))
+
+    w._catalog_invert_activate(slug)
+
+    assert [wp.id for wp in w._plan.waypoints] == ["B", "A"]
+    stored = w._ensure_catalog().load(slug)
+    assert [wp.id for wp in stored.waypoints] == ["A", "B"]  # unchanged on disk
+
+
+def test_catalog_edit_loads_without_publishing(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    slug = w._ensure_catalog().save(fp_model.FlightPlan(
+        name="AB", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0)]))
+
+    w._catalog_edit(slug)
+
+    assert [wp.id for wp in w._plan.waypoints] == ["A"]
+    assert w._plan_dirty is False
+    assert w._page == "fpl"
+    assert int(fix.db.get_item("FPLCOUNT").value) == 0  # bus untouched
+
+
+def test_catalog_copy_writes_a_new_slug(qtbot, tmp_path):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    slug = w._ensure_catalog().save(fp_model.FlightPlan(
+        name="AB", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0)]))
+
+    w._catalog_copy_prompt(slug)
+    assert w._modal is not None
+    w._modal["value"] = "AB COPY"
+    w._modal_enter()
+
+    assert w._catalog_message == "COPIED"
+    assert len(w._ensure_catalog().list()) == 2
+
+
+def test_catalog_delete_removes_entry(qtbot, tmp_path):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    slug = w._ensure_catalog().save(fp_model.FlightPlan(
+        name="AB", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0)]))
+
+    w._catalog_delete_request(slug)
+    assert w._catalog_confirm == {"kind": "delete", "slug": slug}
+    w._catalog_confirm_yes()
+
+    assert w._ensure_catalog().list() == []
+
+
+def test_catalog_managed_route_hides_edit_and_delete(qtbot, tmp_path):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "managed_foo.json").write_text(json.dumps(fp_model.FlightPlan(
+        name="MANAGED", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0)]
+    ).to_json()))
+
+    labels = [label for label, _ in w._catalog_row_menu_items("managed_foo")]
+    assert "Edit" not in labels
+    assert "Delete" not in labels
+    assert "Activate" in labels
+    assert "Invert & Activate" in labels
+    assert "Copy" in labels  # copying a managed route to a new slug is fine
+
+
+def test_catalog_new_confirms_when_unsaved_then_clears(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    w._plan = _plan(2)
+    w._plan_dirty = True
+    w._commit()
+
+    w._catalog_new()
+    assert w._catalog_confirm == {"kind": "new"}
+    w._catalog_confirm_yes()
+
+    assert w._plan.count == 0
+    assert w._page == "fpl"
+
+
+def test_catalog_delete_all_skips_managed_routes_and_reports(qtbot, tmp_path):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    cat = fp_catalog.Catalog(tmp_path)
+    _install_catalog(w, cat)
+    cat.save(fp_model.FlightPlan(
+        name="A", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0)]))
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "managed_locked.json").write_text(json.dumps(fp_model.FlightPlan(
+        name="LOCKED", waypoints=[fp_model.Waypoint(id="B", type="fix", lat=0, lon=0)]
+    ).to_json()))
+
+    w._catalog_delete_all_request()
+    w._catalog_confirm_yes()
+
+    assert {e.slug for e in cat.list()} == {"managed_locked"}
+    assert "SKIPPED 1 MANAGED" in w._catalog_message
+
+
+# ---------------------------------------------------------------------------
+# WPT Info page (FP5b)
+# ---------------------------------------------------------------------------
+def test_wpt_info_bearing_distance_from_lat_long(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    fix.db.set_value("LAT", 34.0)
+    fix.db.set_value("LONG", -120.0)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w._plan = fp_model.FlightPlan(waypoints=[
+        fp_model.Waypoint(id="KSBA", type="airport", lat=34.4262, lon=-119.8404)])
+    w._commit()
+
+    w._row_menu_index = 0
+    w._row_menu_wpt_info()
+
+    ref_lat, ref_lon = w._aircraft_position()
+    assert (ref_lat, ref_lon) == (34.0, -120.0)
+    expected_brg = fp_geo.initial_bearing(ref_lat, ref_lon, 34.4262, -119.8404)
+    expected_dist = fp_geo.distance_nm(ref_lat, ref_lon, 34.4262, -119.8404)
+    assert fp_geo.initial_bearing(ref_lat, ref_lon, w._wpt_info.lat, w._wpt_info.lon) \
+        == pytest.approx(expected_brg)
+    assert fp_geo.distance_nm(ref_lat, ref_lon, w._wpt_info.lat, w._wpt_info.lon) \
+        == pytest.approx(expected_dist)
+    w.grab()  # the 1 Hz refresh timer must not make paint raise
+    w._close_wpt_info()
+    assert w._wpt_info is None
+
+
+def test_user_waypoint_create_edit_delete_and_active_plan_refusal(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    fix.db.set_value("LAT", 34.0)
+    fix.db.set_value("LONG", -120.0)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_index(w, _build_fixture_index(tmp_path))
+
+    # create: ident, comment, lat, lon
+    w._open_user_wpt_creator()
+    w._modal["value"] = "TESTW"
+    w._modal_enter()
+    w._modal["value"] = "A COMMENT"
+    w._modal_enter()
+    w._modal["value"] = "34.5000N"
+    w._modal_enter()
+    w._modal["value"] = "120.5000W"
+    w._modal_enter()
+
+    created = w._ensure_waypoint_index().user.lookup("TESTW")
+    assert len(created) == 1
+    assert created[0].lat == pytest.approx(34.5)
+    assert created[0].lon == pytest.approx(-120.5)
+    assert w._message == "CREATED TESTW"
+
+    # edit: comment, lat, lon
+    w._open_wpt_info(created[0])
+    w._open_user_wpt_editor(w._wpt_info)
+    w._modal["value"] = "EDITED"
+    w._modal_enter()
+    w._modal["value"] = "35.0000N"
+    w._modal_enter()
+    w._modal["value"] = "121.0000W"
+    w._modal_enter()
+
+    edited = w._ensure_waypoint_index().user.lookup("TESTW")[0]
+    assert edited.comment == "EDITED"
+    assert edited.lat == pytest.approx(35.0)
+    assert edited.lon == pytest.approx(-121.0)
+    assert w._message == "SAVED"
+
+    # refused while it's in the active plan
+    w._plan = fp_model.FlightPlan(waypoints=[
+        fp_model.Waypoint(id="TESTW", type="user", lat=35.0, lon=-121.0)])
+    w._open_wpt_info(w._plan.waypoints[0])
+    w._user_wpt_delete_request(w._wpt_info)
+    assert "active flight plan" in w._message
+    assert w._ensure_waypoint_index().user.lookup("TESTW")
+
+    # succeeds once it's no longer active
+    w._plan = fp_model.FlightPlan()
+    w._user_wpt_delete_request(edited)
+    assert w._ensure_waypoint_index().user.lookup("TESTW") == []
+
+
+# ---------------------------------------------------------------------------
+# Physical keyboard (FP5b)
+# ---------------------------------------------------------------------------
+def test_keyboard_keyclicks_build_field_and_enter_commits(fix, qtbot, tmp_path):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_index(w, _build_fixture_index(tmp_path))
+    w.keyboard = True
+
+    w._footer_add()
+    QTest.keyClicks(w, "KSBA")
+    assert w._entry_field == "KSBA"
+    QTest.keyClick(w, Qt.Key.Key_Return)
+
+    assert w._page == "fpl"
+    assert w._plan.waypoints[-1].id == "KSBA"
+
+
+def test_keyboard_escape_cancels_entry(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.keyboard = True
+
+    w._footer_add()
+    QTest.keyClicks(w, "AB")
+    QTest.keyClick(w, Qt.Key.Key_Escape)
+
+    assert w._page == "fpl"
+    assert w._entry_mode is None
+
+
+def test_keyboard_unbound_letter_not_consumed_when_page_closed(fix, qtbot):
+    """When no ident-entry surface is open, a letter key is left un-accepted
+    so it propagates to gui.py's ``keyPress`` signal / hmi/keys.py bindings,
+    same as before this instrument's keyboard path existed (brief 3.5)."""
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.keyboard = True
+    w._page = "fpl"
+
+    evt = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier, "A")
+    w.keyPressEvent(evt)
+
+    assert evt.isAccepted() is False
+
+
+def test_keyboard_disabled_consumes_nothing(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.keyboard = False
+    w._footer_add()
+
+    evt = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_K, Qt.KeyboardModifier.NoModifier, "K")
+    w.keyPressEvent(evt)
+
+    assert evt.isAccepted() is False
+    assert w._entry_field == ""

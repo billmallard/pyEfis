@@ -1253,14 +1253,14 @@ _register(InstrumentSpec(
     ],
 ))
 
-# `flight_plan` (FP5a, billmallard/pyEfis#185): an app-like instrument, same
-# "builds in isolation, construct-never-raises" shape as checklist, but reads
-# the FP1 route block via flightplan.fixbridge.FixBridge instead of taking its
-# state inline -- missing FIX keys just mean `available=False` (annunciate,
-# read-only), never a raise. Touch-only in this item; the physical-keyboard
-# path is FP5b and the encoder path is FP5c (neither is wired here, so no
-# `encoder_order` Prop yet -- it isn't declared for a type with no
-# `enc_selectable`, matching every other instrument's convention).
+# `flight_plan` (FP5a/b, billmallard/pyEfis#185, #187): an app-like
+# instrument, same "builds in isolation, construct-never-raises" shape as
+# checklist, but reads the FP1 route block via flightplan.fixbridge.FixBridge
+# instead of taking its state inline -- missing FIX keys just mean
+# `available=False` (annunciate, read-only), never a raise. Touch and
+# physical-keyboard input are both wired; the encoder path is FP5c (not
+# wired here, so no `encoder_order` Prop yet -- it isn't declared for a type
+# with no `enc_selectable`, matching every other instrument's convention).
 _register(InstrumentSpec(
     type="flight_plan",
     label="Flight Plan",
@@ -1285,10 +1285,12 @@ _register(InstrumentSpec(
              help="comma-separated FPL page data columns, in order; choices "
                   "DTK, DIS, CUM, ETE, ETA"),
         Prop("keypad", "boolean", default=True, label="On-screen keypad",
-             help="show the gloved-finger on-screen keypad on the Entry page"),
+             help="show the gloved-finger on-screen keypad on the Entry/"
+                  "Direct To Waypoint pages and any text/lat-lon prompt"),
         Prop("keyboard", "boolean", default=False, label="Physical keyboard",
-             help="let a physical keyboard drive the Entry page while it is "
-                  "open; not yet implemented (FP5b)"),
+             help="let a physical keyboard drive an open ident-entry surface "
+                  "(Entry page, Direct To page's Waypoint tab, or a text/"
+                  "lat-lon prompt) while it is open"),
         Prop("default_page", "enum", default="fpl", enum=["fpl", "entry"],
              label="Default page", help="page shown when the instrument first "
                   "paints"),

@@ -1,10 +1,14 @@
 #  SPDX-License-Identifier: GPL-2.0-or-later
-"""The `flight_plan` app-like instrument (FP5a, billmallard/pyEfis#185).
+"""The `flight_plan` app-like instrument (FP5a/b, billmallard/pyEfis#185,
+#187).
 
-Touch-only in this item: FPL page (route header, waypoint list, row menu,
-footer menu) and Entry page (FastFind ident field, suggestion strip,
-Recent/Nearest/FPL/User tabs, an on-screen keypad). Physical-keyboard
-input is FP5b; the encoder path is FP5c -- neither is wired here.
+FPL page (route header, waypoint list, row menu, footer menu), Entry page
+(FastFind ident field, suggestion strip, Recent/Nearest/FPL/User tabs, an
+on-screen keypad), Direct To page (Waypoint/FPL/NRST APT tabs), Catalog page
+(stored-route list and its Activate/Invert & Activate/Edit/Copy/Delete
+actions), WPT Info (lat/lon, elevation/frequency, bearing/distance, user
+waypoint Edit/Delete) and the physical-keyboard input path all live here.
+The encoder path is FP5c -- not wired yet.
 
 Modelled on the `checklist` instrument (docs/checklist_widget.md): a thin
 QPainter view that never raises, with per-frame tap targets recorded during
@@ -20,12 +24,22 @@ second display of this instrument agrees (Appendix A: consumers act on
 the FP1 keys are simply missing (construct-never-raises,
 ``pyEfis/CLAUDE.md``): ``available`` is False, an annunciation shows, and the
 pages render read-only (no tap targets are registered).
+
+Physical keyboard (FP5b): while the ``keyboard`` option is true and the
+instrument's ident-entry surface (the Entry page, the Direct To page's
+Waypoint tab, or a text/lat-lon modal) is open, the widget takes Qt focus and
+consumes A-Z/0-9, Backspace, Enter, Escape, Up/Down, Tab, `.`/`-`; every
+other key (and every key while no entry surface is open) is left un-accepted
+so Qt's normal key-event propagation carries it up to ``gui.py``'s
+``keyPress`` signal and ``hmi/keys.py`` bindings, same as before this
+instrument existed. A bound HMI key that collides with A-Z while an entry
+surface is open is shadowed by the field -- see docs/flight_plan_widget.md.
 """
 
 import logging
 import os
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QWidget
 
@@ -45,12 +59,15 @@ TYPE_FILTERS = {"All": None, "Apt": frozenset({"airport"}), "VOR": frozenset({"v
                 "NDB": frozenset({"ndb"}), "Fix": frozenset({"fix"}),
                 "User": frozenset({"user"})}
 ENTRY_TABS = ("Recent", "Nearest", "FPL", "User")
+DTO_TABS = ("Waypoint", "FPL", "NRST APT")
 KEYPAD_ROWS = ("ABCDEFG", "HIJKLMN", "OPQRSTU", "VWXYZ01", "23456789")
+KEYPAD_NUMERIC_ROWS = ("789", "456", "123", "0.-", "NSEW")
 KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
 
 _STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 _CDI_SCALE_CHOICES = ("0.3", "1.0", "2.0", "AUTO")
+_INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog")
 
 _ROW_MENU_ITEMS = (
     ("Insert Before", "_row_menu_insert_before"),
@@ -71,6 +88,7 @@ class FlightPlan(QWidget):
         super().__init__(parent)
         self.parent = parent
         self.font_family = font_family
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # apply="attr" InstrumentSpec Props -- keep in lockstep with the
         # registry record (screenbuilder_factory.py) and its defaults.
@@ -88,6 +106,7 @@ class FlightPlan(QWidget):
 
         self._page = None
         self._plan = fp_model.FlightPlan()
+        self._plan_dirty = False
         self._engine = {}
         self._message = ""
         self._cdi_scale_choice = "AUTO"
@@ -104,6 +123,19 @@ class FlightPlan(QWidget):
         self._entry_type_filter = "All"
         self._entry_dupe_choices = None
         self._entry_message = ""
+        self._entry_nav_index = None
+
+        self._dto_tab = "Waypoint"
+        self._dto_target = None
+
+        self._catalog_row_menu = None
+        self._catalog_confirm = None
+        self._catalog_message = ""
+        self._catalog_dist_cache = {}
+
+        self._modal = None
+        self._uwpt_new = None
+        self._uwpt_edit = None
 
         self._waypoint_index = None
         self._waypoint_index_key = None
@@ -111,6 +143,10 @@ class FlightPlan(QWidget):
         self._catalog_dir_used = None
 
         self._tap_targets = []
+
+        self._wpt_timer = QTimer(self)
+        self._wpt_timer.setInterval(1000)
+        self._wpt_timer.timeout.connect(self.update)
 
         self._bridge = fp_fixbridge.FixBridge(fix)
         if self._bridge.available:
@@ -151,7 +187,10 @@ class FlightPlan(QWidget):
             self._close_entry()
             self._page = "fpl"
             self.update()
-        # "dto" / "catalog" are FP5b pages -- no page to switch to yet.
+        elif page == "dto":
+            self._open_dto_page()
+        elif page == "catalog":
+            self._open_catalog_page()
 
     def _act_direct_to(self, arg=""):
         parts = str(arg or "").split(None, 1)
@@ -168,6 +207,7 @@ class FlightPlan(QWidget):
         if len(matches) == 1:
             self._bridge.stage_direct_to(matches[0])
             self._bridge.command("DTO")
+            self._page = "fpl"
             self.update()
 
     # -- bridge sync -------------------------------------------------------
@@ -323,16 +363,19 @@ class FlightPlan(QWidget):
         if len(self._entry_field) < 10:
             self._entry_field += ch
         self._entry_message = ""
+        self._entry_nav_index = None
         self.update()
 
     def _entry_backspace(self):
         self._entry_field = self._entry_field[:-1]
         self._entry_message = ""
+        self._entry_nav_index = None
         self.update()
 
     def _entry_clear(self):
         self._entry_field = ""
         self._entry_message = ""
+        self._entry_nav_index = None
         self.update()
 
     def _entry_cancel(self):
@@ -343,6 +386,7 @@ class FlightPlan(QWidget):
         self._entry_field = ""
         self._entry_message = ""
         self._entry_dupe_choices = None
+        self._entry_nav_index = None
         self._page = "fpl"
         self.update()
 
@@ -381,6 +425,7 @@ class FlightPlan(QWidget):
         self._entry_field = ""
         self._entry_message = ""
         self._entry_dupe_choices = None
+        self._entry_nav_index = None
         self._entry_tab = "Recent"
         self._entry_type_filter = "All"
         self._page = "entry"
@@ -410,6 +455,7 @@ class FlightPlan(QWidget):
             self.update()
             return
         self._ensure_waypoint_index().recent.push(wp.id)
+        self._plan_dirty = True
         self._commit()
         self._close_entry()
 
@@ -456,11 +502,30 @@ class FlightPlan(QWidget):
         i = self._row_menu_index
         wp = self._plan.waypoints[i]
         self._close_row_menu()
-        self._wpt_info = wp
+        self._open_wpt_info(wp)
+
+    def _open_wpt_info(self, wp):
+        """*wp* may be a plan ``model.Waypoint`` (no elevation/frequency) or a
+        ``waypoints.Waypoint``; resolve the richer record from the lookup
+        index when one exists so elevation/frequency show for anything the
+        on-device databases know about (brief 3.5 WPT Info)."""
+        self._wpt_info = self._resolve_wpt_info(wp)
+        self._wpt_timer.start()
         self.update()
+
+    def _resolve_wpt_info(self, wp):
+        matches = self._ensure_waypoint_index().lookup(wp.id)
+        for m in matches:
+            if m.type == wp.type:
+                return m
+        if matches:
+            return matches[0]
+        return fp_waypoints.Waypoint(id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon,
+                                      name=getattr(wp, "name", "") or "")
 
     def _close_wpt_info(self):
         self._wpt_info = None
+        self._wpt_timer.stop()
         self.update()
 
     def _row_menu_remove(self):
@@ -472,6 +537,7 @@ class FlightPlan(QWidget):
             self._message = str(e)
             self.update()
             return
+        self._plan_dirty = True
         self._commit()
 
     def _row_menu_set_role(self, role):
@@ -484,6 +550,7 @@ class FlightPlan(QWidget):
             self.update()
             return
         self._close_row_menu()
+        self._plan_dirty = True
         self._commit()
 
     # -- FPL page: footer / menu ---------------------------------------------
@@ -491,11 +558,10 @@ class FlightPlan(QWidget):
         self._open_entry({"kind": "append", "index": None})
 
     def _footer_direct_to(self):
-        self._open_entry({"kind": "direct_to", "index": None})
+        self._open_dto_page()
 
     def _footer_catalog(self):
-        self._message = "CATALOG: COMING SOON"
-        self.update()
+        self._open_catalog_page()
 
     def _footer_menu(self):
         self._menu_open = not self._menu_open
@@ -509,6 +575,7 @@ class FlightPlan(QWidget):
 
     def _menu_invert(self):
         self._plan = self._plan.invert()
+        self._plan_dirty = True
         self._menu_open = False
         self._commit()
 
@@ -516,6 +583,7 @@ class FlightPlan(QWidget):
         try:
             self._ensure_catalog().save(self._plan)
             self._message = "STORED"
+            self._plan_dirty = False
         except fp_catalog.CatalogError as e:
             self._message = str(e)
         self._menu_open = False
@@ -527,6 +595,7 @@ class FlightPlan(QWidget):
 
     def _menu_clear_confirm(self):
         self._plan = fp_model.FlightPlan()
+        self._plan_dirty = False
         self._confirm = None
         self._menu_open = False
         self._commit()
@@ -537,6 +606,7 @@ class FlightPlan(QWidget):
 
     def _menu_delete_confirm(self):
         self._plan = fp_model.FlightPlan()
+        self._plan_dirty = False
         self._confirm = None
         self._menu_open = False
         self._commit()
@@ -555,6 +625,522 @@ class FlightPlan(QWidget):
         if self._bridge.available:
             self._bridge.command("SCALE", self._cdi_scale_choice)
         self.update()
+
+    # -- Direct To (DTO) page ------------------------------------------------
+    def _open_dto_page(self):
+        self._dto_tab = "Waypoint"
+        self._dto_target = None
+        self._entry_mode = {"kind": "direct_to"}
+        self._entry_field = ""
+        self._entry_message = ""
+        self._entry_dupe_choices = None
+        self._entry_nav_index = None
+        self._page = "dto"
+        self.update()
+
+    def _close_dto(self):
+        self._entry_mode = None
+        self._entry_field = ""
+        self._entry_dupe_choices = None
+        self._entry_nav_index = None
+        self._dto_target = None
+        self._page = "fpl"
+        self.update()
+
+    def _select_dto_tab(self, tab):
+        self._dto_tab = tab
+        self._entry_nav_index = None
+        self.update()
+
+    def _dto_select_fpl(self, i):
+        self._dto_target = ("fpl", i, self._plan.waypoints[i])
+        self.update()
+
+    def _dto_select_nearest(self, wp):
+        self._dto_target = ("wp", None, wp)
+        self.update()
+
+    def _dto_activate(self):
+        if not self._bridge.available:
+            return
+        state = int(self._engine_value("FPLSTATE", 0) or 0)
+        if state == 2:  # an existing direct-to is active -- this button is "Remove"
+            self._bridge.command("DTOX")
+            self._close_dto()
+            return
+        target = self._dto_target
+        if target is None:
+            self._message = "SELECT A WAYPOINT"
+            self.update()
+            return
+        kind, idx, wp = target
+        self._bridge.stage_direct_to(wp)
+        if kind == "fpl":
+            self._bridge.command("DTO", idx + 1)
+        else:
+            self._bridge.command("DTO")
+        self._close_dto()
+
+    # -- Catalog page ---------------------------------------------------------
+    def _open_catalog_page(self):
+        self._catalog_row_menu = None
+        self._catalog_confirm = None
+        self._catalog_message = ""
+        self._page = "catalog"
+        self.update()
+
+    def _close_catalog(self):
+        self._catalog_row_menu = None
+        self._catalog_confirm = None
+        self._page = "fpl"
+        self.update()
+
+    def _catalog_entries(self):
+        return sorted(self._ensure_catalog().list(), key=lambda e: e.mtime, reverse=True)
+
+    def _catalog_entry_distance_nm(self, entry, ref_lat, ref_lon):
+        cached = self._catalog_dist_cache.get(entry.slug)
+        if cached is not None and cached[0] == entry.mtime:
+            return cached[1]
+        try:
+            plan = self._ensure_catalog().load(entry.slug)
+        except fp_catalog.CatalogError:
+            return None
+        dist = (fp_geo.distance_nm(ref_lat, ref_lon, plan.waypoints[0].lat, plan.waypoints[0].lon)
+                if plan.waypoints else None)
+        self._catalog_dist_cache[entry.slug] = (entry.mtime, dist)
+        return dist
+
+    def _catalog_open_row_menu(self, slug):
+        self._catalog_row_menu = slug
+        self.update()
+
+    def _close_catalog_row_menu(self):
+        self._catalog_row_menu = None
+        self.update()
+
+    def _catalog_row_menu_items(self, slug):
+        managed = slug.startswith(fp_catalog.MANAGED_PREFIX)
+        items = [
+            ("Activate", lambda: self._catalog_activate(slug)),
+            ("Invert & Activate", lambda: self._catalog_invert_activate(slug)),
+        ]
+        if not managed:
+            items.append(("Edit", lambda: self._catalog_edit(slug)))
+        items.append(("Copy", lambda: self._catalog_copy_prompt(slug)))
+        if not managed:
+            items.append(("Delete", lambda: self._catalog_delete_request(slug)))
+        return items
+
+    def _plan_unsaved(self):
+        return self._plan_dirty and self._plan.count > 0
+
+    def _catalog_activate(self, slug):
+        self._catalog_row_menu = None
+        if self._plan_unsaved():
+            self._catalog_confirm = {"kind": "activate", "slug": slug}
+            self.update()
+            return
+        self._catalog_do_activate(slug)
+
+    def _catalog_do_activate(self, slug):
+        try:
+            plan = self._ensure_catalog().load(slug)
+        except fp_catalog.CatalogError as e:
+            self._catalog_message = str(e)
+            self._catalog_confirm = None
+            self.update()
+            return
+        self._plan = plan
+        self._plan_dirty = False
+        self._catalog_confirm = None
+        self._commit()
+        self._close_catalog()
+
+    def _catalog_invert_activate(self, slug):
+        self._catalog_row_menu = None
+        if self._plan_unsaved():
+            self._catalog_confirm = {"kind": "invert_activate", "slug": slug}
+            self.update()
+            return
+        self._catalog_do_invert_activate(slug)
+
+    def _catalog_do_invert_activate(self, slug):
+        try:
+            plan = self._ensure_catalog().invert(slug)
+        except fp_catalog.CatalogError as e:
+            self._catalog_message = str(e)
+            self._catalog_confirm = None
+            self.update()
+            return
+        self._plan = plan
+        self._plan_dirty = False
+        self._catalog_confirm = None
+        self._commit()
+        self._close_catalog()
+
+    def _catalog_edit(self, slug):
+        """Loads *slug* into the working copy for editing without publishing
+        it to the bus -- the guide's "Edit ... Store writes back" (brief
+        3.5). The active route on the bus is untouched until the next edit
+        commits or Store is used."""
+        self._catalog_row_menu = None
+        try:
+            plan = self._ensure_catalog().load(slug)
+        except fp_catalog.CatalogError as e:
+            self._catalog_message = str(e)
+            self.update()
+            return
+        self._plan = plan
+        self._plan_dirty = False
+        self._page = "fpl"
+        self.update()
+
+    def _catalog_copy_prompt(self, slug):
+        self._catalog_row_menu = None
+        try:
+            plan = self._ensure_catalog().load(slug)
+        except fp_catalog.CatalogError as e:
+            self._catalog_message = str(e)
+            self.update()
+            return
+        default_name = plan.name or plan.default_name()
+        self._modal_open("COPY AS", default_name, False, fp_model.NAME_MAX_LEN,
+                          (lambda v, slug=slug: self._catalog_copy_commit(slug, v)))
+
+    def _catalog_copy_commit(self, slug, new_name):
+        try:
+            self._ensure_catalog().copy(slug, new_name)
+            self._catalog_message = "COPIED"
+        except fp_catalog.CatalogError as e:
+            self._catalog_message = str(e)
+        self.update()
+
+    def _catalog_delete_request(self, slug):
+        self._catalog_row_menu = None
+        self._catalog_confirm = {"kind": "delete", "slug": slug}
+        self.update()
+
+    def _catalog_delete_confirm(self):
+        slug = self._catalog_confirm["slug"]
+        try:
+            self._ensure_catalog().delete(slug)
+            self._catalog_message = "DELETED"
+        except fp_catalog.CatalogError as e:
+            self._catalog_message = str(e)
+        self._catalog_confirm = None
+        self.update()
+
+    def _catalog_new(self):
+        if self._plan_unsaved():
+            self._catalog_confirm = {"kind": "new"}
+            self.update()
+            return
+        self._catalog_do_new()
+
+    def _catalog_do_new(self):
+        self._plan = fp_model.FlightPlan()
+        self._plan_dirty = False
+        self._catalog_confirm = None
+        self._commit()
+        self._close_catalog()
+
+    def _catalog_delete_all_request(self):
+        self._catalog_confirm = {"kind": "delete_all"}
+        self.update()
+
+    def _catalog_delete_all_confirm(self):
+        cat = self._ensure_catalog()
+        skipped = 0
+        for entry in cat.list():
+            if entry.slug.startswith(fp_catalog.MANAGED_PREFIX):
+                skipped += 1
+                continue
+            cat.delete(entry.slug)
+        self._catalog_message = (f"DELETED ALL (SKIPPED {skipped} MANAGED)" if skipped
+                                  else "DELETED ALL")
+        self._catalog_confirm = None
+        self.update()
+
+    def _catalog_confirm_yes(self):
+        c = self._catalog_confirm
+        if c is None:
+            return
+        {
+            "activate": lambda: self._catalog_do_activate(c["slug"]),
+            "invert_activate": lambda: self._catalog_do_invert_activate(c["slug"]),
+            "delete": self._catalog_delete_confirm,
+            "delete_all": self._catalog_delete_all_confirm,
+            "new": self._catalog_do_new,
+        }[c["kind"]]()
+
+    def _catalog_confirm_no(self):
+        self._catalog_confirm = None
+        self.update()
+
+    # -- generic modal text/numeric entry (Catalog Copy, user waypoints) -----
+    def _modal_open(self, title, value, numeric, max_len, on_enter):
+        self._modal = {"title": title, "value": value, "numeric": numeric,
+                        "max_len": max_len, "on_enter": on_enter}
+        self.update()
+
+    def _modal_key(self, ch):
+        m = self._modal
+        if m is None:
+            return
+        if len(m["value"]) < m["max_len"]:
+            m["value"] += ch
+        self.update()
+
+    def _modal_backspace(self):
+        m = self._modal
+        if m is None:
+            return
+        m["value"] = m["value"][:-1]
+        self.update()
+
+    def _modal_clear(self):
+        m = self._modal
+        if m is None:
+            return
+        m["value"] = ""
+        self.update()
+
+    def _modal_enter(self):
+        m = self._modal
+        if m is None:
+            return
+        self._modal = None
+        m["on_enter"](m["value"])
+
+    def _modal_do_cancel(self):
+        self._modal = None
+        self.update()
+
+    # -- lat/lon entry helpers (numeric modal: digits, '.', '-', N/S/E/W) ----
+    @staticmethod
+    def _fmt_latlon_entry(value, is_lat):
+        hemi = ("N" if value >= 0 else "S") if is_lat else ("E" if value >= 0 else "W")
+        return f"{abs(value):.4f}{hemi}"
+
+    @staticmethod
+    def _parse_latlon_entry(value, is_lat):
+        value = (value or "").strip().upper()
+        if not value:
+            return None
+        hemi = value[-1]
+        want = ("N", "S") if is_lat else ("E", "W")
+        if hemi not in want:
+            return None
+        try:
+            mag = float(value[:-1])
+        except ValueError:
+            return None
+        return -mag if hemi in ("S", "W") else mag
+
+    @staticmethod
+    def _fmt_latlon_dm(lat, lon):
+        def part(value, pos_hemi, neg_hemi):
+            hemi = pos_hemi if value >= 0 else neg_hemi
+            value = abs(value)
+            d = int(value)
+            m = (value - d) * 60.0
+            return f"{d:02d} {m:05.2f}{hemi}"
+        return f"{part(lat, 'N', 'S')}  {part(lon, 'E', 'W')}"
+
+    # -- user waypoint create (Entry page User tab) / edit (WPT Info) --------
+    def _open_user_wpt_creator(self):
+        self._uwpt_new = {}
+        self._modal_open("IDENT (BLANK=AUTO)", "", False, fp_waypoints.USER_ID_MAX_LEN,
+                          self._uwpt_new_ident)
+
+    def _uwpt_new_ident(self, value):
+        self._uwpt_new["id"] = value.strip().upper()
+        self._modal_open("COMMENT", "", False, fp_waypoints.USER_COMMENT_MAX_LEN,
+                          self._uwpt_new_comment)
+
+    def _uwpt_new_comment(self, value):
+        self._uwpt_new["comment"] = value
+        ref_lat, ref_lon = self._aircraft_position()
+        self._modal_open("LAT", self._fmt_latlon_entry(ref_lat, True), True, 10,
+                          self._uwpt_new_lat)
+
+    def _uwpt_new_lat(self, value):
+        lat = self._parse_latlon_entry(value, True)
+        if lat is None:
+            self._message = "BAD LAT"
+            self.update()
+            return
+        self._uwpt_new["lat"] = lat
+        ref_lat, ref_lon = self._aircraft_position()
+        self._modal_open("LON", self._fmt_latlon_entry(ref_lon, False), True, 11,
+                          self._uwpt_new_lon)
+
+    def _uwpt_new_lon(self, value):
+        lon = self._parse_latlon_entry(value, False)
+        if lon is None:
+            self._message = "BAD LON"
+            self.update()
+            return
+        n = self._uwpt_new
+        try:
+            wp = self._ensure_waypoint_index().user.add(
+                lat=n["lat"], lon=lon, comment=n["comment"], id=n["id"] or None)
+            self._message = f"CREATED {wp.id}"
+        except fp_waypoints.WaypointError as e:
+            self._message = str(e)
+        self._uwpt_new = None
+        self.update()
+
+    def _open_user_wpt_editor(self, wp):
+        self._uwpt_edit = {"id": wp.id}
+        self._modal_open("COMMENT", wp.comment or "", False, fp_waypoints.USER_COMMENT_MAX_LEN,
+                          self._uwpt_edit_comment)
+
+    def _uwpt_edit_comment(self, value):
+        self._uwpt_edit["comment"] = value
+        wp = self._wpt_info
+        self._modal_open("LAT", self._fmt_latlon_entry(wp.lat, True), True, 10,
+                          self._uwpt_edit_lat)
+
+    def _uwpt_edit_lat(self, value):
+        lat = self._parse_latlon_entry(value, True)
+        if lat is None:
+            self._message = "BAD LAT"
+            self.update()
+            return
+        self._uwpt_edit["lat"] = lat
+        wp = self._wpt_info
+        self._modal_open("LON", self._fmt_latlon_entry(wp.lon, False), True, 11,
+                          self._uwpt_edit_lon)
+
+    def _uwpt_edit_lon(self, value):
+        lon = self._parse_latlon_entry(value, False)
+        if lon is None:
+            self._message = "BAD LON"
+            self.update()
+            return
+        e = self._uwpt_edit
+        try:
+            wp = self._ensure_waypoint_index().user.edit(
+                e["id"], lat=e["lat"], lon=lon, comment=e["comment"])
+            self._wpt_info = wp
+            self._message = "SAVED"
+        except fp_waypoints.WaypointError as ex:
+            self._message = str(ex)
+        self._uwpt_edit = None
+        self.update()
+
+    def _user_wpt_delete_request(self, wp):
+        active_idents = [w.id for w in self._plan.waypoints]
+        try:
+            self._ensure_waypoint_index().user.delete(wp.id, active_idents=active_idents)
+            self._message = "DELETED"
+            self._close_wpt_info()
+        except fp_waypoints.WaypointError as e:
+            self._message = str(e)
+            self.update()
+
+    # -- physical keyboard (FP5b) ---------------------------------------------
+    def _keyboard_active(self):
+        """Whether an ident-entry surface is open and ``keyboard`` wants the
+        widget to consume A-Z/0-9/control keys instead of letting them
+        propagate to ``hmi/keys.py`` bindings (brief 3.5)."""
+        if not self.keyboard:
+            return False
+        if self._modal is not None:
+            return True
+        if self._page == "entry":
+            return True
+        if self._page == "dto" and self._dto_tab == "Waypoint":
+            return True
+        return False
+
+    def _keyboard_char(self, ch):
+        if self._modal is not None:
+            self._modal_key(ch)
+        elif self._page in ("entry", "dto"):
+            self._entry_key(ch)
+
+    def _keyboard_backspace(self):
+        if self._modal is not None:
+            self._modal_backspace()
+        else:
+            self._entry_backspace()
+
+    def _keyboard_enter(self):
+        if self._modal is not None:
+            self._modal_enter()
+            return
+        if self._entry_nav_index is not None:
+            choices = self._entry_dupe_choices or self._entry_candidates()
+            if 0 <= self._entry_nav_index < len(choices):
+                wp = choices[self._entry_nav_index]
+                self._entry_nav_index = None
+                if self._entry_dupe_choices:
+                    self._choose_duplicate(wp)
+                else:
+                    self._select_waypoint(wp)
+                return
+        if self._page in ("entry", "dto"):
+            self._entry_enter()
+
+    def _keyboard_escape(self):
+        if self._modal is not None:
+            self._modal_do_cancel()
+        elif self._entry_dupe_choices:
+            self._cancel_dupe_chooser()
+        elif self._page == "dto":
+            self._close_dto()
+        elif self._page == "entry":
+            self._entry_cancel()
+
+    def _keyboard_nav(self, direction):
+        if self._modal is not None:
+            return
+        choices = self._entry_dupe_choices or self._entry_candidates()
+        if not choices:
+            return
+        idx = self._entry_nav_index if self._entry_nav_index is not None else -1
+        self._entry_nav_index = (idx + direction) % len(choices)
+        self.update()
+
+    def _keyboard_tab(self):
+        if self._modal is not None:
+            return
+        if self._page == "entry":
+            i = ENTRY_TABS.index(self._entry_tab)
+            self._select_entry_tab(ENTRY_TABS[(i + 1) % len(ENTRY_TABS)])
+        elif self._page == "dto":
+            i = DTO_TABS.index(self._dto_tab)
+            self._select_dto_tab(DTO_TABS[(i + 1) % len(DTO_TABS)])
+
+    def keyPressEvent(self, event):
+        if not self._keyboard_active():
+            event.ignore()
+            super().keyPressEvent(event)
+            return
+        key = event.key()
+        text = event.text()
+        if key == Qt.Key.Key_Escape:
+            self._keyboard_escape()
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._keyboard_enter()
+        elif key == Qt.Key.Key_Backspace:
+            self._keyboard_backspace()
+        elif key == Qt.Key.Key_Up:
+            self._keyboard_nav(-1)
+        elif key == Qt.Key.Key_Down:
+            self._keyboard_nav(1)
+        elif key == Qt.Key.Key_Tab:
+            self._keyboard_tab()
+        elif text and (text.isalnum() or text in ".-") and len(text) == 1:
+            self._keyboard_char(text.upper())
+        else:
+            event.ignore()
+            super().keyPressEvent(event)
+            return
+        event.accept()
 
     # -- input dispatch ------------------------------------------------------
     def _tap(self, x, y, w, h, callback):
@@ -577,8 +1163,9 @@ class FlightPlan(QWidget):
             logger.warning("flight_plan: paint error", exc_info=True)
 
     def _paint(self):
-        if self._page not in ("fpl", "entry"):
-            self._page = self.default_page if self.default_page in ("fpl", "entry") else "fpl"
+        if self._page not in _INSTRUMENT_PAGES:
+            self._page = self.default_page if self.default_page in _INSTRUMENT_PAGES else "fpl"
+        self._sync_keyboard_focus()
         self._tap_targets = []
         p = QPainter(self)
         try:
@@ -588,10 +1175,21 @@ class FlightPlan(QWidget):
             page = self._page if self._bridge.available else "fpl"
             if page == "entry":
                 self._paint_entry(p, w, h)
+            elif page == "dto":
+                self._paint_dto(p, w, h)
+            elif page == "catalog":
+                self._paint_catalog(p, w, h)
             else:
                 self._paint_fpl(p, w, h)
         finally:
             p.end()
+
+    def _sync_keyboard_focus(self):
+        active = self._keyboard_active()
+        if active and not self.hasFocus():
+            self.setFocus()
+        elif not active and self.hasFocus():
+            self.clearFocus()
 
     # -- FPL page --------------------------------------------------------------
     def _paint_fpl(self, p, w, h):
@@ -609,6 +1207,8 @@ class FlightPlan(QWidget):
             self._paint_menu(p, w, h)
         elif self._wpt_info is not None:
             self._paint_wpt_info(p, w, h)
+            if self._modal is not None:
+                self._paint_modal(p, w, h)
 
         if self._message:
             self._paint_toast(p, w, h, self._message)
@@ -839,20 +1439,58 @@ class FlightPlan(QWidget):
     def _paint_wpt_info(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
         wp = self._wpt_info
-        box_w, box_h = w * 0.7, h * 0.4
+        box_w, box_h = w * 0.8, h * 0.6
         box_x, box_y = (w - box_w) / 2, (h - box_h) / 2
         p.setBrush(QBrush(QColor("#202020")))
         p.setPen(QPen(QColor("#ffffff")))
         p.drawRect(QRectF(box_x, box_y, box_w, box_h))
+
+        ref_lat, ref_lon = self._aircraft_position()
+        brg = fp_geo.initial_bearing(ref_lat, ref_lon, wp.lat, wp.lon)
+        dist = fp_geo.distance_nm(ref_lat, ref_lon, wp.lat, wp.lon)
+
+        lines = [f"{wp.id}  {wp.type.upper()}", wp.name or "", self._fmt_latlon_dm(wp.lat, wp.lon)]
+        elev = getattr(wp, "elev_ft", None)
+        freq = getattr(wp, "freq", None)
+        extra = []
+        if elev is not None:
+            extra.append(f"{elev:.0f} FT")
+        if freq:
+            extra.append(str(freq))
+        if extra:
+            lines.append("  ".join(extra))
+        lines.append(f"{brg:03.0f}°  {dist:.1f} NM")
+        comment = getattr(wp, "comment", "")
+        if comment:
+            lines.append(comment)
+
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(box_h * 0.14)))
+        f.setPixelSize(max(9, int(box_h * 0.08)))
         p.setFont(f)
-        ly = box_y + box_h * 0.1
-        for line in (wp.id, wp.name or "", f"{wp.lat:.4f}, {wp.lon:.4f}"):
-            p.drawText(QRectF(box_x, ly, box_w, box_h * 0.2),
+        ly = box_y + box_h * 0.04
+        line_h = (box_h * 0.72) / max(len(lines), 1)
+        for line in lines:
+            p.setPen(QPen(QColor("#ffffff")))
+            p.drawText(QRectF(box_x, ly, box_w, line_h),
                        Qt.AlignmentFlag.AlignCenter, line)
-            ly += box_h * 0.22
-        close_rect = (box_x, box_y + box_h * 0.8, box_w, box_h * 0.2)
+            ly += line_h
+
+        footer_top = box_y + box_h * 0.8
+        footer_h = box_h * 0.2
+        if wp.type == "user":
+            seg = box_w / 3.0
+            edit_rect = (box_x, footer_top, seg, footer_h)
+            p.setPen(QPen(QColor("#00ffff")))
+            p.drawText(QRectF(*edit_rect), Qt.AlignmentFlag.AlignCenter, "Edit")
+            self._tap(*edit_rect, (lambda w_=wp: self._open_user_wpt_editor(w_)))
+            del_rect = (box_x + seg, footer_top, seg, footer_h)
+            p.setPen(QPen(QColor("#ff8080")))
+            p.drawText(QRectF(*del_rect), Qt.AlignmentFlag.AlignCenter, "Delete")
+            self._tap(*del_rect, (lambda w_=wp: self._user_wpt_delete_request(w_)))
+            close_rect = (box_x + seg * 2, footer_top, seg, footer_h)
+        else:
+            close_rect = (box_x, footer_top, box_w, footer_h)
+        p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(*close_rect), Qt.AlignmentFlag.AlignCenter, "Close")
         self._tap(*close_rect, self._close_wpt_info)
 
@@ -871,7 +1509,7 @@ class FlightPlan(QWidget):
         keypad_h = h * 0.5 if self.keypad else 0
         list_h = h - field_h - strip_h - tabs_h - keypad_h
 
-        self._paint_entry_field(p, w, field_h)
+        self._paint_entry_field(p, w, 0, field_h)
         y = field_h
         self._paint_suggestion_strip(p, w, y, strip_h)
         y += strip_h
@@ -884,32 +1522,335 @@ class FlightPlan(QWidget):
 
         if self._entry_dupe_choices:
             self._paint_dupe_chooser(p, w, h)
+        elif self._modal is not None:
+            self._paint_modal(p, w, h)
 
-    def _paint_entry_field(self, p, w, field_h):
+    # -- Direct To page ---------------------------------------------------------
+    def _paint_dto(self, p, w, h):
+        header_h = int(h * 0.14)
+        tabs_h = int(h * 0.08)
+        footer_h = int(h * 0.10)
+
+        self._paint_dto_header(p, w, header_h)
+        y = header_h
+        self._paint_dto_tabs(p, w, y, tabs_h)
+        y += tabs_h
+        body_h = h - y - footer_h
+        if self._dto_tab == "Waypoint":
+            self._paint_dto_waypoint_tab(p, w, y, body_h)
+        elif self._dto_tab == "FPL":
+            self._paint_dto_fpl_tab(p, w, y, body_h)
+        else:
+            self._paint_dto_nrst_tab(p, w, y, body_h)
+        self._paint_dto_footer(p, w, h - footer_h, footer_h)
+
+        if self._dto_tab == "Waypoint" and self._entry_dupe_choices:
+            self._paint_dupe_chooser(p, w, h)
+        if self._message:
+            self._paint_toast(p, w, h, self._message)
+
+    def _paint_dto_header(self, p, w, header_h):
+        f = QFont(self.font_family)
+        f.setPixelSize(max(10, int(header_h * 0.4)))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(0, 0, w, header_h), Qt.AlignmentFlag.AlignCenter, "DIRECT TO")
+        cancel_rect = (w - header_h, 0, header_h, header_h)
+        p.setPen(QPen(QColor("#ff8080")))
+        p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
+        self._tap(*cancel_rect, self._close_dto)
+
+    def _paint_dto_tabs(self, p, w, top, tabs_h):
+        seg = w / len(DTO_TABS)
+        f = QFont(self.font_family)
+        f.setPixelSize(max(9, int(tabs_h * 0.5)))
+        p.setFont(f)
+        for i, tab in enumerate(DTO_TABS):
+            x = i * seg
+            color = "#00ffff" if tab == self._dto_tab else "#808080"
+            p.setPen(QPen(QColor(color)))
+            p.drawText(QRectF(x, top, seg, tabs_h), Qt.AlignmentFlag.AlignCenter, tab)
+            self._tap(x, top, seg, tabs_h, (lambda t=tab: self._select_dto_tab(t)))
+
+    def _paint_dto_waypoint_tab(self, p, w, top, h):
+        field_h = h * 0.28
+        strip_h = h * 0.22
+        keypad_h = h - field_h - strip_h if self.keypad else 0
+        self._paint_entry_field(p, w, top, field_h, show_cancel=False)
+        y = top + field_h
+        self._paint_suggestion_strip(p, w, y, strip_h)
+        y += strip_h
+        if self.keypad:
+            self._paint_keypad(p, w, y, keypad_h)
+
+    def _paint_dto_fpl_tab(self, p, w, top, h):
+        rows = self._plan.waypoints
+        f = QFont(self.font_family)
+        if not rows:
+            f.setPixelSize(max(10, int(h * 0.06)))
+            p.setFont(f)
+            p.setPen(QPen(QColor("#808080")))
+            p.drawText(QRectF(0, top, w, h), Qt.AlignmentFlag.AlignCenter, "NO WAYPOINTS")
+            return
+        row_h = max(h / len(rows), 18)
+        f.setPixelSize(max(9, int(row_h * 0.5)))
+        p.setFont(f)
+        y = top
+        for i, wp in enumerate(rows):
+            rh = min(row_h, top + h - y)
+            if rh <= 0:
+                break
+            selected = self._dto_target is not None and self._dto_target[:2] == ("fpl", i)
+            p.setPen(QPen(QColor("#00ffff" if selected else "#ffffff")))
+            label = wp.id
+            role = ROLE_ABBREV.get(wp.role, "")
+            if role:
+                label = f"{label} {role}"
+            p.drawText(QRectF(6, y, w - 12, rh),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+            self._tap(0, y, w, rh, (lambda idx=i: self._dto_select_fpl(idx)))
+            y += rh
+
+    def _paint_dto_nrst_tab(self, p, w, top, h):
+        idx = self._ensure_waypoint_index()
+        ref_lat, ref_lon = self._aircraft_position()
+        results = idx.nearest(ref_lat, ref_lon, types=frozenset({"airport"}))
+        f = QFont(self.font_family)
+        if not results:
+            f.setPixelSize(max(10, int(h * 0.06)))
+            p.setFont(f)
+            p.setPen(QPen(QColor("#808080")))
+            p.drawText(QRectF(0, top, w, h), Qt.AlignmentFlag.AlignCenter, "NO AIRPORTS")
+            return
+        row_h = max(h / len(results), 18)
+        f.setPixelSize(max(9, int(row_h * 0.42)))
+        p.setFont(f)
+        y = top
+        for wp, dist, brg, rwy in results:
+            rh = min(row_h, top + h - y)
+            if rh <= 0:
+                break
+            selected = (self._dto_target is not None and self._dto_target[0] == "wp"
+                        and self._dto_target[2].id == wp.id)
+            p.setPen(QPen(QColor("#00ffff" if selected else "#ffffff")))
+            p.drawText(QRectF(6, y, w * 0.3, rh),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, wp.id)
+            mid = f"{brg:03.0f}° {dist:.0f}NM"
+            p.drawText(QRectF(w * 0.32, y, w * 0.38, rh),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, mid)
+            if rwy:
+                p.drawText(QRectF(w * 0.68, y, w * 0.3, rh),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                           f"RWY {int(rwy)}FT")
+            self._tap(0, y, w, rh, (lambda w_=wp: self._dto_select_nearest(w_)))
+            y += rh
+
+    def _paint_dto_footer(self, p, w, top, footer_h):
+        state = int(self._engine_value("FPLSTATE", 0) or 0)
+        label = "REMOVE" if state == 2 else "ACTIVATE"
+        color = "#ff8080" if state == 2 else "#00ff00"
+        f = QFont(self.font_family)
+        f.setPixelSize(max(10, int(footer_h * 0.4)))
+        p.setFont(f)
+        p.setPen(QPen(QColor(color)))
+        rect = (0, top, w, footer_h)
+        p.drawText(QRectF(*rect), Qt.AlignmentFlag.AlignCenter, label)
+        self._tap(*rect, self._dto_activate)
+
+    # -- Catalog page -------------------------------------------------------------
+    def _paint_catalog(self, p, w, h):
+        header_h = int(h * 0.12)
+        footer_h = int(h * 0.10)
+        self._paint_catalog_header(p, w, header_h)
+        self._paint_catalog_list(p, w, header_h, h - footer_h)
+        self._paint_catalog_footer(p, w, h - footer_h, footer_h)
+
+        if self._catalog_row_menu is not None:
+            self._paint_catalog_row_menu(p, w, h)
+        elif self._catalog_confirm is not None:
+            self._paint_catalog_confirm(p, w, h)
+        elif self._modal is not None:
+            self._paint_modal(p, w, h)
+
+        if self._catalog_message:
+            self._paint_toast(p, w, h, self._catalog_message)
+
+    def _paint_catalog_header(self, p, w, header_h):
+        f = QFont(self.font_family)
+        f.setPixelSize(max(10, int(header_h * 0.4)))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(0, 0, w, header_h), Qt.AlignmentFlag.AlignCenter, "CATALOG")
+        cancel_rect = (w - header_h, 0, header_h, header_h)
+        p.setPen(QPen(QColor("#ff8080")))
+        p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
+        self._tap(*cancel_rect, self._close_catalog)
+
+    def _draw_lock_icon(self, p, x, y, size):
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor("#ffaa00")))
+        p.drawRect(QRectF(x, y + size * 0.45, size, size * 0.55))
+        pen = QPen(QColor("#ffaa00"))
+        pen.setWidthF(max(1.0, size * 0.15))
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawArc(QRectF(x + size * 0.15, y, size * 0.7, size * 0.7), 0, 180 * 16)
+        p.restore()
+
+    def _paint_catalog_list(self, p, w, top, bottom):
+        entries = self._catalog_entries()
+        f = QFont(self.font_family)
+        if not entries:
+            f.setPixelSize(max(10, int((bottom - top) * 0.08)))
+            p.setFont(f)
+            p.setPen(QPen(QColor("#808080")))
+            p.drawText(QRectF(0, top, w, bottom - top),
+                       Qt.AlignmentFlag.AlignCenter, "NO STORED ROUTES")
+            return
+        ref_lat, ref_lon = self._aircraft_position()
+        row_h = max(18, min((bottom - top) / len(entries), (bottom - top) * 0.22))
+        f.setPixelSize(max(9, int(row_h * 0.4)))
+        p.setFont(f)
+        y = top
+        for entry in entries:
+            rh = min(row_h, bottom - y)
+            if rh <= 0:
+                break
+            managed = entry.slug.startswith(fp_catalog.MANAGED_PREFIX)
+            lock_size = rh * 0.4
+            x0 = 4.0
+            if managed:
+                self._draw_lock_icon(p, x0, y + (rh - lock_size) / 2, lock_size)
+                x0 += lock_size + 6
+            p.setPen(QPen(QColor("#ffffff")))
+            p.drawText(QRectF(x0, y, w * 0.4, rh),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, entry.name)
+            dist = self._catalog_entry_distance_nm(entry, ref_lat, ref_lon)
+            dist_text = f"{dist:.0f}NM" if dist is not None else ""
+            p.drawText(QRectF(w * 0.42, y, w * 0.18, rh),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, dist_text)
+            p.drawText(QRectF(w * 0.6, y, w * 0.12, rh),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       f"{entry.count}WP")
+            p.drawText(QRectF(w * 0.72, y, w * 0.26, rh),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       entry.comment or "")
+            self._tap(0, y, w, rh, (lambda slug=entry.slug: self._catalog_open_row_menu(slug)))
+            y += rh
+
+    def _paint_catalog_footer(self, p, w, top, footer_h):
+        labels = ("NEW", "DELETE ALL")
+        callbacks = (self._catalog_new, self._catalog_delete_all_request)
+        seg = w / len(labels)
+        f = QFont(self.font_family)
+        f.setPixelSize(max(9, int(footer_h * 0.34)))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#ffffff")))
+        for i, label in enumerate(labels):
+            x = i * seg
+            p.drawText(QRectF(x, top, seg, footer_h), Qt.AlignmentFlag.AlignCenter, label)
+            self._tap(x, top, seg, footer_h, callbacks[i])
+
+    def _paint_catalog_row_menu(self, p, w, h):
+        self._paint_overlay_backdrop(p, w, h)
+        items = self._catalog_row_menu_items(self._catalog_row_menu)
+        self._paint_menu_list(p, w, h, items, self._close_catalog_row_menu)
+
+    def _paint_catalog_confirm(self, p, w, h):
+        self._paint_overlay_backdrop(p, w, h)
+        kind = self._catalog_confirm["kind"]
+        text = {
+            "activate": "Active plan has unsaved edits.\nActivate anyway?",
+            "invert_activate": "Active plan has unsaved edits.\nInvert & Activate anyway?",
+            "delete": "Delete this stored route?",
+            "delete_all": "Delete all stored routes?",
+            "new": "Active plan has unsaved edits.\nStart a new plan?",
+        }[kind]
+        self._paint_confirm(p, w, h, text, self._catalog_confirm_yes)
+
+    # -- generic modal overlay ------------------------------------------------
+    def _paint_modal(self, p, w, h):
+        self._paint_overlay_backdrop(p, w, h)
+        m = self._modal
+        box_w, box_h = w * 0.8, h * 0.8
+        box_x, box_y = (w - box_w) / 2, (h - box_h) / 2
+        p.setBrush(QBrush(QColor("#202020")))
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawRect(QRectF(box_x, box_y, box_w, box_h))
+
+        f = QFont(self.font_family)
+        f.setPixelSize(max(10, int(box_h * 0.06)))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(box_x, box_y + 2, box_w, box_h * 0.1),
+                   Qt.AlignmentFlag.AlignCenter, m["title"])
+        p.setPen(QPen(QColor("#00ffff")))
+        p.drawText(QRectF(box_x, box_y + box_h * 0.1, box_w, box_h * 0.12),
+                   Qt.AlignmentFlag.AlignCenter, m["value"] or " ")
+
+        cancel_size = box_h * 0.08
+        cancel_rect = (box_x, box_y + 2, cancel_size, cancel_size)
+        p.setPen(QPen(QColor("#ff8080")))
+        p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
+        self._tap(*cancel_rect, self._modal_do_cancel)
+
+        rows = KEYPAD_NUMERIC_ROWS if m["numeric"] else KEYPAD_ROWS
+        kp_top = box_y + box_h * 0.24
+        kp_h = box_h * 0.76
+        n_rows = len(rows) + 1
+        row_h = kp_h / n_rows
+        fk = QFont(self.font_family)
+        fk.setPixelSize(max(10, int(row_h * 0.4)))
+        p.setFont(fk)
+        y = kp_top
+        for row in rows:
+            seg = box_w / len(row)
+            for i, ch in enumerate(row):
+                x = box_x + i * seg
+                p.setPen(QPen(QColor("#333333")))
+                p.drawRect(QRectF(x + 1, y + 1, seg - 2, row_h - 2))
+                p.setPen(QPen(QColor("#ffffff")))
+                p.drawText(QRectF(x, y, seg, row_h), Qt.AlignmentFlag.AlignCenter, ch)
+                self._tap(x, y, seg, row_h, (lambda c=ch: self._modal_key(c)))
+            y += row_h
+        seg = box_w / len(KEYPAD_CTRL_ROW)
+        callbacks = {"BKSP": self._modal_backspace, "CLR": self._modal_clear,
+                     "ENT": self._modal_enter}
+        for i, label in enumerate(KEYPAD_CTRL_ROW):
+            x = box_x + i * seg
+            p.setPen(QPen(QColor("#333333")))
+            p.drawRect(QRectF(x + 1, y + 1, seg - 2, row_h - 2))
+            p.setPen(QPen(QColor("#00ff00" if label == "ENT" else "#ff8080")))
+            p.drawText(QRectF(x, y, seg, row_h), Qt.AlignmentFlag.AlignCenter, label)
+            self._tap(x, y, seg, row_h, callbacks[label])
+
+    def _paint_entry_field(self, p, w, top, field_h, show_cancel=True):
         p.setPen(QPen(QColor("#444444")))
-        p.drawLine(0, int(field_h), w, int(field_h))
+        p.drawLine(0, int(top + field_h), w, int(top + field_h))
         f = QFont(self.font_family)
         f.setPixelSize(max(12, int(field_h * 0.5)))
         p.setFont(f)
         typed = self._entry_field
         suffix = self._entry_suffix()
         p.setPen(QPen(QColor("#ffffff")))
-        p.drawText(QRectF(8, 0, w * 0.5, field_h),
+        p.drawText(QRectF(8, top, w * 0.5, field_h),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, typed)
         if suffix:
             advance = p.fontMetrics().horizontalAdvance(typed)
             p.setPen(QPen(QColor("#00ffff")))
-            p.drawText(QRectF(8 + advance, 0, w * 0.5, field_h),
+            p.drawText(QRectF(8 + advance, top, w * 0.5, field_h),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, suffix)
         if self._entry_message:
             p.setPen(QPen(QColor("#ff0000")))
-            p.drawText(QRectF(w * 0.5, 0, w * 0.42, field_h),
+            p.drawText(QRectF(w * 0.5, top, w * 0.42, field_h),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                        self._entry_message)
-        cancel_rect = (w - field_h, 0, field_h, field_h)
-        p.setPen(QPen(QColor("#ff8080")))
-        p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
-        self._tap(*cancel_rect, self._entry_cancel)
+        if show_cancel:
+            cancel_rect = (w - field_h, top, field_h, field_h)
+            p.setPen(QPen(QColor("#ff8080")))
+            p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
+            self._tap(*cancel_rect, self._entry_cancel)
 
     def _paint_suggestion_strip(self, p, w, top, strip_h):
         cands = self._entry_candidates()
@@ -940,10 +1881,21 @@ class FlightPlan(QWidget):
             self._tap(x, top, seg, tabs_h, (lambda t=tab: self._select_entry_tab(t)))
 
     def _paint_entry_list(self, p, w, top, list_h):
-        rows = self._entry_tab_rows()
         f = QFont(self.font_family)
         f.setPixelSize(max(9, int(max(list_h, 1) * 0.08)))
         p.setFont(f)
+
+        if self._entry_tab == "User":
+            create_row_h = min(max(list_h * 0.16, 16), list_h)
+            create_rect = (0, top, w, create_row_h)
+            p.setPen(QPen(QColor("#00ff00")))
+            p.drawText(QRectF(*create_rect), Qt.AlignmentFlag.AlignCenter,
+                       "+ CREATE USER WAYPOINT")
+            self._tap(*create_rect, self._open_user_wpt_creator)
+            top += create_row_h
+            list_h -= create_row_h
+
+        rows = self._entry_tab_rows()
         if not rows:
             p.setPen(QPen(QColor("#808080")))
             p.drawText(QRectF(0, top, w, list_h), Qt.AlignmentFlag.AlignCenter, "NO MATCHES")
