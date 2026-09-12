@@ -325,6 +325,34 @@ def test_moving_position_budget_gate_via_main(bmg, qapp, tmp_path):
     assert rc != 0
 
 
+def test_shipped_moving_position_budget_gates_map_on_probe_not_frame_gap(bmg):
+    """AER-1082 regression: the shipped budget must not resurrect AER-679's
+    borrowed 50 ms bound on map.frame_gap_ms.p95. AER-692 showed that path
+    reads ~205 ms p50 / ~292 ms p95 for a healthy map at 10 NM/130 kt --
+    pose-quantization arithmetic, not a defect -- so a bound there fails
+    every run, forever, correctly-behaving code included."""
+    budget = json.loads(
+        (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
+    checks = {c["path"]: c for c in budget["moving_position"]}
+    assert "map.frame_gap_ms.p95" not in checks
+    assert checks["map.probe.p95_ms"]["max"] == 50
+    assert checks["svs.frame_gap_ms.p95"]["max"] == 50
+
+
+def test_shipped_moving_position_budget_passes_healthy_quantized_map(bmg):
+    """A map reading AER-692's own quantization numbers (~292 ms p95
+    frame_gap_ms) but a healthy GuiProbe gap (~10.9 ms, no GIL
+    starvation) must pass the shipped budget -- it would have failed the
+    old shared 50 ms frame_gap_ms bound despite being defect-free."""
+    budget = json.loads(
+        (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
+    result = dict(scenario="moving_position", counters=dict(
+        svs=dict(frame_gap_ms=dict(p95=24.1)),
+        map=dict(frame_gap_ms=dict(p95=292.0),
+                 probe=dict(p95_ms=10.9))))
+    assert bmg.check_budgets([result], budget) == []
+
+
 def test_moving_position_svs_target_reports_or_skips_without_gl(bmg, qapp):
     """SVS is GL-required with no CPU fallback (ai/svs.py) -- in a
     headless CI box with no usable GL, SVS disables itself and this
