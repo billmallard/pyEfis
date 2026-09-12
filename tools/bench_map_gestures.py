@@ -59,15 +59,21 @@ budgets file and exits non-zero on any violation.
     itself is Python load, so this measures "pyEfis under motion
     comparable to X-Plane," not a pure-pyEfis number.
 
-    Pass threshold: frame_gap_ms.p95 <= 50 ms, sourced from
-    ``PROBE_GAP_WARN_MS`` in map/perf.py -- the project's own existing
-    GUI-thread-stall gate (MP6), reused here so the map and SVS share one
-    canonical number instead of two independently invented ones.
-    Cross-checked against AER-677's own measurement: 50 ms sits with
-    clean margin above the healthy ~25 ms baseline and two orders of
-    magnitude below the ~699 ms defect, so it discriminates cleanly
-    without being tuned to that one bug. See tools/budgets/
-    moving_position.json for a ready-to-use --budget file.
+    Pass threshold: svs.frame_gap_ms.p95 <= 50 ms; map.probe.p95_ms <= 50
+    ms (AER-1082). Both 50 ms bounds are ``PROBE_GAP_WARN_MS`` from
+    map/perf.py, the project's own existing GUI-thread-stall gate (MP6).
+    SVS is gated on its own paint-to-paint gap directly -- cross-checked
+    against AER-677's measurement, 50 ms sits with clean margin above
+    the healthy ~25 ms baseline and two orders of magnitude below the
+    ~699 ms defect. The map is NOT gated on frame_gap_ms (still reported
+    as an observable): AER-692 found it reads ~205-300 ms by pose-
+    quantization arithmetic alone at 10 NM/130 kt with every layer
+    healthy, which would make a frame_gap_ms bound permanently red. The
+    map is instead gated on probe.p95_ms, GuiProbe's own 10 ms-timer
+    tick-to-tick gap -- the objective GIL-starvation detector,
+    insensitive to pose quantization. See tools/budgets/
+    moving_position.json for a ready-to-use --budget file and
+    docs/moving_map_spec.md section 9.2 for the full derivation.
 
 Run (Windows, deps on C:/pylib):
     PYTHONPATH="C:/pylib;src" python tools/bench_map_gestures.py \\

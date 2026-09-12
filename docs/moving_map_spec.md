@@ -330,17 +330,40 @@ architecture); anything else -- an exact cache hit, or promoting an
 already-finished worker's result -- is a "hit," since both cost ~0 on the
 render thread.
 
-**Pass threshold: `frame_gap_ms.p95 <= 50` (both `svs` and `map`).**
-Sourced from `PROBE_GAP_WARN_MS` in `map/perf.py` -- the project's own
-existing GUI-thread-stall gate (MP6) -- reused here so the map and SVS
-share one canonical "is the screen still redrawing" number instead of
-two independently invented ones. Cross-checked against AER-677's own
-measurement: healthy SVS gap ~25 ms (40 fps) vs the reproduced defect's
-~699 ms (1.4 fps) -- 50 ms sits with clean margin above the healthy
-baseline and two orders of magnitude below the defect, so it separates
-the two without being tuned to this specific bug. See
-`tools/budgets/moving_position.json` for a ready-to-use `--budget` file
-encoding this threshold.
+**Pass threshold: `svs.frame_gap_ms.p95 <= 50`; `map.probe.p95_ms <= 50`.**
+(AER-1082, narrowing AER-679's original shared bound.) `50` is
+`PROBE_GAP_WARN_MS` in `map/perf.py` -- the project's own existing
+GUI-thread-stall gate (MP6). For SVS, `frame_gap_ms.p95` IS that gate:
+SVS redraws on its own frame clock, so a stalled render thread shows up
+directly as an inflated paint-to-paint gap. Cross-checked against
+AER-677's own measurement: healthy SVS gap ~25 ms (40 fps) vs the
+reproduced defect's ~699 ms (1.4 fps) -- 50 ms sits with clean margin
+above the healthy baseline and two orders of magnitude below the
+defect.
+
+The map does NOT gate on `frame_gap_ms.p95`. AER-692 found the map's
+paint-to-paint gap is dominated by pose-quantization arithmetic, not
+render health: at 10 NM half-range on a 1040 px widget one screen pixel
+is ~35.6 m, and at 130 kt it takes ~266 ms to move the half-pixel the
+pose gate requires before a repaint is even requested, plus up to one
+10 Hz frame-clock period on top -- so a correctly-behaving map reads
+~205 ms p50 / ~292 ms p95 in that scenario, comfortably over a 50 ms
+bound with every layer a structural no-op. A bound that is always red
+for defect-free code isn't a gate. `frame_gap_ms` is still reported for
+`map` (a recorded observable, useful for eyeballing update cadence) but
+nothing budgets on it.
+
+Instead the map is gated on `probe.p95_ms` -- `MapPerfStats`'s
+`GuiProbe`, a QTimer on the GUI thread measuring its own tick-to-tick
+wall-clock gap against its 10 ms period (`map/perf.py`). Because it
+free-runs independently of paint/pose gating, it is the objective
+GIL-starvation detector: any worker (map or SVS) holding the GIL long
+enough to matter shows up here regardless of what triggered it, and it
+is blind to the quantization effect above. In the AER-692 run that read
+205 ms of `frame_gap_ms`, `probe` read p50 9.7 / p95 10.9 / max 13.6 ms
+-- confirming that run's ~300 ms map cadence was arithmetic, not a
+stall. See `tools/budgets/moving_position.json` for a ready-to-use
+`--budget` file encoding both thresholds.
 
 ## 10. Phases
 
