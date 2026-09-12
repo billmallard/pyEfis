@@ -583,7 +583,7 @@ class TestWaterDB:
         polys = list(db.polygons_in_range(24.5, -81.7, 60.0))
         assert len(polys) == 1
         poly = polys[0]
-        assert poly.rings == [4, 8]
+        assert poly.rings == (4, 8)
         assert len(poly.vertices) == 8
         assert np.array_equal(poly.outer_vertices, outer)
 
@@ -647,6 +647,152 @@ class TestWaterDB:
         p2 = list(db.polygons_in_range(34.005, -120.0, 30.0))[0]
         assert p2 is p1
         assert len(db._poly_cache) == 1
+
+    def _build_multiring_db(self, tmp_path, extra_rows=()):
+        """One multi-ring lake row (outer ring + island hole, with
+        triangles + rings blobs) plus any *extra_rows* -- each a
+        ``(kind, elev_ft, verts, min_lat, max_lat, min_lon, max_lon)``
+        tuple for a single-ring row. Returns (path, outer, hole)."""
+        import sqlite3
+        import struct
+        from pyefis.instruments.ai.water_db import encode_vertices
+        outer = [(24.0, -82.5), (25.0, -82.5),
+                 (25.0, -81.0), (24.0, -81.0)]
+        hole = [(24.5, -81.8), (24.5, -81.7),
+                (24.6, -81.7), (24.6, -81.8)]
+        tris = struct.pack("<6H", 0, 1, 2, 0, 2, 3)
+        rings = struct.pack("<2H", 4, 8)
+        path = tmp_path / "water.sqlite"
+        con = sqlite3.connect(str(path))
+        con.execute("""
+            CREATE TABLE water_polygons (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                min_lat   REAL NOT NULL, max_lat   REAL NOT NULL,
+                min_lon   REAL NOT NULL, max_lon   REAL NOT NULL,
+                kind      TEXT NOT NULL, elev_ft   REAL,
+                vertices  BLOB NOT NULL, triangles BLOB, rings BLOB)
+        """)
+        con.execute(
+            "INSERT INTO water_polygons "
+            "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+            " vertices, triangles, rings) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (24.0, 25.0, -82.5, -81.0, "lake", 10.0,
+             encode_vertices(outer + hole), tris, rings))
+        for kind, elev_ft, verts, min_lat, max_lat, min_lon, max_lon in \
+                extra_rows:
+            con.execute(
+                "INSERT INTO water_polygons "
+                "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+                " vertices) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (min_lat, max_lat, min_lon, max_lon, kind, elev_ft,
+                 encode_vertices(verts)))
+        con.commit()
+        con.close()
+        return path, outer, hole
+
+    def test_mutating_yielded_polygon_fails_loudly_and_leaves_cache_intact(
+            self, tmp_path):
+        """AER-1093 (the AER-1091 fault class): a consumer that mutates
+        a yielded WaterPolygon -- by reference (field reassignment) or
+        in place (vertices/triangles/rings) -- must fail loudly instead
+        of silently corrupting the shared cache entry. Regardless of
+        whether the mutation is attempted, a later collect cycle over
+        the same window must see geometry identical to a freshly
+        constructed, cache-cold WaterDB -- B11's missing "output
+        identical to the uncached path" half of the DoD."""
+        import dataclasses
+        from pyefis.instruments.ai.water_db import WaterDB
+        path, outer, hole = self._build_multiring_db(tmp_path)
+
+        db = WaterDB(path, max_vertices=6)
+        poly = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+
+        # Field reassignment: WaterPolygon is a frozen dataclass.
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            poly.elev_ft = 999.0
+
+        # In-place vertex write: vertices is a read-only ndarray.
+        with pytest.raises(ValueError):
+            poly.vertices[0, 0] = 999.0
+
+        # triangles/rings are tuples: neither item assignment nor
+        # .append (a consumer treating them as the old list type) works.
+        with pytest.raises(TypeError):
+            poly.triangles[0] = 999
+        with pytest.raises(AttributeError):
+            poly.triangles.append(999)
+        with pytest.raises(TypeError):
+            poly.rings[0] = 999
+        with pytest.raises(AttributeError):
+            poly.rings.append(999)
+
+        # None of the above landed (they all raised before mutating
+        # anything) -- confirm the shared cache entry is still exactly
+        # what a cache-cold WaterDB over the same window decodes.
+        again = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+        cold = WaterDB(path, max_vertices=6)
+        fresh = list(cold.polygons_in_range(24.5, -81.7, 60.0))[0]
+        assert again.elev_ft == fresh.elev_ft == 10.0
+        assert np.array_equal(again.vertices, fresh.vertices)
+        assert again.triangles == fresh.triangles
+        assert again.rings == fresh.rings
+
+    def test_repeated_overlapping_window_queries_decode_each_row_once(
+            self, tmp_path, monkeypatch):
+        """B11's missing decode-count spy: N ``polygons_in_range`` calls
+        over an overlapping moving window must decode a given row
+        exactly once -- the whole point of the #124 cache."""
+        from pyefis.instruments.ai import water_db as water_db_mod
+        from pyefis.instruments.ai.water_db import WaterDB
+        path = self._build_db(tmp_path, [
+            ("ocean", None, [(34.0, -120.5), (34.0, -119.5),
+                             (34.5, -119.5), (34.5, -120.5)]),
+        ])
+        calls = []
+        orig = water_db_mod._decode_vertices
+
+        def _spy(*a, **kw):
+            calls.append(1)
+            return orig(*a, **kw)
+
+        monkeypatch.setattr(water_db_mod, "_decode_vertices", _spy)
+        db = WaterDB(path)
+        positions = [(34.40, -119.80), (34.41, -119.79),
+                     (34.39, -119.81), (34.40, -119.80),
+                     (34.42, -119.78)]
+        for lat, lon in positions:
+            list(db.polygons_in_range(lat, lon, 30.0))
+        assert len(calls) == 1
+
+    def test_polygon_cache_eviction_redecodes_full_multiring_geometry(
+            self, tmp_path):
+        """Extends test_polygon_cache_evicts_lru_on_vertex_budget past
+        elev_ft (B11): after an evict-and-re-decode cycle, a MULTI-RING
+        row (rings + triangles + the uint16/uint32 dtype rule) must
+        come back with vertices/triangles/rings identical to the
+        pre-eviction decode, not just a matching elev_ft."""
+        from pyefis.instruments.ai.water_db import WaterDB
+        path, outer, hole = self._build_multiring_db(tmp_path, extra_rows=[
+            ("lake", 20.0,
+             [(44.0, -120.5), (44.0, -119.5),
+              (44.5, -119.5), (44.5, -120.5)],
+             44.0, 44.5, -120.5, -119.5),
+        ])
+
+        # Budget holds exactly the 8-vertex multi-ring row; querying the
+        # second (4-vertex) polygon pushes it over budget and evicts
+        # the multi-ring row (LRU-first).
+        db = WaterDB(path, max_vertices=6, cache_vertex_budget=8)
+        poly1 = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+        list(db.polygons_in_range(44.2, -120.0, 30.0))    # evicts poly1
+        poly1_again = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+
+        assert poly1_again is not poly1        # actually re-decoded
+        assert np.array_equal(poly1_again.vertices, poly1.vertices)
+        assert poly1_again.triangles == poly1.triangles
+        assert poly1_again.rings == poly1.rings
+        assert poly1_again.elev_ft == poly1.elev_ft
 
 
 class TestSVSWaterRendering:

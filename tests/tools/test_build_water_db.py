@@ -280,7 +280,7 @@ class TestShapefileImport:
         polys = list(db.polygons_in_range(24.55, -81.75, 30.0))
         assert len(polys) == 1
         poly = polys[0]
-        assert poly.rings == [4, 8]
+        assert poly.rings == (4, 8)
         assert len(poly.vertices) == 8           # never re-decimated
         assert poly.outer_vertices.tolist() == poly.vertices[:4].tolist()
         assert poly.triangles is not None
