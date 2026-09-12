@@ -331,15 +331,36 @@ already-finished worker's result -- is a "hit," since both cost ~0 on the
 render thread.
 
 **Pass threshold: `svs.frame_gap_ms.p95 <= 50`; `map.probe.p95_ms <= 50`.**
-(AER-1082, narrowing AER-679's original shared bound.) `50` is
-`PROBE_GAP_WARN_MS` in `map/perf.py` -- the project's own existing
-GUI-thread-stall gate (MP6). For SVS, `frame_gap_ms.p95` IS that gate:
-SVS redraws on its own frame clock, so a stalled render thread shows up
-directly as an inflated paint-to-paint gap. Cross-checked against
-AER-677's own measurement: healthy SVS gap ~25 ms (40 fps) vs the
-reproduced defect's ~699 ms (1.4 fps) -- 50 ms sits with clean margin
-above the healthy baseline and two orders of magnitude below the
-defect.
+(AER-1082, narrowing AER-679's original shared bound; SVS provenance
+corrected by AER-1086.) `50` is `PROBE_GAP_WARN_MS` in `map/perf.py` --
+the project's own existing GUI-thread-stall gate (MP6). For SVS,
+`frame_gap_ms.p95` IS that gate: SVS redraws on its own frame clock, so
+a stalled render thread shows up directly as an inflated paint-to-paint
+gap. The bar was originally justified by an AER-677 measurement of
+"healthy SVS gap ~25 ms (40 fps)" -- that figure came from the
+DEMO-contaminated era (bench demo pattern sweeping ALT continuously
+with LAT/LONG pinned, so the widget repainted on its own frame clock
+with no position-driven collector load), the same set of numbers
+AER-677 itself retired, so it was never a valid baseline for a gate
+meant to cover position-driven motion.
+
+AER-1086 re-measured on healthy current `dev` using this harness's own
+`--moving-position --target svs` mode (130 kt/280 deg/20 Hz, 41 s): p50
+33.0 / p95 34.0 / p99 34.9 / max 35.6 ms, with collector hit rates
+>99% and `frame_total_ms` staying ~4.6-5.0 ms (render itself is cheap,
+not starved). Note this requires a real GL context -- the `offscreen`
+Qt platform cannot create a `QOpenGLWidget` at all (`SVS: OpenGL draw
+failed ... no current GL context`); run with `QT_QPA_PLATFORM=xcb` and
+`DISPLAY` pointed at the bench's existing X server instead (GLX
+tolerates a second concurrent client fine; no need to stop the live
+`pyefis.service`). This measurement also settles AER-1086's suspected
+"floored at the drive period" mechanism: SVS repaints on its own
+free-running 30 fps `QTimer` (`ai/__init__.py`'s `set_frame_rate`,
+default 30), not on position change, so the ~33 ms gap tracks that
+timer's nominal 33.3 ms period regardless of the 20 Hz position-drive
+rate. 50 ms keeps clean margin (~16 ms, ~32%) above this real healthy
+baseline and two orders of magnitude below AER-677's ~699 ms
+(1.4 fps) reproduced defect.
 
 The map does NOT gate on `frame_gap_ms.p95`. AER-692 found the map's
 paint-to-paint gap is dominated by pose-quantization arithmetic, not

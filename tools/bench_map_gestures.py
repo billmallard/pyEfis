@@ -62,18 +62,27 @@ budgets file and exits non-zero on any violation.
     Pass threshold: svs.frame_gap_ms.p95 <= 50 ms; map.probe.p95_ms <= 50
     ms (AER-1082). Both 50 ms bounds are ``PROBE_GAP_WARN_MS`` from
     map/perf.py, the project's own existing GUI-thread-stall gate (MP6).
-    SVS is gated on its own paint-to-paint gap directly -- cross-checked
-    against AER-677's measurement, 50 ms sits with clean margin above
-    the healthy ~25 ms baseline and two orders of magnitude below the
-    ~699 ms defect. The map is NOT gated on frame_gap_ms (still reported
-    as an observable): AER-692 found it reads ~205-300 ms by pose-
-    quantization arithmetic alone at 10 NM/130 kt with every layer
-    healthy, which would make a frame_gap_ms bound permanently red. The
-    map is instead gated on probe.p95_ms, GuiProbe's own 10 ms-timer
-    tick-to-tick gap -- the objective GIL-starvation detector,
-    insensitive to pose quantization. See tools/budgets/
-    moving_position.json for a ready-to-use --budget file and
-    docs/moving_map_spec.md section 9.2 for the full derivation.
+    SVS is gated on its own paint-to-paint gap directly. AER-1086
+    re-measured the healthy baseline on current dev with this harness
+    (real GL required -- offscreen QPA can't create a QOpenGLWidget
+    context; run under a shared X display instead, see that issue):
+    p50 33.0 / p95 34.0 / p99 34.9 / max 35.6 ms, 41 s at 130 kt/280
+    deg/20 Hz, collector hit rates >99%. SVS repaints on its own
+    free-running 30 fps QTimer (ai/__init__.py set_frame_rate), not on
+    position change, so this tracks that timer's ~33.3 ms period rather
+    than being floored by the 20 Hz drive period -- 50 ms keeps clean
+    margin above it. (The bar's earlier "~25 ms (40 fps)" justification
+    was a DEMO-era figure -- AER-677 retired that whole measurement
+    era -- and is no longer the basis for this bound.) The map is NOT
+    gated on frame_gap_ms (still reported as an observable): AER-692
+    found it reads ~205-300 ms by pose-quantization arithmetic alone at
+    10 NM/130 kt with every layer healthy, which would make a
+    frame_gap_ms bound permanently red. The map is instead gated on
+    probe.p95_ms, GuiProbe's own 10 ms-timer tick-to-tick gap -- the
+    objective GIL-starvation detector, insensitive to pose quantization.
+    See tools/budgets/moving_position.json for a ready-to-use --budget
+    file and docs/moving_map_spec.md section 9.2 for the full
+    derivation.
 
 Run (Windows, deps on C:/pylib):
     PYTHONPATH="C:/pylib;src" python tools/bench_map_gestures.py \\

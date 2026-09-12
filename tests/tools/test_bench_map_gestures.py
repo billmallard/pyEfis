@@ -353,6 +353,26 @@ def test_shipped_moving_position_budget_passes_healthy_quantized_map(bmg):
     assert bmg.check_budgets([result], budget) == []
 
 
+def test_shipped_moving_position_budget_passes_healthy_svs(bmg):
+    """AER-1086 regression: a measured healthy SVS reading must pass the
+    shipped budget. Fixture is AER-1086's own bench run -- healthy
+    current dev, --moving-position --target svs, 130 kt/280 deg/20 Hz,
+    real GL (offscreen QPA can't create a QOpenGLWidget context at all;
+    this run used a shared X display instead) -- p50 33.0 / p95 34.0 /
+    p99 34.9 / max 35.6 ms, comfortably under the 50 ms bar. A test that
+    only asserts the key exists would not have caught the DEMO-era
+    "~25 ms (40 fps)" provenance this bar used to cite (AER-677's
+    retired numbers), nor would it prove the bar is set above a real
+    measurement rather than below it."""
+    budget = json.loads(
+        (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
+    result = dict(scenario="moving_position", counters=dict(
+        svs=dict(frame_gap_ms=dict(p95=34.0)),
+        map=dict(frame_gap_ms=dict(p95=292.0),
+                 probe=dict(p95_ms=10.9))))
+    assert bmg.check_budgets([result], budget) == []
+
+
 def test_moving_position_svs_target_reports_or_skips_without_gl(bmg, qapp):
     """SVS is GL-required with no CPU fallback (ai/svs.py) -- in a
     headless CI box with no usable GL, SVS disables itself and this
