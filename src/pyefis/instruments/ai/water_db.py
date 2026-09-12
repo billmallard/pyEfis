@@ -53,22 +53,32 @@ log = logging.getLogger(__name__)
 NM_PER_DEG_LAT = 60.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class WaterPolygon:
+    """Immutable by construction (AER-1093): every yielded instance may
+    be a SHARED cache entry (#124) handed to a different consumer on a
+    later collect cycle, so nothing about it may be mutated in place —
+    a stale-value write on a shared row would otherwise persist
+    silently across every later query over the same coastline. Field
+    reassignment (``poly.elev_ft = x``) raises ``FrozenInstanceError``;
+    ``vertices`` is a read-only ndarray (write raises ``ValueError``);
+    ``triangles``/``rings`` are tuples (item assignment raises
+    ``TypeError``, ``.append`` raises ``AttributeError``). All fail
+    loudly rather than corrupting the cache."""
     id        : int
     kind      : str          # 'ocean', 'lake', 'river', ...
     elev_ft   : float | None # known water-surface elev; None = sample SRTM
-    # (n, 2) float64 ndarray of (lat, lon) rows (#125); may be a
-    # read-only view of the storage blob. Iterates/unpacks like the
-    # old list-of-tuples. Cached queries (#124) share one array —
-    # treat as immutable.
+    # (n, 2) float64 ndarray of (lat, lon) rows (#125), always
+    # read-only (both the frombuffer view and the decimated copy).
+    # Iterates/unpacks like the old list-of-tuples. Cached queries
+    # (#124) share one array.
     vertices  : object = field(default_factory=list)
-    # Pre-tessellated triangle indices (flat list of ints, 3 per
+    # Pre-tessellated triangle indices (flat tuple of ints, 3 per
     # triangle, into the ``vertices`` list). Bytes blob in storage,
-    # decoded to a Python list at load time so the GPU renderer can
-    # convert to whatever it wants. None when the build tool was
+    # decoded to an immutable tuple at load time so the GPU renderer
+    # can convert to whatever it wants. None when the build tool was
     # older than the tessellation schema bump.
-    triangles : list | None = None
+    triangles : tuple | None = None
     # Ring END offsets into ``vertices`` for multi-ring polygons
     # (outer ring first, then each island hole — earcut convention).
     # None for single-ring polygons. When present, ``triangles`` was
@@ -76,7 +86,7 @@ class WaterPolygon:
     # ring handling; outline/fill consumers must use even-odd filling
     # or ``outer_vertices`` — the raw ``vertices`` list concatenates
     # all rings and is NOT one drawable outline.
-    rings     : list | None = None
+    rings     : tuple | None = None
 
     @property
     def is_ocean(self) -> bool:
@@ -285,9 +295,8 @@ class WaterDB:
         budget = self._cache_vertex_budget
         for r in cur:
             # Decoded-polygon cache (#124): the yielded WaterPolygon is
-            # SHARED with the cache — consumers must treat it as
-            # immutable (both in-tree consumers only read; the SVS
-            # collector's np.asarray(..., dtype=float32) copies).
+            # SHARED with the cache. Immutability is enforced, not just
+            # documented (AER-1093) — see WaterPolygon's docstring.
             pid = r["id"]
             hit = cache.get(pid)
             if hit is not None:
@@ -342,8 +351,11 @@ def _decode_vertices(blob: bytes, max_vertices: int | None = None):
     (the SVS collector via ``asarray(dtype=float32)``, which copies;
     the map layer via vectorised projection). Iteration still unpacks
     like the old list (``for lat, lon in poly.vertices``). The
-    undecimated array is a READ-ONLY view of the blob — deliberate,
-    since cached polygons (#124) share it between query results."""
+    returned array is always READ-ONLY (AER-1093) — deliberate, since
+    cached polygons (#124) share it between query results: the
+    undecimated path is already a read-only view of the immutable blob
+    bytes, and the decimated path's fancy-index copy is explicitly
+    write-locked below so both paths behave alike."""
     import numpy as _np
     if not blob:
         return _np.empty((0, 2), dtype=_np.float64)
@@ -353,6 +365,7 @@ def _decode_vertices(blob: bytes, max_vertices: int | None = None):
         # Even-stride decimation preserving indices 0 and n-1.
         idx = _np.round(_np.linspace(0, n - 1, max_vertices)).astype(int)
         pts = pts[idx]
+    pts.setflags(write=False)
     return pts
 
 
@@ -366,7 +379,7 @@ def encode_vertices(vertices) -> bytes:
 
 
 def _decode_triangles(blob, n_vertices):
-    """Unpack a little-endian triangle-index blob into a flat list of
+    """Unpack a little-endian triangle-index blob into a flat tuple of
     ints (3 entries per triangle). Returns None when the polygon was
     inserted by a pre-tessellation build of the DB and has no
     triangles stored.
@@ -376,30 +389,35 @@ def _decode_triangles(blob, n_vertices):
     lower Florida Keys cell carries 3,322 island rings) overflow
     uint16; the old builder dropped their holes entirely rather than
     widen the indices (#44 residual). The builder applies the same
-    threshold, so no schema flag is needed."""
+    threshold, so no schema flag is needed.
+
+    Returns a tuple, not a list (AER-1093): cached rows (#124) share
+    this object across every consumer that queries the same polygon,
+    so it must not be appendable or item-assignable in place."""
     if not blob:
         return None
     if n_vertices > 65535:
         if len(blob) % 4:
             return None     # not a uint32 blob — treat as untessellated
         n = len(blob) // 4
-        return list(struct.unpack(f"<{n}I", blob))
+        return struct.unpack(f"<{n}I", blob)
     n = len(blob) // 2
-    return list(struct.unpack(f"<{n}H", blob))
+    return struct.unpack(f"<{n}H", blob)
 
 
 def _decode_rings(blob, n_vertices):
-    """Unpack a little-endian ring-end-offset blob into a list of ints
+    """Unpack a little-endian ring-end-offset blob into a tuple of ints
     (earcut convention: entry k is the END offset of ring k in the
     vertices list; ring 0 is the outer ring, the rest are island
     holes). Returns None for single-ring polygons and pre-#44 DBs.
-    Same uint16/uint32 vertex-count rule as ``_decode_triangles``."""
+    Same uint16/uint32 vertex-count rule as ``_decode_triangles``, and
+    the same tuple-not-list immutability rationale (AER-1093)."""
     if not blob:
         return None
     if n_vertices > 65535:
         if len(blob) % 4:
             return None
         n = len(blob) // 4
-        return list(struct.unpack(f"<{n}I", blob))
+        return struct.unpack(f"<{n}I", blob)
     n = len(blob) // 2
-    return list(struct.unpack(f"<{n}H", blob))
+    return struct.unpack(f"<{n}H", blob)
