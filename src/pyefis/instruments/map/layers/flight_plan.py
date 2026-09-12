@@ -73,8 +73,17 @@ def _off_route_direct(engine):
 def build_legs(route, engine):
     """Pure geometry/color computation for the plan's slot-to-slot legs --
     testable without Qt. Returns ``[(color, (lat1, lon1), (lat2, lon2)), ...]``
-    in slot order. The direct-to line is a separate item (see
-    :func:`build_direct_to`)."""
+    in slot order (plus a leading synthetic entry when ``FPLACTLEG`` = 1 --
+    see below). The direct-to line is a separate item (see
+    :func:`build_direct_to`).
+
+    ``FPLACTLEG`` (Appendix A) is the 1-based slot number of the active
+    leg's TO waypoint, i.e. leg index ``i`` (0-based, slots[i] -> slots[i+1])
+    has TO-waypoint slot number ``i + 2``. ``FPLACTLEG`` = 1 is a real engine
+    state (a freshly activated plan, or ``ACT 1``) with no prior route slot
+    at all -- the FROM point is the aircraft's live position, not
+    ``slots[-1]`` -- so it can't be represented by any ``slots[i]``/
+    ``slots[i+1]`` pair; every real route leg is still ahead in that case."""
     slots = route.waypoints
     off_route = _off_route_direct(engine)
     act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
@@ -83,9 +92,11 @@ def build_legs(route, engine):
     to_lat = _engine_val(engine, "WPLAT", 0.0) or 0.0
     to_lon = _engine_val(engine, "WPLON", 0.0) or 0.0
     legs = []
+    if act_leg == 1 and not off_route:
+        legs.append((ACTIVE, (fr_lat, fr_lon), (to_lat, to_lon)))
     for i in range(len(slots) - 1):
         a, b = slots[i], slots[i + 1]
-        to_idx = i + 1
+        to_idx = i + 2   # 1-based slot number of this leg's TO waypoint (b)
         if off_route:
             legs.append((PAST, (a.lat, a.lon), (b.lat, b.lon)))
         elif act_leg and to_idx == act_leg:
