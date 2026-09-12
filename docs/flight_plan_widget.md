@@ -1,11 +1,11 @@
 # Flight plan widget
 
-Status: ACTIVE (FP5a, 2026-09-08) — touch. The `flight_plan` instrument's FPL
-and Entry pages, keypad, and touch input path are live. Direct To / Catalog /
-WPT Info pages and the physical-keyboard path are FP5b; the encoder path is
-FP5c — neither is wired yet. Full plan: `makerplane/briefs/flight_plan_plan.md`
-section 3.4-3.5; tracking epic pyEfis#181; the data layer is pyEfis#183
-(AER-804), this item pyEfis#185 (AER-805).
+Status: ACTIVE (FP5b, 2026-09-12) — touch + physical keyboard. All five
+pages (FPL, Entry, Direct To, Catalog, WPT Info) and the physical-keyboard
+input path are live. The encoder path is FP5c — not wired yet. Full plan:
+`makerplane/briefs/flight_plan_plan.md` section 3.4-3.5; tracking epic
+pyEfis#181; the data layer is pyEfis#183 (AER-804), FP5a is pyEfis#185
+(AER-805), this item is pyEfis#187 (AER-807).
 
 ## Data layer (`src/pyefis/flightplan/`)
 
@@ -54,7 +54,7 @@ See the *Flight plan* section of
 [FIX-Database-Keys](wiki/FIX-Database-Keys.md) for the key table; the
 authoritative registry (types, ranges, CAN-FIX IDs) lives in fix-gateway.
 
-## The `flight_plan` instrument (FP5a)
+## The `flight_plan` instrument (FP5a/b)
 
 `type: flight_plan`, category `navigation`. An app-like instrument (the
 `checklist` precedent, [checklist_widget.md](checklist_widget.md)): a working
@@ -75,22 +75,88 @@ render read-only — it never raises.
   `WPETE` on the active row only; ETA not yet computed). The TO row
   (`FPLACTLEG`) is `active_color`, earlier rows `past_color`, later rows
   `future_color`. Tapping a row opens a menu: Insert Before, Insert After,
-  Activate Leg (`ACT k`), Direct To (stages + `DTO k`), WPT Info (ident/lat/lon
-  stub), Set Role (None/IAF/FAF/MAP/MAHP — refused with a message on a second
-  FAF/MAP or a MAP before the FAF), Remove. Footer: Add Waypoint (Entry page,
-  append), Direct To (Entry page in direct-to mode until FP5b's DTO page),
-  Catalog (stub — FP5b), Menu (Invert, Store, Clear, Suspend/Resume, CDI
-  Scale 0.3/1.0/2.0/AUTO, Delete — Clear and Delete both confirm and both
-  reset the working plan; a distinct "Delete" semantic can be added if the
-  guide's usage turns out to need one).
-- **Entry** (Add/Insert/Direct To) — an ident field with FastFind: typed
-  characters white, the predicted suffix (nearest match by distance from a
-  mode-dependent reference point — the aircraft when appending to an empty
-  plan or direct-to, the last waypoint when appending, the midpoint of the
-  neighbours when inserting) cyan; "NO MATCHES"/"DUPLICATE FOUND"
-  annunciations; a top-5 suggestion strip; tabs Recent/Nearest/FPL/User with a
-  type filter (All/Apt/VOR/NDB/Fix/User); an on-screen keypad (A-Z, 0-9,
-  Backspace, Clear, Enter — the `keypad` option, default true).
+  Activate Leg (`ACT k`), Direct To (stages + `DTO k`), WPT Info (full
+  detail, see below), Set Role (None/IAF/FAF/MAP/MAHP — refused with a
+  message on a second FAF/MAP or a MAP before the FAF), Remove. Footer: Add
+  Waypoint (Entry page, append), Direct To (the DTO page), Catalog (the
+  Catalog page), Menu (Invert, Store, Clear, Suspend/Resume, CDI Scale
+  0.3/1.0/2.0/AUTO, Delete — Clear and Delete both confirm and both reset the
+  working plan; a distinct "Delete" semantic can be added if the guide's
+  usage turns out to need one).
+- **Entry** (Add/Insert) — an ident field with FastFind: typed characters
+  white, the predicted suffix (nearest match by distance from a mode-dependent
+  reference point — the aircraft when appending to an empty plan, the last
+  waypoint when appending, the midpoint of the neighbours when inserting)
+  cyan; "NO MATCHES"/"DUPLICATE FOUND" annunciations; a top-5 suggestion
+  strip; tabs Recent/Nearest/FPL/User with a type filter
+  (All/Apt/VOR/NDB/Fix/User) — the User tab has a "+ CREATE USER WAYPOINT"
+  row (below) above its list; an on-screen keypad (A-Z, 0-9, Backspace,
+  Clear, Enter — the `keypad` option, default true).
+- **Direct To (DTO)** (FP5b, brief 3.5 item 3) — tabs **Waypoint** (the same
+  ident field/suggestion-strip/keypad as Entry, bound in direct-to mode),
+  **FPL** (the active plan's waypoints), **NRST APT** (`WaypointIndex.nearest`
+  filtered to airports — nearest first within 200 nm, up to 25, with bearing,
+  distance and longest runway). Tapping a row in FPL/NRST APT selects it as
+  the pending target (highlighted cyan); typing an ident on the Waypoint tab
+  and pressing Enter activates immediately. The footer button reads
+  **Activate** (stages `DTO*` then issues `DTO <k>` for an FPL-tab target,
+  plain `DTO` otherwise) or **Remove** (issues `DTOX`) whenever a direct-to is
+  already active (`FPLSTATE` = DIRECT) — this takes priority over whatever
+  tab/target is showing. Either action returns to the FPL page.
+- **Catalog** (FP5b, brief 3.5 item 4) — `Catalog.list()`, nearest-modified
+  first, each row showing name, distance to the route's first waypoint from
+  present position (cached per slug/mtime), waypoint count and comment; a
+  lock glyph marks `managed_` (configurator-owned) routes. Tapping a row opens
+  Activate / Invert & Activate / Edit / Copy / Delete (Edit and Delete are
+  omitted for `managed_` rows — refused per `catalog.py`); Activate and Invert
+  & Activate confirm first when the working plan has unsaved edits
+  (`_plan_dirty` and non-empty). Edit loads the stored route into the working
+  copy **without** publishing it to the bus — Store (FPL page Menu) writes it
+  back; nothing else touches the live route until the next edit commits.
+  Copy prompts for a new name via the generic modal keypad and writes a new
+  slug, leaving the original untouched — including for `managed_` sources,
+  since only the write side is refused. Footer: New (clears the working plan,
+  same unsaved-edit confirm) and Delete All (confirms once, skips and reports
+  any `managed_` entries).
+- **WPT Info** (FP5b, brief 3.5 item 5) — resolves the tapped waypoint through
+  `WaypointIndex.lookup` for the richer record (elevation, frequency) when one
+  exists; shows ident/type, name, lat/lon as DD MM.MM, elevation/frequency
+  where known, and bearing/distance from present position, refreshed at 1 Hz
+  by a `QTimer` while the page is open. User waypoints (`type == "user"`) get
+  Edit (comment, lat, lon via the generic modal — ident rename is not
+  supported, `UserWaypointStore.edit` has no id parameter) and Delete, refused
+  with the guide's message while the ident is in the active plan
+  (`WaypointInUseError`).
+
+### The generic modal (Catalog Copy, user waypoints)
+
+A small reusable keypad overlay (`_modal_open`/`_modal_key`/`_modal_enter`/
+`_modal_do_cancel`) drives every free-text or lat/lon prompt that isn't the
+Entry/DTO ident field: Catalog Copy's new-name prompt, and the user-waypoint
+create/edit wizard (ident -> comment -> lat -> lon, chained via each step's
+`on_enter` callback). Numeric mode swaps the A-Z keypad rows for digits,
+`.`/`-` and N/S/E/W; lat/lon parsing/formatting is decimal degrees with a
+hemisphere suffix (e.g. `34.4262N`), not the WPT Info display's DD MM.MM —
+entry and display are deliberately different representations of the same
+value.
+
+### Physical keyboard (FP5b)
+
+While the `keyboard` option is true and an ident-entry surface is open (the
+Entry page, the DTO page's Waypoint tab, or the generic modal), the widget
+takes Qt focus (`setFocusPolicy(StrongFocus)` always; `setFocus()`/
+`clearFocus()` each paint, tracked by `_keyboard_active()`) and its
+`keyPressEvent` consumes A-Z/0-9 (uppercased), Backspace, Enter/Return,
+Escape (cancel), Up/Down (moves a selection cursor over the suggestion strip
+or duplicate chooser; Enter then picks it), Tab (cycles the current page's
+sub-tabs), and `.`/`-`. Every other key — and every key while no entry
+surface is open — is left un-accepted (`event.ignore()` +
+`super().keyPressEvent(event)`) so Qt's normal propagation carries it to
+`gui.py`'s `keyPress` signal and `hmi/keys.py` bindings exactly as before this
+instrument existed. **A bound HMI key that collides with A-Z while an entry
+surface is open is shadowed by the field** — e.g. a keybinding on plain `D`
+will not fire while the Entry/DTO ident field has focus; rebind such keys
+with a modifier, or accept the shadowing while that page is open.
 
 ### HMI verbs
 
@@ -101,8 +167,8 @@ screen, the `checklist` broadcast precedent).
 
 | Verb | Payload |
 |------|---------|
-| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog` are reserved for FP5b |
-| `flightplan direct to` | blank opens the Entry page in direct-to mode; an ident stages and activates direct-to that waypoint immediately |
+| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog` open those pages |
+| `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
 
 ### Options (`InstrumentSpec` Props)
 
@@ -112,8 +178,8 @@ screen, the `checklist` broadcast precedent).
 | `nasr_db_path` | `""` | `airports.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
 | `navaid_db_path` | `""` | `navaids.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
 | `columns` | `"DTK,DIS,CUM"` | comma-separated FPL page columns; choices DTK, DIS, CUM, ETE, ETA |
-| `keypad` | `true` | show the on-screen keypad on the Entry page |
-| `keyboard` | `false` | let a physical keyboard drive the Entry page; not yet implemented (FP5b) |
+| `keypad` | `true` | show the on-screen keypad on the Entry/DTO Waypoint pages and the generic modal |
+| `keyboard` | `false` | let a physical keyboard drive an open ident-entry surface (see above) |
 | `default_page` | `"fpl"` | page shown when the instrument first paints (`fpl`\|`entry`) |
 | `hmi_group` | `""` | HMI verb targeting (see above) |
 | `active_color` | `#ff00ff` | active (TO) leg row colour |
@@ -137,7 +203,7 @@ curated schema metadata is acceptable. `tools/build_editor_assets.py` picks
 configurator-side twin work live in `makerplane-data` and are out of this PR's
 repo boundary (see the PR description).
 
-## Coming in FP5b/c
+## Coming in FP5c
 
-FP5b: Direct To / Catalog / WPT Info pages, the physical-keyboard input path.
-FP5c: the encoder path (`enc_selectable` etc. via `encoder_order`).
+The encoder path (`enc_selectable` etc. via `encoder_order`): inner turn =
+character or list scroll, push = enter, long push = back.

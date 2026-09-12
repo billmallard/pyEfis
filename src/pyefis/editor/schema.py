@@ -338,12 +338,12 @@ _ACTIONS = [
     # flight_plan instrument on the screen), mirroring the checklist broadcast.
     {"verb": "flightplan page", "label": "Flight plan: show page",
      "group": "flightplan", "arg": {"kind": "string"},
-     "help": "switch the flight_plan instrument's page ('fpl' now; 'dto'/"
-             "'catalog' are reserved for FP5b)"},
+     "help": "switch the flight_plan instrument's page ('fpl', 'dto', or "
+             "'catalog')"},
     {"verb": "flightplan direct to", "label": "Flight plan: direct to",
      "group": "flightplan", "arg": {"kind": "string"},
-     "help": "blank opens the Entry page for a direct-to; an ident stages "
-             "and activates direct-to that waypoint immediately"},
+     "help": "blank opens the Direct To page; an ident stages and activates "
+             "direct-to that waypoint immediately"},
     # --- HMI menu navigation ---
     {"verb": "activate menu", "label": "Activate menu", "group": "menu",
      "arg": {"kind": "string"}, "help": "open an HMI menu"},
