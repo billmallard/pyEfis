@@ -140,18 +140,55 @@ airways off)
 - CIFP remains GPL-deferred; NASR covers all three feature classes
   for US. (Procedure geometry = future layer, not v1.)
 
+### 5.4 Flight plan (z=45, default on, FP6, billmallard/pyEfis#184)
+
+- **No database, no worker** — pure `paint()` like `RangeRingsLayer`
+  (5.5): the whole route block, active-leg state and direct-to point
+  already live on the FIX bus via the FP4 `flightplan.fixbridge.FixBridge`
+  read-back (`read_route`/`read_engine`/`read_direct_to`). With no FP1
+  keys published, the layer paints nothing and never raises (the
+  construct-never-raises convention, `CLAUDE.md`).
+- Legs between consecutive route slots: past (before the active leg)
+  gray `#808080` 2 px, the active leg magenta `#ff00ff` 3 px drawn from
+  `FPLFRLAT/LON` (the direct-to activation point when it differs from
+  the previous slot) to the TO waypoint (`WPLAT/WPLON`), next/future
+  legs white 2 px. Off-route direct-to (`FPLSTATE`=DIRECT,
+  `FPLACTLEG`=0) draws every plan leg gray plus a separate magenta line
+  from the activation point to `DTO*`. Great-circle legs are drawn as
+  straight screen segments — no subdivision: at a leg near the edge of
+  the 160 NM range the chord-vs-geodesic pixel error stays under 0.5 px
+  through an 80 NM leg and only crosses 1 px past ~110 NM (verified
+  numerically against `MapTransform.to_screen`).
+- Waypoint symbols reuse the 5.2/5.3 glyph vocabulary (circle/hexagon/
+  stippled-disc/triangle) colored by route status rather than navdata
+  source; the current TO waypoint (or the DTO point, off-route) is
+  ringed magenta. Ident labels take the role (`FAF`/`MAP`/`IAF`/`MAHP`)
+  as a suffix when set. While suspended at the MAP with LNAV armed
+  (`FPLSTATE`=SUSP, `FPLAPR`=LNAV), a dashed magenta line extends the
+  final course past the MAP so the pilot still sees where it leads —
+  the exact length is a look call, not a navigation guarantee.
+- Declutter: labels off above 80 NM (symbols stay), nothing draws
+  above 160 NM except the legs.
+- Prop `layer_flight_plan` (default on); the `LiveBind` runtime toggle
+  rides #96 when it lands (layer toggles are GUI-thread-only today).
+
+### 5.5 Range rings (z=20, default on)
+
+Concentric half/full-range rings with distance labels — the
+provider-model proof (section 4): trivial by design, ships v1.
+
 ## 6. Future layers (design targets for the provider seam)
 
-Named now so the interfaces stay honest: `range_rings` (trivial,
-ships v1 as the provider-model proof), `flight_plan` (route from a
-future FMS/GPS source), `traffic` (ADS-B via Stratux — FIX keys or a
-side TCP feed; symbol set = TIS-B standard), `metar_flags` /
-`fisb_weather` (Stratux FIS-B: NEXRAD raster as a tile layer —
-raster layers must be first-class), `lightning`, `airspace` (NASR
-CLS_ARSP/SUA — high value, data build like 5.3), `obstacles` (DOF,
-already on-device), `sectional_raster` (FAA VFR chart tiles; mine
-pyAvMap). Each is "a provider + maybe a pack"; none require core
-changes if sections 4's contract holds.
+Named now so the interfaces stay honest: `traffic` (ADS-B via
+Stratux — FIX keys or a side TCP feed; symbol set = TIS-B standard),
+`metar_flags` / `fisb_weather` (Stratux FIS-B: NEXRAD raster as a
+tile layer — raster layers must be first-class), `lightning`,
+`airspace` (NASR CLS_ARSP/SUA — high value, data build like 5.3),
+`obstacles` (DOF, already on-device), `sectional_raster` (FAA VFR
+chart tiles; mine pyAvMap), and graphical editing on the map (FP10:
+hit-test a waypoint -> Direct To / Insert). Each is "a provider +
+maybe a pack"; none require core changes if sections 4's contract
+holds.
 
 ## 7. Controls (buttons/encoder — hardware pending)
 
@@ -171,8 +208,9 @@ for 3 s after any action (so button UX works blind of the menu).
 - Factory registration + Props: `range_nm`, `orientation`,
   `ownship_position`, `layers` (per-layer default-on booleans:
   `layer_terrain`, `layer_airports`, `layer_navaids`,
-  `layer_airways`, `layer_range_rings`), `terrain_mode`, symbol
-  options, `db paths` (default to /data/makerplane-data locations).
+  `layer_airways`, `layer_flight_plan`, `layer_range_rings`),
+  `terrain_mode`, symbol options, `db paths` (default to
+  /data/makerplane-data locations).
 - Editor twin: static top-down preview — a canvas rendering a small
   baked terrain patch (the SVS preview-patch pattern; one scene is
   enough) with sample airport/navaid symbols honoring the layer

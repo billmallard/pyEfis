@@ -1088,6 +1088,11 @@ _register(InstrumentSpec(
              label="Navaid db path",
              help="navaids.sqlite (tools/build_navaid_db.py; on the Pi "
                   "/data/makerplane-data/navaids/current/navaids.sqlite)"),
+        Prop("layer_flight_plan", "boolean", default=True,
+             label="Layer: flight plan",
+             help="active route: past/active/future legs, waypoint symbols, "
+                  "direct-to and the suspended-at-MAP extended final course "
+                  "(FP6; no database, reads the FIX flight-plan bus)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = "

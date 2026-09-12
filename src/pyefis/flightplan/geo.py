@@ -65,3 +65,19 @@ def along_track_distance_nm(lat: float, lon: float,
     xte_rad = math.asin(math.sin(delta13) * math.sin(theta13 - dtk))
     atd_rad = math.acos(math.cos(delta13) / math.cos(xte_rad))
     return atd_rad * EARTH_RADIUS_NM
+
+
+def destination_point(lat: float, lon: float,
+                       bearing_deg: float, dist_nm: float) -> tuple[float, float]:
+    """The point *dist_nm* along the great circle at initial true
+    *bearing_deg* from (lat, lon) -- the inverse of
+    :func:`initial_bearing`/:func:`distance_nm`. Used by the map's
+    ``flight_plan`` layer (FP6) to project the extended final approach
+    course past the MAP."""
+    p1, l1 = _rad(lat), _rad(lon)
+    brg = _rad(bearing_deg)
+    d = dist_nm / EARTH_RADIUS_NM
+    p2 = math.asin(math.sin(p1) * math.cos(d) + math.cos(p1) * math.sin(d) * math.cos(brg))
+    l2 = l1 + math.atan2(math.sin(brg) * math.sin(d) * math.cos(p1),
+                          math.cos(d) - math.sin(p1) * math.sin(p2))
+    return math.degrees(p2), (math.degrees(l2) + 540.0) % 360.0 - 180.0

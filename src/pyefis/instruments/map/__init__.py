@@ -115,6 +115,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.layer_fixes = False
         self.layer_airways = False
         self.navaid_db_path = ""               # navaids.sqlite (Phase D)
+        self.layer_flight_plan = True          # route/active-leg/direct-to (FP6)
         # Control-binding keys (control_bindings.md): when an <x>_key option
         # names a FIX key, a control (button/knob) drives that setting at
         # runtime. Empty = the setting stays a static config option.
@@ -309,6 +310,7 @@ class MovingMap(LiveBindingMixin, QWidget):
     # --- layer plumbing ---------------------------------------------------
     def _build_layers(self):
         from pyefis.instruments.map.layers import airports  # noqa: F401
+        from pyefis.instruments.map.layers import flight_plan  # noqa: F401
         from pyefis.instruments.map.layers import navaids  # noqa: F401
         from pyefis.instruments.map.layers import rivers  # noqa: F401
         from pyefis.instruments.map.layers import roads  # noqa: F401
