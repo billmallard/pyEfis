@@ -81,6 +81,14 @@ class ItemValue:
     fail: bool
 
 
+@dataclass
+class DirectTo:
+    id: str
+    lat: float
+    lon: float
+    type: str
+
+
 class FixBridge:
     """Wraps ``pyavtools.fix``. *fix_module* is the imported ``pyavtools.fix``
     (or a compatible test double exposing ``.db``)."""
@@ -213,3 +221,13 @@ class FixBridge:
             item = self._get(key)
             out[key] = ItemValue(value=item.value, old=item.old, bad=item.bad, fail=item.fail)
         return out
+
+    def read_direct_to(self) -> DirectTo | None:
+        """The staged direct-to point (``DTO*``, Appendix A) -- consumed by
+        the map layer (FP6) to draw the activation-point-to-DTO line when
+        off-route (``FPLSTATE=DIRECT``, ``FPLACTLEG=0``)."""
+        if not self.available:
+            return None
+        return DirectTo(id=self._get("DTOID").value, lat=self._get("DTOLAT").value,
+                         lon=self._get("DTOLON").value,
+                         type=FPLTYPE_TO_TYPE.get(int(self._get("DTOTYPE").value), "unknown"))

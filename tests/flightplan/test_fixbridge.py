@@ -266,6 +266,22 @@ def test_read_engine_reports_values_and_quality(fix):
     assert engine["FPLCRS"].bad is True
 
 
+def test_read_direct_to_none_when_unavailable(fix):
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.read_direct_to() is None
+
+
+def test_read_direct_to_reflects_staged_point(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.stage_direct_to(model.Waypoint(id="RZS", type="vor", lat=34.02, lon=-119.55))
+    dto = bridge.read_direct_to()
+    assert dto.id == "RZS"
+    assert dto.lat == pytest.approx(34.02)
+    assert dto.lon == pytest.approx(-119.55)
+    assert dto.type == "vor"
+
+
 # ---------------------------------------------------------------------------
 # Qt-free (static -- fixbridge legitimately depends on pyavtools.fix, which
 # is itself Qt-based, so the sys.modules check test_model.py/test_catalog.py

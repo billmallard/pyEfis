@@ -35,6 +35,12 @@ four gauges also have `ganged_` variants.
 | `atitude_indicator` | `ai.AI` | `PITCH`,`ROLL`,`ALAT`,`TAS` | Attitude indicator (+ optional FPM, SVS). Note the one-`t` spelling. |
 | `virtual_vfr` | `ai.VirtualVfr.VirtualVfr` | `PITCH`,`ROLL`,`ALAT`,`LAT`,`LONG`,`ALT`,`COURSE`¹ | AI + airport/runway overlay + Synthetic Vision terrain |
 
+## Navigation
+
+| `type:` | Class | Default FIX key(s) | Description |
+|---------|-------|--------------------|-------------|
+| `moving_map` | `map.MovingMap` | `LAT`,`LONG`,`TRACKM` | Top-down moving map: terrain/roads/rivers/airports/navaids/flight-plan layers, each toggled by a `layer_*` Prop. See [moving_map_spec.md](https://github.com/billmallard/pyEfis/blob/dev/docs/moving_map_spec.md) for the full layer list; `layer_flight_plan` (FP6) draws the active route, leg colors and direct-to from the flight-plan FIX bus — no `dbkey` of its own, graceful with no plan published |
+
 ## Engine & data gauges — [Widgets-Engine-Gauges](Widgets-Engine-Gauges)
 
 | `type:` | Class | Default FIX key(s) | Description |

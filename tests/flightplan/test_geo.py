@@ -77,3 +77,24 @@ def test_initial_bearing_wraps_into_0_360():
     brg = geo.initial_bearing(46.0, -100.0, 45.0, -100.0)
     assert 0.0 <= brg < 360.0
     assert brg == pytest.approx(180.0, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# destination_point (FP6: the map layer's extended-final-course projection)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("lat1,lon1,lat2,lon2,dist_nm,bearing_deg", BEARING_DIST_CASES)
+def test_destination_point_round_trips_bearing_dist(lat1, lon1, lat2, lon2, dist_nm, bearing_deg):
+    got_lat, got_lon = geo.destination_point(lat1, lon1, bearing_deg, dist_nm)
+    assert got_lat == pytest.approx(lat2, abs=1e-3)
+    assert got_lon == pytest.approx(lon2, abs=1e-3)
+
+
+def test_destination_point_zero_distance_is_identity():
+    lat, lon = geo.destination_point(34.5, -119.0, 47.0, 0.0)
+    assert lat == pytest.approx(34.5, abs=1e-9)
+    assert lon == pytest.approx(-119.0, abs=1e-9)
+
+
+def test_destination_point_longitude_stays_in_range():
+    lat, lon = geo.destination_point(20.0, 179.9, 90.0, 30.0)
+    assert -180.0 <= lon < 180.0
