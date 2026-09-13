@@ -1022,6 +1022,16 @@ _register(InstrumentSpec(
                   "live (zoom_by/pan_by/rotate_by mark a frame dirty rather "
                   "than repainting per event); the normal frame rate "
                   "applies the rest of the time"),
+        Prop("pinch_rotate_threshold_deg", "number", default=15, minimum=0,
+             maximum=90, label="Pinch rotate threshold (deg)",
+             help="cumulative twist a pinch must reach before it rotates "
+                  "the view; below this a pinch is zoom-only, so a couple "
+                  "of degrees of finger wobble does not nudge orientation "
+                  "(#202)"),
+        Prop("pinch_pan_threshold_px", "number", default=20, minimum=0,
+             maximum=200, label="Pinch pan threshold (px)",
+             help="centroid movement (screen px) a pinch must reach before "
+                  "it pans the view; below this a pinch is zoom-only (#202)"),
         Prop("ownship_position", "number", default=50, minimum=0,
              maximum=100, label="Ownship position (%)",
              help="ownship anchor, percent up from the bottom "

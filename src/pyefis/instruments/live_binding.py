@@ -96,6 +96,19 @@ class LiveBindingMixin:
                     pass
             self._live_binds.append((b, item, slot))
 
+    def _live_bind_and_item(self, attr):
+        """The (LiveBind, FIX item) pair bound to widget attribute *attr*, or
+        (None, None) if that attribute is unbound or bindings have not been
+        initialised yet. Lets a setting's own setter write BACK to its bound
+        key (e.g. the map's range_nm pushing a fresh ladder index to
+        range_key after a pinch/wheel/zoom-rail change) using the same
+        index/enum conversion :meth:`_current_index` already does for
+        startup seeding, without re-deriving it per caller (#202)."""
+        for b, item, _slot in getattr(self, "_live_binds", []):
+            if b.attr == attr:
+                return b, item
+        return None, None
+
     # --- internals ---------------------------------------------------------
     def _live_slot(self, b, item):
         def slot(*_ignored):
