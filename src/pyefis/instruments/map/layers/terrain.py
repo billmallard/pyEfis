@@ -113,19 +113,45 @@ class TerrainLayer(MapLayer):
     _SNAP_FRAC = 0.15
     #: rendered image pixels per screen pixel (1 = exact; <1 = softer/faster)
     _RES = 1.0
-    #: at/below this range the full water overlay draws (ocean coastline + all
-    #: lakes). Above it, the ocean is dropped (terrain void-water still shows
-    #: oceans) and only large inland lakes -- Great Lakes scale -- draw, for
-    #: orientation. Uncapped, _draw_water dominated the worker at wide zoom
-    #: (2.8 s @ 800 NM, 15 s @ 2500) -- the ocean coastline is never size-
-    #: filtered. map_wide_range_perf_plan.md.
-    _WATER_FULL_MAX_NM = 300.0
-    #: above _WATER_FULL_MAX_NM the lake size floor scales with range (bbox
-    #: diagonal deg = range_nm * this, clamped to _WATER_WIDE_DIAG_MAX) so the
-    #: drawn-poly count stays bounded (~dozens) as you zoom out -- only
-    #: progressively larger bodies survive, and the Great Lakes (6-8 deg) always
-    #: do. This DB tags everything kind='water' with no elev, so SIZE is the
-    #: only discriminator (map_wide_range_perf_plan.md).
+    #: at/below this NOMINAL (pilot-facing, widget.range_nm) range the full
+    #: water overlay draws (ocean coastline + all lakes). Above it, the ocean
+    #: is dropped (terrain void-water still shows oceans) and only large
+    #: inland lakes -- Great Lakes scale -- draw, for orientation.
+    #:
+    #: Compared against the NOMINAL range on purpose (AER-1149) -- the query
+    #: window the water overlay actually reads is the rotated viewport's
+    #: half-diagonal, oversized 1.25x, which runs 1.47x-2.43x nominal
+    #: depending on widget aspect. A window-range comparison made the full/
+    #: wide split a function of screen geometry: the same 160 NM ladder top
+    #: stayed full-detail on a portrait widget and silently dropped the
+    #: coastline on a landscape one. The nominal range is a fixed property
+    #: of what the pilot chose; every shipped screen now means the same
+    #: thing at the same range_nm.
+    #:
+    #: 160 NM is the range ladder's own shipped/default maximum
+    #: (MovingMap.range_ladder, _range_bounds clamps range_nm to it) --
+    #: measured against the published water-na (2026q2r6) pack at every
+    #: shipped widget aspect, full overlay at 160 NM nominal costs at most
+    #: 120,576 vertices (Raleigh, 800x480), a 20% margin under the 150k
+    #: budget. The same scene climbs past budget (~150,600) once nominal
+    #: range reaches ~179 NM on that aspect, and an uncapped nominal range
+    #: still reproduces the original blow-up this constant exists to avoid
+    #: (12.1M vertices decoded, 15 s query, at 450 NM). So the ocean-drop
+    #: still earns its keep above the ladder -- it just has to fire on the
+    #: ladder's own units, not a geometry-inflated proxy for them. Held at
+    #: the ladder's actual maximum, with no headroom borrowed from the
+    #: untested margin above it: a future ladder stop past 160 NM falls
+    #: through to wide mode by design until it is measured too.
+    _WATER_FULL_MAX_NM = 160.0
+    #: above _WATER_FULL_MAX_NM the lake size floor scales with the QUERY
+    #: window range (bbox diagonal deg = window_range_nm * this, clamped to
+    #: _WATER_WIDE_DIAG_MAX) so the drawn-poly count stays bounded (~dozens)
+    #: as you zoom out -- only progressively larger bodies survive, and the
+    #: Great Lakes (6-8 deg) always do. This DB tags everything kind='water'
+    #: with no elev, so SIZE is the only discriminator
+    #: (map_wide_range_perf_plan.md). Unlike the full/wide gate above, this
+    #: shaping is legitimately about the rendered image's footprint, not the
+    #: pilot's selection, so it stays keyed on the window range.
     _WATER_WIDE_DIAG_PER_NM = 0.001
     _WATER_WIDE_DIAG_MAX = 3.0
 
@@ -338,14 +364,15 @@ class TerrainLayer(MapLayer):
         raster_mode = str(getattr(self._owner, "water_raster", "numpy")
                           or "numpy")
         if have_water and raster_mode != "qt":
-            self._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
+            self._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, range_nm)
         qimg = QImage(rgbx.data, n, n, 4 * n,
                       QImage.Format.Format_RGBX8888).copy()
         if have_water and raster_mode == "qt":
-            self._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos)
+            self._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, range_nm)
         return qimg, (lat0, lon0, mpp)
 
-    def _draw_water_numpy(self, rgbx, lat0, lon0, mpp, n, lat_cos):
+    def _draw_water_numpy(self, rgbx, lat0, lon0, mpp, n, lat_cos,
+                          nominal_range_nm):
         """MP5 (brief section 4): numpy even-odd scanline fill, replacing
         the Qt QPointF/QPolygonF/drawPath path. Every ring of every
         polygon in range is collected first; ONE raster.fill_even_odd()
@@ -353,12 +380,17 @@ class TerrainLayer(MapLayer):
         disjoint/nested lakes for free via the even-odd rule -- no
         per-polygon special-casing. Mutates *rgbx* in place; the caller
         builds the QImage from it afterwards, so this never constructs a
-        QPointF/QPolygonF and touches the raster only once."""
+        QPointF/QPolygonF and touches the raster only once.
+
+        *nominal_range_nm* is the widget's own ``range_nm`` (what the pilot
+        selected), NOT the query window computed below -- see
+        ``_WATER_FULL_MAX_NM`` (AER-1149) for why the full/wide gate has to
+        use the former."""
         half_px = (n - 1) / 2.0
-        range_nm = (half_px * mpp) / 1852.0
-        wide = range_nm > self._WATER_FULL_MAX_NM
+        window_range_nm = (half_px * mpp) / 1852.0
+        wide = nominal_range_nm > self._WATER_FULL_MAX_NM
         min_diag = (min(self._WATER_WIDE_DIAG_MAX,
-                        range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
+                        window_range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
                     else 3.0 * mpp / M_PER_DEG_LAT)
         px_per_deg_lat = M_PER_DEG_LAT / mpp
         px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
@@ -369,7 +401,7 @@ class TerrainLayer(MapLayer):
         rings = []
         try:
             for poly in self._water.polygons_in_range(
-                    lat0, lon0, range_nm, min_bbox_diag_deg=min_diag,
+                    lat0, lon0, window_range_nm, min_bbox_diag_deg=min_diag,
                     drop_ocean=wide):
                 n_polys += 1
                 v = np.asarray(poly.vertices, dtype=np.float64)
@@ -407,7 +439,8 @@ class TerrainLayer(MapLayer):
             perf.water.record(n_polys, n_verts, n_polys_after,
                                n_verts_after, 0)
 
-    def _draw_water_qt(self, qimg, lat0, lon0, mpp, n, lat_cos):
+    def _draw_water_qt(self, qimg, lat0, lon0, mpp, n, lat_cos,
+                       nominal_range_nm):
         """Legacy per-vertex QPointF/QPolygonF/drawPath rasterizer, kept
         behind ``water_raster: qt`` for one release of A/B against MP5's
         numpy path (brief section 4 MP5 guardrail). Rasterize water-pack
@@ -416,17 +449,22 @@ class TerrainLayer(MapLayer):
         still blits one image (#91). Painted AFTER the caution tint on
         purpose: water is not a TAWS threat surface. The
         elevation-derived water (void-tile ocean) stays underneath as
-        the backstop."""
+        the backstop.
+
+        *nominal_range_nm* is the widget's own ``range_nm``, not the query
+        window computed below -- see ``_WATER_FULL_MAX_NM`` (AER-1149)."""
         half_px = (n - 1) / 2.0
-        range_nm = (half_px * mpp) / 1852.0
+        window_range_nm = (half_px * mpp) / 1852.0
         # Wide zoom: drop the ocean coastline (terrain void-water already shows
         # oceans) and keep only large inland lakes -- the Great Lakes etc. --
         # for orientation. The never-size-filtered coastline is what dominated
-        # the worker (2.8 s @ 800 NM). Close in: full overlay, sub-3-px pieces
-        # skipped before the BLOB decode.
-        wide = range_nm > self._WATER_FULL_MAX_NM
+        # the worker (2.8 s @ 800 NM pre-MP4/MP5). Close in: full overlay,
+        # sub-3-px pieces skipped before the BLOB decode. Gated on the
+        # NOMINAL range (AER-1149) so the split doesn't move with widget
+        # aspect ratio.
+        wide = nominal_range_nm > self._WATER_FULL_MAX_NM
         min_diag = (min(self._WATER_WIDE_DIAG_MAX,
-                        range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
+                        window_range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
                     else 3.0 * mpp / M_PER_DEG_LAT)
         px_per_deg_lat = M_PER_DEG_LAT / mpp
         px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
@@ -445,7 +483,7 @@ class TerrainLayer(MapLayer):
         n_qpointf = 0
         try:
             for poly in self._water.polygons_in_range(
-                    lat0, lon0, range_nm, min_bbox_diag_deg=min_diag,
+                    lat0, lon0, window_range_nm, min_bbox_diag_deg=min_diag,
                     drop_ocean=wide):
                 n_polys += 1
                 # Vectorised deg->px projection (#125): vertices arrive
