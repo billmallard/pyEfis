@@ -106,13 +106,22 @@ def effective_range_nm(range_nm: float, w: int = SCENE_W, h: int = SCENE_H,
 
 #: Mirror of ``TerrainLayer._WATER_FULL_MAX_NM``. Above it the layer
 #: drops the ocean coastline and size-filters lakes, so the drawn
-#: polygon set changes DISCONTINUOUSLY -- and the range it compares
-#: against is the WINDOW range from ``effective_range_nm`` above, not
-#: the widget's nominal one. Mirrored rather than imported because the
-#: guard has to run before any widget exists; kept honest by
+#: polygon set changes DISCONTINUOUSLY. AER-1149: compared against the
+#: widget's own NOMINAL ``range_nm`` (what the pilot selected), not the
+#: WINDOW range from ``effective_range_nm`` above -- a window-range
+#: comparison made the full/wide split a function of widget aspect
+#: ratio, so the range ladder's own 160 NM top stop stayed full-detail
+#: on a portrait screen and silently dropped the coastline on a
+#: landscape one (the finding this constant's value now reflects: 160
+#: NM is the range ladder's own shipped/default maximum --
+#: ``MovingMap.range_ladder``, hard-clamped by ``_range_bounds`` --
+#: measured safe on the water-na 2026q2r6 pack at every shipped aspect,
+#: 120,576 vertices worst case against the 150k budget). Mirrored
+#: rather than imported because the guard has to run before any widget
+#: exists; kept honest by
 #: ``test_the_wide_water_cliff_constant_still_matches_the_renderer``,
 #: which imports the real thing and requires the two to agree.
-WATER_FULL_OVERLAY_MAX_NM = 300.0
+WATER_FULL_OVERLAY_MAX_NM = 160.0
 
 
 def wide_water_mode(range_nm: float, w: int = SCENE_W, h: int = SCENE_H,
@@ -121,30 +130,27 @@ def wide_water_mode(range_nm: float, w: int = SCENE_W, h: int = SCENE_H,
     cliff -- ocean dropped, lakes size-filtered?
 
     This is ``TerrainLayer._draw_water_numpy``'s ``wide`` flag,
-    predicted from geometry alone."""
-    return (effective_range_nm(range_nm, w, h, anchor_frac)
-            > WATER_FULL_OVERLAY_MAX_NM)
+    predicted from the NOMINAL range alone (AER-1149) -- ``w``/``h``/
+    ``anchor_frac`` are accepted only so callers that still pass a
+    geometry keep working; the answer no longer depends on them,
+    which is the point (the same pilot-selected range means the same
+    thing on every shipped screen layout)."""
+    return range_nm > WATER_FULL_OVERLAY_MAX_NM
 
 
 def full_overlay_max_nominal_nm(w: int = SCENE_W, h: int = SCENE_H,
                                 anchor_frac: float = _OWNSHIP_ANCHOR_FRAC
                                 ) -> float:
     """The largest nominal (pilot-facing) ``range_nm`` at which the full
-    water overlay still draws, for a widget of this geometry.
+    water overlay still draws.
 
-    ``effective_range_nm`` is monotonic in ``range_nm`` bar the integer
-    floor on ``n``, so a bisection is exact to the resolution asked for.
-    The answer is strongly geometry-dependent -- 203.7 NM at 650x1040,
-    170.0 NM at 300x300, 123.6 NM at 800x480 -- which is the whole
-    reason this function exists rather than a constant."""
-    lo, hi = 1.0, 4000.0
-    for _ in range(64):
-        mid = 0.5 * (lo + hi)
-        if wide_water_mode(mid, w, h, anchor_frac):
-            hi = mid
-        else:
-            lo = mid
-    return lo
+    AER-1149: geometry-independent by construction now -- the gate
+    compares the widget's own ``range_nm`` to the constant directly, so
+    this is just the constant. ``w``/``h``/``anchor_frac`` are accepted
+    for call-site compatibility with the pre-AER-1149 geometry-dependent
+    version (203.7 NM at 650x1040, 170.0 NM at 300x300, 123.6 NM at
+    800x480) and otherwise ignored."""
+    return WATER_FULL_OVERLAY_MAX_NM
 
 
 def cliff_margin(range_nm: float, w: int = SCENE_W, h: int = SCENE_H,
@@ -152,15 +158,18 @@ def cliff_margin(range_nm: float, w: int = SCENE_W, h: int = SCENE_H,
     """How close a scene sits to the wide-water cliff, as numbers a
     skip/fail message can quote.
 
-    ``fraction`` is signed: negative = full overlay with that much room
-    to spare, positive = already wide by that much."""
+    ``fraction`` is signed against the NOMINAL range (AER-1149):
+    negative = full overlay with that much room to spare, positive =
+    already wide by that much. ``effective_nm`` (the query window) is
+    still reported -- it is what the pack is actually asked to cover --
+    but no longer decides ``wide``."""
     eff = effective_range_nm(range_nm, w, h, anchor_frac)
-    frac = (eff - WATER_FULL_OVERLAY_MAX_NM) / WATER_FULL_OVERLAY_MAX_NM
+    frac = (range_nm - WATER_FULL_OVERLAY_MAX_NM) / WATER_FULL_OVERLAY_MAX_NM
     return {
         "nominal_nm": range_nm,
         "effective_nm": round(eff, 1),
         "threshold_nm": WATER_FULL_OVERLAY_MAX_NM,
-        "wide": eff > WATER_FULL_OVERLAY_MAX_NM,
+        "wide": range_nm > WATER_FULL_OVERLAY_MAX_NM,
         "fraction": round(frac, 4),
         "nominal_at_cliff_nm": round(
             full_overlay_max_nominal_nm(w, h, anchor_frac), 1),
