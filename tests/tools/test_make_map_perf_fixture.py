@@ -648,10 +648,13 @@ def test_water_footprint_covers_the_asserted_range_not_a_stale_literal(mpf):
     against the SAME range (RANGE_LADDER_TOP_NM) the volume budget
     actually asserts at."""
     lat, lon = _LAT, _LON
-    native_m = _native_m_for_side(3601)   # real GLO-30 pitch
 
-    water_radius_nm = mpf.terrain_level_bands(lat, lon, native_m,
-                                               levels=(6,))[6]["radius_nm"]
+    # The ACTUAL cut_scene code path (AER-1143): water is no longer read
+    # off terrain's own mip bands (a single-geometry derivation answering
+    # a different question -- see terrain_level_bands' docstring) but
+    # derived directly, widest-of-every-suite-widget, at the range the
+    # volume budget is asserted at.
+    water_radius_nm, _env = mpf._widest_half_diag_nm(mpf.RANGE_LADDER_TOP_NM)
     water_lat_deg, water_lon_deg = mpf._deg_radius(water_radius_nm, lat)
     lat_lo, lat_hi, lon_lo, lon_hi = mpf._bbox_from_radius(
         lat, lon, water_lat_deg, water_lon_deg)
@@ -681,7 +684,7 @@ def test_highway_footprint_covers_its_own_max_range_not_a_stale_literal(mpf):
     assert hidden_above_nm == mpf.HIGHWAY_MAX_RANGE_NM
 
     lat, lon = _LAT, _LON
-    radius_nm = mpf._half_diag_nm(hidden_above_nm)
+    radius_nm, _env = mpf._widest_half_diag_nm(hidden_above_nm)
     lat_deg, lon_deg = mpf._deg_radius(radius_nm, lat)
     lat_lo, lat_hi, _, _ = mpf._bbox_from_radius(lat, lon, lat_deg, lon_deg)
 
@@ -708,6 +711,137 @@ def test_navaid_footprint_covers_its_own_max_range_not_a_stale_literal(mpf):
     OLD_WINDOW_DEG = 2.0
     old_lo, old_hi = lat - OLD_WINDOW_DEG / 2.0, lat + OLD_WINDOW_DEG / 2.0
     assert not (old_lo <= probe_lat <= old_hi)
+
+
+# --- widest-across-widget-geometries (AER-1143's amendment, change 5) -----
+
+def test_widest_half_diag_nm_prefers_the_wider_of_the_known_widgets(mpf):
+    """The 300x300 count-budget widget reads further than the 650x1040
+    volume-budget widget at the SAME range (a square aspect ratio beats a
+    portrait one here -- ``hypot(w,h)/cy`` is 2.83 vs 2.36), so it must be
+    the one ``_widest_half_diag_nm`` returns -- pinned against the two
+    single-geometry numbers directly, not against each other, so a
+    regression in either underlying calc still shows up."""
+    radius_nm, env = mpf._widest_half_diag_nm(mpf.RANGE_LADDER_TOP_NM)
+    square = mpf._half_diag_nm(mpf.RANGE_LADDER_TOP_NM, w=300, h=300,
+                               anchor_frac=0.5)
+    portrait = mpf._half_diag_nm(mpf.RANGE_LADDER_TOP_NM, w=650, h=1040,
+                                 anchor_frac=0.5)
+    assert square > portrait
+    assert radius_nm == pytest.approx(square)
+    assert env == (300, 300, 0.5)
+
+
+def test_widest_half_diag_nm_picks_up_a_new_wider_widget(mpf, monkeypatch):
+    """The falsifier: if a THIRD, wider widget geometry is added to the
+    suite's known list, the derivation must pick it up automatically --
+    proving this is a live computation over the list, not a comment
+    that happens to match today's two entries."""
+    wider = (2000, 200, 0.5)   # a very flat/wide widget: huge hypot, tiny cy
+    envelopes = mpf.PERF_WIDGET_ENVELOPES + (wider,)
+    radius_nm, env = mpf._widest_half_diag_nm(mpf.RANGE_LADDER_TOP_NM,
+                                              envelopes=envelopes)
+    assert env == wider
+    default_radius, _ = mpf._widest_half_diag_nm(mpf.RANGE_LADDER_TOP_NM)
+    assert radius_nm > default_radius
+
+
+def test_navaid_footprint_is_range_only_not_widget_dependent(mpf):
+    """navaids.py's own ``_bbox`` never reads a widget size -- confirms
+    the cutter's navaid derivation stays that way even though the water/
+    highway derivations above are now widget-geometry-aware, so a future
+    editor does not "fix" navaid into taking an envelopes argument it has
+    no use for."""
+    import inspect
+    assert "envelopes" not in inspect.signature(mpf._navaid_bbox_deg).parameters
+
+
+# --- footprint.json: the pack declares what it was cut to cover (AER-1143,
+# change 6 / requirement 5) -------------------------------------------------
+
+def test_footprint_manifest_records_bbox_and_envelope_per_layer(mpf):
+    manifest = mpf.footprint_manifest(
+        "raleigh", _LAT, _LON,
+        water_bbox=(30.0, 40.0, -85.0, -75.0),
+        highway_bbox=(34.0, 37.0, -80.0, -77.0),
+        navaid_bbox=(33.0, 38.0, -82.0, -76.0),
+        water_env=(300, 300, 0.5), highway_env=(300, 300, 0.5),
+        navaid_range_nm=mpf.NAVAID_MAX_RANGE_NM)
+
+    assert manifest["scene"] == "raleigh"
+    assert manifest["lat"] == _LAT and manifest["lon"] == _LON
+    assert [tuple(e) for e in manifest["considered_envelopes"]] == list(
+        mpf.PERF_WIDGET_ENVELOPES)
+
+    water = manifest["layers"]["water"]
+    assert water["bbox"] == [30.0, 40.0, -85.0, -75.0]
+    assert water["envelope"] == {"w": 300, "h": 300,
+                                 "ownship_position_frac": 0.5,
+                                 "range_nm": mpf.RANGE_LADDER_TOP_NM}
+
+    highway = manifest["layers"]["highway"]
+    assert highway["envelope"]["range_nm"] == mpf.HIGHWAY_MAX_RANGE_NM
+
+    navaid = manifest["layers"]["navaid"]
+    assert navaid["bbox"] == [33.0, 38.0, -82.0, -76.0]
+    assert navaid["envelope"] == {"range_nm": mpf.NAVAID_MAX_RANGE_NM,
+                                  "lat": _LAT}
+    assert "w" not in navaid["envelope"]   # range/lat only -- no widget
+
+
+def test_footprint_manifest_records_the_override_when_window_deg_is_set(mpf):
+    manifest = mpf.footprint_manifest(
+        "raleigh", _LAT, _LON,
+        water_bbox=(34.0, 37.0, -80.0, -77.0),
+        highway_bbox=(34.0, 37.0, -80.0, -77.0),
+        navaid_bbox=(34.0, 37.0, -80.0, -77.0),
+        window_deg=2.0)
+    for layer in ("water", "highway", "navaid"):
+        assert manifest["layers"][layer]["envelope"] == {
+            "override_window_deg": 2.0}
+
+
+def test_cut_scene_writes_footprint_json_matching_the_actual_cut_bboxes(
+        tmp_path, mpf, source_terrain, source_water, source_highway,
+        source_navaid, monkeypatch, generous_native_cap):
+    """The producer side of "declare, don't re-derive": the file written
+    into the pack must describe the SAME bbox the vector layers were
+    actually cut to, not a recomputation that could drift from it."""
+    src_water_path, _ = source_water
+    monkeypatch.setitem(mpf.SCENES, "_test_scene", {"lat": _LAT, "lon": _LON})
+    out = tmp_path / "scene"
+    stats = mpf.cut_scene("_test_scene", source_terrain, src_water_path,
+                          source_highway, source_navaid, out)
+
+    manifest_path = out / mpf.FOOTPRINT_MANIFEST_NAME
+    assert manifest_path.is_file()
+    on_disk = json.loads(manifest_path.read_text())
+    assert on_disk == stats["footprint_manifest"]
+
+    water_bbox = on_disk["layers"]["water"]["bbox"]
+    lat_lo, lat_hi, lon_lo, lon_hi = water_bbox
+    water_radius_nm, _ = mpf._widest_half_diag_nm(mpf.RANGE_LADDER_TOP_NM)
+    water_lat_deg, water_lon_deg = mpf._deg_radius(water_radius_nm, _LAT)
+    assert lat_lo == pytest.approx(_LAT - water_lat_deg)
+    assert lat_hi == pytest.approx(_LAT + water_lat_deg)
+    assert lon_lo == pytest.approx(_LON - water_lon_deg)
+    assert lon_hi == pytest.approx(_LON + water_lon_deg)
+
+    # A "required subset-of declared" consumer check, demonstrated inline:
+    # a render window narrower than the declared bbox must pass; one that
+    # pokes outside it must not -- the comparison AER-1143 asks a
+    # consumer test to make against this file instead of re-deriving the
+    # cutter's own geometry a second time.
+    def _covers(declared_bbox, required_bbox):
+        d_lat_lo, d_lat_hi, d_lon_lo, d_lon_hi = declared_bbox
+        r_lat_lo, r_lat_hi, r_lon_lo, r_lon_hi = required_bbox
+        return (d_lat_lo <= r_lat_lo and d_lat_hi >= r_lat_hi
+                and d_lon_lo <= r_lon_lo and d_lon_hi >= r_lon_hi)
+
+    inside = (_LAT - 0.1, _LAT + 0.1, _LON - 0.1, _LON + 0.1)
+    outside = (_LAT - 90.0, _LAT + 90.0, _LON - 0.1, _LON + 0.1)
+    assert _covers(water_bbox, inside)
+    assert not _covers(water_bbox, outside)
 
 
 # --- fetch_fixture ---------------------------------------------------------

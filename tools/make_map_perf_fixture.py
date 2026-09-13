@@ -70,6 +70,34 @@ none of which is "shrink the window" or "raise the cap":
    test_make_map_perf_fixture.py`` carries a test that fails against that
    old literal-window behaviour and passes against the derivation here.
 
+**AER-1143's amendment (a second QA finding, same heartbeat as the ruling
+above).** Two things change what this module builds; the four changes
+above are unaffected:
+
+5. **The footprint is a function of the WIDGET, not of the scene.** A
+   square 300x300 render reads FURTHER than a 650x1040 one at the same
+   ``range_nm`` (``0.5*hypot(w,h)/cy`` with ``cy = h*(1-anchor)`` --
+   the square geometry's ratio is larger), so "the window" is only
+   well-defined once a widget geometry is picked, and picking the wrong
+   one (or transcribing someone else's number) under-covers silently.
+   ``PERF_WIDGET_ENVELOPES`` below lists every widget geometry actually
+   asserted against this pack across the perf suite; every per-layer
+   footprint is the WIDEST radius across that whole list at the range it
+   is asserted at, derived in code, never a single hard-coded widget.
+6. **The pack declares its own footprint; a consumer compares rather
+   than re-derives.** ``cut_scene`` writes ``footprint.json`` into the
+   output directory: per vector layer, the cut bbox and the
+   ``(w, h, ownship_position, range_nm)`` envelope it was derived from.
+   Two independent implementations of one geometric rule (the cutter's
+   and a consumer test's) is exactly how ``WINDOW_DEG = 2.0`` drifted
+   from the layers it was meant to cover -- the fix is not a better
+   derivation on either side, it is one derivation, declared, and a
+   "required subset-of declared" comparison on the consumer's side. A
+   consumer MAY keep its own independent computation too, as a
+   cross-check that fires loudly on mismatch -- that is what would catch
+   the producer (this file) being wrong, which a pure subset check on a
+   self-reported number cannot.
+
 Cutting and publishing the ACTUAL packs (the real production terrain/
 water/highway/navaid trees) is out of scope for this file -- AVIONICS-DATA
 owns that (AER-1134). This tool is what they run.
@@ -173,15 +201,50 @@ M_PER_DEG_LAT = 111139.0
 # not transcribe.
 # ---------------------------------------------------------------------------
 
-#: The moving-map volume-budget widget (tests/perf/test_map_gestures.py's
-#: ``_W``/``_H``) -- the widget whose renders the volume budgets (e.g.
-#: "water vertices rasterized at 160 NM") are asserted against, so it is
-#: also the widget whose window geometry the terrain/water footprints
-#: below must match.
+#: A single default geometry for the low-level, single-widget helpers
+#: below (``_terrain_render_geometry`` and everything built directly on
+#: it) -- convenient for ad hoc/test calls, but NOT what the cutter uses
+#: to size a real cut. AER-1143's amendment: the footprint is a function
+#: of the WIDGET, and this module must derive for the widest widget any
+#: budget asserts against, not transcribe one. See
+#: ``PERF_WIDGET_ENVELOPES`` immediately below for that list.
 PERF_WIDGET_W = PERF_WIDGET_H = 300
 #: MapWidget.ownship_position's own default (map/__init__.py) -- 50%
 #: up from the bottom edge, i.e. screen-centred.
 PERF_OWNSHIP_ANCHOR_FRAC = 0.50
+
+#: Every ``(w, h, ownship_anchor_frac)`` widget geometry a REAL,
+#: pack-dependent perf assertion is known to run against, across the
+#: whole perf suite -- not just "the" perf widget. AER-1143's amendment
+#: to the AER-1140 ruling: "the footprint is derived from (w, h,
+#: ownship_position, range_nm, lat), and must be cut for the widest such
+#: tuple any budget asserts at, across every widget geometry in the
+#: suite. Not from a scene, and not from either table."
+#:
+#: A square widget reads FURTHER than a portrait one at the same
+#: ``range_nm`` -- the ratio that matters is ``hypot(w, h) / cy`` with
+#: ``cy = h * (1 - anchor)``, and that ratio is 2.83 for 300x300 against
+#: 2.36 for 650x1040 -- a constant multiplier independent of range_nm
+#: (``_terrain_render_geometry`` is linear in range for fixed geometry),
+#: so 300x300 is the wider candidate at every range these two are
+#: compared at, not merely at 160 NM.
+#:
+#:   - (300, 300, 0.50): ``tests/perf/test_map_gestures.py``'s MP8a
+#:     count-budget widget (``_W = _H = 300``). Its own budgets are
+#:     synthetic-data-only today (no real pack), but it is still a
+#:     widget geometry a future pack-dependent assertion could run
+#:     against, and it happens to be the wider of the two below.
+#:   - (650, 1040, 0.50): ``tests/perf/test_map_pack_budgets.py``'s
+#:     ``measure.SCENE_W``/``SCENE_H`` -- the actual widget the real,
+#:     pack-dependent volume/timing rows (MP8b-2, AER-1135) run against.
+#:
+#: Adding a THIRD geometry that some future real-pack budget asserts
+#: against means adding it HERE, not editing the derivation math below --
+#: the whole point of deriving from a list rather than one constant.
+PERF_WIDGET_ENVELOPES = (
+    (300, 300, 0.50),
+    (650, 1040, 0.50),
+)
 
 #: map/__init__.py's own ``range_ladder`` default
 #: (``"2,5,10,20,40,80,160"``) -- the top is the widest range any budget
@@ -293,6 +356,23 @@ def _bbox_from_radius(lat: float, lon: float, radius_lat_deg: float,
             lon - radius_lon_deg, lon + radius_lon_deg)
 
 
+def _widest_half_diag_nm(range_nm: float,
+                          envelopes=PERF_WIDGET_ENVELOPES) -> tuple[float, tuple]:
+    """The widest half-diagonal reach, in NM, at *range_nm* across every
+    ``(w, h, anchor_frac)`` in *envelopes* -- and which envelope won, so
+    a caller can declare it (``footprint_manifest``). AER-1143's
+    amendment: the footprint is a function of the widget, so any single
+    hard-coded geometry is a claim about which widget is widest, and this
+    is the one place that claim is settled, by computing it rather than
+    asserting it."""
+    best_radius, best_env = None, None
+    for (w, h, anchor) in envelopes:
+        radius_nm = _half_diag_nm(range_nm, w=w, h=h, anchor_frac=anchor)
+        if best_radius is None or radius_nm > best_radius:
+            best_radius, best_env = radius_nm, (w, h, anchor)
+    return best_radius, best_env
+
+
 def _pan_excursion_deg(lat: float, native_m: float,
                         **geom_kwargs) -> tuple[float, float]:
     """Worst-case centre drift ``bench_map_gestures.py``'s ``scenario_pan``
@@ -303,7 +383,11 @@ def _pan_excursion_deg(lat: float, native_m: float,
     ``MapWidget.pan_by``'s own screen-px -> world-metre conversion
     (``map/__init__.py``). Applied symmetrically in both directions: which
     way the finger drags is a test detail, not a fixture property to
-    pin."""
+    pin.
+
+    NOT widened across ``PERF_WIDGET_ENVELOPES`` (unlike the vector-layer
+    footprints below) -- see ``terrain_level_bands``'s docstring for why
+    the terrain/native derivation stays single-geometry."""
     band_top_nm = _band_top_nm(0, native_m, **geom_kwargs)
     _, _, cy = _terrain_render_geometry(band_top_nm, **geom_kwargs)
     px_per_m = cy / max(1.0, band_top_nm * 1852.0)
@@ -324,7 +408,26 @@ def terrain_level_bands(lat: float, lon: float, native_m: float,
     widest reach; a cell further out than that is never sampled at this
     level by any range the renderer selects it for). AER-1140's ruling:
     "derive the radii in code from the selector, do not transcribe the
-    table -- the table is the instance, the selector is the rule."."""
+    table -- the table is the instance, the selector is the rule."
+
+    Deliberately single-geometry, NOT widened across
+    ``PERF_WIDGET_ENVELOPES`` the way the vector-layer footprints in
+    ``cut_scene`` are (AER-1143's amendment). The two are not the same
+    question: a vector layer's footprint is "how far does a query box at
+    a FIXED asserted range reach", which grows monotonically with a
+    wider/flatter widget at that SAME range -- so the widest widget is
+    unambiguous. A terrain level's band is "at what range does THIS
+    geometry's OWN mip selector stop choosing this level", and that
+    range scales with ``cy`` (`h * (1 - anchor)`), not with the
+    half-diagonal ratio -- a portrait 650x1040 widget reaches a given mip
+    level at a LARGER range than the square 300x300 one, precisely
+    because its taller ``cy`` keeps ``mpp`` finer for longer. Taking a
+    per-level max across geometries would therefore inflate levels 0-5
+    non-uniformly by the OTHER geometry's mip-selection boundary, not by
+    anything this level's own selector ever reads at -- a real behaviour
+    change to terrain sizing that Elon's amendment did not ask for
+    ("my ~72 MB terrain sizing stands. Water does not."). Terrain stays
+    keyed to the single ``PERF_WIDGET_W``/``PERF_WIDGET_H`` geometry."""
     bands = {}
     for level in levels:
         band_top_nm = _band_top_nm(level, native_m, ladder_top_nm,
@@ -813,6 +916,62 @@ def package_scene(out_dir: Path, dest_tarball: Path,
 
 
 # ---------------------------------------------------------------------------
+# footprint.json -- the pack DECLARES what it was cut to cover (AER-1143's
+# amendment, requirement 5)
+# ---------------------------------------------------------------------------
+
+FOOTPRINT_MANIFEST_NAME = "footprint.json"
+
+
+def footprint_manifest(scene: str, lat: float, lon: float, *,
+                        water_bbox, highway_bbox, navaid_bbox,
+                        water_env=None, highway_env=None,
+                        navaid_range_nm: float = NAVAID_MAX_RANGE_NM,
+                        window_deg: float | None = None) -> dict:
+    """The declaration written to ``footprint.json`` inside every cut
+    pack: per vector layer, the exact bbox that was cut and the
+    ``(w, h, ownship_position, range_nm)`` envelope it was derived from.
+
+    This is the mechanism half of AER-1143's amendment: a consumer test
+    computing its own required render window can check "is my window a
+    subset of what this pack DECLARES it covers?" -- a comparison against
+    an objective, written fact -- instead of re-deriving the cutter's own
+    geometry rule a second time and trusting the two derivations stay in
+    sync. Keeping an independent computation too, as a cross-check on
+    this declaration, is still the consumer's job (and a good one -- it
+    is what would catch THIS file deriving the wrong number); this
+    manifest only removes the need for that to be the sole check.
+
+    *water_env*/*highway_env* are the winning ``(w, h, anchor_frac)``
+    tuple from ``_widest_half_diag_nm``/``terrain_level_bands``' band 6,
+    or ``None`` when *window_deg* overrode the per-layer derivation --
+    navaid has no widget envelope at all (``_navaid_bbox_deg`` is a pure
+    function of range and latitude, matching ``navaids.py``'s own
+    ``_bbox``, which never reads a widget size)."""
+    def _layer(bbox, env, range_nm):
+        envelope = ({"override_window_deg": window_deg} if window_deg is not None
+                    else {"w": env[0], "h": env[1],
+                          "ownship_position_frac": env[2],
+                          "range_nm": range_nm})
+        return {"bbox": list(bbox), "envelope": envelope}
+
+    return {
+        "scene": scene, "lat": lat, "lon": lon,
+        "considered_envelopes": [list(e) for e in PERF_WIDGET_ENVELOPES],
+        "layers": {
+            "water": _layer(water_bbox, water_env, RANGE_LADDER_TOP_NM),
+            "highway": _layer(highway_bbox, highway_env, HIGHWAY_MAX_RANGE_NM),
+            "navaid": {
+                "bbox": list(navaid_bbox),
+                "envelope": ({"override_window_deg": window_deg}
+                            if window_deg is not None
+                            else {"range_nm": navaid_range_nm, "lat": lat}),
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # cut: one scene, end to end
 # ---------------------------------------------------------------------------
 
@@ -847,17 +1006,19 @@ def cut_scene(scene: str, tile_root: Path, water_db: Path, highway_db: Path,
 
     stats["terrain"] = cut_terrain(Path(tile_root), out_dir, lat, lon)
 
+    water_env = highway_env = None
     if window_deg is not None:
         half = window_deg / 2.0
         water_bbox = highway_bbox = navaid_bbox = (
             lat - half, lat + half, lon - half, lon + half)
         stats["footprints"] = {"override_window_deg": window_deg}
     else:
-        water_radius_nm = stats["terrain"]["bands"][6]["radius_nm"]
+        water_radius_nm, water_env = _widest_half_diag_nm(RANGE_LADDER_TOP_NM)
         water_lat_deg, water_lon_deg = _deg_radius(water_radius_nm, lat)
         water_bbox = _bbox_from_radius(lat, lon, water_lat_deg, water_lon_deg)
 
-        highway_radius_nm = _half_diag_nm(HIGHWAY_MAX_RANGE_NM)
+        highway_radius_nm, highway_env = _widest_half_diag_nm(
+            HIGHWAY_MAX_RANGE_NM)
         hwy_lat_deg, hwy_lon_deg = _deg_radius(highway_radius_nm, lat)
         highway_bbox = _bbox_from_radius(lat, lon, hwy_lat_deg, hwy_lon_deg)
 
@@ -876,6 +1037,14 @@ def cut_scene(scene: str, tile_root: Path, water_db: Path, highway_db: Path,
                                     out_dir / "highway.sqlite", highway_bbox)
     stats["navaid"] = cut_navaid(Path(navaid_db), out_dir / "navaids.sqlite",
                                   navaid_bbox)
+
+    manifest = footprint_manifest(
+        scene, lat, lon, water_bbox=water_bbox, highway_bbox=highway_bbox,
+        navaid_bbox=navaid_bbox, water_env=water_env, highway_env=highway_env,
+        navaid_range_nm=NAVAID_MAX_RANGE_NM, window_deg=window_deg)
+    (out_dir / FOOTPRINT_MANIFEST_NAME).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    stats["footprint_manifest"] = manifest
 
     stats["raw_bytes"] = _dir_size(out_dir)   # advisory only -- see package_scene
     return stats
