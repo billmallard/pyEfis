@@ -196,24 +196,54 @@ class _FakeDenseCoastWaterDB:
     far more than the ~90 m/px image can resolve, like a real OSM
     coastline (~30 m spacing) against a wide-range window. MP4's
     decimation should collapse most of these without moving the
-    rasterized shape."""
+    rasterized shape.
+
+    *rotate_deg* and *jitter_frac* (AER-667) turn the ring from an
+    axis-aligned square donut into a non-axis-aligned one: rotation makes
+    every edge exercise raster.fill_even_odd's general dx/dy interpolation
+    instead of its dy==0 (skipped) / dx==0 (exact) fast paths, and the
+    per-vertex jitter (a deterministic irrational-stride sine, not
+    np.random -- reproducible, and never periodic with pts_per_edge) pushes
+    corner/edge vertices off exact scanline rows so the half-open
+    ``ymin <= yc < ymax`` rule and the shared-vertex no-double-count case
+    actually get exercised. Jitter is applied along each edge's normal and
+    capped to a small fraction of the local point spacing so the ring stays
+    simple (non-self-intersecting). Both default to 0, so the existing
+    axis-aligned callers of this fixture are unchanged."""
 
     ready = True
 
-    def __init__(self, lat0, lon0, pts_per_edge=1500):
+    def __init__(self, lat0, lon0, pts_per_edge=1500, rotate_deg=0.0,
+                 jitter_frac=0.0):
         d, hd = 0.03, 0.01              # outer / island half-sides
+        theta = np.radians(rotate_deg)
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
 
-        def edge(a, b, n):
+        def edge(a, b, n, seed):
             t = np.linspace(0.0, 1.0, n, endpoint=False)
-            return [(a[0] + (b[0] - a[0]) * ti,
-                     a[1] + (b[1] - a[1]) * ti) for ti in t]
+            tx, ty = b[0] - a[0], b[1] - a[1]
+            length = np.hypot(tx, ty)
+            nx, ny = -ty / length, tx / length      # unit normal
+            spacing = length / n
+            pts = []
+            for i, ti in enumerate(t):
+                dlat = a[0] + tx * ti
+                dlon = a[1] + ty * ti
+                if jitter_frac:
+                    amt = jitter_frac * spacing * np.sin((seed + i) * 2.399963)
+                    dlat += amt * nx
+                    dlon += amt * ny
+                rlat = dlat * cos_t - dlon * sin_t
+                rlon = dlat * sin_t + dlon * cos_t
+                pts.append((lat0 + rlat, lon0 + rlon))
+            return pts
 
         def ring(half, n):
-            corners = [(lat0 - half, lon0 - half), (lat0 - half, lon0 + half),
-                       (lat0 + half, lon0 + half), (lat0 + half, lon0 - half)]
+            corners = [(-half, -half), (-half, half),
+                       (half, half), (half, -half)]
             pts = []
             for i in range(4):
-                pts.extend(edge(corners[i], corners[(i + 1) % 4], n))
+                pts.extend(edge(corners[i], corners[(i + 1) % 4], n, i * n))
             return pts
 
         outer = ring(d, pts_per_edge)
@@ -474,27 +504,53 @@ def test_terrain_water_numpy_matches_qt_iou(qapp):
     stand-in for the brief's 10/80/160 NM cases -- the fixture's real
     extent is a few km, so the mpp values are chosen to reproduce the
     LOD regime (near-1:1 vs heavily decimated) each range implies,
-    not to be a literal NM-accurate render."""
+    not to be a literal NM-accurate render.
+
+    AER-667 (a follow-up to AER-643/Elon's release comment on it): the
+    coarse case now compares against a ROTATED + JITTERED ring, not the
+    plain axis-aligned square donut the fine/moderate cases still use.
+    That matters because on the axis-aligned ring, two of
+    raster.fill_even_odd's four edges per ring are exactly horizontal
+    (dy == 0) and never enter the crossing accumulator at all (the
+    `keep = counts > 0` filter drops them), and the other two are exactly
+    vertical (dx == 0), so x_at's dx/dy interpolation is never exercised
+    either -- the general non-axis-aligned scanline math, and the
+    shared-vertex no-double-count case the half-open `ymin <= yc < ymax`
+    rule exists for, were untested. A 27-degree rotation (an arbitrary,
+    non-special angle -- not near 0/45/90) puts every edge at a generic
+    slope so both are actually exercised; the per-vertex jitter (see
+    _FakeDenseCoastWaterDB) additionally scatters vertices off exact
+    scanline rows."""
     lat0, lon0 = 34.5, -120.5
     lat_cos = np.cos(np.radians(lat0))
     n = 400
 
-    # (mpp, stands in for, min IoU). The fine/moderate cases meet the
-    # brief's literal 0.98/0.985 floors for 10/80 NM. The coarse case does
-    # NOT meet the literal 160 NM floor (0.985) on this fixture -- measured
-    # 0.9492. This fixture is a square donut with hard 90-degree corners;
-    # at heavy decimation (mpp=60, most of the fixture's edges collapse to
-    # a handful of surviving pixels) the corner disagreement between the
-    # numpy path's hard edge and the Qt path's antialiasing is a much
-    # larger fraction of the shape's total area than a real, much larger
-    # and smoother coastline's would be -- exactly the caveat the issue
-    # flags ("say which fixture you used"). 0.94 is the measured floor with
-    # a small margin; the literal 0.985 needs MP8's real fixture pack.
-    cases = [(4.0, "fine (~10 NM stand-in)", 0.98),
-             (20.0, "moderate (~80 NM stand-in)", 0.985),
-             (60.0, "coarse (~160 NM stand-in)", 0.94)]
-    for mpp, label, min_iou in cases:
-        water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    # (mpp, stands in for, min IoU, rotate_deg, jitter_frac). Fine/moderate
+    # keep the axis-aligned ring (rotate_deg=0) and meet the brief's literal
+    # 0.98/0.985 floors for 10/80 NM comfortably (measured ~1.0 / ~0.993).
+    #
+    # Coarse now uses the rotated+jittered ring. A full 0-90 degree sweep in
+    # 3-degree steps (see AER-667) shows non-axis-aligned geometry actually
+    # IMPROVES coarse-case IoU over the axis-aligned 0.9492 -- every angle
+    # tried measured between ~0.963 and ~0.972, never near the literal 0.985
+    # floor. That rules out "axis-aligned corners were hiding a fixable
+    # rasterizer bug": the gap is this fixture's small size (a few km
+    # ring) combined with mpp=60's heavy decimation, which leaves only a
+    # few thousand water pixels total, so a few hundred pixels of
+    # Qt-antialiasing-vs-hard-edge disagreement is a large fraction of the
+    # union regardless of rotation. 27 degrees (measured IoU 0.9652,
+    # deterministic -- rotate_deg/jitter_frac carry no randomness) is used
+    # here; 0.96 is the floor, a small margin below that measurement and a
+    # real tightening from the previously and silently relaxed 0.94. The
+    # literal 0.985 still needs MP8's real fixture pack -- disclosed here,
+    # not silently dropped.
+    cases = [(4.0, "fine (~10 NM stand-in)", 0.98, 0.0, 0.0),
+             (20.0, "moderate (~80 NM stand-in)", 0.985, 0.0, 0.0),
+             (60.0, "coarse (~160 NM stand-in)", 0.96, 27.0, 0.3)]
+    for mpp, label, min_iou, rotate_deg, jitter_frac in cases:
+        water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500,
+                                        rotate_deg=rotate_deg,
+                                        jitter_frac=jitter_frac)
 
         class Owner:
             _alt_ft = 0.0
