@@ -78,6 +78,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPolygonF
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -1142,6 +1144,183 @@ def test_numpy_fill_covers_the_qt_rasterizers_solid_water(bench, qapp, scene):
         f"MP5's numpy fill covers {area_n:.0f} px of water, the legacy Qt "
         f"rasterizer {area_q:.0f} px -- {rel * 100:.1f}% apart, over the "
         f"{COVERAGE_AREA_TOLERANCE * 100:.0f}% tolerance.")
+
+
+def _qt_render_sequential(polys, n, land):
+    """Reproduce ``TerrainLayer._draw_water_qt`` (terrain.py) exactly: one
+    ``drawPolygon``/``drawPath`` call PER POLYGON, antialiased, sequential
+    compositing onto the same image. *polys* is a list of polygons, each a
+    list of rings (each ring an (k, 2) array); a polygon with >1 ring goes
+    through a single ``QPainterPath`` with ``OddEvenFill`` (island holes),
+    matching the multi-ring branch in ``_draw_water_qt``."""
+    img = QImage(n, n, QImage.Format.Format_RGB32)
+    img.fill(QColor(int(land[0]), int(land[1]), int(land[2])))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor(60, 110, 160)))
+    for rings in polys:
+        ring_pts = [[QPointF(x, y) for x, y in ring] for ring in rings]
+        if len(rings) > 1:
+            path = QPainterPath()
+            path.setFillRule(Qt.FillRule.OddEvenFill)
+            for pts in ring_pts:
+                path.addPolygon(QPolygonF(pts))
+                path.closeSubpath()
+            p.drawPath(path)
+        else:
+            p.drawPolygon(QPolygonF(ring_pts[0]))
+    p.end()
+    ptr = img.constBits()
+    ptr.setsize(img.sizeInBytes())
+    arr = np.frombuffer(ptr, np.uint8).reshape(n, img.bytesPerLine() // 4, 4)
+    return arr[:, :n, :3][:, :, ::-1].astype(float)  # Format_RGB32 is BGRA
+
+
+def _numpy_render(polys, n):
+    """Reproduce ``TerrainLayer._draw_water_numpy``: every ring of every
+    polygon accumulates into ONE ``raster.fill_even_odd`` call."""
+    from pyefis.instruments.map import raster
+    rings = [np.asarray(r, dtype=np.float64) for poly in polys for r in poly]
+    return raster.fill_even_odd(rings, n)
+
+
+_LAND_RGB = np.array([80.0, 114.0, 71.0])
+
+
+def test_qt_solid_numpy_dry_gap_is_geometry_not_a_fill_defect():
+    """AER-1148: the discriminator the open question in the test above
+    asks for -- "is the gap a fill_even_odd bug, or a metric boundary" --
+    run with SYNTHETIC geometry through the REAL production rendering
+    code, because the real Raleigh pack this issue's numbers were
+    measured against is not available in this sandbox
+    (``tools/perf_fixtures.json``: ``sha256``/``url`` are both null, so
+    ``fetch_fixture`` raises ``PerfFixtureUnavailable`` unconditionally,
+    before any network call -- there is no path to the real 1,124/1,059
+    pixel split here). Same methodology as
+    ``test_coverage_metric_is_not_fooled_by_antialiasing`` above it:
+    demonstrate the mechanism by construction against the actual
+    rasterizer code, since the real-scene number cannot be reproduced in
+    every environment that runs this suite.
+
+    ``_qt_render_sequential`` reproduces ``_draw_water_qt`` (terrain.py)
+    exactly, including the detail that matters here: each polygon in
+    range gets its OWN ``drawPolygon``/``drawPath`` call, composited onto
+    the same image antialiased and sequential -- not one combined path
+    for the whole scene. ``_numpy_render`` reproduces
+    ``_draw_water_numpy``: one ``fill_even_odd`` accumulator over every
+    ring of every polygon (point-sampled at the pixel centre).
+
+    Four findings, each pinned below:
+
+    1. **Control.** A single straight half-plane edge covering 90% of a
+       pixel: the issue's own math claim (a half-plane covering >=0.5 of
+       a square always contains its centre) holds -- 0 pixels disagree.
+
+    2. **Multiplicity does not inflate.** The issue's working hypothesis
+       was that several separate thin features compositing together
+       could push a pixel's recovered coverage above 0.9 with no single
+       feature covering the centre (its own worked example: three
+       features at ~0.5 composite to ~0.875). That is not how Qt's
+       per-polygon sequential "over" compositing behaves: composited
+       alpha is ``1 - prod(1 - a_i)``, which is <= ``sum(a_i)`` for any
+       a_i in [0, 1] (equality only when at most one a_i > 0) -- ALWAYS
+       an underestimate of the true disjoint-area total, never an
+       inflation. Splitting a pixel that is 100% water by true area into
+       k equal disjoint slivers and drawing each with its own sequential
+       call makes the RECOVERED coverage fall further from 1.0 as k
+       grows (k=2: 0.75, k=4: 0.70, k=8: 0.62 here) -- converging toward
+       1 - 1/e =~ 0.632, not up toward 1.0. Two adjacent lakes sharing a
+       pixel can only read as LESS solid than one lake of the same total
+       area, never more. This falsifies the multiplicity hypothesis:
+       it cannot be where the 1,124 px live.
+
+    3. **A single ring reproduces the exact symptom.** An ordinary
+       concave shoreline feature -- one simple ring, no holes, no second
+       polygon, shaped like a thin peninsula/spit that removes only
+       ~5.5% of one pixel's area but is positioned so the notch swallows
+       the exact pixel centre -- reproduces "Qt calls it solid water
+       (coverage >= 0.9), numpy calls it dry" on its own. No compositing
+       and no fill_even_odd defect are needed; ordinary sub-pixel-scale
+       shoreline concavity is sufficient. Given the real scene is
+       "hundreds of small lakes" (small water bodies have a much higher
+       perimeter-to-area ratio, so proportionally more of their boundary
+       sits at this sub-pixel scale), this is the far more plausible
+       source of the measured 1,124/9,764 (11.5%) than multi-polygon
+       compositing.
+
+    4. fill_even_odd itself is exact on known geometry
+       (test_map_raster.py's square/vertex-on-scanline/nested-ring
+       tests, independent of this file) -- the point-sample at (3) is
+       geometrically correct (the centre truly is on the excluded side
+       of a valid simple polygon), not a rounding bug.
+
+    Conclusion for the brief: this is a metric-boundary effect, the same
+    species as the antialiased-fringe carve-out DoD item 2 already
+    grants, just occurring at a boundary CONCAVITY instead of a straight
+    edge -- not a fill_even_odd defect, and not explained by
+    multi-feature compositing. The exact real-scene split between "part
+    of a bigger lake's shoreline detail" vs. "a separate tiny pond" is
+    not measurable without the real pack; that split is a hardware/bench
+    task, not a sandbox one."""
+    n = 12
+    tx, ty = 6, 6                      # target pixel: [6,7) x [6,7)
+    cx, cy = tx + 0.5, ty + 0.5        # pixel centre (6.5, 6.5)
+
+    # --- 1: control -- straight half-plane, must agree exactly ---------
+    half_plane = [[np.array([[0, 0], [6.9, 0], [6.9, 12], [0, 12]])]]
+    fq = _water_coverage(_qt_render_sequential(half_plane, n, _LAND_RGB),
+                          np.tile(_LAND_RGB, (n, n, 1)))
+    fn = _numpy_render(half_plane, n)
+    solid = fq >= 0.9
+    assert solid.sum() > 0
+    assert not (solid & ~fn).any(), (
+        "a clean straight edge disagreed with numpy -- the control case "
+        "itself is broken")
+
+    # --- 2: multiplicity can only push coverage DOWN, never inflate ----
+    base = np.tile(_LAND_RGB, (n, n, 1))
+    prev = None
+    for k in (1, 2, 4, 8):
+        w = 1.0 / k
+        strips = [[np.array([[tx + i * w, ty], [tx + (i + 1) * w, ty],
+                             [tx + (i + 1) * w, ty + 1], [tx + i * w, ty + 1]])]
+                  for i in range(k)]
+        cov = _water_coverage(_qt_render_sequential(strips, n, _LAND_RGB),
+                              base)[ty, tx]
+        if k == 1:
+            assert cov == pytest.approx(1.0, abs=1e-6)
+        else:
+            assert cov < prev, (
+                f"k={k} disjoint slivers (true area 1.0) recovered MORE "
+                f"coverage ({cov:.3f}) than k={k // 2} ({prev:.3f}) -- "
+                "sequential compositing is inflating instead of "
+                "underestimating; the multiplicity hypothesis would hold "
+                "after all and this docstring is wrong")
+            assert cov < 0.9, (
+                f"k={k} disjoint slivers of true area 1.0 recovered "
+                f"{cov:.3f} >= 0.9 -- multiplicity DID manufacture a "
+                "'solid' reading; re-open the multiplicity hypothesis")
+        prev = cov
+
+    # --- 3: a single-ring concave notch reproduces the real symptom ----
+    notch = [[np.array([
+        [0, 0], [6.45, 0], [6.45, 6.55], [6.55, 6.55], [6.55, 0],
+        [12, 0], [12, 12], [0, 12],
+    ])]]
+    fq3 = _water_coverage(_qt_render_sequential(notch, n, _LAND_RGB), base)
+    fn3 = _numpy_render(notch, n)
+    assert fq3[ty, tx] >= 0.9, (
+        "the notch construction no longer reads as Qt-solid -- adjust "
+        "the geometry")
+    assert not fn3[ty, tx], (
+        "the notch construction no longer reads as numpy-dry -- adjust "
+        "the geometry")
+    # And the reverse never happens for this construction: no OTHER
+    # pixel in this small scene shows the opposite disagreement (numpy
+    # water where Qt calls it solid land), matching MP5's DoD item 1.
+    solid_land3 = fq3 <= 0.1
+    assert not (solid_land3 & fn3).any()
 
 
 def test_coverage_metric_is_not_fooled_by_antialiasing():
