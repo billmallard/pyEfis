@@ -459,6 +459,7 @@ never raise: the instrument annunciates and the pages render read-only.
 | `default_page` | `"fpl"` | page shown when the instrument first paints |
 | `hmi_group` | `""` | targets this instance from the `flightplan page`/`flightplan direct to` HMI verbs |
 | `active_color` / `future_color` / `past_color` | `#ff00ff` / `#ffffff` / `#808080` | FPL page row colours by leg status |
+| `font_percent` | unset (100%) | the common option; here it scales the built-in text sizes (`0.8` or `80` = 80%), not a fraction of widget height. A pane taller than it is wide also shrinks its text automatically so labels don't overlap |
 
 ```yaml
 - type: flight_plan
