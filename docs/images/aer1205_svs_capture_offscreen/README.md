@@ -129,7 +129,7 @@ Exit 0, `captured windowed_contrast.png`. Run while `pyefis.service` was
 `active` throughout (a second on-screen X client, not offscreen --
 uncontended on this X11 box per the correction above).
 
-![windowed contrast frame -- Santa Barbara coastal pose, terrain + water + obstacles + SBA airport marker](https://raw.githubusercontent.com/billmallard/pyEfis/<COMMIT_SHA>/docs/images/aer1205_svs_capture_offscreen/windowed_contrast.png)
+![windowed contrast frame -- Santa Barbara coastal pose, terrain + water + obstacles + SBA airport marker](https://raw.githubusercontent.com/billmallard/pyEfis/8c9293b2c8bb12619ec4fc3fb944838c7ae5f838/docs/images/aer1205_svs_capture_offscreen/windowed_contrast.png)
 
 `pyefis.service` was confirmed `active` before and after every attempt above,
 with no `traceback`/`error`/`segfault` in its journal for the test window --
