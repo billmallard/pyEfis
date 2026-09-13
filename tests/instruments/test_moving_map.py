@@ -296,7 +296,9 @@ def test_terrain_water_decimation_matches_undecimated_fraction(qapp):
 
     decimated = QImage(n, n, QImage.Format.Format_RGB32)
     decimated.fill(0xFFFFFFFF)
-    lay._draw_water_qt(decimated, lat0, lon0, mpp, n, lat_cos)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_qt(decimated, lat0, lon0, mpp, n, lat_cos,
+                       nominal_range_nm)
 
     reference = QImage(n, n, QImage.Format.Format_RGB32)
     reference.fill(0xFFFFFFFF)
@@ -330,7 +332,8 @@ def test_terrain_water_decimation_preserves_island_hole(qapp):
 
     qimg = QImage(n, n, QImage.Format.Format_RGB32)
     qimg.fill(0xFFFFFFFF)
-    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
 
     def px(la, lo):
         half = (n - 1) / 2.0
@@ -376,7 +379,8 @@ def test_terrain_water_decimation_counters(qapp):
 
     qimg = QImage(n, n, QImage.Format.Format_RGB32)
     qimg.fill(0xFFFFFFFF)
-    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
 
     w = Owner.perf.water
     assert w.polygons_before == 1
@@ -412,7 +416,8 @@ def test_terrain_water_numpy_preserves_island_hole(qapp):
 
     rgbx = np.zeros((n, n, 4), np.uint8)
     rgbx[..., :3] = 255
-    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
 
     def is_water(la, lo):
         half = (n - 1) / 2.0
@@ -456,7 +461,8 @@ def test_terrain_water_numpy_zero_qpointf(qapp):
 
     rgbx = np.zeros((n, n, 4), np.uint8)
     rgbx[..., :3] = 255
-    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
 
     w = Owner.perf.water
     assert w.polygons_before == 1
@@ -495,6 +501,7 @@ def test_terrain_water_numpy_matches_qt_iou(qapp):
              (60.0, "coarse (~160 NM stand-in)", 0.94)]
     for mpp, label, min_iou in cases:
         water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+        nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
 
         class Owner:
             _alt_ft = 0.0
@@ -504,7 +511,8 @@ def test_terrain_water_numpy_matches_qt_iou(qapp):
         lay_qt._owner = Owner
         qt_img = QImage(n, n, QImage.Format.Format_RGB32)
         qt_img.fill(0xFFFFFFFF)
-        lay_qt._draw_water_qt(qt_img, lat0, lon0, mpp, n, lat_cos)
+        lay_qt._draw_water_qt(qt_img, lat0, lon0, mpp, n, lat_cos,
+                              nominal_range_nm)
         wq = _water_mask(qt_img, n)
 
         lay_np = TerrainLayer()
@@ -512,7 +520,8 @@ def test_terrain_water_numpy_matches_qt_iou(qapp):
         lay_np._owner = Owner
         rgbx = np.zeros((n, n, 4), np.uint8)
         rgbx[..., :3] = 255
-        lay_np._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos)
+        lay_np._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos,
+                                 nominal_range_nm)
         wn = _rgbx_water_mask(rgbx)
 
         inter = int((wq & wn).sum())
