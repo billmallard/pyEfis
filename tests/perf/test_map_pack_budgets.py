@@ -235,16 +235,44 @@ def raleigh_volume(bench, qapp):
     return out
 
 
-def _require_footprint(scene, water_db, range_nm, pack_root=None):
+def _require_footprint(scene, water_db, range_nm, pack_root):
     """Skip unless the pack is big enough for the question. See
     ``measure.pack_coverage`` -- this is the guard that stops a
     truncated pack reporting a comfortable pass.
 
     AER-1156: *pack_root* is what makes this read the pack's own
     ``footprint.json`` rather than inferring the cut from the data
-    extent. Callers should always pass it (``_scene_pack``'s first
-    return value); it is optional only so the no-pack falsifiers below
-    can exercise the fallback path deliberately."""
+    extent, and it is **required**. Pass ``_scene_pack``'s first return
+    value.
+
+    It was briefly optional, on the stated reasoning that the no-pack
+    falsifiers below would exercise the fallback path through it. They
+    do not: every one of them calls ``M.pack_coverage`` directly with a
+    real (empty) pack root. So the default had no consumer, and what it
+    did have was a way back into the defect this guard was written for.
+    Omitting the argument yields ``pack_root=None``, no declaration, and
+    a silent fall back to the data extent -- at the 650x1040 geometry
+    section 5's whole table is measured at, that reads ``covers=True``
+    for a pack cut 0.127 deg short of the 160 NM window, where the
+    declaration reads ``covers=False``. A caller that forgets should be
+    a ``TypeError``, not a green test.
+
+    The fallback itself is untouched. It lives in
+    ``measure.pack_coverage``, keyed on whether the PACK carries a
+    declaration -- which is where it belongs, because whether a pack can
+    be decided on its declaration is a fact about the pack, not a choice
+    made by the caller.
+
+    Known residual, stated so it is a bound and not a blind spot: this
+    guard always asks the coverage question at the suite's own 650x1040,
+    because it passes no geometry to ``pack_coverage`` and takes that
+    function's defaults. Every row that currently reaches it does render
+    at 650x1040, so the answer is the right one today. It would not be
+    for a row at another aspect: a pack cut exactly to the 160 NM
+    portrait window (7.85 x 9.68 deg) reads ``covers=True`` at this
+    geometry and ``covers=False`` at 800x480 (12.95 x 15.96 deg) -- the
+    same false pass in a different variable. Whoever adds the first
+    non-portrait row owns threading the geometry through."""
     s = M.SCENES[scene]
     cov = M.pack_coverage(pack_root, water_db, s["lat"], s["lon"], range_nm)
     if not cov["covers"]:
