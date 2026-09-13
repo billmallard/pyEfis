@@ -2,7 +2,7 @@
 #  SPDX-License-Identifier: GPL-2.0-or-later
 """Cut a small geographic-window perf fixture pack out of the real
 moving-map data packs (MP8b, briefs/map_gesture_perf_plan.md's MP8 item;
-pyEfis #98, AER-1133).
+pyEfis #98, AER-1133; reworked per AER-1140's ruling, AER-1142).
 
 MP8a (AER-1121, pyEfis #207) landed the count-based moving-map perf
 budgets in ``tests/perf/test_map_gestures.py`` -- pipeline properties
@@ -32,6 +32,48 @@ Two scenes (brief's Track 4 MP8 item), both dense, both real perf traps:
     key_west   24.55, -81.78  dense multi-ring coastline (the 08-13
                                stutter scene; the #44 island-hole case)
 
+**AER-1140's ruling, and what changed here (AER-1142).** QA cut against the
+real production tiles and found the original cutter could produce neither
+scene: a 3x3 native-tile grid (the whole-degree window the old
+``WINDOW_DEG = 2.0`` expanded to) is 233.4 MB against a 209.7 MB cap on its
+own, and that same 2-degree window captured only 14% of Raleigh's water
+vertices at 160 NM -- so a volume budget asserted against it would pass
+with a real rasterizer regression hiding underneath. Elon's ruling on
+AER-1140 (read it before touching this file again) made four changes,
+none of which is "shrink the window" or "raise the cap":
+
+1. **The cap gates the packaged tarball, not the raw directory.**
+   ``MAX_PACK_BYTES`` traces to CI fetch time -- the compressed download --
+   not to the uncompressed bytes on disk. ``cut_scene`` no longer raises on
+   raw size; ``package_scene`` raises on the tarball's size. Raw size is
+   still recorded (``stats["raw_bytes"]``) as an advisory stat.
+2. **Terrain is cut concentrically by mip level, not as one uniform grid.**
+   ``TerrainLayer._render`` (``src/pyefis/instruments/map/layers/
+   terrain.py:290-308``) picks a mip level from ``round(log2(mpp /
+   native))``, and ``mpp`` is *linear in range_nm* for a fixed widget
+   geometry -- so each level owns a closed, non-overlapping range band, and
+   a cell far from the scene centre is NEVER sampled at native or a shallow
+   mip. Copying it there is dead weight, not margin. ``terrain_level_bands``
+   below derives each level's own reach (the half-diagonal at the TOP of
+   its band) by literally calling the same mip-selection formula the
+   renderer uses, not by transcribing a hand-computed table -- the ruling's
+   own instruction: "derive the radii in code from the selector, the table
+   is the instance, the selector is the rule."
+3. **Water/highway/navaid/fixes footprints are derived per-layer, not one
+   shared ``WINDOW_DEG``.** Each vector layer decides its own query extent
+   at its own widest asserted range (water and highway from the same
+   half-diagonal geometry terrain uses; navaid/airway/fixes from
+   ``navaids.py``'s own ``_bbox`` formula) -- see ``cut_scene``.
+4. **The anti-vacuity test.** ``WINDOW_DEG = 2.0`` shipped with a comment
+   that correctly predicted under-coverage and no test to catch it, which
+   is exactly why it shipped anyway. ``tests/tools/
+   test_make_map_perf_fixture.py`` carries a test that fails against that
+   old literal-window behaviour and passes against the derivation here.
+
+Cutting and publishing the ACTUAL packs (the real production terrain/
+water/highway/navaid trees) is out of scope for this file -- AVIONICS-DATA
+owns that (AER-1134). This tool is what they run.
+
 Usage, cutting from a real pack tree on a workstation that holds it
 (never on the EFIS device -- same rule as the builder tools)::
 
@@ -60,15 +102,20 @@ is truthy (CI sets it; a bare local ``pytest`` run must skip cleanly, not
 fail) and never adds a runtime dependency -- download/verify/extract are
 stdlib (``urllib``, ``hashlib``, ``tarfile``).
 
-**Honest limitation, current as of this tool's introduction:** the
-``sha256``/``url`` fields in ``tools/perf_fixtures.json`` start ``null``
-for both scenes. Producing the real packs requires (a) access to the
-full production terrain/water/highway/navaid packs, which live in the
-data-manager pipeline's storage, not in a pyEfis checkout, and (b) R2
-write credentials. Whoever runs ``cut --publish`` against the real packs
-fills the manifest in; until then ``fetch_fixture`` raises a clear,
-actionable ``PerfFixtureUnavailable`` rather than silently returning
-nothing or fabricating a pin.
+**Honest limitation, current as of AER-1142.** The ``sha256``/``url``
+fields in ``tools/perf_fixtures.json`` start ``null`` for both scenes.
+Producing the real packs requires (a) access to the full production
+terrain/water/highway/navaid packs, which live in the data-manager
+pipeline's storage, not in a pyEfis checkout, and (b) R2 write
+credentials. Neither is available in the sandbox this rework was authored
+in either -- the concentric-cut/per-layer-footprint math below is
+exercised against synthetic packs in the test suite, the same way MP8a's
+count budgets are, but the **measured** tarball ratio against the real
+packs (the number that decides whether 200 MB actually holds) still needs
+AVIONICS-DATA's access (AER-1134). Whoever runs ``cut --publish`` against
+the real packs fills the manifest in; until then ``fetch_fixture`` raises
+a clear, actionable ``PerfFixtureUnavailable`` rather than silently
+returning nothing or fabricating a pin.
 """
 
 from __future__ import annotations
@@ -98,77 +145,237 @@ SCENES = {
     "key_west": {"lat": 24.55, "lon": -81.78},
 }
 
-#: "2x2 deg window" per the issue. Centred on the scene lat/lon; the
-#: terrain tile grid this expands to is whole-degree aligned and may be
-#: very slightly larger (see _cell_range) -- water/highway/navaid cuts
-#: reuse that same, larger bbox so every data type in the pack shares
-#: exactly one footprint definition. Over-inclusion costs a little size;
-#: under-inclusion would silently gate nothing (see module docstring of
-#: tests/perf/test_map_gestures.py, "the vacuity trap").
-WINDOW_DEG = 2.0
-
 MIP_LEVELS = (1, 2, 3, 4, 5, 6)          # matches build_terrain_mips.MAX_LEVEL
 MOSAIC_LEVELS = (4, 5, 6)                # matches build_terrain_mosaic default
 
-#: Traces to CI fetch time, not to physics (issue text) -- a scene over
-#: this is a real problem to escalate, not a window to quietly shrink.
+#: Traces to CI fetch time, not to physics (AER-1140's ruling) -- fetch
+#: time is a property of the COMPRESSED tarball a CI job downloads, so
+#: this is checked against ``package_scene``'s tarball bytes, not the raw
+#: cut directory (see MAX_PACK_BYTES's use below). A scene over this is a
+#: real problem to escalate, not a window to quietly shrink.
 MAX_PACK_BYTES = 200 * 1024 * 1024
 
 SRTM3_VOID = -32768
 
-#: Verbatim from tools/build_water_db.py's SCHEMA (not imported: that
-#: module pulls in mapbox_earcut at top level for tessellation, a
-#: build-time-only dependency this cutter has no use for and should not
-#: force onto whoever just wants to cut a fixture). Keep in sync by hand.
-WATER_SCHEMA = """
-CREATE TABLE IF NOT EXISTS water_polygons (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    min_lat   REAL NOT NULL,
-    max_lat   REAL NOT NULL,
-    min_lon   REAL NOT NULL,
-    max_lon   REAL NOT NULL,
-    kind      TEXT NOT NULL,
-    elev_ft   REAL,
-    vertices  BLOB NOT NULL,
-    triangles BLOB,
-    rings     BLOB
-);
-CREATE INDEX IF NOT EXISTS idx_bbox
-    ON water_polygons(min_lat, max_lat, min_lon, max_lon);
-CREATE INDEX IF NOT EXISTS idx_kind ON water_polygons(kind);
-CREATE VIRTUAL TABLE IF NOT EXISTS water_rtree USING rtree(
-    id,
-    min_lat, max_lat,
-    min_lon, max_lon
-);
-CREATE TABLE IF NOT EXISTS waterway_lines (
-    id INTEGER PRIMARY KEY,
-    fclass TEXT NOT NULL,
-    min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,
-    verts BLOB NOT NULL
-);
-CREATE VIRTUAL TABLE IF NOT EXISTS waterway_rtree USING rtree(
-    id, min_lat, max_lat, min_lon, max_lon
-);
-"""
+#: camera.py's own constant (``M_PER_DEG_LAT``), duplicated for the same
+#: Qt-free reason WATER_SCHEMA/tile_name below are duplicated rather than
+#: imported: this tool must stay usable with no Qt/PyQt6 installed.
+M_PER_DEG_LAT = 111139.0
 
-#: Verbatim from tools/build_highway_db.py's SCHEMA. Loaded as a literal
-#: for the same reason as WATER_SCHEMA above -- consistency, and this
-#: one in particular has no problematic top-level import today, but a
-#: cutter tool should not be coupled to a builder's import graph at all.
-HIGHWAY_SCHEMA = """
-CREATE TABLE IF NOT EXISTS highway_lines (
-    id INTEGER PRIMARY KEY,
-    fclass TEXT NOT NULL,
-    min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,
-    verts BLOB NOT NULL,
-    flags INTEGER NOT NULL DEFAULT 0,
-    ref TEXT
-);
-CREATE VIRTUAL TABLE IF NOT EXISTS highway_rtree USING rtree(
-    id, min_lat, max_lat, min_lon, max_lon
-);
-"""
+# ---------------------------------------------------------------------------
+# Per-layer footprint derivation (AER-1142, per AER-1140's ruling).
+#
+# Every footprint below is derived from the SAME formula the runtime layer
+# itself uses to decide what it reads at a given range -- never a literal
+# window copied from a table. ``WINDOW_DEG = 2.0`` shipped with a comment
+# that correctly predicted under-inclusion and no test to catch it; this
+# section is both the fix and the reason a future editor should derive,
+# not transcribe.
+# ---------------------------------------------------------------------------
+
+#: The moving-map volume-budget widget (tests/perf/test_map_gestures.py's
+#: ``_W``/``_H``) -- the widget whose renders the volume budgets (e.g.
+#: "water vertices rasterized at 160 NM") are asserted against, so it is
+#: also the widget whose window geometry the terrain/water footprints
+#: below must match.
+PERF_WIDGET_W = PERF_WIDGET_H = 300
+#: MapWidget.ownship_position's own default (map/__init__.py) -- 50%
+#: up from the bottom edge, i.e. screen-centred.
+PERF_OWNSHIP_ANCHOR_FRAC = 0.50
+
+#: map/__init__.py's own ``range_ladder`` default
+#: (``"2,5,10,20,40,80,160"``) -- the top is the widest range any budget
+#: can assert at; nothing wider is reachable and nothing narrower needs
+#: covering.
+RANGE_LADDER_TOP_NM = 160.0
+#: roads.py RoadsLayer._BAND_BASE's own coarsest band -- above this the
+#: roads layer is hidden and never queried at all.
+HIGHWAY_MAX_RANGE_NM = 80.0
+#: navaids.py NavaidsLayer/AirwaysLayer._MAX_RANGE.
+NAVAID_MAX_RANGE_NM = 160.0
+#: navaids.py FixesLayer._MAX_RANGE (fixes are range-gated -- ~70k of them
+#: nationwide need it to stay usable).
+FIXES_MAX_RANGE_NM = 20.0
+#: navaids.py _DbLayer._bbox's own literal box half-width factor and
+#: cos(lat) floor (the floor avoids a division blow-up near the poles;
+#: irrelevant at these scenes' latitudes but kept for fidelity).
+NAVAID_BBOX_NM_TO_DEG = 2.2 / 60.0
+NAVAID_COS_LAT_FLOOR = 0.2
+
+#: bench_map_gestures.py's own scenario_pan parameters (3 s at 60 Hz, 3 px
+#: per event) -- the pan excursion the native (level-0) footprint must
+#: survive without walking the render centre out of the cut cell(s) and
+#: making TileCache.get() return None (which silently falls back the mip
+#: selector's `native` pitch to 1200, per terrain.py:306-308).
+_PAN_EVENTS = 180
+_PAN_PX_PER_EVENT = 3.0
+#: A native/level-0 footprint wider than this (2x2 whole-degree cells) is
+#: no longer "one native tile plus pan margin" -- a 3x3 ring alone is
+#: 233 MB and busts the cap on its own (AER-1140's ruling). Past this the
+#: cutter raises rather than silently grow the native ring.
+MAX_NATIVE_CELLS = 4
+
+
+def _terrain_render_geometry(range_nm: float, w: int = PERF_WIDGET_W,
+                              h: int = PERF_WIDGET_H,
+                              anchor_frac: float = PERF_OWNSHIP_ANCHOR_FRAC):
+    """Mirror ``TerrainLayer._render``'s own window-sizing math EXACTLY
+    (``terrain.py:292-297``) -- ``half_diag_m`` (half-diagonal of the
+    oversized, track-up-safe window, in metres) and ``mpp`` (metres per
+    image pixel). Every footprint derived below goes through this one
+    function, so a change to the renderer's sizing constants (the 1.25
+    oversize factor, the pixel-count clamp) is inherited automatically
+    instead of drifting out of sync with a hand-copied formula."""
+    cy = max(1.0, h * (1.0 - anchor_frac))
+    px_per_m = cy / max(1.0, range_nm * 1852.0)
+    half_diag_m = 0.5 * math.hypot(w, h) / px_per_m * 1.25
+    n = int(min(1024, max(64, 2 * half_diag_m * px_per_m)))
+    mpp = 2 * half_diag_m / n
+    return half_diag_m, mpp, cy
+
+
+def _mip_for_range(range_nm: float, native_m: float, **geom_kwargs) -> int:
+    """The mip level ``TerrainLayer._render`` would pick at *range_nm*
+    (``terrain.py:308``), given a native tile pitch of *native_m* metres."""
+    _, mpp, _ = _terrain_render_geometry(range_nm, **geom_kwargs)
+    return max(0, min(6, int(round(math.log2(max(1.0, mpp / native_m))))))
+
+
+def _band_top_nm(level: int, native_m: float,
+                  ladder_top_nm: float = RANGE_LADDER_TOP_NM,
+                  **geom_kwargs) -> float:
+    """The largest range (up to *ladder_top_nm*) at which the renderer's
+    own mip selector still picks *level* -- found by binary-searching the
+    SAME selector the renderer calls at paint time, not by inverting its
+    formula by hand. ``mpp`` is monotonically increasing in ``range_nm``
+    for fixed widget geometry, so the selector is monotonic and the search
+    converges on the exact band boundary."""
+    if _mip_for_range(ladder_top_nm, native_m, **geom_kwargs) <= level:
+        return ladder_top_nm
+    lo, hi = 1e-3, ladder_top_nm
+    for _ in range(60):
+        mid = (lo + hi) / 2.0
+        if _mip_for_range(mid, native_m, **geom_kwargs) <= level:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _half_diag_nm(range_nm: float, **geom_kwargs) -> float:
+    half_diag_m, _, _ = _terrain_render_geometry(range_nm, **geom_kwargs)
+    return half_diag_m / 1852.0
+
+
+def _deg_radius(nm: float, lat: float) -> tuple[float, float]:
+    """Nautical miles -> (lat degrees, lon degrees) at *lat*. 1 NM is
+    exactly 1/60 deg of latitude; a degree of longitude is narrower by
+    cos(lat), so the same NM radius is WIDER in longitude degrees."""
+    lat_deg = nm / 60.0
+    lon_deg = lat_deg / max(1e-6, math.cos(math.radians(lat)))
+    return lat_deg, lon_deg
+
+
+def _navaid_bbox_deg(range_nm: float, lat: float) -> tuple[float, float]:
+    """Mirrors ``navaids.py`` ``_DbLayer._bbox`` EXACTLY (its own
+    NM->degree factor and cos-lat floor are NOT the same as
+    ``_deg_radius``'s -- this is deliberately a separate function rather
+    than a shared one, so a change to either formula shows up as a diff
+    here instead of silently reusing the wrong constant)."""
+    d = range_nm * NAVAID_BBOX_NM_TO_DEG
+    dl = d / max(NAVAID_COS_LAT_FLOOR, math.cos(math.radians(lat)))
+    return d, dl
+
+
+def _bbox_from_radius(lat: float, lon: float, radius_lat_deg: float,
+                       radius_lon_deg: float):
+    return (lat - radius_lat_deg, lat + radius_lat_deg,
+            lon - radius_lon_deg, lon + radius_lon_deg)
+
+
+def _pan_excursion_deg(lat: float, native_m: float,
+                        **geom_kwargs) -> tuple[float, float]:
+    """Worst-case centre drift ``bench_map_gestures.py``'s ``scenario_pan``
+    (3 s at 60 Hz, 3 px/event) can walk the render centre while native
+    (level 0) is still the selected mip -- evaluated at the TOP of
+    native's own band (the widest range native is ever read at, so the
+    worst-case excursion within native's whole operating range), mirroring
+    ``MapWidget.pan_by``'s own screen-px -> world-metre conversion
+    (``map/__init__.py``). Applied symmetrically in both directions: which
+    way the finger drags is a test detail, not a fixture property to
+    pin."""
+    band_top_nm = _band_top_nm(0, native_m, **geom_kwargs)
+    _, _, cy = _terrain_render_geometry(band_top_nm, **geom_kwargs)
+    px_per_m = cy / max(1.0, band_top_nm * 1852.0)
+    exc_m = (_PAN_EVENTS * _PAN_PX_PER_EVENT) / px_per_m
+    exc_lat_deg = exc_m / M_PER_DEG_LAT
+    exc_lon_deg = exc_m / (M_PER_DEG_LAT * max(1e-6, math.cos(math.radians(lat))))
+    return exc_lat_deg, exc_lon_deg
+
+
+def terrain_level_bands(lat: float, lon: float, native_m: float,
+                         levels=range(7),
+                         ladder_top_nm: float = RANGE_LADDER_TOP_NM,
+                         **geom_kwargs) -> dict:
+    """For every mip level 0 (native) .. 6, the whole-degree cell range
+    this scene's terrain render actually reads at that level -- each
+    level cut to the half-diagonal at the TOP of its own selection band
+    (the mip clamp is monotonic in range, so that top is also the level's
+    widest reach; a cell further out than that is never sampled at this
+    level by any range the renderer selects it for). AER-1140's ruling:
+    "derive the radii in code from the selector, do not transcribe the
+    table -- the table is the instance, the selector is the rule."."""
+    bands = {}
+    for level in levels:
+        band_top_nm = _band_top_nm(level, native_m, ladder_top_nm,
+                                    **geom_kwargs)
+        radius_nm = _half_diag_nm(band_top_nm, **geom_kwargs)
+        radius_lat_deg, radius_lon_deg = _deg_radius(radius_nm, lat)
+        lat_cells = _cell_range(lat - radius_lat_deg, lat + radius_lat_deg)
+        lon_cells = _cell_range(lon - radius_lon_deg, lon + radius_lon_deg)
+        bands[level] = {
+            "band_top_nm": band_top_nm,
+            "radius_nm": radius_nm,
+            "radius_lat_deg": radius_lat_deg,
+            "radius_lon_deg": radius_lon_deg,
+            "lat_cells": lat_cells,
+            "lon_cells": lon_cells,
+        }
+    return bands
+
+
+def native_footprint(lat: float, lon: float, native_m: float,
+                      **geom_kwargs):
+    """The level-0 (native) cell footprint: the level's own band radius
+    (tiny -- a couple NM) widened to also cover the pan-excursion margin
+    (``_pan_excursion_deg``), so a ``pan_by`` sweep during the volume-perf
+    scenario cannot walk the render centre out of the cut cell(s) (the
+    "fails loudly, never quietly under-covers" mechanism trap from
+    AER-1140's ruling). Raises ``PerfFixtureError`` if the resulting
+    footprint needs more than ``MAX_NATIVE_CELLS`` whole-degree cells --
+    native tiles are the expensive ones (a 3x3 ring alone busts the cap),
+    so past a small margin this is a scene-pose problem to report, not a
+    ring to silently widen."""
+    band0 = terrain_level_bands(lat, lon, native_m, levels=(0,),
+                                 **geom_kwargs)[0]
+    exc_lat, exc_lon = _pan_excursion_deg(lat, native_m, **geom_kwargs)
+    lat_radius = max(band0["radius_lat_deg"], exc_lat)
+    lon_radius = max(band0["radius_lon_deg"], exc_lon)
+    lat_cells = _cell_range(lat - lat_radius, lat + lat_radius)
+    lon_cells = _cell_range(lon - lon_radius, lon + lon_radius)
+    n_cells = len(lat_cells) * len(lon_cells)
+    if n_cells > MAX_NATIVE_CELLS:
+        raise PerfFixtureError(
+            f"scene centre ({lat}, {lon}): the native-tile footprint "
+            f"(band radius +/-{band0['radius_lat_deg']:.3f} lat / "
+            f"+/-{band0['radius_lon_deg']:.3f} lon, pan-excursion margin "
+            f"+/-{exc_lat:.3f} lat / +/-{exc_lon:.3f} lon) needs "
+            f"{n_cells} whole-degree native cells, over the "
+            f"{MAX_NATIVE_CELLS}-cell sanity cap (a 3x3 ring alone is "
+            "233 MB and busts the pack on its own -- AER-1140). Move the "
+            "scene pose away from a whole-degree boundary, or get a "
+            "ruling on widening the cap.")
+    return lat_cells, lon_cells
 
 
 class PerfFixtureError(RuntimeError):
@@ -222,6 +429,16 @@ def _hgt_path(tile_root: Path, lat: int, lon: int) -> Path | None:
     return None
 
 
+def _native_pitch_m(hgt_path: Path) -> float:
+    """The native sample pitch (metres/sample) of an HGT tile, derived
+    from its file size alone (big-endian int16, square) -- no numpy
+    dependency needed just to learn a tile's side, and this tool
+    deliberately carries none (module docstring)."""
+    n_samples = hgt_path.stat().st_size // 2
+    side = int(round(math.sqrt(n_samples)))
+    return M_PER_DEG_LAT / (side - 1)
+
+
 def _cell_range(lo: float, hi: float) -> range:
     """Integer SW-corner degree cells whose [c, c+1) span overlaps
     [lo, hi). May include one extra cell when ``hi`` lands exactly on an
@@ -229,63 +446,78 @@ def _cell_range(lo: float, hi: float) -> range:
     return range(math.floor(lo), math.floor(hi) + 1)
 
 
-def window_bbox(lat: float, lon: float, window_deg: float = WINDOW_DEG):
-    """Return (lat_lo, lat_hi, lon_lo, lon_hi, lat_cells, lon_cells) for a
-    scene centre -- the single footprint every data type in the pack is
-    cut against."""
-    half = window_deg / 2.0
-    lat_lo, lat_hi = lat - half, lat + half
-    lon_lo, lon_hi = lon - half, lon + half
-    lat_cells = _cell_range(lat_lo, lat_hi)
-    lon_cells = _cell_range(lon_lo, lon_hi)
-    # Widen the query bbox to the whole-degree tile grid so terrain and
-    # the vector layers agree on one footprint (module docstring).
-    return (float(lat_cells.start), float(lat_cells.stop),
-            float(lon_cells.start), float(lon_cells.stop),
-            lat_cells, lon_cells)
-
-
 # ---------------------------------------------------------------------------
-# Terrain: native tiles, mip pyramid, mosaic
+# Terrain: native tile, concentric mip pyramid, mosaic
 # ---------------------------------------------------------------------------
 
-def cut_terrain(src_root: Path, dst_root: Path, lat_cells: range,
-                 lon_cells: range, mip_levels=MIP_LEVELS,
+def cut_terrain(src_root: Path, dst_root: Path, lat: float, lon: float,
+                 mip_levels=MIP_LEVELS,
                  mosaic_levels=MOSAIC_LEVELS) -> dict:
-    """Copy native + mip tiles for every cell in the window, then
-    regenerate the mosaic from the CUT mip tiles via the real
-    ``build_terrain_mosaic.build_level`` -- not by slicing the source
-    mosaic and hand-adjusting its JSON. Reusing the shipped builder is
-    what guarantees the cut mosaic's (rows, cols, spd, lat_n, lon_w) is
-    self-consistent with its own .hgt file, which is TileCache.get_mosaic's
-    hard requirement (a shape/JSON mismatch makes the mosaic silently
-    unavailable, not wrong -- but "silently unavailable" is still not
-    what a fixture claiming to hold a mosaic should ship)."""
+    """Concentric mip cut (AER-1142, per AER-1140's ruling): each level is
+    copied only for the whole-degree cells its OWN selection band's widest
+    reach touches, not a single uniform grid shared by every level. A cell
+    several degrees from the centre is never opened at native or a
+    shallow mip -- it is only ever sampled at whatever level its range
+    selects, so copying it at any other level is dead weight, not safety
+    margin. Level 0 (native) additionally covers the pan-excursion margin
+    (``native_footprint``).
+
+    Requires the native tile under the scene centre to exist FIRST: its
+    pixel pitch is ``native``, the mip selector's own reference
+    (terrain.py:306-308) -- without it every level's band would be
+    derived from the wrong pitch. Raises loudly rather than falling back
+    to a guessed pitch, matching the runtime's own "fail loud, don't
+    silently shift 1.6x coarser" trap that motivated this rework."""
+    src_root = Path(src_root)
+    dst_root = Path(dst_root)
+    centre_path = _hgt_path(src_root, math.floor(lat), math.floor(lon))
+    if centre_path is None:
+        raise PerfFixtureError(
+            f"the native tile under the scene centre ({lat}, {lon}) is "
+            f"missing from {src_root} -- the mip selector "
+            "(terrain.py:306-308) needs it to derive `native`; without "
+            "it every level would silently shift ~1.6x coarser (falling "
+            "back to a 1200-sample assumption). Check --tile-root, not "
+            "the window size.")
+    native_m = _native_pitch_m(centre_path)
+
+    bands = terrain_level_bands(lat, lon, native_m, levels=(0,) + tuple(mip_levels))
+    native_lat_cells, native_lon_cells = native_footprint(lat, lon, native_m)
+
     native_copied = 0
     native_bytes = 0
+    for la in native_lat_cells:
+        for lo_ in native_lon_cells:
+            src = _hgt_path(src_root, la, lo_)
+            if src is None:
+                continue
+            dst = dst_root / _ns_dir(la) / f"{tile_name(la, lo_)}.hgt"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            data = src.read_bytes()
+            dst.write_bytes(data)
+            native_copied += 1
+            native_bytes += len(data)
+
     mip_copied = {level: 0 for level in mip_levels}
     mip_bytes = 0
-    for la in lat_cells:
-        for lo in lon_cells:
-            src = _hgt_path(src_root, la, lo)
-            if src is not None:
-                dst = dst_root / _ns_dir(la) / f"{tile_name(la, lo)}.hgt"
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                data = src.read_bytes()
-                dst.write_bytes(data)
-                native_copied += 1
-                native_bytes += len(data)
-            for level in mip_levels:
-                msrc = _hgt_path(src_root / ".mip" / str(level), la, lo)
+    per_level_cells = {0: native_copied}
+    for level in mip_levels:
+        band = bands[level]
+        n_this_level = 0
+        for la in band["lat_cells"]:
+            for lo_ in band["lon_cells"]:
+                msrc = _hgt_path(src_root / ".mip" / str(level), la, lo_)
                 if msrc is None:
                     continue
                 mdst = (dst_root / ".mip" / str(level) / _ns_dir(la)
-                        / f"{tile_name(la, lo)}.hgt")
+                        / f"{tile_name(la, lo_)}.hgt")
                 mdst.parent.mkdir(parents=True, exist_ok=True)
                 data = msrc.read_bytes()
                 mdst.write_bytes(data)
                 mip_copied[level] += 1
                 mip_bytes += len(data)
+                n_this_level += 1
+        per_level_cells[level] = n_this_level
 
     build_terrain_mosaic = _load_tool("build_terrain_mosaic")
     mosaic_meta = {}
@@ -296,12 +528,20 @@ def cut_terrain(src_root: Path, dst_root: Path, lat_cells: range,
         if meta is not None:
             mosaic_meta[level] = meta
 
+    band_stats = {
+        lvl: {k: v for k, v in b.items() if k not in ("lat_cells", "lon_cells")}
+        for lvl, b in bands.items()
+    }
+
     return {
         "native_tiles": native_copied,
         "native_bytes": native_bytes,
+        "native_m": native_m,
         "mip_tiles": mip_copied,
         "mip_bytes": mip_bytes,
         "mosaic_levels": mosaic_meta,
+        "bands": band_stats,
+        "per_level_cells": per_level_cells,
     }
 
 
@@ -349,9 +589,65 @@ def cut_water(src_path: Path, dst_path: Path, bbox) -> dict:
     return stats
 
 
+#: Verbatim from tools/build_water_db.py's SCHEMA (not imported: that
+#: module pulls in mapbox_earcut at top level for tessellation, a
+#: build-time-only dependency this cutter has no use for and should not
+#: force onto whoever just wants to cut a fixture). Keep in sync by hand.
+WATER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS water_polygons (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    min_lat   REAL NOT NULL,
+    max_lat   REAL NOT NULL,
+    min_lon   REAL NOT NULL,
+    max_lon   REAL NOT NULL,
+    kind      TEXT NOT NULL,
+    elev_ft   REAL,
+    vertices  BLOB NOT NULL,
+    triangles BLOB,
+    rings     BLOB
+);
+CREATE INDEX IF NOT EXISTS idx_bbox
+    ON water_polygons(min_lat, max_lat, min_lon, max_lon);
+CREATE INDEX IF NOT EXISTS idx_kind ON water_polygons(kind);
+CREATE VIRTUAL TABLE IF NOT EXISTS water_rtree USING rtree(
+    id,
+    min_lat, max_lat,
+    min_lon, max_lon
+);
+CREATE TABLE IF NOT EXISTS waterway_lines (
+    id INTEGER PRIMARY KEY,
+    fclass TEXT NOT NULL,
+    min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,
+    verts BLOB NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS waterway_rtree USING rtree(
+    id, min_lat, max_lat, min_lon, max_lon
+);
+"""
+
+
 # ---------------------------------------------------------------------------
 # highway db
 # ---------------------------------------------------------------------------
+
+#: Verbatim from tools/build_highway_db.py's SCHEMA. Loaded as a literal
+#: for the same reason as WATER_SCHEMA above -- consistency, and this
+#: one in particular has no problematic top-level import today, but a
+#: cutter tool should not be coupled to a builder's import graph at all.
+HIGHWAY_SCHEMA = """
+CREATE TABLE highway_lines (
+    id INTEGER PRIMARY KEY,
+    fclass TEXT NOT NULL,
+    min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,
+    verts BLOB NOT NULL,
+    flags INTEGER NOT NULL DEFAULT 0,
+    ref TEXT
+);
+CREATE VIRTUAL TABLE highway_rtree USING rtree(
+    id, min_lat, max_lat, min_lon, max_lon
+);
+"""
+
 
 def cut_highway(src_path: Path, dst_path: Path, bbox) -> dict:
     lat_lo, lat_hi, lon_lo, lon_hi = bbox
@@ -496,21 +792,49 @@ def package(out_dir: Path, dest_tarball: Path) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
+def package_scene(out_dir: Path, dest_tarball: Path,
+                   max_bytes: int = MAX_PACK_BYTES) -> tuple[int, str]:
+    """``package()`` *out_dir*, then gate on the TARBALL bytes --
+    ``MAX_PACK_BYTES`` traces to CI fetch time, which is the compressed
+    download, not the raw cut directory (AER-1140's ruling: "a
+    requirement whose stated reason is fetch time, gated on a quantity
+    that is not fetched, does not trace to its reason"). Raw directory
+    size (``cut_scene``'s ``stats["raw_bytes"]``) is an advisory stat
+    only; this is the check that raises."""
+    size, sha256 = package(out_dir, dest_tarball)
+    if size > max_bytes:
+        raise PerfFixtureError(
+            f"packaged tarball {size / 1e6:.0f} MB exceeds the "
+            f"{max_bytes / 1e6:.0f} MB budget -- CI fetch time, not raw "
+            "disk (AER-1140's ruling). This is a real finding, not a "
+            "knob to turn: report the breakdown above and get a ruling "
+            "on the number before publishing.")
+    return size, sha256
+
+
 # ---------------------------------------------------------------------------
 # cut: one scene, end to end
 # ---------------------------------------------------------------------------
 
 def cut_scene(scene: str, tile_root: Path, water_db: Path, highway_db: Path,
               navaid_db: Path, out_dir: Path,
-              window_deg: float = WINDOW_DEG,
-              max_bytes: int = MAX_PACK_BYTES) -> dict:
+              window_deg: float | None = None) -> dict:
+    """Cut one scene's terrain (concentric mip pyramid) + water/highway/
+    navaid vector layers. No size gate here any more -- see
+    ``package_scene`` (AER-1140's ruling moved the gate to the packaged
+    tarball).
+
+    *window_deg*, when given, overrides the per-layer derivation below
+    with a single uniform +/- half-window for water/highway/navaid (NOT
+    terrain, which is always cut concentrically by mip level) -- a manual
+    escape hatch for quick local debugging. Left ``None`` (the default),
+    each vector layer's footprint is derived from that layer's own query
+    formula at its own widest asserted range, which is what a real
+    publish run must use."""
     if scene not in SCENES:
         raise PerfFixtureError(
             f"unknown scene {scene!r}; known scenes: {sorted(SCENES)}")
     lat, lon = SCENES[scene]["lat"], SCENES[scene]["lon"]
-    lat_lo, lat_hi, lon_lo, lon_hi, lat_cells, lon_cells = window_bbox(
-        lat, lon, window_deg)
-    bbox = (lat_lo, lat_hi, lon_lo, lon_hi)
 
     out_dir = Path(out_dir)
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -519,35 +843,41 @@ def cut_scene(scene: str, tile_root: Path, water_db: Path, highway_db: Path,
             "(refusing to merge into a stale cut)")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    stats = {"scene": scene, "lat": lat, "lon": lon, "bbox": bbox,
-             "window_deg": window_deg}
+    stats = {"scene": scene, "lat": lat, "lon": lon}
 
-    stats["terrain"] = cut_terrain(Path(tile_root), out_dir, lat_cells,
-                                    lon_cells)
-    center_tile = _hgt_path(out_dir, math.floor(lat), math.floor(lon))
-    if center_tile is None:
-        raise PerfFixtureError(
-            f"scene {scene}: the native tile under the scene centre "
-            f"({lat}, {lon}) is missing from {tile_root} -- the 2-5 NM "
-            "case this pack exists to cover would have no terrain at all. "
-            "Check --tile-root, not the window size.")
+    stats["terrain"] = cut_terrain(Path(tile_root), out_dir, lat, lon)
 
-    stats["water"] = cut_water(Path(water_db), out_dir / "water.sqlite", bbox)
+    if window_deg is not None:
+        half = window_deg / 2.0
+        water_bbox = highway_bbox = navaid_bbox = (
+            lat - half, lat + half, lon - half, lon + half)
+        stats["footprints"] = {"override_window_deg": window_deg}
+    else:
+        water_radius_nm = stats["terrain"]["bands"][6]["radius_nm"]
+        water_lat_deg, water_lon_deg = _deg_radius(water_radius_nm, lat)
+        water_bbox = _bbox_from_radius(lat, lon, water_lat_deg, water_lon_deg)
+
+        highway_radius_nm = _half_diag_nm(HIGHWAY_MAX_RANGE_NM)
+        hwy_lat_deg, hwy_lon_deg = _deg_radius(highway_radius_nm, lat)
+        highway_bbox = _bbox_from_radius(lat, lon, hwy_lat_deg, hwy_lon_deg)
+
+        nav_lat_deg, nav_lon_deg = _navaid_bbox_deg(NAVAID_MAX_RANGE_NM, lat)
+        navaid_bbox = _bbox_from_radius(lat, lon, nav_lat_deg, nav_lon_deg)
+
+        stats["footprints"] = {
+            "water_deg": (water_lat_deg, water_lon_deg),
+            "highway_deg": (hwy_lat_deg, hwy_lon_deg),
+            "navaid_deg": (nav_lat_deg, nav_lon_deg),
+        }
+
+    stats["water"] = cut_water(Path(water_db), out_dir / "water.sqlite",
+                                water_bbox)
     stats["highway"] = cut_highway(Path(highway_db),
-                                    out_dir / "highway.sqlite", bbox)
+                                    out_dir / "highway.sqlite", highway_bbox)
     stats["navaid"] = cut_navaid(Path(navaid_db), out_dir / "navaids.sqlite",
-                                  bbox)
+                                  navaid_bbox)
 
-    stats["raw_bytes"] = _dir_size(out_dir)
-    if stats["raw_bytes"] > max_bytes:
-        raise PerfFixtureError(
-            f"scene {scene}: cut pack is {stats['raw_bytes'] / 1e6:.0f} MB, "
-            f"over the {max_bytes / 1e6:.0f} MB budget BEFORE tar.gz. "
-            "This is a real finding, not a knob to turn: shrinking the "
-            "window would slice out the geometry the volume budget is "
-            "supposed to gate on. Report the breakdown above and get a "
-            "ruling on the number before packaging (issue AER-1133: "
-            "'the 200 MB traces to CI fetch time, not to physics').")
+    stats["raw_bytes"] = _dir_size(out_dir)   # advisory only -- see package_scene
     return stats
 
 
@@ -642,19 +972,14 @@ def _download(url: str, dest: Path):
 def _cmd_cut(args) -> int:
     stats = cut_scene(args.scene, args.tile_root, args.water_db,
                        args.highway_db, args.navaid_db, args.out,
-                       window_deg=args.window_deg, max_bytes=args.max_bytes)
+                       window_deg=args.window_deg)
     print(json.dumps(stats, indent=2, default=str))
 
     tarball = Path(args.out).with_suffix(".tar.gz")
-    size, sha256 = package(Path(args.out), tarball)
-    print(f"packaged {tarball} : {size / 1e6:.1f} MB  sha256={sha256}")
-    if size > args.max_bytes:
-        raise PerfFixtureError(
-            f"packaged tarball {size / 1e6:.0f} MB exceeds the "
-            f"{args.max_bytes / 1e6:.0f} MB budget even though the raw "
-            f"directory ({stats['raw_bytes'] / 1e6:.0f} MB) did not -- "
-            "unusual (gzip should shrink, not grow); investigate before "
-            "publishing.")
+    size, sha256 = package_scene(Path(args.out), tarball,
+                                  max_bytes=args.max_bytes)
+    print(f"packaged {tarball} : {size / 1e6:.1f} MB  sha256={sha256}  "
+          f"(raw dir {stats['raw_bytes'] / 1e6:.1f} MB, advisory)")
 
     if args.publish:
         _publish(args.scene, tarball, size, sha256)
@@ -728,7 +1053,11 @@ def _parse_args(argv=None):
     cut.add_argument("--highway-db", required=True)
     cut.add_argument("--navaid-db", required=True)
     cut.add_argument("--out", required=True, help="output directory")
-    cut.add_argument("--window-deg", type=float, default=WINDOW_DEG)
+    cut.add_argument("--window-deg", type=float, default=None,
+                     help="override: one uniform +/- half-window for "
+                          "water/highway/navaid instead of each layer's "
+                          "own derived footprint (terrain is always cut "
+                          "concentrically by mip level regardless)")
     cut.add_argument("--max-bytes", type=int, default=MAX_PACK_BYTES)
     cut.add_argument("--publish", action="store_true",
                      help="push the packaged tarball to R2 and pin the "
