@@ -235,7 +235,27 @@ def raleigh_volume(bench, qapp):
     return out
 
 
-def _require_footprint(scene, water_db, range_nm, pack_root=None):
+@pytest.fixture(scope="module")
+def raleigh_volume_landscape(bench, qapp):
+    """The AER-1149 regression case: the same 160 NM Raleigh render, on
+    an ordinary landscape widget (800x480) instead of the portrait one
+    section 5 was specified against. Before the fix this crossed into
+    wide water mode (ocean dropped) at the ladder's own top stop, while
+    the portrait fixture above stayed full-detail throughout -- same
+    pilot-selected range, two different pictures. See the wide-water
+    cliff tests below for the geometry-only version of this guard."""
+    root, tiles, water, _hw = _scene_pack("raleigh")
+    _require_footprint("raleigh", water, 160.0, pack_root=root,
+                       w=800, h=480)
+    out = M.measure_water_volume(bench, qapp, "raleigh", tiles, water,
+                                 w=800, h=480)
+    if out is None:
+        pytest.skip("raleigh 160 NM landscape render never published")
+    return out
+
+
+def _require_footprint(scene, water_db, range_nm, pack_root=None,
+                       w=M.SCENE_W, h=M.SCENE_H):
     """Skip unless the pack is big enough for the question. See
     ``measure.pack_coverage`` -- this is the guard that stops a
     truncated pack reporting a comfortable pass.
@@ -246,7 +266,8 @@ def _require_footprint(scene, water_db, range_nm, pack_root=None):
     return value); it is optional only so the no-pack falsifiers below
     can exercise the fallback path deliberately."""
     s = M.SCENES[scene]
-    cov = M.pack_coverage(pack_root, water_db, s["lat"], s["lon"], range_nm)
+    cov = M.pack_coverage(pack_root, water_db, s["lat"], s["lon"],
+                          range_nm, w, h)
     if not cov["covers"]:
         area = cov["pack_area_vs_window"]
         need = cov["need_span_deg"]
@@ -287,6 +308,42 @@ def test_water_vertices_at_160nm_within_budget(raleigh_volume):
         f"{raleigh_volume['vertices_before']}, polygons "
         f"{raleigh_volume['polygons_before']} -> "
         f"{raleigh_volume['polygons_after']}.")
+
+
+def test_water_vertices_at_160nm_within_budget_on_landscape_aspect(
+        raleigh_volume_landscape):
+    """AER-1149, pinned end-to-end through the real renderer and the
+    real pack: the range ladder's own 160 NM top stop must be
+    full-detail on a landscape widget too, not just the portrait one
+    section 5 happens to specify.
+
+    Before the fix this scene/range read as WIDE mode on an 800x480
+    widget (the query window at 160 NM nominal is 388.4 NM, past the
+    old 300 NM WINDOW-range threshold) and rasterized 54,019 vertices
+    with the ocean coastline dropped -- a real coastline silently
+    replaced by whatever inland lakes survived the size floor. Gated on
+    the nominal range instead, this reads full overlay like the
+    portrait fixture: measured 120,576 vertices on the published
+    water-na (2026q2r6) pack, a 20% margin under the same 150k budget."""
+    assert raleigh_volume_landscape["polygons_after"] >= 1
+    assert raleigh_volume_landscape["vertices_after"] > 0
+    assert (raleigh_volume_landscape["vertices_after"]
+            < raleigh_volume_landscape["vertices_before"])
+    assert (raleigh_volume_landscape["vertices_after"]
+            <= WATER_VERTEX_BUDGET_160NM), (
+        f"{raleigh_volume_landscape['vertices_after']} water vertices "
+        f"rasterized at 160 NM on an 800x480 widget, over the "
+        f"{WATER_VERTEX_BUDGET_160NM} budget.")
+    # The AER-1149 regression signature: wide mode on this exact
+    # scene/range/aspect combination rasterized under 55k because the
+    # ocean was dropped. A number well above that confirms the
+    # coastline is actually present, not just under budget by accident
+    # of a truncated query.
+    assert raleigh_volume_landscape["vertices_after"] > 90_000, (
+        f"only {raleigh_volume_landscape['vertices_after']} vertices at "
+        "160 NM on the landscape aspect -- this is the AER-1149 "
+        "wide-mode signature (54,019 measured pre-fix), not a passing "
+        "full-overlay render.")
 
 
 def test_water_volume_budget_fails_without_mp4_decimation(bench, qapp):
@@ -663,15 +720,18 @@ def test_the_guard_skips_rather_than_crashes_on_an_empty_pack(tmp_path):
 # ---------------------------------------------------------------------------
 #
 # ``TerrainLayer`` draws the full water overlay -- ocean coastline plus
-# every lake down to a 3-pixel floor -- only while the WINDOW range is
-# at or below ``_WATER_FULL_MAX_NM`` (300 NM). Above it the ocean is
-# dropped entirely and lakes are filtered by bbox diagonal. The drawn
-# set therefore changes DISCONTINUOUSLY at that boundary, and the
-# boundary is crossed as a function of widget geometry, not of the range
-# the pilot selected.
+# every lake down to a 3-pixel floor -- only while the widget's NOMINAL
+# range_nm is at or below ``_WATER_FULL_MAX_NM``. Above it the ocean is
+# dropped entirely and lakes are filtered by bbox diagonal. The drawn set
+# therefore changes DISCONTINUOUSLY at that boundary.
 #
-# Measured on the published North America pack (water-na, 2026q2r6),
-# cap 1024, one nominal 160 NM render per row:
+# AER-1149 found the boundary compared against the WINDOW range (the
+# rotated-viewport half-diagonal, oversized 1.25x) instead -- a quantity
+# that runs 1.47x-2.43x the widget's nominal range_nm depending on aspect
+# ratio alone. That made the full/wide split a function of screen
+# geometry, not of the range the pilot selected. Measured on the
+# published North America pack (water-na, 2026q2r6), cap 1024, one
+# nominal 160 NM render per row, BEFORE the fix:
 #
 #   scene     widget     window NM   mode     vertices rasterized
 #   raleigh   650x1040       235.6   full                 102,034
@@ -679,12 +739,24 @@ def test_the_guard_skips_rather_than_crashes_on_an_empty_pack(tmp_path):
 #   key_west  650x1040       235.6   full                  75,313
 #   key_west  800x480        388.4   wide                   2,593
 #
-# Key West loses 29x of its water at the same nominal range, because
-# dropping the ocean drops essentially the whole scene. A budget written
-# as "at 160 NM" is therefore two different budgets wearing one number,
-# and which one you measured is decided by the widget's aspect ratio.
-# Raised back to the brief as a requirement question (AER-1135); pinned
-# here so the volume row at least states which of the two it is.
+# Key West lost 29x of its water at the same nominal range on the
+# landscape widget, because dropping the ocean drops essentially the
+# whole scene, while the portrait widget kept full detail throughout the
+# ladder. The fix: gate on the widget's nominal range_nm directly
+# (``TerrainLayer._draw_water_numpy``/``_draw_water_qt`` now take it as
+# an explicit parameter, separate from the window range still used to
+# size the pack query), and re-derive the threshold rather than reuse
+# 300 -- 300 was a window-range number and means nothing as a nominal
+# one. 160 NM is the range ladder's own shipped/default maximum
+# (``MovingMap.range_ladder``; ``_range_bounds`` hard-clamps pinch/wheel
+# zoom to it), so it is not a candidate value among several: it is the
+# only nominal range every shipped screen can actually reach. Measured
+# safe there on the same pack at every shipped aspect (worst case
+# Raleigh/800x480: 120,576 vertices, 20% under the 150k budget), and the
+# ocean-drop still earns its keep above it -- the same scene climbs past
+# budget by ~179 NM nominal on that aspect, and an uncapped nominal range
+# reproduces the pre-MP4/MP5 blow-up this constant exists to avoid (12.1M
+# vertices decoded, ~15 s query, at 450 NM).
 
 def test_the_wide_water_cliff_constant_still_matches_the_renderer():
     """``measure.WATER_FULL_OVERLAY_MAX_NM`` mirrors a private constant
@@ -700,82 +772,106 @@ def test_the_wide_water_cliff_constant_still_matches_the_renderer():
 
 
 def test_volume_row_is_measured_with_the_full_water_overlay():
-    """The volume row's scene must sit on the FULL-overlay side, and
-    this states by how much.
+    """The volume row's scene must sit on the FULL-overlay side.
 
     Section 5's 150k is a budget on MP4's decimation of a dense real
     scene. Measured in wide mode it would be a budget on the size filter
     instead -- a different mechanism, a much smaller number, and a pass
-    that means nothing. 650x1040 at 160 NM reads a 235.6 NM window, 21%
-    clear of the 300 NM threshold.
+    that means nothing. 160 NM is exactly the range ladder's own
+    shipped/default maximum (AER-1149), so this sits at the gate's
+    inclusive edge by construction rather than with margin to spare --
+    the margin that matters is in vertex count
+    (``test_water_vertices_at_160nm_within_budget``), not in NM.
 
-    This fails, rather than silently changing the number, if the scene
-    geometry or the oversize factor drifts across the boundary."""
+    This fails, rather than silently changing the number, if the
+    threshold or the 160 NM ladder top drift apart."""
     c = M.cliff_margin(160.0)
     assert c["wide"] is False, (
         f"the 160 NM volume row is being measured in WIDE water mode "
-        f"(window {c['effective_nm']} NM > {c['threshold_nm']} NM): the "
+        f"(nominal {c['nominal_nm']} NM > {c['threshold_nm']} NM): the "
         "ocean is dropped and lakes are size-filtered, so 150k is no "
         "longer a budget on MP4's decimation.")
     assert c["effective_nm"] == pytest.approx(235.6, abs=0.5)
-    assert c["fraction"] < -0.15
+    assert c["fraction"] == pytest.approx(0.0, abs=1e-6)
 
 
 def test_the_300nm_timing_row_is_measured_in_wide_mode():
     """The companion, and the reason the two timing rows are not
     comparable as "the same scene, further out".
 
-    A nominal 300 NM render at 650x1040 reads a 441.8 NM window, which
-    is 47% PAST the threshold: the ocean is gone and only lakes with a
-    bbox diagonal over 0.44 deg survive. Section 5 budgets both 160 and
-    300 NM at the same 0.6 s, and this is the note that they are timing
-    two different drawn sets. Pinned so that is a recorded fact rather
-    than something a later reader has to re-derive."""
+    A nominal 300 NM render is 87.5% past the 160 NM threshold (AER-1149:
+    compared on nominal range now, not the 441.8 NM window it happens to
+    read at 650x1040) -- the ocean is gone and only lakes with a bbox
+    diagonal over the wide-mode floor survive. Section 5 budgets both 160
+    and 300 NM at the same 0.6 s, and this is the note that they are
+    timing two different drawn sets. Pinned so that is a recorded fact
+    rather than something a later reader has to re-derive."""
     c = M.cliff_margin(300.0)
     assert c["wide"] is True
     assert c["effective_nm"] == pytest.approx(441.8, abs=0.5)
 
 
-def test_the_count_budget_geometry_is_below_the_cliff_but_only_just():
+def test_the_count_budget_geometry_is_full_overlay_at_the_ladder_top():
     """MP8a's landed count budgets (``test_map_gestures.py``) run at
-    300x300, and its pinch tops out at 160 NM. That lands at a 282.3 NM
-    window -- inside the full overlay, but with **5.9%** of headroom,
-    and the pinch would cross the boundary at a top range of 170 NM.
+    300x300, and its pinch tops out at 160 NM -- the range ladder's own
+    maximum. AER-1149 made the full/wide split geometry-independent, so
+    this holds at 300x300 for the same reason it holds at every other
+    shipped aspect: nothing about widget shape enters the decision any
+    more.
 
     Nothing in MP8a asserts a water COUNT that the mode change would
     move (its synthetic lakes are 1.0-1.4 deg across and survive the
-    wide-mode size floor either way), so this is not a live defect in
-    that file. It is a tripwire: if the pinch's top range, the ownship
-    anchor or the 1.25 oversize is edited, the MP8a water counters
-    change mode, and this says so by name instead of leaving a changed
-    number to be explained."""
+    wide-mode size floor either way), so this was never a live defect in
+    that file -- it is a tripwire against the threshold and the ladder's
+    top drifting apart."""
     c = M.cliff_margin(160.0, w=300, h=300)
     assert c["wide"] is False
-    assert c["effective_nm"] == pytest.approx(282.3, abs=0.5)
-    assert -0.10 < c["fraction"] < 0.0, (
-        f"MP8a's 300x300 geometry now sits {c['fraction']:+.1%} from the "
-        "wide-water cliff; its water counters may have changed mode.")
-    assert c["nominal_at_cliff_nm"] == pytest.approx(170.0, abs=1.0)
+    assert c["nominal_at_cliff_nm"] == pytest.approx(160.0, abs=0.5)
 
 
-def test_a_landscape_widget_crosses_the_cliff_at_the_same_nominal_range():
-    """The falsifier for the guard above: prove it can say True.
+def test_a_landscape_widget_no_longer_crosses_the_cliff_at_the_ladder_top():
+    """The regression AER-1149 exists to fix, pinned so it cannot come
+    back silently.
 
-    If ``wide_water_mode`` answered False everywhere it would be a
-    decoration on the volume row rather than a check. A 800x480 widget
-    -- an ordinary landscape map geometry -- reads a 388.4 NM window at
-    the same nominal 160 NM and is already wide.
-
-    It also states the finding in its assertable form: the nominal range
-    at which the crisp coastline disappears is 203.7 NM on the portrait
-    scene and 123.6 NM on this one. Same code, same pilot-selected
-    range, different picture."""
+    Before the fix, a 800x480 widget -- an ordinary landscape map
+    geometry -- read a 388.4 NM WINDOW at the same nominal 160 NM and
+    was already past the (window-range) 300 NM threshold: wide mode,
+    ocean dropped. Gated on the nominal range instead, it is full
+    overlay at 160 NM like every other shipped aspect -- the same
+    pilot-selected range now means the same thing on every screen."""
     c = M.cliff_margin(160.0, w=800, h=480)
-    assert c["wide"] is True
+    assert c["wide"] is False, (
+        "a landscape (800x480) widget is back in WIDE water mode at the "
+        "range ladder's own 160 NM maximum -- this is the AER-1149 "
+        "regression (the gate is reading a geometry-inflated window "
+        "range again instead of the widget's nominal range_nm).")
     assert c["effective_nm"] == pytest.approx(388.4, abs=0.5)
-    assert c["nominal_at_cliff_nm"] == pytest.approx(123.6, abs=1.0)
     assert (M.full_overlay_max_nominal_nm(800, 480)
-            < M.full_overlay_max_nominal_nm(650, 1040))
+            == M.full_overlay_max_nominal_nm(650, 1040)), (
+        "the full-overlay cliff is geometry-dependent again -- AER-1149's "
+        "whole point was that a pilot-selected range means the same "
+        "thing on every shipped screen layout.")
+
+
+def test_the_cliff_still_fires_above_the_ladder_on_every_shipped_aspect():
+    """The falsifier for the two guards above: prove ``wide_water_mode``
+    can still say True, identically, regardless of geometry.
+
+    If the gate answered False everywhere it would be a decoration on
+    the volume row rather than a check -- and the ocean-drop genuinely
+    still earns its keep above the ladder (see the module docstring
+    above): an uncapped full overlay reproduces the pre-MP4/MP5 cost
+    blow-up by a few hundred NM out. A nominal range past the threshold
+    must read wide on EVERY shipped aspect, not just the one that used
+    to cross first."""
+    for w, h in ((650, 1040), (800, 480), (300, 300)):
+        assert M.wide_water_mode(161.0, w, h) is True, (
+            f"{w}x{h} at 161 NM (1 NM past the ladder's 160 NM top) is "
+            "still full overlay -- the cliff no longer fires at all.")
+    assert (M.full_overlay_max_nominal_nm(650, 1040)
+            == M.full_overlay_max_nominal_nm(800, 480)
+            == M.full_overlay_max_nominal_nm(300, 300)
+            == 160.0)
 
 
 @pytest.fixture(scope="module")
