@@ -79,8 +79,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPolygonF
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -1390,7 +1388,29 @@ def _qt_render_sequential(polys, n, land):
     compositing onto the same image. *polys* is a list of polygons, each a
     list of rings (each ring an (k, 2) array); a polygon with >1 ring goes
     through a single ``QPainterPath`` with ``OddEvenFill`` (island holes),
-    matching the multi-ring branch in ``_draw_water_qt``."""
+    matching the multi-ring branch in ``_draw_water_qt``.
+
+    Imports PyQt6 lazily (AER-1165): this is the only place in the
+    module that needs it, and hoisting it to module scope turned a
+    missing PyQt6 into a collection error for the whole file -- 28
+    non-Qt guards lost instead of the 3 tests that actually call this
+    helper.
+
+    The import is converted to ``pytest.skip`` rather than left to
+    raise (AER-1156): an unavailable binding means the Qt raster path
+    was NOT MEASURED, and this suite's convention everywhere else is to
+    say so with a reason rather than to report a red test that a reader
+    cannot tell apart from a real budget violation. ``ImportError``
+    covers both a missing wheel and a wheel whose shared objects will
+    not load -- the likelier failure on a bench box. Nothing else is
+    caught, so a genuine fault inside the helper still fails."""
+    try:
+        from PyQt6.QtCore import Qt, QPointF
+        from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter,
+                                 QPainterPath, QPolygonF)
+    except ImportError as exc:
+        pytest.skip(f"PyQt6 not importable ({exc}): the Qt raster path is "
+                    f"not measured on this host")
     img = QImage(n, n, QImage.Format.Format_RGB32)
     img.fill(QColor(int(land[0]), int(land[1]), int(land[2])))
     p = QPainter(img)
