@@ -86,11 +86,19 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.grabGesture(Qt.GestureType.PinchGesture)
         self.font_family = font_family
         # Options (screenbuilder setattrs; defaults per the spec):
-        self.range_nm = 10.0
+        self._range_nm = 10.0
         self.range_ladder = "2,5,10,20,40,80,160"
         self.orientation = "track_up"          # or "north_up"
         self.touch_gestures = True             # pinch-zoom / two-finger pan+rotate
         self.gesture_timeout = 30.0            # s before a pan/rotate re-locks
+        # Pinch dead-band (#202/AER-1216): a zoom-only pinch must not also pan
+        # or rotate the view. Rotation/pan each engage only after the
+        # gesture's CUMULATIVE motion since it started crosses one of these
+        # thresholds; below both, the pinch is zoom-only. Proposed defaults,
+        # not measured -- judged on the glass per the bench process, same as
+        # MP10c's 20 NM.
+        self.pinch_rotate_threshold_deg = 15.0
+        self.pinch_pan_threshold_px = 20.0
         self.ownship_position = 50             # percent up from bottom
         self.symbol_color = "yellow"
         self.layer_range_rings = True
@@ -147,6 +155,23 @@ class MovingMap(LiveBindingMixin, QWidget):
         # scaled image instead; the timer firing repaints once, after the
         # gesture settles, so exactly one render lands.
         self._gesture_active = False
+
+        # --- pinch dead-band state (#202/AER-1216) ---------------------------
+        # True from a PinchGesture's Started state through Finished/Canceled;
+        # used both to gate the rotate/pan dead-band below and to suppress a
+        # synthesized mouse drag arriving from the same two-finger touch (a
+        # drag racing the pinch's own pan_by would double it -- unverified on
+        # real hardware, see #202). accum_* track cumulative gesture motion
+        # since the last reset (see _reset_pinch_deadband); *_engaged latches
+        # True for the rest of the gesture once its threshold is crossed, so
+        # a component that has engaged never re-arms mid-pinch.
+        self._pinch_active = False
+        self._pinch_rot_accum_deg = 0.0
+        self._pinch_rot_engaged = False
+        self._pinch_pan_accum_dx = 0.0
+        self._pinch_pan_accum_dy = 0.0
+        self._pinch_pan_engaged = False
+
         self._settle_timer = QTimer(self)
         self._settle_timer.setSingleShot(True)
         self._settle_timer.timeout.connect(self.update)
@@ -226,6 +251,35 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._gesture_frame_rate = max(10.0, min(60.0, float(fps)))
         if self._gesture_active:
             self._frame_timer.start(int(round(1000.0 / self._gesture_frame_rate)))
+
+    # --- range: one write path (#202 requirement 3) --------------------------
+    @property
+    def range_nm(self):
+        return self._range_nm
+
+    @range_nm.setter
+    def range_nm(self, nm):
+        """The single range-write path: zoom_by, range_up/range_down, the
+        pinch-release ladder snap, and the future zoom rail (#205) all set
+        range through this setter, which also pushes the ladder index to
+        range_key (MAPRANGE) when one is bound -- so a button/knob pressed
+        after any of those always steps from the range actually on screen
+        instead of a stale pre-gesture index."""
+        try:
+            self._range_nm = float(nm)
+        except (TypeError, ValueError):
+            return
+        b, item = self._live_bind_and_item("range_nm")
+        if item is None:
+            return
+        idx = self._current_index(b)
+        if idx is None:
+            return
+        try:
+            item.value = idx
+            item.output_value()
+        except Exception:                       # noqa: BLE001
+            pass
 
     def _set_gesture_active(self, active):
         """(De)activate the gesture phase and switch the frame clock
@@ -482,13 +536,88 @@ class MovingMap(LiveBindingMixin, QWidget):
         """(Re)arm the settle debounce off a QGesture's state (MP1). Fake
         gesture objects in tests that don't implement ``state()`` are
         treated as phase-less: they exercise the touch math without
-        engaging the gating."""
+        engaging the gating.
+
+        #202/AER-1216: also brackets ``_pinch_active`` (Started..Finished/
+        Canceled), resetting the rotate/pan dead-band on a fresh gesture and
+        snapping range to the nearest ladder rung when one ends."""
         GS = Qt.GestureState
         if state in (GS.GestureStarted, GS.GestureUpdated):
+            if not self._pinch_active:
+                self._reset_pinch_deadband()
+                self._drag_last = None   # a pinch kills any in-flight synthesized drag
+            self._pinch_active = True
             self._set_gesture_active(True)
         elif state in (GS.GestureFinished, GS.GestureCanceled):
+            self._pinch_active = False
             self._set_gesture_active(False)
             self._settle_timer.start(_SETTLE_MS)
+            self._snap_range_to_ladder()
+
+    def _reset_pinch_deadband(self):
+        """New pinch: clear the cumulative rotate/pan motion and un-latch
+        both components (#202)."""
+        self._pinch_rot_accum_deg = 0.0
+        self._pinch_rot_engaged = False
+        self._pinch_pan_accum_dx = 0.0
+        self._pinch_pan_accum_dy = 0.0
+        self._pinch_pan_engaged = False
+
+    def _pinch_rotate_threshold_deg(self):
+        try:
+            return max(0.0, float(self.pinch_rotate_threshold_deg))
+        except (TypeError, ValueError):
+            return 15.0
+
+    def _pinch_pan_threshold_px(self):
+        try:
+            return max(0.0, float(self.pinch_pan_threshold_px))
+        except (TypeError, ValueError):
+            return 20.0
+
+    def _pinch_rotate(self, deg):
+        """Dead-band gate on cumulative twist since this pinch started
+        (#202): below ``pinch_rotate_threshold_deg`` a pinch must not rotate
+        the view at all, so a couple of degrees of finger wobble during a
+        zoom-only pinch raises no CTR chip. Once the accumulated twist
+        crosses the threshold, the WHOLE accumulated rotation is applied in
+        one step (so no motion is lost at the crossing) and the component
+        latches engaged for the rest of the gesture."""
+        self._pinch_rot_accum_deg += deg
+        if self._pinch_rot_engaged:
+            self.rotate_by(deg)
+            return
+        if abs(self._pinch_rot_accum_deg) >= self._pinch_rotate_threshold_deg():
+            self._pinch_rot_engaged = True
+            self.rotate_by(self._pinch_rot_accum_deg)
+
+    def _pinch_pan(self, dx, dy):
+        """Same dead-band shape as :meth:`_pinch_rotate`, gated on the
+        centroid's cumulative displacement from where this pinch started
+        (#202) rather than any single event's delta -- a slow drift must
+        still engage once it adds up, even though no one event crosses the
+        threshold on its own."""
+        self._pinch_pan_accum_dx += dx
+        self._pinch_pan_accum_dy += dy
+        if self._pinch_pan_engaged:
+            self.pan_by(dx, dy)
+            return
+        dist = math.hypot(self._pinch_pan_accum_dx, self._pinch_pan_accum_dy)
+        if dist >= self._pinch_pan_threshold_px():
+            self._pinch_pan_engaged = True
+            self.pan_by(self._pinch_pan_accum_dx, self._pinch_pan_accum_dy)
+
+    def _snap_range_to_ladder(self):
+        """Pinch-release snap (#202 requirement 2): land on the
+        ``range_ladder`` rung nearest ``range_nm`` in LOG space, so the chip
+        and ring labels always read a round number and (via the ``range_nm``
+        setter) a bound ``range_key`` ends up holding that rung's real
+        index. Zoom itself stays continuous throughout the gesture; only the
+        landing value snaps."""
+        cur = max(1e-9, float(self.range_nm))
+        self.range_nm = min(
+            self._ladder(),
+            key=lambda v: abs(math.log(max(v, 1e-9)) - math.log(cur)))
 
     def event(self, e):
         if (e.type() == QEvent.Type.Gesture
@@ -504,18 +633,23 @@ class MovingMap(LiveBindingMixin, QWidget):
                     self.zoom_by(g.scaleFactor())
                 if flags & CF.CenterPointChanged:
                     d = g.centerPoint() - g.lastCenterPoint()
-                    self.pan_by(d.x(), d.y())
+                    self._pinch_pan(d.x(), d.y())
                 if flags & CF.RotationAngleChanged:
                     # Negate: a positive _rot_offset rotates the map content
                     # counter-clockwise (see MapTransform.to_screen), so the raw
                     # pinch delta must be inverted for the map to FOLLOW the
                     # fingers -- clockwise twist -> clockwise map (#114).
-                    self.rotate_by(-(g.rotationAngle() - g.lastRotationAngle()))
+                    self._pinch_rotate(-(g.rotationAngle() - g.lastRotationAngle()))
                 return True
         return super().event(e)
 
     # --- desktop parity: drag = pan, modifier-drag = rotate, tap = recenter
     def mousePressEvent(self, e):
+        if self._pinch_active:
+            # A synthesized mouse press from the same two fingers driving an
+            # active pinch must not also start a competing drag (#202,
+            # unverified on real touch hardware).
+            return
         if (getattr(self, "touch_gestures", True)
                 and e.button() == Qt.MouseButton.LeftButton):
             self._drag_last = e.position()
