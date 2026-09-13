@@ -1,0 +1,19 @@
+{
+  "scenes": {
+    "key_west": {
+      "bytes": null,
+      "lat": 24.55,
+      "lon": -81.78,
+      "sha256": null,
+      "url": null
+    },
+    "raleigh": {
+      "bytes": null,
+      "lat": 35.8,
+      "lon": -78.8,
+      "sha256": null,
+      "url": null
+    }
+  },
+  "status": "unpublished: both scenes need a `make_map_perf_fixture.py cut --scene <s> --publish` run against the real production terrain/water/highway/navaid packs plus R2 write credentials (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID). Neither is available in the pyEfis dev sandbox this manifest was authored in (AER-1133). fetch_fixture() raises PerfFixtureUnavailable rather than silently no-oping while this is null."
+}
