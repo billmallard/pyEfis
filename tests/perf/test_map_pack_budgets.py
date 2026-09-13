@@ -51,11 +51,18 @@ suite here would otherwise overstate itself:
     but it does mean the timing rows are a bench/workstation gate, not a
     CI gate. ``tools/map_perf_baseline.host_id`` and
     ``tests/perf/baselines/README.md`` explain how a host opts in.
-  * The **volume** row and the **pixel comparison** are
-    hardware-independent -- they are functions of the pack, the scene,
-    the range, the widget size and the decimation algorithm, nothing
-    else -- so they are hard assertions wherever a pack exists,
-    including CI once the manifest is published.
+  * The **volume** row is hardware-independent -- a function of the
+    pack, the scene, the range, the widget size and the decimation
+    algorithm, nothing else -- so it is a hard assertion wherever a pack
+    exists, including CI once the manifest is published. It is a
+    function of the widget GEOMETRY too, more sharply than the brief
+    suggests: see "the wide-water cliff" below.
+  * The **pixel comparison** is hardware-independent in the same sense,
+    but only half of it holds today. "The numpy fill invents no water"
+    gates; "the numpy fill covers everything the Qt path calls solid
+    water" does not, and is carried as a strict ``xfail`` with its
+    measurement rather than widened into a pass. Key West cannot carry
+    the comparison at all and says so.
   * Everything in the ``--- falsifiers ---`` sections runs everywhere,
     always.
 """
@@ -414,6 +421,210 @@ def test_footprint_guard_rejects_an_empty_pack():
 
 
 # ---------------------------------------------------------------------------
+# the wide-water cliff: which side of it the volume row is measured on
+# ---------------------------------------------------------------------------
+#
+# ``TerrainLayer`` draws the full water overlay -- ocean coastline plus
+# every lake down to a 3-pixel floor -- only while the WINDOW range is
+# at or below ``_WATER_FULL_MAX_NM`` (300 NM). Above it the ocean is
+# dropped entirely and lakes are filtered by bbox diagonal. The drawn
+# set therefore changes DISCONTINUOUSLY at that boundary, and the
+# boundary is crossed as a function of widget geometry, not of the range
+# the pilot selected.
+#
+# Measured on the published North America pack (water-na, 2026q2r6),
+# cap 1024, one nominal 160 NM render per row:
+#
+#   scene     widget     window NM   mode     vertices rasterized
+#   raleigh   650x1040       235.6   full                 102,034
+#   raleigh   800x480        388.4   wide                  54,019
+#   key_west  650x1040       235.6   full                  75,313
+#   key_west  800x480        388.4   wide                   2,593
+#
+# Key West loses 29x of its water at the same nominal range, because
+# dropping the ocean drops essentially the whole scene. A budget written
+# as "at 160 NM" is therefore two different budgets wearing one number,
+# and which one you measured is decided by the widget's aspect ratio.
+# Raised back to the brief as a requirement question (AER-1135); pinned
+# here so the volume row at least states which of the two it is.
+
+def test_the_wide_water_cliff_constant_still_matches_the_renderer():
+    """``measure.WATER_FULL_OVERLAY_MAX_NM`` mirrors a private constant
+    in the layer. If the layer moves and the mirror does not, every
+    cliff-side claim below becomes a statement about a threshold that no
+    longer exists -- so import the real one and require agreement."""
+    from pyefis.instruments.map.layers.terrain import TerrainLayer
+    assert (M.WATER_FULL_OVERLAY_MAX_NM
+            == TerrainLayer._WATER_FULL_MAX_NM), (
+        "the wide-water threshold moved in TerrainLayer "
+        f"({TerrainLayer._WATER_FULL_MAX_NM}) but measure.py still "
+        f"mirrors {M.WATER_FULL_OVERLAY_MAX_NM}.")
+
+
+def test_volume_row_is_measured_with_the_full_water_overlay():
+    """The volume row's scene must sit on the FULL-overlay side, and
+    this states by how much.
+
+    Section 5's 150k is a budget on MP4's decimation of a dense real
+    scene. Measured in wide mode it would be a budget on the size filter
+    instead -- a different mechanism, a much smaller number, and a pass
+    that means nothing. 650x1040 at 160 NM reads a 235.6 NM window, 21%
+    clear of the 300 NM threshold.
+
+    This fails, rather than silently changing the number, if the scene
+    geometry or the oversize factor drifts across the boundary."""
+    c = M.cliff_margin(160.0)
+    assert c["wide"] is False, (
+        f"the 160 NM volume row is being measured in WIDE water mode "
+        f"(window {c['effective_nm']} NM > {c['threshold_nm']} NM): the "
+        "ocean is dropped and lakes are size-filtered, so 150k is no "
+        "longer a budget on MP4's decimation.")
+    assert c["effective_nm"] == pytest.approx(235.6, abs=0.5)
+    assert c["fraction"] < -0.15
+
+
+def test_the_300nm_timing_row_is_measured_in_wide_mode():
+    """The companion, and the reason the two timing rows are not
+    comparable as "the same scene, further out".
+
+    A nominal 300 NM render at 650x1040 reads a 441.8 NM window, which
+    is 47% PAST the threshold: the ocean is gone and only lakes with a
+    bbox diagonal over 0.44 deg survive. Section 5 budgets both 160 and
+    300 NM at the same 0.6 s, and this is the note that they are timing
+    two different drawn sets. Pinned so that is a recorded fact rather
+    than something a later reader has to re-derive."""
+    c = M.cliff_margin(300.0)
+    assert c["wide"] is True
+    assert c["effective_nm"] == pytest.approx(441.8, abs=0.5)
+
+
+def test_the_count_budget_geometry_is_below_the_cliff_but_only_just():
+    """MP8a's landed count budgets (``test_map_gestures.py``) run at
+    300x300, and its pinch tops out at 160 NM. That lands at a 282.3 NM
+    window -- inside the full overlay, but with **5.9%** of headroom,
+    and the pinch would cross the boundary at a top range of 170 NM.
+
+    Nothing in MP8a asserts a water COUNT that the mode change would
+    move (its synthetic lakes are 1.0-1.4 deg across and survive the
+    wide-mode size floor either way), so this is not a live defect in
+    that file. It is a tripwire: if the pinch's top range, the ownship
+    anchor or the 1.25 oversize is edited, the MP8a water counters
+    change mode, and this says so by name instead of leaving a changed
+    number to be explained."""
+    c = M.cliff_margin(160.0, w=300, h=300)
+    assert c["wide"] is False
+    assert c["effective_nm"] == pytest.approx(282.3, abs=0.5)
+    assert -0.10 < c["fraction"] < 0.0, (
+        f"MP8a's 300x300 geometry now sits {c['fraction']:+.1%} from the "
+        "wide-water cliff; its water counters may have changed mode.")
+    assert c["nominal_at_cliff_nm"] == pytest.approx(170.0, abs=1.0)
+
+
+def test_a_landscape_widget_crosses_the_cliff_at_the_same_nominal_range():
+    """The falsifier for the guard above: prove it can say True.
+
+    If ``wide_water_mode`` answered False everywhere it would be a
+    decoration on the volume row rather than a check. A 800x480 widget
+    -- an ordinary landscape map geometry -- reads a 388.4 NM window at
+    the same nominal 160 NM and is already wide.
+
+    It also states the finding in its assertable form: the nominal range
+    at which the crisp coastline disappears is 203.7 NM on the portrait
+    scene and 123.6 NM on this one. Same code, same pilot-selected
+    range, different picture."""
+    c = M.cliff_margin(160.0, w=800, h=480)
+    assert c["wide"] is True
+    assert c["effective_nm"] == pytest.approx(388.4, abs=0.5)
+    assert c["nominal_at_cliff_nm"] == pytest.approx(123.6, abs=1.0)
+    assert (M.full_overlay_max_nominal_nm(800, 480)
+            < M.full_overlay_max_nominal_nm(650, 1040))
+
+
+@pytest.fixture(scope="module")
+def synthetic_water(tmp_path_factory):
+    """Three dense circular lakes around the Raleigh centre, so a render
+    has something to query for.
+
+    Nothing is asserted about the CONTENT -- this exists only so
+    ``polygons_in_range`` is called and its arguments can be observed.
+    The lakes are 0.7-1.0 deg across on purpose: big enough to survive
+    the wide-mode size floor at either geometry, so whether the call
+    returns anything never depends on the flag under test."""
+    from pyefis.instruments.ai.water_db import encode_vertices
+    lat, lon = M.SCENES["raleigh"]["lat"], M.SCENES["raleigh"]["lon"]
+    path = tmp_path_factory.mktemp("water_plumbing") / "water.sqlite"
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE water_polygons ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " min_lat REAL NOT NULL, max_lat REAL NOT NULL,"
+        " min_lon REAL NOT NULL, max_lon REAL NOT NULL,"
+        " kind TEXT NOT NULL, elev_ft REAL, vertices BLOB NOT NULL)")
+    for clat, clon, radius in ((lat, lon, 0.5), (lat + 0.6, lon + 0.6, 0.35),
+                               (lat - 0.6, lon - 0.6, 0.4)):
+        verts = [(clat + radius * math.cos(2 * math.pi * i / 2000),
+                  clon + radius * math.sin(2 * math.pi * i / 2000))
+                 for i in range(2000)]
+        lats = [v[0] for v in verts]
+        lons = [v[1] for v in verts]
+        con.execute(
+            "INSERT INTO water_polygons (min_lat, max_lat, min_lon, max_lon,"
+            " kind, elev_ft, vertices) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (min(lats), max(lats), min(lons), max(lons), "lake", 200.0,
+             encode_vertices(verts)))
+    con.commit()
+    con.close()
+    return str(path)
+
+
+def test_cliff_prediction_matches_the_renderer(bench, qapp, synthetic_tiles,
+                                               synthetic_water):
+    """The arithmetic above is a reimplementation of production sizing,
+    and a reimplementation is a claim. This runs a real render at each
+    geometry and requires ``wide_water_mode``'s prediction to match the
+    ``drop_ocean`` the layer actually passed the water DB.
+
+    Needs no pack: the flag is decided by geometry before a single
+    polygon is read, so a three-lake synthetic set is enough to observe
+    the call. This is the same lesson as
+    ``test_render_window_matches_the_water_query_box`` -- the anchor
+    fraction was wrong on the first pass there and no amount of
+    pure-arithmetic testing could see it."""
+    tiles, water = synthetic_tiles, synthetic_water
+    from pyefis.instruments.ai import water_db as wdb
+    for (w_px, h_px, nominal) in ((650, 1040, 160.0), (800, 480, 160.0),
+                                  (300, 300, 160.0), (650, 1040, 300.0)):
+        seen = []
+        orig = wdb.WaterDB.polygons_in_range
+
+        def spy(self, lat, lon, range_nm, min_bbox_diag_deg=0.0,
+                drop_ocean=False, _o=orig, _s=seen, **kw):
+            _s.append((range_nm, drop_ocean))
+            return _o(self, lat, lon, range_nm,
+                      min_bbox_diag_deg=min_bbox_diag_deg,
+                      drop_ocean=drop_ocean, **kw)
+
+        wdb.WaterDB.polygons_in_range = spy
+        try:
+            M.measure_water_volume(bench, qapp, "raleigh", tiles, water,
+                                   range_nm=nominal, w=w_px, h=h_px)
+        finally:
+            wdb.WaterDB.polygons_in_range = orig
+        if not seen:
+            pytest.skip(f"{w_px}x{h_px} @ {nominal} NM never queried water")
+        actual_range, actual_wide = seen[0]
+        assert actual_range == pytest.approx(
+            M.effective_range_nm(nominal, w_px, h_px), rel=0.01), (
+            f"{w_px}x{h_px} @ {nominal} NM: predicted window "
+            f"{M.effective_range_nm(nominal, w_px, h_px):.1f} NM, the "
+            f"renderer used {actual_range:.1f} NM.")
+        assert actual_wide is M.wide_water_mode(nominal, w_px, h_px), (
+            f"{w_px}x{h_px} @ {nominal} NM: predicted wide="
+            f"{M.wide_water_mode(nominal, w_px, h_px)}, the renderer "
+            f"passed drop_ocean={actual_wide}.")
+
+
+# ---------------------------------------------------------------------------
 # section 5: the timing rows
 # ---------------------------------------------------------------------------
 
@@ -743,42 +954,123 @@ def _window_rgb(bench, app, scene, tiles, water, raster, range_nm):
     return out, snap
 
 
+#: A base pixel must be this far (squared RGB distance) from the water
+#: colour before the blend above can be inverted at all -- see
+#: ``_coverage_measurable``. 400 is an RGB distance of 20, comfortably
+#: above hillshade dither and far below any real land colour.
+_COVERAGE_DEN_FLOOR = 400.0
+
+#: Below this measurable fraction of the window the comparison is not
+#: evidence and the row SKIPS with its numbers rather than passing. The
+#: value is not tuned to make a scene pass: Raleigh measures 0.57 here
+#: and Key West 0.03, so anything between them behaves identically.
+_COVERAGE_MIN_MEASURABLE_FRAC = 0.25
+
+
+def _coverage_measurable(base):
+    """Which pixels can carry a coverage measurement at all.
+
+    **The blind spot this exists to declare.** ``TerrainLayer`` paints
+    its own elevation-derived water -- void tiles and the ocean
+    backstop -- in exactly the overlay's RGB (``terrain.py:326`` writes
+    ``60, 110, 160``; ``:404`` writes the same triple for the pack's
+    polygons). Where the base render is already that colour, ``d`` is
+    zero, the blend below is not invertible, and NO rasterizer
+    difference is observable in the final image however large it is.
+
+    Measured today against the published pack (water-na, 2026q2r6) at
+    40 NM, offscreen:
+
+      * **Key West, real GLO-30 Keys tiles: 0.0% measurable** at this
+        floor (96.9% of the window is exactly the water RGB, and the
+        remaining 3.1% is within 20 RGB of it). Total recovered
+        coverage is 0.0 px: the comparison cannot distinguish the two
+        paths anywhere in the scene.
+      * **Raleigh: 57.2% measurable**, 11.0k px change under the numpy
+        path and 17.9k under the Qt path, so the row has something to
+        compare.
+
+    This is a property of the oracle, not a defect in either
+    rasterizer. Stating it as a mask -- and skipping on it -- is what
+    keeps "could not be measured" from being recorded as "the two paths
+    agree"."""
+    d = _WATER_RGB - base
+    return (d * d).sum(axis=2) > _COVERAGE_DEN_FLOOR
+
+
 def _water_coverage(painted, base):
     """Per-pixel water coverage in 0..1, recovered from the blend
-    ``base*(1-f) + WATER*f``.
+    ``base*(1-f) + WATER*f``, and zero wherever
+    ``_coverage_measurable`` says the blend cannot be inverted.
 
-    NOT a hard colour match, and that distinction is the finding here.
-    The legacy Qt rasterizer draws antialiased, so its boundary pixels
-    are partial blends; MP5's numpy scanline fill writes whole pixels.
-    A hard mask therefore scores the two as disagreeing along every
-    coastline: measured at Key West 40 NM, an exact-colour IoU reads
-    0.27 while the two paths cover the same total area to within 3.6%.
-    The disagreement was entirely the oracle's."""
+    NOT a hard colour match, and that distinction is the second finding
+    here. The legacy Qt rasterizer draws antialiased, so its boundary
+    pixels are partial blends; MP5's numpy scanline fill writes whole
+    pixels. A hard mask therefore scores the two as disagreeing along
+    every coastline -- see
+    ``test_coverage_metric_is_not_fooled_by_antialiasing``, which
+    reproduces the artifact synthetically rather than resting on a
+    scene number."""
     d = _WATER_RGB - base
     den = (d * d).sum(axis=2)
     num = ((painted - base) * d).sum(axis=2)
-    return np.clip(np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0),
-                   0.0, 1.0)
+    ok = den > _COVERAGE_DEN_FLOOR
+    return np.clip(np.where(ok, num / np.maximum(den, 1e-6), 0.0), 0.0, 1.0)
 
 
-def test_water_raster_paths_agree_on_coverage(bench, qapp):
-    """MP5's DoD pixel comparison: the numpy scanline fill must draw the
-    same water as the per-vertex Qt rasterizer it replaced.
+def _raster_ab(bench, qapp, scene):
+    """The three renders MP5's comparison needs -- no water, numpy
+    water, Qt water -- plus the recovered coverage fields.
 
-    Compared as total antialiasing-weighted coverage AREA, plus a soft
-    (coverage-weighted) IoU, rather than as a hard-mask IoU -- see
-    ``_water_coverage``. The counters are asserted equal alongside, so
-    "same area" cannot be reached by drawing different geometry that
-    happens to cover the same number of pixels."""
-    _root, tiles, water, _hw = _scene_pack("key_west")
-    base, _ = _window_rgb(bench, qapp, "key_west", tiles, "", "numpy", 40.0)
-    np_img, np_snap = _window_rgb(bench, qapp, "key_west", tiles, water,
+    Skips (never passes) when the scene cannot carry the measurement:
+    no pack, no published render, or a window the terrain backstop has
+    already painted the overlay's own colour."""
+    _root, tiles, water, _hw = _scene_pack(scene)
+    base, _ = _window_rgb(bench, qapp, scene, tiles, "", "numpy", 40.0)
+    np_img, np_snap = _window_rgb(bench, qapp, scene, tiles, water,
                                   "numpy", 40.0)
-    qt_img, qt_snap = _window_rgb(bench, qapp, "key_west", tiles, water,
+    qt_img, qt_snap = _window_rgb(bench, qapp, scene, tiles, water,
                                   "qt", 40.0)
     if base is None or np_img is None or qt_img is None:
-        pytest.skip("key_west 40 NM render never published")
+        pytest.skip(f"{scene} 40 NM render never published")
+    frac = float(_coverage_measurable(base).mean())
+    if frac < _COVERAGE_MIN_MEASURABLE_FRAC:
+        pytest.skip(
+            f"{scene} 40 NM: only {frac * 100:.1f}% of the window can carry "
+            "a coverage measurement -- the terrain layer's own water "
+            "(terrain.py:326) already paints the rest in the overlay's "
+            "exact RGB, so no difference between the two rasterizers is "
+            "observable there. Not a pass: the paths were not compared.")
+    fn = _water_coverage(np_img, base)
+    fq = _water_coverage(qt_img, base)
+    if fn.sum() <= 0 and fq.sum() <= 0:
+        pytest.skip(
+            f"neither path drew any water over the {frac * 100:.1f}% of "
+            f"the {scene} window that is measurable")
+    return {"scene": scene, "fn": fn, "fq": fq, "measurable_frac": frac,
+            "np_snap": np_snap, "qt_snap": qt_snap}
 
+
+@pytest.mark.parametrize("scene", ["raleigh", "key_west"])
+def test_water_raster_paths_draw_the_same_geometry(bench, qapp, scene):
+    """MP5's DoD pixel comparison, in the direction that holds and is
+    the one that matters: **the numpy fill invents no water.**
+
+    Measured at Raleigh 40 NM against the published pack (water-na,
+    2026q2r6): both paths decode the same 574 polygons and the same
+    29,285 post-decimation vertices, and over the 57% of the window that
+    is measurable the numpy fill lights **10 pixels** that the Qt
+    rasterizer calls solid land -- 1e-5 of it. Water painted where there
+    is none is the failure with a cockpit consequence; this is the
+    assertion that gates it, and it is hard.
+
+    The opposite direction does NOT hold and is recorded separately in
+    ``test_numpy_fill_covers_the_qt_rasterizers_solid_water``. It is
+    split out rather than folded in here so that this row keeps gating
+    on every host with a pack instead of being dragged red by an open
+    question."""
+    ab = _raster_ab(bench, qapp, scene)
+    np_snap, qt_snap = ab["np_snap"], ab["qt_snap"]
     assert np_snap["water"]["polygons_after"] == \
         qt_snap["water"]["polygons_after"]
     assert np_snap["water"]["vertices_after"] == \
@@ -786,16 +1078,70 @@ def test_water_raster_paths_agree_on_coverage(bench, qapp):
     assert np_snap["water"]["qpointf_count"] == 0
     assert qt_snap["water"]["qpointf_count"] > 0
 
-    fn = _water_coverage(np_img, base)
-    fq = _water_coverage(qt_img, base)
+    fn, fq = ab["fn"], ab["fq"]
+    solid_land = fq <= 0.1
+    spurious = int((solid_land & (fn > 0.5)).sum())
+    assert spurious <= 0.001 * max(1, int(solid_land.sum())), (
+        f"MP5's numpy fill paints water on {spurious} pixels the Qt "
+        f"rasterizer renders as solid land ({ab['scene']} 40 NM). Water "
+        "drawn where the pack has none is the direction with a cockpit "
+        "consequence.")
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "MP5's numpy fill is a strict SUBSET of the Qt rasterizer's water and "
+    "misses 11.5% of the pixels Qt renders as solid water. Measured, not "
+    "assumed -- see the docstring. Open question for the brief; strict so "
+    "this fails loudly the moment the numbers move in either direction."))
+@pytest.mark.parametrize("scene", ["raleigh"])
+def test_numpy_fill_covers_the_qt_rasterizers_solid_water(bench, qapp, scene):
+    """The half of MP5's DoD that does not hold today, recorded as a
+    measurement rather than absorbed into a tolerance.
+
+    Raleigh, 40 NM, published pack (water-na, 2026q2r6), 1024x1024
+    window, both paths decoding an identical 574 polygons / 29,285
+    vertices:
+
+      ===========================================  ==============
+      numpy-only water (px Qt calls solid land)            10 px
+      Qt-only water (px numpy leaves dry)               6,698 px
+      ...of which isolated single-pixel specks          1,059 px
+      Qt solid water (coverage >= 0.9)                  9,764 px
+      ...missed entirely by the numpy fill              1,124 px
+      total coverage area, numpy vs Qt            10,731 / 12,423
+      ===========================================  ==============
+
+    So the numpy water is a strict subset: it never disagrees about
+    WHERE water is, only about how much of the thin end of it survives.
+    Part of the gap is unavoidable -- a whole-pixel scanline fill cannot
+    reproduce an antialiased fringe, and the fringe here is 57% of the
+    solid-water area because the scene is hundreds of small lakes. But
+    **1,124 px of Qt-SOLID water going dry is not a fringe effect**, and
+    that is the part this records as open.
+
+    Why it is not fixed here and not tuned away: which of the two
+    pictures is correct is a requirement question about MP5's DoD -- the
+    numpy fill drops sub-pixel and hairline features that the Qt path
+    renders as faint blue, and a moving map may well prefer either.
+    Widening ``COVERAGE_AREA_TOLERANCE`` past 13.6% would make the row
+    green while deleting the only evidence that the two pictures differ,
+    which is the one thing this row exists to say.
+
+    Raleigh only: Key West cannot carry the measurement at all
+    (``_coverage_measurable``)."""
+    ab = _raster_ab(bench, qapp, scene)
+    fn, fq = ab["fn"], ab["fq"]
+    solid_water = fq >= 0.9
+    missed = int((solid_water & (fn < 0.5)).sum())
+    assert missed <= 0.01 * max(1, int(solid_water.sum())), (
+        f"MP5's numpy fill leaves {missed} of {int(solid_water.sum())} "
+        "Qt-solid water pixels dry")
     area_n, area_q = float(fn.sum()), float(fq.sum())
-    assert area_n > 0 and area_q > 0, "neither path drew any water"
     rel = abs(area_n - area_q) / max(area_n, area_q)
     assert rel <= COVERAGE_AREA_TOLERANCE, (
         f"MP5's numpy fill covers {area_n:.0f} px of water, the legacy Qt "
         f"rasterizer {area_q:.0f} px -- {rel * 100:.1f}% apart, over the "
-        f"{COVERAGE_AREA_TOLERANCE * 100:.0f}% tolerance. MP5 bought its "
-        "zero QPointF count by drawing something different.")
+        f"{COVERAGE_AREA_TOLERANCE * 100:.0f}% tolerance.")
 
 
 def test_coverage_metric_is_not_fooled_by_antialiasing():
@@ -808,9 +1154,17 @@ def test_coverage_metric_is_not_fooled_by_antialiasing():
     covered fringe, the way an antialiased rasterizer does. Their AREAS
     are equal by construction. A hard 0.5-threshold mask nonetheless
     scores them at IoU 0.44, because it keeps only the fringe's
-    fully-covered interior -- which is exactly the artifact that made an
-    exact-colour IoU read 0.27 on the real Key West scene while the two
-    rasterizers agreed on area to within 3.6%.
+    fully-covered interior -- exactly the artifact a hard mask produces
+    along every antialiased coastline in a real scene.
+
+    Synthetic on purpose, and deliberately no longer resting on a scene
+    number: an earlier revision of this docstring cited an exact-colour
+    IoU of 0.27 against a 3.6% area agreement at Key West, and that pair
+    does not reproduce against the published pack. Key West's window is
+    96.9% ocean-backstop blue before the pack is read, so neither
+    statistic is recoverable there at all (``_coverage_measurable``).
+    The trap is real; that measurement of it was not, so it is
+    demonstrated here by construction instead.
 
     If the IoU assertion ever fails, this test has stopped demonstrating
     the trap. If the area assertion fails, ``_water_coverage`` has
@@ -849,6 +1203,46 @@ def test_coverage_metric_is_not_fooled_by_antialiasing():
         "the coverage metric is not recovering the antialiased blend; "
         "test_water_raster_paths_agree_on_coverage is measuring "
         "antialiasing, not geometry")
+
+
+def test_coverage_is_blind_where_the_base_is_already_water():
+    """The falsifier for ``_coverage_measurable``, and the proof that
+    the skip above is a real guard rather than a comment.
+
+    A base that is already the overlay's exact RGB is what
+    ``TerrainLayer`` produces over ocean and void tiles. Paint water on
+    top of it and the image does not change, so the recovered coverage
+    is 0 -- **identical to the reading for "no water was drawn"**. If
+    those two cases were not separated, an ocean scene would report the
+    two rasterizers as agreeing perfectly while nothing had been
+    compared.
+
+    Half the frame is land and half is backstop-blue: the guard must
+    call exactly the land half measurable, and the recovered coverage
+    must find only the water drawn there."""
+    land = np.tile(np.array([80.0, 114.0, 71.0]), (8, 8, 1))
+    frame = np.concatenate([land, np.tile(_WATER_RGB, (8, 8, 1))], axis=1)
+
+    painted = frame.copy()
+    painted[:, :, :] = _WATER_RGB            # flood the WHOLE frame
+
+    meas = _coverage_measurable(frame)
+    assert meas[:, :8].all(), "land is not measurable"
+    assert not meas[:, 8:].any(), (
+        "pixels already painted the overlay's own colour are being "
+        "treated as measurable -- the blend there is not invertible")
+    assert meas.mean() == pytest.approx(0.5)
+
+    f = _water_coverage(painted, frame)
+    assert f[:, :8].sum() == pytest.approx(64.0)
+    assert f[:, 8:].sum() == 0.0, (
+        "coverage is being credited on pixels that could not change; "
+        "an ocean scene would read as a perfect agreement")
+
+    # And the degenerate case the Key West scene actually hits.
+    all_water = np.tile(_WATER_RGB, (8, 8, 1))
+    assert not _coverage_measurable(all_water).any()
+    assert _water_coverage(all_water.copy(), all_water).sum() == 0.0
 
 
 # ---------------------------------------------------------------------------
