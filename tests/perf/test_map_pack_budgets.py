@@ -68,6 +68,7 @@ suite here would otherwise overstate itself:
 """
 
 import importlib.util
+import json
 import math
 import os
 import sqlite3
@@ -99,6 +100,18 @@ fixture_tool = _load_tool("make_map_perf_fixture")
 
 #: Section 5: "water vertices rasterized at 160 NM <= 150k after MP4".
 WATER_VERTEX_BUDGET_160NM = 150_000
+
+#: The range that row is asserted at, owned by THIS suite because the
+#: brief owns it. Deliberately not
+#: ``make_map_perf_fixture.RANGE_LADDER_TOP_NM``, which is the cutter's
+#: input and happens to hold the same value today: a coverage check that
+#: takes both the cut AND the window it must contain from the same
+#: constant moves with it and asserts nothing. That is the failure
+#: AER-1156 is fixing, and it is easy to write again by accident -- the
+#: first draft of ``test_the_cutter_declares_a_footprint_that_covers_
+#: the_volume_row`` did exactly that and survived the cutter's ladder
+#: top being narrowed 160 -> 100 NM.
+VOLUME_ROW_RANGE_NM = 160.0
 
 #: MP5's DoD pixel comparison. NOT an IoU threshold -- see
 #: test_water_raster_paths_agree_on_coverage for why a hard-mask IoU is
@@ -214,29 +227,37 @@ def raleigh_volume(bench, qapp):
     """One 160 NM render of the Raleigh scene, the configuration section
     5's whole table is measured in ("Beelink, Raleigh scene, 650x1040,
     warm")."""
-    _root, tiles, water, _hw = _scene_pack("raleigh")
-    _require_footprint("raleigh", water, 160.0)
+    root, tiles, water, _hw = _scene_pack("raleigh")
+    _require_footprint("raleigh", water, 160.0, pack_root=root)
     out = M.measure_water_volume(bench, qapp, "raleigh", tiles, water)
     if out is None:
         pytest.skip("raleigh 160 NM render never published")
     return out
 
 
-def _require_footprint(scene, water_db, range_nm):
+def _require_footprint(scene, water_db, range_nm, pack_root=None):
     """Skip unless the pack is big enough for the question. See
-    ``measure.footprint_covers_window`` -- this is the guard that stops
-    a truncated pack reporting a comfortable pass."""
+    ``measure.pack_coverage`` -- this is the guard that stops a
+    truncated pack reporting a comfortable pass.
+
+    AER-1156: *pack_root* is what makes this read the pack's own
+    ``footprint.json`` rather than inferring the cut from the data
+    extent. Callers should always pass it (``_scene_pack``'s first
+    return value); it is optional only so the no-pack falsifiers below
+    can exercise the fallback path deliberately."""
     s = M.SCENES[scene]
-    cov = M.footprint_covers_window(
-        M.water_coverage_bbox(water_db), s["lat"], s["lon"], range_nm)
+    cov = M.pack_coverage(pack_root, water_db, s["lat"], s["lon"], range_nm)
     if not cov["covers"]:
+        area = cov["pack_area_vs_window"]
+        need = cov["need_span_deg"]
         pytest.skip(
             f"{scene} pack does not cover the {range_nm:.0f} NM render "
             f"window, so a volume budget measured against it is not "
-            f"evidence: {cov['reason']}. Covered area fraction "
-            f"{cov['pack_area_vs_window']}. Re-cut with a window at least "
-            f"{cov['need_span_deg'][0]:.1f} x {cov['need_span_deg'][1]:.1f} "
-            "deg (tools/make_map_perf_fixture.py --window-deg).")
+            f"evidence: {cov['reason']}."
+            + (f" Covered area fraction {area}." if area is not None else "")
+            + (f" Re-cut with a window at least {need[0]:.1f} x "
+               f"{need[1]:.1f} deg." if need is not None else "")
+            + " (tools/make_map_perf_fixture.py cut)")
 
 
 def test_water_vertices_at_160nm_within_budget(raleigh_volume):
@@ -276,8 +297,8 @@ def test_water_volume_budget_fails_without_mp4_decimation(bench, qapp):
     rasterizes every decoded vertex, which on the real Raleigh pack is
     3,362,433 -- 22x the budget. If this passes, the budget is not
     measuring MP4."""
-    _root, tiles, water, _hw = _scene_pack("raleigh")
-    _require_footprint("raleigh", water, 160.0)
+    root, tiles, water, _hw = _scene_pack("raleigh")
+    _require_footprint("raleigh", water, 160.0, pack_root=root)
     from pyefis.instruments.map.layers import terrain as terrain_mod
     orig = terrain_mod._decimate_to_pixel_grid
 
@@ -299,17 +320,13 @@ def test_water_volume_budget_fails_without_mp4_decimation(bench, qapp):
 
 # --- falsifiers for the footprint guard (no pack needed) ----------------
 
-def test_render_window_at_160nm_is_wider_than_a_2x2_degree_cut():
+def test_a_160nm_render_reads_far_more_than_160_nm_of_pack():
     """The arithmetic behind ``_require_footprint``, pinned.
 
-    ``make_map_perf_fixture.WINDOW_DEG`` is 2.0, widened to whole-degree
-    tile cells, so a Raleigh cut spans 3 deg x 3 deg = 9 square degrees.
-    A nominal 160 NM render at 650x1040 reads a window of **7.85 deg lat
-    x 9.68 deg lon** -- 76 square degrees, so the pack is about **12% of
-    the window by area**.
-
-    Two compounding reasons it is so much wider than "160 NM", both
-    easy to under-count:
+    A nominal 160 NM render at 650x1040 does not read a 160 NM circle.
+    It reads a window of **7.85 deg lat x 9.68 deg lon** at Raleigh --
+    76 square degrees -- for two compounding reasons, both easy to
+    under-count:
 
       * the widget's ``range_nm`` is measured anchor-to-top-edge, and
         the ownship anchor defaults to mid-screen, so the window's
@@ -320,24 +337,94 @@ def test_render_window_at_160nm_is_wider_than_a_2x2_degree_cut():
     Together a nominal 160 NM render queries the water pack over a
     235.6 NM box.
 
-    Consequence, measured on the real pack rather than argued: Raleigh
-    at 160 NM rasterizes 102,034 vertices against the full North America
-    pack and 14,259 against a 3x3 deg cut of that same pack -- 14% of
-    the truth, and a 10.5x margin under a 150k budget instead of 1.47x.
-    That budget would still catch MP4 being deleted outright, and would
-    not catch decimation becoming 7x less effective. Even
-    ``--window-deg 7`` (an 8x8 deg cut) still recovers only 90,707.
+    Why it matters, measured on the real pack rather than argued:
+    Raleigh at 160 NM rasterizes 102,034 vertices against the full North
+    America pack and 14,259 against a 3x3 deg cut of that same pack --
+    14% of the truth, and a 10.5x margin under a 150k budget instead of
+    1.47x. That budget would still catch MP4 being deleted outright, and
+    would not catch decimation becoming 7x less effective.
 
-    This test is here so that raising ``WINDOW_DEG`` to cover the window
-    (or deciding not to, and accepting a warn-only volume row) is a
-    deliberate edit against a stated number, not a silent default."""
+    AER-1156: this test used to close by comparing the window against a
+    literal ``9.0`` square degrees, described as what the cutter emits
+    -- ``WINDOW_DEG = 2.0`` snapped to 3x3 whole-degree cells. AER-1142
+    (#209) deleted ``WINDOW_DEG`` outright and derives each vector
+    layer's footprint per layer instead, so both the symbol and the
+    number named a thing that no longer exists. The test still passed,
+    because it was arithmetic over its own literals -- which is exactly
+    the drift its last paragraph claimed to be guarding against. The
+    anchoring assertion now lives in
+    ``test_the_cutter_declares_a_footprint_that_covers_the_volume_row``,
+    where it is asked of the tool rather than of a constant copied out
+    of it."""
     lat_span, lon_span = M.render_window_span_deg(160.0,
                                                   M.SCENES["raleigh"]["lat"])
     assert M.effective_range_nm(160.0) == pytest.approx(235.6, abs=0.5)
     assert lat_span == pytest.approx(7.85, abs=0.05)
     assert lon_span == pytest.approx(9.68, abs=0.05)
-    # 3x3 deg cut vs a 7.85 x 9.68 deg window
-    assert (9.0 / (lat_span * lon_span)) < 0.15
+    # The claim in the name: the window is far wider than the nominal
+    # range makes it sound. 160 NM is 2.67 deg of latitude; the window
+    # is 7.85, so the pack must reach ~2.9x further than "160 NM".
+    assert lat_span / (2.0 * 160.0 / 60.0) == pytest.approx(1.47, abs=0.02)
+
+
+def test_the_cutter_declares_a_footprint_that_covers_the_volume_row():
+    """The anchor: the cutter's own derived water footprint must contain
+    the window the volume row is asserted over.
+
+    This is the guard AER-1156 exists to install, and the one whose
+    absence let AER-1142 (#209) rework the cut geometry with nothing
+    noticing. It re-derives nothing -- it asks
+    ``make_map_perf_fixture`` what it would cut, using the tool's own
+    functions and its own published constants, and requires the answer
+    to contain the window ``measure.render_window_span_deg`` says a
+    160 NM render reads.
+
+    The two sides come from different owners on purpose, which is the
+    whole of why it can fail: the cut is derived with the CUTTER's
+    constants, the window it must contain is ``VOLUME_ROW_RANGE_NM``,
+    owned by this suite. So it goes red in both directions that matter,
+    on every CI run, with no pack:
+
+      * the cutter is narrowed, or its range/envelope inputs change, so
+        a published pack would no longer cover the volume row's window
+        (verified: ``RANGE_LADDER_TOP_NM`` 160 -> 100 fails this);
+      * the RENDER window grows -- a wider default widget, a different
+        ownship anchor, a bigger oversize factor -- past a cut that used
+        to contain it (verified: the ``_render`` oversize 1.25 -> 1.6
+        fails this).
+
+    Measured today at Raleigh: the cutter derives a 282.8 NM radius from
+    the widest of ``PERF_WIDGET_ENVELOPES`` at its 160 NM ladder top,
+    giving a 9.43 x 11.62 deg box against a 7.85 x 9.68 deg window."""
+    for scene in ("raleigh", "key_west"):
+        s = M.SCENES[scene]
+        lat, lon = s["lat"], s["lon"]
+
+        radius_nm, _env = fixture_tool._widest_half_diag_nm(
+            fixture_tool.RANGE_LADDER_TOP_NM)
+        d_lat, d_lon = fixture_tool._deg_radius(radius_nm, lat)
+        declared = fixture_tool._bbox_from_radius(lat, lon, d_lat, d_lon)
+
+        cov = M.footprint_covers_window(declared, lat, lon,
+                                        VOLUME_ROW_RANGE_NM,
+                                        source="declared")
+        assert cov["covers"], (
+            f"the cutter's derived {scene} water footprint no longer covers "
+            f"the window the volume row is asserted over. {cov['reason']}. "
+            "Either the cut narrowed or the render window grew; a pack cut "
+            "by this tool would make the volume row a measurement of a "
+            "truncated scene.")
+
+
+def test_the_manifest_name_still_matches_the_cutter():
+    """``measure.FOOTPRINT_MANIFEST_NAME`` is a duplicate of the
+    cutter's, for the same reason everything else in ``measure`` is a
+    duplicate. If the cutter renames the file and the mirror does not
+    follow, ``pack_coverage`` silently stops finding any declaration and
+    falls back to the data extent on every pack -- which still passes,
+    and quietly reinstates the failure mode AER-1156 removed."""
+    assert (M.FOOTPRINT_MANIFEST_NAME
+            == fixture_tool.FOOTPRINT_MANIFEST_NAME)
 
 
 def test_render_window_matches_the_water_query_box(bench, qapp):
@@ -391,19 +478,144 @@ def test_render_window_matches_the_water_query_box(bench, qapp):
 
 
 def test_footprint_guard_rejects_a_pack_smaller_than_the_window():
+    """Both boxes below are HYPOTHETICAL undersized cuts, not a claim
+    about what any tool emits.
+
+    AER-1156: the first used to be commented "what the cutter emits
+    today" -- ``WINDOW_DEG = 2.0`` snapped to 3x3 whole-degree cells --
+    and AER-1142 (#209) deleted ``WINDOW_DEG`` and widened the
+    derivation past both of them. The comparison is still worth pinning,
+    because it is the guard's own arithmetic; what was false was the
+    provenance claimed for the numbers. What the cutter actually emits
+    is asserted, against the tool, in
+    ``test_the_cutter_declares_a_footprint_that_covers_the_volume_row``."""
     lat, lon = M.SCENES["raleigh"]["lat"], M.SCENES["raleigh"]["lon"]
-    cut = (34.0, 37.0, -80.0, -77.0)        # what the cutter emits today
-    cov = M.footprint_covers_window(cut, lat, lon, 160.0)
+    cov = M.footprint_covers_window((34.0, 37.0, -80.0, -77.0), lat, lon,
+                                    160.0)
     assert cov["covers"] is False
     assert cov["pack_area_vs_window"] < 0.15
     assert "160 NM render" in cov["reason"]
 
-    # Even a 7 deg cut window (8x8 deg after whole-degree snapping) is
-    # short -- recorded so nobody widens WINDOW_DEG a little and assumes
-    # the row became evidence.
+    # An 8x8 deg cut is still short -- recorded so nobody widens a cut
+    # a little and assumes the row became evidence.
     wide = M.footprint_covers_window((32.0, 40.0, -83.0, -75.0),
                                      lat, lon, 160.0)
     assert wide["covers"] is False
+
+
+def test_the_data_extent_can_report_coverage_a_cut_does_not_have():
+    """Why ``pack_coverage`` decides on the declaration and not on
+    ``water_coverage_bbox``. Measured, not argued.
+
+    ``cut_water`` selects polygons by bbox OVERLAP and keeps each one
+    WHOLE -- correctly, since a renderer inside the window needs the
+    whole polygon. So MIN/MAX over what a cut pack contains reaches PAST
+    the box it was cut to, and it reaches past it in the direction that
+    reads as more coverage.
+
+    Both boxes below are MEASURED, on the published North America water
+    pack (water-na, 2026q2r6), by running ``cut_water``'s own overlap
+    predicate at Raleigh over a 7.60 x 11.00 deg cut -- 8,106 polygons,
+    0.127 deg short of the 160 NM window at both the top and the bottom
+    in latitude:
+
+      * the cut box does NOT contain the window -- the truth;
+      * the resulting data extent DOES -- what the old guard said.
+
+    A pack cut that way would have had its volume row treated as
+    evidence with the scene truncated top and bottom.
+
+    On the honest size of it: 0.127 deg is 7.6 NM, and this test does
+    not claim that much truncation moves the vertex count enough to
+    matter -- that would need a render, and it was not run. What it
+    pins is that the proxy answers "covered" for a cut that is not, and
+    that nothing bounds by how much. The over-report happens to stop at
+    ~0.13 deg here only because this pack's ocean polygons are clipped
+    to whole-degree tiles; the largest single polygon in it spans 5.46
+    deg of latitude and 7.99 of longitude, which is the scale the error
+    can reach on a pack built differently."""
+    lat, lon = M.SCENES["raleigh"]["lat"], M.SCENES["raleigh"]["lon"]
+    cut = (32.0000, 39.6000, -84.3000, -73.3000)
+    data_extent = (30.9995, 40.0005, -84.8616, -72.9994)
+
+    truth = M.footprint_covers_window(cut, lat, lon, 160.0,
+                                      source="declared")
+    proxy = M.footprint_covers_window(data_extent, lat, lon, 160.0,
+                                      source="data-extent")
+    assert truth["covers"] is False, (
+        "the measured undersized cut now reads as covering; the window "
+        "arithmetic moved and this recorded measurement no longer "
+        "demonstrates anything.")
+    assert proxy["covers"] is True, (
+        "the measured data extent no longer reads as covering; re-measure "
+        "before treating the data extent as a safe fallback.")
+
+
+def test_pack_coverage_prefers_the_declaration_over_the_data_extent(tmp_path):
+    """The precedence rule, end to end, on a pack built to make the two
+    sources disagree.
+
+    A ``footprint.json`` declaring an undersized cut must win over a
+    water table whose contents sprawl past it -- that is the false pass
+    above, refused. With no declaration the data extent is still used,
+    because a pre-AER-1142 pack guarded loosely beats one not guarded at
+    all, and ``source`` says which answered either way."""
+    lat, lon = M.SCENES["raleigh"]["lat"], M.SCENES["raleigh"]["lon"]
+    water = tmp_path / "water.sqlite"
+    con = sqlite3.connect(str(water))
+    try:
+        con.executescript(fixture_tool.WATER_SCHEMA)
+        # One edge polygon sprawling past the cut, exactly as the real
+        # pack's do -- the measured extent from the test above.
+        con.execute(
+            "INSERT INTO water_polygons (min_lat, max_lat, min_lon, max_lon, "
+            "kind, vertices) VALUES (?, ?, ?, ?, 'ocean', X'00')",
+            (30.9995, 40.0005, -84.8616, -72.9994))
+        con.commit()
+    finally:
+        con.close()
+
+    # No declaration: the data extent answers, and says covered.
+    fallback = M.pack_coverage(tmp_path, str(water), lat, lon, 160.0)
+    assert fallback["source"] == "data-extent"
+    assert fallback["covers"] is True
+    assert fallback["declared_bbox"] is None
+
+    # Same pack, now declaring the undersized cut it was really made
+    # from: the declaration wins and the row is refused.
+    (tmp_path / M.FOOTPRINT_MANIFEST_NAME).write_text(json.dumps({
+        "scene": "raleigh", "lat": lat, "lon": lon,
+        "layers": {"water": {"bbox": [32.0000, 39.6000,
+                                      -84.3000, -73.3000]}},
+    }))
+    decided = M.pack_coverage(tmp_path, str(water), lat, lon, 160.0)
+    assert decided["source"] == "declared"
+    assert decided["covers"] is False
+    assert decided["centre_matches"] is True
+    assert decided["data_extent_bbox"] is not None
+    assert "declared" in decided["reason"]
+
+
+def test_pack_coverage_refuses_a_manifest_from_another_scene(tmp_path):
+    """Truth-blindness, refused rather than measured around.
+
+    A ``footprint.json`` that declares a different centre is not a
+    declaration about this pack. Falling back to the data extent there
+    would be worse than useless: it would answer confidently for a pack
+    whose provenance is unknown. The centre check is exact (float noise
+    only) because the two ``SCENES`` tables carry the same literals --
+    any real difference is a different scene."""
+    lat, lon = M.SCENES["raleigh"]["lat"], M.SCENES["raleigh"]["lon"]
+    kw = M.SCENES["key_west"]
+    (tmp_path / M.FOOTPRINT_MANIFEST_NAME).write_text(json.dumps({
+        "scene": "key_west", "lat": kw["lat"], "lon": kw["lon"],
+        "layers": {"water": {"bbox": [kw["lat"] - 6, kw["lat"] + 6,
+                                      kw["lon"] - 6, kw["lon"] + 6]}},
+    }))
+    cov = M.pack_coverage(tmp_path, "", lat, lon, 160.0)
+    assert cov["covers"] is False
+    assert cov["centre_matches"] is False
+    assert "does not describe this pack" in cov["reason"]
 
 
 def test_footprint_guard_accepts_a_pack_that_covers_the_window():
@@ -418,6 +630,32 @@ def test_footprint_guard_rejects_an_empty_pack():
     cov = M.footprint_covers_window(None, 35.8, -78.8, 160.0)
     assert cov["covers"] is False
     assert "no water polygons" in cov["reason"]
+
+
+def test_the_guard_skips_rather_than_crashes_on_an_empty_pack(tmp_path):
+    """Found while fixing AER-1156, and separate from it.
+
+    ``footprint_covers_window``'s no-coverage branch returned a dict
+    without ``pack_area_vs_window`` or ``need_span_deg``, and
+    ``_require_footprint`` formats both into its skip message -- so an
+    empty water pack raised ``KeyError`` out of the guard instead of
+    skipping. The test above never saw it because it calls the
+    comparison directly and never goes through the guard. This one goes
+    through the guard, which is the only place the bug lived."""
+    water = tmp_path / "water.sqlite"
+    con = sqlite3.connect(str(water))
+    try:
+        con.executescript(fixture_tool.WATER_SCHEMA)
+        con.commit()
+    finally:
+        con.close()
+    # pytest.skip raises off BaseException, so catching Exception here
+    # would let the skip escape and mark THIS test skipped -- which is
+    # indistinguishable from it passing, the failure mode this file
+    # spends most of its length avoiding.
+    with pytest.raises(pytest.skip.Exception) as exc:
+        _require_footprint("raleigh", str(water), 160.0, pack_root=tmp_path)
+    assert "no water polygons" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
