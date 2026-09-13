@@ -12,6 +12,8 @@ import json
 import os
 import sqlite3
 import time
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from PyQt6.QtCore import QEvent, Qt
@@ -174,6 +176,126 @@ def test_build_via_factory(qtbot):
         None, {"type": "flight_plan", "options": {}}, font_family="DejaVu Sans Condensed")
     qtbot.addWidget(w)
     assert isinstance(w, flight_plan.FlightPlan)
+
+
+# ---------------------------------------------------------------------------
+# font sizing: the common font_percent option + the portrait-pane fit
+# (Beelink bench: text far too large in a ~657x1003 tab, font_percent ignored)
+# ---------------------------------------------------------------------------
+def _header_font_px(w):
+    """Pixel size the real _paint_header sets, captured off a mock painter."""
+    p = MagicMock()
+    w._paint_header(p, w.width(), int(w.height() * 0.16), True)
+    return p.setFont.call_args_list[0].args[0].pixelSize()
+
+
+def _footer_font_px(w):
+    p = MagicMock()
+    footer_h = int(w.height() * 0.10)
+    w._paint_footer(p, w.width(), w.height() - footer_h, footer_h, True)
+    return p.setFont.call_args_list[0].args[0].pixelSize()
+
+
+def test_builder_passes_font_percent_to_widget(fix, qtbot):
+    w = factory.create_instrument(
+        None, {"type": "flight_plan", "options": {}}, font_percent=0.8,
+        font_family="DejaVu Sans Condensed")
+    qtbot.addWidget(w)
+    assert w.font_percent == 0.8
+
+    unset = factory.create_instrument(
+        None, {"type": "flight_plan", "options": {}},
+        font_family="DejaVu Sans Condensed")
+    qtbot.addWidget(unset)
+    assert unset.font_percent is None
+
+
+def test_yaml_font_percent_reaches_the_widget_through_the_screen_path(fix, qtbot):
+    # The real Screen.setup_instruments sequence: apply_preferences ->
+    # create_instrument -> apply_options, with a whole-number percent as the
+    # configurator writes it.
+    from pyefis.screens import screenbuilder_options, screenbuilder_preferences
+    config = {"type": "flight_plan", "options": {"font_percent": 80}}
+    font_percent, font_family = screenbuilder_preferences.apply_preferences(config, {})
+    w = factory.create_instrument(None, config, font_percent=font_percent,
+                                  font_family=font_family)
+    qtbot.addWidget(w)
+    screen = SimpleNamespace(instruments={0: w}, encoder_list=[])
+    screenbuilder_options.apply_options(screen, 0, config)
+    w.resize(1000, 600)
+    assert w.font_percent == pytest.approx(0.8)
+    assert w._font_scale() == pytest.approx(0.8)
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, 1.0), (0.8, 0.8), (80, 0.8), ("80", 0.8), (100, 1.0), (150, 1.5),
+    (1.0, 1.0), (0, 1.0), (-5, 1.0), ("bogus", 1.0), (float("nan"), 1.0),
+])
+def test_font_percent_normalizes_percent_and_fraction(fix, qtbot, value, expected):
+    # Same rule as screenbuilder_preferences.normalize_font_percent (> 1 is a
+    # percent), plus unset/zero/negative/garbage = 100%. A landscape pane has
+    # fit 1.0, so the scale is the user factor alone.
+    w = flight_plan.FlightPlan(None, font_percent=value)
+    qtbot.addWidget(w)
+    w.resize(1000, 600)
+    assert w._font_scale() == pytest.approx(expected)
+
+
+def test_font_percent_half_halves_the_header_font(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    default = flight_plan.FlightPlan(None)
+    half = flight_plan.FlightPlan(None, font_percent=0.5)
+    for w in (default, half):
+        qtbot.addWidget(w)
+        w.resize(1000, 600)
+    assert _header_font_px(default) == int(int(600 * 0.16) * 0.32)  # 30, as before
+    assert _header_font_px(half) == pytest.approx(_header_font_px(default) / 2, abs=1)
+    # the legibility floors still hold at a tiny user scale
+    tiny = flight_plan.FlightPlan(None, font_percent=0.01)
+    qtbot.addWidget(tiny)
+    tiny.resize(1000, 600)
+    assert _header_font_px(tiny) == 10
+    assert _footer_font_px(tiny) == 9
+
+
+def test_portrait_pane_shrinks_fonts_landscape_is_unchanged(fix, qtbot):
+    _define_all_fp1_keys(fix)
+    beelink = flight_plan.FlightPlan(None)   # Beelink Flight Plan tab
+    landscape = flight_plan.FlightPlan(None)
+    for w, size in ((beelink, (657, 1003)), (landscape, (1000, 600))):
+        qtbot.addWidget(w)
+        w.resize(*size)
+    assert landscape._font_scale() == 1.0
+    assert beelink._font_scale() < landscape._font_scale()
+    assert beelink._font_scale() == pytest.approx((657 / 1003) / flight_plan._FONT_FIT_ASPECT)
+    # landscape sizes are exactly the pre-fix formulas
+    assert _header_font_px(landscape) == max(10, int(int(600 * 0.16) * 0.32))
+    assert _footer_font_px(landscape) == max(9, int(int(600 * 0.10) * 0.34))
+    # the portrait pane's header/footer text is scaled down from those formulas
+    assert _header_font_px(beelink) < max(10, int(int(1003 * 0.16) * 0.32))
+    assert _footer_font_px(beelink) < max(9, int(int(1003 * 0.10) * 0.34))
+
+
+def test_font_scale_guards_a_zero_height_widget(fix, qtbot):
+    w = flight_plan.FlightPlan(None, font_percent=0.5)
+    qtbot.addWidget(w)
+    w.resize(0, 0)
+    assert w._font_scale() == pytest.approx(0.5)
+
+
+def test_font_scaling_never_moves_tap_targets(fix, qtbot):
+    # Only fonts shrink -- layout and hit-test rects are identical.
+    _define_all_fp1_keys(fix)
+    rects = []
+    for fp in (None, 0.5):
+        w = flight_plan.FlightPlan(None, font_percent=fp)
+        qtbot.addWidget(w)
+        w.resize(657, 1003)
+        w._plan = _plan(4)
+        w._commit()
+        w.grab()
+        rects.append([t[:4] for t in w._tap_targets])
+    assert rects[0] and rects[0] == rects[1]
 
 
 # ---------------------------------------------------------------------------

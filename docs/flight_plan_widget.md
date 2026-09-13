@@ -186,6 +186,18 @@ screen, the `checklist` broadcast precedent).
 | `future_color` | `#ffffff` | upcoming leg row colour |
 | `past_color` | `#808080` | already-flown leg row colour |
 
+**Text size.** The common `font_percent` option (schema `common_options`, not
+redeclared as a Prop — [instrument_spec.md](instrument_spec.md)) is honoured,
+but for this widget it scales the built-in text sizes (`0.8` or `80` = 80%,
+unset = 100%) rather than being a fraction of the widget's height: every font
+here is already sized from its own header/row/footer/box. Independently, in a
+pane taller than it is wide every font is also scaled by width/height
+(`_FONT_FIT_ASPECT = 1.0`), because the text rects are width fractions and Qt
+does not clip overflowing text — a ~657x1003 tab otherwise overlaps its
+header and footer labels. Square and landscape panes are unaffected. Only
+fonts scale; layout and tap targets never do. Evidence:
+[images/fp_font_scale](images/fp_font_scale/README.md).
+
 ### Stock screen
 
 `config/screens/flightplan.yaml` (`SCREEN_FLIGHTPLAN`): `moving_map` on the

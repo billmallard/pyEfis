@@ -219,7 +219,12 @@ def build_checklist(screen, config, font_percent=None, font_family=None, replace
 
 
 def build_flight_plan(screen, config, font_percent=None, font_family=None, replace=None):
-    return flight_plan.FlightPlan(screen, font_family=font_family)
+    # font_percent is the common option (already normalised to a fraction by
+    # screenbuilder_preferences). The widget reads it as a multiplier on its
+    # built-in text sizes, not a fraction of its height -- see
+    # FlightPlan._font_scale.
+    return flight_plan.FlightPlan(screen, font_family=font_family,
+                                  font_percent=font_percent)
 
 
 # Every instrument type is migrated -- these legacy lookup tables are populated

@@ -37,6 +37,7 @@ surface is open is shadowed by the field -- see docs/flight_plan_widget.md.
 """
 
 import logging
+import math
 import os
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
@@ -80,15 +81,32 @@ _ROW_MENU_ITEMS = (
 )
 _ROLE_MENU_ORDER = ("none", "iaf", "faf", "map", "mahp")
 
+# Every text size below is a fraction of some *height* (header/footer/row/box),
+# while the rects the text sits in are fractions of the *width*. In a pane
+# taller than it is wide (the Beelink's ~657x1003 Flight Plan tab) the text
+# outgrows its rects and, since Qt does not clip drawText, labels run into
+# each other. So fonts also shrink by (w/h)/_FONT_FIT_ASPECT, capped at 1.0:
+# square and landscape panes (w/h >= 1.0) keep exactly the original sizes.
+_FONT_FIT_ASPECT = 1.0
+
 
 class FlightPlan(QWidget):
     """The `flight_plan` instrument widget."""
 
-    def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
+    def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
+                 font_percent=None):
         super().__init__(parent)
         self.parent = parent
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        # The common `font_percent` option (editor/schema.py common_options,
+        # not an InstrumentSpec Prop). For this widget it is a multiplier on
+        # the built-in text sizing (1.0 = 100%, 0.8 = 80%), NOT the usual
+        # "fraction of widget height": the widget draws many text elements,
+        # each already sized from its own region. None = 100%. See
+        # _font_scale(); apply_options also setattr's it after construction.
+        self.font_percent = font_percent
 
         # apply="attr" InstrumentSpec Props -- keep in lockstep with the
         # registry record (screenbuilder_factory.py) and its defaults.
@@ -1156,6 +1174,36 @@ class FlightPlan(QWidget):
         super().mousePressEvent(event)
 
     # -- painting -------------------------------------------------------------
+    def _font_scale(self):
+        """Multiplier applied to every font size: user x fit.
+
+        user -- ``font_percent`` normalised like
+        ``screenbuilder_preferences.normalize_font_percent`` (a value > 1 is a
+        whole-number percent, so 80 and 0.8 both mean 80%); unset, zero,
+        negative or non-numeric means 1.0. Inlined rather than imported to keep
+        pyefis.screens out of this module's imports (import cycle).
+        fit -- ``min(1, (w/h) / _FONT_FIT_ASPECT)``: shrinks text in a pane
+        taller than it is wide so it stays inside its width-fraction rects;
+        exactly 1.0 for square/landscape panes. Only fonts scale -- geometry
+        and tap targets never do."""
+        try:
+            user = float(self.font_percent) if self.font_percent is not None else 1.0
+        except (TypeError, ValueError):
+            user = 1.0
+        if not math.isfinite(user) or user <= 0:
+            user = 1.0
+        elif user > 1.0:
+            user /= 100.0
+        w, h = self.width(), self.height()
+        fit = 1.0 if h <= 0 else min(1.0, (w / h) / _FONT_FIT_ASPECT)
+        return user * fit
+
+    def _px(self, value, minimum):
+        """Pixel size for a font nominally *value* px, scaled by
+        ``_font_scale()`` and floored at *minimum* (the original per-site
+        legibility floors are kept as they were)."""
+        return max(minimum, int(value * self._font_scale()))
+
     def paintEvent(self, event):
         try:
             self._paint()
@@ -1215,7 +1263,7 @@ class FlightPlan(QWidget):
 
     def _paint_header(self, p, w, header_h, interactive):
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(header_h * 0.32)))
+        f.setPixelSize(self._px(int(header_h * 0.32), 10))
         p.setFont(f)
 
         name = self._plan.name or self._plan.default_name() or "NO FLT PLAN"
@@ -1294,7 +1342,7 @@ class FlightPlan(QWidget):
         if n == 0:
             p.setPen(QPen(QColor("#808080")))
             f = QFont(self.font_family)
-            f.setPixelSize(max(10, min(int((bottom - top) * 0.08), int(max_row_h * 0.5))))
+            f.setPixelSize(self._px(min(int((bottom - top) * 0.08), int(max_row_h * 0.5)), 10))
             p.setFont(f)
             p.drawText(QRectF(0, top, w, bottom - top),
                        Qt.AlignmentFlag.AlignCenter, "NO WAYPOINTS")
@@ -1310,7 +1358,7 @@ class FlightPlan(QWidget):
         # is what sizes rows down to fit, not the list area's leftover space.
         row_h = max(14, min((bottom - top) / n, max_row_h))
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(row_h * 0.5)))
+        f.setPixelSize(self._px(int(row_h * 0.5), 9))
         p.setFont(f)
 
         y = top
@@ -1348,7 +1396,7 @@ class FlightPlan(QWidget):
                      self._footer_menu)
         seg = w / len(labels)
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(footer_h * 0.34)))
+        f.setPixelSize(self._px(int(footer_h * 0.34), 9))
         p.setFont(f)
         p.setPen(QPen(QColor("#ffffff")))
         for i, label in enumerate(labels):
@@ -1368,7 +1416,7 @@ class FlightPlan(QWidget):
         box_top = h * 0.12
         item_h = (h * 0.76) / n
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(item_h * 0.4)))
+        f.setPixelSize(self._px(int(item_h * 0.4), 10))
         p.setFont(f)
         p.setPen(QPen(QColor("#ffffff")))
         p.setBrush(QBrush(QColor("#202020")))
@@ -1404,7 +1452,7 @@ class FlightPlan(QWidget):
         p.setPen(QPen(QColor("#ffffff")))
         p.drawRect(QRectF(box_x, box_y, box_w, box_h))
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(box_h * 0.16)))
+        f.setPixelSize(self._px(int(box_h * 0.16), 10))
         p.setFont(f)
         p.drawText(QRectF(box_x, box_y, box_w, box_h * 0.5),
                    Qt.AlignmentFlag.AlignCenter, text)
@@ -1465,7 +1513,7 @@ class FlightPlan(QWidget):
             lines.append(comment)
 
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(box_h * 0.08)))
+        f.setPixelSize(self._px(int(box_h * 0.08), 9))
         p.setFont(f)
         ly = box_y + box_h * 0.04
         line_h = (box_h * 0.72) / max(len(lines), 1)
@@ -1496,7 +1544,7 @@ class FlightPlan(QWidget):
 
     def _paint_toast(self, p, w, h, text):
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(h * 0.05)))
+        f.setPixelSize(self._px(int(h * 0.05), 10))
         p.setFont(f)
         p.setPen(QPen(QColor("#ffff00")))
         p.drawText(QRectF(0, h * 0.02, w, h * 0.06), Qt.AlignmentFlag.AlignCenter, text)
@@ -1551,7 +1599,7 @@ class FlightPlan(QWidget):
 
     def _paint_dto_header(self, p, w, header_h):
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(header_h * 0.4)))
+        f.setPixelSize(self._px(int(header_h * 0.4), 10))
         p.setFont(f)
         p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(0, 0, w, header_h), Qt.AlignmentFlag.AlignCenter, "DIRECT TO")
@@ -1563,7 +1611,7 @@ class FlightPlan(QWidget):
     def _paint_dto_tabs(self, p, w, top, tabs_h):
         seg = w / len(DTO_TABS)
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(tabs_h * 0.5)))
+        f.setPixelSize(self._px(int(tabs_h * 0.5), 9))
         p.setFont(f)
         for i, tab in enumerate(DTO_TABS):
             x = i * seg
@@ -1587,13 +1635,13 @@ class FlightPlan(QWidget):
         rows = self._plan.waypoints
         f = QFont(self.font_family)
         if not rows:
-            f.setPixelSize(max(10, int(h * 0.06)))
+            f.setPixelSize(self._px(int(h * 0.06), 10))
             p.setFont(f)
             p.setPen(QPen(QColor("#808080")))
             p.drawText(QRectF(0, top, w, h), Qt.AlignmentFlag.AlignCenter, "NO WAYPOINTS")
             return
         row_h = max(h / len(rows), 18)
-        f.setPixelSize(max(9, int(row_h * 0.5)))
+        f.setPixelSize(self._px(int(row_h * 0.5), 9))
         p.setFont(f)
         y = top
         for i, wp in enumerate(rows):
@@ -1617,13 +1665,13 @@ class FlightPlan(QWidget):
         results = idx.nearest(ref_lat, ref_lon, types=frozenset({"airport"}))
         f = QFont(self.font_family)
         if not results:
-            f.setPixelSize(max(10, int(h * 0.06)))
+            f.setPixelSize(self._px(int(h * 0.06), 10))
             p.setFont(f)
             p.setPen(QPen(QColor("#808080")))
             p.drawText(QRectF(0, top, w, h), Qt.AlignmentFlag.AlignCenter, "NO AIRPORTS")
             return
         row_h = max(h / len(results), 18)
-        f.setPixelSize(max(9, int(row_h * 0.42)))
+        f.setPixelSize(self._px(int(row_h * 0.42), 9))
         p.setFont(f)
         y = top
         for wp, dist, brg, rwy in results:
@@ -1650,7 +1698,7 @@ class FlightPlan(QWidget):
         label = "REMOVE" if state == 2 else "ACTIVATE"
         color = "#ff8080" if state == 2 else "#00ff00"
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(footer_h * 0.4)))
+        f.setPixelSize(self._px(int(footer_h * 0.4), 10))
         p.setFont(f)
         p.setPen(QPen(QColor(color)))
         rect = (0, top, w, footer_h)
@@ -1677,7 +1725,7 @@ class FlightPlan(QWidget):
 
     def _paint_catalog_header(self, p, w, header_h):
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(header_h * 0.4)))
+        f.setPixelSize(self._px(int(header_h * 0.4), 10))
         p.setFont(f)
         p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(0, 0, w, header_h), Qt.AlignmentFlag.AlignCenter, "CATALOG")
@@ -1702,7 +1750,7 @@ class FlightPlan(QWidget):
         entries = self._catalog_entries()
         f = QFont(self.font_family)
         if not entries:
-            f.setPixelSize(max(10, int((bottom - top) * 0.08)))
+            f.setPixelSize(self._px(int((bottom - top) * 0.08), 10))
             p.setFont(f)
             p.setPen(QPen(QColor("#808080")))
             p.drawText(QRectF(0, top, w, bottom - top),
@@ -1710,7 +1758,7 @@ class FlightPlan(QWidget):
             return
         ref_lat, ref_lon = self._aircraft_position()
         row_h = max(18, min((bottom - top) / len(entries), (bottom - top) * 0.22))
-        f.setPixelSize(max(9, int(row_h * 0.4)))
+        f.setPixelSize(self._px(int(row_h * 0.4), 9))
         p.setFont(f)
         y = top
         for entry in entries:
@@ -1744,7 +1792,7 @@ class FlightPlan(QWidget):
         callbacks = (self._catalog_new, self._catalog_delete_all_request)
         seg = w / len(labels)
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(footer_h * 0.34)))
+        f.setPixelSize(self._px(int(footer_h * 0.34), 9))
         p.setFont(f)
         p.setPen(QPen(QColor("#ffffff")))
         for i, label in enumerate(labels):
@@ -1780,7 +1828,7 @@ class FlightPlan(QWidget):
         p.drawRect(QRectF(box_x, box_y, box_w, box_h))
 
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(box_h * 0.06)))
+        f.setPixelSize(self._px(int(box_h * 0.06), 10))
         p.setFont(f)
         p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(box_x, box_y + 2, box_w, box_h * 0.1),
@@ -1801,7 +1849,7 @@ class FlightPlan(QWidget):
         n_rows = len(rows) + 1
         row_h = kp_h / n_rows
         fk = QFont(self.font_family)
-        fk.setPixelSize(max(10, int(row_h * 0.4)))
+        fk.setPixelSize(self._px(int(row_h * 0.4), 10))
         p.setFont(fk)
         y = kp_top
         for row in rows:
@@ -1829,7 +1877,7 @@ class FlightPlan(QWidget):
         p.setPen(QPen(QColor("#444444")))
         p.drawLine(0, int(top + field_h), w, int(top + field_h))
         f = QFont(self.font_family)
-        f.setPixelSize(max(12, int(field_h * 0.5)))
+        f.setPixelSize(self._px(int(field_h * 0.5), 12))
         p.setFont(f)
         typed = self._entry_field
         suffix = self._entry_suffix()
@@ -1855,7 +1903,7 @@ class FlightPlan(QWidget):
     def _paint_suggestion_strip(self, p, w, top, strip_h):
         cands = self._entry_candidates()
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(strip_h * 0.45)))
+        f.setPixelSize(self._px(int(strip_h * 0.45), 9))
         p.setFont(f)
         seg = w / 5.0
         for i in range(5):
@@ -1871,7 +1919,7 @@ class FlightPlan(QWidget):
     def _paint_entry_tabs(self, p, w, top, tabs_h):
         seg = w / len(ENTRY_TABS)
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(tabs_h * 0.5)))
+        f.setPixelSize(self._px(int(tabs_h * 0.5), 9))
         p.setFont(f)
         for i, tab in enumerate(ENTRY_TABS):
             x = i * seg
@@ -1882,7 +1930,7 @@ class FlightPlan(QWidget):
 
     def _paint_entry_list(self, p, w, top, list_h):
         f = QFont(self.font_family)
-        f.setPixelSize(max(9, int(max(list_h, 1) * 0.08)))
+        f.setPixelSize(self._px(int(max(list_h, 1) * 0.08), 9))
         p.setFont(f)
 
         if self._entry_tab == "User":
@@ -1924,7 +1972,7 @@ class FlightPlan(QWidget):
         n_rows = len(KEYPAD_ROWS) + 1
         row_h = keypad_h / n_rows
         f = QFont(self.font_family)
-        f.setPixelSize(max(10, int(row_h * 0.5)))
+        f.setPixelSize(self._px(int(row_h * 0.5), 10))
         p.setFont(f)
         y = top
         for row in KEYPAD_ROWS:
