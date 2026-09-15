@@ -1,19 +1,22 @@
-"""#202/AER-1216: a zoom-only pinch must not also pan/rotate the map, range
-lands on a range_ladder rung on release, and range_key (when bound) always
-reflects the range actually on screen afterward.
+"""#202/AER-1216: a zoom-only pinch must not also pan/rotate the map, zoom
+must feel continuous throughout AND across release (Bill, 2026-09-15 --
+supersedes the original release-snap requirement), and range_key (when
+bound) always reflects the range actually on screen without clobbering a
+live pinch's continuity.
 
 Every test here drives the gesture through ``event()`` (a real
 ``QPinchGesture`` reports RotationAngleChanged/CenterPointChanged/
 ScaleFactorChanged deltas the same way these fakes do) -- calling
 ``zoom_by``/``rotate_by``/``pan_by`` directly, as the MP7 bench harness does,
-cannot observe any of this: the defect is entirely in how ``event()`` applies
-those three components with no dead-band."""
+cannot observe any of this: the defect is entirely in how ``event()``/the
+range_key write-back apply those components."""
 import pytest
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtWidgets import QPinchGesture
 
 import pyefis.hmi.functions as functions
 from pyefis.instruments import map as moving_map
+from pyefis.instruments.map.layers import format_range_nm
 
 _LADDER = [2.0, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0]
 
@@ -154,14 +157,16 @@ def test_pinch_pan_engages_after_centroid_threshold_and_catches_up(fix, qtbot):
     assert (w._pan_e, w._pan_n) == pytest.approx((ref._pan_e, ref._pan_n))
 
 
-# --- snap-on-release + the one range-write path ----------------------------
+# --- continuous zoom, release does not snap, one range-write path ----------
 
-def test_pinch_release_snaps_to_ladder_and_updates_range_key(fix, qtbot):
-    """Requirements 2+3: on Finished, range_nm lands on the ladder rung
-    nearest in log space, and range_key (when bound) is updated to that
-    rung's real index -- so a real 'RNG+' button press (change value wrap)
-    afterward steps from the range the pinch actually landed on, not a
-    stale pre-pinch index."""
+def test_pinch_release_does_not_snap_range_stays_where_fingers_left_it(fix, qtbot):
+    """Bill's 2026-09-15 verdict on #220 (bench feel: 'practically unusable
+    ... very unpredictable'): the release-to-ladder snap is withdrawn.
+    range_nm must land exactly where the pinch left it, not jump to a rung
+    -- with the default 4-5x-spaced ladder a snap sprang most zooms back to
+    the start and jumped the rest 5x. A real 'RNG+' press afterward must
+    still step from the range actually on screen (the one-range-write-path
+    requirement, #202 requirement 3), not a stale pre-pinch index."""
     fix.db.define_item("MAPRANGE", "MAPRANGE", "int", 0, 7, "", 50000, "")
     fix.db.set_value("MAPRANGE", 0)
     item = fix.db.get_item("MAPRANGE")
@@ -176,20 +181,66 @@ def test_pinch_release_snaps_to_ladder_and_updates_range_key(fix, qtbot):
     w.range_nm = 10.0
 
     _send(w, state=GS.GestureStarted, scale=1.0)
-    _send(w, state=GS.GestureUpdated, scale=10.0 / 16.0)   # zoom OUT to ~16 NM
+    _send(w, state=GS.GestureUpdated, scale=10.0 / 16.0)   # zoom OUT to 16 NM
     _send(w, state=GS.GestureFinished)
 
-    assert w.range_nm == 20.0                    # nearest rung to 16 NM in log space
-    assert item.value == _LADDER.index(20.0)     # range_key holds that rung's index
+    assert w.range_nm == pytest.approx(16.0)      # exactly where fingers left it
+    assert item.value == _LADDER.index(20.0)      # nearest rung to 16, for RNG+
 
     functions.changeValueWrap("MAPRANGE,1")       # a real RNG+ button press
-    assert w.range_nm == 40.0                     # steps from the landed rung
+    assert w.range_nm == 40.0                     # steps from the landed range
 
 
-def test_pinch_snap_and_dead_band_compose(fix, qtbot):
+def test_bound_range_key_pinch_stays_continuous_across_linear_midpoint(fix, qtbot):
+    """#202 requirement 3 / AER-1216 item 3: with range_key bound, the
+    range_nm setter's write-back to the key must not re-apply onto range_nm.
+    Before the fix, pyavtools' DB_Item.value setter emits valueChanged
+    whenever the nearest-index-by-LINEAR-distance flips, and
+    LiveBindingMixin._apply_bind's setattr forced range_nm to that rung mid-
+    gesture -- so a pinch could never be continuous on a bound panel (e.g.
+    the map-controls screen, which binds MAPRANGE). 10 -> 20 is a ladder gap
+    whose linear midpoint is 15: drive a pinch through it and require the
+    bound widget to track a reference (unbound) widget seeing the identical
+    event stream, step for step."""
+    fix.db.define_item("MAPRANGE", "MAPRANGE", "int", 0, 7, "", 50000, "")
+    fix.db.set_value("MAPRANGE", 0)
+    item = fix.db.get_item("MAPRANGE")
+    item.bad = False
+    item.fail = False
+
+    bound = moving_map.MovingMap()
+    qtbot.addWidget(bound)
+    bound.range_ladder = "2,5,10,20,40,80,160"
+    bound.range_key = "MAPRANGE"
+    bound.init_live_bindings(bound._live_binding_specs())
+    bound.range_nm = 10.0
+
+    ref = moving_map.MovingMap()
+    qtbot.addWidget(ref)
+    ref.range_ladder = "2,5,10,20,40,80,160"
+    ref.range_nm = 10.0
+
+    _send(bound, state=GS.GestureStarted, scale=1.0)
+    _send(ref, state=GS.GestureStarted, scale=1.0)
+    # 10 -> 12 -> 14 -> 16 -> 18: straddles the 10/20 linear midpoint (15).
+    for target in (12.0, 14.0, 16.0, 18.0):
+        factor = bound.range_nm / target
+        _send(bound, state=GS.GestureUpdated, scale=factor)
+        factor = ref.range_nm / target
+        _send(ref, state=GS.GestureUpdated, scale=factor)
+        assert bound.range_nm == pytest.approx(ref.range_nm), (
+            "bound range_key clobbered a continuous pinch at %.1f NM" % target)
+
+    _send(bound, state=GS.GestureFinished)
+    _send(ref, state=GS.GestureFinished)
+    assert bound.range_nm == pytest.approx(ref.range_nm)
+    assert item.value == _LADDER.index(20.0)   # write-back still landed once settled
+
+
+def test_pinch_dead_band_composes_with_continuous_zoom(fix, qtbot):
     """A real pinch mixes all three components: this drives a zoom-out with
-    rotation/pan under threshold and checks the release still only affects
-    range, landing on a rung, while orientation/pan stay untouched."""
+    rotation/pan under threshold and checks release leaves range exactly
+    where the pinch landed (no snap) while orientation/pan stay untouched."""
     w = moving_map.MovingMap()
     qtbot.addWidget(w)
     w.range_ladder = "2,5,10,20,40,80,160"
@@ -201,9 +252,19 @@ def test_pinch_snap_and_dead_band_compose(fix, qtbot):
           last_rotation=0.0, center=QPointF(2, 1), last_center=QPointF(0, 0))
     _send(w, state=GS.GestureFinished)
 
-    assert w.range_nm in _LADDER
+    assert w.range_nm == pytest.approx(13.0)
     assert w._rot_offset == 0.0
     assert not w.is_offset
+
+
+# --- displayed-range rounding (display only, #202's original complaint) ----
+
+def test_format_range_nm_rounds_for_readability():
+    """"14 NM" instead of "13.7234" -- display-only, range_nm stays
+    continuous (Bill, AER-1216 2026-09-15)."""
+    assert format_range_nm(13.7234) == "14"
+    assert format_range_nm(2.53) == "2.5"
+    assert format_range_nm(160.0) == "160"
 
 
 # --- synthesized mouse drag suppression (unverified on real hardware) ------
