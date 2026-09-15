@@ -259,12 +259,15 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     @range_nm.setter
     def range_nm(self, nm):
-        """The single range-write path: zoom_by, range_up/range_down, the
-        pinch-release ladder snap, and the future zoom rail (#205) all set
-        range through this setter, which also pushes the ladder index to
-        range_key (MAPRANGE) when one is bound -- so a button/knob pressed
-        after any of those always steps from the range actually on screen
-        instead of a stale pre-gesture index."""
+        """The single range-write path: zoom_by, range_up/range_down and the
+        future zoom rail (#205) all set range through this setter, which
+        also pushes the nearest ladder index to range_key (MAPRANGE) when
+        one is bound -- so a button/knob pressed after a free pinch always
+        steps from the range actually on screen instead of a stale
+        pre-gesture index. range_nm itself stays exactly what the caller
+        set (Bill, AER-1216 2026-09-15: a pinch must feel continuous, so a
+        bound range_key must not write itself back onto range_nm -- see
+        LiveBindingMixin._live_writeback)."""
         try:
             self._range_nm = float(nm)
         except (TypeError, ValueError):
@@ -275,11 +278,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         idx = self._current_index(b)
         if idx is None:
             return
-        try:
-            item.value = idx
-            item.output_value()
-        except Exception:                       # noqa: BLE001
-            pass
+        self._live_writeback("range_nm", item, idx)
 
     def _set_gesture_active(self, active):
         """(De)activate the gesture phase and switch the frame clock
@@ -539,8 +538,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         engaging the gating.
 
         #202/AER-1216: also brackets ``_pinch_active`` (Started..Finished/
-        Canceled), resetting the rotate/pan dead-band on a fresh gesture and
-        snapping range to the nearest ladder rung when one ends."""
+        Canceled), resetting the rotate/pan dead-band on a fresh gesture.
+        Range does NOT snap when the gesture ends (Bill, 2026-09-15: pinch
+        zoom must feel continuous end to end) -- range_nm stays exactly
+        where the fingers left it; only its on-screen display rounds."""
         GS = Qt.GestureState
         if state in (GS.GestureStarted, GS.GestureUpdated):
             if not self._pinch_active:
@@ -552,7 +553,6 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._pinch_active = False
             self._set_gesture_active(False)
             self._settle_timer.start(_SETTLE_MS)
-            self._snap_range_to_ladder()
 
     def _reset_pinch_deadband(self):
         """New pinch: clear the cumulative rotate/pan motion and un-latch
@@ -606,18 +606,6 @@ class MovingMap(LiveBindingMixin, QWidget):
         if dist >= self._pinch_pan_threshold_px():
             self._pinch_pan_engaged = True
             self.pan_by(self._pinch_pan_accum_dx, self._pinch_pan_accum_dy)
-
-    def _snap_range_to_ladder(self):
-        """Pinch-release snap (#202 requirement 2): land on the
-        ``range_ladder`` rung nearest ``range_nm`` in LOG space, so the chip
-        and ring labels always read a round number and (via the ``range_nm``
-        setter) a bound ``range_key`` ends up holding that rung's real
-        index. Zoom itself stays continuous throughout the gesture; only the
-        landing value snaps."""
-        cur = max(1e-9, float(self.range_nm))
-        self.range_nm = min(
-            self._ladder(),
-            key=lambda v: abs(math.log(max(v, 1e-9)) - math.log(cur)))
 
     def event(self, e):
         if (e.type() == QEvent.Type.Gesture
@@ -764,7 +752,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         p.setFont(f)
         p.setPen(QPen(QColor(255, 255, 255, 200)))
         mode = "TRK UP" if self.orientation == "track_up" else "NORTH UP"
-        chip = "%g NM  %s" % (float(self.range_nm), mode)
+        chip = "%s NM  %s" % (map_layers.format_range_nm(self.range_nm), mode)
         if stale:
             chip += "  NO POS"
         p.drawText(QRectF(6, 4, self.width() - 12, f.pixelSize() + 6),
