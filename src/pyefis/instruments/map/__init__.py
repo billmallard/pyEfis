@@ -172,10 +172,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._pinch_pan_accum_dy = 0.0
         self._pinch_pan_engaged = False
         # range_nm as of this pinch's Started event (AER-1216 follow-up):
-        # QPinchGesture.scaleFactor() is cumulative since the gesture
-        # started, not a per-event delta, so zoom must be re-derived from
-        # this fixed baseline on every event rather than compounded onto
-        # the already-zoomed range_nm -- see _pinch_zoom.
+        # zoom is re-derived from this fixed baseline and Qt's cumulative
+        # totalScaleFactor() on every event, rather than compounded onto
+        # the already-zoomed range_nm via the per-event scaleFactor() delta
+        # -- see _pinch_zoom for the (once-confused) distinction.
         self._pinch_zoom_baseline_nm = None
 
         self._settle_timer = QTimer(self)
@@ -443,11 +443,11 @@ class MovingMap(LiveBindingMixin, QWidget):
         """Scale the view continuously by ``factor`` (>1 = zoom IN = smaller
         ``range_nm``) applied as a DELTA against the current range_nm --
         correct for wheel-up (each notch is its own independent step) and
-        the future zoom rail (#205). Pinch does NOT use this: a
-        QPinchGesture's scaleFactor() is cumulative since the gesture
-        started, not a delta, so committing it here every event would
-        compound across the whole gesture -- see _pinch_zoom, which
-        recomputes range_nm from a fixed per-gesture baseline instead.
+        the future zoom rail (#205). Pinch does NOT use this: it needs the
+        gesture's cumulative-since-start scale (Qt's ``totalScaleFactor()``,
+        NOT ``scaleFactor()`` -- see _pinch_zoom for the distinction, which
+        AER-1216 got backwards once already), re-derived from a fixed
+        per-gesture baseline rather than compounded per event.
         Clamped to the range-ladder span; ``range_up``/``range_down`` still
         do the discrete button/knob stepping. Returns the new range.
 
@@ -622,19 +622,25 @@ class MovingMap(LiveBindingMixin, QWidget):
             self.pan_by(self._pinch_pan_accum_dx, self._pinch_pan_accum_dy)
 
     def _pinch_zoom(self, total_scale_factor):
-        """QPinchGesture.scaleFactor() is cumulative since the gesture
-        STARTED (it is the same value as totalScaleFactor(); lastScaleFactor()
-        is the separate, distinct property for "since the last event" --
-        Qt's own imagegestures example computes a live preview as
-        ``originalScale * totalScaleFactor()`` every frame and only bakes it
-        in once, on GestureFinished). Re-deriving range_nm from this pinch's
+        """AER-1216 follow-up correction: the FIRST attempt at this fix
+        (37a6e99) misread Qt's own semantics and fed this ``g.scaleFactor()``
+        -- confirmed backwards against Qt's actual recognizer source
+        (qtbase qstandardgestures.cpp): ``d->scaleFactor = line.length() /
+        lastLine.length()`` is the DELTA since the *last* event, while
+        ``d->totalScaleFactor = d->totalScaleFactor * d->scaleFactor`` is the
+        cumulative product since the gesture STARTED -- i.e. scaleFactor()
+        and totalScaleFactor() have exactly the opposite meaning from what
+        37a6e99 assumed. Feeding the tiny near-1.0 per-event delta into this
+        baseline-relative formula made a real pinch's zoom nearly inert --
+        confirmed by driving a synthesized 2x pinch through this formula
+        with only the per-event delta available: range_nm moved from 10.0
+        to 9.99, not 5.0. The caller MUST pass ``g.totalScaleFactor()``.
+        Re-deriving range_nm from this pinch's
         fixed start-of-gesture baseline on every event -- instead of calling
-        zoom_by() per event, which commits the cumulative factor onto the
-        ALREADY-zoomed range_nm -- keeps a fast, finely-sampled pinch's
-        effective zoom equal to the fingers' actual spread ratio instead of
-        the product of every intermediate sample (AER-1216: a naturally
-        fluid pinch was compounding into the ladder's extreme end, which is
-        why only very slow, sparsely-sampled gestures stayed usable)."""
+        zoom_by() per event, which would compound the per-event deltas onto
+        the ALREADY-zoomed range_nm -- is mathematically equivalent (total
+        scale is exactly the product of the per-event deltas) but immune to
+        floating-point drift over a long, finely-sampled gesture."""
         try:
             factor = float(total_scale_factor)
         except (TypeError, ValueError):
@@ -657,7 +663,7 @@ class MovingMap(LiveBindingMixin, QWidget):
                 flags = g.changeFlags()
                 CF = QPinchGesture.ChangeFlag
                 if flags & CF.ScaleFactorChanged:
-                    self._pinch_zoom(g.scaleFactor())
+                    self._pinch_zoom(g.totalScaleFactor())
                 if flags & CF.CenterPointChanged:
                     d = g.centerPoint() - g.lastCenterPoint()
                     self._pinch_pan(d.x(), d.y())
