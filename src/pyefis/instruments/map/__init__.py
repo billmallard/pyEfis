@@ -290,7 +290,22 @@ class MovingMap(LiveBindingMixin, QWidget):
         """(De)activate the gesture phase and switch the frame clock
         between ``gesture_frame_rate`` (a gesture is live) and
         ``frame_rate`` (MP3) -- the clock is what actually repaints while
-        zoom_by/pan_by/rotate_by only mark a frame dirty."""
+        zoom_by/pan_by/rotate_by only mark a frame dirty.
+
+        AER-1216 follow-up (Bill, 2026-09-16 -- "the screen redraw is so
+        slow the visual feedback doesn't match what command it's
+        receiving"): ``_gesture_phase`` calls this on EVERY GestureUpdated
+        event, not just the transition into/out of a gesture. QTimer.start()
+        on an already-running timer resets its countdown to a full interval
+        (Qt semantics), so calling it unconditionally here meant a real
+        pinch -- which reports events faster than the ~33 ms gesture tick --
+        perpetually restarted the clock before it could ever fire: input
+        was applied instantly but the screen only repainted during a gap
+        between touch events wider than one tick. Only touch the timer on
+        an actual active/inactive transition; once running at the right
+        rate it free-runs on its own."""
+        if active == self._gesture_active:
+            return
         self._gesture_active = active
         hz = self._gesture_frame_rate if active else self._frame_rate
         self._frame_timer.start(int(round(1000.0 / hz)))
