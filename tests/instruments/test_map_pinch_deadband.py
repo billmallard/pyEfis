@@ -223,10 +223,12 @@ def test_bound_range_key_pinch_stays_continuous_across_linear_midpoint(fix, qtbo
     _send(bound, state=GS.GestureStarted, scale=1.0)
     _send(ref, state=GS.GestureStarted, scale=1.0)
     # 10 -> 12 -> 14 -> 16 -> 18: straddles the 10/20 linear midpoint (15).
+    # scale is CUMULATIVE since gesture start (real QPinchGesture semantics,
+    # AER-1216 follow-up), i.e. baseline(10.0) / target -- not a per-step
+    # delta against the moving range_nm.
     for target in (12.0, 14.0, 16.0, 18.0):
-        factor = bound.range_nm / target
+        factor = 10.0 / target
         _send(bound, state=GS.GestureUpdated, scale=factor)
-        factor = ref.range_nm / target
         _send(ref, state=GS.GestureUpdated, scale=factor)
         assert bound.range_nm == pytest.approx(ref.range_nm), (
             "bound range_key clobbered a continuous pinch at %.1f NM" % target)
@@ -255,6 +257,46 @@ def test_pinch_dead_band_composes_with_continuous_zoom(fix, qtbot):
     assert w.range_nm == pytest.approx(13.0)
     assert w._rot_offset == 0.0
     assert not w.is_offset
+
+
+# --- scaleFactor is cumulative-since-start, not a per-event delta ---------
+
+def test_finely_sampled_pinch_does_not_overshoot_from_scaleFactor_compounding(
+        fix, qtbot):
+    """QPinchGesture.scaleFactor() is cumulative since the gesture STARTED
+    (it is the same value as totalScaleFactor() -- Qt's own imagegestures
+    example computes a live preview as ``originalScale * totalScaleFactor()``
+    on every frame and only commits it once, on GestureFinished; lastScaleFactor()
+    is a separate, distinct property precisely because scaleFactor() is not
+    already a delta). A real touch panel fires many GestureUpdated events
+    over one continuous finger spread -- if each event's cumulative factor
+    is committed onto the ALREADY-zoomed range_nm (as a naive per-event
+    ``zoom_by(g.scaleFactor())`` does), the effective total zoom is the
+    PRODUCT of every intermediate cumulative factor, not just the final
+    one. The more finely the gesture is sampled, the worse the runaway --
+    which is exactly backwards from what a touchscreen pinch should do, and
+    matches Bill's report that a fluid, naturally-sampled pinch went wild
+    while a very slow, sparse one (fewer samples) stayed usable.
+
+    This drives 30 events smoothly interpolating the cumulative scaleFactor
+    from 1.0 to 0.5 -- a plain 2x zoom-out. Landing anywhere near the
+    ladder's extreme end (160) instead of ~20 NM is the compounding bug."""
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.range_ladder = "2,5,10,20,40,80,160"
+    w.range_nm = 10.0
+
+    _send(w, state=GS.GestureStarted, scale=1.0)
+    steps = 30
+    for i in range(1, steps + 1):
+        cumulative = 1.0 - (i / steps) * 0.5   # 1.0 -> 0.5 over `steps` samples
+        _send(w, state=GS.GestureUpdated, scale=cumulative)
+    _send(w, state=GS.GestureFinished)
+
+    assert w.range_nm == pytest.approx(20.0, rel=0.05), (
+        "a 2x zoom-out sampled at 30 events landed at %.1f NM instead of "
+        "~20 -- scaleFactor() is being compounded across events instead of "
+        "applied once from the gesture's start-of-pinch baseline" % w.range_nm)
 
 
 # --- displayed-range rounding (display only, #202's original complaint) ----

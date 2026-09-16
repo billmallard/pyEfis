@@ -171,6 +171,12 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._pinch_pan_accum_dx = 0.0
         self._pinch_pan_accum_dy = 0.0
         self._pinch_pan_engaged = False
+        # range_nm as of this pinch's Started event (AER-1216 follow-up):
+        # QPinchGesture.scaleFactor() is cumulative since the gesture
+        # started, not a per-event delta, so zoom must be re-derived from
+        # this fixed baseline on every event rather than compounded onto
+        # the already-zoomed range_nm -- see _pinch_zoom.
+        self._pinch_zoom_baseline_nm = None
 
         self._settle_timer = QTimer(self)
         self._settle_timer.setSingleShot(True)
@@ -435,14 +441,20 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def zoom_by(self, factor):
         """Scale the view continuously by ``factor`` (>1 = zoom IN = smaller
-        ``range_nm``). Pinch-spread and wheel-up both zoom in. Clamped to the
-        range-ladder span; ``range_up``/``range_down`` still do the discrete
-        button/knob stepping. Returns the new range.
+        ``range_nm``) applied as a DELTA against the current range_nm --
+        correct for wheel-up (each notch is its own independent step) and
+        the future zoom rail (#205). Pinch does NOT use this: a
+        QPinchGesture's scaleFactor() is cumulative since the gesture
+        started, not a delta, so committing it here every event would
+        compound across the whole gesture -- see _pinch_zoom, which
+        recomputes range_nm from a fixed per-gesture baseline instead.
+        Clamped to the range-ladder span; ``range_up``/``range_down`` still
+        do the discrete button/knob stepping. Returns the new range.
 
         MP3: marks a frame dirty instead of calling update() directly -- a
-        pinch or fast wheel can call this tens/hundreds of times a second;
-        the frame clock (_frame_tick) is what actually repaints, at most
-        once per clock period."""
+        fast wheel can call this tens of times a second; the frame clock
+        (_frame_tick) is what actually repaints, at most once per clock
+        period."""
         try:
             factor = float(factor)
         except (TypeError, ValueError):
@@ -556,12 +568,14 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def _reset_pinch_deadband(self):
         """New pinch: clear the cumulative rotate/pan motion and un-latch
-        both components (#202)."""
+        both components (#202), and capture the range_nm this pinch's zoom
+        will be computed from (see _pinch_zoom)."""
         self._pinch_rot_accum_deg = 0.0
         self._pinch_rot_engaged = False
         self._pinch_pan_accum_dx = 0.0
         self._pinch_pan_accum_dy = 0.0
         self._pinch_pan_engaged = False
+        self._pinch_zoom_baseline_nm = self.range_nm
 
     def _pinch_rotate_threshold_deg(self):
         try:
@@ -607,6 +621,31 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._pinch_pan_engaged = True
             self.pan_by(self._pinch_pan_accum_dx, self._pinch_pan_accum_dy)
 
+    def _pinch_zoom(self, total_scale_factor):
+        """QPinchGesture.scaleFactor() is cumulative since the gesture
+        STARTED (it is the same value as totalScaleFactor(); lastScaleFactor()
+        is the separate, distinct property for "since the last event" --
+        Qt's own imagegestures example computes a live preview as
+        ``originalScale * totalScaleFactor()`` every frame and only bakes it
+        in once, on GestureFinished). Re-deriving range_nm from this pinch's
+        fixed start-of-gesture baseline on every event -- instead of calling
+        zoom_by() per event, which commits the cumulative factor onto the
+        ALREADY-zoomed range_nm -- keeps a fast, finely-sampled pinch's
+        effective zoom equal to the fingers' actual spread ratio instead of
+        the product of every intermediate sample (AER-1216: a naturally
+        fluid pinch was compounding into the ladder's extreme end, which is
+        why only very slow, sparsely-sampled gestures stayed usable)."""
+        try:
+            factor = float(total_scale_factor)
+        except (TypeError, ValueError):
+            return
+        if factor <= 0.0 or self._pinch_zoom_baseline_nm is None:
+            return
+        lo, hi = self._range_bounds()
+        self.range_nm = max(lo, min(hi, self._pinch_zoom_baseline_nm / factor))
+        self._frame_dirty = True
+        self._perf_mark_gesture_event()
+
     def event(self, e):
         if (e.type() == QEvent.Type.Gesture
                 and getattr(self, "touch_gestures", True)):
@@ -618,7 +657,7 @@ class MovingMap(LiveBindingMixin, QWidget):
                 flags = g.changeFlags()
                 CF = QPinchGesture.ChangeFlag
                 if flags & CF.ScaleFactorChanged:
-                    self.zoom_by(g.scaleFactor())
+                    self._pinch_zoom(g.scaleFactor())
                 if flags & CF.CenterPointChanged:
                     d = g.centerPoint() - g.lastCenterPoint()
                     self._pinch_pan(d.x(), d.y())
