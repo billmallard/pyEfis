@@ -27,6 +27,17 @@ def range_bucket(range_nm):
     return round(math.log(max(1e-6, float(range_nm))) / math.log(_RANGE_BUCKET_BASE))
 
 
+def format_range_nm(nm):
+    """Round a continuous NM value to something readable for DISPLAY only
+    (the range chip, ring labels) -- "14 NM" instead of "13.7234" (#202).
+    range_nm itself stays continuous throughout a pinch (Bill, AER-1216
+    2026-09-15: zoom must feel continuous); only what gets printed rounds."""
+    nm = max(0.0, float(nm))
+    if nm < 10.0:
+        return ("%.1f" % nm).rstrip("0").rstrip(".")
+    return str(int(round(nm)))
+
+
 def register_layer(cls):
     LAYER_REGISTRY[cls.id] = cls
     return cls
@@ -93,6 +104,6 @@ class RangeRingsLayer(MapLayer):
         for frac in (0.5, 1.0):
             r_px = x.nm_to_px(x.range_nm * frac)
             p.drawEllipse(QPointF(x.cx, x.cy), r_px, r_px)
-            lbl = ("%g" % (x.range_nm * frac))
+            lbl = format_range_nm(x.range_nm * frac)
             p.drawText(QRectF(x.cx + 4, x.cy - r_px, 80, f.pixelSize() + 6),
                        Qt.AlignmentFlag.AlignLeft, lbl)

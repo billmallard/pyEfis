@@ -116,6 +116,14 @@ class LiveBindingMixin:
         return slot
 
     def _apply_bind(self, b, raw):
+        if b.attr in getattr(self, "_live_writeback_suspended", ()):
+            # This valueChanged is an echo of our own _live_writeback() call
+            # below, publishing state we already applied -- not an inbound
+            # command. Re-entering here would clobber a continuous setting
+            # (e.g. the map's range_nm mid-pinch, AER-1216) with the bound
+            # key's coarser (ladder/enum) resolution on every step where the
+            # nearest index flips.
+            return
         value = self._convert(b, raw)
         if value is None:
             return
@@ -186,6 +194,26 @@ class LiveBindingMixin:
                        key=lambda i: abs(options[i] - float(cur)))
         except (TypeError, ValueError):
             return 0
+
+    def _live_writeback(self, attr, item, idx):
+        """Publish *idx* to the FIX key bound to *attr* (e.g. the map's
+        range_nm pushing a fresh ladder index to range_key after a pinch/
+        wheel/zoom-rail change, #202) without re-entering *attr*'s own
+        setter via the resulting valueChanged (AER-1216): this write is an
+        outbound publish of state the setter already applied, not an
+        inbound command that should be applied again."""
+        suspended = getattr(self, "_live_writeback_suspended", None)
+        if suspended is None:
+            suspended = set()
+            self._live_writeback_suspended = suspended
+        suspended.add(attr)
+        try:
+            item.value = idx
+            item.output_value()
+        except Exception:                       # noqa: BLE001
+            pass
+        finally:
+            suspended.discard(attr)
 
     def _seed(self, b, item):
         """Startup policy (control_bindings.md 11.3, Phase 1): with no persistence

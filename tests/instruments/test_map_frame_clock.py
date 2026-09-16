@@ -189,3 +189,54 @@ def test_rotate_by_burst_in_gesture_paints_at_most_4_in_100ms(fix, qtbot):
         w.rotate_by(0.05)
     qtbot.wait(100)
     assert 1 <= len(paints) <= 4
+
+
+class _FakePinchUpdate:
+    """A GestureUpdated pinch event carrying a ScaleFactorChanged delta --
+    what a real touchscreen sends on every one of its (possibly 60-120/s)
+    reports, as opposed to ``_start_gesture``'s single GestureStarted call
+    with no change flags."""
+
+    def __init__(self, total_scale):
+        self._total_scale = total_scale
+
+    def state(self):
+        return Qt.GestureState.GestureUpdated
+
+    def changeFlags(self):
+        from PyQt6.QtWidgets import QPinchGesture
+        return QPinchGesture.ChangeFlag.ScaleFactorChanged
+
+    def scaleFactor(self):
+        return self._total_scale
+
+    def totalScaleFactor(self):
+        return self._total_scale
+
+
+def test_rapid_pinch_updates_do_not_starve_the_frame_clock(fix, qtbot):
+    """AER-1216 follow-up (Bill, 2026-09-16): "the screen redraw is so slow
+    the visual feedback doesn't match what command it's receiving". Root
+    cause: ``_gesture_phase`` calls ``_set_gesture_active(True)`` on EVERY
+    GestureUpdated event, not just the first, and ``_set_gesture_active``
+    unconditionally called ``_frame_timer.start(...)`` -- restarting an
+    already-running QTimer resets its countdown to a full interval. A real
+    pinch delivers events faster than the ~33 ms gesture-clock tick, so the
+    timer was continuously reset before it could ever fire: input was
+    applied instantly but the screen only repainted during a gap between
+    touch events larger than one tick (matches "it does respond if I'm slow
+    and careful"). Drive updates every 5 ms -- well under the 33 ms period
+    -- for 200 ms and require at least one paint to land mid-gesture."""
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.resize(300, 300)
+    w.show()
+    qtbot.waitExposed(w)
+    assert w.gesture_frame_rate == 30.0
+    paints = []
+    w.update = lambda: paints.append(1)
+    _start_gesture(w)
+    for i in range(40):
+        w.event(_FakeGestureEvent(_FakePinchUpdate(1.0 + i * 0.002)))
+        qtbot.wait(5)
+    assert len(paints) >= 1

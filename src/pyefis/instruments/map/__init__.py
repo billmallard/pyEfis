@@ -171,6 +171,12 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._pinch_pan_accum_dx = 0.0
         self._pinch_pan_accum_dy = 0.0
         self._pinch_pan_engaged = False
+        # range_nm as of this pinch's Started event (AER-1216 follow-up):
+        # zoom is re-derived from this fixed baseline and Qt's cumulative
+        # totalScaleFactor() on every event, rather than compounded onto
+        # the already-zoomed range_nm via the per-event scaleFactor() delta
+        # -- see _pinch_zoom for the (once-confused) distinction.
+        self._pinch_zoom_baseline_nm = None
 
         self._settle_timer = QTimer(self)
         self._settle_timer.setSingleShot(True)
@@ -259,12 +265,15 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     @range_nm.setter
     def range_nm(self, nm):
-        """The single range-write path: zoom_by, range_up/range_down, the
-        pinch-release ladder snap, and the future zoom rail (#205) all set
-        range through this setter, which also pushes the ladder index to
-        range_key (MAPRANGE) when one is bound -- so a button/knob pressed
-        after any of those always steps from the range actually on screen
-        instead of a stale pre-gesture index."""
+        """The single range-write path: zoom_by, range_up/range_down and the
+        future zoom rail (#205) all set range through this setter, which
+        also pushes the nearest ladder index to range_key (MAPRANGE) when
+        one is bound -- so a button/knob pressed after a free pinch always
+        steps from the range actually on screen instead of a stale
+        pre-gesture index. range_nm itself stays exactly what the caller
+        set (Bill, AER-1216 2026-09-15: a pinch must feel continuous, so a
+        bound range_key must not write itself back onto range_nm -- see
+        LiveBindingMixin._live_writeback)."""
         try:
             self._range_nm = float(nm)
         except (TypeError, ValueError):
@@ -275,17 +284,28 @@ class MovingMap(LiveBindingMixin, QWidget):
         idx = self._current_index(b)
         if idx is None:
             return
-        try:
-            item.value = idx
-            item.output_value()
-        except Exception:                       # noqa: BLE001
-            pass
+        self._live_writeback("range_nm", item, idx)
 
     def _set_gesture_active(self, active):
         """(De)activate the gesture phase and switch the frame clock
         between ``gesture_frame_rate`` (a gesture is live) and
         ``frame_rate`` (MP3) -- the clock is what actually repaints while
-        zoom_by/pan_by/rotate_by only mark a frame dirty."""
+        zoom_by/pan_by/rotate_by only mark a frame dirty.
+
+        AER-1216 follow-up (Bill, 2026-09-16 -- "the screen redraw is so
+        slow the visual feedback doesn't match what command it's
+        receiving"): ``_gesture_phase`` calls this on EVERY GestureUpdated
+        event, not just the transition into/out of a gesture. QTimer.start()
+        on an already-running timer resets its countdown to a full interval
+        (Qt semantics), so calling it unconditionally here meant a real
+        pinch -- which reports events faster than the ~33 ms gesture tick --
+        perpetually restarted the clock before it could ever fire: input
+        was applied instantly but the screen only repainted during a gap
+        between touch events wider than one tick. Only touch the timer on
+        an actual active/inactive transition; once running at the right
+        rate it free-runs on its own."""
+        if active == self._gesture_active:
+            return
         self._gesture_active = active
         hz = self._gesture_frame_rate if active else self._frame_rate
         self._frame_timer.start(int(round(1000.0 / hz)))
@@ -436,14 +456,20 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def zoom_by(self, factor):
         """Scale the view continuously by ``factor`` (>1 = zoom IN = smaller
-        ``range_nm``). Pinch-spread and wheel-up both zoom in. Clamped to the
-        range-ladder span; ``range_up``/``range_down`` still do the discrete
-        button/knob stepping. Returns the new range.
+        ``range_nm``) applied as a DELTA against the current range_nm --
+        correct for wheel-up (each notch is its own independent step) and
+        the future zoom rail (#205). Pinch does NOT use this: it needs the
+        gesture's cumulative-since-start scale (Qt's ``totalScaleFactor()``,
+        NOT ``scaleFactor()`` -- see _pinch_zoom for the distinction, which
+        AER-1216 got backwards once already), re-derived from a fixed
+        per-gesture baseline rather than compounded per event.
+        Clamped to the range-ladder span; ``range_up``/``range_down`` still
+        do the discrete button/knob stepping. Returns the new range.
 
         MP3: marks a frame dirty instead of calling update() directly -- a
-        pinch or fast wheel can call this tens/hundreds of times a second;
-        the frame clock (_frame_tick) is what actually repaints, at most
-        once per clock period."""
+        fast wheel can call this tens of times a second; the frame clock
+        (_frame_tick) is what actually repaints, at most once per clock
+        period."""
         try:
             factor = float(factor)
         except (TypeError, ValueError):
@@ -539,8 +565,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         engaging the gating.
 
         #202/AER-1216: also brackets ``_pinch_active`` (Started..Finished/
-        Canceled), resetting the rotate/pan dead-band on a fresh gesture and
-        snapping range to the nearest ladder rung when one ends."""
+        Canceled), resetting the rotate/pan dead-band on a fresh gesture.
+        Range does NOT snap when the gesture ends (Bill, 2026-09-15: pinch
+        zoom must feel continuous end to end) -- range_nm stays exactly
+        where the fingers left it; only its on-screen display rounds."""
         GS = Qt.GestureState
         if state in (GS.GestureStarted, GS.GestureUpdated):
             if not self._pinch_active:
@@ -552,16 +580,17 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._pinch_active = False
             self._set_gesture_active(False)
             self._settle_timer.start(_SETTLE_MS)
-            self._snap_range_to_ladder()
 
     def _reset_pinch_deadband(self):
         """New pinch: clear the cumulative rotate/pan motion and un-latch
-        both components (#202)."""
+        both components (#202), and capture the range_nm this pinch's zoom
+        will be computed from (see _pinch_zoom)."""
         self._pinch_rot_accum_deg = 0.0
         self._pinch_rot_engaged = False
         self._pinch_pan_accum_dx = 0.0
         self._pinch_pan_accum_dy = 0.0
         self._pinch_pan_engaged = False
+        self._pinch_zoom_baseline_nm = self.range_nm
 
     def _pinch_rotate_threshold_deg(self):
         try:
@@ -607,17 +636,36 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._pinch_pan_engaged = True
             self.pan_by(self._pinch_pan_accum_dx, self._pinch_pan_accum_dy)
 
-    def _snap_range_to_ladder(self):
-        """Pinch-release snap (#202 requirement 2): land on the
-        ``range_ladder`` rung nearest ``range_nm`` in LOG space, so the chip
-        and ring labels always read a round number and (via the ``range_nm``
-        setter) a bound ``range_key`` ends up holding that rung's real
-        index. Zoom itself stays continuous throughout the gesture; only the
-        landing value snaps."""
-        cur = max(1e-9, float(self.range_nm))
-        self.range_nm = min(
-            self._ladder(),
-            key=lambda v: abs(math.log(max(v, 1e-9)) - math.log(cur)))
+    def _pinch_zoom(self, total_scale_factor):
+        """AER-1216 follow-up correction: the FIRST attempt at this fix
+        (37a6e99) misread Qt's own semantics and fed this ``g.scaleFactor()``
+        -- confirmed backwards against Qt's actual recognizer source
+        (qtbase qstandardgestures.cpp): ``d->scaleFactor = line.length() /
+        lastLine.length()`` is the DELTA since the *last* event, while
+        ``d->totalScaleFactor = d->totalScaleFactor * d->scaleFactor`` is the
+        cumulative product since the gesture STARTED -- i.e. scaleFactor()
+        and totalScaleFactor() have exactly the opposite meaning from what
+        37a6e99 assumed. Feeding the tiny near-1.0 per-event delta into this
+        baseline-relative formula made a real pinch's zoom nearly inert --
+        confirmed by driving a synthesized 2x pinch through this formula
+        with only the per-event delta available: range_nm moved from 10.0
+        to 9.99, not 5.0. The caller MUST pass ``g.totalScaleFactor()``.
+        Re-deriving range_nm from this pinch's
+        fixed start-of-gesture baseline on every event -- instead of calling
+        zoom_by() per event, which would compound the per-event deltas onto
+        the ALREADY-zoomed range_nm -- is mathematically equivalent (total
+        scale is exactly the product of the per-event deltas) but immune to
+        floating-point drift over a long, finely-sampled gesture."""
+        try:
+            factor = float(total_scale_factor)
+        except (TypeError, ValueError):
+            return
+        if factor <= 0.0 or self._pinch_zoom_baseline_nm is None:
+            return
+        lo, hi = self._range_bounds()
+        self.range_nm = max(lo, min(hi, self._pinch_zoom_baseline_nm / factor))
+        self._frame_dirty = True
+        self._perf_mark_gesture_event()
 
     def event(self, e):
         if (e.type() == QEvent.Type.Gesture
@@ -630,7 +678,7 @@ class MovingMap(LiveBindingMixin, QWidget):
                 flags = g.changeFlags()
                 CF = QPinchGesture.ChangeFlag
                 if flags & CF.ScaleFactorChanged:
-                    self.zoom_by(g.scaleFactor())
+                    self._pinch_zoom(g.totalScaleFactor())
                 if flags & CF.CenterPointChanged:
                     d = g.centerPoint() - g.lastCenterPoint()
                     self._pinch_pan(d.x(), d.y())
@@ -764,7 +812,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         p.setFont(f)
         p.setPen(QPen(QColor(255, 255, 255, 200)))
         mode = "TRK UP" if self.orientation == "track_up" else "NORTH UP"
-        chip = "%g NM  %s" % (float(self.range_nm), mode)
+        chip = "%s NM  %s" % (map_layers.format_range_nm(self.range_nm), mode)
         if stale:
             chip += "  NO POS"
         p.drawText(QRectF(6, 4, self.width() - 12, f.pixelSize() + 6),
