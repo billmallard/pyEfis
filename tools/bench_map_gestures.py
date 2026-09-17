@@ -16,6 +16,11 @@ or bypasses that logic; the harness only supplies input and reads
 
 Scenarios (brief section 4, MP7):
     pinch_out   10 -> 160 NM, 90 zoom_by events at 60 Hz, then hold 5 s.
+                Bounds are --pinch-lo-nm/--pinch-hi-nm (default 10/160,
+                the brief's own numbers); override --pinch-hi-nm to probe
+                ranges past the ladder top (AER-1216 -- section 5's render
+                budget table stops at 160 NM, so a wider pinch is the only
+                way to measure past it without inventing a new scenario).
     pinch_in    160 -> 10 NM, mirror of pinch_out.
     rotate      3 s continuous rotate_by sweep at 60 Hz (180 events).
     pan         3 s continuous pan_by sweep at 60 Hz, then hold 3 s.
@@ -332,17 +337,19 @@ def _scenario_pinch(app, w, lo_nm, hi_nm, zoom_in):
                 event_hz=_EVENT_HZ, hold_s=_PINCH_HOLD_S)
 
 
-def scenario_pinch_out(app, w):
-    return _scenario_pinch(app, w, _PINCH_RANGE_LO_NM, _PINCH_RANGE_HI_NM,
-                           zoom_in=False)
+def scenario_pinch_out(app, w, args=None):
+    lo = args.pinch_lo_nm if args is not None else _PINCH_RANGE_LO_NM
+    hi = args.pinch_hi_nm if args is not None else _PINCH_RANGE_HI_NM
+    return _scenario_pinch(app, w, lo, hi, zoom_in=False)
 
 
-def scenario_pinch_in(app, w):
-    return _scenario_pinch(app, w, _PINCH_RANGE_LO_NM, _PINCH_RANGE_HI_NM,
-                           zoom_in=True)
+def scenario_pinch_in(app, w, args=None):
+    lo = args.pinch_lo_nm if args is not None else _PINCH_RANGE_LO_NM
+    hi = args.pinch_hi_nm if args is not None else _PINCH_RANGE_HI_NM
+    return _scenario_pinch(app, w, lo, hi, zoom_in=True)
 
 
-def scenario_rotate(app, w):
+def scenario_rotate(app, w, args=None):
     started, finished = _gesture_bracket(w)
     started()
     delta = _ROTATE_SWEEP_DEG / _ROTATE_EVENTS
@@ -354,7 +361,7 @@ def scenario_rotate(app, w):
                 event_hz=_EVENT_HZ, duration_s=_ROTATE_DURATION_S)
 
 
-def scenario_pan(app, w):
+def scenario_pan(app, w, args=None):
     started, finished = _gesture_bracket(w)
     started()
     _run_events(app, [lambda: w.pan_by(_PAN_PX_PER_EVENT, 0.0)
@@ -366,7 +373,7 @@ def scenario_pan(app, w):
                 hold_s=_PAN_HOLD_S)
 
 
-def scenario_ladder(app, w):
+def scenario_ladder(app, w, args=None):
     ladder = w._ladder()
     w.range_nm = ladder[0]
     _pump(app, _LADDER_STEP_HOLD_S)
@@ -483,7 +490,7 @@ def run_scenario(app, args, name, rev, host):
     _pump(app, 0.1)   # let the frame clock's first tick paint + settle
 
     t0 = time.perf_counter()
-    params = SCENARIOS[name](app, w)
+    params = SCENARIOS[name](app, w, args)
     duration_s = time.perf_counter() - t0
 
     snap = w.perf.snapshot()
@@ -800,6 +807,14 @@ def _parse_args(argv):
     ap.add_argument("--alt", type=float, default=1500.0,
                     help="ownship altitude, ft (caution-mode terrain tint)")
     ap.add_argument("--range-ladder", default="2,5,10,20,40,80,160")
+    ap.add_argument("--pinch-lo-nm", type=float, default=_PINCH_RANGE_LO_NM,
+                    help="pinch_out/pinch_in near bound, NM (default "
+                         "unchanged from the brief's 10 NM; override to "
+                         "probe ranges past the ladder top, AER-1216)")
+    ap.add_argument("--pinch-hi-nm", type=float, default=_PINCH_RANGE_HI_NM,
+                    help="pinch_out/pinch_in far bound, NM (default "
+                         "unchanged from the brief's 160 NM; override to "
+                         "probe ranges past the ladder top, AER-1216)")
     ap.add_argument("--tile-path", default="",
                     help="GLO-30/SRTM mip pyramid root (terrain layer)")
     ap.add_argument("--water-db", default="", help="water.sqlite")

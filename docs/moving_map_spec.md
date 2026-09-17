@@ -242,7 +242,11 @@ pyEfis #98) builds a real `MovingMap` offscreen against the mock FIX db
 scenario (`pinch_out`, `pinch_in`, `rotate`, `pan`, `ladder`, or `all`),
 pumping the Qt event loop at 1 kHz so the widget's own gesture gating
 (MP1), worker publication (MP2), frame clock (MP3) and MP6 perf counters
-all run as they would live. Output is always a JSON **array** (one
+all run as they would live. `pinch_out`/`pinch_in`'s bounds default to the
+brief's own 10/160 NM but take `--pinch-lo-nm`/`--pinch-hi-nm` overrides
+(AER-1216) to probe ranges past the ladder top without inventing a second
+scenario -- the result still conforms to this schema, `params.range_to_nm`
+just reads the override. Output is always a JSON **array** (one
 element per scenario run, so `--scenario all` and a single `--scenario
 pinch_out` share one schema) written to `--out` or stdout; progress/
 summary lines go to stderr so stdout stays pipeable. Each element:
