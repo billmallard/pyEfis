@@ -19,7 +19,29 @@ silently degraded terrain picture that omits obstacles is worse than
 an honest absence.
 
 The polar mesh parameters (n_range, n_az, fov_deg, radial_warp,
-r_min_nm) remain tunable and apply to the GL terrain fan.
+r_min_nm) are accepted in config for backward compatibility but are
+**dead** — nothing in `src/pyefis` reads them (confirmed AER-1478, and
+deleted from `SVSRenderer.__init__`/`POLAR_DEFAULTS`). The GL fan has
+no azimuth cull of its own; its horizontal extent is set purely by the
+AI viewport's aspect ratio — see "Azimuthal extent" below.
+
+## Azimuthal Extent (HFOV)
+
+There is no configured forward-fan angle. The terrain drawn horizontally
+spans whatever the AI/`virtual_vfr` widget's pixels-per-degree implies,
+because the same roll/pitch/yaw transform used for the pitch ladder and
+FPM projects terrain too:
+
+    HFOV_deg = viewport_width_px * pitchDegreesShown / viewport_height_px
+
+`pitchDegreesShown` is fixed at 30 (`ai_widget.py:488`); `camera.py:85-86`
+applies the resulting `pixelsPerDeg` to both axes, and `svs.py` hands it
+to the GL renderer. So the half-fan a given panel actually draws is
+`(viewport_width_px / 2) / pixelsPerDeg`, and it changes with the widget's
+aspect ratio — e.g. ~50° total on an 800×480 panel, 51.2° on 1024×600,
+40° for `tools/svs_capture.py`'s 800×600 capture default. Always compute
+this for the specific viewport in question rather than assuming a fixed
+number (AER-1478).
 
 ## Cell Size and Visible Range
 
@@ -98,7 +120,13 @@ coordinates centred on the aircraft. Two payoffs:
   warp `r_i = r_min + (r_max - r_min) · (i / (n_range-1))**p` so cells get
   finer toward the aircraft.
 
-### Polar config keys (screen YAML)
+### Polar config keys (screen YAML) — legacy, dead
+
+This example describes the deleted `renderer: polar` CPU tier (see
+"GL-required" above). The keys are still accepted for config
+compatibility but nothing reads them, including `fov_deg` — the GL
+fan's azimuthal extent is not configurable; it follows the viewport
+aspect ratio (see "Azimuthal Extent (HFOV)" above).
 
 ```yaml
 svs:
@@ -106,11 +134,11 @@ svs:
     renderer: polar
     tile_path: /media/terrain/srtm3
     range_nm: 30
-    n_range:     80    # radial samples
-    n_az:        120   # azimuthal samples
-    fov_deg:     140   # total forward field-of-view
-    radial_warp: 1.5   # outer cell ~10× inner cell
-    r_min_nm:    0.05  # epsilon at r=0 to avoid the singularity
+    n_range:     80    # radial samples — dead, unread
+    n_az:        120   # azimuthal samples — dead, unread
+    fov_deg:     140   # forward field-of-view — dead, unread
+    radial_warp: 1.5   # outer cell ~10× inner cell — dead, unread
+    r_min_nm:    0.05  # epsilon at r=0 to avoid the singularity — dead, unread
 ```
 
 ### Cell sizes at the polar default (n_range=80, warp=1.5, range_nm=30)
@@ -128,9 +156,10 @@ svs:
   1.5 (default) gives a ~10× inner/outer cell ratio that keeps both the
   near-field and horizon usable. Values above 2.5 leave the far horizon
   too blocky for SVS purposes.
-- `fov_deg` 120-160. Wider FOV adds samples to corners that are nearly
-  always off-screen; narrower can cause visible cropping during steep
-  banks. 140° (default) covers `±70°` either side of the nose.
+- `fov_deg` is dead (unread) on both the removed CPU polar tier and the
+  GL renderer. There is no configurable FOV — the drawn azimuthal
+  extent follows the viewport aspect ratio; see "Azimuthal Extent
+  (HFOV)" above.
 - For Raspberry Pi 4: try `n_range=64, n_az=96, radial_warp=2.0`
   (~6,000 quads) before reaching for `cpu_sparse`. For Pi 5 and x86,
   the defaults (n_range=80, n_az=120) come in ~25% faster than
@@ -208,16 +237,15 @@ svs:
     renderer: opengl
     tile_path: /media/terrain/srtm3
     range_nm: 30
-    # polar mesh dimensions still tunable via the polar config keys
-    n_range:     64
-    n_az:        96
-    fov_deg:     140
-    radial_warp: 2.0
 ```
 
-The polar tuning knobs (`n_range`, `n_az`, `fov_deg`, `radial_warp`,
-`r_min_nm`) apply identically — the GL tier reuses the same polar mesh
-topology, just executes it on the GPU.
+The GL tier reuses the same polar (range, azimuth) mesh topology as the
+removed CPU tier, executed on the GPU, but none of the old tuning knobs
+(`n_range`, `n_az`, `fov_deg`, `radial_warp`, `r_min_nm`) are read —
+mesh resolution and azimuthal extent are not configurable; the latter
+follows the viewport aspect ratio (see "Azimuthal Extent (HFOV)"
+above). The keys are still accepted in YAML for config compatibility
+and silently ignored (AER-1478).
 
 ### Pi 5 verdict
 

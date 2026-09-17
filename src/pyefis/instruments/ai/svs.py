@@ -174,22 +174,6 @@ _PALETTES = {
 # never mistaken for water.
 _WATER_SENTINEL = -9999.0
 
-# Polar (range, azimuth) mesh defaults for the GL terrain renderer — a
-# forward-facing fan centred on the aircraft, with a radial warp that
-# concentrates samples near the aircraft (finer near, coarser far). See
-# docs/svs_rendering.md for the rationale.
-#
-# Cells = n_range × n_az. At the defaults below: 80 × 120 = 9,600 cells —
-# 42% fewer quads than cpu_dense (16k) but ~25% faster per frame and
-# noticeably crisper in the near-field thanks to the radial LOD. Tuned
-# from an A/B sweep at 39.20 N / 106.85 W, 12,000 ft, head 150°.
-POLAR_DEFAULTS = {
-    "n_range":     80,    # radial samples
-    "n_az":        120,   # azimuthal samples
-    "fov_deg":     140.0, # total forward field-of-view (±70°)
-    "radial_warp": 1.5,   # outer cell ~10× inner cell at default n_range
-    "r_min_nm":    0.05,  # epsilon at r=0 to avoid the singularity
-}
 
 
 # ---------------------------------------------------------------------------
@@ -651,20 +635,6 @@ class SVSRenderer:
         # spacing.
         self._clip_cells  = int(config.get("clipmap_cells", 64))
         self._clip_levels = int(config.get("clipmap_levels", 7))
-        # Legacy polar-fan parameters — accepted and retained for
-        # config compatibility (the Pi config sets n_range), no
-        # longer consulted by the renderer.
-        # Polar mesh parameters for the GL terrain fan.
-        self._n_range      = int(config.get("n_range",
-                                            POLAR_DEFAULTS["n_range"]))
-        self._n_az         = int(config.get("n_az",
-                                            POLAR_DEFAULTS["n_az"]))
-        self._fov_deg      = float(config.get("fov_deg",
-                                              POLAR_DEFAULTS["fov_deg"]))
-        self._radial_warp  = float(config.get("radial_warp",
-                                              POLAR_DEFAULTS["radial_warp"]))
-        self._r_min_nm     = float(config.get("r_min_nm",
-                                              POLAR_DEFAULTS["r_min_nm"]))
 
     @property
     def ready(self) -> bool:

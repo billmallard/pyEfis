@@ -19,7 +19,6 @@ from pyefis.instruments.ai.svs import (
     tile_name, load_tile, elevation_at,
     COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
     SRTM3_SAMPLES, SRTM3_VOID, _WATER_SENTINEL,
-    POLAR_DEFAULTS,
 )
 from pyefis.instruments.ai import AI
 
