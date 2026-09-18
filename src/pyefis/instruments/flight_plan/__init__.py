@@ -1250,6 +1250,27 @@ class FlightPlan(QWidget):
             mm = 14.0
         return max(24.0, mm * self._px_per_mm())
 
+    def _chrome_h(self, h, units, max_fraction):
+        """Height of a chrome band -- a header, footer or tab strip -- in px.
+
+        Physical for the same reason the rows are. A band holds one line of
+        text or a row of soft keys, and how tall that has to be is a property
+        of the glass and the finger, not of the pane it happens to sit in.
+        These were pane fractions (0.16 h for the FPL header, 0.10 h for its
+        footer), which on a 993 px pane spent 257 px of chrome on ~20 px of
+        text and pushed the list into what was left.
+
+        *units* is a multiple of the physical row height, so the whole
+        instrument scales together: a header is worth about one and a half
+        rows, a soft-key footer a little over one, a tab strip one.
+
+        Clamped both ways. *max_fraction* keeps a short pane from spending
+        itself entirely on chrome -- the list is the point of the page -- and
+        the floor keeps a band from collapsing if the physical data is absent
+        and the nominal DPI is far off.
+        """
+        return max(16.0, min(units * self._row_h_cap(), h * max_fraction))
+
     def _px(self, value, minimum):
         """Pixel size for a font nominally *value* px, scaled by
         ``_font_scale()`` and floored at *minimum* (the original per-site
@@ -1294,8 +1315,12 @@ class FlightPlan(QWidget):
     # -- FPL page --------------------------------------------------------------
     def _paint_fpl(self, p, w, h):
         interactive = self._bridge.available
-        header_h = int(h * 0.16)
-        footer_h = int(h * 0.10)
+        # 2.0 because this header draws TWO lines -- name/badge/remaining in
+        # the top half, approach state or the gateway warning in the bottom --
+        # so it is worth two rows. The footer is a soft-key touch row: 1.3
+        # rows is ~18 mm, comfortably above a fingertip.
+        header_h = int(self._chrome_h(h, 2.0, 0.26))
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
 
         self._paint_header(p, w, header_h, interactive)
         self._paint_list(p, w, header_h, h - footer_h,
@@ -1614,8 +1639,8 @@ class FlightPlan(QWidget):
     # -- Entry page ---------------------------------------------------------------
     def _paint_entry(self, p, w, h):
         field_h = h * 0.10
-        strip_h = h * 0.08
-        tabs_h = h * 0.06
+        strip_h = self._chrome_h(h, 1.0, 0.12)
+        tabs_h = self._chrome_h(h, 1.0, 0.10)
         keypad_h = h * 0.5 if self.keypad else 0
         list_h = h - field_h - strip_h - tabs_h - keypad_h
 
@@ -1637,9 +1662,9 @@ class FlightPlan(QWidget):
 
     # -- Direct To page ---------------------------------------------------------
     def _paint_dto(self, p, w, h):
-        header_h = int(h * 0.14)
-        tabs_h = int(h * 0.08)
-        footer_h = int(h * 0.10)
+        header_h = int(self._chrome_h(h, 1.3, 0.18))   # single-line title
+        tabs_h = int(self._chrome_h(h, 1.0, 0.12))
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
 
         self._paint_dto_header(p, w, header_h)
         y = header_h
@@ -1769,8 +1794,8 @@ class FlightPlan(QWidget):
 
     # -- Catalog page -------------------------------------------------------------
     def _paint_catalog(self, p, w, h):
-        header_h = int(h * 0.12)
-        footer_h = int(h * 0.10)
+        header_h = int(self._chrome_h(h, 1.3, 0.18))   # single-line title
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
         self._paint_catalog_header(p, w, header_h)
         self._paint_catalog_list(p, w, header_h, h - footer_h)
         self._paint_catalog_footer(p, w, h - footer_h, footer_h)

@@ -168,8 +168,11 @@ def test_row_label_does_not_collide_with_the_type_icon(fix, qtbot):
     w = _widget(qtbot)
     img = _row_bands(w)
     cap = w._row_h_cap()
-    # Centre line of the first row: list starts below the header.
-    y = int(int(993 * 0.16) + cap / 2)
+    # Centre line of the first row. Ask the widget where its header ends --
+    # hardcoding the old 0.16 * h put this scanline in the wrong place the
+    # moment the chrome became physical, which is the same trap this file
+    # exists to close.
+    y = int(w._chrome_h(993, 2.0, 0.26) + cap / 2)
     runs = _runs_on_line(img, y, 0, int(w.width() * 0.35))
     assert len(runs) >= 2, f"expected an icon and a label on the row line, got {runs}"
     icon_end, label_start = runs[0][1], runs[1][0]
@@ -185,3 +188,50 @@ def test_a_long_plan_still_shrinks_rows_to_fit(fix, qtbot):
     w.grab()
     # 40 rows cannot each be the capped height in a ~736 px list area.
     assert w._row_h_cap() * 40 > 993
+
+
+# --------------------------------------------------------------------------
+# chrome bands (header / footer / tab strips)
+# --------------------------------------------------------------------------
+
+def test_chrome_does_not_grow_with_the_pane(fix, qtbot):
+    """Same defect as the rows, one level up.
+
+    The FPL header was 0.16 x pane height and its footer 0.10 x -- 257 px of
+    chrome on a 993 px pane, for about 20 px of text.
+    """
+    short = _widget(qtbot, size=(649, 500))
+    tall = _widget(qtbot, size=(649, 993))
+    assert short._chrome_h(500, 2.0, 0.26) == pytest.approx(
+        tall._chrome_h(993, 2.0, 0.26))
+
+
+def test_chrome_tracks_the_physical_display(fix, qtbot):
+    bench = _widget(qtbot, display=BEELINK)
+    panel = _widget(qtbot, display=SEVEN_INCH)
+    assert panel._chrome_h(600, 2.0, 0.26) > bench._chrome_h(600, 2.0, 0.26)
+
+
+def test_chrome_is_clamped_on_a_short_pane(fix, qtbot):
+    """The list is the point of the page; chrome must not eat a short pane."""
+    w = _widget(qtbot, size=(649, 200))
+    header = w._chrome_h(200, 2.0, 0.26)
+    footer = w._chrome_h(200, 1.3, 0.18)
+    assert header + footer < 200 * 0.45
+
+
+def test_chrome_never_collapses(fix, qtbot):
+    """With no physical information and a tiny pane, a band is still drawable."""
+    w = _widget(qtbot, size=(120, 90), display=None)
+    assert w._chrome_h(90, 2.0, 0.26) >= 16.0
+
+
+def test_the_list_gets_the_space_the_chrome_gave_back(fix, qtbot):
+    """End to end: the reclaimed chrome becomes visible legs."""
+    w = _widget(qtbot, size=(649, 993))
+    header = int(w._chrome_h(993, 2.0, 0.26))
+    footer = int(w._chrome_h(993, 1.3, 0.18))
+    new_list = 993 - header - footer
+    old_list = 993 - int(993 * 0.16) - int(993 * 0.10)   # the previous formulas
+    assert new_list > old_list
+    assert new_list / w._row_h_cap() >= 12      # ~12+ legs where 4 used to fit
