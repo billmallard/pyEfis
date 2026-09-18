@@ -1324,6 +1324,13 @@ _register(InstrumentSpec(
              help="colour of upcoming (not yet flown) legs"),
         Prop("past_color", "color", default="#808080", label="Past leg colour",
              help="colour of already-flown legs"),
+        Prop("row_height_mm", "number", default=14.0, minimum=6.0, maximum=30.0,
+             step=0.5, label="List row height (mm)",
+             help="physical height of one flight-plan row on the glass. "
+                  "Geometry, not text size: it sets the row pitch, the type "
+                  "icon and the row font. A taller pane shows MORE legs at "
+                  "this height rather than fewer, larger ones. Needs "
+                  "screenDiagonalInches to be correct for the device."),
     ],
     preview={"name": "KSBA-GVO-KSMX",
              "waypoints": [{"id": "KSBA"}, {"id": "GVO"}, {"id": "KSMX"}]},
