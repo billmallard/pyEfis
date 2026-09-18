@@ -94,6 +94,19 @@ class Main(QMainWindow):
             self.screenWidth = screensize.width()
             self.screenHeight = screensize.height()
 
+        # Physical size of the panel, as asserted by whoever configured it
+        # (the configurator writes this; hand-written configs may omit it).
+        # Instruments use it to size text and touch targets in millimetres
+        # rather than as a fraction of their own pane -- see
+        # pyefis.display_metrics. Kept as None when absent or unparseable so
+        # that module can fall through to Qt and then to a nominal DPI; a bad
+        # value here must not become silently unreadable text.
+        try:
+            diag = config["main"].get("screenDiagonalInches", None)
+            self.screenDiagonalInches = float(diag) if diag is not None else None
+        except (TypeError, ValueError):
+            self.screenDiagonalInches = None
+
         self.screenColor = config["main"]["screenColor"]
         self.nodeID = config["main"].get('nodeID', 1)
 

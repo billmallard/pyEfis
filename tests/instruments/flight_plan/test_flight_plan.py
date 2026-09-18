@@ -477,10 +477,16 @@ def test_single_waypoint_row_height_is_capped_not_full_list_height(fix, qtbot):
     w.resize(960, 1080)
     w._plan = _plan(1)
     w._commit()
-    header_h = int(w.height() * 0.16)
-    footer_h = int(w.height() * 0.10)
-    row_h = max(14, min((w.height() - footer_h - header_h) / 1, header_h))
-    assert row_h == pytest.approx(header_h)
+    # The cap is now physical (`_row_h_cap`, millimetres) rather than
+    # `header_h` = 0.16 * pane height. This used to recompute the old formula
+    # locally and assert it against itself, which stayed green while saying
+    # nothing about the widget -- ask the widget instead.
+    header_h = int(w._chrome_h(w.height(), 2.0, 0.26))
+    footer_h = int(w._chrome_h(w.height(), 1.3, 0.18))
+    list_h = w.height() - header_h - footer_h
+    row_h = max(14, min(list_h / 1, w._row_h_cap()))
+    assert row_h == pytest.approx(w._row_h_cap())
+    assert row_h < list_h / 2, "a single waypoint must not stretch to the list area"
     w.grab()
 
 

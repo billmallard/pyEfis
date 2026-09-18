@@ -38,6 +38,8 @@ surface is open is shadowed by the field -- see docs/flight_plan_widget.md.
 
 import logging
 import math
+
+from pyefis import display_metrics
 import os
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
@@ -121,6 +123,13 @@ class FlightPlan(QWidget):
         self.active_color = "#ff00ff"
         self.future_color = "#ffffff"
         self.past_color = "#808080"
+        # Target height of one list row, in MILLIMETRES on the glass. Geometry,
+        # not typography: this sets the row pitch, the type icon and (via
+        # row_h * 0.5) the row font. It is deliberately physical rather than a
+        # fraction of the pane -- a taller pane should show MORE legs, not
+        # bigger ones -- and deliberately independent of font_percent, which
+        # still scales the text drawn inside the row.
+        self.row_height_mm = 14.0
 
         self._page = None
         self._plan = fp_model.FlightPlan()
@@ -1198,6 +1207,70 @@ class FlightPlan(QWidget):
         fit = 1.0 if h <= 0 else min(1.0, (w / h) / _FONT_FIT_ASPECT)
         return user * fit
 
+    def _px_per_mm(self):
+        """Pixels per millimetre on the panel this widget is drawn on.
+
+        The screen geometry lives on the main window (``screen.parent``), which
+        is also where the configured ``screenDiagonalInches`` lands. Every
+        lookup is defensive: this runs inside paint, and an instrument built
+        without the usual parent chain (tests, the twin exporter) must still
+        render rather than raise.
+        """
+        main = getattr(getattr(self, "parent", None), "parent", None)
+        qscreen = None
+        try:
+            qscreen = self.screen()
+        except Exception:
+            qscreen = None
+        return display_metrics.pixels_per_mm(
+            getattr(main, "screenWidth", None),
+            getattr(main, "screenHeight", None),
+            getattr(main, "screenDiagonalInches", None),
+            qscreen,
+        )
+
+    def _row_h_cap(self):
+        """Tallest a list row may be, in pixels, from the physical target.
+
+        The previous cap was ``header_h`` -- 0.16 x the pane height, which came
+        to 158 px on a 993 px pane and rendered four grotesque rows. Row height
+        drives the icon and the row font, and neither is touched by
+        font_percent (see _font_scale: only fonts scale, geometry never does),
+        so no text setting could correct it.
+
+        The floor keeps a row usable if the physical information is wrong or
+        missing; the list still shrinks rows below this when a long plan needs
+        the space, because the caller takes a min() against the available area.
+        """
+        try:
+            mm = float(self.row_height_mm)
+        except (TypeError, ValueError):
+            mm = 14.0
+        if not math.isfinite(mm) or mm <= 0:
+            mm = 14.0
+        return max(24.0, mm * self._px_per_mm())
+
+    def _chrome_h(self, h, units, max_fraction):
+        """Height of a chrome band -- a header, footer or tab strip -- in px.
+
+        Physical for the same reason the rows are. A band holds one line of
+        text or a row of soft keys, and how tall that has to be is a property
+        of the glass and the finger, not of the pane it happens to sit in.
+        These were pane fractions (0.16 h for the FPL header, 0.10 h for its
+        footer), which on a 993 px pane spent 257 px of chrome on ~20 px of
+        text and pushed the list into what was left.
+
+        *units* is a multiple of the physical row height, so the whole
+        instrument scales together: a header is worth about one and a half
+        rows, a soft-key footer a little over one, a tab strip one.
+
+        Clamped both ways. *max_fraction* keeps a short pane from spending
+        itself entirely on chrome -- the list is the point of the page -- and
+        the floor keeps a band from collapsing if the physical data is absent
+        and the nominal DPI is far off.
+        """
+        return max(16.0, min(units * self._row_h_cap(), h * max_fraction))
+
     def _px(self, value, minimum):
         """Pixel size for a font nominally *value* px, scaled by
         ``_font_scale()`` and floored at *minimum* (the original per-site
@@ -1242,11 +1315,16 @@ class FlightPlan(QWidget):
     # -- FPL page --------------------------------------------------------------
     def _paint_fpl(self, p, w, h):
         interactive = self._bridge.available
-        header_h = int(h * 0.16)
-        footer_h = int(h * 0.10)
+        # 2.0 because this header draws TWO lines -- name/badge/remaining in
+        # the top half, approach state or the gateway warning in the bottom --
+        # so it is worth two rows. The footer is a soft-key touch row: 1.3
+        # rows is ~18 mm, comfortably above a fingertip.
+        header_h = int(self._chrome_h(h, 2.0, 0.26))
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
 
         self._paint_header(p, w, header_h, interactive)
-        self._paint_list(p, w, header_h, h - footer_h, header_h, interactive)
+        self._paint_list(p, w, header_h, h - footer_h,
+                         self._row_h_cap(), interactive)
         self._paint_footer(p, w, h - footer_h, footer_h, interactive)
 
         if self._row_menu_index is not None:
@@ -1367,13 +1445,22 @@ class FlightPlan(QWidget):
             if rh <= 0:
                 break
             p.setPen(QPen(QColor(self._row_color(i, active_idx))))
-            self._draw_type_icon(p, 6 + rh * 0.15, y + rh / 2, rh * 0.28, wp.type)
+            # Centre must clear its own radius: the original
+            # `6 + rh*0.15` against radius `rh*0.28` puts the left edge at
+            # `6 - rh*0.13`, negative for any rh > 46, which is why the type
+            # icons clipped off the left of the widget at the old row sizes.
+            _ir = rh * 0.28
+            _icx = max(6 + rh * 0.15, _ir + 2.0)
+            self._draw_type_icon(p, _icx, y + rh / 2, _ir, wp.type)
 
             label = wp.id
             role = ROLE_ABBREV.get(wp.role, "")
             if role:
                 label = f"{label} {role}"
-            p.drawText(QRectF(rh * 0.5, y, w * 0.35, rh),
+            # `rh * 0.5` assumed the old oversized icon; once rows are sane
+            # it lands inside the icon, so take the icon's right edge.
+            _lx = max(rh * 0.5, _icx + _ir + 8.0)
+            p.drawText(QRectF(_lx, y, w * 0.35, rh),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
 
             col_w = (w * 0.55) / len(cols)
@@ -1552,8 +1639,8 @@ class FlightPlan(QWidget):
     # -- Entry page ---------------------------------------------------------------
     def _paint_entry(self, p, w, h):
         field_h = h * 0.10
-        strip_h = h * 0.08
-        tabs_h = h * 0.06
+        strip_h = self._chrome_h(h, 1.0, 0.12)
+        tabs_h = self._chrome_h(h, 1.0, 0.10)
         keypad_h = h * 0.5 if self.keypad else 0
         list_h = h - field_h - strip_h - tabs_h - keypad_h
 
@@ -1575,9 +1662,9 @@ class FlightPlan(QWidget):
 
     # -- Direct To page ---------------------------------------------------------
     def _paint_dto(self, p, w, h):
-        header_h = int(h * 0.14)
-        tabs_h = int(h * 0.08)
-        footer_h = int(h * 0.10)
+        header_h = int(self._chrome_h(h, 1.3, 0.18))   # single-line title
+        tabs_h = int(self._chrome_h(h, 1.0, 0.12))
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
 
         self._paint_dto_header(p, w, header_h)
         y = header_h
@@ -1707,8 +1794,8 @@ class FlightPlan(QWidget):
 
     # -- Catalog page -------------------------------------------------------------
     def _paint_catalog(self, p, w, h):
-        header_h = int(h * 0.12)
-        footer_h = int(h * 0.10)
+        header_h = int(self._chrome_h(h, 1.3, 0.18))   # single-line title
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
         self._paint_catalog_header(p, w, header_h)
         self._paint_catalog_list(p, w, header_h, h - footer_h)
         self._paint_catalog_footer(p, w, h - footer_h, footer_h)
