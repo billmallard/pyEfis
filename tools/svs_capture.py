@@ -76,9 +76,14 @@ config and the scene graph, but rendering goes through
 widget's own (window-bound) viewport compositing --
 ``AI._paint_overlays()`` is the extracted half of ``paintEvent`` that isn't
 scene items (the bank cluster, FPM, chevrons, ...) and gets driven the same
-way. Not yet validated against a real eglfs+DRM-contention rig or diffed
-pixel-for-pixel against the windowed path -- see the AER-763 issue thread
-before trusting this as a second golden source.
+way. AER-1205 proved the first cut of this path never actually rendered
+(two defects: ``resize()`` on a never-``show()``n widget delivers no
+``resizeEvent``, so the scene was never built; and the offscreen GL context
+was made current once at setup and never again, so the FBO's QPainter came
+up inactive on every real paint attempt). AER-1631 fixes both -- see the
+issue thread for the Pi validation evidence (concurrent with a live pyEfis,
+diffed against a windowed capture of the same pose) before treating this as
+a second golden source in a new context.
 """
 
 import argparse
@@ -101,8 +106,8 @@ sys.modules["pyavtools.fix.client"] = mock_db.client
 sys.modules["pyavtools.scheduler"] = mock_db.scheduler
 
 import pyavtools.fix as fix  # noqa: E402
-from PyQt6.QtCore import Qt, QRectF, QTimer  # noqa: E402
-from PyQt6.QtGui import QImage, QPainter  # noqa: E402
+from PyQt6.QtCore import Qt, QRectF, QSize, QTimer  # noqa: E402
+from PyQt6.QtGui import QImage, QPainter, QResizeEvent  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMainWindow  # noqa: E402
 
 from pyefis.instruments.ai import AI  # noqa: E402
@@ -326,7 +331,7 @@ def make_offscreen_target(width, height):
     return surface, ctx, fbo, paint_device
 
 
-def render_offscreen_frame(widget, fbo, paint_device):
+def render_offscreen_frame(widget, ctx, surface, fbo, paint_device):
     """Paint one frame of ``widget`` directly into ``fbo``.
 
     Stands in for ``AI.paintEvent`` in the offscreen path: ``paintEvent``
@@ -339,10 +344,25 @@ def render_offscreen_frame(widget, fbo, paint_device):
     ``AI._paint_overlays()`` is the extracted non-scene half of paintEvent
     (bank cluster, FPM, chevrons, ...); it takes a QPainter directly for
     exactly this reason.
+
+    Re-asserts the offscreen context as current every call (AER-1631):
+    ``ctx.makeCurrent(surface)`` was previously done once at setup and
+    never again, on the assumption a QOpenGLContext stays the thread's
+    current context indefinitely. It does not -- nothing here promises
+    that across repeated Qt event-loop iterations, which is exactly why
+    QOpenGLWidget's own paintGL() always re-asserts its context before
+    invoking user paint code. Without the re-assert, ``fbo.bind()``
+    silently fails and the paint device's QPainter never becomes active
+    ("context needs to be current"), and the scene never settles.
     """
+    if not ctx.makeCurrent(surface):
+        raise RuntimeError("offscreen GL context failed to become current")
     widget._update_land_brush()
-    fbo.bind()
+    if not fbo.bind():
+        raise RuntimeError("offscreen FBO failed to bind")
     painter = QPainter(paint_device)
+    if not painter.isActive():
+        raise RuntimeError("offscreen QPainter failed to become active")
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     rect = QRectF(0, 0, widget.width(), widget.height())
     if widget.terrain_only:
@@ -531,7 +551,7 @@ def main(argv=None):
             print("SVS: could not create an offscreen GL surface/context",
                   file=sys.stderr)
             return EXIT_GL_FAILED
-        _surface, _ctx, fbo, paint_device = offscreen_target
+        surface, ctx, fbo, paint_device = offscreen_target
         widget = AI(None, show_fpm=not args.terrain_only)
     else:
         win = QMainWindow()
@@ -548,12 +568,17 @@ def main(argv=None):
     widget._pose.extrap_cap_s = 0.0
 
     if args.offscreen:
-        # Triggers resizeEvent -> builds the scene and calls redraw() once,
-        # establishing the view's roll/pitch transform from the pose already
-        # seeded above. No show() -- that's the one call this path exists to
-        # avoid, and geometry/paint-to-image both work without it (see
-        # tools/render_instrument.py for the same pattern on the raster side).
+        # resize() alone does NOT deliver a resizeEvent here (AER-1631): Qt
+        # only sends one to a widget carrying WA_WState_Created, which is set
+        # on show()/window creation -- exactly the call this path exists to
+        # avoid under eglfs DRM contention. The scene/overlay construction
+        # that a real resize would trigger lives entirely in AI.resizeEvent
+        # (ai_widget.py), is pure CPU/QPainter work with no GL dependency,
+        # and doesn't chain to QGraphicsView.resizeEvent -- so it's safe and
+        # faithful to call it directly instead of forcing a real window.
         widget.resize(args.width, args.height)
+        widget.resizeEvent(
+            QResizeEvent(QSize(args.width, args.height), QSize(0, 0)))
     else:
         win.setCentralWidget(widget)
         win.show()
@@ -594,7 +619,12 @@ def main(argv=None):
             # There is no window to dispatch a real paintEvent, so this path
             # drives its own render each tick instead of the widget.update()
             # below -- see render_offscreen_frame's docstring.
-            render_offscreen_frame(widget, fbo, paint_device)
+            try:
+                render_offscreen_frame(widget, ctx, surface, fbo, paint_device)
+            except RuntimeError as e:
+                print(f"SVS: offscreen render failed: {e}", file=sys.stderr)
+                app.exit(EXIT_GL_FAILED)
+                return
 
         if not state["requested"]:
             if settled(svs, expect_layers, require_terrain=not args.symbology_only):
@@ -602,7 +632,15 @@ def main(argv=None):
                 if state["confirmed"] >= CONFIRM_FRAMES:
                     if args.offscreen:
                         state["done"] = True
-                        fbo.bind()
+                        # render_offscreen_frame just ran this same tick and left
+                        # ctx current, but re-assert explicitly rather than rely
+                        # on that -- the whole point of AER-1631 is not trusting
+                        # current-ness to persist implicitly.
+                        if not ctx.makeCurrent(surface) or not fbo.bind():
+                            print("SVS: offscreen context/FBO not available "
+                                  "for readback", file=sys.stderr)
+                            app.exit(EXIT_GL_FAILED)
+                            return
                         ok = _readback_pixels(args.width, args.height, args.out)
                         if ok:
                             print(f"captured {args.out}")
