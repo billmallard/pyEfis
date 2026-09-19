@@ -106,11 +106,15 @@ def test_magvar_direction_matches_west_positive_convention(svs_capture):
 # ---------------------------------------------------------------------------
 # --offscreen (AER-763): svs_capture needs a window today (a QMainWindow it
 # shows so its QOpenGLWidget viewport can initialise), which eglfs refuses to
-# hand out a second one of while pyEfis already holds the display. These
-# tests only cover parse_args' validation -- the render path itself
+# hand out a second one of while pyEfis already holds the display. Most of
+# these tests only cover parse_args' validation -- the actual render path
 # (make_offscreen_target / render_offscreen_frame) needs a real GL context
 # and is not exercised by this suite; see the module docstring for what is
-# and is not verified about it.
+# and is not verified about it. resize_for_offscreen_capture() is the
+# exception: it is pure widget/scene geometry with no GL dependency (see its
+# own docstring), so the AER-1692 regression below exercises the actual
+# function svs_capture.py's --offscreen path calls, not a hand-derived
+# reimplementation of it.
 # ---------------------------------------------------------------------------
 
 def test_offscreen_flag_defaults_to_false(svs_capture):
@@ -149,3 +153,36 @@ def test_offscreen_rejects_non_default_msaa(svs_capture, capsys):
             "--offscreen", "--msaa", "4",
         ])
     assert "--offscreen" in capsys.readouterr().err
+
+
+def test_offscreen_resize_tracks_requested_size(svs_capture, fix, qtbot):
+    """AER-1692 regression: resize_for_offscreen_capture() must leave the
+    widget's internal viewport tracking the requested capture size, not
+    stuck at whatever size it had when set_svs_config() installed it.
+
+    Before the fix, AI.redraw()'s centerOn() call -- which reads
+    viewport().width()/height(), not the outer widget's own (correctly
+    resized) size -- always centred the scene on the same fixed point, so
+    the AI overlay's centre row never moved with --width/--height.
+    """
+    from PyQt6.QtCore import QPointF
+    from pyefis.instruments.ai import AI
+
+    widget = AI(None, show_fpm=False)
+    qtbot.addWidget(widget)
+    widget.set_svs_config({"enabled": False})
+
+    for width, height in [(800, 600), (1920, 1200)]:
+        svs_capture.resize_for_offscreen_capture(widget, width, height)
+
+        assert widget.viewport().width() == width
+        assert widget.viewport().height() == height
+
+        # At rest (zero pitch/roll, horizon_position=50) the scene's centre
+        # point is the pitch=0 horizon -- it must land at the viewport's
+        # own vertical centre, scaling with height rather than sitting at a
+        # fixed absolute row.
+        horizon_view_y = widget.mapFromScene(
+            QPointF(widget.scene.width() / 2, widget.scene.height() / 2)
+        ).y()
+        assert horizon_view_y == pytest.approx(height / 2, abs=1)

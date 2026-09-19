@@ -1,5 +1,118 @@
 # AER-1631 -- offscreen `svs_capture.py` repair, Pi 5 bench evidence
 
+**Update (2026-09-19, AER-1692): the frames above were geometrically wrong,
+now fixed.** INTEGRATOR's review of #245 at head `428ba48` measured the
+committed `offscreen_*.png` frames against `windowed_1920x1200.png` and found
+the AI overlay (horizon line, pitch ladder, bank cluster) composited about a
+fixed centre row of ~240px, regardless of the requested `--width`/`--height`
+-- 360 rows above the true centre of a 1200-tall capture. The "How closely
+they agree" section below, from the first AER-1631 session, attributed the
+resulting disagreement to sky colour (an FBO/`QOpenGLWidget` surface-format
+or sRGB difference); that hypothesis did not survive the actual measurements
+-- a colour difference cannot displace a horizon line by 360 rows.
+
+**Root cause.** `AI.redraw()`'s `centerOn()` call (`ai_widget.py`) positions
+the scene using `self.viewport().width()/height()` -- not the outer `AI`
+widget's own size, which `resizeEvent` already reads correctly via
+`self.height()`. The `--offscreen` path resizes the outer widget with
+`widget.resize(...)`, then delivers the resize by calling
+`widget.resizeEvent(...)` directly as a plain Python method (AER-1631,
+deliberately, since this widget is never shown). That direct call reaches
+`AI`'s own resize logic but skips `QAbstractScrollArea`'s Resize-event
+handling -- the code that keeps the internal `viewport()` child widget's size
+in step with the view. Left untouched, that viewport stays at whatever size
+it had when `set_svs_config()` installed it, so `centerOn()` centres every
+capture on that fixed (wrong) point regardless of the requested capture size.
+
+**The fix that didn't work, and why.** `set_svs_config()` installs a live
+`QOpenGLWidget` as this view's viewport, for the windowed path's native-GL
+terrain painting -- exactly the DRM/GPU resource `--offscreen` exists to
+never touch (`render_offscreen_frame()` paints through its own, separate
+`QOffscreenSurface`/FBO and never touches `viewport()` at all). The first fix
+attempted here called `widget.viewport().resize(...)` directly on that live
+GL widget to correct `centerOn()`'s input. On the Pi 5 bench, under `eglfs`
+with `pyefis.service` already holding DRM master, that resize made Qt attempt
+to realise the GL widget's native surface; repeated every `pump()` tick, it
+spammed `MESA: error: Failed to allocate device memory for BO` and, once,
+crashed the whole board hard enough to need a reboot -- not just the capture
+process. **The shipped fix instead swaps `viewport()` for a plain, inert
+`QWidget()` before resizing** -- `centerOn()`/`render()`'s viewport-size
+dependency only needs the *size* to be right, never the paint capability,
+since this path never shows or paints through it either way. A plain
+`QWidget` resize touches no DRM/GPU resource.
+
+**Re-captured and verified.** All three frames in this directory (`offscreen_
+1920x1200.png`, `offscreen_concurrent_800x600.png`, `windowed_1920x1200.png`)
+are re-captured with the fix, same pose as the original session. The
+artificial horizon now lands on row 599 of 1200 (offscreen) and row 599 of
+1200 (windowed) -- exact agreement -- and on row 299 of 600 in the 800x600
+offscreen capture, confirming it now scales with the requested height rather
+than sitting at a fixed absolute row. See the corrected "How closely they
+agree" section below (in place of the superseded sky-colour hypothesis) and
+`horizon_align_crop_zoom3x.png` (replacing the retired `sky_diff_crop_zoom3x.
+png`, whose sky-colour framing no longer matches what the data shows).
+
+**A stale path, not a bench defect.** The exact commands below use
+`--dof .../obstacles/260611/obstacles.sqlite`, which no longer exists --
+`makerplane-data`'s obstacle cycle has since rolled to `260806`, exposed via
+a `current` symlink. Using the stale path (copied verbatim from this
+document) made the DOF collector never key, so `settled()` waited forever,
+`pump()` looped far longer than the ~1-2s a normal capture takes, and *that*
+-- not the code fix -- is what reproduced the same `Failed to allocate device
+memory for BO` crash signature independent of the viewport question above.
+The lesson: point `--dof` (and, if `makerplane-data` follows the same
+pattern, `--nasr`) at the `current` symlink rather than a dated snapshot
+directory copied from an old command. With a live path, both offscreen
+captures above settled and exited in under 2 seconds each.
+
+### AER-1692 exact commands
+
+Same pose and bench as the second session below, `--dof` corrected to the
+`current` symlink. Concurrent offscreen, `pyefis.service` active throughout
+(`MainPID`/`NRestarts` unchanged before and after both captures):
+
+```bash
+cd ~/pyEfis
+export QT_QPA_PLATFORM=eglfs
+export QT_QPA_EGLFS_KMS_CONFIG=/home/wpballard/eglfs_hdmi.json
+export PYTHONPATH=src:tests
+.venv/bin/python tools/svs_capture.py --offscreen \
+  --lat 34.4275 --lon -119.8546 --alt 500 --heading 87 --range 8 \
+  --width 800 --height 600 \
+  --tiles /data/makerplane-data/terrain/tiles \
+  --water /data/makerplane-data/water/current/water.sqlite \
+  --nasr /data/makerplane-data/airports/airports-canada/2026.06/airports.sqlite \
+  --dof /data/makerplane-data/obstacles/current/obstacles.sqlite \
+  --out /tmp/aer1692_fixed_800x600.png --timeout 20 --verbose
+# captured /tmp/aer1692_fixed_800x600.png, exit 0, real 0m1.323s
+
+# same command, --width 1920 --height 1200, --out .../aer1692_fixed_1920x1200.png
+# captured, exit 0, real 0m1.731s
+```
+
+Windowed comparison (`pyefis.service` stopped first, restarted immediately
+after, same as the second session's convention):
+
+```bash
+systemctl --user stop pyefis.service
+cd ~/pyEfis
+export QT_QPA_PLATFORM=eglfs
+export QT_QPA_EGLFS_KMS_CONFIG=/home/wpballard/eglfs_hdmi.json
+export PYTHONPATH=src:tests
+.venv/bin/python tools/svs_capture.py \
+  --lat 34.4275 --lon -119.8546 --alt 500 --heading 87 --range 8 \
+  --width 800 --height 600 \
+  --tiles /data/makerplane-data/terrain/tiles \
+  --water /data/makerplane-data/water/current/water.sqlite \
+  --nasr /data/makerplane-data/airports/airports-canada/2026.06/airports.sqlite \
+  --dof /data/makerplane-data/obstacles/current/obstacles.sqlite \
+  --out /tmp/aer1692_windowed_1920x1200.png --timeout 20 --verbose
+# captured /tmp/aer1692_windowed_1920x1200.png, exit 0, real 0m1.759s, 1920x1200
+# despite --width 800 --height 600 (same eglfs fullscreen-forcing as before)
+systemctl --user reset-failed pyefis.service
+systemctl --user restart pyefis.service
+```
+
 **Update (2026-09-19, second Pi session): full DoD reached.** A physical
 HDMI display is now connected to the Pi 5 (Bill connected one after
 accepting the confirmation card raised in the first session below).
@@ -129,40 +242,36 @@ back to `active`, `NRestarts=0`, new `MainPID`, within 5s of the restart.
 
 ## How closely they agree
 
+**Corrected 2026-09-19 (AER-1692).** The numbers below are re-measured
+against the re-captured, geometry-fixed frames. The previous version of this
+section (sky "disagrees smoothly and systematically", 46.4% of pixels
+differ) was measuring the 360-row horizon displacement, not a colour or
+surface-format difference -- see the AER-1692 update note at the top of this
+document. That hypothesis is retracted.
+
 Pixel diff between `offscreen_1920x1200.png` and `windowed_1920x1200.png`
 (matching resolution, same pose, same command modulo `--offscreen`):
 
 | region | agreement |
 |---|---|
-| terrain / ground (bottom ~50% of frame) | **byte-identical** -- sampled RGB at y=700/900/1100 matched to the integer across the frame width |
-| sky (top ~40% of frame) | **disagrees smoothly and systematically** -- not noise. Offscreen sky reads visibly brighter/more saturated than windowed sky at the same screen position; both follow the same gradient direction and hue |
-| whole frame | 46.4% of pixels differ at all; 37.0% differ by >30/255 in some channel; mean abs diff 16.4/255 |
+| terrain / ground (bottom ~50% of frame) | **byte-identical** -- mean abs diff 0.0/255 |
+| sky (top ~40% of frame) | **near-identical** -- mean abs diff 0.267/255 (anti-aliasing-scale noise, not a systematic shift) |
+| whole frame | 0.09% of pixels differ at all; 0.09% differ by >30/255 in some channel; mean abs diff 0.111/255 |
 
-`sidebyside_full_1920x1200.png` shows the full frames and diff side by
-side (downscaled for legibility). `sky_diff_crop_zoom3x.png` is a 3x
-crop of the sky band (x700-1220, y200-400) where the difference
-concentrates, offscreen/windowed/diff stacked.
+`sidebyside_full_1920x1200.png` shows the full frames and diff side by side
+(downscaled for legibility) -- the diff panel is visibly blank except for a
+faint trace around the bank-arc anti-aliased edges. `horizon_align_crop_
+zoom3x.png` is a 3x crop centred on the artificial horizon (x700-1220,
+y540-660) offscreen/windowed stacked, confirming pixel-level alignment
+(replaces the retired `sky_diff_crop_zoom3x.png`, whose framing -- a sky-band
+crop looking for a colour difference -- no longer matches what the corrected
+data shows).
 
-**Likely cause, not confirmed, not fixed here.** The sky is a flat
-`QLinearGradient` `QGraphicsScene` rect item (`ai_widget.py:508-523`) with
-no data dependency -- a geometry or pose mismatch would shift/blur it, not
-recolor it uniformly, and the identical terrain proves pose/geometry
-*are* identical between the two runs. The most likely remaining explanation
-is a rendering-pipeline difference between the two paint targets: the
-windowed path's viewport is a `QOpenGLWidget` built with an explicit MSAA
-`QSurfaceFormat` (`ai_widget.py:688-703`, `set_svs_config`), while the
-offscreen path's `QOpenGLFramebufferObject` is built directly in
-`make_offscreen_target()` (`tools/svs_capture.py:285-331`) with `setSamples(0)`
-and no other format negotiation -- a color-space/sRGB-handling difference
-between an app-configured `QOpenGLWidget` surface and a bare manually-built
-FBO would produce exactly this signature (flat gradient content reads
-correct in hue/direction but off in brightness/saturation, edges/geometry
-otherwise unaffected). Per this issue's instruction ("disagreement is a
-finding worth more than a green tick -- report it, do not tune until it
-matches"), this is reported and not chased further here; it's a candidate
-for its own follow-up issue if the offscreen path is meant to be a
-pixel-exact stand-in for the windowed one rather than just a
-render-something-real proof.
+The residual ~0.1% (anti-aliasing-scale, confined to curved/rotated edges
+like the bank arc) is not chased further here -- it is two orders of
+magnitude below the geometry defect this issue fixed, and is exactly the kind
+of rounding difference expected between two independently-rasterized paths at
+the same nominal size.
 
 ## What this does and does not prove
 
@@ -176,13 +285,29 @@ render-something-real proof.
 - **Proves:** terrain content (the data-driven part of the render -- SRTM
   elevation, water, airports, obstacles) is byte-identical between the
   offscreen and windowed paths at the same pose and resolution.
-- **Does not prove** the two paths are pixel-identical overall -- the sky
-  gradient disagrees systematically, cause not confirmed (see above).
+- **Proves (AER-1692):** with the geometry fix, the artificial horizon,
+  pitch ladder and bank cluster land at the same pixel rows as the windowed
+  capture, and scale with the requested `--height` rather than sitting at a
+  fixed absolute row -- the two paths agree to within anti-aliasing noise
+  (0.09% of pixels differ, mean abs diff 0.111/255) rather than the 46.4%/
+  16.4-per-255 divergence the pre-fix frames showed. The sky-colour
+  hypothesis in the original "How closely they agree" section is retracted.
 - **Does not prove** this generalizes to poses/configs untested here
   (single coastal SBA pose, terrain_only=False, default MSAA/AA settings).
 - **Does not prove** `QT_QPA_EGLFS_KMS_CONFIG` is unnecessary on a
   single-DRM-node box -- this Pi has two nodes; a box with one might not
   need it, untested.
+- **Does not prove** `render_offscreen_frame()`'s per-tick GPU allocation is
+  leak-free when `pump()` has to loop for many ticks (a scene that is slow to
+  settle, not just one that never will) -- AER-1692's own testing hit
+  repeated `MESA: error: Failed to allocate device memory for BO` and one
+  full board reboot while diagnosing a *stale `--dof` path* that made the
+  scene never settle at all (see the update note at the top). Once pointed
+  at valid data every capture here settled in under 2 seconds, at which
+  point this was never exercised. Whether a few seconds of genuinely slow
+  settling (not "never") is also safe is untested and worth its own
+  follow-up if `--offscreen` is going to run against real (not mock) data
+  sources that can legitimately take longer to promote.
 
 ## Bench hygiene
 
@@ -194,6 +319,19 @@ render-something-real proof.
   which cannot coexist with pyEfis by construction) and restarted
   immediately after; confirmed `active`/`NRestarts=0` before ending the
   session.
+
+**AER-1692 session bench hygiene.** `~/pyEfis` stayed on `dev` @ `aa7f16c`
+throughout; the AER-1631+AER-1692 diff was applied via `git apply`, exercised
+for every capture in this update, then reverted, same convention as above.
+`pyefis.service` was stopped once for the windowed comparison and restarted
+immediately after (confirmed `active`, `NRestarts=0`, display `connected`
+at the end). One thing this session did *not* leave clean by choice: while
+diagnosing the stale-`--dof`/never-settled crash before finding its real
+cause, an early offscreen run crashed hard enough to reboot the Pi 5 outright
+(not just the capture process) -- `pyefis.service` came back up on its own
+(`Restart=always`) with no action needed, and no data or bench state was
+lost, but flagging it plainly rather than only in the narrative above: this
+board rebooted once during this session.
 
 ---
 

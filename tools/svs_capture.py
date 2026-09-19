@@ -108,7 +108,7 @@ sys.modules["pyavtools.scheduler"] = mock_db.scheduler
 import pyavtools.fix as fix  # noqa: E402
 from PyQt6.QtCore import Qt, QRectF, QSize, QTimer  # noqa: E402
 from PyQt6.QtGui import QImage, QPainter, QResizeEvent  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QMainWindow  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget  # noqa: E402
 
 from pyefis.instruments.ai import AI  # noqa: E402
 
@@ -365,17 +365,73 @@ def render_offscreen_frame(widget, ctx, surface, fbo, paint_device):
         raise RuntimeError("offscreen QPainter failed to become active")
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     rect = QRectF(0, 0, widget.width(), widget.height())
+    # QGraphicsView.render()'s ``source`` (view coordinates, mapped to the
+    # scene via the current transform) defaults to viewport().rect() when
+    # left unset -- which is exactly the value AER-1692 found stuck at Qt's
+    # implicit 640x480 top-level default in this never-shown offscreen
+    # widget. Passing it explicitly, matching ``target``, removes the
+    # dependency on that fallback tracking the widget's real size.
+    source = widget.rect()
     if widget.terrain_only:
         hl = getattr(widget, "_horizon_line", None)
         if hl is not None:
             hl.setOpacity(0.0)
         for _i, _item in widget.pitchItems:
             _item.setOpacity(0.0)
-        widget.render(painter, rect)
+        widget.render(painter, rect, source)
     else:
-        widget.render(painter, rect)
+        widget.render(painter, rect, source)
         widget._paint_overlays(painter)
     painter.end()
+
+
+def resize_for_offscreen_capture(widget, width, height):
+    """Deliver an offscreen ``AI`` widget its first (and only) resize.
+
+    ``resize()`` alone does NOT deliver a resizeEvent here (AER-1631): Qt
+    only sends one to a widget carrying WA_WState_Created, which is set on
+    show()/window creation -- exactly the call this path exists to avoid
+    under eglfs DRM contention. The scene/overlay construction that a real
+    resize would trigger lives entirely in AI.resizeEvent (ai_widget.py), is
+    pure CPU/QPainter work with no GL dependency, and doesn't chain to
+    QGraphicsView.resizeEvent -- so it's safe and faithful to call it
+    directly instead of forcing a real window.
+
+    But calling resizeEvent() as a plain Python method, rather than
+    delivering it through Qt's real event dispatch, also skips
+    QAbstractScrollArea's own Resize handling -- the code that resizes
+    QGraphicsView's internal viewport() child widget to track the view's
+    size. AI never constructs a window, so that viewport is never shown or
+    laid out either, and it never gets a first real resize: it is left at
+    whatever size it had when set_svs_config() installed it.
+    AI.resizeEvent's own scene/pixelsPerDeg math reads self.width()/height()
+    (the outer widget, resized below) and is unaffected, but redraw()'s
+    centerOn() call positions the scene using viewport().width()/height() --
+    so with that stuck at its installed size, every capture composites the
+    AI overlay about the wrong centre row, regardless of the requested
+    --width/--height (AER-1692; the symptom was a constant ~240px centre
+    row, half of Qt's implicit 640x480 top-level default).
+
+    set_svs_config() unconditionally installs a live QOpenGLWidget as this
+    view's viewport, for the windowed path's native-GL SVS painting --
+    exactly the DRM/GPU resource --offscreen exists to never touch (see the
+    module docstring). render_offscreen_frame() never paints through it: it
+    reads back through a separate QOffscreenSurface/FBO, so the live GL
+    viewport is dead weight here, kept only because set_svs_config() doesn't
+    know which path called it. Resizing that widget directly -- the first
+    fix attempted here -- forces Qt to try to create its native GL surface
+    on eglfs while pyefis.service already holds DRM master, and repeating
+    that every pump() tick exhausted GPU memory and crashed the Pi 5 bench
+    outright (a board reboot, not just a process crash). Swap in an inert
+    QWidget instead: a plain (non-native, non-GL) child needs no DRM/GPU
+    resource to resize, and centerOn()/render()'s implicit viewport().rect()
+    fallback only need its *size* to be right, not its paint capability --
+    this process never shows it or paints through it either way.
+    """
+    widget.setViewport(QWidget())
+    widget.resize(width, height)
+    widget.viewport().resize(width, height)
+    widget.resizeEvent(QResizeEvent(QSize(width, height), QSize(0, 0)))
 
 
 def settled(svs, expect_layers, require_terrain=True):
@@ -568,17 +624,7 @@ def main(argv=None):
     widget._pose.extrap_cap_s = 0.0
 
     if args.offscreen:
-        # resize() alone does NOT deliver a resizeEvent here (AER-1631): Qt
-        # only sends one to a widget carrying WA_WState_Created, which is set
-        # on show()/window creation -- exactly the call this path exists to
-        # avoid under eglfs DRM contention. The scene/overlay construction
-        # that a real resize would trigger lives entirely in AI.resizeEvent
-        # (ai_widget.py), is pure CPU/QPainter work with no GL dependency,
-        # and doesn't chain to QGraphicsView.resizeEvent -- so it's safe and
-        # faithful to call it directly instead of forcing a real window.
-        widget.resize(args.width, args.height)
-        widget.resizeEvent(
-            QResizeEvent(QSize(args.width, args.height), QSize(0, 0)))
+        resize_for_offscreen_capture(widget, args.width, args.height)
     else:
         win.setCentralWidget(widget)
         win.show()
