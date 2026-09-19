@@ -50,6 +50,13 @@ What this tool does instead
 
 Exit codes: 0 ok, 2 never settled (timeout), 3 GL unavailable, 4 PNG write failed.
 
+On success a ``<out>.json`` sidecar is written alongside the frame, naming the
+pyEfis checkout that rendered it: ``{"pyefis_rev": "<short-sha>[-dirty]"}``
+(AER-1675). A cross-renderer differential is only as good as its ability to
+tell "different GPU" from "different code" apart, and an archived frame is
+only re-attributable later if the identity travels with it -- resolved live
+from the checkout each run, never a constant someone has to remember to bump.
+
 Usage::
 
     python tools/svs_capture.py --lat 24.5561 --lon -81.7595 --alt 500 \\
@@ -82,6 +89,8 @@ before trusting this as a second golden source.
 """
 
 import argparse
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -238,6 +247,49 @@ def _default(path, *parts):
 def _default_water():
     found = sorted((_REPO / "water").glob("water_rtree*.sqlite"))
     return str(found[0]) if found else ""
+
+
+def resolve_pyefis_rev(repo_root=None):
+    """Identify the pyEfis checkout actually rendering this frame (AER-1675).
+
+    A cross-renderer differential (Beelink vs Pi) only localises a defect if
+    a disagreement can be attributed to *different code* vs *different GPU*
+    -- which needs the rendering identity read from the checkout that is
+    live right now, not a constant someone has to remember to bump (a
+    constant is a lie waiting to happen). Dirty is reported rather than
+    silently collapsed into the clean SHA: a frame rendered from uncommitted
+    changes is not reproducible from that SHA alone.
+
+    Never raises -- this is metadata for archival/attribution, not something
+    a capture should fail over. Returns "unknown" if this isn't a git
+    checkout or git is unavailable.
+    """
+    root = repo_root or _REPO
+    try:
+        sha = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if sha.returncode != 0:
+            return "unknown"
+        rev = sha.stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if dirty.returncode == 0 and dirty.stdout.strip():
+            rev += "-dirty"
+        return rev
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def _write_manifest(out_path, pyefis_rev):
+    """Sidecar `<out>.json` naming the checkout that rendered `<out>` -- so an
+    archived frame can be re-attributed later, which is most of why it's
+    archived at all."""
+    manifest_path = Path(str(out_path) + ".json")
+    manifest_path.write_text(json.dumps({"pyefis_rev": pyefis_rev}, indent=1))
 
 
 class CapturingAI(AI):
@@ -461,6 +513,7 @@ def seed_mock_fix(args):
 
 def main(argv=None):
     args = parse_args(argv)
+    pyefis_rev = resolve_pyefis_rev()
 
     highways = args.highways
     if args.symbology_only:
@@ -574,6 +627,7 @@ def main(argv=None):
                 return
         elif widget.capture_ok is not None:
             if widget.capture_ok:
+                _write_manifest(args.out, pyefis_rev)
                 print(f"captured {args.out}")
                 app.exit(EXIT_OK)
             else:
@@ -605,6 +659,7 @@ def main(argv=None):
                         fbo.bind()
                         ok = _readback_pixels(args.width, args.height, args.out)
                         if ok:
+                            _write_manifest(args.out, pyefis_rev)
                             print(f"captured {args.out}")
                             app.exit(EXIT_OK)
                         else:
@@ -633,6 +688,7 @@ def main(argv=None):
         print(f"pose   : {args.lat}, {args.lon} @ {args.alt} ft, hdg {args.heading}")
         print(f"range  : {args.range_nm} NM (auto_range={args.auto_range})")
         print(f"layers : {sorted(expect_layers) or 'none'}  water={bool(water)}")
+        print(f"rev    : {pyefis_rev}")
 
     return app.exec()
 
