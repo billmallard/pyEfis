@@ -1,4 +1,5 @@
-"""Tests for tools/svs_capture.py's mock-FIX fixture (AER-708).
+"""Tests for tools/svs_capture.py's mock-FIX fixture (AER-708) and its
+rendering-identity metadata (AER-1675).
 
 MAGVAR previously had no seat in the capture tool's mock FIX database, so
 ``head_true = HEAD - MAGVAR`` (src/pyefis/instruments/ai/__init__.py) always
@@ -13,6 +14,8 @@ invisible to every capture the tool could produce. These tests exercise
 """
 import argparse
 import importlib.util
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -186,3 +189,52 @@ def test_offscreen_resize_tracks_requested_size(svs_capture, fix, qtbot):
             QPointF(widget.scene.width() / 2, widget.scene.height() / 2)
         ).y()
         assert horizon_view_y == pytest.approx(height / 2, abs=1)
+
+
+# ---------------------------------------------------------------------------
+# pyefis_rev (AER-1675): a cross-renderer differential only localises a
+# defect if a disagreement can be attributed to different code vs different
+# GPU, which needs the rendering identity read from the live checkout --
+# never a constant someone has to remember to bump.
+# ---------------------------------------------------------------------------
+
+def _git_repo(tmp_path, dirty=False):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run = lambda *cmd: subprocess.run(
+        ["git", *cmd], cwd=repo, capture_output=True, text=True, check=True,
+    )
+    run("init", "-q")
+    run("-c", "user.email=test@test", "-c", "user.name=test",
+        "commit", "--allow-empty", "-q", "-m", "init")
+    if dirty:
+        (repo / "untracked.txt").write_text("scratch")
+    return repo
+
+
+def test_resolve_pyefis_rev_reports_clean_checkout(svs_capture, tmp_path):
+    repo = _git_repo(tmp_path)
+    rev = svs_capture.resolve_pyefis_rev(repo)
+    assert rev != "unknown"
+    assert not rev.endswith("-dirty")
+
+
+def test_resolve_pyefis_rev_flags_dirty_checkout(svs_capture, tmp_path):
+    repo = _git_repo(tmp_path, dirty=True)
+    rev = svs_capture.resolve_pyefis_rev(repo)
+    assert rev.endswith("-dirty")
+
+
+def test_resolve_pyefis_rev_unknown_outside_a_git_checkout(svs_capture, tmp_path):
+    not_a_repo = tmp_path / "not-a-repo"
+    not_a_repo.mkdir()
+    assert svs_capture.resolve_pyefis_rev(not_a_repo) == "unknown"
+
+
+def test_write_manifest_writes_sidecar_json_beside_the_frame(svs_capture, tmp_path):
+    out = tmp_path / "frame.png"
+    svs_capture._write_manifest(out, "abc1234-dirty")
+
+    manifest = tmp_path / "frame.png.json"
+    assert manifest.is_file()
+    assert json.loads(manifest.read_text()) == {"pyefis_rev": "abc1234-dirty"}
