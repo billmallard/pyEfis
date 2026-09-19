@@ -24,12 +24,27 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-MAX_SLOTS = 50
+MAX_SLOTS = 100
 
 TYPE_TO_FPLTYPE = {"unknown": 0, "airport": 1, "vor": 2, "ndb": 3, "fix": 4, "user": 5, "map": 6}
 FPLTYPE_TO_TYPE = {v: k for k, v in TYPE_TO_FPLTYPE.items()}
-ROLE_TO_FPLROLE = {"none": 0, "iaf": 1, "faf": 2, "map": 3, "mahp": 4}
-FPLROLE_TO_ROLE = {v: k for k, v in ROLE_TO_FPLROLE.items()}
+
+# PA3 (fix-gateway#27) replaced the scalar FPLfROLE (0 none/1 iaf/2 faf/3
+# map/4 mahp) with a FPLfFLAGS bitfield shared with fly-over (0x01) and
+# from-a-coded-procedure (0x20) -- neither of which this module reads or
+# writes yet. The bit positions do NOT match the old scalar values (faf was
+# 2, IAF's bit is 0x02), so this has to be an explicit table in both
+# directions -- a straight rename/shift would silently turn faf into iaf.
+ROLE_TO_FLAG = {"none": 0x00, "iaf": 0x02, "faf": 0x04, "map": 0x08, "mahp": 0x10}
+_FLAG_TO_ROLE = ((0x02, "iaf"), (0x04, "faf"), (0x08, "map"), (0x10, "mahp"))
+
+
+def _flag_to_role(flags: int) -> str:
+    for bit, role in _FLAG_TO_ROLE:
+        if flags & bit:
+            return role
+    return "none"
+
 
 # Appendix A engine outputs the ActivePlan read-back watches.
 ENGINE_OUTPUT_KEYS = (
@@ -47,7 +62,7 @@ _STATIC_KEYS = (
 
 
 def _slot_keys(n: int) -> tuple[str, str, str, str, str]:
-    return (f"FPL{n}ID", f"FPL{n}LAT", f"FPL{n}LON", f"FPL{n}TYPE", f"FPL{n}ROLE")
+    return (f"FPL{n}ID", f"FPL{n}LAT", f"FPL{n}LON", f"FPL{n}TYPE", f"FPL{n}FLAGS")
 
 
 def _probe_keys():
@@ -130,20 +145,20 @@ class FixBridge:
             return
         count = plan.count
         for i in range(1, max(count, self._published_count) + 1):
-            id_key, lat_key, lon_key, type_key, role_key = _slot_keys(i)
+            id_key, lat_key, lon_key, type_key, flags_key = _slot_keys(i)
             if i <= count:
                 wp = plan.waypoints[i - 1]
                 self._set(id_key, wp.id)
                 self._set(lat_key, wp.lat)
                 self._set(lon_key, wp.lon)
                 self._set(type_key, TYPE_TO_FPLTYPE.get(wp.type, 0))
-                self._set(role_key, ROLE_TO_FPLROLE.get(wp.role, 0))
+                self._set(flags_key, ROLE_TO_FLAG.get(wp.role, 0))
             else:
                 self._set(id_key, "")
                 self._set(lat_key, 0.0)
                 self._set(lon_key, 0.0)
                 self._set(type_key, 0)
-                self._set(role_key, 0)
+                self._set(flags_key, 0)
         self._set("FPLCOUNT", count)
         self._set("FPLNAME", plan.name or plan.default_name())
         self._set("FPLSEQ", int(self._get("FPLSEQ").value) + 1)
@@ -203,13 +218,13 @@ class FixBridge:
         count = int(self._get("FPLCOUNT").value)
         slots = []
         for i in range(1, count + 1):
-            id_key, lat_key, lon_key, type_key, role_key = _slot_keys(i)
+            id_key, lat_key, lon_key, type_key, flags_key = _slot_keys(i)
             slots.append(RouteSlot(
                 id=self._get(id_key).value,
                 lat=self._get(lat_key).value,
                 lon=self._get(lon_key).value,
                 type=FPLTYPE_TO_TYPE.get(int(self._get(type_key).value), "unknown"),
-                role=FPLROLE_TO_ROLE.get(int(self._get(role_key).value), "none")))
+                role=_flag_to_role(int(self._get(flags_key).value))))
         return RouteBlock(name=self._get("FPLNAME").value,
                            seq=int(self._get("FPLSEQ").value), waypoints=slots)
 

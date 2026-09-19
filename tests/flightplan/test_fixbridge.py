@@ -45,15 +45,15 @@ _ENGINE_DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "str": ""}
 
 
 def _define_all_fp1_keys(fix):
-    """Defines the full Appendix A route block (all 50 slots), staging,
+    """Defines the full PA3 route block (all ``MAX_SLOTS`` slots), staging,
     command and engine-output keys on the fixture's mock FIX database."""
     for n in range(1, fixbridge.MAX_SLOTS + 1):
-        id_key, lat_key, lon_key, type_key, role_key = fixbridge._slot_keys(n)
+        id_key, lat_key, lon_key, type_key, flags_key = fixbridge._slot_keys(n)
         _define(fix, id_key, "str", "")
         _define(fix, lat_key, "float", 0.0)
         _define(fix, lon_key, "float", 0.0)
         _define(fix, type_key, "int", 0)
-        _define(fix, role_key, "int", 0)
+        _define(fix, flags_key, "int", 0)
     _define(fix, "FPLCOUNT", "int", 0)
     _define(fix, "FPLNAME", "str", "")
     _define(fix, "FPLSEQ", "int", 0)
@@ -95,6 +95,52 @@ def test_available_true_with_all_fp1_keys_defined(fix):
     assert bridge.available is True
 
 
+def test_available_false_when_only_the_old_fp1_role_key_is_defined(fix):
+    """AER-1709 regression: a PA3 gateway has no FPLfROLE -- probing for it
+    (instead of FPLfFLAGS) is exactly the bug that pinned ``available`` to
+    False against every current gateway."""
+    for n in range(1, fixbridge.MAX_SLOTS + 1):
+        _define(fix, f"FPL{n}ID", "str", "")
+        _define(fix, f"FPL{n}LAT", "float", 0.0)
+        _define(fix, f"FPL{n}LON", "float", 0.0)
+        _define(fix, f"FPL{n}TYPE", "int", 0)
+        _define(fix, f"FPL{n}ROLE", "int", 0)  # the old FP1 spelling, not FLAGS
+    _define(fix, "FPLCOUNT", "int", 0)
+    _define(fix, "FPLNAME", "str", "")
+    _define(fix, "FPLSEQ", "int", 0)
+    _define(fix, "DTOID", "str", "")
+    _define(fix, "DTOLAT", "float", 0.0)
+    _define(fix, "DTOLON", "float", 0.0)
+    _define(fix, "DTOTYPE", "int", 0)
+    _define(fix, "FPLCMD", "str", "")
+    _define(fix, "FPLCMDACK", "int", 0)
+    _define(fix, "FPLMSG", "str", "")
+    for key, dtype in _ENGINE_DTYPES.items():
+        _define(fix, key, dtype, _ENGINE_DEFAULTS[dtype])
+
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.available is False
+
+
+def test_max_slots_is_100():
+    assert fixbridge.MAX_SLOTS == 100
+
+
+def test_probe_keys_match_current_flightplan_yaml_contract():
+    """Frozen against fix-gateway database/flightplan.yaml as of PA3
+    (fix-gateway#27, commit 125884b, 2026-09-18 -- Bill's decision 1). If the
+    next contract revision renames or adds a block-level key, this test --
+    and ``_slot_keys``/``_probe_keys`` -- must move together, or this catches
+    the drift before a bench does."""
+    probed = set(fixbridge._probe_keys())
+    for suffix in ("ID", "LAT", "LON", "TYPE", "FLAGS"):
+        assert f"FPL1{suffix}" in probed
+        assert f"FPL{fixbridge.MAX_SLOTS}{suffix}" in probed
+    # the key PA3 deleted must never be probed again
+    assert "FPL1ROLE" not in probed
+    assert f"FPL{fixbridge.MAX_SLOTS}ROLE" not in probed
+
+
 # ---------------------------------------------------------------------------
 # publish
 # ---------------------------------------------------------------------------
@@ -117,8 +163,8 @@ def test_publish_writes_slots_in_order_and_seq_last(fix):
 
     # slot 1 fields, then slot 2 fields, then count/name, then seq last
     assert order == [
-        "FPL1ID", "FPL1LAT", "FPL1LON", "FPL1TYPE", "FPL1ROLE",
-        "FPL2ID", "FPL2LAT", "FPL2LON", "FPL2TYPE", "FPL2ROLE",
+        "FPL1ID", "FPL1LAT", "FPL1LON", "FPL1TYPE", "FPL1FLAGS",
+        "FPL2ID", "FPL2LAT", "FPL2LON", "FPL2TYPE", "FPL2FLAGS",
         "FPLCOUNT", "FPLNAME", "FPLSEQ",
     ]
     assert fix.db.get_item("FPL1ID").value == "WP00"
@@ -145,10 +191,11 @@ def test_publish_blanks_trailing_slots_on_shrink(fix):
     bridge.publish(_plan(3))
     assert fix.db.get_item("FPLCOUNT").value == 3
     for n in range(4, 21):
-        id_key, lat_key, lon_key, type_key, role_key = fixbridge._slot_keys(n)
+        id_key, lat_key, lon_key, type_key, flags_key = fixbridge._slot_keys(n)
         assert fix.db.get_item(id_key).value == "", f"slot {n} id not blanked"
         assert fix.db.get_item(lat_key).value == 0.0, f"slot {n} lat not blanked"
         assert fix.db.get_item(type_key).value == 0, f"slot {n} type not blanked"
+        assert fix.db.get_item(flags_key).value == 0, f"slot {n} flags not blanked"
     # untouched, in-use slots survive
     assert fix.db.get_item("FPL1ID").value == "WP00"
     assert fix.db.get_item("FPL3ID").value == "WP02"
@@ -163,9 +210,36 @@ def test_publish_writes_role_and_type_codes(fix):
     ])
     bridge.publish(plan)
     assert fix.db.get_item("FPL1TYPE").value == 4  # fix
-    assert fix.db.get_item("FPL1ROLE").value == 2  # faf
+    assert fix.db.get_item("FPL1FLAGS").value == 0x04  # faf bit
     assert fix.db.get_item("FPL2TYPE").value == 6  # map
-    assert fix.db.get_item("FPL2ROLE").value == 3  # map
+    assert fix.db.get_item("FPL2FLAGS").value == 0x08  # map bit
+
+
+def test_publish_faf_does_not_collide_with_iaf_bit(fix):
+    """AER-1709: PA3's bit positions do not match the old scalar enum (faf
+    was scalar 2, IAF's bit is 0x02) -- a naive rename would silently turn a
+    published FAF into an IAF on the wire."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(model.FlightPlan(name="APR", waypoints=[
+        model.Waypoint(id="ZUMAB", type="fix", lat=1.0, lon=2.0, role="faf"),
+    ]))
+    flags = fix.db.get_item("FPL1FLAGS").value
+    assert flags & 0x04  # FAF bit set
+    assert not flags & 0x02  # IAF bit must not be set
+
+
+def test_role_round_trips_through_publish_and_read_route(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    plan = model.FlightPlan(name="APR", waypoints=[
+        model.Waypoint(id="ZUMAB", type="fix", lat=1.0, lon=2.0, role="faf"),
+        model.Waypoint(id="IPOSA", type="fix", lat=1.5, lon=2.5, role="iaf"),
+    ])
+    bridge.publish(plan)
+    route = bridge.read_route()
+    assert route.waypoints[0].role == "faf"
+    assert route.waypoints[1].role == "iaf"
 
 
 # ---------------------------------------------------------------------------

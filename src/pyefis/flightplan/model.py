@@ -25,11 +25,10 @@ MAX_WAYPOINTS = 50
 WAYPOINT_TYPES = ("airport", "vor", "ndb", "fix", "user", "map")
 ROLES = ("none", "iaf", "faf", "map", "mahp")
 
-# Appendix A: FPLfTYPE 0..6, FPLfROLE 0..4.
+# Appendix A: FPLfTYPE 0..6. Role<->FPLfFLAGS translation lives in
+# fixbridge.py, the only module that talks to the bus.
 TYPE_TO_FPLTYPE = {"unknown": 0, "airport": 1, "vor": 2, "ndb": 3, "fix": 4, "user": 5, "map": 6}
 FPLTYPE_TO_TYPE = {v: k for k, v in TYPE_TO_FPLTYPE.items()}
-ROLE_TO_FPLROLE = {"none": 0, "iaf": 1, "faf": 2, "map": 3, "mahp": 4}
-FPLROLE_TO_ROLE = {v: k for k, v in ROLE_TO_FPLROLE.items()}
 
 NAME_MAX_LEN = 32
 _WAYPOINT_KNOWN_FIELDS = frozenset(

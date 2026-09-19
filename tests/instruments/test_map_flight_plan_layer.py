@@ -178,12 +178,12 @@ def _define(fix, key, dtype, value):
 
 def _define_all_fp1_keys(fix):
     for n in range(1, fixbridge.MAX_SLOTS + 1):
-        id_key, lat_key, lon_key, type_key, role_key = fixbridge._slot_keys(n)
+        id_key, lat_key, lon_key, type_key, flags_key = fixbridge._slot_keys(n)
         _define(fix, id_key, "str", "")
         _define(fix, lat_key, "float", 0.0)
         _define(fix, lon_key, "float", 0.0)
         _define(fix, type_key, "int", 0)
-        _define(fix, role_key, "int", 0)
+        _define(fix, flags_key, "int", 0)
     _define(fix, "FPLCOUNT", "int", 0)
     _define(fix, "FPLNAME", "str", "")
     _define(fix, "FPLSEQ", "int", 0)
