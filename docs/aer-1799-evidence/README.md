@@ -2,22 +2,39 @@
 
 Renders backing the AER-1799 recommendation (AI visible pitch range vs
 AC 23.1311-1C Sec 8.5(c), and the SVS FOV coupling it exposed). All
-five frames are the same pose -- level flight, 1 NM final RWY 7 KSBA,
+frames are the same pose -- level flight, 1 NM final RWY 7 KSBA,
 611 ft MSL, heading 089, range 5 NM -- captured with
 `tools/svs_capture.py --offscreen` on the Beelink bench (Intel ADL-N
-iGPU) against three separate throwaway checkouts, never the bench's
-live `~/src/pyEfis` (which stayed on `dev`, untouched, services never
+iGPU) against separate throwaway checkouts, never the bench's live
+`~/src/pyEfis` (which stayed on `dev`, untouched, services never
 restarted).
 
-| File | Panel | Checkout | `pyefis_rev` (sidecar) |
-|---|---|---|---|
-| `baseline_800x480.png` | 800x480 | `dev` | `4838942` |
-| `raise_only_800x480.png` | 800x480 | `aer-1799/pitch-range-raise-only-eval` | `7cb49b9` |
-| `decouple_800x480.png` | 800x480 | `aer-1799/pitch-range-svs-fov-eval` | `7e42491` |
-| `baseline_1024x600.png` | 1024x600 | `dev` | `4838942` |
-| `decouple_1024x600.png` | 1024x600 | `aer-1799/pitch-range-svs-fov-eval` | `7e42491` |
+**Correction (v2, 2026-09-20):** the "both eval candidates show +-25"
+claim below the v1 table was wrong -- QA measured the committed v1
+`decouple_800x480.png` directly and found the ladder actually stopped
+at +-14, not +-25 (`visiblePitchAngle`, a separate constant, was still
+hard-coded to 15 and faded every mark past it regardless of
+`pitchDegreesShown`). The v1 row is kept below for the coupling/HFOV
+comparison, which QA verified independently and which still holds; do
+not read the v1 pitch-ladder claim as true. The v2 rows are the fix.
 
-Command (per file, `$D` = the checkout dir, `$W`/`$H` = panel size):
+| File | Panel | Checkout | `pyefis_rev` (sidecar) | horizon_position |
+|---|---|---|---|---|
+| `baseline_800x480.png` | 800x480 | `dev` | `4838942` | 50 (schema default) |
+| `raise_only_800x480.png` | 800x480 | `aer-1799/pitch-range-raise-only-eval` | `7cb49b9` | 50 |
+| `decouple_800x480.png` | 800x480 | `aer-1799/pitch-range-svs-fov-eval` (v1) | `7e42491` | 50 |
+| `baseline_1024x600.png` | 1024x600 | `dev` | `4838942` | 50 |
+| `decouple_1024x600.png` | 1024x600 | `aer-1799/pitch-range-svs-fov-eval` (v1) | `7e42491` | 50 |
+| `decouple_v2_hp50_800x480.png` | 800x480 | `aer-1799/pitch-range-svs-fov-eval` (v2, fixed) | `b1628e5` | 50 |
+| `decouple_v2_hp68_800x480.png` | 800x480 | `aer-1799/pitch-range-svs-fov-eval` (v2, fixed) | `b1628e5` | **68 (live value, both benches)** |
+| `baseline_hp68_800x480.png` | 800x480 | `dev` | `4838942` | **68 (live value, both benches)** |
+
+Command (per file, `$D` = the checkout dir, `$W`/`$H` = panel size). The
+v2/hp68 frames additionally set `SVS_CAPTURE_HORIZON_POSITION=68` in the
+environment against a local, uncommitted one-line patch to
+`tools/svs_capture.py` (`widget.horizon_position = float(os.environ[...])`
+right after widget construction) -- evidence-gathering only, never
+pushed; the tool has no CLI flag for this and none is proposed here:
 
 ```bash
 cd $D
@@ -34,12 +51,9 @@ DISPLAY=:0 PYTHONPATH=$PWD/src ~/pyefis-venv/bin/python tools/svs_capture.py \
 
 ## What to look at
 
-- **Pitch ladder**: baseline shows only +-10 numbered with the frame
-  edge landing at +-15 (30 deg total shown). Both eval candidates show
-  +-25 at the same numbered-tick style -- the guidance floor is met in
-  both.
-- **Terrain/runway scale** (the coupling's actual consequence): measured
-  the magenta-mountain silhouette's rightmost visible column (a clean,
+- **Terrain/runway scale** (the coupling's actual consequence, v1
+  measurement -- unaffected by the v2 fix, still holds): measured the
+  magenta-mountain silhouette's rightmost visible column (a clean,
   HFOV-sensitive, color-isolable feature) with a plain color-threshold
   scan, rows 0-250/0-310:
 
@@ -56,3 +70,38 @@ DISPLAY=:0 PYTHONPATH=$PWD/src ~/pyefis-venv/bin/python tools/svs_capture.py \
   scale is statistically indistinguishable from baseline's, because its
   horizontal camera scale is the literal same `height/30` expression
   baseline uses, just no longer tied to the ladder's `pitchDegreesShown`.
+
+- **Pitch ladder extent, v2 (the fix)**: `measure_ladder_extent.py`
+  scans row-brightness variance in the ladder column band against a
+  clean background band (same method QA used to catch v1's bug, just
+  automated instead of eyeballed) and reports how many degrees above
+  and below current pitch (0) still carry a mark:
+
+  ```
+  baseline pitchDegreesShown=30, hp=68          up= 9.0 deg  down=18.9 deg
+  decouple-v2 pitchDegreesShown=50, hp=50       up=24.1 deg  down=24.0 deg   <- fix confirmed: was ~14/~14 in v1
+  decouple-v2 pitchDegreesShown=50, hp=68       up=16.0 deg  down=24.0 deg   <- live horizon_position still short of +25 up
+  ```
+
+  Run: `PYTHONPATH=. python3 measure_ladder_extent.py` from this directory
+  (needs `numpy` + `Pillow`).
+
+  **v2 fix confirmed at the schema-default `horizon_position=50`**: the
+  ladder now reaches ~24 deg both up and down (target +-25; the ~1 deg
+  shortfall is the same edge-of-frame measurement effect QA's v1 method
+  saw, not a residual bug -- `visiblePitchAngle` derives from
+  `pitchDegreesShown / 2` exactly, so the marks are drawn to the
+  specified angle, just partly clipped by anti-aliasing/label width at
+  the very edge).
+
+  **At the LIVE `horizon_position=68`** (read directly off both benches'
+  active `managed*.yaml`, see the issue comment -- not the `70` this
+  repo's `CLAUDE.md` records, which is stale), the fixed candidate only
+  reaches **+16 deg up**, still 9 deg short of the AC 23.1311-1C floor.
+  This is not a bug in the candidate: `up = (1 - horizon_position/100) *
+  pitchDegreesShown`, and at `horizon_position=68` no value of
+  `pitchDegreesShown` under the guidance's own 50-deg total ceiling can
+  reach 25 (`up >= 25` forces `horizon_position <= 50`, independent of
+  `pitchDegreesShown`) -- see the issue comment for the general result.
+  The baseline (current shipped code) at the same live `horizon_position`
+  does even worse (+9/-19).
