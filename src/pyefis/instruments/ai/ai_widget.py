@@ -803,6 +803,16 @@ class AI(QGraphicsView):
                     round(self._svs_alt, 2), self._pitchAngle,
                     self._rollAngle, self._fpm_head, self._latAccel,
                     self._tas)
+        # AER-1714: an async SVS overlay collector (water/highways/airports/
+        # obstacles) can land a result on a background worker with the pose
+        # completely unchanged -- a stationary aircraft. Nothing else would
+        # set _frame_dirty in that case, so the result would sit parked
+        # forever behind the early-out below. consume_async_dirty() is a
+        # cheap flag check, not an unconditional repaint, so a genuinely
+        # static scene still costs near-zero CPU.
+        svs = self._live_svs()
+        if svs is not None and svs.consume_async_dirty():
+            self._frame_dirty = True
         if not self._frame_dirty and pose_key == self._frame_last_pose:
             return
         self._frame_last_pose = pose_key
