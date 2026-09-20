@@ -398,6 +398,49 @@ class TestAISVSIntegration:
         qtbot.waitExposed(widget)
         widget.paintEvent(QPaintEvent(widget.rect()))
 
+    def test_svs_item_rebuild_survives_attr_clobber(self, fix, qtbot, tmp_path):
+        """AER-1713: when the old SVS item's C++ object has been destroyed
+        (resizeEvent's own comment: "seen on eglfs (Pi), where fullscreen
+        startup produces extra resize events with the old scene destroyed in
+        between"), _attach_svs_item_if_ready has to rebuild the wrapper. If
+        it rebuilds around self.svs (which the screenbuilder commonly
+        clobbers to the raw config dict, as in the clobber tests above)
+        instead of the live renderer, the new item's paint() reads `.ready`
+        off a dict and raises; Qt swallows exceptions from paint(), so every
+        SVS layer silently stops drawing after the very next rebuild."""
+        from PyQt6 import sip
+
+        root = _make_tile_dir(tmp_path, 32, -97)
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(400, 300)
+        cfg = {"enabled": True, "tile_path": str(root)}
+        widget.set_svs_config(cfg)
+        widget.show()
+        qtbot.waitExposed(widget)
+        real_renderer = widget._svs_renderer
+        assert isinstance(real_renderer, SVSRenderer)
+
+        # The screenbuilder clobber: self.svs becomes the config dict.
+        widget.svs = cfg
+        old_item = widget._svs_item
+
+        # Simulate the old item's C++ object being destroyed with its scene
+        # (the eglfs/Pi race resizeEvent's own comment documents) so the
+        # rebuild path in _attach_svs_item_if_ready is exercised directly.
+        sip.delete(old_item)
+        with pytest.raises(RuntimeError):
+            old_item.scene()  # confirms the old wrapper really is gone
+
+        widget._attach_svs_item_if_ready()
+
+        new_item = widget._svs_item
+        assert new_item is not old_item
+        assert new_item._renderer is real_renderer          # not the dict
+        assert isinstance(new_item._renderer, SVSRenderer)
+        assert new_item._renderer.ready                     # no AttributeError
+        widget.paintEvent(QPaintEvent(widget.rect()))        # still paints
+
     def test_ai_construction_tolerates_missing_fpm_key(self, fix, qtbot,
                                                       monkeypatch, caplog):
         """If a Flight Path Marker FIX key is undefined (e.g. gateway doesn't

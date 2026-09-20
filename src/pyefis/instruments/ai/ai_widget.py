@@ -715,8 +715,16 @@ class AI(QGraphicsView):
         ``resizeEvent`` rebuilds ``self.scene`` on every resize, so the item
         has to be re-attached each time the scene changes. If the item's
         C++ object was deleted with a destroyed scene, rebuild the thin
-        wrapper around the surviving SVSRenderer."""
-        if getattr(self, "svs", None) is None:
+        wrapper around the surviving SVSRenderer.
+
+        Resolved clobber-safe (self.svs is often the YAML config DICT the
+        screenbuilder overwrites it with — see the note in set_svs_config):
+        rebuilding around that dict instead of the live renderer leaves the
+        item wrapping something whose ``.ready`` access raises inside
+        paint(), which Qt swallows, so every SVS layer silently stops
+        drawing after the next scene rebuild."""
+        svs = self._live_svs()
+        if svs is None:
             return
         # self.scene is the inherited QGraphicsView.scene method until
         # resizeEvent assigns the instance attribute — guard against that.
@@ -732,7 +740,7 @@ class AI(QGraphicsView):
                 return
             except RuntimeError:
                 pass  # wrapper points at a deleted C++ object — rebuild
-        self._svs_item = make_svs_item(self.svs, self)
+        self._svs_item = make_svs_item(svs, self)
         self._svs_item.setZValue(getattr(self, "_svs_z", 0.5))
         scene.addItem(self._svs_item)
 
@@ -1146,7 +1154,7 @@ class AI(QGraphicsView):
         # held by the SVS renderer and only does work when its
         # ``enabled`` flag is set.
         import time as _time
-        perf = getattr(getattr(self, "svs", None), "_perf", None)
+        perf = getattr(self._live_svs(), "_perf", None)
         if perf is not None and perf.enabled:
             _pe_t0 = _time.perf_counter_ns()
             _pe_last = getattr(self, "_perf_last_paint_ns", 0)
