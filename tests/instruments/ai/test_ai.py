@@ -1,8 +1,8 @@
 from unittest import mock
 
 import pytest
-from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QPaintEvent
+from PyQt6.QtCore import QPointF, QSize
+from PyQt6.QtGui import QPaintEvent, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView
 
 from pyefis.instruments import ai
@@ -148,6 +148,31 @@ def test_ai_resize_with_gray_quality_and_custom_bank_radius(fix, qtbot):
     assert widget.bankAngleRadius == 42
     assert widget.getAIOld() is True
     assert widget.getAIBad() is True
+
+
+def test_ai_bank_angle_radius_tracks_latest_resize(fix, qtbot):
+    """AER-1785: the auto-calculated bankAngleRadius must track the
+    CURRENT height on every resizeEvent, not freeze at whatever height the
+    FIRST resizeEvent happened to see. A windowed top-level on eglfs gets
+    exactly two resizeEvents before it settles -- one at the requested
+    --width/--height, a second when the (window-manager-less) platform
+    forces the window fullscreen -- and the previous `if self.
+    bankAngleRadius is None` guard latched the radius from the first,
+    leaving the bank cluster sized as if the output were still that
+    earlier, usually smaller, height. An explicit config/YAML override
+    (test_ai_resize_with_gray_quality_and_custom_bank_radius, above) must
+    still stick across resizes; only the unset default must keep tracking."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    qtbot.addWidget(widget)
+
+    widget.resize(800, 600)
+    widget.resizeEvent(QResizeEvent(QSize(800, 600), QSize(0, 0)))
+    assert widget.bankAngleRadius == pytest.approx(600 / 3)
+
+    widget.resize(1920, 1200)
+    widget.resizeEvent(QResizeEvent(QSize(1920, 1200), QSize(800, 600)))
+    assert widget.bankAngleRadius == pytest.approx(1200 / 3)
 
 
 def test_ai_resize_can_skip_unmatched_minor_ticks(fix, qtbot):

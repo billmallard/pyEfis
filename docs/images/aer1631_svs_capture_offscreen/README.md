@@ -1,5 +1,116 @@
 # AER-1631 -- offscreen `svs_capture.py` repair, Pi 5 bench evidence
 
+**Update (2026-09-20, AER-1785): `windowed_1920x1200.png` was not a control
+-- it was never regenerated with the AER-1692 fix, and a live windowed-path
+defect was hiding behind that gap.** `adbac1a6` (AER-1692) regenerated
+`offscreen_1920x1200.png` and its siblings but left `windowed_1920x1200.png`
+byte-identical to its pre-fix (`428ba48`) version -- the "Re-captured and
+verified. All three frames..." claim two paragraphs below was true of the
+code, not of what got committed. Two arms minted at different revisions
+aren't a control pair: a pixel difference between them can't be attributed to
+the capture path, which is the entire point of keeping this pair.
+
+Recapturing `windowed_1920x1200.png` at #245's merged tip (`5fbd78d`, same
+pose, same command) reproduced the exact same bytes as the stale file --
+ruling out simple staleness. The windowed path has its own live defect,
+independent of AER-1692's `centerOn()`/`viewport()` fix:
+`AI.resizeEvent`'s `if self.bankAngleRadius is None:` guard
+(`ai_widget.py`) computes the bank cluster's radius from `self.height()`
+only on the FIRST resizeEvent a widget ever gets. A windowed top-level on
+eglfs (no window manager) receives exactly two -- one at the requested
+`--width`/`--height`, a second when the platform forces the window
+fullscreen -- so the radius froze at the pre-fullscreen height (600, giving
+radius 200) instead of the real one (1200, radius 400). The offscreen path
+never showed this because `resize_for_offscreen_capture` delivers exactly
+one manual resizeEvent, already at the final size.
+
+Fixed by making `bankAngleRadius` a property: an explicit YAML/config
+override (screenbuilder's plain `setattr`) marks the value explicit and is
+never touched again; the auto-calculated default recomputes on every
+resize instead of latching after the first. `windowed_1920x1200.png` below
+is regenerated from that fix (`e89c9c1`, same pose, same bench, same
+command) and is now **byte-identical** to `offscreen_1920x1200.png` --
+confirming both paths agree exactly once the windowed-side defect is gone.
+See the code + a regression test (`test_ai_bank_angle_radius_tracks_
+latest_resize`, `tests/instruments/ai/test_ai.py`) on branch
+`aer-1785/windowed-bank-radius-stale`.
+
+```bash
+systemctl --user stop pyefis.service
+cd ~/pyEfis && git checkout aer-1785/windowed-bank-radius-stale
+export QT_QPA_PLATFORM=eglfs
+export QT_QPA_EGLFS_KMS_CONFIG=/home/wpballard/eglfs_hdmi.json
+export PYTHONPATH=src:tests
+.venv/bin/python tools/svs_capture.py \
+  --lat 34.4275 --lon -119.8546 --alt 500 --heading 87 --range 8 \
+  --width 800 --height 600 \
+  --tiles /data/makerplane-data/terrain/tiles \
+  --water /data/makerplane-data/water/current/water.sqlite \
+  --nasr /data/makerplane-data/airports/airports-canada/2026.06/airports.sqlite \
+  --dof /data/makerplane-data/obstacles/current/obstacles.sqlite \
+  --out /tmp/aer1785_windowed_1920x1200.png --timeout 20 --verbose
+# captured, exit 0, 1920x1200, pyefis_rev e89c9c1 (clean, no -dirty)
+git checkout dev
+systemctl --user reset-failed pyefis.service
+systemctl --user restart pyefis.service
+```
+
+`pyefis.service` was `active`/`NRestarts=0` before and after (new `MainPID`
+after the restart), same hygiene as every other capture in this file. The
+bench was left back on `dev` @ `5fbd78d`, exactly where it started.
+
+**Second update, same day: the committed frame could not name its own
+revision, so it was re-run with the sidecar committed too.** The diff above
+committed `windowed_1920x1200.png` and a README paragraph asserting
+`pyefis_rev: e89c9c1`, but not the `<out>.json` sidecar AER-1675
+(`859c6b9`, landed three commits before this branch's base) writes
+alongside every successful capture -- so the artifact itself carried no
+information distinguishing "recaptured on the bench" from "copied from the
+offscreen sibling it now matches byte-for-byte." Re-ran the same command at
+this branch's then-head (`5bb6e90`, the PR body/README commit -- no code
+changed since `e89c9c1`, so this reproduces rather than retests the fix):
+
+```bash
+systemctl --user stop pyefis.service
+cd ~/pyEfis && git pull --ff-only   # e89c9c1 -> 5bb6e90
+export QT_QPA_PLATFORM=eglfs
+export QT_QPA_EGLFS_KMS_CONFIG=/home/wpballard/eglfs_hdmi.json
+export PYTHONPATH=src:tests
+.venv/bin/python tools/svs_capture.py \
+  --lat 34.4275 --lon -119.8546 --alt 500 --heading 87 --range 8 \
+  --width 800 --height 600 \
+  --tiles /data/makerplane-data/terrain/tiles \
+  --water /data/makerplane-data/water/current/water.sqlite \
+  --nasr /data/makerplane-data/airports/airports-canada/2026.06/airports.sqlite \
+  --dof /data/makerplane-data/obstacles/current/obstacles.sqlite \
+  --out /tmp/aer1785_windowed_1920x1200.png --timeout 20 --verbose
+# captured, exit 0, 1920x1200, rev 5bb6e90 (clean, no -dirty)
+systemctl --user reset-failed pyefis.service
+systemctl --user restart pyefis.service
+```
+
+`sha256sum` of the fresh `/tmp/aer1785_windowed_1920x1200.png` matches the
+already-committed `windowed_1920x1200.png` and `offscreen_1920x1200.png`
+exactly (`ebc2afa2...fab926`, all three) -- **the second, independent
+capture reproduces the first rather than averaging away a fluke.** Both the
+PNG and its capture-written `.json` sidecar
+(`windowed_1920x1200.png.json`, `{"pyefis_rev": "5bb6e90"}`) are committed
+here from this run's own `/tmp` output, not hand-typed. `pyefis.service`
+was `active`/`NRestarts=0` before and after; bench left on `dev` @ `5fbd78d`.
+
+**On `sidebyside_full_1920x1200.png` and `horizon_align_crop_zoom3x.png`:
+deleted, not regenerated.** Both were pixel-diff visualizations built
+against the stale (pre-`e89c9c1`) windowed frame, back when offscreen and
+windowed disagreed by 0.09% of pixels (anti-aliasing noise around the bank
+arc). Now that the two paths are confirmed byte-identical -- twice, at
+`e89c9c1` and again at `5bb6e90` -- a diff panel between them is a blank
+image and a 3x crop is two copies of the same pixels stacked: neither has
+a job left to do. Regenerating them would cost a bench session to produce
+evidence of nothing. If a future defect reopens a visible offscreen/
+windowed gap, a fresh comparison render at that point will actually show
+something; these two are retired rather than carried forward as
+permanently-blank placeholders.
+
 **Update (2026-09-19, AER-1692): the frames above were geometrically wrong,
 now fixed.** INTEGRATOR's review of #245 at head `428ba48` measured the
 committed `offscreen_*.png` frames against `windowed_1920x1200.png` and found
@@ -258,14 +369,23 @@ Pixel diff between `offscreen_1920x1200.png` and `windowed_1920x1200.png`
 | sky (top ~40% of frame) | **near-identical** -- mean abs diff 0.267/255 (anti-aliasing-scale noise, not a systematic shift) |
 | whole frame | 0.09% of pixels differ at all; 0.09% differ by >30/255 in some channel; mean abs diff 0.111/255 |
 
-`sidebyside_full_1920x1200.png` shows the full frames and diff side by side
-(downscaled for legibility) -- the diff panel is visibly blank except for a
-faint trace around the bank-arc anti-aliased edges. `horizon_align_crop_
-zoom3x.png` is a 3x crop centred on the artificial horizon (x700-1220,
-y540-660) offscreen/windowed stacked, confirming pixel-level alignment
-(replaces the retired `sky_diff_crop_zoom3x.png`, whose framing -- a sky-band
-crop looking for a colour difference -- no longer matches what the corrected
-data shows).
+**Superseded 2026-09-20 (AER-1785): this table was measured against the
+stale `windowed_1920x1200.png`.** That frame predated the `bankAngleRadius`
+fix (`e89c9c1`) -- its bank cluster (arc + datum pointer) was drawn at half
+radius (200px instead of 400px). The residual this table attributed to
+"anti-aliasing-scale noise... confined to curved/rotated edges like the
+bank arc" was measured against exactly the region a mis-sized bank arc
+would occupy, so it was at minimum conflating that real defect with true
+AA noise, not measuring AA noise alone as stated. Not re-litigated further
+here -- as of `e89c9c1`/`5bb6e90` the two frames are byte-identical (0%
+differ, no residual to attribute), see the update note at the top of this
+document.
+
+`sidebyside_full_1920x1200.png` and `horizon_align_crop_zoom3x.png`, which
+used to be referenced here, were **deleted** (not regenerated) once that
+byte-identity was confirmed -- a diff panel between two identical images is
+blank and has no evidentiary job left. See the deletion note at the top of
+this document.
 
 The residual ~0.1% (anti-aliasing-scale, confined to curved/rotated edges
 like the bank arc) is not chased further here -- it is two orders of
