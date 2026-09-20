@@ -94,7 +94,10 @@ class AI(QGraphicsView):
         self.bankMarkSize = 10
         # Standard rate turn bank angle indicators.
         self.drawBankMarkers = True
-        self.bankAngleRadius = None # Radius of the bank angle markings
+        self._bankAngleRadius = None  # Radius of the bank angle markings
+        self._bankAngleRadius_explicit = False  # True once a config/YAML
+        # value (not resizeEvent's own auto-calc) has set bankAngleRadius --
+        # see the bankAngleRadius property and resizeEvent (AER-1785).
         self.bankAngleMaximum = 25  # Largest bank angle that will be indicated
         # Envelope-awareness caution thresholds (AC 25-11B App A A.2.5 / A.2.6):
         # amber annunciation past excessive bank / sideslip. Configurable.
@@ -338,6 +341,19 @@ class AI(QGraphicsView):
         # we can adjust the opacity of the items.
         self.pitchItems = []
 
+    @property
+    def bankAngleRadius(self):
+        return self._bankAngleRadius
+
+    @bankAngleRadius.setter
+    def bankAngleRadius(self, value):
+        # Distinguishes an explicit config/YAML override (screenbuilder's
+        # apply_options does a plain setattr) from resizeEvent's own
+        # auto-calc, which writes _bankAngleRadius directly and must NOT
+        # be latched here -- see resizeEvent (AER-1785).
+        self._bankAngleRadius = value
+        self._bankAngleRadius_explicit = value is not None
+
     def _draw_aircraft_symbol(self, p, w, h):
         """Draw the fixed aircraft reference symbol into the static
         overlay. Style + colour come from self.aircraft_symbol /
@@ -489,9 +505,17 @@ class AI(QGraphicsView):
         self.scene = QGraphicsScene(0, 0, sceneWidth, sceneHeight)
         # Setup default values. bank_radius (percent of height, default
         # 33.3 = the classic height/3) sizes the bank arc; an explicit
-        # bankAngleRadius px from the YAML still wins.
-        if self.bankAngleRadius is None:
-            self.bankAngleRadius = self.height() * max(
+        # bankAngleRadius px from the YAML still wins. Recomputed on EVERY
+        # resize (not just the first) so a widget that receives more than
+        # one resizeEvent before settling -- e.g. a windowed top-level on
+        # eglfs, which lays out once at the requested size and again when
+        # the platform forces it fullscreen -- doesn't freeze the bank
+        # cluster's radius at whatever height happened to be current on
+        # the FIRST call (AER-1785). Writes the backing field directly,
+        # not through the property, so this auto-calc is never mistaken
+        # for an explicit override.
+        if not self._bankAngleRadius_explicit:
+            self._bankAngleRadius = self.height() * max(
                 5.0, min(80.0,
                          float(getattr(self, "bank_radius", 33.3)))) / 100.0
         # Get a failure scene ready in case it's needed
