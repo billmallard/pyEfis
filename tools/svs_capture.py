@@ -557,6 +557,14 @@ def seed_mock_fix(args):
         ("VS", "VS", -30000, 30000, "ft/min"),
         ("GS", "GS", 0.0, 2000.0, "knots"),
         ("TRACK", "Track", 0.0, 359.9, "deg"),
+        # VPATH is optional in real operation (ai_widget.py falls back to
+        # atan2(VS, GS) when a source doesn't publish it), but leaving it
+        # undefined here makes the FPM's VPATH-preferred branch permanently
+        # unexercised by this harness and logs a "Flight Path Marker
+        # disabled" warning that overstates the effect (AER-1790) -- VS=0
+        # above, so 0.0 is the same steady-state value the atan2 fallback
+        # would compute anyway.
+        ("VPATH", "VPath", -90.0, 90.0, "deg"),
         ("LAT", "Lat", -90.0, 90.0, "deg"),
         ("LONG", "Lon", -180.0, 180.0, "deg"),
         ("ALT", "Alt", -2000, 60000, "ft"),
@@ -577,6 +585,7 @@ def seed_mock_fix(args):
         "VS": 0.0,
         "GS": 120.0,
         "TRACK": heading,
+        "VPATH": 0.0,
         "LAT": args.lat,
         "LONG": args.lon,
         "ALT": args.alt,
