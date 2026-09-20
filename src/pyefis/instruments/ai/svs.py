@@ -754,7 +754,8 @@ class SVSRenderer:
     def draw(self, p: QPainter, w: int, h: int,
              ac_lat: float, ac_lon: float, ac_alt_ft: float,
              pitch_deg: float, roll_deg: float, heading_deg: float,
-             pixels_per_deg: float, device_pixel_ratio: float = 1.0):
+             pixels_per_deg: float, device_pixel_ratio: float = 1.0,
+             pixels_per_deg_h: float = None):
         """
         Draw the SVS terrain overlay onto the AI viewport.
 
@@ -812,7 +813,8 @@ class SVSRenderer:
                 self._gl_renderer.draw(
                     p, w, h, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg,
-                    pixels_per_deg, range_nm, device_pixel_ratio)
+                    pixels_per_deg, range_nm, device_pixel_ratio,
+                    pixels_per_deg_h=pixels_per_deg_h)
             # Terrain painted successfully — the AI may now show sky (not brown)
             # above the synthetic terrain.
             self.drew_terrain = True
@@ -2357,6 +2359,11 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             vp = ai.viewport()
             ppd = getattr(ai, 'pixelsPerDeg',
                           vp.height() / ai.pitchDegreesShown)
+            # AER-1799 eval: when the AI widget publishes an independent
+            # horizontal terrain scale (decoupling the pitch-ladder scale
+            # from the SVS HFOV), use it; None elsewhere keeps them
+            # coupled exactly as before.
+            ppd_h = getattr(ai, 'svs_pixels_per_deg_h', None)
             # SVS does its geographic projection in true-north
             # coordinates, so subtract local magnetic variation from
             # the magnetic HEAD before projecting. _magvar defaults to
@@ -2376,6 +2383,6 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
                 painter, vp.width(), vp.height(),
                 ai._svs_lat, ai._svs_lon, ai._svs_alt,
                 pitch_for_svs, ai._rollAngle, head_true,
-                ppd, vp.devicePixelRatioF())
+                ppd, vp.devicePixelRatioF(), pixels_per_deg_h=ppd_h)
 
     return _SVSGraphicsItem(renderer, ai_widget)

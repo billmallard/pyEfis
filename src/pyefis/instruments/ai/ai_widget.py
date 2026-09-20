@@ -58,24 +58,33 @@ class AI(QGraphicsView):
         else:
             self.fontSize = 30
         # Number of degrees shown from top to bottom. This sets
-        # pixelsPerDeg = widget_height / pitchDegreesShown, which is
-        # the SAME scale applied to the horizontal axis, so the AI's
-        # effective horizontal FOV = widget_width * pitchDegreesShown
-        # / widget_height. At the original 60 deg on a 5" 800x480
-        # panel the HFOV came out to ~100 deg — about 2x the angular
-        # spread of a typical avionics PFD's synthetic-vision view
-        # (Garmin GI-275: ~50 deg; G1000 PFD: ~50-60 deg; X-Plane
-        # cockpit view: 60-70 deg). Terrain and runways appeared
-        # roughly half their natural size as a result.
+        # pixelsPerDeg = widget_height / pitchDegreesShown, the pitch
+        # ladder's (and FPM's) vertical scale.
         #
-        # 30 puts HFOV at 50 deg on a 5:3 panel (800x480 -> 50 deg,
-        # 1024x600 -> 51.2 deg) — matches the Garmin GI-275 SVS and
-        # most G1000-class PFD synthetic-vision views. The pitch
-        # ladder spreads out by 60/30 = 2x relative to the original,
-        # which gives more screen-space per degree of pitch (more
-        # readable, and matches the visible pitch range real PFDs
-        # use).
-        self.pitchDegreesShown = 30
+        # AER-1799 EVAL BUILD — do not merge as-is (see AER-1799 for the
+        # recommendation this demonstrates). Prior to this change,
+        # pitchDegreesShown ALSO set the SVS terrain's horizontal FOV
+        # (HFOV = widget_width * pitchDegreesShown / widget_height,
+        # because pixelsPerDeg was applied unscaled to both axes) — one
+        # constant carrying two independent requirements. That coupling
+        # is why the value could not simply be raised to meet AC
+        # 23.1311-1C Sec 8.5(c) (>= +25/-15 visible pitch; this constant
+        # yields a symmetric +-pitchDegreesShown/2, so 30 gave only
+        # +-15). This build breaks the coupling: svs_hfov_pitch_equiv_deg
+        # below now sets the terrain's horizontal scale independently
+        # (see resizeEvent's svs_pixels_per_deg_h), so pitchDegreesShown
+        # is free to serve the pitch-range requirement alone. 50 gives
+        # +-25 (meets the >=+25/-15 floor, and is exactly the +-25/+-25
+        # = 50 total ceiling in the same guidance).
+        self.pitchDegreesShown = 50
+        # The terrain's own horizontal-FOV requirement, expressed as the
+        # pitchDegreesShown-equivalent it used to share with the ladder
+        # (kept at the pre-AER-1799 default of 30 so the terrain/runway
+        # scale this was originally tuned to — ~50 deg HFOV on a 5:3
+        # panel, matching the Garmin GI-275 SVS / G1000-class PFD
+        # synthetic-vision view — is unchanged by the ladder's range).
+        # See resizeEvent for how this becomes svs_pixels_per_deg_h.
+        self.svs_hfov_pitch_equiv_deg = 30
         # Pitch tick mark configurations
         self.minorDiv = 1   # Degrees between minor divisions
         self.majorDiv = 5  # Degrees between major divisions
@@ -486,6 +495,12 @@ class AI(QGraphicsView):
         sceneWidth = math.sqrt(self.width() * self.width() +
                                self.height() * self.height())
         self.pixelsPerDeg = self.height() / self.pitchDegreesShown
+        # AER-1799 eval: terrain's own horizontal scale, independent of
+        # the pitch ladder's pixelsPerDeg above. See svs.py's
+        # _SVSGraphicsItem.paint (reads this attribute) and
+        # camera.view_projection's pixels_per_deg_h.
+        self.svs_pixels_per_deg_h = (
+            self.height() / self.svs_hfov_pitch_equiv_deg)
         self.scene = QGraphicsScene(0, 0, sceneWidth, sceneHeight)
         # Setup default values. bank_radius (percent of height, default
         # 33.3 = the classic height/3) sizes the bank arc; an explicit

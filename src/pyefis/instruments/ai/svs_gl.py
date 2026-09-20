@@ -675,7 +675,7 @@ class SVSGLRenderer:
     # ------------------------------------------------------------------
     def draw(self, painter, w, h, ac_lat, ac_lon, ac_alt_ft,
              pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-             range_nm=None, device_pixel_ratio=1.0):
+             range_nm=None, device_pixel_ratio=1.0, pixels_per_deg_h=None):
         """Render terrain + overlays directly into the painter's GL
         surface between begin/endNativePainting. Requires the AI view
         to carry a QOpenGLWidget viewport; raises when no GL context
@@ -709,7 +709,8 @@ class SVSGLRenderer:
             self._ensure_heightmap(ac_lat, ac_lon)
             self._update_camera(w, h, ac_lat, ac_lon, ac_alt_ft,
                                 pitch_deg, roll_deg, heading_deg,
-                                pixels_per_deg)
+                                pixels_per_deg,
+                                pixels_per_deg_h=pixels_per_deg_h)
             # Qt leaves the GL viewport undefined inside native
             # painting; set it to the full backing store (device
             # pixels, hence the DPR scale).
@@ -767,11 +768,18 @@ class SVSGLRenderer:
     # Internals
     # ------------------------------------------------------------------
     def _update_camera(self, w, h, ac_lat, ac_lon, ac_alt_ft,
-                       pitch_deg, roll_deg, heading_deg, pixels_per_deg):
+                       pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                       pixels_per_deg_h=None):
         """Build the per-frame unified camera (P3): aircraft ENU
         position relative to the heightmap patch origin, the 4x4
         view-projection matrix, and the ENU conversion factors used
-        when uploading overlay vertex buffers."""
+        when uploading overlay vertex buffers.
+
+        *pixels_per_deg_h* (AER-1799 eval) is the terrain's own
+        horizontal scale when decoupled from the pitch-ladder's
+        vertical *pixels_per_deg*; None keeps today's coupled
+        behaviour (both axes share one scale).
+        """
         import math as _math
         o_lat, o_lon = self._patch_origin
         lat_cos = _math.cos(_math.radians(ac_lat))
@@ -779,7 +787,8 @@ class SVSGLRenderer:
         ac_n = (ac_lat - o_lat) * M_PER_DEG_LAT
         ac_u = ac_alt_ft * M_PER_FT
         vp = view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg,
-                             roll_deg, pixels_per_deg, w, h)
+                             roll_deg, pixels_per_deg, w, h,
+                             pixels_per_deg_h=pixels_per_deg_h)
         self._frame_vp = QMatrix4x4(*[float(x) for x in vp.ravel()])
         self._frame_ac_e = ac_e
         self._frame_ac_n = ac_n
