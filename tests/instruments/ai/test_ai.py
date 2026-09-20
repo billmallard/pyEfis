@@ -497,6 +497,30 @@ def test_ai_cat_recovery_chevrons_at_extreme_pitch(fix, qtbot):
     assert widget._show_recovery_chevrons is True
 
 
+def test_ai_cat_recovery_chevrons_at_horizon_off_scale(fix, qtbot):
+    """AER-1805: the chevron trigger must track where the horizon line
+    actually leaves the glass, not just the fixed AC 25-11B constants. At
+    the shipped bench config (pitchDegreesShown=30, horizon_position=68)
+    the horizon is off-scale by -9.6 deg -- well inside the old -20 deg
+    constant -- and the chevrons must already be up."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.horizon_position = 68
+
+    widget.pitchAngle = -9.6          # horizon just off the top edge
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is True
+
+    widget.pitchAngle = -15           # deep in the old constant-only gap
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is True
+
+    widget.pitchAngle = -5            # horizon still on-glass, no cue due
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is False
+
+
 def test_ai_cat_excessive_bank_annunciation(fix, qtbot):
     """AI-TC-102 | AI-BANK-001 | Beyond the excessive-bank threshold (before stall buffet)
     the AI annunciates excessive bank (amber bank scale). AC 25-11B App A A.2.5 (p.70)."""
