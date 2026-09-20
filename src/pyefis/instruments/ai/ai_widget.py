@@ -68,6 +68,17 @@ class AI(QGraphicsView):
         # cockpit view: 60-70 deg). Terrain and runways appeared
         # roughly half their natural size as a result.
         #
+        # AER-1799 EVAL BUILD — raise-only, coupled (do not merge; see
+        # AER-1799 candidate comparison). Raised from 30 to 50 so the
+        # symmetric +-pitchDegreesShown/2 visible pitch range meets AC
+        # 23.1311-1C Sec 8.5(c) (>= +25/-15; this yields +-25). Because
+        # pitchDegreesShown ALSO sets the SVS terrain's horizontal FOV
+        # (HFOV = widget_width * pitchDegreesShown / widget_height, the
+        # coupling this eval branch deliberately leaves in place for
+        # comparison), this reopens the ~83 deg HFOV problem the 60->30
+        # change below existed to fix — see AER-1799 for the HFOV table
+        # and the sibling eval branch that decouples the two instead.
+        #
         # 30 puts HFOV at 50 deg on a 5:3 panel (800x480 -> 50 deg,
         # 1024x600 -> 51.2 deg) — matches the Garmin GI-275 SVS and
         # most G1000-class PFD synthetic-vision views. The pitch
@@ -75,7 +86,7 @@ class AI(QGraphicsView):
         # which gives more screen-space per degree of pitch (more
         # readable, and matches the visible pitch range real PFDs
         # use).
-        self.pitchDegreesShown = 30
+        self.pitchDegreesShown = 50
         # Pitch tick mark configurations
         self.minorDiv = 1   # Degrees between minor divisions
         self.majorDiv = 5  # Degrees between major divisions
