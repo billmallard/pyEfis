@@ -1,5 +1,72 @@
 # AER-1631 -- offscreen `svs_capture.py` repair, Pi 5 bench evidence
 
+**Update (2026-09-20, AER-1785): `windowed_1920x1200.png` was not a control
+-- it was never regenerated with the AER-1692 fix, and a live windowed-path
+defect was hiding behind that gap.** `adbac1a6` (AER-1692) regenerated
+`offscreen_1920x1200.png` and its siblings but left `windowed_1920x1200.png`
+byte-identical to its pre-fix (`428ba48`) version -- the "Re-captured and
+verified. All three frames..." claim two paragraphs below was true of the
+code, not of what got committed. Two arms minted at different revisions
+aren't a control pair: a pixel difference between them can't be attributed to
+the capture path, which is the entire point of keeping this pair.
+
+Recapturing `windowed_1920x1200.png` at #245's merged tip (`5fbd78d`, same
+pose, same command) reproduced the exact same bytes as the stale file --
+ruling out simple staleness. The windowed path has its own live defect,
+independent of AER-1692's `centerOn()`/`viewport()` fix:
+`AI.resizeEvent`'s `if self.bankAngleRadius is None:` guard
+(`ai_widget.py`) computes the bank cluster's radius from `self.height()`
+only on the FIRST resizeEvent a widget ever gets. A windowed top-level on
+eglfs (no window manager) receives exactly two -- one at the requested
+`--width`/`--height`, a second when the platform forces the window
+fullscreen -- so the radius froze at the pre-fullscreen height (600, giving
+radius 200) instead of the real one (1200, radius 400). The offscreen path
+never showed this because `resize_for_offscreen_capture` delivers exactly
+one manual resizeEvent, already at the final size.
+
+Fixed by making `bankAngleRadius` a property: an explicit YAML/config
+override (screenbuilder's plain `setattr`) marks the value explicit and is
+never touched again; the auto-calculated default recomputes on every
+resize instead of latching after the first. `windowed_1920x1200.png` below
+is regenerated from that fix (`e89c9c1`, same pose, same bench, same
+command) and is now **byte-identical** to `offscreen_1920x1200.png` --
+confirming both paths agree exactly once the windowed-side defect is gone.
+See the code + a regression test (`test_ai_bank_angle_radius_tracks_
+latest_resize`, `tests/instruments/ai/test_ai.py`) on branch
+`aer-1785/windowed-bank-radius-stale`.
+
+```bash
+systemctl --user stop pyefis.service
+cd ~/pyEfis && git checkout aer-1785/windowed-bank-radius-stale
+export QT_QPA_PLATFORM=eglfs
+export QT_QPA_EGLFS_KMS_CONFIG=/home/wpballard/eglfs_hdmi.json
+export PYTHONPATH=src:tests
+.venv/bin/python tools/svs_capture.py \
+  --lat 34.4275 --lon -119.8546 --alt 500 --heading 87 --range 8 \
+  --width 800 --height 600 \
+  --tiles /data/makerplane-data/terrain/tiles \
+  --water /data/makerplane-data/water/current/water.sqlite \
+  --nasr /data/makerplane-data/airports/airports-canada/2026.06/airports.sqlite \
+  --dof /data/makerplane-data/obstacles/current/obstacles.sqlite \
+  --out /tmp/aer1785_windowed_1920x1200.png --timeout 20 --verbose
+# captured, exit 0, 1920x1200, pyefis_rev e89c9c1 (clean, no -dirty)
+git checkout dev
+systemctl --user reset-failed pyefis.service
+systemctl --user restart pyefis.service
+```
+
+`pyefis.service` was `active`/`NRestarts=0` before and after (new `MainPID`
+after the restart), same hygiene as every other capture in this file. The
+bench was left back on `dev` @ `5fbd78d`, exactly where it started.
+
+Not regenerated here: `sidebyside_full_1920x1200.png` and `horizon_align_
+crop_zoom3x.png` below were rendered against the stale (pre-fix) windowed
+frame, so the "0.09% of pixels differ" figure in "How closely they agree"
+now overstates the disagreement -- the two paths are byte-identical as of
+this fix. Left as a follow-up, not blocking: this issue scoped to the
+control frame and the source-level answer, not the derived comparison
+renders.
+
 **Update (2026-09-19, AER-1692): the frames above were geometrically wrong,
 now fixed.** INTEGRATOR's review of #245 at head `428ba48` measured the
 committed `offscreen_*.png` frames against `windowed_1920x1200.png` and found
