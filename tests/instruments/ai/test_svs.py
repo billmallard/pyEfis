@@ -9,6 +9,7 @@ import math
 import struct
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -1668,3 +1669,114 @@ class TestAutoRangeRenderedExtent:
             f"rendered extent jumped {max(deltas):.2f} NM between "
             f"consecutive samples -- expected smooth tracking, not a "
             f"bucket-sized step: {rendered}")
+
+
+class TestAsyncCollectorWakesFrameClock:
+    """AER-1714: on a stationary aircraft, an async overlay collector
+    (water/highways, or anything routed through _async_cache -- airports,
+    obstacles) finishes on a background worker and parks its result in
+    *_result / _async_state. With the pose completely unchanged nothing
+    else marks the frame dirty, so the frame clock's early-out
+    (ai_widget._frame_tick) never promotes or paints it -- the bug
+    reported live on the Pi 5 (water/roads/obstacles/airports never
+    appearing until the position was nudged). consume_async_dirty() is
+    the wake signal each worker sets on completion; these tests drive the
+    real worker methods synchronously so they exercise the actual
+    completion path, not a stand-in for it."""
+
+    def test_async_cache_worker_sets_and_clears_dirty_flag(self):
+        # Covers both "airports" and "obstacles", which share _async_cache.
+        r = SVSRenderer({})
+        assert r.consume_async_dirty() is False
+        r._async_cache("obstacles", ("key",), lambda: {"result": True})
+        worker = r._async_state["obstacles"]["worker"]
+        assert worker is not None
+        worker.join(timeout=2.0)
+        assert not worker.is_alive()
+        assert r.consume_async_dirty() is True
+        # Consuming clears it -- it doesn't get stuck permanently true and
+        # force a repaint on every subsequent tick.
+        assert r.consume_async_dirty() is False
+
+    def test_water_worker_sets_dirty_flag_even_with_no_result(self):
+        # A worker landing "nothing in range" is still a real completion --
+        # it must wake the UI just as much as a non-empty result would (a
+        # water/road/obstacle set draining to empty also needs to paint).
+        r = SVSRenderer({})
+        r.water_db = _StubWaterDB([])
+        assert r.consume_async_dirty() is False
+        r._collect_slot.acquire()  # the real caller holds this before spawning
+        r._water_collect_worker(("key",), 39.0, -107.0, 12000.0, 10.0)
+        assert r._water_result == (("key",), None)
+        assert r.consume_async_dirty() is True
+
+    def test_highway_worker_sets_dirty_flag_even_with_no_result(self):
+        r = SVSRenderer({})
+        r.highway_db = _StubHighwayDB([])
+        assert r.consume_async_dirty() is False
+        r._collect_slot.acquire()  # the real caller holds this before spawning
+        r._hwy_collect_worker(("key",), 39.0, -107.0, 12000.0, 10.0, 1000.0)
+        assert r._hwy_result == (("key",), None)
+        assert r.consume_async_dirty() is True
+
+    def test_frame_tick_wakes_and_paints_on_a_stationary_aircraft(
+            self, fix, qtbot):
+        """The end-to-end regression: pose held completely fixed, a
+        collector finishes in the background, and the AI widget's frame
+        clock must still wake up and repaint. Fails against pre-fix code
+        because nothing sets _frame_dirty when the worker lands its
+        result, so _frame_tick's early-out never lets the redraw happen."""
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(240, 220)
+        widget.show()
+        qtbot.waitExposed(widget)
+        widget.set_svs_config({"enabled": True})
+        widget.svs.highway_db = _StubHighwayDB([])
+
+        # Settle the frame clock completely: pose fixed, nothing dirty --
+        # the parked-aircraft steady state.
+        widget._frame_dirty = True
+        widget._frame_tick()
+        widget.redraw = mock.Mock()
+        widget.update = mock.Mock()
+        widget._frame_dirty = False
+
+        # The highway collector finishes on its worker thread while the
+        # aircraft position hasn't moved at all.
+        widget.svs._collect_slot.acquire()
+        widget.svs._hwy_collect_worker(
+            ("k1",), widget._svs_lat, widget._svs_lon, widget._svs_alt,
+            widget.svs.range_nm, 1000.0)
+
+        # Nothing about the pose changed -- only the landed async result
+        # should wake the frame clock.
+        widget._frame_tick()
+        widget.redraw.assert_called_once_with()
+        widget.update.assert_called_once_with()
+
+        # And it doesn't loop forever redrawing once the wake is consumed.
+        widget._frame_tick()
+        assert widget.redraw.call_count == 1
+
+    def test_frame_tick_stays_quiet_with_no_pending_async_result(
+            self, fix, qtbot):
+        """Baseline: with the pose unchanged and no collector result
+        pending, the frame clock must NOT repaint -- the fix must not
+        degrade into an unconditional per-tick redraw."""
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(240, 220)
+        widget.show()
+        qtbot.waitExposed(widget)
+        widget.set_svs_config({"enabled": True})
+
+        widget._frame_dirty = True
+        widget._frame_tick()
+        widget.redraw = mock.Mock()
+        widget.update = mock.Mock()
+        widget._frame_dirty = False
+
+        widget._frame_tick()
+        widget.redraw.assert_not_called()
+        widget.update.assert_not_called()

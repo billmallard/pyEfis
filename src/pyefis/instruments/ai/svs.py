@@ -597,6 +597,15 @@ class SVSRenderer:
         self._collect_slot = threading.Lock()
         # Generic async cache slots (airports, obstacles, ...).
         self._async_state = {}
+        # Cross-thread wake signal (AER-1714). Every async collector below
+        # (water, highways, and anything routed through _async_cache) only
+        # ever gets consumed from the render thread's next draw pass. On a
+        # stationary aircraft nothing else schedules that next draw, so a
+        # worker's finished result sits parked in *_result/_async_state
+        # forever. Each worker sets this on completion; the host widget's
+        # frame clock consumes it (consume_async_dirty) to force the one
+        # more paint that actually promotes the result.
+        self._async_dirty = threading.Event()
         # Obstacle pole vertex cache (Phase 2). Same TTL strategy as
         # water; key includes altitude bucket because the
         # conflict-vs-lit grouping depends on aircraft altitude.
@@ -1474,6 +1483,7 @@ class SVSRenderer:
                         v = builder()
                         with st["lock"]:
                             st["res"] = (key, v)
+                        self._async_dirty.set()
                     except Exception:
                         log.warning("%s worker failed", name,
                                     exc_info=True)
@@ -1482,6 +1492,19 @@ class SVSRenderer:
                 st["worker"] = threading.Thread(target=run, daemon=True)
                 st["worker"].start()
             return st["val"]
+
+    def consume_async_dirty(self):
+        """Check-and-clear the AER-1714 wake signal.
+
+        True means an async collector worker (water, highways, or anything
+        routed through ``_async_cache`` — airports, obstacles) landed a
+        result since the last call. The host widget's frame clock uses this
+        to force one more paint even when the pose hasn't moved, which is
+        what actually promotes the parked result into the draw."""
+        if self._async_dirty.is_set():
+            self._async_dirty.clear()
+            return True
+        return False
 
     def _airports_in_range(self, ac_lat, ac_lon):
         """Yield ``(label, ref_lat, ref_lon, elev_ft, runways)`` records from
@@ -1577,6 +1600,7 @@ class SVSRenderer:
             arr = self._collect_water_sync(ac_lat, ac_lon, ac_alt_ft, range_nm)
             with self._water_worker_lock:
                 self._water_result = (key, arr)
+            self._async_dirty.set()
         except Exception:
             log.warning("water collect worker failed", exc_info=True)
         finally:
@@ -1782,6 +1806,7 @@ class SVSRenderer:
                 self._perf.set_gauge("highways.segments", n_vertices / 6.0)
             with self._hwy_worker_lock:
                 self._hwy_result = (key, result)
+            self._async_dirty.set()
         except Exception:
             log.warning("highway collect worker failed", exc_info=True)
         finally:
