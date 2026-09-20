@@ -50,12 +50,20 @@ What this tool does instead
 
 Exit codes: 0 ok, 2 never settled (timeout), 3 GL unavailable, 4 PNG write failed.
 
-On success a ``<out>.json`` sidecar is written alongside the frame, naming the
-pyEfis checkout that rendered it: ``{"pyefis_rev": "<short-sha>[-dirty]"}``
-(AER-1675). A cross-renderer differential is only as good as its ability to
-tell "different GPU" from "different code" apart, and an archived frame is
-only re-attributable later if the identity travels with it -- resolved live
-from the checkout each run, never a constant someone has to remember to bump.
+On success a ``<out>.json`` sidecar is written alongside the frame, naming not
+just *when* it was rendered but *which path* drew it (AER-1675, AER-1795):
+``pyefis_rev`` (the checkout, ``<short-sha>[-dirty]``, resolved live each run
+rather than a constant someone has to remember to bump), ``capture_mode``
+(``"windowed"`` or ``"offscreen"``), ``requested_size`` and ``actual_size``
+(the AER-1785 defect was a window resized out from under the request -- a
+sidecar recording both would have named it without a bench session),
+``argv`` (the exact invocation) and ``sha256`` of the PNG itself (so a reader
+can confirm the sidecar in hand belongs to the file sitting next to it, not a
+stale one from a previous run). A reader holding only the PNG and its
+sidecar can answer "which capture path produced these bytes, at what size,
+from what command" without reading a commit message or trusting anybody's
+prose -- which is exactly what a byte-identical windowed/offscreen pair
+otherwise cannot say for itself (#251/AER-1793).
 
 Usage::
 
@@ -94,6 +102,7 @@ a second golden source in a new context.
 """
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -289,12 +298,33 @@ def resolve_pyefis_rev(repo_root=None):
         return "unknown"
 
 
-def _write_manifest(out_path, pyefis_rev):
-    """Sidecar `<out>.json` naming the checkout that rendered `<out>` -- so an
-    archived frame can be re-attributed later, which is most of why it's
-    archived at all."""
+def _write_manifest(
+    out_path, *, pyefis_rev, capture_mode, requested_size, actual_size,
+):
+    """Sidecar `<out>.json` naming not just when `<out>` was rendered but
+    which path drew it, at what size, from what command (AER-1795).
+
+    A sidecar carrying only ``pyefis_rev`` cannot distinguish "windowed and
+    offscreen agree because they draw the same scene through the same
+    deterministic renderer" from "one is a copy of the other" -- exactly the
+    ambiguity that sent #251's byte-identical pair back around as AER-1793.
+    ``sha256`` is self-referential by design: it lets a reader confirm the
+    sidecar sitting next to a PNG actually belongs to it, rather than a
+    stale one left over from a previous run at the same ``--out`` path.
+    Called after the PNG is written, never before -- it has to hash the
+    bytes that were actually saved.
+    """
+    out_path = Path(out_path)
     manifest_path = Path(str(out_path) + ".json")
-    manifest_path.write_text(json.dumps({"pyefis_rev": pyefis_rev}, indent=1))
+    manifest = {
+        "pyefis_rev": pyefis_rev,
+        "capture_mode": capture_mode,
+        "requested_size": list(requested_size),
+        "actual_size": list(actual_size),
+        "argv": " ".join(sys.argv),
+        "sha256": hashlib.sha256(out_path.read_bytes()).hexdigest(),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=1))
 
 
 class CapturingAI(AI):
@@ -304,13 +334,15 @@ class CapturingAI(AI):
         super().__init__(*args, **kwargs)
         self.capture_to = None
         self.capture_ok = None
+        self.capture_actual_size = None
 
     def paintEvent(self, event):
         super().paintEvent(event)
         if self.capture_to is None:
             return
         path, self.capture_to = self.capture_to, None
-        self.capture_ok = _readback(self.viewport(), path)
+        self.capture_ok, self.capture_actual_size = _readback(
+            self.viewport(), path)
 
 
 def _readback_pixels(w, h, path):
@@ -327,11 +359,15 @@ def _readback_pixels(w, h, path):
 
 
 def _readback(viewport, path):
-    """Read the widget's FBO. Must run with the GL context current, i.e. in paint."""
+    """Read the widget's FBO. Must run with the GL context current, i.e. in
+    paint. Returns ``(ok, (w, h))`` -- the actual pixel size read back,
+    which the caller records in the sidecar alongside the requested size
+    (AER-1795): devicePixelRatioF() scaling or a window resized out from
+    under the request (AER-1785) can make them differ."""
     dpr = viewport.devicePixelRatioF()
     w = int(round(viewport.width() * dpr))
     h = int(round(viewport.height() * dpr))
-    return _readback_pixels(w, h, path)
+    return _readback_pixels(w, h, path), (w, h)
 
 
 def make_offscreen_target(width, height):
@@ -707,7 +743,13 @@ def main(argv=None):
                 return
         elif widget.capture_ok is not None:
             if widget.capture_ok:
-                _write_manifest(args.out, pyefis_rev)
+                _write_manifest(
+                    args.out,
+                    pyefis_rev=pyefis_rev,
+                    capture_mode="windowed",
+                    requested_size=(args.width, args.height),
+                    actual_size=widget.capture_actual_size,
+                )
                 print(f"captured {args.out}")
                 app.exit(EXIT_OK)
             else:
@@ -752,7 +794,17 @@ def main(argv=None):
                             return
                         ok = _readback_pixels(args.width, args.height, args.out)
                         if ok:
-                            _write_manifest(args.out, pyefis_rev)
+                            _write_manifest(
+                                args.out,
+                                pyefis_rev=pyefis_rev,
+                                capture_mode="offscreen",
+                                requested_size=(args.width, args.height),
+                                # The offscreen FBO is allocated at exactly
+                                # (args.width, args.height) with no DPR
+                                # scaling -- actual == requested by
+                                # construction, unlike the windowed path.
+                                actual_size=(args.width, args.height),
+                            )
                             print(f"captured {args.out}")
                             app.exit(EXIT_OK)
                         else:
