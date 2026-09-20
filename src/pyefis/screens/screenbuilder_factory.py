@@ -277,7 +277,9 @@ def _ai_overlay_props():
     its default matches the widget. The tick-width / bank-size knobs only take
     effect when tick_autoscale is off (otherwise they scale with the font)."""
     return [
-        Prop("pitchDegreesShown", "number", default=30,
+        # AER-1799 EVAL BUILD: defaults raised to match ai_widget.py's
+        # eval-build constructor defaults (50 / 25) -- do not merge as-is.
+        Prop("pitchDegreesShown", "number", default=50,
              label="Pitch field of view (deg)",
              help="total vertical pitch span shown"),
         Prop("minorDiv", "integer", default=1, label="Minor division (deg)",
@@ -287,7 +289,7 @@ def _ai_overlay_props():
         Prop("numberedDiv", "integer", default=10,
              label="Numbered division (deg)",
              help="pitch interval at which ladder lines get a number"),
-        Prop("visiblePitchAngle", "integer", default=15,
+        Prop("visiblePitchAngle", "integer", default=25,
              label="Pitch label range (deg)",
              help="ladder marks fade out beyond this from current pitch"),
         Prop("pitchOpacity", "number", default=0.6, minimum=0.0, maximum=1.0,
@@ -1396,6 +1398,17 @@ _register(InstrumentSpec(
         Prop("horizon_position", "integer", default=50, minimum=40, maximum=80,
              step=1, label="Horizon position (% up)",
              help="50 = centred (default); ~67 = two-thirds up the screen"),
+        # AER-1799 EVAL BUILD: SVS-only terrain horizontal-FOV knob,
+        # decoupled from pitchDegreesShown by this eval (see ai_widget.py).
+        # apply='attr' (a widget constructor attribute, unlike the
+        # svs_*/apply='special' knobs above which flow through
+        # set_svs_config) -- do not merge as-is.
+        Prop("svs_hfov_pitch_equiv_deg", "number", default=30,
+             label="Terrain FOV (pitch-equivalent deg)",
+             help="terrain horizontal FOV, expressed as the "
+                  "pitchDegreesShown value that would have produced it "
+                  "before the pitch ladder and SVS FOV were decoupled -- "
+                  "does not affect the ladder's own vertical scale"),
         # Editor preview only: the device renders real SVS terrain; this picks
         # which stylised backdrop the configurator twin shows for layout.
         Prop("preview_scene", "enum", default="mountains",

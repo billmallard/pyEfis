@@ -97,7 +97,19 @@ class AI(QGraphicsView):
         # font on resize; set False to honour the explicit pixel sizes above
         # (so they can be exposed as independent editor options).
         self.tick_autoscale = True
-        self.visiblePitchAngle = 15 # Amount of visible pitch angle marks
+        # AER-1799 finding 1 (QA changes-requested): this used to be a
+        # fixed 15, independent of pitchDegreesShown -- so raising
+        # pitchDegreesShown to 50 widened the ladder's screen geometry
+        # but this constant still hid every mark past +-15, leaving the
+        # extra range blank sky/terrain with no pitch attitude reference
+        # in it (measured directly in the eval screenshots). The AC
+        # 23.1311-1C requirement is about visible pitch ATTITUDE, i.e.
+        # ladder marks -- so visiblePitchAngle, not pitchDegreesShown/2,
+        # is the constant that actually owns this requirement. Default
+        # it to match the full geometric range (no declutter) so the two
+        # stay consistent unless a screen deliberately narrows it below
+        # what fits on screen.
+        self.visiblePitchAngle = self.pitchDegreesShown / 2
         self.pitchOpacity = 0.6
         # Bank angle tick indicators
         self.bankMarkSize = 10
