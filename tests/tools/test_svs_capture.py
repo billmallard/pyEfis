@@ -13,6 +13,7 @@ invisible to every capture the tool could produce. These tests exercise
 * A non-zero ``--magvar`` changes only the MAGVAR key.
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -233,8 +234,42 @@ def test_resolve_pyefis_rev_unknown_outside_a_git_checkout(svs_capture, tmp_path
 
 def test_write_manifest_writes_sidecar_json_beside_the_frame(svs_capture, tmp_path):
     out = tmp_path / "frame.png"
-    svs_capture._write_manifest(out, "abc1234-dirty")
+    out.write_bytes(b"not-really-a-png")
+    svs_capture._write_manifest(
+        out,
+        pyefis_rev="abc1234-dirty",
+        capture_mode="windowed",
+        requested_size=(800, 600),
+        actual_size=(800, 600),
+    )
 
     manifest = tmp_path / "frame.png.json"
     assert manifest.is_file()
-    assert json.loads(manifest.read_text()) == {"pyefis_rev": "abc1234-dirty"}
+    written = json.loads(manifest.read_text())
+    assert written == {
+        "pyefis_rev": "abc1234-dirty",
+        "capture_mode": "windowed",
+        "requested_size": [800, 600],
+        "actual_size": [800, 600],
+        "argv": written["argv"],
+        "sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
+    }
+    assert written["argv"]  # non-empty; exact value is the pytest invocation
+
+
+def test_write_manifest_sha256_matches_the_frame_bytes(svs_capture, tmp_path):
+    out = tmp_path / "frame.png"
+    out.write_bytes(b"some png bytes")
+    svs_capture._write_manifest(
+        out,
+        pyefis_rev="abc1234",
+        capture_mode="offscreen",
+        requested_size=(1920, 1200),
+        actual_size=(1920, 1200),
+    )
+
+    manifest = json.loads((tmp_path / "frame.png.json").read_text())
+    assert manifest["sha256"] == hashlib.sha256(b"some png bytes").hexdigest()
+    assert manifest["capture_mode"] == "offscreen"
+    assert manifest["requested_size"] == [1920, 1200]
+    assert manifest["actual_size"] == [1920, 1200]
