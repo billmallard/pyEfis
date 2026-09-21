@@ -193,6 +193,66 @@ def test_offscreen_resize_tracks_requested_size(svs_capture, fix, qtbot):
 
 
 # ---------------------------------------------------------------------------
+# --width/--height on the windowed path (AER-1810): eglfs (no window manager)
+# forces a windowed top-level to the screen size regardless of what was
+# requested, delivering the requested geometry as a first resizeEvent and the
+# forced one as a second (the same two-resize sequence AER-1785 diagnosed).
+# check_delivered_size() is the pure geometry check main() refuses a capture
+# on; it needs no GL context, so it's exercised directly here the same way
+# resize_for_offscreen_capture() is above -- the actual eglfs forcing behavior
+# itself is a platform fact, not something this suite can or needs to
+# reproduce, only the resulting mismatch this code must catch.
+# ---------------------------------------------------------------------------
+
+def test_check_delivered_size_matches_the_requested_geometry(svs_capture, fix, qtbot):
+    widget = svs_capture.CapturingAI(None, show_fpm=False)
+    qtbot.addWidget(widget)
+    widget.set_svs_config({"enabled": False})
+
+    widget.resize(800, 600)
+    widget.viewport().resize(800, 600)
+
+    assert svs_capture.check_delivered_size(widget.viewport(), 800, 600) is None
+
+
+def test_check_delivered_size_flags_eglfs_forced_fullscreen(svs_capture, fix, qtbot):
+    """Simulates the AER-1785 two-resize sequence: a first resize at the
+    requested --width/--height, then a second (the platform forcing
+    fullscreen) that leaves the viewport at a different size. A caller who
+    asked for 800x600 must see this as a hard mismatch against 1920x1200,
+    not have it silently pass."""
+    widget = svs_capture.CapturingAI(None, show_fpm=False)
+    qtbot.addWidget(widget)
+    widget.set_svs_config({"enabled": False})
+
+    widget.resize(800, 600)
+    widget.viewport().resize(800, 600)
+    widget.resize(1920, 1200)
+    widget.viewport().resize(1920, 1200)
+
+    mismatch = svs_capture.check_delivered_size(widget.viewport(), 800, 600)
+    assert mismatch == (1920, 1200)
+
+
+def test_check_delivered_size_offscreen_target_always_matches_by_construction(
+    svs_capture, fix, qtbot
+):
+    """The offscreen FBO (make_offscreen_target) is allocated at exactly the
+    requested size with no window manager involved -- unlike the windowed
+    path, resize_for_offscreen_capture cannot be forced to a different
+    geometry, so check_delivered_size must report no mismatch after it."""
+    from pyefis.instruments.ai import AI
+
+    widget = AI(None, show_fpm=False)
+    qtbot.addWidget(widget)
+    widget.set_svs_config({"enabled": False})
+
+    svs_capture.resize_for_offscreen_capture(widget, 1920, 1200)
+
+    assert svs_capture.check_delivered_size(widget.viewport(), 1920, 1200) is None
+
+
+# ---------------------------------------------------------------------------
 # pyefis_rev (AER-1675): a cross-renderer differential only localises a
 # defect if a disagreement can be attributed to different code vs different
 # GPU, which needs the rendering identity read from the live checkout --
