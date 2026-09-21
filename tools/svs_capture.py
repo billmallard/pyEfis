@@ -151,6 +151,7 @@ sys.modules["pyavtools.fix.client"] = mock_db.client
 sys.modules["pyavtools.scheduler"] = mock_db.scheduler
 
 import pyavtools.fix as fix  # noqa: E402
+from OpenGL import GL as gl  # noqa: E402
 from PyQt6.QtCore import Qt, QRectF, QSize, QTimer  # noqa: E402
 from PyQt6.QtGui import QImage, QPainter, QResizeEvent  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget  # noqa: E402
@@ -506,6 +507,24 @@ def render_offscreen_frame(widget, ctx, surface, fbo, paint_device):
     invoking user paint code. Without the re-assert, ``fbo.bind()``
     silently fails and the paint device's QPainter never becomes active
     ("context needs to be current"), and the scene never settles.
+
+    Ends every call with ``glFinish()`` (AER-1697): this FBO is never
+    presented through ``eglSwapBuffers`` -- there is no window, and
+    ``QOffscreenSurface`` has no swap chain -- so the V3D kernel driver
+    never gets the "frame boundary" signal it uses to reclaim the
+    per-submission scratch/binning BOs each draw call allocates. A
+    windowed ``QOpenGLWidget`` gets that boundary for free from Qt's own
+    swap-on-repaint; this path has to ask for it explicitly. Measured on
+    the Pi 5 (real terrain, ``pyefis.service`` holding the display
+    concurrently) without this call: ~100-120 new BOs (~1.9 MB) leaked
+    on *every* 16ms ``pump()`` tick while waiting for ``settled()``,
+    unbounded and linear in tick count (confirmed via
+    ``/sys/kernel/debug/dri/*/bo_stats``) -- the mechanism behind
+    AER-1692's/AER-1789's ``Failed to allocate device memory for BO``
+    crashes and the one board reboot. With this call, the same
+    ``bo_stats`` counters go flat within the first couple of ticks and
+    stay flat for 1000+ subsequent ticks, regardless of how long the
+    scene takes to settle.
     """
     if not ctx.makeCurrent(surface):
         raise RuntimeError("offscreen GL context failed to become current")
@@ -535,6 +554,7 @@ def render_offscreen_frame(widget, ctx, surface, fbo, paint_device):
         widget.render(painter, rect, source)
         widget._paint_overlays(painter)
     painter.end()
+    gl.glFinish()
 
 
 def resize_for_offscreen_capture(widget, width, height):

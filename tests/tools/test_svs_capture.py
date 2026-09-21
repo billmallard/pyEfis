@@ -192,6 +192,54 @@ def test_offscreen_resize_tracks_requested_size(svs_capture, fix, qtbot):
         assert horizon_view_y == pytest.approx(height / 2, abs=1)
 
 
+def test_render_offscreen_frame_flushes_gl_every_call(svs_capture, fix, qtbot,
+                                                       monkeypatch):
+    """AER-1697 regression: render_offscreen_frame() must end every call
+    with a GL flush (``glFinish()``).
+
+    The offscreen FBO is never presented through ``eglSwapBuffers`` -- no
+    window, no swap chain -- so without an explicit flush the V3D kernel
+    driver never gets a frame boundary to reclaim the per-submission
+    scratch/binning BOs each draw allocates. Measured on the Pi 5 (real
+    terrain, ``pyefis.service`` holding the display concurrently): without
+    this call, ``pump()``'s 16ms tick loop leaked ~100-120 new BOs (~1.9 MB)
+    on *every* tick while waiting for ``settled()`` -- unbounded and linear
+    in tick count (``/sys/kernel/debug/dri/*/bo_stats`` climbed the whole
+    run) -- the mechanism behind the ``Failed to allocate device memory for
+    BO`` crashes and one board reboot. With the call, the same counters go
+    flat within the first couple of ticks and stay flat for 1000+
+    subsequent ones. No real GPU exists in this sandbox (see the module
+    docstring above), so ctx/fbo are mocked here and only the flush call
+    count is asserted -- this pins "a flush happens every frame", not the
+    render's pixel output, which the rest of this suite already can't
+    exercise here either.
+    """
+    from unittest.mock import MagicMock
+    from PyQt6.QtGui import QImage
+    from pyefis.instruments.ai import AI
+
+    widget = AI(None, show_fpm=False)
+    qtbot.addWidget(widget)
+    widget.set_svs_config({"enabled": False})
+    svs_capture.resize_for_offscreen_capture(widget, 64, 64)
+
+    ctx = MagicMock()
+    ctx.makeCurrent.return_value = True
+    surface = MagicMock()
+    fbo = MagicMock()
+    fbo.bind.return_value = True
+    paint_device = QImage(64, 64, QImage.Format.Format_RGB32)
+
+    finish = MagicMock()
+    monkeypatch.setattr(svs_capture.gl, "glFinish", finish)
+
+    for _ in range(3):
+        svs_capture.render_offscreen_frame(
+            widget, ctx, surface, fbo, paint_device)
+
+    assert finish.call_count == 3
+
+
 # ---------------------------------------------------------------------------
 # --width/--height on the windowed path (AER-1810): eglfs (no window manager)
 # forces a windowed top-level to the screen size regardless of what was
