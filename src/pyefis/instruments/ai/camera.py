@@ -48,14 +48,22 @@ Z_FAR = 800e3
 
 
 def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
-                    pixels_per_deg, viewport_w, viewport_h):
+                    pixels_per_deg, viewport_w, viewport_h,
+                    pixels_per_deg_h=None):
     """Build the 4x4 view-projection matrix (numpy float64, row-major)
     mapping ENU-metre world positions to GL clip space.
 
     Composition: translate(-aircraft) -> heading -> pitch -> roll ->
     pixel scale. Signs and order match the proven Phase-4b perspective
     shader exactly.
+
+    *pixels_per_deg_h* (AER-1806) lets the horizontal (terrain HFOV)
+    scale be set independently of the vertical pitch-ladder scale;
+    None (every call site today) keeps them equal -- the coupling
+    this parameter exists to let a caller break.
     """
+    if pixels_per_deg_h is None:
+        pixels_per_deg_h = pixels_per_deg
     ch, sh = math.cos(math.radians(heading_deg)), math.sin(math.radians(heading_deg))
     cp, sp = math.cos(math.radians(pitch_deg)), math.sin(math.radians(pitch_deg))
     cr, sr = math.cos(math.radians(roll_deg)), math.sin(math.radians(roll_deg))
@@ -82,7 +90,7 @@ def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
     # No unit factor here: clip x/y and clip w are both in camera-frame
     # metres, so the ratio GL forms at the divide is the pure tangent —
     # DEG_PER_RAD * ppd then maps small angles to angle_deg * ppd pixels.
-    sx = DEG_PER_RAD * pixels_per_deg * 2.0 / viewport_w
+    sx = DEG_PER_RAD * pixels_per_deg_h * 2.0 / viewport_w
     sy = DEG_PER_RAD * pixels_per_deg * 2.0 / viewport_h
     # rows: clip.x = sx*right, clip.y = sy*up, clip.w = fwd,
     # clip.z = za*fwd + zb — ndc z spans [-1, +1] over [Z_NEAR, Z_FAR]

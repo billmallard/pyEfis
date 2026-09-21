@@ -48,14 +48,24 @@ What this tool does instead
 * **Disables MSAA**, because ``glReadPixels`` on a multisample FBO is invalid -- and
   because the sample pattern is driver-specific, which a golden should not be.
 
-Exit codes: 0 ok, 2 never settled (timeout), 3 GL unavailable, 4 PNG write failed.
+Exit codes: 0 ok, 2 never settled (timeout), 3 GL unavailable, 4 PNG write
+failed, 5 requested/delivered size mismatch (windowed path only -- see
+``--width``/``--height`` below).
 
-On success a ``<out>.json`` sidecar is written alongside the frame, naming the
-pyEfis checkout that rendered it: ``{"pyefis_rev": "<short-sha>[-dirty]"}``
-(AER-1675). A cross-renderer differential is only as good as its ability to
-tell "different GPU" from "different code" apart, and an archived frame is
-only re-attributable later if the identity travels with it -- resolved live
-from the checkout each run, never a constant someone has to remember to bump.
+On success a ``<out>.json`` sidecar is written alongside the frame, naming not
+just *when* it was rendered but *which path* drew it (AER-1675, AER-1795):
+``pyefis_rev`` (the checkout, ``<short-sha>[-dirty]``, resolved live each run
+rather than a constant someone has to remember to bump), ``capture_mode``
+(``"windowed"`` or ``"offscreen"``), ``requested_size`` and ``actual_size``
+(the AER-1785 defect was a window resized out from under the request -- a
+sidecar recording both would have named it without a bench session),
+``argv`` (the exact invocation) and ``sha256`` of the PNG itself (so a reader
+can confirm the sidecar in hand belongs to the file sitting next to it, not a
+stale one from a previous run). A reader holding only the PNG and its
+sidecar can answer "which capture path produced these bytes, at what size,
+from what command" without reading a commit message or trusting anybody's
+prose -- which is exactly what a byte-identical windowed/offscreen pair
+otherwise cannot say for itself (#251/AER-1793).
 
 Usage::
 
@@ -91,9 +101,35 @@ up inactive on every real paint attempt). AER-1631 fixes both -- see the
 issue thread for the Pi validation evidence (concurrent with a live pyEfis,
 diffed against a windowed capture of the same pose) before treating this as
 a second golden source in a new context.
+
+``--width``/``--height`` on the windowed path (AER-1810): eglfs has no window
+manager, so a windowed top-level does not get the size it asks for -- the
+platform forces it to the screen size regardless, delivering the requested
+geometry as a first resizeEvent and the forced one as a second (the same
+two-resize sequence AER-1785 diagnosed for ``bankAngleRadius``). The
+requested size is not silently dropped; it does briefly reach the widget,
+which makes the failure sharper than "the flag is ignored" -- a caller who
+asked for 800x600 gets a real, fully-rendered 1920x1200 PNG at exit 0, with
+nothing about the name or the exit code saying so. This tool refuses that
+capture instead: once the scene settles, the delivered viewport geometry is
+compared against the requested size, and a mismatch exits ``5`` before any
+PNG or sidecar is written -- never a warning that still exits 0, and never a
+silent substitution of a different render path. A caller that needs a
+specific size guaranteed on eglfs has that already, in ``--offscreen``: its
+FBO is allocated at exactly the requested size and cannot be resized out
+from under the request by a window manager that isn't there. This is
+complementary to, not a replacement for, AER-1795's sidecar
+``requested_size``/``actual_size`` fields above: those two keys can now
+never disagree for a *windowed* capture that reached the sidecar at all
+(a mismatch is refused before ``_write_manifest`` runs), but the other three
+AER-1795 fields -- ``capture_mode``, ``argv``, ``sha256`` -- answer questions
+this refusal does nothing about (which path drew a frame, from what
+invocation, and whether the sidecar in hand still belongs to the PNG next to
+it), and remain exactly as load-bearing as before.
 """
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -115,6 +151,7 @@ sys.modules["pyavtools.fix.client"] = mock_db.client
 sys.modules["pyavtools.scheduler"] = mock_db.scheduler
 
 import pyavtools.fix as fix  # noqa: E402
+from OpenGL import GL as gl  # noqa: E402
 from PyQt6.QtCore import Qt, QRectF, QSize, QTimer  # noqa: E402
 from PyQt6.QtGui import QImage, QPainter, QResizeEvent  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget  # noqa: E402
@@ -125,6 +162,7 @@ EXIT_OK = 0
 EXIT_NOT_SETTLED = 2
 EXIT_GL_FAILED = 3
 EXIT_SAVE_FAILED = 4
+EXIT_SIZE_MISMATCH = 5
 
 PUMP_INTERVAL_MS = 16
 CONFIRM_FRAMES = 2  # settled must hold this many paints running
@@ -159,8 +197,18 @@ def parse_args(argv=None):
         help="let the renderer shrink range with altitude (off by default here: a "
         "capture should render the range it was asked for)",
     )
-    view.add_argument("--width", type=int, default=800)
-    view.add_argument("--height", type=int, default=600)
+    view.add_argument(
+        "--width", type=int, default=800,
+        help="on the windowed path, eglfs (no window manager) may force the "
+        "delivered geometry to the screen size regardless of what's "
+        "requested here -- if so, the tool refuses to capture (exit 5) "
+        "rather than write a PNG whose name lies. --offscreen always gets "
+        "the exact size requested",
+    )
+    view.add_argument(
+        "--height", type=int, default=600,
+        help="see --width",
+    )
     view.add_argument(
         "--offscreen",
         action="store_true",
@@ -289,12 +337,33 @@ def resolve_pyefis_rev(repo_root=None):
         return "unknown"
 
 
-def _write_manifest(out_path, pyefis_rev):
-    """Sidecar `<out>.json` naming the checkout that rendered `<out>` -- so an
-    archived frame can be re-attributed later, which is most of why it's
-    archived at all."""
+def _write_manifest(
+    out_path, *, pyefis_rev, capture_mode, requested_size, actual_size,
+):
+    """Sidecar `<out>.json` naming not just when `<out>` was rendered but
+    which path drew it, at what size, from what command (AER-1795).
+
+    A sidecar carrying only ``pyefis_rev`` cannot distinguish "windowed and
+    offscreen agree because they draw the same scene through the same
+    deterministic renderer" from "one is a copy of the other" -- exactly the
+    ambiguity that sent #251's byte-identical pair back around as AER-1793.
+    ``sha256`` is self-referential by design: it lets a reader confirm the
+    sidecar sitting next to a PNG actually belongs to it, rather than a
+    stale one left over from a previous run at the same ``--out`` path.
+    Called after the PNG is written, never before -- it has to hash the
+    bytes that were actually saved.
+    """
+    out_path = Path(out_path)
     manifest_path = Path(str(out_path) + ".json")
-    manifest_path.write_text(json.dumps({"pyefis_rev": pyefis_rev}, indent=1))
+    manifest = {
+        "pyefis_rev": pyefis_rev,
+        "capture_mode": capture_mode,
+        "requested_size": list(requested_size),
+        "actual_size": list(actual_size),
+        "argv": " ".join(sys.argv),
+        "sha256": hashlib.sha256(out_path.read_bytes()).hexdigest(),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=1))
 
 
 class CapturingAI(AI):
@@ -304,13 +373,15 @@ class CapturingAI(AI):
         super().__init__(*args, **kwargs)
         self.capture_to = None
         self.capture_ok = None
+        self.capture_actual_size = None
 
     def paintEvent(self, event):
         super().paintEvent(event)
         if self.capture_to is None:
             return
         path, self.capture_to = self.capture_to, None
-        self.capture_ok = _readback(self.viewport(), path)
+        self.capture_ok, self.capture_actual_size = _readback(
+            self.viewport(), path)
 
 
 def _readback_pixels(w, h, path):
@@ -326,12 +397,42 @@ def _readback_pixels(w, h, path):
     return bool(img.mirrored(False, True).copy().save(path, "PNG"))
 
 
-def _readback(viewport, path):
-    """Read the widget's FBO. Must run with the GL context current, i.e. in paint."""
+def _delivered_size(viewport):
+    """The pixel geometry a readback of ``viewport`` would actually produce --
+    the same width/height math ``_readback`` uses, exposed separately so a
+    caller can check it *before* spending a readback (AER-1810)."""
     dpr = viewport.devicePixelRatioF()
-    w = int(round(viewport.width() * dpr))
-    h = int(round(viewport.height() * dpr))
-    return _readback_pixels(w, h, path)
+    return int(round(viewport.width() * dpr)), int(round(viewport.height() * dpr))
+
+
+def _readback(viewport, path):
+    """Read the widget's FBO. Must run with the GL context current, i.e. in
+    paint. Returns ``(ok, (w, h))`` -- the actual pixel size read back,
+    which the caller records in the sidecar alongside the requested size
+    (AER-1795): devicePixelRatioF() scaling or a window resized out from
+    under the request (AER-1785) can make them differ."""
+    w, h = _delivered_size(viewport)
+    return _readback_pixels(w, h, path), (w, h)
+
+
+def check_delivered_size(viewport, requested_width, requested_height):
+    """``None`` if ``viewport``'s delivered geometry matches what was
+    requested; otherwise the actual ``(w, h)`` it settled at (AER-1810).
+
+    On eglfs (no window manager) a windowed top-level is forced to the
+    screen size regardless of ``--width``/``--height`` -- the requested size
+    reaches the widget as a first resizeEvent, the platform's forced
+    fullscreen as a second (AER-1785's two-resize sequence), and only the
+    second is what a readback would actually capture. The caller must treat
+    a non-``None`` result as a hard failure, not a warning: a mismatch here
+    means the requested geometry was never, even briefly, the one the scene
+    settled and rendered at, so a PNG saved under that name would misstate
+    its own size.
+    """
+    actual = _delivered_size(viewport)
+    if actual == (requested_width, requested_height):
+        return None
+    return actual
 
 
 def make_offscreen_target(width, height):
@@ -406,6 +507,24 @@ def render_offscreen_frame(widget, ctx, surface, fbo, paint_device):
     invoking user paint code. Without the re-assert, ``fbo.bind()``
     silently fails and the paint device's QPainter never becomes active
     ("context needs to be current"), and the scene never settles.
+
+    Ends every call with ``glFinish()`` (AER-1697): this FBO is never
+    presented through ``eglSwapBuffers`` -- there is no window, and
+    ``QOffscreenSurface`` has no swap chain -- so the V3D kernel driver
+    never gets the "frame boundary" signal it uses to reclaim the
+    per-submission scratch/binning BOs each draw call allocates. A
+    windowed ``QOpenGLWidget`` gets that boundary for free from Qt's own
+    swap-on-repaint; this path has to ask for it explicitly. Measured on
+    the Pi 5 (real terrain, ``pyefis.service`` holding the display
+    concurrently) without this call: ~100-120 new BOs (~1.9 MB) leaked
+    on *every* 16ms ``pump()`` tick while waiting for ``settled()``,
+    unbounded and linear in tick count (confirmed via
+    ``/sys/kernel/debug/dri/*/bo_stats``) -- the mechanism behind
+    AER-1692's/AER-1789's ``Failed to allocate device memory for BO``
+    crashes and the one board reboot. With this call, the same
+    ``bo_stats`` counters go flat within the first couple of ticks and
+    stay flat for 1000+ subsequent ticks, regardless of how long the
+    scene takes to settle.
     """
     if not ctx.makeCurrent(surface):
         raise RuntimeError("offscreen GL context failed to become current")
@@ -435,6 +554,7 @@ def render_offscreen_frame(widget, ctx, surface, fbo, paint_device):
         widget.render(painter, rect, source)
         widget._paint_overlays(painter)
     painter.end()
+    gl.glFinish()
 
 
 def resize_for_offscreen_capture(widget, width, height):
@@ -707,7 +827,13 @@ def main(argv=None):
                 return
         elif widget.capture_ok is not None:
             if widget.capture_ok:
-                _write_manifest(args.out, pyefis_rev)
+                _write_manifest(
+                    args.out,
+                    pyefis_rev=pyefis_rev,
+                    capture_mode="windowed",
+                    requested_size=(args.width, args.height),
+                    actual_size=widget.capture_actual_size,
+                )
                 print(f"captured {args.out}")
                 app.exit(EXIT_OK)
             else:
@@ -752,12 +878,38 @@ def main(argv=None):
                             return
                         ok = _readback_pixels(args.width, args.height, args.out)
                         if ok:
-                            _write_manifest(args.out, pyefis_rev)
+                            _write_manifest(
+                                args.out,
+                                pyefis_rev=pyefis_rev,
+                                capture_mode="offscreen",
+                                requested_size=(args.width, args.height),
+                                # The offscreen FBO is allocated at exactly
+                                # (args.width, args.height) with no DPR
+                                # scaling -- actual == requested by
+                                # construction, unlike the windowed path.
+                                actual_size=(args.width, args.height),
+                            )
                             print(f"captured {args.out}")
                             app.exit(EXIT_OK)
                         else:
                             print(f"failed to write {args.out}", file=sys.stderr)
                             app.exit(EXIT_SAVE_FAILED)
+                        return
+                    mismatch = check_delivered_size(
+                        widget.viewport(), args.width, args.height)
+                    if mismatch is not None:
+                        actual_w, actual_h = mismatch
+                        print(
+                            f"SVS: requested {args.width}x{args.height} but the "
+                            f"scene settled at {actual_w}x{actual_h} -- eglfs "
+                            f"(no window manager) forces a windowed top-level to "
+                            f"the screen size and cannot grant an arbitrary one. "
+                            f"Refusing to capture a frame whose filename would "
+                            f"lie about its own size; use --offscreen for a "
+                            f"guaranteed exact size.",
+                            file=sys.stderr,
+                        )
+                        app.exit(EXIT_SIZE_MISMATCH)
                         return
                     widget.capture_to = args.out
                     state["requested"] = True

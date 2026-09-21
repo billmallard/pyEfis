@@ -88,7 +88,19 @@ class AI(QGraphicsView):
         # font on resize; set False to honour the explicit pixel sizes above
         # (so they can be exposed as independent editor options).
         self.tick_autoscale = True
-        self.visiblePitchAngle = 15 # Amount of visible pitch angle marks
+        # Amount of visible pitch angle marks. Owned by pitchDegreesShown
+        # (half the total span) rather than an independent literal --
+        # AER-1806: the AER-1799 v1 eval build raised pitchDegreesShown to
+        # 50 (+-25 intended) but left this hardcoded at 15, silently
+        # truncating the ladder while the suite stayed green. Deriving it
+        # here means a future pitchDegreesShown change carries this along
+        # for free. At the unchanged default of 30 this is still exactly
+        # 15, so no visual change. int() keeps the attribute's type stable
+        # (screenbuilder_options._coerce_to_attr_type picks a config
+        # string's target type off this attribute's current type; several
+        # sibling pitch-ladder options segfault Qt/geometry code if that
+        # type ever drifts to float, per test_option_coercion.py).
+        self.visiblePitchAngle = int(self.pitchDegreesShown / 2)
         self.pitchOpacity = 0.6
         # Bank angle tick indicators
         self.bankMarkSize = 10
