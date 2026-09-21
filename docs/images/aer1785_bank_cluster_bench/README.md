@@ -32,4 +32,7 @@ This is a staging capture for Bill's on-glass judgement of the bank-angle
 cluster -- nothing here self-certifies correctness. `aer-1785/windowed-bank-radius-stale`
 merged as PR #251; its content is now `dev`. AER-1793, which held the
 `--restore` decision, was discharged by Elon and closed on 2026-09-20; no open
-issue owns the restore. AER-1803 returns the bench to `dev`.
+issue owns the restore. The bench is now staged on
+`aer-1805/horizon-off-scale-chevron-trigger` (AER-1805, the recovery-chevron
+trigger fix) pending Bill's call on that PR; no open issue currently returns
+it to `dev`.
