@@ -83,6 +83,12 @@ class TestAzimuthalExtentFollowsViewportAspect:
     same scale to x). Pin the relation directly against view_projection
     so a later edit to the screen-scale factors fails this test loudly
     instead of silently drifting, across more than one viewport aspect.
+
+    This class exercises view_projection's DEFAULT coupling, i.e. what
+    happens when a caller leaves ``pixels_per_deg_h`` unset (as every call
+    site did before AER-1973). svs_gl.py's actual call site no longer does
+    that -- see TestTerrainHFOVPinnedAcrossPitchDegreesShown below for the
+    live, pinned behaviour.
     """
 
     PITCH_DEGREES_SHOWN = 30.0
@@ -120,3 +126,47 @@ class TestAzimuthalExtentFollowsViewportAspect:
         half_fan_a = (800 / 2.0) / ppd_a
         half_fan_b = (1024 / 2.0) / ppd_b
         assert half_fan_a != pytest.approx(half_fan_b)
+
+
+class TestTerrainHFOVPinnedAcrossPitchDegreesShown:
+    """AER-1973 raises the AI widget's default pitchDegreesShown 30 -> 50
+    (more ladder gain, taller terrain view vertically) without widening the
+    terrain horizontally -- svs_gl.py's ``_update_camera`` now always
+    passes an explicit ``pixels_per_deg_h`` pinned to
+    ``h / _TERRAIN_HFOV_PITCH_DEG`` (AER-1806's decouple hook, wired here
+    for the first time). This is a pure-arithmetic pin on
+    view_projection's sx term (terrain horizontal clip-space scale) so a
+    future pitchDegreesShown edit that forgets to keep passing
+    pixels_per_deg_h fails HERE, immediately, instead of silently
+    widening the terrain picture the way AER-1799's evaluated and
+    rejected Option 1 coupling did. No rendered frame involved.
+    """
+
+    def test_sx_unchanged_as_live_pitch_degrees_shown_varies(self):
+        from pyefis.instruments.ai.svs_gl import _TERRAIN_HFOV_PITCH_DEG
+
+        w, h = 800, 480
+        pixels_per_deg_h = h / _TERRAIN_HFOV_PITCH_DEG
+
+        sx_values = [
+            view_projection(0.0, 0.0, 300.0, 0.0, 0.0, 0.0,
+                            h / pitch_degrees_shown, w, h,
+                            pixels_per_deg_h=pixels_per_deg_h)[0, 0]
+            for pitch_degrees_shown in (30.0, 50.0, 60.0)
+        ]
+        assert sx_values[0] == pytest.approx(sx_values[1])
+        assert sx_values[1] == pytest.approx(sx_values[2])
+
+    def test_sx_matches_pinned_hfov_not_live_ppd(self):
+        from pyefis.instruments.ai.svs_gl import _TERRAIN_HFOV_PITCH_DEG
+
+        w, h = 800, 480
+        live_ppd = h / 50.0  # today's live pitchDegreesShown
+        pinned_ppd_h = h / _TERRAIN_HFOV_PITCH_DEG
+
+        vp = view_projection(0.0, 0.0, 300.0, 0.0, 0.0, 0.0,
+                             live_ppd, w, h, pixels_per_deg_h=pinned_ppd_h)
+        expected_sx = DEG_PER_RAD * pinned_ppd_h * 2.0 / w
+        unpinned_sx = DEG_PER_RAD * live_ppd * 2.0 / w
+        assert vp[0, 0] == pytest.approx(expected_sx)
+        assert vp[0, 0] != pytest.approx(unpinned_sx)

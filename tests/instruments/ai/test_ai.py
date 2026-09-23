@@ -500,19 +500,21 @@ def test_ai_cat_recovery_chevrons_at_extreme_pitch(fix, qtbot):
 def test_ai_cat_recovery_chevrons_at_horizon_off_scale(fix, qtbot):
     """AER-1805: the chevron trigger must track where the horizon line
     actually leaves the glass, not just the fixed AC 25-11B constants. At
-    the shipped bench config (pitchDegreesShown=30, horizon_position=68)
-    the horizon is off-scale by -9.6 deg -- well inside the old -20 deg
-    constant -- and the chevrons must already be up."""
+    the shipped bench config (pitchDegreesShown=50, horizon_position=68 --
+    AER-1973 moved pitchDegreesShown 30 -> 50, see
+    tests/instruments/ai/test_horizon_off_scale.py) the horizon is
+    off-scale by -16.0 deg -- well inside the old -20 deg constant -- and
+    the chevrons must already be up."""
     _reset_ai_items(fix)
     widget = ai.AI()
     event = _show_ai(qtbot, widget)
     widget.horizon_position = 68
 
-    widget.pitchAngle = -9.6          # horizon just off the top edge
+    widget.pitchAngle = -16.0         # horizon just off the top edge
     widget.paintEvent(event)
     assert widget._show_recovery_chevrons is True
 
-    widget.pitchAngle = -15           # deep in the old constant-only gap
+    widget.pitchAngle = -18           # deep in the constant-only gap
     widget.paintEvent(event)
     assert widget._show_recovery_chevrons is True
 
