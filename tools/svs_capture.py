@@ -131,6 +131,7 @@ it), and remain exactly as load-bearing as before.
 import argparse
 import hashlib
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -275,6 +276,16 @@ def parse_args(argv=None):
         help="seconds to wait for the scene to settle before failing",
     )
     p.add_argument("--verbose", action="store_true")
+    p.add_argument(
+        "--perf-log",
+        action="store_true",
+        help="enable the SVS per-frame profiler (collector/draw timings, "
+        "mirrors the screen-config svs_perf_log option) and force one "
+        "summary report to stderr once the capture settles -- a "
+        "single-shot capture usually finishes well under the profiler's "
+        "own 2s report interval, so without forcing this would silently "
+        "never print",
+    )
     args = p.parse_args(argv)
     if args.terrain_only and args.symbology_only:
         p.error("--terrain-only and --symbology-only are mirror images of "
@@ -364,6 +375,16 @@ def _write_manifest(
         "sha256": hashlib.sha256(out_path.read_bytes()).hexdigest(),
     }
     manifest_path.write_text(json.dumps(manifest, indent=1))
+
+
+def _report_perf(svs):
+    """Force one SVS perf-profiler summary line for --perf-log, bypassing
+    the profiler's own 2s report interval (svs.py's ``_SVSPerfLog``) --
+    a single-shot capture settles well under that, so without forcing this
+    call, --perf-log would enable the profiler and still print nothing."""
+    perf = getattr(svs, "_perf", None)
+    if perf is not None:
+        perf.maybe_report(force=True)
 
 
 class CapturingAI(AI):
@@ -720,6 +741,14 @@ def main(argv=None):
     args = parse_args(argv)
     pyefis_rev = resolve_pyefis_rev()
 
+    if args.perf_log:
+        # svs.py's profiler logs via `logging.getLogger(__name__).info(...)`;
+        # with no handler configured, INFO records are swallowed silently
+        # (the root logger's default level is WARNING), so --perf-log would
+        # look like it did nothing. This is the tool's only user of the
+        # logging module, so a plain basicConfig is not fighting anyone else.
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     highways = args.highways
     if args.symbology_only:
         # Terrain is disabled outright below (svs.enabled = False), so none
@@ -767,7 +796,7 @@ def main(argv=None):
         "water_max_vertices": args.water_max_vertices,
         "highway_db_path": highways,
         "paved_only": True,
-        "perf_log": False,
+        "perf_log": args.perf_log,
         "haze": not args.flat,
         "haze_distance_nm": 40.0,
         "msaa_samples": 0 if args.offscreen else args.msaa,
@@ -834,6 +863,7 @@ def main(argv=None):
                     requested_size=(args.width, args.height),
                     actual_size=widget.capture_actual_size,
                 )
+                _report_perf(svs)
                 print(f"captured {args.out}")
                 app.exit(EXIT_OK)
             else:
@@ -889,6 +919,7 @@ def main(argv=None):
                                 # construction, unlike the windowed path.
                                 actual_size=(args.width, args.height),
                             )
+                            _report_perf(svs)
                             print(f"captured {args.out}")
                             app.exit(EXIT_OK)
                         else:

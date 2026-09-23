@@ -108,6 +108,39 @@ def test_magvar_direction_matches_west_positive_convention(svs_capture):
 
 
 # ---------------------------------------------------------------------------
+# --perf-log (AER-1976): svs_config["perf_log"] used to be hardcoded False,
+# so svs_perf_log was unobtainable through this tool no matter what a caller
+# asked for -- the road-ribbon perf budgets in brief section 5 could never
+# be measured through the capture service. These tests pin the CLI parsing
+# and the source-level wiring; exercising the forced report end-to-end
+# needs a live GL context (see tests/instruments/ai/test_svs.py's
+# TestSVSPerfLogForce for the GL-free half of that, on _SVSPerfLog itself).
+# ---------------------------------------------------------------------------
+
+def test_perf_log_flag_defaults_to_false(svs_capture):
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+    ])
+    assert args.perf_log is False
+
+
+def test_perf_log_flag_parses(svs_capture):
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+        "--perf-log",
+    ])
+    assert args.perf_log is True
+
+
+def test_perf_log_wired_to_args_not_hardcoded(svs_capture):
+    """A future edit reverting `svs_config["perf_log"]` to a literal False
+    should fail loudly here rather than silently reintroducing AER-1976."""
+    source = Path(svs_capture.__file__).read_text()
+    assert '"perf_log": args.perf_log' in source
+    assert '"perf_log": False' not in source
+
+
+# ---------------------------------------------------------------------------
 # --offscreen (AER-763): svs_capture needs a window today (a QMainWindow it
 # shows so its QOpenGLWidget viewport can initialise), which eglfs refuses to
 # hand out a second one of while pyEfis already holds the display. Most of
