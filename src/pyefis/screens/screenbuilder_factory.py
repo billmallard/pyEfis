@@ -277,7 +277,7 @@ def _ai_overlay_props():
     its default matches the widget. The tick-width / bank-size knobs only take
     effect when tick_autoscale is off (otherwise they scale with the font)."""
     return [
-        Prop("pitchDegreesShown", "number", default=30,
+        Prop("pitchDegreesShown", "number", default=50,
              label="Pitch field of view (deg)",
              help="total vertical pitch span shown"),
         Prop("minorDiv", "integer", default=1, label="Minor division (deg)",
@@ -287,7 +287,7 @@ def _ai_overlay_props():
         Prop("numberedDiv", "integer", default=10,
              label="Numbered division (deg)",
              help="pitch interval at which ladder lines get a number"),
-        Prop("visiblePitchAngle", "integer", default=15,
+        Prop("visiblePitchAngle", "integer", default=25,
              label="Pitch label range (deg)",
              help="ladder marks fade out beyond this from current pitch"),
         Prop("pitchOpacity", "number", default=0.6, minimum=0.0, maximum=1.0,

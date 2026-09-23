@@ -58,24 +58,27 @@ class AI(QGraphicsView):
         else:
             self.fontSize = 30
         # Number of degrees shown from top to bottom. This sets
-        # pixelsPerDeg = widget_height / pitchDegreesShown, which is
-        # the SAME scale applied to the horizontal axis, so the AI's
-        # effective horizontal FOV = widget_width * pitchDegreesShown
-        # / widget_height. At the original 60 deg on a 5" 800x480
-        # panel the HFOV came out to ~100 deg — about 2x the angular
-        # spread of a typical avionics PFD's synthetic-vision view
-        # (Garmin GI-275: ~50 deg; G1000 PFD: ~50-60 deg; X-Plane
-        # cockpit view: 60-70 deg). Terrain and runways appeared
-        # roughly half their natural size as a result.
+        # pixelsPerDeg = widget_height / pitchDegreesShown, the pitch
+        # ladder's vertical gain. Terrain's HORIZONTAL scale is now pinned
+        # separately (AER-1973, svs_gl.py's _TERRAIN_HFOV_PITCH_DEG via
+        # camera.view_projection's pixels_per_deg_h) rather than following
+        # this value the way it used to -- see docs/svs_rendering.md
+        # "Azimuthal Extent (HFOV)". Raising pitchDegreesShown now only
+        # spreads the pitch ladder out (more screen-space per degree of
+        # pitch shown, coarser gain) and, through visiblePitchAngle below,
+        # widens the visible pitch range; it no longer changes the terrain
+        # picture.
         #
-        # 30 puts HFOV at 50 deg on a 5:3 panel (800x480 -> 50 deg,
-        # 1024x600 -> 51.2 deg) — matches the Garmin GI-275 SVS and
-        # most G1000-class PFD synthetic-vision views. The pitch
-        # ladder spreads out by 60/30 = 2x relative to the original,
-        # which gives more screen-space per degree of pitch (more
-        # readable, and matches the visible pitch range real PFDs
-        # use).
-        self.pitchDegreesShown = 30
+        # 30->50 (AER-1973) raises the visible pitch range from +9.6/-15 to
+        # +16.0/-25 deg at the live horizon_position=68 (pyEfis#76,
+        # reaffirmed AER-1802 2026-09-23) -- see the horizon_position
+        # comment below for why that horizon offset is a deliberate owner
+        # departure from AC 23.1311-1C 8.5(a)/(c). The historical value of
+        # 30 (HFOV 50 deg on a 5:3 panel -- matches the Garmin GI-275 SVS
+        # and most G1000-class PFD synthetic-vision views) is preserved as
+        # the terrain HFOV pin above and as a parametrized test row in
+        # tests/instruments/ai/test_pitch_ladder_geometry.py.
+        self.pitchDegreesShown = 50
         # Pitch tick mark configurations
         self.minorDiv = 1   # Degrees between minor divisions
         self.majorDiv = 5  # Degrees between major divisions
@@ -180,6 +183,17 @@ class AI(QGraphicsView):
         # two-thirds up) to expand the ground area; the WHOLE attitude reference
         # -- horizon, pitch ladder, aircraft symbol and SVS terrain -- shifts
         # together so level flight still shows the wings on the horizon.
+        #
+        # Deployed SVS panels set this to 68 (config, not this default --
+        # see managed_PFD_AI_ONLY.yaml on the bench). That is a deliberate
+        # owner decision (Bill's pyEfis#76, reaffirmed AER-1802 on
+        # 2026-09-23) and a KNOWING departure from AC 23.1311-1C 8.5(a)
+        # ("caged to the center of the display") and 8.5(c) (+25/-15 deg
+        # visible pitch caged): at horizon_position=68 with
+        # pitchDegreesShown=50 the visible pitch range is +16.0/-25 deg
+        # (AER-1973), not caged to centre. Do not treat this as a bug or
+        # re-open it without a new ruling from Bill -- AER-1799 -> AER-1802
+        # already re-derived it twice.
         self.horizon_position = 50
 
         # Compass heading scale on the white horizon line (off by default):
