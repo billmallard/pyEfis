@@ -69,15 +69,24 @@ def test_visible_pitch_angle_is_owned_by_pitch_degrees_shown(fix, qtbot):
     assert widget.visiblePitchAngle == widget.pitchDegreesShown / 2
 
 
-def test_shipped_config_visible_extent_is_unchanged(fix, qtbot):
-    """The actual point of landing AER-1806 at today's values: the live
-    ladder geometry at dev's shipped (pitchDegreesShown=30,
-    horizon_position=68) is provably identical before and after this
-    refactor -- both inputs to _visible_extent are unchanged by it."""
+def test_shipped_config_visible_extent_matches_pitch_degrees_shown_50(fix, qtbot):
+    """AER-1973 deliberately moves this pin from (9.6, 15.0) to (16.0, 25.0).
+
+    This test previously asserted the live ladder geometry at dev's shipped
+    (pitchDegreesShown=30, horizon_position=68) was unchanged by the
+    AER-1806 refactor. AER-1973 raises the widget default pitchDegreesShown
+    30 -> 50 (Bill's AER-1802 ruling: horizon_position stays 68, but the
+    pitch-up ceiling goes from +9.6 to +16.0 deg without touching the
+    ground area) -- visiblePitchAngle follows for free via the AER-1806
+    ownership fix. So this pin MUST move too; re-pinning it here is that
+    deliberate edit, not a silent re-baseline against a red test. See the
+    parametrized case (50, 25, 68, (16.0, 25.0)) above for the same
+    arithmetic in isolation.
+    """
     widget = ai.AI()
     qtbot.addWidget(widget)
     widget.horizon_position = 68
     up, down = _visible_extent(
         widget.pitchDegreesShown, widget.visiblePitchAngle,
         widget.horizon_position)
-    assert (up, down) == pytest.approx((9.6, 15.0))
+    assert (up, down) == pytest.approx((16.0, 25.0))
