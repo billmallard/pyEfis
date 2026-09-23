@@ -184,11 +184,19 @@ def test_build_via_factory(qtbot):
 # nasr_db_path/navaid_db_path -> _ensure_waypoint_index wiring.
 # ---------------------------------------------------------------------------
 def test_procedures_db_path_prop_reaches_widget(qtbot, tmp_path):
-    w = factory.create_instrument(
-        None, {"type": "flight_plan",
-               "options": {"procedures_db_path": str(tmp_path / "procedures.pack")}},
-        font_family="DejaVu Sans Condensed")
+    # procedures_db_path is a plain (non-"special") Prop, so -- like
+    # nasr_db_path/navaid_db_path and font_percent above -- it is not applied
+    # by create_instrument itself; it reaches the widget through
+    # screenbuilder_options.apply_options, the second half of the real
+    # Screen.setup_instruments sequence (see
+    # test_yaml_font_percent_reaches_the_widget_through_the_screen_path).
+    from pyefis.screens import screenbuilder_options
+    config = {"type": "flight_plan",
+              "options": {"procedures_db_path": str(tmp_path / "procedures.pack")}}
+    w = factory.create_instrument(None, config, font_family="DejaVu Sans Condensed")
     qtbot.addWidget(w)
+    screen = SimpleNamespace(instruments={0: w}, encoder_list=[])
+    screenbuilder_options.apply_options(screen, 0, config)
     assert w.procedures_db_path == str(tmp_path / "procedures.pack")
 
 
