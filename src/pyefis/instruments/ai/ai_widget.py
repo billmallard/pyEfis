@@ -121,7 +121,13 @@ class AI(QGraphicsView):
         # these pitch thresholds large chevrons point to the nearest horizon
         # so the pilot recognises + initiates recovery within one second.
         # Asymmetric per common EFIS/Part 25 convention (spec sec 4);
-        # configurable.
+        # configurable. This is a regime cue (an extreme attitude in its own
+        # right, independent of what the display happens to show) -- it is
+        # OR'd with the geometric horizon-off-scale cue below
+        # (_horizon_off_glass, AC 23.1311-1C 8.5(b)), not replaced by it: a
+        # wide pitchDegreesShown / centred horizon_position can keep the
+        # horizon line on-glass well past 30/-20, and that is still an
+        # unusual attitude.
         self.unusualPitchHighDeg = 30
         self.unusualPitchLowDeg = -20
         self._show_recovery_chevrons = False
@@ -1000,8 +1006,13 @@ class AI(QGraphicsView):
         initiate recovery within one second. Drawn in the rolled attitude frame
         (like the pitch ladder / FPM) so they track the horizon at any bank; the
         stack marches toward the horizon and the apexes point at it -- down when
-        nose-high (the horizon has fallen below the symbol), up when nose-low."""
-        nose_high = self._pitchAngle > self.unusualPitchHighDeg
+        nose-high (the horizon has fallen below the symbol), up when nose-low.
+        Direction is which side of level the aircraft is on, not which of the
+        two OR'd trigger conditions fired -- since AER-1805 the geometric term
+        can engage below unusualPitchHighDeg (e.g. pitch=25 at a raised
+        horizon_position), where a threshold-relative test would point the
+        chevrons the wrong way."""
+        nose_high = self._pitchAngle > 0
         d = 1.0 if nose_high else -1.0     # +y is down: +1 points/leads to ground
         half = w * 0.16                    # chevron half-width (shoulder to centre)
         depth = h * 0.09                   # how far the apex leads the shoulders
@@ -1146,6 +1157,29 @@ class AI(QGraphicsView):
         return (float(getattr(self, "horizon_position", 50)) / 100.0
                 - 0.5) * self.pitchDegreesShown
 
+    @staticmethod
+    def _horizon_exit_pitch(horizon_position, pitch_degrees_shown):
+        # Pure geometry (AC 23.1311-1C 8.5(b)): the pitch=0 horizon line
+        # sits horizon_position percent up the screen, and the viewport
+        # shows pitch_degrees_shown degrees top-to-bottom. Nose-down
+        # (negative) pitch scrolls the horizon toward the TOP edge; nose-up
+        # (positive) pitch scrolls it toward the BOTTOM edge. Returns the
+        # (top_exit, bottom_exit) pitch angles -- in degrees -- at which the
+        # horizon line leaves the glass on each side. f is the fraction of
+        # the screen above the level horizon.
+        f = 1.0 - float(horizon_position) / 100.0
+        return (-f * pitch_degrees_shown, (1.0 - f) * pitch_degrees_shown)
+
+    def _horizon_off_glass(self):
+        # True once the current pitch has scrolled the pitch=0 horizon line
+        # fully off the top or bottom edge of the viewport -- the condition
+        # AC 23.1311-1C 8.5(b) actually asks for ("when the true horizon
+        # line would not normally be displayed"), as a function of the live
+        # horizon_position / pitchDegreesShown rather than a fixed angle.
+        top, bottom = self._horizon_exit_pitch(
+            getattr(self, "horizon_position", 50), self.pitchDegreesShown)
+        return self._pitchAngle <= top or self._pitchAngle >= bottom
+
     def redraw(self):
         # self.scene is the inherited QGraphicsView.scene METHOD until
         # resizeEvent builds the instance attribute (see
@@ -1278,13 +1312,20 @@ class AI(QGraphicsView):
         # Bank-cluster anchor (bank_position; 50 = the classic centre).
         p.translate(w / 2, self._bank_anchor_y(h))
 
-        # Unusual-attitude regime (AC 25-11B App A A.2.2 / p.47) -- drives both
-        # the recovery chevrons and the de-clutter. Computed up front so the
+        # Unusual-attitude regime (AC 25-11B App A A.2.2 / p.47) OR the
+        # horizon line having scrolled off the glass (AC 23.1311-1C 8.5(b),
+        # AER-1805) -- drives both the recovery chevrons and the de-clutter.
+        # The two are independent conditions: a wide pitchDegreesShown /
+        # centred horizon_position can hold an extreme pitch on-glass past
+        # 30/-20 (still unusual -- the constants govern), while a raised
+        # horizon_position can lose the horizon line well inside 30/-20
+        # (the geometric term governs). Computed up front so the
         # non-essential overlays below can be suppressed this frame; the
         # chevrons themselves are drawn last (on top).
         self._show_recovery_chevrons = (
             self._pitchAngle > self.unusualPitchHighDeg
-            or self._pitchAngle < self.unusualPitchLowDeg)
+            or self._pitchAngle < self.unusualPitchLowDeg
+            or self._horizon_off_glass())
         self._decluttered = (self._show_recovery_chevrons
                              or abs(self._rollAngle) > self.unusualBankDeg)
 

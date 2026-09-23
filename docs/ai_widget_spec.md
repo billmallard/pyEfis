@@ -61,7 +61,7 @@ test catalog (§5). **Status** is the widget as of this writing.
 | **AI-ANN-001** | Attitude-fail annunciation | `PITCH`/`ROLL` fail | Remove attitude; show a clear fail display ("XXX") | Table 4-1 p.27; §25.1301 | **DONE** — `fail_scene` |
 | **AI-FAIL-001** | Degraded (stale/invalid) attitude greyed | `PITCH`/`ROLL`/`ALAT`/`TAS` old or bad | Grey sky/land | widget convention; AC 25-11B §4.2 | **DONE** |
 | **AI-SLIP-001** | Sideslip shown (slip/skid ball) | `ALAT` | Ball deflects with lateral accel | App A §A.2.6 p.70 | **DONE** |
-| **AI-CHEV-001** | Unusual-attitude **recovery chevrons** | pitch beyond the unusual-attitude threshold | Large chevrons pointing to the nearest horizon, enabling recovery < 1 s | App A §A.2.2 p.70 | **DONE** — amber chevrons, `_draw_recovery_chevrons` |
+| **AI-CHEV-001** | Unusual-attitude **recovery chevrons** | pitch beyond the unusual-attitude threshold, OR the true horizon line off-scale | Large chevrons pointing to the nearest horizon, enabling recovery < 1 s | App A §A.2.2 p.70; AC 23.1311-1C 8.5(b) | **DONE** — amber chevrons, `_draw_recovery_chevrons` |
 | **AI-BANK-001** | **Excessive-bank** annunciation | roll beyond threshold (before stall buffet) | Salient bank alert (amber/red) | App A §A.2.5 p.70 | **DONE** — amber bank scale |
 | **AI-DCL-001** | **De-clutter** at unusual attitude | unusual attitude | Remove non-essential overlays, retain recovery info | AC 25-11B p.47; §A.2 | **DONE** — `_decluttered` suppresses FPM / standard-rate diamonds / horizon heading scale |
 | **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **DONE** — amber ball |
@@ -70,14 +70,24 @@ test catalog (§5). **Status** is the widget as of this writing.
 **Thresholds.** "Unusual attitude" follows common EFIS/Part 25 convention — all
 configurable attributes:
 - **Recovery chevrons + de-clutter** engage on pitch **> +30° / < −20°**
-  (`unusualPitchHighDeg` / `unusualPitchLowDeg`); de-clutter *also* engages on a steep
-  bank **> 65°** (`unusualBankDeg`), past the excessive-bank caution — the
-  unusual-attitude regime, not a normal steep turn.
+  (`unusualPitchHighDeg` / `unusualPitchLowDeg`) **OR** the pitch=0 horizon line having
+  scrolled fully off the top/bottom of the viewport (`_horizon_off_glass`,
+  AC 23.1311-1C 8.5(b), AER-1805). The two are independent and both earn their place: the
+  constants are a regime cue (an extreme attitude in its own right, whatever the display
+  shows), and the geometric term is derived live from `horizon_position` /
+  `pitchDegreesShown` (`_horizon_exit_pitch`) so a raised horizon can't lose the horizon
+  reference well inside the fixed constants without a cue — the defect this closed. De-
+  clutter *also* engages on a steep bank **> 65°** (`unusualBankDeg`), past the
+  excessive-bank caution — the unusual-attitude regime, not a normal steep turn.
 - **Excessive-bank caution** (amber bank scale) engages earlier, at bank **> 45°**
   (`excessiveBankDeg`); a 45–65° steep turn shows the caution but stays fully cluttered
   so the pilot keeps all cues.
 
-The thresholds are pinned here and in the test catalog (AI-TC-101/103).
+The thresholds are pinned here and in the test catalog (AI-TC-101/103), and the pure
+horizon-exit geometry is pinned closed-form in
+[`tests/instruments/ai/test_horizon_off_scale.py`](../tests/instruments/ai/test_horizon_off_scale.py)
+(no rendering — `(pitchDegreesShown, horizon_position, pitch) -> (horizon on/off glass,
+chevrons on/off)`).
 
 ## 5. Test cases
 
@@ -92,7 +102,7 @@ removal. `AI-LIM-001` stays `xfail` until an `AOA`/stall-margin key exists.
 | 001 | AI-ANN-001 | `attitude_fail_shows_fail_scene` | pass |
 | 002 | AI-FAIL-001 | `degraded_attitude_stays_greyed` | pass |
 | 003 | AI-SLIP-001 | `slip_ball_tracks_lateral_accel` | pass |
-| 101 | **AI-CHEV-001** | `recovery_chevrons_at_extreme_pitch` | pass |
+| 101 | **AI-CHEV-001** | `recovery_chevrons_at_extreme_pitch`, `recovery_chevrons_at_horizon_off_scale` | pass |
 | 102 | **AI-BANK-001** | `excessive_bank_annunciation` | pass |
 | 103 | **AI-DCL-001** | `declutter_at_unusual_attitude` | pass |
 | 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | pass |
