@@ -1301,6 +1301,10 @@ _register(InstrumentSpec(
         Prop("navaid_db_path", "string", default="", label="Navaid db path",
              help="navaids.sqlite for FastFind/nearest navaid and fix lookup "
                   "(same path as the moving map's navaid_db_path)"),
+        Prop("procedures_db_path", "string", default="", label="Procedures db path",
+             help="procedures-conus.pack for SID/STAR/approach lookup (PA5; "
+                  "on the Pi /data/makerplane-data/procedures/current/"
+                  "procedures.sqlite)"),
         Prop("columns", "string", default="DTK,DIS,CUM", label="Columns",
              help="comma-separated FPL page data columns, in order; choices "
                   "DTK, DIS, CUM, ETE, ETA"),

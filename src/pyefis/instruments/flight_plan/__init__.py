@@ -52,6 +52,7 @@ from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import model as fp_model
+from pyefis.flightplan import procedures as fp_procedures
 from pyefis.flightplan import waypoints as fp_waypoints
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ class FlightPlan(QWidget):
         self.flightplan_dir = ""
         self.nasr_db_path = ""
         self.navaid_db_path = ""
+        self.procedures_db_path = ""
         self.columns = "DTK,DIS,CUM"
         self.keypad = True
         self.keyboard = False
@@ -166,6 +168,8 @@ class FlightPlan(QWidget):
 
         self._waypoint_index = None
         self._waypoint_index_key = None
+        self._procedure_index = None
+        self._procedure_index_key = None
         self._catalog = None
         self._catalog_dir_used = None
 
@@ -305,6 +309,16 @@ class FlightPlan(QWidget):
             user_file=user_file, recent_file=recent_file)
         self._waypoint_index_key = key
         return self._waypoint_index
+
+    def _ensure_procedure_index(self):
+        # PA5 (AER-1604): the lookup service is wired here so PA7's PROC page
+        # has somewhere to call into; PA7 owns actually driving it from the UI.
+        key = self.procedures_db_path
+        if self._procedure_index is not None and self._procedure_index_key == key:
+            return self._procedure_index
+        self._procedure_index = fp_procedures.ProcedureIndex(key or None)
+        self._procedure_index_key = key
+        return self._procedure_index
 
     def _ensure_catalog(self):
         if self._catalog is None or self._catalog_dir_used != self.flightplan_dir:
