@@ -28,20 +28,33 @@ AI viewport's aspect ratio — see "Azimuthal extent" below.
 ## Azimuthal Extent (HFOV)
 
 There is no configured forward-fan angle. The terrain drawn horizontally
-spans whatever the AI/`virtual_vfr` widget's pixels-per-degree implies,
-because the same roll/pitch/yaw transform used for the pitch ladder and
-FPM projects terrain too:
+spans whatever pixels-per-degree the GL camera is given, because the same
+roll/pitch/yaw transform used for the pitch ladder and FPM projects
+terrain too:
 
-    HFOV_deg = viewport_width_px * pitchDegreesShown / viewport_height_px
+    HFOV_deg = viewport_width_px * TERRAIN_HFOV_PITCH_DEG / viewport_height_px
 
-`pitchDegreesShown` is fixed at 30 (`ai_widget.py:488`); `camera.py:85-86`
-applies the resulting `pixelsPerDeg` to both axes, and `svs.py` hands it
-to the GL renderer. So the half-fan a given panel actually draws is
-`(viewport_width_px / 2) / pixelsPerDeg`, and it changes with the widget's
-aspect ratio — e.g. ~50° total on an 800×480 panel, 51.2° on 1024×600,
-40° for `tools/svs_capture.py`'s 800×600 capture default. Always compute
-this for the specific viewport in question rather than assuming a fixed
-number (AER-1478).
+**AER-1973 (2026-09-23) decoupled this from `pitchDegreesShown`.**
+`pitchDegreesShown` (`ai_widget.py`, 50 as of AER-1973, was 30) sets only
+the pitch ladder's vertical gain now. The terrain's horizontal scale is
+pinned separately at `_TERRAIN_HFOV_PITCH_DEG = 30.0`
+(`svs_gl.py`) via `camera.view_projection`'s `pixels_per_deg_h` parameter
+(the AER-1806 decouple hook, wired to `svs_gl.py:_update_camera` by
+AER-1973) — so a `pitchDegreesShown` edit changes the vertical pitch
+range shown without dragging the terrain HFOV along with it. `sy` (the
+matrix's vertical scale) still follows the live `pitchDegreesShown` — the
+terrain has to stay registered with the ladder's degree marks — so
+raising `pitchDegreesShown` legitimately shows more sky/ground
+*vertically*; it does not widen the picture *horizontally*.
+
+So the half-fan a given panel actually draws is
+`(viewport_width_px / 2) / (viewport_height_px / _TERRAIN_HFOV_PITCH_DEG)`,
+and it changes with the widget's aspect ratio — e.g. ~50° total on an
+800×480 panel, 51.2° on 1024×600, 40° for `tools/svs_capture.py`'s
+800×600 capture default. Always compute this for the specific viewport in
+question rather than assuming a fixed number (AER-1478); and compute it
+from `_TERRAIN_HFOV_PITCH_DEG`, not the live `pitchDegreesShown`, now that
+the two are independent (AER-1973).
 
 ## Cell Size and Visible Range
 
