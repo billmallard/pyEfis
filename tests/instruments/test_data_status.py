@@ -140,6 +140,24 @@ def test_picker_prechecks_tracked_and_renders(app):
     assert not pk.grab().isNull()                        # paints offscreen
 
 
+def test_procedures_kind_groups_under_navigation_data(app):
+    # PA5 (AER-1604): the procedures-conus pack must group with the other
+    # navdata packs, not fall into "Other" for want of a _KIND_GROUP entry.
+    assert data_status._KIND_GROUP["procedures"] == "Navigation Data"
+    doc = {
+        "ok": True, "generated": CATALOG["generated"], "storage": CATALOG["storage"],
+        "packs": CATALOG["packs"] + [
+            {"id": "procedures-conus", "name": "SIDs, STARs & Approaches",
+             "kind": "procedures", "status": "current", "severity": "none",
+             "bytes": 4_000_000, "tracked": True, "installed": True},
+        ],
+    }
+    pk = data_status.PackPicker(doc=doc)
+    pk.resize(800, 480)
+    assert "procedures-conus" in pk.rows
+    assert not pk.grab().isNull()
+
+
 def test_picker_row_tap_toggles_checkbox(app):
     # On the touchscreen the whole row must toggle (tapping the tiny indicator
     # is unreliable); children are mouse-transparent and the row toggles on tap.
