@@ -61,6 +61,16 @@ from pyefis.instruments.ai.camera import (  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+# Terrain horizontal FOV is pinned to this pitchDegreesShown-equivalent,
+# independent of the AI widget's actual (live) pitchDegreesShown. AER-1799
+# settled the terrain HFOV at pitchDegreesShown=30 on a 5:3 panel (50 deg,
+# matching the Garmin GI-275 / G1000-class SVS field of view); AER-1806 added
+# the camera.view_projection(pixels_per_deg_h=...) hook precisely so a later
+# pitchDegreesShown change (AER-1973: 30 -> 50, widening the pitch ladder's
+# vertical gain) does not also widen the terrain picture horizontally. Do not
+# derive this from the AI widget's live pitchDegreesShown.
+_TERRAIN_HFOV_PITCH_DEG = 30.0
+
 
 # Shader source bodies — the #version header gets prepended at compile
 # time based on the actual context's renderable type (ES vs desktop).
@@ -778,8 +788,15 @@ class SVSGLRenderer:
         ac_e = (ac_lon - o_lon) * M_PER_DEG_LAT * lat_cos
         ac_n = (ac_lat - o_lat) * M_PER_DEG_LAT
         ac_u = ac_alt_ft * M_PER_FT
+        # Pin the terrain's horizontal scale to _TERRAIN_HFOV_PITCH_DEG
+        # rather than the live pixels_per_deg (AER-1973) -- see the
+        # constant's comment. Vertical scale (pixels_per_deg) stays tied
+        # to the AI's live pitchDegreesShown so terrain stays registered
+        # with the pitch ladder.
+        pixels_per_deg_h = h / _TERRAIN_HFOV_PITCH_DEG
         vp = view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg,
-                             roll_deg, pixels_per_deg, w, h)
+                             roll_deg, pixels_per_deg, w, h,
+                             pixels_per_deg_h=pixels_per_deg_h)
         self._frame_vp = QMatrix4x4(*[float(x) for x in vp.ravel()])
         self._frame_ac_e = ac_e
         self._frame_ac_n = ac_n

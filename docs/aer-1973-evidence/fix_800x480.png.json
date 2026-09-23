@@ -1,0 +1,14 @@
+{
+ "pyefis_rev": "0f0aa52-dirty",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  800,
+  480
+ ],
+ "actual_size": [
+  800,
+  480
+ ],
+ "argv": "/home/pyefis/eval-aer1973/tools/svs_capture.py --out /tmp/aer1973_fix_800x480.png --lat 34.4275 --lon -119.8546 --alt 3000 --heading 87 --pitch 0 --roll 0 --range 15 --offscreen --width 800 --height 480 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --nasr /data/makerplane-data/navdata/current/airports.sqlite --dof /data/makerplane-data/obstacles/current/obstacles.sqlite --highways /data/makerplane-data/highways/current/highways.sqlite --timeout 25 --verbose",
+ "sha256": "f6ed1e3a0c17a16060a9df336a5cd6036d8413c47e4f2b405f1f82c86898c9ef"
+}
