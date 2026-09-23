@@ -251,6 +251,46 @@ class TestSVSRendererConfig:
         assert r._clearance_color(-50)  == COLOR_CONFLICT
 
 
+class TestSVSPerfLogForce:
+    """AER-1976: svs_capture.py's --perf-log forces one summary report so a
+    single-shot capture (which typically settles well under the profiler's
+    own 2s REPORT_INTERVAL_S) still prints highways.worker_ms. Pin the
+    force path here, GL-free, on `_SVSPerfLog` itself -- see
+    tests/tools/test_svs_capture.py for the CLI-parsing half."""
+
+    def test_disabled_profiler_never_reports_even_when_forced(self):
+        r = SVSRenderer({"perf_log": False})
+        assert r._perf.enabled is False
+        assert r._perf.maybe_report(force=True) is False
+
+    def test_unforced_report_waits_for_the_interval(self, caplog):
+        r = SVSRenderer({"perf_log": True})
+        r._perf.add_ns("highways.worker_ms", 12_000_000)  # 12ms, 1 call
+        with caplog.at_level("INFO"):
+            reported = r._perf.maybe_report()
+        assert reported is False
+        assert not caplog.records
+
+    def test_forced_report_bypasses_the_interval_and_logs_the_metric(self, caplog):
+        r = SVSRenderer({"perf_log": True})
+        r._perf.add_ns("highways.worker_ms", 12_000_000)  # 12ms, 1 call
+        with caplog.at_level("INFO"):
+            reported = r._perf.maybe_report(force=True)
+        assert reported is True
+        assert any("highways.worker_ms" in rec.getMessage()
+                    for rec in caplog.records)
+
+    def test_forced_report_still_resets_the_accumulator(self, caplog):
+        # A forced report must not leave stale timings to double-count into
+        # the next natural (unforced) report.
+        r = SVSRenderer({"perf_log": True})
+        r._perf.add_ns("highways.worker_ms", 12_000_000)
+        with caplog.at_level("INFO"):
+            r._perf.maybe_report(force=True)
+        assert r._perf._accum == {}
+        assert r._perf._count == {}
+
+
 # ---------------------------------------------------------------------------
 # AI widget integration
 # ---------------------------------------------------------------------------

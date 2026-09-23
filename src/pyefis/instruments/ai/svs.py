@@ -79,11 +79,11 @@ class _SVSPerfLog:
         with self._lock:
             self._gauges[name] = value
 
-    def maybe_report(self, extra_lines=None):
+    def maybe_report(self, extra_lines=None, force: bool = False):
         if not self.enabled:
             return False
         now = time.perf_counter()
-        if now - self._last_report < self.REPORT_INTERVAL_S:
+        if not force and now - self._last_report < self.REPORT_INTERVAL_S:
             return False
         elapsed = now - self._last_report
         with self._lock:
