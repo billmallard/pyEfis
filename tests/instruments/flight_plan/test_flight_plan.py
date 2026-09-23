@@ -25,6 +25,7 @@ from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import model as fp_model
+from pyefis.flightplan import procedures as fp_procedures
 from pyefis.flightplan import waypoints as fp_waypoints
 from pyefis.instruments import flight_plan
 from pyefis.screens import screenbuilder_factory as factory
@@ -176,6 +177,52 @@ def test_build_via_factory(qtbot):
         None, {"type": "flight_plan", "options": {}}, font_family="DejaVu Sans Condensed")
     qtbot.addWidget(w)
     assert isinstance(w, flight_plan.FlightPlan)
+
+
+# ---------------------------------------------------------------------------
+# procedures_db_path injector (PA5, AER-1604) -- mirrors the
+# nasr_db_path/navaid_db_path -> _ensure_waypoint_index wiring.
+# ---------------------------------------------------------------------------
+def test_procedures_db_path_prop_reaches_widget(qtbot, tmp_path):
+    # procedures_db_path is a plain (non-"special") Prop, so -- like
+    # nasr_db_path/navaid_db_path and font_percent above -- it is not applied
+    # by create_instrument itself; it reaches the widget through
+    # screenbuilder_options.apply_options, the second half of the real
+    # Screen.setup_instruments sequence (see
+    # test_yaml_font_percent_reaches_the_widget_through_the_screen_path).
+    from pyefis.screens import screenbuilder_options
+    config = {"type": "flight_plan",
+              "options": {"procedures_db_path": str(tmp_path / "procedures.pack")}}
+    w = factory.create_instrument(None, config, font_family="DejaVu Sans Condensed")
+    qtbot.addWidget(w)
+    screen = SimpleNamespace(instruments={0: w}, encoder_list=[])
+    screenbuilder_options.apply_options(screen, 0, config)
+    assert w.procedures_db_path == str(tmp_path / "procedures.pack")
+
+
+def test_ensure_procedure_index_builds_and_caches_by_path(qtbot, tmp_path):
+    pack_path = tmp_path / "procedures.pack"
+    con = sqlite3.connect(str(pack_path))
+    con.executescript(
+        "CREATE TABLE procedures (id INTEGER PRIMARY KEY, airport TEXT, "
+        " kind TEXT, ident TEXT, runway TEXT, approach_type TEXT, rnp REAL, "
+        " cycle TEXT);")
+    con.execute("INSERT INTO procedures (airport, kind, ident, cycle) "
+                "VALUES ('KSBA', 'approach', 'I07', '2609')")
+    con.commit()
+    con.close()
+
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    assert w._ensure_procedure_index().ready is False   # blank path -> no pack
+
+    w.procedures_db_path = str(pack_path)
+    idx = w._ensure_procedure_index()
+    assert isinstance(idx, fp_procedures.ProcedureIndex)
+    assert idx.ready is True
+
+    # Same path -> same (cached) instance, not rebuilt every paint.
+    assert w._ensure_procedure_index() is idx
 
 
 # ---------------------------------------------------------------------------

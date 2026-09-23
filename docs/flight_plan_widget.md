@@ -22,6 +22,19 @@ themselves). Every DB-backed object is construct-never-raises with
 - **`waypoints.py`** (FP3) — `WaypointIndex`: in-memory identifier index over
   the on-device `airports.sqlite`/`navaids.sqlite` packs, FastFind (`prefix`),
   `nearest`, plus `UserWaypointStore` and `RecentList`.
+- **`airways.py`** (PA2, procedures epic) — `AirwayGraph`: lookup + expansion
+  over the `procedures` pack's `airways`/`airway_legs` tables (`expand()`
+  emits ordinary `type="fix"` waypoints; no leg model needed for an airway
+  segment).
+- **`procedures.py`** (PA5, procedures epic) — `ProcedureIndex`: lookup over
+  the same pack's `procedures`/`transitions`/`legs` tables (departures,
+  arrivals, approaches) by airport/kind/runway/transition. Query-only — it
+  does not assemble a transition into a flyable leg sequence (PA7/PA9, needs
+  the PA3 leg model) and does not enforce the whole-procedure-rejection
+  guardrail (the engine, PA4). Wired into this widget via the
+  `procedures_db_path` option and `_ensure_procedure_index()`, lazily, the
+  same pattern as `nasr_db_path`/`navaid_db_path` -> `_ensure_waypoint_index`
+  — PA7's PROC page is the first real consumer.
 - **`model.py`** (FP4) — `Waypoint` and `FlightPlan`, the editor's working
   copy of a route: `insert_before`/`insert_after`/`remove` (mutate in place —
   the editor commits every edit immediately, per section 3.4), `invert()`

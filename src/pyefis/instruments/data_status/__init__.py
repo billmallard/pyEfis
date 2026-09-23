@@ -115,6 +115,7 @@ def fmt_bytes(n):
 _KIND_GROUP = {
     "navdata": "Navigation Data", "obstacles": "Navigation Data",
     "cifp": "Navigation Data", "airports": "Navigation Data",
+    "procedures": "Navigation Data",
     "water": "Water", "highways": "Roads",
     "terrain": "Terrain", "charts": "Charts",
 }
