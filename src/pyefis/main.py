@@ -256,6 +256,23 @@ def main():
     # Signal-handler runs in the main thread but outside the Qt event loop,
     # so calling QWidget.grab() directly from inside the handler is unsafe.
     # The signal just flips a flag; a QTimer in Qt's loop does the real work.
+    #
+    # AER-2002: on the Pi 5 (eglfs), grabbing a window that contains a
+    # QOpenGLWidget (the SVS AI viewport) forces Qt's internal GL-widget
+    # grab path (an FBO resize/readback it owns, not something pyEfis code
+    # can hook into or retry). The Pi's CMA pool is chronically ~0 free in
+    # steady state (confirmed live: CmaTotal 65536 kB, CmaFree 16 kB with no
+    # screenshot involved) -- corroborated independently by
+    # /tmp/svs_gl_failure.log entries from days before this issue showing
+    # the V3D driver returning a genuine GL_OUT_OF_MEMORY with no screenshot
+    # anywhere near them. Any extra GL allocation on this box is a coin
+    # flip, and Qt's own grab path has no failure recovery: a failed
+    # allocation there leaves the widget's surface black with no exception
+    # pyEfis can catch, unlike svs.py's own draw() errors (which retry and
+    # fall back to the brown "SVS UNAVAIL" ground). There is no safe way to
+    # make that Qt-internal path GL-safe from here, so skip it entirely
+    # under eglfs rather than gamble with the live display.
+    _is_eglfs = app.platformName() == "eglfs"
     import signal as _signal_mod
     from PyQt6.QtCore import QTimer as _QTimer
     _screenshot_pending = [False]
@@ -265,6 +282,12 @@ def main():
         if not _screenshot_pending[0]:
             return
         _screenshot_pending[0] = False
+        if _is_eglfs:
+            log.warning(
+                "SIGUSR1 screenshot skipped: eglfs platform (AER-2002 -- "
+                "grabbing the SVS QOpenGLWidget here can black it out "
+                "until restart, see pyEfis/CLAUDE.md)")
+            return
         try:
             target = gui.mainWindow if gui.mainWindow else app.primaryScreen()
             pix = target.grab() if hasattr(target, "grab") \
@@ -279,7 +302,12 @@ def main():
         _screenshot_timer.setInterval(100)
         _screenshot_timer.timeout.connect(_maybe_screenshot)
         _screenshot_timer.start()
-        log.info("SIGUSR1 -> /tmp/pyefis_screenshot.png handler armed")
+        if _is_eglfs:
+            log.info(
+                "SIGUSR1 handler armed (eglfs: screenshot disabled, "
+                "AER-2002 -- see pyEfis/CLAUDE.md)")
+        else:
+            log.info("SIGUSR1 -> /tmp/pyefis_screenshot.png handler armed")
     except Exception as e:
         log.warning(f"could not install SIGUSR1 screenshot handler: {e}")
 
