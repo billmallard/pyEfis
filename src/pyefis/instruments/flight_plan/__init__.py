@@ -184,6 +184,11 @@ class FlightPlan(QWidget):
         self._catalog_dir_used = None
 
         self._tap_targets = []
+        # Popup-menu scroll state (AER-1605 follow-up): keyed by the caller's
+        # scroll_key, value is (n_items, offset) -- the count guards against a
+        # stale offset surviving into a different (shorter) item list opened
+        # under the same key.
+        self._menu_scroll = {}
 
         self._wpt_timer = QTimer(self)
         self._wpt_timer.setInterval(1000)
@@ -1719,26 +1724,83 @@ class FlightPlan(QWidget):
     def _paint_overlay_backdrop(self, p, w, h):
         p.fillRect(QRectF(0, 0, w, h), QColor(0, 0, 0, 160))
 
-    def _paint_menu_list(self, p, w, h, items, on_cancel):
-        n = len(items) + 1
+    def _menu_scroll_by(self, key, delta):
+        n_items, offset = self._menu_scroll.get(key, (0, 0))
+        self._menu_scroll[key] = (n_items, offset + delta)
+        self.update()
+
+    def _paint_menu_list(self, p, w, h, items, on_cancel, scroll_key=None):
+        """Popup menu of *items* (label, callback) plus a trailing Cancel row.
+
+        Row height is physical (``_row_h_cap()``), not a fraction of the
+        popup's own height -- an airway can carry dozens of exit fixes, and
+        sizing text off ``h / len(items)`` (the previous approach) shrank it
+        to unreadable as the list grew (AER-1605 follow-up, reported live by
+        Bill against the V27 exit-fix list). When the list doesn't fit, it
+        scrolls instead of shrinking further, with tappable up/down rows --
+        this box is driven by touch, no wheel or drag-scroll available.
+        """
+        n_items = len(items)
         box_w = w * 0.6
         box_x = (w - box_w) / 2
         box_top = h * 0.12
-        item_h = (h * 0.76) / n
+        avail_h = h * 0.76
+        item_h = max(1.0, min(self._row_h_cap(), avail_h))
+
+        # Budget: Cancel always gets one row. The item list gets whatever is
+        # left; if that isn't enough to show every item, two more rows are
+        # spent on scroll arrows and the visible window shrinks to fit them.
+        rows_free = max(0, int(avail_h / item_h) - 1)
+        scrollable = n_items > rows_free
+        visible_rows = max(1, min(n_items, rows_free - 2)) if scrollable else n_items
+
+        offset = 0
+        key = scroll_key or "menu"
+        if scrollable:
+            stored_n, stored_offset = self._menu_scroll.get(key, (n_items, 0))
+            offset = stored_offset if stored_n == n_items else 0
+            offset = max(0, min(offset, n_items - visible_rows))
+            self._menu_scroll[key] = (n_items, offset)
+        elif key in self._menu_scroll:
+            self._menu_scroll[key] = (n_items, 0)
+
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(item_h * 0.4), 10))
         p.setFont(f)
+
+        box_rows = visible_rows + (2 if scrollable else 0) + 1
+        box_h = item_h * box_rows
         p.setPen(QPen(QColor("#ffffff")))
         p.setBrush(QBrush(QColor("#202020")))
-        p.drawRect(QRectF(box_x, box_top, box_w, item_h * n))
+        p.drawRect(QRectF(box_x, box_top, box_w, box_h))
+
         y = box_top
-        for label, callback in items:
+        if scrollable:
+            can_up = offset > 0
+            p.setPen(QPen(QColor("#00ffff" if can_up else "#505050")))
+            p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, "▲")
+            if can_up:
+                self._tap(box_x, y, box_w, item_h,
+                           (lambda k=key, d=-visible_rows: self._menu_scroll_by(k, d)))
+            y += item_h
+
+        for label, callback in items[offset:offset + visible_rows]:
             p.setPen(QPen(QColor("#000000")))
             p.drawRect(QRectF(box_x + 2, y + 2, box_w - 4, item_h - 4))
             p.setPen(QPen(QColor("#00ffff")))
             p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, label)
             self._tap(box_x, y, box_w, item_h, callback)
             y += item_h
+
+        if scrollable:
+            can_down = offset + visible_rows < n_items
+            p.setPen(QPen(QColor("#00ffff" if can_down else "#505050")))
+            p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, "▼")
+            if can_down:
+                self._tap(box_x, y, box_w, item_h,
+                           (lambda k=key, d=visible_rows: self._menu_scroll_by(k, d)))
+            y += item_h
+
         p.setPen(QPen(QColor("#ff8080")))
         p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, "Cancel")
         self._tap(box_x, y, box_w, item_h, on_cancel)
@@ -1748,12 +1810,12 @@ class FlightPlan(QWidget):
         if self._role_menu_open:
             items = [(ROLE_ABBREV.get(r) or "NONE", (lambda role=r: self._row_menu_set_role(role)))
                      for r in _ROLE_MENU_ORDER]
-            self._paint_menu_list(p, w, h, items, self._close_row_menu)
+            self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu_role")
             return
         items = []
         for label, attr in _ROW_MENU_ITEMS:
             items.append((label, self._open_role_menu if attr is None else getattr(self, attr)))
-        self._paint_menu_list(p, w, h, items, self._close_row_menu)
+        self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu")
 
     def _paint_airway_picker(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -1770,7 +1832,8 @@ class FlightPlan(QWidget):
                     hi = leg.max_alt_ft if leg.max_alt_ft is not None else "-"
                     label = f"{label}  {lo}-{hi}FT"
                 items.append((label, (lambda fid=leg.fix_id: self._airway_picker_pick_exit(fid))))
-        self._paint_menu_list(p, w, h, items, self._close_airway_picker)
+        self._paint_menu_list(p, w, h, items, self._close_airway_picker,
+                               scroll_key=f"airway_picker_{picker['stage']}")
         if picker["message"]:
             f = QFont(self.font_family)
             f.setPixelSize(self._px(int(h * 0.04), 10))
@@ -1816,7 +1879,7 @@ class FlightPlan(QWidget):
             (f"CDI Scale ({self._cdi_scale_choice})", self._menu_cdi_scale),
             ("Delete", self._menu_delete_request),
         ]
-        self._paint_menu_list(p, w, h, items, self._close_menu)
+        self._paint_menu_list(p, w, h, items, self._close_menu, scroll_key="menu")
 
     def _paint_wpt_info(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -2137,7 +2200,7 @@ class FlightPlan(QWidget):
     def _paint_catalog_row_menu(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
         items = self._catalog_row_menu_items(self._catalog_row_menu)
-        self._paint_menu_list(p, w, h, items, self._close_catalog_row_menu)
+        self._paint_menu_list(p, w, h, items, self._close_catalog_row_menu, scroll_key="catalog_row_menu")
 
     def _paint_catalog_confirm(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -2335,4 +2398,4 @@ class FlightPlan(QWidget):
         items = [(f"{wp.id} {wp.type} {wp.name or ''}".strip(),
                   (lambda w_=wp: self._choose_duplicate(w_)))
                  for wp in self._entry_dupe_choices]
-        self._paint_menu_list(p, w, h, items, self._cancel_dupe_chooser)
+        self._paint_menu_list(p, w, h, items, self._cancel_dupe_chooser, scroll_key="dupe_chooser")
