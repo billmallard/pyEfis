@@ -1753,6 +1753,17 @@ class FlightPlan(QWidget):
         rows_free = max(0, int(avail_h / item_h) - 1)
         scrollable = n_items > rows_free
         visible_rows = max(1, min(n_items, rows_free - 2)) if scrollable else n_items
+        box_rows = visible_rows + (2 if scrollable else 0) + 1
+
+        # A long list (a big airway's exit-fix picker) can force rows_free
+        # to 0-2: the floor of one visible row plus, when scrollable, the two
+        # arrow rows and Cancel still add up to more rows than the physical
+        # cap leaves room for. Re-deriving item_h from box_rows keeps the
+        # popup inside avail_h instead of drawing past the bottom of the pane
+        # (AER-1605 follow-up -- Bill's V27 exit-fix list overflowed off the
+        # visible area before he could reach a fix past the fold).
+        if box_rows * item_h > avail_h:
+            item_h = avail_h / box_rows
 
         offset = 0
         key = scroll_key or "menu"
@@ -1767,8 +1778,6 @@ class FlightPlan(QWidget):
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(item_h * 0.4), 10))
         p.setFont(f)
-
-        box_rows = visible_rows + (2 if scrollable else 0) + 1
         box_h = item_h * box_rows
         p.setPen(QPen(QColor("#ffffff")))
         p.setBrush(QBrush(QColor("#202020")))

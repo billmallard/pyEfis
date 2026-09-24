@@ -101,6 +101,19 @@ def test_scrolling_down_then_past_the_end_clamps(fix, qtbot):
     assert offset2 + visible_rows == 30
 
 
+def test_long_list_in_a_small_pane_does_not_overflow_the_widget(fix, qtbot):
+    """AER-1605 follow-up, reported live by Bill: picking V27 (88 fixes) in a
+    pane too short for the physical row cap to fit even the minimum chrome
+    (1 visible row + 2 scroll arrows + Cancel) overflowed the popup off the
+    bottom of the widget -- he could not reach a fix past the fold because
+    the box, and its tap targets, were drawn past the visible area."""
+    w = _widget(qtbot, size=(400, 200))
+    taps = _render(w, _items(88), key="v27_small")
+    assert taps, "expected at least the Cancel row to be tappable"
+    for x, y, tw, th, _callback in taps:
+        assert y + th <= w.height() + 1e-6
+
+
 def test_reopening_a_shorter_list_under_the_same_key_resets_scroll(fix, qtbot):
     """A stale offset from a longer list must not survive onto a shorter
     one opened under the same scroll_key (e.g. a different, shorter
