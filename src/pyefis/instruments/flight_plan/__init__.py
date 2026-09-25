@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import QWidget
 
 from pyavtools import fix
 from pyefis import hmi
+from pyefis.flightplan import airways as fp_airways
 from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
@@ -76,6 +77,7 @@ _INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog")
 _ROW_MENU_ITEMS = (
     ("Insert Before", "_row_menu_insert_before"),
     ("Insert After", "_row_menu_insert_after"),
+    ("Load Airway", "_row_menu_load_airway"),
     ("Activate Leg", "_row_menu_activate_leg"),
     ("Direct To", "_row_menu_direct_to"),
     ("WPT Info", "_row_menu_wpt_info"),
@@ -146,6 +148,12 @@ class FlightPlan(QWidget):
         self._menu_open = False
         self._confirm = None
 
+        # Airway insertion (PA6, AER-1605): row menu -> pick an airway through
+        # the selected fix -> pick an exit fix -> AirwayGraph.expand() inserts
+        # the intermediate fixes collapsed into one row (brief section 3.5).
+        self._airway_picker = None
+        self._expanded_airway_groups = set()
+
         self._entry_mode = None
         self._entry_field = ""
         self._entry_tab = "Recent"
@@ -170,10 +178,17 @@ class FlightPlan(QWidget):
         self._waypoint_index_key = None
         self._procedure_index = None
         self._procedure_index_key = None
+        self._airway_graph = None
+        self._airway_graph_key = None
         self._catalog = None
         self._catalog_dir_used = None
 
         self._tap_targets = []
+        # Popup-menu scroll state (AER-1605 follow-up): keyed by the caller's
+        # scroll_key, value is (n_items, offset) -- the count guards against a
+        # stale offset surviving into a different (shorter) item list opened
+        # under the same key.
+        self._menu_scroll = {}
 
         self._wpt_timer = QTimer(self)
         self._wpt_timer.setInterval(1000)
@@ -246,10 +261,25 @@ class FlightPlan(QWidget):
         route = self._bridge.read_route()
         if route is None:
             return
-        self._plan = fp_model.FlightPlan(
-            name=route.name,
-            waypoints=[fp_model.Waypoint(id=s.id, type=s.type, lat=s.lat, lon=s.lon,
-                                          role=s.role) for s in route.waypoints])
+        # The FP1 bus contract (fixbridge.RouteSlot) carries id/lat/lon/type/
+        # role only -- there is no per-slot "which airway did this fix come
+        # from" key (brief 3.4: an airway segment is an ordinary TF leg, no
+        # leg model needed). So a plain re-read after every commit would
+        # silently un-collapse every airway row it had just drawn. Carry the
+        # display-only `extra` dict (PA6, AER-1605) forward by matching id +
+        # lat/lon at the same slot against the plan as it stood before this
+        # sync -- true immediately after our own publish, and a safe no-op
+        # (falls back to expanded, ordinary rows) the moment anything shifts.
+        old = self._plan.waypoints
+        waypoints = []
+        for i, s in enumerate(route.waypoints):
+            extra = {}
+            if (i < len(old) and old[i].id == s.id
+                    and abs(old[i].lat - s.lat) < 1e-5 and abs(old[i].lon - s.lon) < 1e-5):
+                extra = dict(old[i].extra)
+            waypoints.append(fp_model.Waypoint(id=s.id, type=s.type, lat=s.lat, lon=s.lon,
+                                                role=s.role, extra=extra))
+        self._plan = fp_model.FlightPlan(name=route.name, waypoints=waypoints)
 
     def _sync_engine_from_bridge(self):
         self._engine = self._bridge.read_engine() or {}
@@ -319,6 +349,16 @@ class FlightPlan(QWidget):
         self._procedure_index = fp_procedures.ProcedureIndex(key or None)
         self._procedure_index_key = key
         return self._procedure_index
+
+    def _ensure_airway_graph(self):
+        # PA2 (AER-1601): airways live in the same procedures pack as PA5's
+        # ProcedureIndex, so this reuses the same procedures_db_path Prop.
+        key = self.procedures_db_path
+        if self._airway_graph is not None and self._airway_graph_key == key:
+            return self._airway_graph
+        self._airway_graph = fp_airways.AirwayGraph(key or None)
+        self._airway_graph_key = key
+        return self._airway_graph
 
     def _ensure_catalog(self):
         if self._catalog is None or self._catalog_dir_used != self.flightplan_dir:
@@ -593,6 +633,117 @@ class FlightPlan(QWidget):
         self._close_row_menu()
         self._plan_dirty = True
         self._commit()
+
+    # -- FPL page: airway insertion (PA6, AER-1605) --------------------------
+    def _row_menu_load_airway(self):
+        i = self._row_menu_index
+        wp = self._plan.waypoints[i]
+        self._close_row_menu()
+        self._open_airway_picker(i, wp)
+
+    def _open_airway_picker(self, i, wp):
+        graph = self._ensure_airway_graph()
+        idents = graph.airways_through_fix(wp.id)
+        if not idents:
+            self._message = f"NO AIRWAYS AT {wp.id}"
+            self.update()
+            return
+        self._airway_picker = {"stage": "airway", "entry_index": i, "entry_wp": wp,
+                                "idents": idents, "ident": None, "legs": [], "message": ""}
+        self.update()
+
+    def _close_airway_picker(self):
+        self._airway_picker = None
+        self.update()
+
+    def _airway_picker_pick_ident(self, ident):
+        picker = self._airway_picker
+        graph = self._ensure_airway_graph()
+        entry_norm = picker["entry_wp"].id.strip().upper()
+        exits = [leg for leg in graph.legs(ident) if leg.fix_id.strip().upper() != entry_norm]
+        if not exits:
+            picker["message"] = f"NO OTHER FIXES ON {ident}"
+            self.update()
+            return
+        picker.update(stage="exit", ident=ident, legs=exits, message="")
+        self.update()
+
+    def _airway_picker_pick_exit(self, exit_fix_id):
+        picker = self._airway_picker
+        graph = self._ensure_airway_graph()
+        try:
+            expansion = graph.expand(picker["ident"], picker["entry_wp"].id, exit_fix_id)
+        except fp_airways.AirwayError as e:
+            picker["message"] = str(e)
+            self.update()
+            return
+        self._insert_airway_segment(picker["entry_index"], picker["ident"], expansion)
+        self._airway_picker = None
+        self.update()
+
+    def _insert_airway_segment(self, entry_index, ident, expansion):
+        """*expansion* is the published fix sequence of *ident* from the entry
+        fix to the chosen exit fix, inclusive of both (``AirwayGraph.expand``).
+        The entry fix is already in the plan at *entry_index* -- only the
+        fixes after it are new. Inserted whole or not at all: a route already
+        near ``MAX_WAYPOINTS`` must not accept half an airway."""
+        new_wps = expansion[1:]
+        if not new_wps:
+            return
+        if self._plan.count + len(new_wps) > fp_model.MAX_WAYPOINTS:
+            self._message = f"ROUTE FULL -- {ident} NEEDS {len(new_wps)} MORE SLOTS"
+            self.update()
+            return
+        idx = entry_index
+        for wp in new_wps:
+            self._plan.insert_after(idx, fp_model.Waypoint(
+                id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon, extra={"airway": ident}))
+            idx += 1
+        self._plan_dirty = True
+        self._commit()
+
+    def _row_groups(self):
+        """Partitions ``self._plan.waypoints`` into ``(start, end, ident)``
+        runs: a plain row (``start == end``, ``ident is None``) or a
+        contiguous run of fixes sharing the same ``extra["airway"]`` tag --
+        one collapsible group, regardless of how it currently displays."""
+        rows = self._plan.waypoints
+        groups = []
+        i, n = 0, len(rows)
+        while i < n:
+            ident = (rows[i].extra or {}).get("airway")
+            if ident:
+                j = i + 1
+                while j < n and (rows[j].extra or {}).get("airway") == ident:
+                    j += 1
+                groups.append((i, j - 1, ident))
+                i = j
+            else:
+                groups.append((i, i, None))
+                i += 1
+        return groups
+
+    def _group_key(self, group):
+        start, end, ident = group
+        rows = self._plan.waypoints
+        return (rows[start].id, ident, rows[end].id)
+
+    def _group_expanded(self, group):
+        return group[2] is not None and self._group_key(group) in self._expanded_airway_groups
+
+    def _toggle_airway_group(self, key):
+        if key in self._expanded_airway_groups:
+            self._expanded_airway_groups.discard(key)
+        else:
+            self._expanded_airway_groups.add(key)
+        self.update()
+
+    def _group_row_color(self, start, end, active_idx):
+        if active_idx is None:
+            return self.future_color
+        if start <= active_idx <= end:
+            return self.active_color
+        return self.future_color if active_idx < start else self.past_color
 
     # -- FPL page: footer / menu ---------------------------------------------
     def _footer_add(self):
@@ -1349,6 +1500,8 @@ class FlightPlan(QWidget):
             self._paint_wpt_info(p, w, h)
             if self._modal is not None:
                 self._paint_modal(p, w, h)
+        elif self._airway_picker is not None:
+            self._paint_airway_picker(p, w, h)
 
         if self._message:
             self._paint_toast(p, w, h, self._message)
@@ -1445,49 +1598,110 @@ class FlightPlan(QWidget):
         cols = [c.strip().upper() for c in (self.columns or "").split(",") if c.strip()]
         cols = [c for c in cols if c in COLUMN_CHOICES] or ["DTK", "DIS", "CUM"]
 
+        # A collapsed airway group (PA6) is ONE visible row regardless of how
+        # many fixes it spans; an expanded one is its member count. Sizing off
+        # the visible count, not `n`, is what keeps a collapsed "V27 -> RZS"
+        # from stealing the row height every other leg gets.
+        groups = self._row_groups()
+        visible = sum((g[1] - g[0] + 1) if self._group_expanded(g) else 1 for g in groups)
+
         # Cap the row height so a near-empty plan doesn't stretch one or two
         # rows into a grotesquely oversized icon/font -- a real 50-slot plan
         # is what sizes rows down to fit, not the list area's leftover space.
-        row_h = max(14, min((bottom - top) / n, max_row_h))
+        row_h = max(14, min((bottom - top) / max(visible, 1), max_row_h))
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(row_h * 0.5), 9))
         p.setFont(f)
 
         y = top
-        for i, wp in enumerate(rows):
-            rh = min(row_h, bottom - y)
-            if rh <= 0:
-                break
-            p.setPen(QPen(QColor(self._row_color(i, active_idx))))
-            # Centre must clear its own radius: the original
-            # `6 + rh*0.15` against radius `rh*0.28` puts the left edge at
-            # `6 - rh*0.13`, negative for any rh > 46, which is why the type
-            # icons clipped off the left of the widget at the old row sizes.
-            _ir = rh * 0.28
-            _icx = max(6 + rh * 0.15, _ir + 2.0)
-            self._draw_type_icon(p, _icx, y + rh / 2, _ir, wp.type)
+        for start, end, ident in groups:
+            if ident is not None and not self._group_expanded((start, end, ident)):
+                rh = min(row_h, bottom - y)
+                if rh <= 0:
+                    break
+                self._paint_airway_summary_row(p, w, y, rh, start, end, ident, active_idx,
+                                                cols, interactive)
+                y += rh
+                continue
+            for i in range(start, end + 1):
+                rh = min(row_h, bottom - y)
+                if rh <= 0:
+                    break
+                toggle = (start, end, ident) if (ident is not None and i == start) else None
+                self._paint_one_row(p, w, y, rh, i, rows[i], active_idx, cols, interactive, toggle)
+                y += rh
 
-            label = wp.id
-            role = ROLE_ABBREV.get(wp.role, "")
-            if role:
-                label = f"{label} {role}"
-            # `rh * 0.5` assumed the old oversized icon; once rows are sane
-            # it lands inside the icon, so take the icon's right edge.
-            _lx = max(rh * 0.5, _icx + _ir + 8.0)
-            p.drawText(QRectF(_lx, y, w * 0.35, rh),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+    def _row_icon_geometry(self, rh):
+        # Centre must clear its own radius: the original
+        # `6 + rh*0.15` against radius `rh*0.28` puts the left edge at
+        # `6 - rh*0.13`, negative for any rh > 46, which is why the type
+        # icons clipped off the left of the widget at the old row sizes.
+        ir = rh * 0.28
+        icx = max(6 + rh * 0.15, ir + 2.0)
+        # `rh * 0.5` assumed the old oversized icon; once rows are sane it
+        # lands inside the icon, so take the icon's right edge.
+        lx = max(rh * 0.5, icx + ir + 8.0)
+        return ir, icx, lx
 
-            col_w = (w * 0.55) / len(cols)
-            cx = w * 0.42
-            for c in cols:
-                p.drawText(QRectF(cx, y, col_w, rh),
-                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                           self._column_text(c, i, active_idx))
-                cx += col_w
+    def _paint_one_row(self, p, w, y, rh, i, wp, active_idx, cols, interactive, toggle):
+        p.setPen(QPen(QColor(self._row_color(i, active_idx))))
+        ir, icx, lx = self._row_icon_geometry(rh)
+        self._draw_type_icon(p, icx, y + rh / 2, ir, wp.type)
 
-            if interactive:
-                self._tap(0, y, w, rh, (lambda idx=i: self._open_row_menu(idx)))
-            y += rh
+        label = wp.id
+        role = ROLE_ABBREV.get(wp.role, "")
+        if role:
+            label = f"{label} {role}"
+        ident = (wp.extra or {}).get("airway")
+        if ident:
+            label = f"{label} {ident}"
+        p.drawText(QRectF(lx, y, w * 0.35, rh),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+
+        col_w = (w * 0.55) / len(cols)
+        cx = w * 0.42
+        for c in cols:
+            p.drawText(QRectF(cx, y, col_w, rh),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       self._column_text(c, i, active_idx))
+            cx += col_w
+
+        if interactive:
+            self._tap(0, y, w, rh, (lambda idx=i: self._open_row_menu(idx)))
+            if toggle is not None:
+                # An expanded group's first row also collapses it, in a tap
+                # target confined to the icon so the rest of the row still
+                # opens that fix's own row menu (mousePressEvent hit-tests in
+                # reverse registration order, so this later target wins).
+                toggle_w = icx + ir + 4.0
+                self._tap(0, y, toggle_w, rh,
+                          (lambda g=toggle: self._toggle_airway_group(self._group_key(g))))
+
+    def _paint_airway_summary_row(self, p, w, y, rh, start, end, ident, active_idx, cols,
+                                   interactive):
+        p.setPen(QPen(QColor(self._group_row_color(start, end, active_idx))))
+        ir, icx, lx = self._row_icon_geometry(rh)
+        self._draw_type_icon(p, icx, y + rh / 2, ir, "fix")
+
+        exit_id = self._plan.waypoints[end].id
+        label = f"{ident} → {exit_id}"
+        p.drawText(QRectF(lx, y, w * 0.35, rh),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+
+        # The collapsed row stands in for its last member: DTK/DIS are the
+        # leg leaving `end` (same meaning every other row's DTK/DIS carries),
+        # and CUM/ETE follow the same convention -- see `_column_text`.
+        col_w = (w * 0.55) / len(cols)
+        cx = w * 0.42
+        for c in cols:
+            p.drawText(QRectF(cx, y, col_w, rh),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       self._column_text(c, end, active_idx))
+            cx += col_w
+
+        if interactive:
+            key = self._group_key((start, end, ident))
+            self._tap(0, y, w, rh, (lambda k=key: self._toggle_airway_group(k)))
 
     def _paint_footer(self, p, w, top, footer_h, interactive):
         p.setPen(QPen(QColor("#333333")))
@@ -1510,26 +1724,92 @@ class FlightPlan(QWidget):
     def _paint_overlay_backdrop(self, p, w, h):
         p.fillRect(QRectF(0, 0, w, h), QColor(0, 0, 0, 160))
 
-    def _paint_menu_list(self, p, w, h, items, on_cancel):
-        n = len(items) + 1
+    def _menu_scroll_by(self, key, delta):
+        n_items, offset = self._menu_scroll.get(key, (0, 0))
+        self._menu_scroll[key] = (n_items, offset + delta)
+        self.update()
+
+    def _paint_menu_list(self, p, w, h, items, on_cancel, scroll_key=None):
+        """Popup menu of *items* (label, callback) plus a trailing Cancel row.
+
+        Row height is physical (``_row_h_cap()``), not a fraction of the
+        popup's own height -- an airway can carry dozens of exit fixes, and
+        sizing text off ``h / len(items)`` (the previous approach) shrank it
+        to unreadable as the list grew (AER-1605 follow-up, reported live by
+        Bill against the V27 exit-fix list). When the list doesn't fit, it
+        scrolls instead of shrinking further, with tappable up/down rows --
+        this box is driven by touch, no wheel or drag-scroll available.
+        """
+        n_items = len(items)
         box_w = w * 0.6
         box_x = (w - box_w) / 2
         box_top = h * 0.12
-        item_h = (h * 0.76) / n
+        avail_h = h * 0.76
+        item_h = max(1.0, min(self._row_h_cap(), avail_h))
+
+        # Budget: Cancel always gets one row. The item list gets whatever is
+        # left; if that isn't enough to show every item, two more rows are
+        # spent on scroll arrows and the visible window shrinks to fit them.
+        rows_free = max(0, int(avail_h / item_h) - 1)
+        scrollable = n_items > rows_free
+        visible_rows = max(1, min(n_items, rows_free - 2)) if scrollable else n_items
+        box_rows = visible_rows + (2 if scrollable else 0) + 1
+
+        # A long list (a big airway's exit-fix picker) can force rows_free
+        # to 0-2: the floor of one visible row plus, when scrollable, the two
+        # arrow rows and Cancel still add up to more rows than the physical
+        # cap leaves room for. Re-deriving item_h from box_rows keeps the
+        # popup inside avail_h instead of drawing past the bottom of the pane
+        # (AER-1605 follow-up -- Bill's V27 exit-fix list overflowed off the
+        # visible area before he could reach a fix past the fold).
+        if box_rows * item_h > avail_h:
+            item_h = avail_h / box_rows
+
+        offset = 0
+        key = scroll_key or "menu"
+        if scrollable:
+            stored_n, stored_offset = self._menu_scroll.get(key, (n_items, 0))
+            offset = stored_offset if stored_n == n_items else 0
+            offset = max(0, min(offset, n_items - visible_rows))
+            self._menu_scroll[key] = (n_items, offset)
+        elif key in self._menu_scroll:
+            self._menu_scroll[key] = (n_items, 0)
+
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(item_h * 0.4), 10))
         p.setFont(f)
+        box_h = item_h * box_rows
         p.setPen(QPen(QColor("#ffffff")))
         p.setBrush(QBrush(QColor("#202020")))
-        p.drawRect(QRectF(box_x, box_top, box_w, item_h * n))
+        p.drawRect(QRectF(box_x, box_top, box_w, box_h))
+
         y = box_top
-        for label, callback in items:
+        if scrollable:
+            can_up = offset > 0
+            p.setPen(QPen(QColor("#00ffff" if can_up else "#505050")))
+            p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, "▲")
+            if can_up:
+                self._tap(box_x, y, box_w, item_h,
+                           (lambda k=key, d=-visible_rows: self._menu_scroll_by(k, d)))
+            y += item_h
+
+        for label, callback in items[offset:offset + visible_rows]:
             p.setPen(QPen(QColor("#000000")))
             p.drawRect(QRectF(box_x + 2, y + 2, box_w - 4, item_h - 4))
             p.setPen(QPen(QColor("#00ffff")))
             p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, label)
             self._tap(box_x, y, box_w, item_h, callback)
             y += item_h
+
+        if scrollable:
+            can_down = offset + visible_rows < n_items
+            p.setPen(QPen(QColor("#00ffff" if can_down else "#505050")))
+            p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, "▼")
+            if can_down:
+                self._tap(box_x, y, box_w, item_h,
+                           (lambda k=key, d=visible_rows: self._menu_scroll_by(k, d)))
+            y += item_h
+
         p.setPen(QPen(QColor("#ff8080")))
         p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, "Cancel")
         self._tap(box_x, y, box_w, item_h, on_cancel)
@@ -1539,12 +1819,37 @@ class FlightPlan(QWidget):
         if self._role_menu_open:
             items = [(ROLE_ABBREV.get(r) or "NONE", (lambda role=r: self._row_menu_set_role(role)))
                      for r in _ROLE_MENU_ORDER]
-            self._paint_menu_list(p, w, h, items, self._close_row_menu)
+            self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu_role")
             return
         items = []
         for label, attr in _ROW_MENU_ITEMS:
             items.append((label, self._open_role_menu if attr is None else getattr(self, attr)))
-        self._paint_menu_list(p, w, h, items, self._close_row_menu)
+        self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu")
+
+    def _paint_airway_picker(self, p, w, h):
+        self._paint_overlay_backdrop(p, w, h)
+        picker = self._airway_picker
+        if picker["stage"] == "airway":
+            items = [(ident, (lambda i=ident: self._airway_picker_pick_ident(i)))
+                     for ident in picker["idents"]]
+        else:
+            items = []
+            for leg in picker["legs"]:
+                label = leg.fix_id
+                if leg.min_alt_ft is not None or leg.max_alt_ft is not None:
+                    lo = leg.min_alt_ft if leg.min_alt_ft is not None else "-"
+                    hi = leg.max_alt_ft if leg.max_alt_ft is not None else "-"
+                    label = f"{label}  {lo}-{hi}FT"
+                items.append((label, (lambda fid=leg.fix_id: self._airway_picker_pick_exit(fid))))
+        self._paint_menu_list(p, w, h, items, self._close_airway_picker,
+                               scroll_key=f"airway_picker_{picker['stage']}")
+        if picker["message"]:
+            f = QFont(self.font_family)
+            f.setPixelSize(self._px(int(h * 0.04), 10))
+            p.setFont(f)
+            p.setPen(QPen(QColor("#ff8080")))
+            p.drawText(QRectF(0, h * 0.03, w, h * 0.08),
+                       Qt.AlignmentFlag.AlignCenter, picker["message"])
 
     def _paint_confirm(self, p, w, h, text, on_yes):
         box_w, box_h = w * 0.6, h * 0.3
@@ -1583,7 +1888,7 @@ class FlightPlan(QWidget):
             (f"CDI Scale ({self._cdi_scale_choice})", self._menu_cdi_scale),
             ("Delete", self._menu_delete_request),
         ]
-        self._paint_menu_list(p, w, h, items, self._close_menu)
+        self._paint_menu_list(p, w, h, items, self._close_menu, scroll_key="menu")
 
     def _paint_wpt_info(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -1904,7 +2209,7 @@ class FlightPlan(QWidget):
     def _paint_catalog_row_menu(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
         items = self._catalog_row_menu_items(self._catalog_row_menu)
-        self._paint_menu_list(p, w, h, items, self._close_catalog_row_menu)
+        self._paint_menu_list(p, w, h, items, self._close_catalog_row_menu, scroll_key="catalog_row_menu")
 
     def _paint_catalog_confirm(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -2102,4 +2407,4 @@ class FlightPlan(QWidget):
         items = [(f"{wp.id} {wp.type} {wp.name or ''}".strip(),
                   (lambda w_=wp: self._choose_duplicate(w_)))
                  for wp in self._entry_dupe_choices]
-        self._paint_menu_list(p, w, h, items, self._cancel_dupe_chooser)
+        self._paint_menu_list(p, w, h, items, self._cancel_dupe_chooser, scroll_key="dupe_chooser")

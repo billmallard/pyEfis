@@ -88,14 +88,31 @@ render read-only — it never raises.
   `WPETE` on the active row only; ETA not yet computed). The TO row
   (`FPLACTLEG`) is `active_color`, earlier rows `past_color`, later rows
   `future_color`. Tapping a row opens a menu: Insert Before, Insert After,
-  Activate Leg (`ACT k`), Direct To (stages + `DTO k`), WPT Info (full
-  detail, see below), Set Role (None/IAF/FAF/MAP/MAHP — refused with a
-  message on a second FAF/MAP or a MAP before the FAF), Remove. Footer: Add
-  Waypoint (Entry page, append), Direct To (the DTO page), Catalog (the
-  Catalog page), Menu (Invert, Store, Clear, Suspend/Resume, CDI Scale
-  0.3/1.0/2.0/AUTO, Delete — Clear and Delete both confirm and both reset the
-  working plan; a distinct "Delete" semantic can be added if the guide's
-  usage turns out to need one).
+  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`),
+  Direct To (stages + `DTO k`), WPT Info (full detail, see below), Set Role
+  (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
+  MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
+  Direct To (the DTO page), Catalog (the Catalog page), Menu (Invert, Store,
+  Clear, Suspend/Resume, CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
+  Delete both confirm and both reset the working plan; a distinct "Delete"
+  semantic can be added if the guide's usage turns out to need one).
+- **Load Airway** (PA6, AER-1605, brief section 3.5) — offers every airway
+  through the tapped fix (`AirwayGraph.airways_through_fix`, PA2), then an
+  exit fix from that airway's ordered points, each annotated with its
+  published MEA/ceiling when the pack carries one; `AirwayGraph.expand()`
+  inserts the intermediate fixes (never the entry fix again) right after the
+  tapped row, tagged `extra["airway"]`. A run of consecutively tagged fixes
+  paints as one collapsed row ("V27 → RZS"); tapping it expands the run into
+  its member fixes (each still an ordinary row, with its own row menu), and
+  tapping the expanded run's first row collapses it again. An
+  `AirwayError` (unknown airway, a fix not on it, a one-way violation) or a
+  route already too close to `MAX_WAYPOINTS` for the whole segment leaves the
+  plan untouched and shows the reason — never a partial airway. The tag is
+  display-only: the FP1 bus (`fixbridge.RouteSlot`) carries id/lat/lon/type/
+  role per slot, nothing that says "this fix came from an airway", so
+  `_sync_plan_from_bridge` carries it forward across a commit's publish/
+  read-back by matching id + lat/lon at the same slot — a safe no-op the
+  moment anything else shifts that slot.
 - **Entry** (Add/Insert) — an ident field with FastFind: typed characters
   white, the predicted suffix (nearest match by distance from a mode-dependent
   reference point — the aircraft when appending to an empty plan, the last

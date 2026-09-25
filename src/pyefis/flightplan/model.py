@@ -20,7 +20,14 @@ from dataclasses import dataclass, field
 from . import geo
 
 SCHEMA = "mp-route/1"
-MAX_WAYPOINTS = 50
+# Must match fixbridge.MAX_SLOTS, the FPL1..FPLn bus block width the engine
+# actually publishes. PA3 (fix-gateway#27) grew that block 50->100
+# (AER-1709), but this constant -- the model-layer cap enforced before a
+# route ever reaches the bridge -- was never bumped to match, so every
+# route was capped at half the engine's real capacity. Surfaced live by
+# AER-1605: inserting a real-world Victor airway (V27, 88 published fixes)
+# routinely needs more than 50 total waypoints.
+MAX_WAYPOINTS = 100
 
 WAYPOINT_TYPES = ("airport", "vor", "ndb", "fix", "user", "map")
 ROLES = ("none", "iaf", "faf", "map", "mahp")
