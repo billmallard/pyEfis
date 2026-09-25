@@ -102,17 +102,23 @@ render read-only — it never raises.
   published MEA/ceiling when the pack carries one; `AirwayGraph.expand()`
   inserts the intermediate fixes (never the entry fix again) right after the
   tapped row, tagged `extra["airway"]`. A run of consecutively tagged fixes
-  paints as one collapsed row ("V27 → RZS"); tapping it expands the run into
-  its member fixes (each still an ordinary row, with its own row menu), and
-  tapping the expanded run's first row collapses it again. An
-  `AirwayError` (unknown airway, a fix not on it, a one-way violation) or a
-  route already too close to `MAX_WAYPOINTS` for the whole segment leaves the
-  plan untouched and shows the reason — never a partial airway. The tag is
-  display-only: the FP1 bus (`fixbridge.RouteSlot`) carries id/lat/lon/type/
-  role per slot, nothing that says "this fix came from an airway", so
-  `_sync_plan_from_bridge` carries it forward across a commit's publish/
-  read-back by matching id + lat/lon at the same slot — a safe no-op the
-  moment anything else shifts that slot.
+  paints as one collapsed row ("V27 → RZS") *permanently* — there is no
+  on-page expansion (PA16, AER-2088: Bill found tap-to-expand "confusing" and
+  "clutter" on his first on-glass look at PA6; per-fix access lives on the
+  map instead, which draws every fix regardless — see
+  `instruments/map/layers/flight_plan.py`, unaffected by this since it reads
+  the FP1 bus, not this page's display grouping). Tapping the collapsed row
+  opens its row menu, anchored on the group's last member (its exit fix) the
+  same way the row's own DTK/DIS/CUM columns are; **Remove** from that menu
+  takes the whole tagged span, not just the anchor fix (`_group_containing` in
+  `_row_menu_remove`). An `AirwayError` (unknown airway, a fix not on it, a
+  one-way violation) or a route already too close to `MAX_WAYPOINTS` for the
+  whole segment leaves the plan untouched and shows the reason — never a
+  partial airway. The tag is display-only: the FP1 bus
+  (`fixbridge.RouteSlot`) carries id/lat/lon/type/role per slot, nothing that
+  says "this fix came from an airway", so `_sync_plan_from_bridge` carries it
+  forward across a commit's publish/read-back by matching id + lat/lon at the
+  same slot — a safe no-op the moment anything else shifts that slot.
 - **Entry** (Add/Insert) — an ident field with FastFind: typed characters
   white, the predicted suffix (nearest match by distance from a mode-dependent
   reference point — the aircraft when appending to an empty plan, the last
