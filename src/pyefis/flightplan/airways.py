@@ -87,6 +87,7 @@ class AirwayGraph:
             log.info("AirwayGraph: %s not found -- airway lookup disabled",
                       self._path)
             return
+        con = None
         try:
             con = sqlite3.connect(str(self._path), check_same_thread=False)
             con.row_factory = sqlite3.Row
@@ -95,10 +96,26 @@ class AirwayGraph:
         except Exception as e:
             log.warning("AirwayGraph: cannot open %s: %s", self._path, e)
             self._con = None
+            if con is not None:
+                con.close()
 
     @property
     def ready(self) -> bool:
         return self._con is not None
+
+    def close(self) -> None:
+        """Release the underlying connection. Not needed for the one
+        process-lifetime instance production holds (interpreter exit reclaims
+        it), but callers that construct short-lived instances -- tests doing
+        it once per case being the case in point -- should call this rather
+        than let it ride on the cyclic GC: sqlite3's per-connection prepared-
+        statement cache holds a reference back to the connection, so a
+        connection that has executed any query is part of a reference cycle
+        and cannot be reclaimed by refcounting alone. ``close()`` is
+        idempotent and safe on an already-closed or never-opened instance."""
+        if self._con is not None:
+            self._con.close()
+            self._con = None
 
     # ------------------------------------------------------------------
     # Lookup
