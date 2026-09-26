@@ -277,20 +277,35 @@ def test_collapsed_airway_row_label_does_not_collide_with_the_type_icon(fix, qtb
         f"label starts {label_start - icon_end}px after the icon ends -- they touch")
 
 
-def test_collapsed_airway_row_expands_to_its_members_on_toggle(fix, qtbot):
+def test_tap_on_collapsed_airway_row_opens_row_menu_not_expansion(fix, qtbot):
+    """PA16 (AER-2088): Bill found tap-to-expand "confusing" and "clutter"
+    on his first on-glass look at PA6; per-fix access lives on the map
+    instead (it draws every fix regardless). No tap path on this page may
+    expand a collapsed airway row any more -- proven here by tapping it and
+    checking the row menu opened while the plan itself is untouched."""
     w = _widget(qtbot)
     w._plan = _plan_with_collapsed_airway_group()
     w._commit()
-    group = w._row_groups()[1]
-    assert group == (1, 2, "V27")
-    assert w._group_expanded(group) is False
+    plan_ids_before = [wp.id for wp in w._plan.waypoints]
 
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is True
-    w.grab()  # expanded rendering must not raise
+    from PyQt6.QtGui import QPainter, QPixmap
+    header_h = int(w._chrome_h(w.height(), 2.0, 0.26))
+    footer_h = int(w._chrome_h(w.height(), 1.3, 0.18))
+    pixmap = QPixmap(w.width(), w.height())
+    painter = QPainter(pixmap)
+    w._tap_targets = []
+    w._paint_list(painter, w.width(), header_h, w.height() - footer_h, w._row_h_cap(), True)
+    painter.end()
 
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is False
+    groups = w._row_groups()
+    assert groups == [(0, 0, None), (1, 2, "V27"), (3, 3, None)]
+    assert len(w._tap_targets) == 3  # one tap target per group -- no toggle sub-rect
+    _, _, _, _, callback = w._tap_targets[1]  # the collapsed "V27 -> RZS" row
+    callback()
+
+    assert w._row_menu_index == 2  # anchored on the group's exit fix (RZS)
+    assert [wp.id for wp in w._plan.waypoints] == plan_ids_before  # no expansion happened
+    w.grab()  # the row menu overlay must paint without raising
 
 
 def test_a_long_plan_still_shrinks_rows_to_fit(fix, qtbot):

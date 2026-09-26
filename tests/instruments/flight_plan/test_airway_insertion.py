@@ -210,7 +210,6 @@ def test_full_flow_inserts_expansion_collapsed_between_entry_and_exit(fix, qtbot
 
     groups = w._row_groups()
     assert groups == [(0, 0, None), (1, 1, None), (2, 3, "V27"), (4, 4, None)]
-    assert w._group_expanded(groups[2]) is False  # collapsed by default
     w.grab()  # renders the collapsed "V27 -> RZS" row without raising
 
 
@@ -237,21 +236,31 @@ def test_airway_tag_survives_the_fix_bus_round_trip(fix, qtbot, pack_path):
     assert w._plan.waypoints[2].extra.get("airway") == "V27"
 
 
-def test_expand_collapse_toggle(fix, qtbot, pack_path):
+def test_remove_on_a_collapsed_airway_row_takes_the_whole_group(fix, qtbot, pack_path):
+    """PA16 (AER-2088): the collapsed row has no expand path any more, so
+    Remove is the only way to take an airway segment back out -- and it must
+    take the whole span (POM+RZS), not just the one fix the row menu happens
+    to anchor to (the group's exit fix, RZS -- see `_paint_airway_summary_row`
+    and `_row_menu_remove`'s `_group_containing`)."""
     w = _widget(qtbot, fix, pack_path)
-    w._plan = _plan(fp_model.Waypoint(id="GVO", type="vor", lat=GVO[0], lon=GVO[1]))
+    w._plan = _plan(
+        fp_model.Waypoint(id="KSBA", type="airport", lat=KSBA[0], lon=KSBA[1]),
+        fp_model.Waypoint(id="GVO", type="vor", lat=GVO[0], lon=GVO[1]),
+        fp_model.Waypoint(id="KSMX", type="airport", lat=KSMX[0], lon=KSMX[1]),
+    )
     w._commit()
-    w._row_menu_index = 0
+    w._row_menu_index = 1  # GVO
     w._row_menu_load_airway()
     w._airway_picker_pick_ident("V27")
     w._airway_picker_pick_exit("RZS")
+    assert [wp.id for wp in w._plan.waypoints] == ["KSBA", "GVO", "POM", "RZS", "KSMX"]
 
     group = next(g for g in w._row_groups() if g[2] == "V27")
-    assert w._group_expanded(group) is False
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is True
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is False
+    assert group == (2, 3, "V27")
+    w._row_menu_index = group[1]  # RZS -- the anchor a collapsed-row tap opens
+    w._row_menu_remove()
+
+    assert [wp.id for wp in w._plan.waypoints] == ["KSBA", "GVO", "KSMX"]
 
 
 # ---------------------------------------------------------------------------
