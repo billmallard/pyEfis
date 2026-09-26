@@ -146,7 +146,17 @@ def pack_path(tmp_path):
 
 @pytest.fixture()
 def graph(pack_path):
-    return AirwayGraph(pack_path)
+    g = AirwayGraph(pack_path)
+    yield g
+    # AER-2158: a connection that has executed a query is part of a
+    # reference cycle (sqlite3's statement cache references it back) and
+    # won't be reclaimed by refcounting alone -- close explicitly so ~25
+    # connections a session don't pile up for the cyclic GC to sweep at an
+    # unpredictable later point (a full-suite run showed exactly this:
+    # ResourceWarning for an unclosed database attributed to unrelated
+    # tests' code, because that's simply whatever was executing when the
+    # collector finally ran).
+    g.close()
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +324,7 @@ def test_altitude_range_missing_data_is_none(tmp_path):
     con.close()
     g = AirwayGraph(path)
     assert g.altitude_range("B1", "FOO", "BAR") == (None, None)
+    g.close()
 
 
 def test_altitude_range_same_errors_as_expand(graph):
