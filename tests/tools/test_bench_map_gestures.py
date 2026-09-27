@@ -17,6 +17,7 @@ speed."""
 import importlib.util
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -99,14 +100,118 @@ def test_check_budgets_ignores_scenario_absent_from_results(bmg):
 def test_ladder_scenario_end_to_end(bmg, qapp):
     bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
     args = bmg._parse_args(
-        ["--scenario", "ladder", "--w", "200", "--h", "200"])
+        ["--scenario", "ladder", "--w", "200", "--h", "200",
+         "--water-max-vertices", "1024"])
     r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
     assert r["scenario"] == "ladder"
-    assert r["schema_version"] == 1
+    assert r["schema_version"] == 2
     assert r["counters"]["frames_painted"] > 0
     assert r["params"]["ladder"][0] == 2.0
     assert r["params"]["ladder"][-1] == 160.0
+    # the ladder's LAST rung, not the first -- range_actual_nm is the
+    # comparability key (AER-2206), so a stale first-rung reading would
+    # silently misreport where the scenario actually ended.
+    assert r["params"]["range_actual_nm"] == 160.0
+    # echoes the cap actually in force, not --water-max-vertices' 512
+    # default -- a hardcoded default would pass a presence-only check.
+    assert r["water_max_vertices"] == 1024
+    ts = datetime.fromisoformat(r["timestamp"])
+    assert ts.tzinfo is not None and ts.utcoffset() == timedelta(0)
     assert "ladder:" in r["summary"]
+
+
+# --- schema key-set pin (AER-2232) ------------------------------------
+#
+# AER-2231's incident: v2 added three fields (timestamp, water_max_vertices,
+# params.range_actual_nm on rotate/pan/ladder) while changing zero tests, and
+# CI only went red because one unrelated assertion happened to pin the
+# literal schema_version number. A v3 that bumps that same assertion when it
+# adds/removes/renames a field would sail through green. The per-field pins
+# above (test_ladder_scenario_end_to_end et al.) prove specific values, but
+# say nothing about a field that never existed before -- only an exact
+# key-set comparison fails on that by construction.
+
+#: run_scenario()'s complete top-level key set, current as of
+#: SCHEMA_VERSION 2 (see its docstring in tools/bench_map_gestures.py).
+_RUN_SCENARIO_KEYS = frozenset({
+    "schema_version", "timestamp", "rev", "host", "scenario", "widget",
+    "lat", "lon", "water_max_vertices", "duration_s", "params", "counters",
+    "summary",
+})
+
+#: Each scenario's params dict key set, current as of SCHEMA_VERSION 2.
+_SCENARIO_PARAMS_KEYS = {
+    "pinch_out": frozenset({"range_from_nm", "range_to_nm",
+                            "range_actual_nm", "events", "event_hz",
+                            "hold_s"}),
+    "pinch_in": frozenset({"range_from_nm", "range_to_nm",
+                           "range_actual_nm", "events", "event_hz",
+                           "hold_s"}),
+    "rotate": frozenset({"sweep_deg", "events", "event_hz", "duration_s",
+                         "range_actual_nm"}),
+    "pan": frozenset({"dx_px_per_event", "dy_px_per_event", "events",
+                      "event_hz", "hold_s", "range_actual_nm"}),
+    "ladder": frozenset({"ladder", "step_hold_s", "final_hold_s",
+                         "range_actual_nm"}),
+}
+
+_KEY_SET_DRIFT_MSG = (
+    "%s's key set changed -- see the SCHEMA_VERSION docstring in "
+    "tools/bench_map_gestures.py: bump SCHEMA_VERSION, add an explicit "
+    "pin for the new/removed/renamed field (a per-field test, not just "
+    "this one), then update the expected set here.")
+
+
+def test_run_scenario_top_level_key_set_is_pinned(bmg, qapp):
+    """Fails by construction on any top-level field added, removed, or
+    renamed in run_scenario()'s result -- see the section comment above."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "ladder", "--w", "150", "--h", "150"])
+    r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
+    assert set(r) == _RUN_SCENARIO_KEYS, (
+        _KEY_SET_DRIFT_MSG % "run_scenario()")
+
+
+@pytest.mark.parametrize("scenario", sorted(_SCENARIO_PARAMS_KEYS))
+def test_scenario_params_key_set_is_pinned(bmg, qapp, scenario):
+    """Same guarantee as the top-level pin above, per scenario's own
+    params dict -- fails by construction on any field added, removed, or
+    renamed in that scenario's return value."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", scenario, "--w", "150", "--h", "150"])
+    w = bmg.build_widget(args)
+    w.show()
+    params = bmg.SCENARIOS[scenario](qapp, w, args)
+    assert set(params) == _SCENARIO_PARAMS_KEYS[scenario], (
+        _KEY_SET_DRIFT_MSG % ("scenario_%s()" % scenario))
+
+
+def test_rotate_scenario_reports_actual_widget_range(bmg, qapp):
+    """rotate never touches range_nm, and build_widget() always starts a
+    widget at 10.0 -- so a hardcoded 10.0 would pass a presence-only check
+    on params.range_actual_nm without ever reading the widget for real."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "rotate", "--w", "200", "--h", "200"])
+    w = bmg.build_widget(args)
+    w.show()
+    w.range_nm = 55.0
+    params = bmg.scenario_rotate(qapp, w, args)
+    assert params["range_actual_nm"] == 55.0
+
+
+def test_pan_scenario_reports_actual_widget_range(bmg, qapp):
+    """Same pin as rotate above -- pan_by() moves lat/lon, not range_nm."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "pan", "--w", "200", "--h", "200"])
+    w = bmg.build_widget(args)
+    w.show()
+    w.range_nm = 55.0
+    params = bmg.scenario_pan(qapp, w, args)
+    assert params["range_actual_nm"] == 55.0
 
 
 def test_pinch_out_runs_full_gesture_and_settles(bmg, qapp):

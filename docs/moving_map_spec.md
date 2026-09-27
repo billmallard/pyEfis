@@ -253,16 +253,22 @@ summary lines go to stderr so stdout stays pipeable. Each element:
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "timestamp": "2026-09-27T18:04:11.203841+00:00",  // UTC, datetime.now(timezone.utc).isoformat()
   "rev": "b4d3349",            // git short SHA, "" outside a checkout
   "host": "beelinkpyefis",     // socket.gethostname()
   "scenario": "pinch_out",
   "widget": {"w": 650, "h": 1040},
   "lat": 35.8, "lon": -78.8,
+  "water_max_vertices": 1024,  // the --water-max-vertices cap in force for this run
   "duration_s": 6.48,          // wall-clock time the scenario itself took
   "params": {"range_from_nm": 10.0, "range_to_nm": 160.0,
              "range_actual_nm": 160.0, "events": 90, "event_hz": 60.0,
-             "hold_s": 5.0},   // scenario-specific inputs, for repro
+             "hold_s": 5.0},   // scenario-specific inputs, for repro;
+                              // range_actual_nm is on rotate/pan/ladder too
+                              // (v2) -- the widget's range_nm at scenario
+                              // end, unchanged by rotate/pan, walked to the
+                              // ladder's last rung by ladder
   "counters": {                // MapPerfStats.snapshot() -- every MP6 counter
     "frames_painted": 50,
     "paint_ms": {"p50": 0.7, "p95": 1.0, "max": 5.5, "count": 50},
@@ -293,6 +299,13 @@ summary lines go to stderr so stdout stays pipeable. Each element:
              "terrain req=1 pub=1 superseded=0"
 }
 ```
+
+**v1 -> v2 (AER-2225):** added `timestamp`, `water_max_vertices`, and
+`params.range_actual_nm` on `rotate`/`pan`/`ladder`. The nine
+`schema_version: 1` lines already committed to `makerplane/perf/
+map_gestures.jsonl` are not rewritten; a consumer that reads a v1 line
+sees those three fields simply absent, which MP9b's judge treats as a
+bound rather than a zero.
 
 `--budget <path>` loads a JSON map of `{scenario: [{"path": "a.b.c",
 "max": x} | {"min": x}, ...]}`, evaluates each dotted `path` against that
