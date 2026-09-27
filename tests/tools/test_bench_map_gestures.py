@@ -17,6 +17,7 @@ speed."""
 import importlib.util
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -99,14 +100,50 @@ def test_check_budgets_ignores_scenario_absent_from_results(bmg):
 def test_ladder_scenario_end_to_end(bmg, qapp):
     bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
     args = bmg._parse_args(
-        ["--scenario", "ladder", "--w", "200", "--h", "200"])
+        ["--scenario", "ladder", "--w", "200", "--h", "200",
+         "--water-max-vertices", "1024"])
     r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
     assert r["scenario"] == "ladder"
-    assert r["schema_version"] == 1
+    assert r["schema_version"] == 2
     assert r["counters"]["frames_painted"] > 0
     assert r["params"]["ladder"][0] == 2.0
     assert r["params"]["ladder"][-1] == 160.0
+    # the ladder's LAST rung, not the first -- range_actual_nm is the
+    # comparability key (AER-2206), so a stale first-rung reading would
+    # silently misreport where the scenario actually ended.
+    assert r["params"]["range_actual_nm"] == 160.0
+    # echoes the cap actually in force, not --water-max-vertices' 512
+    # default -- a hardcoded default would pass a presence-only check.
+    assert r["water_max_vertices"] == 1024
+    ts = datetime.fromisoformat(r["timestamp"])
+    assert ts.tzinfo is not None and ts.utcoffset() == timedelta(0)
     assert "ladder:" in r["summary"]
+
+
+def test_rotate_scenario_reports_actual_widget_range(bmg, qapp):
+    """rotate never touches range_nm, and build_widget() always starts a
+    widget at 10.0 -- so a hardcoded 10.0 would pass a presence-only check
+    on params.range_actual_nm without ever reading the widget for real."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "rotate", "--w", "200", "--h", "200"])
+    w = bmg.build_widget(args)
+    w.show()
+    w.range_nm = 55.0
+    params = bmg.scenario_rotate(qapp, w, args)
+    assert params["range_actual_nm"] == 55.0
+
+
+def test_pan_scenario_reports_actual_widget_range(bmg, qapp):
+    """Same pin as rotate above -- pan_by() moves lat/lon, not range_nm."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "pan", "--w", "200", "--h", "200"])
+    w = bmg.build_widget(args)
+    w.show()
+    w.range_nm = 55.0
+    params = bmg.scenario_pan(qapp, w, args)
+    assert params["range_actual_nm"] == 55.0
 
 
 def test_pinch_out_runs_full_gesture_and_settles(bmg, qapp):
