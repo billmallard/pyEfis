@@ -477,23 +477,93 @@ def _one_line_summary(name, snap, duration_s):
             ("; " + layer_bits) if layer_bits else ""))
 
 
+#: LayerStats fields that are cumulative counters (perf.py: "Cumulative
+#: for the process lifetime") rather than latest/max-observed values, so
+#: they are the ones that need to become a per-scenario delta below.
+_LAYER_COUNT_FIELDS = ("jobs_requested", "jobs_started", "jobs_published",
+                       "jobs_superseded")
+
+
+#: Ceiling on how long the warm-up render is allowed to take before its
+#: "before" snapshot is taken anyway (AER-2207's own real-data
+#: measurement saw terrain renders up to ~0.9 s -- comfortably under
+#: this, but the 0.1 s warm-up pump elsewhere in run_scenario() is not).
+_WARMUP_SETTLE_TIMEOUT_S = 5.0
+
+
+def _wait_for_layers_to_settle(app, w, timeout_s=_WARMUP_SETTLE_TIMEOUT_S):
+    """Pump until every layer's most recently requested job has
+    published, or *timeout_s* elapses (AER-2207).
+
+    Without this, a warm-up render slow enough to still be in flight
+    when run_scenario() takes its "before" snapshot publishes into the
+    "after" snapshot instead -- the scenario's own jobs_published delta
+    would then count a render the scenario did not cause, the same
+    contamination _delta_layers() exists to remove from jobs_requested,
+    just arriving on the other side of the before/after split."""
+    deadline = time.perf_counter() + timeout_s
+    while time.perf_counter() < deadline:
+        layers = w.perf.snapshot()["layers"]
+        if all(ls["jobs_published"] >= ls["jobs_requested"]
+               for ls in layers.values()):
+            return
+        _pump(app, 0.05)
+
+
+def _delta_layers(before, after):
+    """Per-layer job-lifecycle counters as a delta across the scenario
+    (AER-2207).
+
+    MapPerfStats counters are cumulative for the widget's whole
+    lifetime, and run_scenario()'s own deterministic warm-up below
+    genuinely renders once (a real settle, not a forced paintEvent) --
+    so an un-deltaed read counts that warm-up render as if the scenario
+    itself had requested it. That inflated ``pinch_out`` (10->160 NM) to
+    2 terrain jobs against section 5's budget of 1: one from the
+    warm-up at the widget's just-constructed 10 NM pose, one genuine
+    settle render at the pinch's own 160 NM end key. ``pinch_in``
+    (160->10 NM) read a misleadingly correct 1 for an unrelated reason
+    -- its settle key happens to land back on the SAME 10 NM/pose key
+    the warm-up already rendered, so its own genuine settle request is
+    absorbed into the cache rather than counted at all. Every MP8a
+    pytest budget (tests/perf/test_map_gestures.py) already computes
+    this same before/after delta by hand; this makes the CLI harness
+    that feeds ``makerplane/perf/map_gestures.jsonl`` agree with it.
+
+    ``last_render_ms``/``max_render_ms`` are latest/max-observed
+    values, not counts, so they are reported as-is from *after*."""
+    out = {}
+    for lid, ls in after.items():
+        b = before.get(lid, {})
+        d = dict(ls)
+        for field in _LAYER_COUNT_FIELDS:
+            d[field] = ls.get(field, 0) - b.get(field, 0)
+        out[lid] = d
+    return out
+
+
 def run_scenario(app, args, name, rev, host):
     w = build_widget(args)
     w.show()
     # Deterministic warm-up: build the layer set (same call paintEvent
     # would make lazily) without going through paintEvent -- the first
     # REAL paint the widget produces on its own frame-clock tick below
-    # is legitimate scenario activity (a live screen paints once before
-    # you can gesture on it); an extra forced paintEvent() call here
-    # would not be.
+    # is a realistic one-time render (a live screen paints once before
+    # you can gesture on it), not scenario activity; an extra forced
+    # paintEvent() call here would not even be realistic. Its own
+    # per-layer job counters are subtracted back out below (AER-2207)
+    # so it does not get counted as something the scenario itself did.
     w._build_layers()
     _pump(app, 0.1)   # let the frame clock's first tick paint + settle
+    _wait_for_layers_to_settle(app, w)   # let a slow warm-up render land
+    before_layers = w.perf.snapshot()["layers"]
 
     t0 = time.perf_counter()
     params = SCENARIOS[name](app, w, args)
     duration_s = time.perf_counter() - t0
 
     snap = w.perf.snapshot()
+    snap["layers"] = _delta_layers(before_layers, snap["layers"])
     summary = _one_line_summary(name, snap, duration_s)
     return dict(
         schema_version=SCHEMA_VERSION, rev=rev, host=host, scenario=name,

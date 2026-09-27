@@ -270,6 +270,16 @@ summary lines go to stderr so stdout stays pipeable. Each element:
       "terrain": {"jobs_requested": 1, "jobs_started": 1,
                   "jobs_published": 1, "jobs_superseded": 0,
                   "last_render_ms": 12.3, "max_render_ms": 12.3}
+                              // the 4 job-lifecycle counts are a DELTA
+                              // across just this scenario (AER-2207) --
+                              // MapPerfStats itself keeps them cumulative
+                              // for the widget's whole lifetime, but
+                              // run_scenario() subtracts back out its own
+                              // one-time construction warm-up render so
+                              // it isn't counted as the scenario's own.
+                              // last_render_ms/max_render_ms are latest/
+                              // max-observed, not counts, so they are not
+                              // deltaed.
     },                        // (omitted entirely) never appears here
     "water": {"polygons_before": 0, "vertices_before": 0,
               "polygons_after": 0, "vertices_after": 0,
