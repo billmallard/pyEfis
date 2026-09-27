@@ -124,11 +124,18 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")   # no display needed
 
-SCHEMA_VERSION = 1
+#: v2 (AER-2225): added top-level `timestamp` and `water_max_vertices`, and
+#: `params.range_actual_nm` on rotate/pan/ladder (previously pinch-only).
+#: Absent on every schema_version 1 line already in makerplane/perf/
+#: map_gestures.jsonl -- those nine entries are not rewritten (brief
+#: section 5's "MP9b baseline store" note), and a consumer reads a missing
+#: field as a bound, never a zero.
+SCHEMA_VERSION = 2
 
 #: gesture-event injection rate the brief specifies for every scenario.
 _EVENT_HZ = 60.0
@@ -175,6 +182,15 @@ _DEFAULT_H = 1040
 #: 160 NM, the scene the brief's numbers were measured against.
 _DEFAULT_LAT = 35.8
 _DEFAULT_LON = -78.8
+
+
+def _utc_timestamp():
+    """ISO-8601 UTC timestamp for the moment a run's result is built --
+    same convention as pyefis.flightplan's `created` fields. Without this
+    (AER-2225), "the previous entry" in makerplane/perf/map_gestures.jsonl
+    can only mean preceding-in-file-order, and an out-of-order append is
+    invisible."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _git_rev():
@@ -358,7 +374,8 @@ def scenario_rotate(app, w, args=None):
     finished()
     app.processEvents()
     return dict(sweep_deg=_ROTATE_SWEEP_DEG, events=_ROTATE_EVENTS,
-                event_hz=_EVENT_HZ, duration_s=_ROTATE_DURATION_S)
+                event_hz=_EVENT_HZ, duration_s=_ROTATE_DURATION_S,
+                range_actual_nm=w.range_nm)
 
 
 def scenario_pan(app, w, args=None):
@@ -370,7 +387,7 @@ def scenario_pan(app, w, args=None):
     _pump(app, _PAN_HOLD_S)
     return dict(dx_px_per_event=_PAN_PX_PER_EVENT, dy_px_per_event=0.0,
                 events=_PAN_EVENTS, event_hz=_EVENT_HZ,
-                hold_s=_PAN_HOLD_S)
+                hold_s=_PAN_HOLD_S, range_actual_nm=w.range_nm)
 
 
 def scenario_ladder(app, w, args=None):
@@ -382,7 +399,8 @@ def scenario_ladder(app, w, args=None):
         _pump(app, _LADDER_STEP_HOLD_S)
     _pump(app, _LADDER_FINAL_HOLD_S)
     return dict(ladder=ladder, step_hold_s=_LADDER_STEP_HOLD_S,
-                final_hold_s=_LADDER_FINAL_HOLD_S)
+                final_hold_s=_LADDER_FINAL_HOLD_S,
+                range_actual_nm=w.range_nm)
 
 
 SCENARIOS = {
@@ -566,8 +584,10 @@ def run_scenario(app, args, name, rev, host):
     snap["layers"] = _delta_layers(before_layers, snap["layers"])
     summary = _one_line_summary(name, snap, duration_s)
     return dict(
-        schema_version=SCHEMA_VERSION, rev=rev, host=host, scenario=name,
+        schema_version=SCHEMA_VERSION, timestamp=_utc_timestamp(),
+        rev=rev, host=host, scenario=name,
         widget=dict(w=args.w, h=args.h), lat=args.lat, lon=args.lon,
+        water_max_vertices=args.water_max_vertices,
         duration_s=duration_s, params=params, counters=snap,
         summary=summary)
 
