@@ -95,6 +95,33 @@ def test_check_budgets_ignores_scenario_absent_from_results(bmg):
     assert bmg.check_budgets(results, budgets) == []
 
 
+# --- guard: no shipped budget cites GuiProbe's trailing-ring percentiles ---
+#
+# AER-2241: probe.p95_ms/probe.max_ms are computed over GuiProbe's
+# RING_SIZE=256 trailing ring (map/perf.py), which saturates in ~2.6 s at
+# the 10 ms tick period regardless of how long the scenario ran -- on the
+# 41 s moving_position run that is ~6% of the window, so a GIL stall
+# anywhere earlier leaves them untouched and the gate silently passes.
+# over_count accumulates for the whole run and is the sound field
+# (oracle_gate.md reading rules 3-4: probe.p95_ms/probe.max_ms are
+# non-citable on any scenario). This walks every shipped budgets file so
+# the fix can't drift back one file at a time.
+
+def test_no_shipped_budget_cites_probe_percentile_bounds():
+    budgets_dir = _ROOT / "tools" / "budgets"
+    offenders = []
+    for path in sorted(budgets_dir.glob("*.json")):
+        budget = json.loads(path.read_text())
+        for scenario, checks in budget.items():
+            if scenario == "_comment":
+                continue
+            for check in checks:
+                p = check.get("path", "")
+                if p.endswith("probe.p95_ms") or p.endswith("probe.max_ms"):
+                    offenders.append("%s: %s.%s" % (path.name, scenario, p))
+    assert offenders == []
+
+
 # --- end-to-end: real MovingMap, offscreen, no data files ------------------
 
 def test_ladder_scenario_end_to_end(bmg, qapp):
@@ -541,30 +568,39 @@ def test_moving_position_budget_gate_via_main(bmg, qapp, tmp_path):
 
 
 def test_shipped_moving_position_budget_gates_map_on_probe_not_frame_gap(bmg):
-    """AER-1082 regression: the shipped budget must not resurrect AER-679's
-    borrowed 50 ms bound on map.frame_gap_ms.p95. AER-692 showed that path
-    reads ~205 ms p50 / ~292 ms p95 for a healthy map at 10 NM/130 kt --
-    pose-quantization arithmetic, not a defect -- so a bound there fails
-    every run, forever, correctly-behaving code included."""
+    """AER-1082 regression, map bound corrected AER-2241: the shipped
+    budget must not resurrect AER-679's borrowed 50 ms bound on
+    map.frame_gap_ms.p95, and must not gate the map on probe.p95_ms/
+    max_ms either -- those percentiles are computed over GuiProbe's
+    RING_SIZE=256 trailing ring, which saturates in ~2.6 s regardless of
+    run length, so on this scenario's ~41 s duration they only see the
+    last ~6% of the run (oracle_gate.md reading rules 3-4: non-citable).
+    AER-692 showed frame_gap_ms.p95 reads ~205 ms p50 / ~292 ms p95 for a
+    healthy map at 10 NM/130 kt -- pose-quantization arithmetic, not a
+    defect -- so a bound there fails every run, forever, correctly-
+    behaving code included."""
     budget = json.loads(
         (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
     checks = {c["path"]: c for c in budget["moving_position"]}
     assert "map.frame_gap_ms.p95" not in checks
-    assert checks["map.probe.p95_ms"]["max"] == 50
+    assert "map.probe.p95_ms" not in checks
+    assert "map.probe.max_ms" not in checks
+    assert checks["map.probe.over_count"]["max"] == 0
     assert checks["svs.frame_gap_ms.p95"]["max"] == 50
 
 
 def test_shipped_moving_position_budget_passes_healthy_quantized_map(bmg):
     """A map reading AER-692's own quantization numbers (~292 ms p95
-    frame_gap_ms) but a healthy GuiProbe gap (~10.9 ms, no GIL
-    starvation) must pass the shipped budget -- it would have failed the
-    old shared 50 ms frame_gap_ms bound despite being defect-free."""
+    frame_gap_ms) but a healthy GuiProbe (over_count=0, no GIL
+    starvation over the WHOLE run) must pass the shipped budget -- it
+    would have failed the old shared 50 ms frame_gap_ms bound despite
+    being defect-free."""
     budget = json.loads(
         (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
     result = dict(scenario="moving_position", counters=dict(
         svs=dict(frame_gap_ms=dict(p95=24.1)),
         map=dict(frame_gap_ms=dict(p95=292.0),
-                 probe=dict(p95_ms=10.9))))
+                 probe=dict(p95_ms=10.9, over_count=0))))
     assert bmg.check_budgets([result], budget) == []
 
 
@@ -584,8 +620,25 @@ def test_shipped_moving_position_budget_passes_healthy_svs(bmg):
     result = dict(scenario="moving_position", counters=dict(
         svs=dict(frame_gap_ms=dict(p95=34.0)),
         map=dict(frame_gap_ms=dict(p95=292.0),
-                 probe=dict(p95_ms=10.9))))
+                 probe=dict(p95_ms=10.9, over_count=0))))
     assert bmg.check_budgets([result], budget) == []
+
+
+def test_shipped_moving_position_budget_flags_a_stall_outside_the_trailing_ring(bmg):
+    """AER-2241: the whole point of gating on over_count instead of
+    probe.p95_ms/max_ms is that a GIL stall early in a long run, outside
+    GuiProbe's 256-sample trailing ring, must still trip the gate. A map
+    reading a clean p95/max (the stall has already scrolled out of the
+    ring) but a nonzero over_count from earlier in the run must fail."""
+    budget = json.loads(
+        (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
+    result = dict(scenario="moving_position", counters=dict(
+        svs=dict(frame_gap_ms=dict(p95=24.1)),
+        map=dict(frame_gap_ms=dict(p95=292.0),
+                 probe=dict(p95_ms=10.9, max_ms=13.6, over_count=1))))
+    violations = bmg.check_budgets([result], budget)
+    assert len(violations) == 1
+    assert violations[0]["path"] == "map.probe.over_count"
 
 
 def test_moving_position_svs_target_reports_or_skips_without_gl(bmg, qapp):
