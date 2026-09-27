@@ -10,6 +10,8 @@ right pixels) uses the repo's ``fix``/``qtbot`` fixtures, the same pattern
 ``tests/instruments/flight_plan/test_flight_plan.py`` uses for FP1 keys.
 """
 
+import gc
+
 import pytest
 from PyQt6.QtGui import QColor, QImage, QPainter
 from PyQt6.QtWidgets import QWidget
@@ -262,6 +264,17 @@ def test_paint_50_waypoints_within_perf_budget(fix, qtbot):
     p = QPainter(img)
     layer.paint(p, x)
     p.end()
+
+    # Collect right before the timed paint, not during it (AER-2158): the
+    # generational GC's collection point is driven by a process-global
+    # allocation count, not a per-test one, so whatever ran earlier in this
+    # process -- entirely unrelated tests -- can leave the count close enough
+    # to threshold that this layer's own paint()-time allocations tip it over
+    # and land a stop-the-world sweep inside the timed window, inflating
+    # last_render_ms with a pause this layer didn't cause and can't control.
+    # Starting the timed section from a clean count is what makes the
+    # measurement about this layer's render cost again.
+    gc.collect()
 
     p = QPainter(img)
     layer.paint(p, x)

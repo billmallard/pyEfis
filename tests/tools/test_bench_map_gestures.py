@@ -7,16 +7,24 @@ at all. The end-to-end tests build a real offscreen MovingMap with no
 data files configured -- every layer stays trivially settled (brief:
 "Layers with no async render... Default True"), so these stay fast while
 still exercising the harness's own plumbing (event pump, gesture
-bracket, JSON schema, --budget exit code) against the real widget."""
+bracket, JSON schema, --budget exit code) against the real widget.
+
+The "terrain render count" group below is the AER-2207 regression: it
+configures a real (synthetic) ``--tile-path`` so TerrainLayer actually
+requests/renders jobs, which every test above deliberately avoids for
+speed."""
 
 import importlib.util
 import json
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
+
+_TILE_LAT, _TILE_LON = 35.8, -78.8
 
 
 def _load(name):
@@ -114,6 +122,108 @@ def test_pinch_out_runs_full_gesture_and_settles(bmg, qapp):
     assert r["params"]["range_actual_nm"] == pytest.approx(160.0, abs=1.0)
     assert r["counters"]["settle_latency_ms"] is not None
     assert r["counters"]["probe"]["count"] > 0   # map_perf_log started it
+
+
+# --- terrain render count (AER-2207) ---------------------------------------
+#
+# Section 5 (briefs/map_gesture_perf_plan.md) budgets "terrain renders per
+# pinch gesture" at 1. run_scenario() used to report the widget's own
+# construction-time warm-up render (build_widget() constructs at 10 NM,
+# and the deterministic warm-up a few lines later genuinely renders that
+# pose) as if the scenario itself had requested it, because its "counters"
+# were the raw, un-deltaed, whole-widget-lifetime snapshot. That inflated
+# pinch_out (10 -> 160 NM) to 2 -- one real render at each end of the
+# gesture -- while pinch_in (160 -> 10 NM) happened to read the "correct" 1
+# for an unrelated reason: its own settle render lands back on the exact
+# pose the warm-up already cached, so it is served from cache and never
+# requested at all. Both readings were artifacts of the same un-deltaed
+# snapshot, not evidence about the gesture itself.
+
+@pytest.fixture(scope="module")
+def tile_root(tmp_path_factory):
+    """A synthetic GLO-30-shaped tile grid, same recipe as
+    tests/perf/test_map_gestures.py::tile_root -- 121x121 big-endian
+    int16 tiles (~29 kB each) are real tiles as far as TileCache and
+    TerrainLayer._sample are concerned, spanning +-4 deg of the scene so
+    the oversized north-up window at 160 NM stays covered."""
+    root = tmp_path_factory.mktemp("tiles")
+    n = 121
+    body = ((np.arange(n * n, dtype=">i2") % 500) + 100).reshape(n, n)
+    for lat in range(int(_TILE_LAT) - 4, int(_TILE_LAT) + 5):
+        d = root / ("N%02d" % lat)
+        d.mkdir(exist_ok=True)
+        for lon in range(int(abs(_TILE_LON)) - 4, int(abs(_TILE_LON)) + 5):
+            body.tofile(d / ("N%02dW%03d.hgt" % (lat, lon)))
+    return root
+
+
+def _run_terrain_scenario(bmg, qapp, tile_root, scenario):
+    bmg._bootstrap_fix_db(_TILE_LAT, _TILE_LON, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", scenario, "--w", "300", "--h", "300",
+         "--lat", str(_TILE_LAT), "--lon", str(_TILE_LON),
+         "--tile-path", str(tile_root)])
+    return bmg.run_scenario(qapp, args, scenario, "deadbeef", "test-host")
+
+
+def test_pinch_out_counts_exactly_one_terrain_render(bmg, qapp, tile_root):
+    """The AER-2207 regression pin: before the fix this read 2."""
+    r = _run_terrain_scenario(bmg, qapp, tile_root, "pinch_out")
+    terrain = r["counters"]["layers"]["terrain"]
+    assert terrain["jobs_requested"] == 1
+    assert terrain["jobs_published"] == 1
+    assert terrain["jobs_superseded"] == 0
+
+
+def test_pan_counts_exactly_one_terrain_render(bmg, qapp, tile_root):
+    """Not a second, pan-specific render mechanism (as AER-2207 floated
+    as a live possibility) -- the same construction-time warm-up
+    artifact as pinch_out, confirmed by the fact that deltaing it away
+    leaves exactly one genuine render, the same as every other gesture
+    here."""
+    r = _run_terrain_scenario(bmg, qapp, tile_root, "pan")
+    terrain = r["counters"]["layers"]["terrain"]
+    assert terrain["jobs_requested"] == 1
+    assert terrain["jobs_published"] == 1
+    assert terrain["jobs_superseded"] == 0
+
+
+def test_pinch_in_counts_no_new_terrain_render(bmg, qapp, tile_root):
+    """The companion that explains why pinch_in read "1" even before the
+    fix, for the wrong reason: it ends exactly at build_widget()'s own
+    10 NM/pose default, so its settle render is served entirely from the
+    warm-up's cache and never becomes a new request."""
+    r = _run_terrain_scenario(bmg, qapp, tile_root, "pinch_in")
+    terrain = r["counters"]["layers"]["terrain"]
+    assert terrain["jobs_requested"] == 0
+    assert terrain["jobs_published"] == 0
+
+
+def test_delta_layers_subtracts_the_warmup_from_the_scenario(bmg):
+    before = {"terrain": {"jobs_requested": 1, "jobs_started": 1,
+                          "jobs_published": 1, "jobs_superseded": 0,
+                          "last_render_ms": 12.0, "max_render_ms": 12.0}}
+    after = {"terrain": {"jobs_requested": 2, "jobs_started": 2,
+                         "jobs_published": 2, "jobs_superseded": 0,
+                         "last_render_ms": 34.0, "max_render_ms": 34.0}}
+    delta = bmg._delta_layers(before, after)
+    assert delta["terrain"]["jobs_requested"] == 1
+    assert delta["terrain"]["jobs_published"] == 1
+    # latest/max-observed values are not counts -- reported as-is.
+    assert delta["terrain"]["last_render_ms"] == 34.0
+    assert delta["terrain"]["max_render_ms"] == 34.0
+
+
+def test_delta_layers_handles_a_layer_that_only_appears_after(bmg):
+    """A layer with no jobs during warm-up is absent from "before"
+    entirely (perf.snapshot() only lists layers that registered a job) --
+    the delta must read as the layer's own full count, not fail on the
+    missing key."""
+    after = {"navaids": {"jobs_requested": 3, "jobs_started": 3,
+                         "jobs_published": 3, "jobs_superseded": 0,
+                         "last_render_ms": 1.0, "max_render_ms": 2.0}}
+    delta = bmg._delta_layers({}, after)
+    assert delta["navaids"]["jobs_requested"] == 3
 
 
 def test_main_writes_json_array_and_exits_zero(bmg, qapp, tmp_path):

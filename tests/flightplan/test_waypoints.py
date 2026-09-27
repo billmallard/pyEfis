@@ -48,10 +48,17 @@ AIRPORTS = [
 ]
 
 # (id, type, name, freq, elev_ft, lat, lon)
+# GVO, RZS and POM are real cycle-2609 navaids (ident/type/freq/coordinates
+# cross-checked against a live CIFP file with packtools.arinc424 -- AER-2151
+# corrected RZS, which this table used to call "Reyes" at 115.40/-119.55000
+# even though the published navaid at that ident is San Marcus at
+# 114.90/-119.77099, ~58 km away, and POM, which it called an NDB at 356
+# even though the published navaid is a VOR/DME at 110.40). ZZZ is
+# synthetic, chosen deliberately to collide with a fix ident below.
 NAVAIDS = [
-    ("GVO", "VOR/DME", "Gaviota", "113.90", 2125, 34.53142, -120.09106),
-    ("RZS", "VOR/DME", "Reyes",   "115.40", 1500, 34.02000, -119.55000),
-    ("POM", "NDB",     "Pomona",  "356",    800,  34.06000, -117.75000),
+    ("GVO", "VOR/DME", "Gaviota",     "113.90", 2125, 34.53142, -120.09106),
+    ("RZS", "VOR/DME", "San Marcus",  "114.90", 1500, 34.50953, -119.77099),
+    ("POM", "VOR/DME", "Pomona",      "110.40", 800,  34.07839, -117.78707),
     ("ZZZ", "VOR",     "Zulu Zulu Zulu", "112.30", 900, 34.50000, -119.50000),  # dup ident w/ a fix
 ]
 
