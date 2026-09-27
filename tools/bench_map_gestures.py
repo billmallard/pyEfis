@@ -124,11 +124,29 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")   # no display needed
 
-SCHEMA_VERSION = 1
+#: v2 (AER-2225): added top-level `timestamp` and `water_max_vertices`, and
+#: `params.range_actual_nm` on rotate/pan/ladder (previously pinch-only).
+#: Absent on every schema_version 1 line already in makerplane/perf/
+#: map_gestures.jsonl -- those nine entries are not rewritten (brief
+#: section 5's "MP9b baseline store" note), and a consumer reads a missing
+#: field as a bound, never a zero.
+#: v3 (AER-2240): `counters.probe` gains `starved_ms`/`window_ms`/`ticks`
+#: (GuiProbe's own O(1) accumulators, map/perf.py) so section 5's
+#: "GUI-thread starved <= 10% of the gesture window" row has something to
+#: check -- `starved_ms / window_ms` is that ratio, exactly. Reported
+#: here scoped to the INTERACTION (gesture-bracket start to settle
+#: complete, or to the last event if no settle lands), not the whole
+#: scenario -- pinch_out's 5 s deliberate idle hold would otherwise
+#: dilute a real stall by ~4.3x. `count` is unchanged (ring occupancy,
+#: docs/moving_map_spec.md section 9.1); `ticks` beside it is the honest
+#: tick count. Additive-only per metric (AER-2233's comparability
+#: ruling), so every existing v1/v2 field/trend stays intact.
+SCHEMA_VERSION = 3
 
 #: gesture-event injection rate the brief specifies for every scenario.
 _EVENT_HZ = 60.0
@@ -175,6 +193,15 @@ _DEFAULT_H = 1040
 #: 160 NM, the scene the brief's numbers were measured against.
 _DEFAULT_LAT = 35.8
 _DEFAULT_LON = -78.8
+
+
+def _utc_timestamp():
+    """ISO-8601 UTC timestamp for the moment a run's result is built --
+    same convention as pyefis.flightplan's `created` fields. Without this
+    (AER-2225), "the previous entry" in makerplane/perf/map_gestures.jsonl
+    can only mean preceding-in-file-order, and an out-of-order append is
+    invisible."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _git_rev():
@@ -316,6 +343,46 @@ def _gesture_bracket(w):
             lambda: w._gesture_phase(GS.GestureFinished))
 
 
+#: Ceiling on how long a gesture's settle measurement is allowed to take
+#: before the interaction window is closed anyway (AER-2240). Generous
+#: headroom, not a tuned bound -- with no data paths configured every
+#: layer is trivially settled (is_settled() short-circuits True, brief
+#: section 4), so settle lands almost immediately in every scenario this
+#: harness runs without --tile-path/--water-db/etc.
+_SETTLE_WAIT_TIMEOUT_S = 5.0
+
+
+def _wait_for_settle(app, w, timeout_s=_SETTLE_WAIT_TIMEOUT_S):
+    """Pump until the widget's own settle measurement completes
+    (``_perf_settle_pending`` clears -- MP6's ``settle_latency_ms``) or
+    *timeout_s* elapses. AER-2240 requirement #3's "gesture-bracket start
+    to settle complete" window closes here; the *timeout_s* fallback is
+    requirement #3's other case, "the last gesture event where no settle
+    is measured" -- the window still closes, just without a completed
+    settle to close it on."""
+    deadline = time.perf_counter() + timeout_s
+    while getattr(w, "_perf_settle_pending", False):
+        if time.perf_counter() >= deadline:
+            return False
+        _pump(app, 0.01)
+    return True
+
+
+def _probe_window_delta(before, after):
+    """starved_ms/window_ms/ticks as a delta across one interaction
+    (AER-2240) -- GuiProbe's counters are cumulative for the widget's
+    whole lifetime, the same shape LayerStats' job counters are, so the
+    same delta pattern ``_delta_layers`` already uses for those applies
+    here: section 5's "the denominator is the interaction, not the
+    scenario" means a scenario's own idle hold after the gesture (5 s on
+    pinch_out) must not dilute the fraction, so the window is
+    snapshotted at the interaction's own boundaries, not the scenario's
+    whole duration."""
+    return dict(starved_ms=after["starved_ms"] - before["starved_ms"],
+                window_ms=after["window_ms"] - before["window_ms"],
+                ticks=after["ticks"] - before["ticks"])
+
+
 # --- scenarios --------------------------------------------------------
 
 def _scenario_pinch(app, w, lo_nm, hi_nm, zoom_in):
@@ -327,14 +394,18 @@ def _scenario_pinch(app, w, lo_nm, hi_nm, zoom_in):
     w.range_nm = start
     factor = (start / end) ** (1.0 / _PINCH_EVENTS)
     started, finished = _gesture_bracket(w)
+    probe_before = w.perf.probe.stats()
     started()
     _run_events(app, [lambda f=factor: w.zoom_by(f)
                       for _ in range(_PINCH_EVENTS)])
     finished()
+    _wait_for_settle(app, w)
+    probe_after = w.perf.probe.stats()
     _pump(app, _PINCH_HOLD_S)
     return dict(range_from_nm=start, range_to_nm=end,
                 range_actual_nm=w.range_nm, events=_PINCH_EVENTS,
-                event_hz=_EVENT_HZ, hold_s=_PINCH_HOLD_S)
+                event_hz=_EVENT_HZ, hold_s=_PINCH_HOLD_S,
+                _probe_window=_probe_window_delta(probe_before, probe_after))
 
 
 def scenario_pinch_out(app, w, args=None):
@@ -351,38 +422,58 @@ def scenario_pinch_in(app, w, args=None):
 
 def scenario_rotate(app, w, args=None):
     started, finished = _gesture_bracket(w)
+    probe_before = w.perf.probe.stats()
     started()
     delta = _ROTATE_SWEEP_DEG / _ROTATE_EVENTS
     _run_events(app, [lambda d=delta: w.rotate_by(d)
                       for _ in range(_ROTATE_EVENTS)])
     finished()
+    _wait_for_settle(app, w)
+    probe_after = w.perf.probe.stats()
     app.processEvents()
     return dict(sweep_deg=_ROTATE_SWEEP_DEG, events=_ROTATE_EVENTS,
-                event_hz=_EVENT_HZ, duration_s=_ROTATE_DURATION_S)
+                event_hz=_EVENT_HZ, duration_s=_ROTATE_DURATION_S,
+                range_actual_nm=w.range_nm,
+                _probe_window=_probe_window_delta(probe_before, probe_after))
 
 
 def scenario_pan(app, w, args=None):
     started, finished = _gesture_bracket(w)
+    probe_before = w.perf.probe.stats()
     started()
     _run_events(app, [lambda: w.pan_by(_PAN_PX_PER_EVENT, 0.0)
                       for _ in range(_PAN_EVENTS)])
     finished()
+    _wait_for_settle(app, w)
+    probe_after = w.perf.probe.stats()
     _pump(app, _PAN_HOLD_S)
     return dict(dx_px_per_event=_PAN_PX_PER_EVENT, dy_px_per_event=0.0,
                 events=_PAN_EVENTS, event_hz=_EVENT_HZ,
-                hold_s=_PAN_HOLD_S)
+                hold_s=_PAN_HOLD_S, range_actual_nm=w.range_nm,
+                _probe_window=_probe_window_delta(probe_before, probe_after))
 
 
 def scenario_ladder(app, w, args=None):
     ladder = w._ladder()
     w.range_nm = ladder[0]
     _pump(app, _LADDER_STEP_HOLD_S)
+    # No gesture bracket/settle here -- range_up() is the MP1 DoD's
+    # "immediate, no gesture gating" path, so it never marks a gesture
+    # event or a settle measurement (map/__init__.py: only zoom_by/
+    # pan_by/rotate_by call _perf_mark_gesture_event). The interaction
+    # window is instead the stepping loop itself, bracketed by hand --
+    # the same "last event, no settle measured" case AER-2240
+    # requirement #3 calls out, excluding only the final hold.
+    probe_before = w.perf.probe.stats()
     for _ in ladder[1:]:
         w.range_up()
         _pump(app, _LADDER_STEP_HOLD_S)
+    probe_after = w.perf.probe.stats()
     _pump(app, _LADDER_FINAL_HOLD_S)
     return dict(ladder=ladder, step_hold_s=_LADDER_STEP_HOLD_S,
-                final_hold_s=_LADDER_FINAL_HOLD_S)
+                final_hold_s=_LADDER_FINAL_HOLD_S,
+                range_actual_nm=w.range_nm,
+                _probe_window=_probe_window_delta(probe_before, probe_after))
 
 
 SCENARIOS = {
@@ -564,10 +655,18 @@ def run_scenario(app, args, name, rev, host):
 
     snap = w.perf.snapshot()
     snap["layers"] = _delta_layers(before_layers, snap["layers"])
+    # AER-2240: counters.probe.{starved_ms,window_ms,ticks} report the
+    # INTERACTION's own window (popped off params -- see each scenario's
+    # `_probe_window`), not w.perf.probe's whole-widget-lifetime
+    # cumulative reading snapshot() would otherwise report here -- the
+    # same reason layers gets deltaed above, applied to the GUI probe.
+    snap["probe"].update(params.pop("_probe_window"))
     summary = _one_line_summary(name, snap, duration_s)
     return dict(
-        schema_version=SCHEMA_VERSION, rev=rev, host=host, scenario=name,
+        schema_version=SCHEMA_VERSION, timestamp=_utc_timestamp(),
+        rev=rev, host=host, scenario=name,
         widget=dict(w=args.w, h=args.h), lat=args.lat, lon=args.lon,
+        water_max_vertices=args.water_max_vertices,
         duration_s=duration_s, params=params, counters=snap,
         summary=summary)
 

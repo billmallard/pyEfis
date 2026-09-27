@@ -441,3 +441,98 @@ def test_gui_probe_reports_gap_when_gil_held(qtbot):
     stats = probe.stats()
     assert stats["max_ms"] > PROBE_GAP_WARN_MS
     assert stats["over_count"] >= 1
+
+
+# --- GuiProbe starved_ms/window_ms/ticks (AER-2240) ----------------------
+#
+# Section 5's "GUI-thread starved <= 10% of the gesture window" row was
+# gated on nothing -- the record had no way to express a ratio of two
+# wall-clock durations. These two tests pin the accounting so a later
+# edit that breaks it fails loudly instead of shipping a quiet drift in
+# what the ratio means.
+
+class _FakeClock:
+    """A monotonic nanosecond clock GuiProbe._tick's own
+    ``time.perf_counter_ns()`` call can be pointed at, so a test can feed
+    an exact, hand-computed gap sequence instead of racing real wall
+    time."""
+
+    def __init__(self):
+        self._ns = 0.0
+
+    def advance_ms(self, ms):
+        self._ns += ms * 1e6
+
+    def now_ns(self):
+        return self._ns
+
+
+def test_gui_probe_starved_and_window_match_hand_computed(monkeypatch):
+    """Pinning test #1 (AER-2240): feed ``_tick`` a synthetic gap
+    sequence -- including one gap under ``interval_ms`` -- and assert
+    ``starved_ms``/``window_ms``/``ticks`` equal the hand-computed
+    values exactly. ``starved_ms`` is a sum of ``max(0, gap -
+    interval_ms)`` terms, never a raw gap sum, so the under-interval gap
+    exercises the clamp: without it, a healthy gap would count as
+    negative starvation and understate the true fraction."""
+    probe = GuiProbe(interval_ms=10.0)
+    clock = _FakeClock()
+    monkeypatch.setattr(time, "perf_counter_ns", clock.now_ns)
+
+    probe._tick()   # establishes _last_ns; no gap yet, no tick counted
+    gaps_ms = [10.0, 15.0, 4.0, 60.0, 9.5]
+    for g in gaps_ms:
+        clock.advance_ms(g)
+        probe._tick()
+
+    stats = probe.stats()
+    expected_window = sum(gaps_ms)
+    expected_starved = sum(max(0.0, g - probe.interval_ms) for g in gaps_ms)
+    assert stats["ticks"] == len(gaps_ms)
+    assert stats["window_ms"] == pytest.approx(expected_window)
+    assert stats["starved_ms"] == pytest.approx(expected_starved)
+    # the 4.0 ms gap is under interval_ms=10.0 -- without the clamp this
+    # would push starved_ms below the value asserted above.
+    assert expected_starved < expected_window
+
+
+def test_gui_probe_windowed_fraction_survives_trailing_idle_padding(
+        monkeypatch):
+    """Pinning test #2 (AER-2240): a delta taken between a snapshot at
+    the interaction's start and one taken the moment it ends (the same
+    before/after pattern ``_delta_layers`` already uses for LayerStats)
+    must report the same starved fraction whether or not a long idle
+    hold follows -- exactly the pinch_out shape (a real gesture stall,
+    then 5 s of deliberate idle). The last assertion pins the failure
+    mode section 5's windowing exists to rule out: reading the fraction
+    off the WHOLE run instead dilutes a real stall as the pad grows."""
+    def measure(pad_ticks):
+        probe = GuiProbe(interval_ms=10.0)
+        clock = _FakeClock()
+        monkeypatch.setattr(time, "perf_counter_ns", clock.now_ns)
+        probe._tick()
+        before = probe.stats()
+        for g in (10.0, 10.0, 10.0, 10.0, 10.0, 600.0):
+            clock.advance_ms(g)
+            probe._tick()
+        after_interaction = probe.stats()
+        for _ in range(pad_ticks):
+            clock.advance_ms(10.0)
+            probe._tick()
+        whole_run = probe.stats()
+
+        def _fraction(a, b):
+            return ((b["starved_ms"] - a["starved_ms"])
+                    / (b["window_ms"] - a["window_ms"]))
+
+        return (_fraction(before, after_interaction),
+                _fraction(before, whole_run))
+
+    windowed_no_pad, whole_no_pad = measure(pad_ticks=0)
+    windowed_with_pad, whole_with_pad = measure(pad_ticks=500)
+
+    assert windowed_no_pad == pytest.approx(windowed_with_pad)
+    assert whole_with_pad < whole_no_pad, (
+        "appending idle padding after the interaction should dilute a "
+        "whole-run fraction -- if it doesn't, this test stopped "
+        "exercising the failure mode section 5 windowing exists to fix")
