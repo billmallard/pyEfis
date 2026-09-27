@@ -332,7 +332,7 @@ class TerrainLayer(MapLayer):
         native = M_PER_DEG_LAT / ((tile.shape[0] - 1) if tile is not None
                                   else 1200)
         mip = max(0, min(6, int(round(math.log2(max(1.0, mpp / native))))))
-        elev_m, water = self._sample(lats, lons, mip)
+        elev_m, water, mask_hit = self._sample(lats, lons, mip)
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
         if self._mode == "caution":
@@ -356,6 +356,20 @@ class TerrainLayer(MapLayer):
         rgbx[..., 2] = b
         rgbx[..., 3] = 255
         have_water = self._water is not None and self._water.ready
+        # MP10c (brief section 4, Track 2): once the pack ships a water
+        # mask at the chosen mip, it is already baked into `water` above
+        # (a nearest-neighbour gather -- one memmap slice, not a per-frame
+        # polygon rasterize) -- the crisp WaterDB polygon overlay only
+        # earns its keep close-in, where shoreline detail actually shows
+        # on screen. `water_polygon_max_nm` (default 20 NM, Bill approved
+        # 2026-09-06) is compared against the pilot's NOMINAL range_nm,
+        # same convention as `_WATER_FULL_MAX_NM` above. An older pack
+        # with no mask (`mask_hit` False) always draws polygons -- reader
+        # fallback, unchanged behaviour.
+        water_polygon_max_nm = float(
+            getattr(self._owner, "water_polygon_max_nm", 20.0) or 20.0)
+        draw_polygons = have_water and (
+            range_nm <= water_polygon_max_nm or not mask_hit)
         # MP5: numpy is the default -- the mask lands directly on rgbx
         # BEFORE the QImage exists, after the caution tint (water is
         # not a TAWS surface). `water_raster: qt` keeps the legacy
@@ -363,11 +377,11 @@ class TerrainLayer(MapLayer):
         # section 4 MP5 guardrail).
         raster_mode = str(getattr(self._owner, "water_raster", "numpy")
                           or "numpy")
-        if have_water and raster_mode != "qt":
+        if draw_polygons and raster_mode != "qt":
             self._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, range_nm)
         qimg = QImage(rgbx.data, n, n, 4 * n,
                       QImage.Format.Format_RGBX8888).copy()
-        if have_water and raster_mode == "qt":
+        if draw_polygons and raster_mode == "qt":
             self._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, range_nm)
         return qimg, (lat0, lon0, mpp)
 
@@ -553,12 +567,26 @@ class TerrainLayer(MapLayer):
 
         Wide-range fast path: when a coarse mosaic exists for this mip level, the
         whole window is one memmap slice + one bilinear -- no per-degree file
-        opens (the measured cold-I/O bottleneck; map_wide_range_perf_plan.md)."""
+        opens (the measured cold-I/O bottleneck; map_wide_range_perf_plan.md).
+
+        Returns ``(elev, water, mask_hit)``. MP10c (brief section 4, Track 2):
+        ``water`` also carries the ``.wmask`` pyramid, gathered NEAREST-
+        NEIGHBOUR (not bilinear -- it is a boolean coverage bit, not a
+        continuous field) on the exact same row/col indices the elevation
+        bilinear already computed above. ``mask_hit`` reports whether any
+        real mask was found for this window (as opposed to every touched
+        tile/mosaic level lacking a ``.wmask`` sibling); ``_render`` uses it
+        to decide whether the polygon overlay is still needed as the only
+        source of truth for this pack edition."""
         mos = (self._cache.get_mosaic(mip)
                if hasattr(self._cache, "get_mosaic") else None)
         if mos is not None:
-            return self._sample_mosaic(lats, lons, mos)
+            mmask = (self._cache.get_mosaic_mask(mip)
+                     if hasattr(self._cache, "get_mosaic_mask") else None)
+            return self._sample_mosaic(lats, lons, mos, mmask)
         elev = np.full((lats.size, lons.size), -9999.0, dtype=np.float32)
+        mask_grid = np.zeros((lats.size, lons.size), dtype=bool)
+        mask_hit = False
         tl = np.floor(lats).astype(np.int32)   # per-row tile latitude
         tn = np.floor(lons).astype(np.int32)   # per-col tile longitude
         for la in np.unique(tl):
@@ -579,22 +607,35 @@ class TerrainLayer(MapLayer):
                 c0 = np.floor(cf).astype(np.int32)
                 dr = (rf - r0).astype(np.float32)[:, None]
                 dc = (cf - c0).astype(np.float32)[None, :]
-                r0 = r0[:, None]
-                c0 = c0[None, :]
+                r0b = r0[:, None]
+                c0b = c0[None, :]
                 elev[np.ix_(rsel, csel)] = (
-                    t[r0, c0] * (1 - dr) * (1 - dc)
-                    + t[r0, c0 + 1] * (1 - dr) * dc
-                    + t[r0 + 1, c0] * dr * (1 - dc)
-                    + t[r0 + 1, c0 + 1] * dr * dc)
-        water = (elev < -4500.0) | (elev == 0.0)
-        return np.where(water, 0.0, elev), water
+                    t[r0b, c0b] * (1 - dr) * (1 - dc)
+                    + t[r0b, c0b + 1] * (1 - dr) * dc
+                    + t[r0b + 1, c0b] * dr * (1 - dc)
+                    + t[r0b + 1, c0b + 1] * dr * dc)
+                m = (self._cache.get_mask(int(la), int(lo), mip)
+                     if hasattr(self._cache, "get_mask") else None)
+                if m is not None:
+                    mask_hit = True
+                    rn = np.clip(np.round(rf).astype(np.int32), 0, nn - 1)
+                    cn = np.clip(np.round(cf).astype(np.int32), 0, nn - 1)
+                    mask_grid[np.ix_(rsel, csel)] = m[np.ix_(rn, cn)]
+        water = (elev < -4500.0) | (elev == 0.0) | mask_grid
+        return np.where(water, 0.0, elev), water, mask_hit
 
-    def _sample_mosaic(self, lats, lons, mos):
+    def _sample_mosaic(self, lats, lons, mos, mask=None):
         """One vectorised bilinear off the memory-mapped coarse mosaic -- the
         wide-range fast path. No per-tile file opens and no Python tile loop:
         the north-up window is separable, so row/col indices are computed on the
         1-D axes and a single fancy-index gather pages in just the touched span
-        of the one mmap (map_wide_range_perf_plan.md)."""
+        of the one mmap (map_wide_range_perf_plan.md).
+
+        *mask*, when given (``TileCache.get_mosaic_mask``'s result), is
+        gathered NEAREST-NEIGHBOUR on the same ``rf_raw``/``cf_raw`` this
+        method already computes for the elevation bilinear (MP10c) -- OOB
+        cells are excluded from the mask gather the same way they already
+        force ``water`` via the elevation ``oob`` term below."""
         arr, meta = mos
         spd = meta["spd"]
         R = meta["rows"]
@@ -616,4 +657,10 @@ class TerrainLayer(MapLayer):
         elev = (v00 * (1 - dr) * (1 - dc) + v01 * (1 - dr) * dc
                 + v10 * dr * (1 - dc) + v11 * dr * dc)
         water = (elev < -4500.0) | (elev == 0.0) | oob
-        return np.where(water, 0.0, elev), water
+        mask_hit = mask is not None
+        if mask_hit:
+            rn = np.clip(np.round(rf_raw).astype(np.int64), 0, R - 1)
+            cn = np.clip(np.round(cf_raw).astype(np.int64), 0, C - 1)
+            gathered = mask[np.ix_(rn, cn)]
+            water = water | (gathered & ~oob)
+        return np.where(water, 0.0, elev), water, mask_hit

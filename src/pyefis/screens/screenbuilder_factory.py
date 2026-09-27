@@ -1127,6 +1127,12 @@ _register(InstrumentSpec(
              help="numpy = vectorised even-odd scanline fill (MP5, "
                   "default); qt = legacy per-vertex QPointF/QPolygonF/"
                   "drawPath path, kept for one release of A/B"),
+        Prop("water_polygon_max_nm", "number", default=20.0, minimum=0,
+             maximum=320, step=5, label="Water polygon cutover (NM)",
+             help="above this range the crisp coastline/lake polygon "
+                  "overlay is skipped in favour of the terrain pack's "
+                  "water-mask channel (one gather, MP10c); packs with no "
+                  "mask at the chosen level always draw polygons"),
         Prop("map_perf_log", "boolean", default=False,
              label="Perf: log summary",
              help="print a MapPerfStats summary every 2s (frames, paint "
