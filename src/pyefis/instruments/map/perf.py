@@ -134,13 +134,32 @@ class GuiProbe:
     event loop's -- so GIL starvation from ANY worker (map or SVS) shows
     up here as a gap far larger than ``interval_ms``. This is the
     objective "does the screen redraw" number the perf plan asks for in
-    place of impressions (brief section 3)."""
+    place of impressions (brief section 3).
+
+    ``starved_ms``/``window_ms``/``ticks`` (AER-2240) are O(1)
+    accumulators alongside the ``_gaps`` ring: ``starved_ms`` is the
+    cumulative time each gap ran over ``interval_ms`` (a gap at or under
+    the interval contributes 0, never negative), ``window_ms`` is the
+    cumulative gap time itself (the probe's own measured span, not a
+    wall-clock subtraction), and ``ticks`` is the true tick count --
+    unlike ``count`` below, which is ring OCCUPANCY (``len(self._gaps)``,
+    capped at ``RING_SIZE``) and reads as a constant 256 on any run long
+    enough to fill the ring. ``starved_ms / window_ms`` is then the
+    section 5 "GUI-thread starved <= 10% of the gesture window" ratio,
+    exactly, with no percentile or threshold baked in here -- a caller
+    scopes the window (e.g. to one gesture's interaction span) by
+    snapshotting ``stats()`` before and after and differencing these
+    three fields, the same delta pattern already used for LayerStats'
+    cumulative job counters."""
 
     def __init__(self, interval_ms=PROBE_INTERVAL_MS,
                  gap_warn_ms=PROBE_GAP_WARN_MS):
         self.interval_ms = interval_ms
         self.gap_warn_ms = gap_warn_ms
         self.over_count = 0
+        self.starved_ms = 0.0
+        self.window_ms = 0.0
+        self.ticks = 0
         self._gaps = _Ring()
         self._last_ns = None
         self._timer = None
@@ -171,16 +190,23 @@ class GuiProbe:
             self._gaps.add(gap_ms)
             if gap_ms > self.gap_warn_ms:
                 self.over_count += 1
+            self.starved_ms += max(0.0, gap_ms - self.interval_ms)
+            self.window_ms += gap_ms
+            self.ticks += 1
         self._last_ns = now
 
     def stats(self):
         p50, p95, mx, n = self._gaps.stats()
         return dict(p50_ms=p50, p95_ms=p95, max_ms=mx, count=n,
-                    over_count=self.over_count)
+                    over_count=self.over_count, starved_ms=self.starved_ms,
+                    window_ms=self.window_ms, ticks=self.ticks)
 
     def reset(self):
         self._gaps = _Ring()
         self.over_count = 0
+        self.starved_ms = 0.0
+        self.window_ms = 0.0
+        self.ticks = 0
 
 
 class MapPerfStats:

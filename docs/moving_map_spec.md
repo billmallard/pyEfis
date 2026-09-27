@@ -253,7 +253,7 @@ summary lines go to stderr so stdout stays pipeable. Each element:
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "timestamp": "2026-09-27T18:04:11.203841+00:00",  // UTC, datetime.now(timezone.utc).isoformat()
   "rev": "b4d3349",            // git short SHA, "" outside a checkout
   "host": "beelinkpyefis",     // socket.gethostname()
@@ -292,17 +292,40 @@ summary lines go to stderr so stdout stays pipeable. Each element:
               "qpointf_count": 0},
     "settle_latency_ms": 97.0, // null if no gesture completed a settle
     "probe": {"p50_ms": 10.7, "p95_ms": 10.8, "max_ms": 11.0,
-              "count": 256,   // ring OCCUPANCY, capped at RING_SIZE=256
-                              // (map/perf.py) -- NOT a tick count. p50/
-                              // p95/max_ms are computed over only this
-                              // trailing ring, so once it saturates
-                              // (~2.6 s at the 10 ms tick period) they
-                              // are blind to anything earlier in a
-                              // longer run; do not cite them as
-                              // run-length evidence (AER-2241,
+              "count": 256, "over_count": 0,
+              "starved_ms": 3.2, "window_ms": 1503.4, "ticks": 150}
+                              // count is RING OCCUPANCY, capped at
+                              // RING_SIZE=256 (map/perf.py) -- NOT a
+                              // tick count. p50/p95/max_ms are computed
+                              // over only this trailing ring, so once it
+                              // saturates (~2.6 s at the 10 ms tick
+                              // period) they are blind to anything
+                              // earlier in a longer run; do not cite
+                              // them as run-length evidence (AER-2241,
                               // oracle_gate.md reading rules 3-4).
-              "over_count": 0} // accumulates for the WHOLE run -- the
-                              // only probe field it is sound to gate on
+                              // over_count accumulates for the WHOLE
+                              // run -- the only p50/p95/max-family field
+                              // it is sound to gate on. ticks (v3,
+                              // AER-2240) is the honest tick count,
+                              // uncapped. starved_ms/window_ms (v3) are
+                              // GuiProbe's own O(1) accumulators --
+                              // starved_ms sums max(0, gap_ms -
+                              // interval_ms) per tick, window_ms sums
+                              // gap_ms itself -- so starved_ms /
+                              // window_ms is section 5's "GUI-thread
+                              // starved <= 10% of the gesture window"
+                              // ratio, exactly. ticks/starved_ms/
+                              // window_ms are reported here scoped to
+                              // the INTERACTION (gesture-bracket start
+                              // to settle complete, or to the last
+                              // gesture event if no settle lands), not
+                              // the whole scenario -- pinch_out's 5 s
+                              // deliberate idle hold after the gesture
+                              // would otherwise dilute a real stall by
+                              // ~4.3x. p50_ms/p95_ms/max_ms/count/
+                              // over_count are unchanged: still
+                              // whole-scenario cumulative, per the rule
+                              // above.
   },
   "summary": "pinch_out: 6.48s, 50 paints (p50=0.7 p95=1.0 max=5.5 ms), "
              "settle=97ms, gui gap p95=10.8ms max=11.0ms >50ms=0; "
@@ -316,6 +339,12 @@ summary lines go to stderr so stdout stays pipeable. Each element:
 map_gestures.jsonl` are not rewritten; a consumer that reads a v1 line
 sees those three fields simply absent, which MP9b's judge treats as a
 bound rather than a zero.
+
+**v2 -> v3 (AER-2240):** added `counters.probe.starved_ms`/`window_ms`/
+`ticks`, scoped to the interaction window described above. Additive
+only, per-metric (AER-2233's comparability ruling), so every existing
+v1/v2 field and trend stays intact; a consumer reading a pre-v3 line
+sees the three fields simply absent.
 
 `--budget <path>` loads a JSON map of `{scenario: [{"path": "a.b.c",
 "max": x} | {"min": x}, ...]}`, evaluates each dotted `path` against that
