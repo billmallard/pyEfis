@@ -227,6 +227,43 @@ def load_tile(tile_root: Path, lat: int, lon: int) -> np.ndarray | None:
         return None
 
 
+def _side_from_hgt_size(size: int) -> int | None:
+    """Grid side implied by an ``>i2`` HGT file's byte size, or ``None`` if
+    it is not a square tile. Mirrors ``build_water_masks.py``'s
+    ``_side_from_file`` -- the ``.wmask`` sibling carries no header of its
+    own, so its side is always read off the ``.hgt`` file next to it."""
+    n = int(round((size / 2) ** 0.5))
+    return n if n * n * 2 == size else None
+
+
+def load_mask(hgt_path: Path) -> np.ndarray | None:
+    """Load the row-packed 1-bit ``.wmask`` sibling of *hgt_path*
+    (``tools/build_water_masks.py``'s output), or ``None`` if it is
+    missing, malformed, or the sibling ``.hgt`` is unreadable -- an older
+    pack edition with no water-mask channel. No header on either file:
+    side is implied by the ``.hgt``'s byte size, packing is
+    ``np.packbits(mask, axis=1)`` (MSB-first, trailing zero-bit row
+    padding to a byte boundary, ``ceil(side/8)`` bytes/row)."""
+    wmask_path = hgt_path.with_suffix(".wmask")
+    if not wmask_path.exists():
+        return None
+    try:
+        side = _side_from_hgt_size(hgt_path.stat().st_size)
+        if side is None:
+            return None
+        row_bytes = -(-side // 8)          # ceil(side / 8)
+        data = np.fromfile(wmask_path, dtype=np.uint8)
+        if data.size != row_bytes * side:
+            log.warning(f"SVS: mask {wmask_path} size {data.size} != "
+                        f"expected {row_bytes * side} (side {side}); skipped")
+            return None
+        bits = np.unpackbits(data.reshape(side, row_bytes), axis=1)
+        return bits[:, :side].astype(bool)
+    except Exception as e:
+        log.warning(f"SVS: failed to load mask {wmask_path}: {e}")
+        return None
+
+
 def elevation_at(tile: np.ndarray, tile_lat: int, tile_lon: int,
                  lat: float, lon: float) -> float:
     """Bilinear interpolation of elevation at (lat, lon) from a loaded
@@ -266,6 +303,13 @@ class TileCache:
         # renders slice these instead of opening hundreds of per-degree files
         # (docs/map_wide_range_perf_plan.md). Lazily loaded, kept resident.
         self._mosaic: dict[int, object] = {}
+        # Water-mask pyramid (MP10c, briefs/map_gesture_perf_plan.md Track 2):
+        # co-registered with _mip/_mosaic at the same keys. A value of None
+        # is cached too (older pack edition with no .wmask sibling) so a
+        # missing mask is not re-probed on disk every render.
+        self._wmask: dict[tuple, np.ndarray | None] = {}
+        self._wmask_order: list[tuple] = []
+        self._mosaic_mask: dict[int, np.ndarray | None] = {}
 
     def get(self, lat: int, lon: int) -> np.ndarray | None:
         key = (lat, lon)
@@ -314,6 +358,68 @@ class TileCache:
                     evict = self._mip_order.pop(0)
                     del self._mip[evict]
         return tile
+
+    def get_mask(self, lat: int, lon: int, level: int) -> np.ndarray | None:
+        """Water-coverage bitmask for the same ``(lat, lon)`` mip tile
+        ``get_mip(lat, lon, level)`` reads, co-registered node-for-node
+        with its elevation grid. ``None`` below level 1 (MP10a builds
+        masks only for the downsampled pyramid, L=1..6 -- native tiles
+        have no ``.wmask``) or when this pack edition has no mask sibling
+        for that tile; callers fall back to the elevation-derived water
+        heuristic in that case, so an older pack keeps rendering exactly
+        as it did before this reader existed."""
+        if level <= 0:
+            return None
+        key = (lat, lon, level)
+        with self._lock:
+            if key in self._wmask:
+                self._wmask_order.remove(key)
+                self._wmask_order.append(key)
+                return self._wmask[key]
+        hgt_path = _hgt_path(self.tile_root / ".mip" / str(level), lat, lon)
+        mask = load_mask(hgt_path) if hgt_path is not None else None
+        with self._lock:
+            if key not in self._wmask:
+                self._wmask[key] = mask
+                self._wmask_order.append(key)
+                if len(self._wmask_order) > self._mip_max:
+                    evict = self._wmask_order.pop(0)
+                    del self._wmask[evict]
+        return mask
+
+    def get_mosaic_mask(self, level: int) -> np.ndarray | None:
+        """Water-coverage bitmask for the whole-extent mosaic at *level*,
+        or ``None`` if this pack edition has none -- co-registered
+        row/col with ``get_mosaic(level)``'s ``(memmap, meta)``, same
+        ``rows``/``cols``/``spd``/``lat_n``/``lon_w`` convention."""
+        with self._lock:
+            if level in self._mosaic_mask:
+                return self._mosaic_mask[level]
+        mdir = self.tile_root / ".mip" / "mosaic"
+        jp = mdir / f"L{level}.json"
+        val = None
+        if jp.exists():
+            try:
+                import json
+                meta = json.loads(jp.read_text())
+                wmask_path = jp.with_suffix(".wmask")
+                rows, cols = meta["rows"], meta["cols"]
+                row_bytes = -(-cols // 8)
+                data = np.fromfile(wmask_path, dtype=np.uint8)
+                if data.size == row_bytes * rows:
+                    bits = np.unpackbits(data.reshape(rows, row_bytes), axis=1)
+                    val = bits[:, :cols].astype(bool)
+                elif data.size:
+                    log.warning(f"SVS: mosaic mask L{level} size "
+                                f"{data.size} != expected "
+                                f"{row_bytes * rows}; skipped")
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                log.warning(f"SVS: mosaic mask L{level} unreadable: {e}")
+        with self._lock:
+            self._mosaic_mask[level] = val
+        return val
 
     def get_mosaic(self, level: int):
         """Coarse whole-extent mosaic for ``level``, or ``None`` if not built.
