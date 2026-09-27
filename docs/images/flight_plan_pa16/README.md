@@ -14,12 +14,17 @@ the Recent list -- then GVO's row menu -> Load Airway -> V27 -> AVOLS), the
 real bench `procedures-conus` pack, not a synthetic fixture.
 
 - `fpl_page_collapsed_airway_row.png` -- FPL page after inserting V27 from
-  GVO to AVOLS (4 published fixes: MZB, REDIN, PACIF, AVOLS). The whole
+  GVO to AVOLS. Decoded straight from the live cycle-2609 CIFP file
+  (`packtools.arinc424.iter_airway_legs` against the bench's own
+  `procedures-conus` source), the published GVO -> AVOLS span is GVO ->
+  GOLET -> KWANG -> DEANO -> HENER -> VTU -> EXERT -> DOYLE -> PAROL -> SXC
+  -> AVOLS -- a 130 NM, 10-member-fix stretch. MZB, REDIN and PACIF sit
+  further south on V27, past AVOLS, and are not part of this span. The whole
   segment is one row, "V27 -> AVOLS", the permanent state this PR ships (no
   on-page expansion any more).
 - `fpl_page_tap_opens_row_menu.png` -- the same row tapped: it opens the row
   menu (Insert Before/After, Load Airway, Activate Leg, Direct To, WPT Info,
-  Set Role, Remove) instead of expanding into its 4 member fixes. This is the
+  Set Role, Remove) instead of expanding into its 10 member fixes. This is the
   DoD's "no tap path expands an airway row" proven on the glass, not just in
   the test suite.
 - `map_tab_route_unaffected.png` -- the Map tab against the same plan: the
