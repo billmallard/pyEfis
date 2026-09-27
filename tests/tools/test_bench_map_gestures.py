@@ -104,7 +104,7 @@ def test_ladder_scenario_end_to_end(bmg, qapp):
          "--water-max-vertices", "1024"])
     r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
     assert r["scenario"] == "ladder"
-    assert r["schema_version"] == 2
+    assert r["schema_version"] == 3
     assert r["counters"]["frames_painted"] > 0
     assert r["params"]["ladder"][0] == 2.0
     assert r["params"]["ladder"][-1] == 160.0
@@ -132,27 +132,37 @@ def test_ladder_scenario_end_to_end(bmg, qapp):
 # key-set comparison fails on that by construction.
 
 #: run_scenario()'s complete top-level key set, current as of
-#: SCHEMA_VERSION 2 (see its docstring in tools/bench_map_gestures.py).
+#: SCHEMA_VERSION 3 (see its docstring in tools/bench_map_gestures.py).
+#: Unchanged by AER-2240 -- run_scenario() pops the per-scenario
+#: `_probe_window` (see below) out of `params` before assembling this
+#: dict, folding it into `counters.probe` instead.
 _RUN_SCENARIO_KEYS = frozenset({
     "schema_version", "timestamp", "rev", "host", "scenario", "widget",
     "lat", "lon", "water_max_vertices", "duration_s", "params", "counters",
     "summary",
 })
 
-#: Each scenario's params dict key set, current as of SCHEMA_VERSION 2.
+#: Each scenario's params dict key set, current as of SCHEMA_VERSION 3.
+#: `_probe_window` (AER-2240) is an internal-only field: run_scenario()
+#: pops it before a result is finalized (it never appears in
+#: run_scenario()'s own `params`, hence _RUN_SCENARIO_KEYS/
+#: test_ladder_scenario_end_to_end et al. seeing no new key there), but
+#: this test calls each scenario function directly, bypassing that pop,
+#: so it shows up here.
 _SCENARIO_PARAMS_KEYS = {
     "pinch_out": frozenset({"range_from_nm", "range_to_nm",
                             "range_actual_nm", "events", "event_hz",
-                            "hold_s"}),
+                            "hold_s", "_probe_window"}),
     "pinch_in": frozenset({"range_from_nm", "range_to_nm",
                            "range_actual_nm", "events", "event_hz",
-                           "hold_s"}),
+                           "hold_s", "_probe_window"}),
     "rotate": frozenset({"sweep_deg", "events", "event_hz", "duration_s",
-                         "range_actual_nm"}),
+                         "range_actual_nm", "_probe_window"}),
     "pan": frozenset({"dx_px_per_event", "dy_px_per_event", "events",
-                      "event_hz", "hold_s", "range_actual_nm"}),
+                      "event_hz", "hold_s", "range_actual_nm",
+                      "_probe_window"}),
     "ladder": frozenset({"ladder", "step_hold_s", "final_hold_s",
-                         "range_actual_nm"}),
+                         "range_actual_nm", "_probe_window"}),
 }
 
 _KEY_SET_DRIFT_MSG = (
@@ -329,6 +339,63 @@ def test_delta_layers_handles_a_layer_that_only_appears_after(bmg):
                          "last_render_ms": 1.0, "max_render_ms": 2.0}}
     delta = bmg._delta_layers({}, after)
     assert delta["navaids"]["jobs_requested"] == 3
+
+
+# --- GUI probe interaction window (AER-2240) ------------------------------
+
+def test_probe_window_delta_subtracts_before_from_after(bmg):
+    before = dict(starved_ms=10.0, window_ms=500.0, ticks=50)
+    after = dict(starved_ms=25.0, window_ms=1500.0, ticks=150)
+    delta = bmg._probe_window_delta(before, after)
+    assert delta == dict(starved_ms=15.0, window_ms=1000.0, ticks=100)
+
+
+def test_pinch_out_probe_window_excludes_the_deliberate_idle_hold(
+        bmg, qapp):
+    """section 5's own worked example: pinch_out's 5 s hold after a
+    1.5 s gesture would divide a real stall by ~4.3 if the ratio were
+    read over the whole scenario. counters.probe.window_ms must instead
+    reflect roughly the gesture + settle span, not duration_s -- with no
+    tile-path/water-db configured every layer settles almost instantly,
+    so window_ms should land near the ~1.5 s gesture length, nowhere
+    near the ~6.5 s total (duration_s includes the 5 s hold_s)."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "pinch_out", "--w", "200", "--h", "200"])
+    r = bmg.run_scenario(qapp, args, "pinch_out", "deadbeef", "test-host")
+    probe = r["counters"]["probe"]
+    assert probe["ticks"] > 0
+    assert probe["window_ms"] > 0.0
+    assert probe["starved_ms"] >= 0.0
+    # generous margin over the gesture's own ~1.5 s -- the point is
+    # "nowhere near duration_s" (~6.5 s), not a tight bound.
+    assert probe["window_ms"] < 0.5 * (r["duration_s"] * 1000.0)
+
+
+def test_ladder_probe_window_excludes_the_final_hold(bmg, qapp):
+    """Same guarantee as pinch_out above, for the no-gesture-bracket
+    ladder path: window_ms must exclude _LADDER_FINAL_HOLD_S (2.0 s),
+    the discrete-step counterpart to pinch_out's continuous-gesture
+    hold."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "ladder", "--w", "200", "--h", "200"])
+    r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
+    probe = r["counters"]["probe"]
+    assert probe["ticks"] > 0
+    assert probe["window_ms"] < (r["duration_s"] * 1000.0
+                                 - bmg._LADDER_FINAL_HOLD_S * 1000.0 * 0.5)
+
+
+def test_probe_window_is_popped_off_params_not_left_behind(bmg, qapp):
+    """run_scenario() folds `_probe_window` into counters.probe and pops
+    it out of params -- it must not leak into the final params dict
+    (see _RUN_SCENARIO_KEYS / _SCENARIO_PARAMS_KEYS' comments)."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "rotate", "--w", "150", "--h", "150"])
+    r = bmg.run_scenario(qapp, args, "rotate", "deadbeef", "test-host")
+    assert "_probe_window" not in r["params"]
 
 
 def test_main_writes_json_array_and_exits_zero(bmg, qapp, tmp_path):
