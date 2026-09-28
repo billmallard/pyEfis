@@ -35,16 +35,23 @@ ocean/size filtering, matching the brief's "no size filter" requirement
 (the renderer's ``WaterDB`` caps and filters for screen-space speed;
 none of that applies when building an offline mask once).
 
-A whole-extent mosaic is rasterized in row-band chunks, not one shot
-(AER-2221): a continental bbox otherwise pulls every overlapping polygon
-into memory at once and sizes the scanline accumulator at
-``rows * (cols+1)``, multiple GB for a continental mip level. See
-``build_mosaic_mask`` / ``--mosaic-chunk-rows``.
+A whole-extent mosaic is rasterized in row x column band chunks, not one
+shot (AER-2221): a continental bbox otherwise pulls every overlapping
+polygon into memory at once and sizes the scanline accumulator at
+``rows * (cols+1)``, multiple GB for a continental mip level. Row-only
+chunking (the first AER-2221 fix) still re-queried the FULL longitude
+width per row band, so the dominant cost -- decoded ring/vertex geometry
+for every polygon overlapping that band's whole east-west extent, not the
+accumulator -- was never bounded; verified live against real `water-na`
+data, it still drove a bench box to near-OOM (see the AER-2221 issue
+thread). Chunking columns too bounds both axes: see ``build_mosaic_mask``
+/ ``--mosaic-chunk-rows`` / ``--mosaic-chunk-cols``.
 
 Usage::
 
     python tools/build_water_masks.py <tile_root> <water_db> \\
-        [--levels 6] [--mosaic-levels 4 5 6] [--mosaic-chunk-rows 2048] \\
+        [--levels 6] [--mosaic-levels 4 5 6] \\
+        [--mosaic-chunk-rows 2048] [--mosaic-chunk-cols 4096] \\
         [--force] [--jobs 0] [--only N35W098 ...]
 
     python tools/build_water_masks.py <tile_root> --check-only
@@ -65,6 +72,11 @@ DEFAULT_MOSAIC_LEVELS = (4, 5, 6)   # matches build_terrain_mosaic.py
 DEFAULT_MOSAIC_CHUNK_ROWS = 2048    # AER-2221: row-band size for chunked
                                      # mosaic rasterization; bounds peak
                                      # memory independent of mosaic extent
+DEFAULT_MOSAIC_CHUNK_COLS = 4096    # AER-2221 follow-up: column-band size
+                                     # -- row chunking alone still re-queried
+                                     # the full east-west extent per band, so
+                                     # this bounds the OTHER axis (decoded
+                                     # ring geometry, the actual dominant cost)
 
 _NAME = re.compile(r"([NS])(\d+)([EW])(\d+)", re.IGNORECASE)
 
@@ -216,6 +228,83 @@ def _mask_at_nodes_band(rings, row_lo: int, row_hi: int,
     +0.5 point-registration shift, then :func:`_fill_even_odd_band`."""
     shifted = [np.asarray(ring, dtype=np.float64) + 0.5 for ring in rings]
     return _fill_even_odd_band(shifted, row_lo, row_hi, cols)
+
+
+def _fill_even_odd_cell(rings, row_lo: int, row_hi: int,
+                         col_lo: int, col_hi: int) -> np.ndarray:
+    """Same algorithm as :func:`_fill_even_odd_band`, additionally
+    restricted to absolute columns ``[col_lo, col_hi)`` (AER-2221
+    follow-up). Clamping a crossing's column into ``[col_lo, col_hi]``
+    (instead of ``[0, cols]``) reproduces exactly what computing the
+    whole row and slicing would give: a crossing west of ``col_lo``
+    toggles parity for every column at/after it, including the entire
+    window, so clamping it to the window's first column has the same
+    effect after the per-row cumsum; a crossing east of ``col_hi`` can't
+    affect any column inside the window, so clamping it to ``col_hi``
+    (which lands in the accumulator's dropped overflow column) discards
+    it exactly as the whole-row version would. *rings* need only be
+    edges from polygons whose bbox overlaps this row AND column window --
+    a polygon lying entirely outside the window contributes a matched
+    enter/exit pair that cancels before reaching it, so omitting it
+    changes nothing (this is what lets the caller re-query water.sqlite
+    per column band without also re-deriving a global running parity).
+    Returns a ``(row_hi - row_lo, col_hi - col_lo)`` bool array."""
+    band_rows = row_hi - row_lo
+    band_cols = col_hi - col_lo
+    x0_parts, y0_parts, x1_parts, y1_parts = [], [], [], []
+    for ring in rings:
+        ring = np.asarray(ring, dtype=np.float64)
+        if ring.shape[0] < 3:
+            continue
+        x = ring[:, 0]
+        y = ring[:, 1]
+        x0_parts.append(x)
+        y0_parts.append(y)
+        x1_parts.append(np.roll(x, -1))
+        y1_parts.append(np.roll(y, -1))
+
+    if not x0_parts:
+        return np.zeros((band_rows, band_cols), dtype=bool)
+
+    x0 = np.concatenate(x0_parts)
+    y0 = np.concatenate(y0_parts)
+    x1 = np.concatenate(x1_parts)
+    y1 = np.concatenate(y1_parts)
+
+    ymin = np.minimum(y0, y1)
+    ymax = np.maximum(y0, y1)
+    j_lo = np.clip(np.ceil(ymin - 0.5).astype(np.int64), row_lo, row_hi)
+    j_hi = np.clip(np.ceil(ymax - 0.5).astype(np.int64), row_lo, row_hi)
+    counts = j_hi - j_lo
+    keep = counts > 0
+    if not keep.any():
+        return np.zeros((band_rows, band_cols), dtype=bool)
+    x0, y0, x1, y1 = x0[keep], y0[keep], x1[keep], y1[keep]
+    j_lo, counts = j_lo[keep], counts[keep]
+
+    total = int(counts.sum())
+    edge_id = np.repeat(np.arange(x0.shape[0]), counts)
+    run_start = np.repeat(np.cumsum(counts) - counts, counts)
+    j = j_lo[edge_id] + (np.arange(total) - run_start)
+    yc = j.astype(np.float64) + 0.5
+
+    dy = (y1 - y0)[edge_id]
+    dx = (x1 - x0)[edge_id]
+    x_at = x0[edge_id] + (yc - y0[edge_id]) * dx / dy
+    c = np.clip(np.ceil(x_at - 0.5).astype(np.int64), col_lo, col_hi)
+
+    flat = (j - row_lo) * (band_cols + 1) + (c - col_lo)
+    acc = np.bincount(flat, minlength=band_rows * (band_cols + 1)).reshape(
+        band_rows, band_cols + 1)
+    return (np.cumsum(acc, axis=1)[:, :band_cols] & 1).astype(bool)
+
+
+def _mask_at_nodes_cell(rings, row_lo: int, row_hi: int,
+                         col_lo: int, col_hi: int) -> np.ndarray:
+    """Cell-restricted counterpart to :func:`_mask_at_nodes` -- same
+    +0.5 point-registration shift, then :func:`_fill_even_odd_cell`."""
+    shifted = [np.asarray(ring, dtype=np.float64) + 0.5 for ring in rings]
+    return _fill_even_odd_cell(shifted, row_lo, row_hi, col_lo, col_hi)
 
 
 def pack_mask(mask: np.ndarray) -> bytes:
@@ -388,23 +477,35 @@ def build_tile_mask(path: Path, force: bool) -> tuple[str, bool, str | None]:
 
 
 def build_mosaic_mask(json_path: Path, force: bool,
-                       chunk_rows: int = DEFAULT_MOSAIC_CHUNK_ROWS
+                       chunk_rows: int = DEFAULT_MOSAIC_CHUNK_ROWS,
+                       chunk_cols: int = DEFAULT_MOSAIC_CHUNK_COLS
                        ) -> tuple[str, bool, str | None]:
     """Build the ``.wmask`` sibling for one whole-extent mosaic level.
 
-    Row-band chunked (AER-2221): a continental-extent mosaic (e.g. the
-    Beelink's L4 at rows=13276, cols=26776) rasterized in one call pulls
-    every water.sqlite polygon overlapping the WHOLE bbox into memory at
-    once and sizes ``_fill_even_odd_rect``'s accumulator at
-    ``rows * (cols+1)`` -- multiple GB, and climbing, on a bench box. Here
-    each ``chunk_rows``-tall band re-queries water.sqlite for just that
-    band's lat range (the same bbox-overlap query the native tile masks
-    already use) and fills only that band, so peak memory is bounded by
-    the band, not the continent. Bands are packed and streamed straight
-    to a temp file (``pack_mask`` packs each row independently, so a
-    per-band write concatenates identically to packing the whole array
-    at once) and atomically renamed on completion, matching the
-    byte-identical-packing contract this module is pinned against."""
+    Row x column band chunked (AER-2221): a continental-extent mosaic
+    (e.g. the Beelink's L4 at rows=13276, cols=26776) rasterized in one
+    call pulls every water.sqlite polygon overlapping the WHOLE bbox into
+    memory at once and sizes ``_fill_even_odd_rect``'s accumulator at
+    ``rows * (cols+1)`` -- multiple GB, and climbing, on a bench box.
+
+    Row-only chunking bounds that accumulator but re-queries the FULL
+    longitude width for every band, so it does nothing about the actual
+    dominant cost: decoded ring/vertex geometry for every polygon whose
+    bbox overlaps the band's whole east-west extent -- for a continental
+    band that's most of a coastline. Verified live against real
+    `water-na` data (see the AER-2221 issue thread), that alone still
+    drove a bench box to near-OOM. So each ``chunk_rows`` x ``chunk_cols``
+    cell re-queries water.sqlite for just that cell's lat/lon range and
+    fills only that cell via :func:`_mask_at_nodes_cell` -- correct
+    without a running cross-cell parity state, because a polygon whose
+    bbox doesn't overlap a cell can't change the fill inside it (see that
+    function's docstring) -- so peak memory is bounded by one cell's
+    geometry, not a whole band's or the continent's. Cells are assembled
+    into a band-wide row buffer, packed, and streamed to a temp file
+    (``pack_mask`` packs each row independently, so a per-band write
+    concatenates identically to packing the whole array at once) and
+    atomically renamed on completion, matching the byte-identical-packing
+    contract this module is pinned against."""
     hgt_path = json_path.with_suffix(".hgt")
     label = json_path.stem
     out = hgt_path.with_suffix(".wmask")
@@ -417,17 +518,24 @@ def build_mosaic_mask(json_path: Path, force: bool,
     spd = meta["spd"]
     lat_n = meta["lat_n"]
     lon_w = meta["lon_w"]
-    lon_e = lon_w + cols / spd
     band_rows = max(1, chunk_rows)
+    band_cols = max(1, chunk_cols)
     tmp_out = out.with_suffix(".wmask.tmp")
     with open(tmp_out, "wb") as fh:
         for row_lo in range(0, rows, band_rows):
             row_hi = min(row_lo + band_rows, rows)
             band_lat_hi = lat_n - row_lo / spd
             band_lat_lo = lat_n - row_hi / spd
-            rings = _collect_rings(band_lat_lo, band_lat_hi, lon_w, lon_e,
-                                    lat_n, lon_w, spd)
-            band_mask = _mask_at_nodes_band(rings, row_lo, row_hi, cols)
+            band_mask = np.zeros((row_hi - row_lo, cols), dtype=bool)
+            for col_lo in range(0, cols, band_cols):
+                col_hi = min(col_lo + band_cols, cols)
+                cell_lon_lo = lon_w + col_lo / spd
+                cell_lon_hi = lon_w + col_hi / spd
+                rings = _collect_rings(band_lat_lo, band_lat_hi,
+                                        cell_lon_lo, cell_lon_hi,
+                                        lat_n, lon_w, spd)
+                band_mask[:, col_lo:col_hi] = _mask_at_nodes_cell(
+                    rings, row_lo, row_hi, col_lo, col_hi)
             fh.write(pack_mask(band_mask))
     tmp_out.replace(out)
     return label, True, None
@@ -506,8 +614,9 @@ def _worker(job):
             _, path, force = job
             stem, written, err = build_tile_mask(path, force)
             return stem, written, err
-        _, json_path, force, chunk_rows = job
-        label, written, err = build_mosaic_mask(json_path, force, chunk_rows)
+        _, json_path, force, chunk_rows, chunk_cols = job
+        label, written, err = build_mosaic_mask(json_path, force, chunk_rows,
+                                                 chunk_cols)
         return label, written, err
     except Exception as exc:                 # noqa: BLE001 -- one bad job != abort
         return job[1], False, repr(exc)
@@ -527,8 +636,14 @@ def main(argv=None):
     ap.add_argument("--mosaic-chunk-rows", type=int,
                     default=DEFAULT_MOSAIC_CHUNK_ROWS,
                     help="row-band size for chunked mosaic mask rasterization "
-                         f"(default {DEFAULT_MOSAIC_CHUNK_ROWS}); bounds peak "
-                         "memory independent of mosaic extent (AER-2221)")
+                         f"(default {DEFAULT_MOSAIC_CHUNK_ROWS}); bounds the "
+                         "fill accumulator (AER-2221)")
+    ap.add_argument("--mosaic-chunk-cols", type=int,
+                    default=DEFAULT_MOSAIC_CHUNK_COLS,
+                    help="column-band size for chunked mosaic mask "
+                         f"rasterization (default {DEFAULT_MOSAIC_CHUNK_COLS}); "
+                         "bounds decoded ring geometry, the dominant cost row "
+                         "chunking alone left unbounded (AER-2221 follow-up)")
     ap.add_argument("--force", action="store_true",
                     help="rebuild masks that already exist")
     ap.add_argument("-j", "--jobs", type=int, default=0,
@@ -548,7 +663,8 @@ def main(argv=None):
             ap.error("water_db is required unless --check-only")
         tile_jobs = [("tile", p, args.force)
                      for _, p in _iter_mip_tiles(root, args.levels, only)]
-        mosaic_jobs = [("mosaic", jp, args.force, args.mosaic_chunk_rows)
+        mosaic_jobs = [("mosaic", jp, args.force, args.mosaic_chunk_rows,
+                        args.mosaic_chunk_cols)
                        for _, jp in _iter_mosaics(root, args.mosaic_levels)]
         jobs = tile_jobs + mosaic_jobs
         jobs_n = max(1, min(args.jobs if args.jobs > 0 else (os.cpu_count() or 1),
