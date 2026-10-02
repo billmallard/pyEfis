@@ -253,16 +253,22 @@ summary lines go to stderr so stdout stays pipeable. Each element:
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 3,
+  "timestamp": "2026-09-27T18:04:11.203841+00:00",  // UTC, datetime.now(timezone.utc).isoformat()
   "rev": "b4d3349",            // git short SHA, "" outside a checkout
   "host": "beelinkpyefis",     // socket.gethostname()
   "scenario": "pinch_out",
   "widget": {"w": 650, "h": 1040},
   "lat": 35.8, "lon": -78.8,
+  "water_max_vertices": 1024,  // the --water-max-vertices cap in force for this run
   "duration_s": 6.48,          // wall-clock time the scenario itself took
   "params": {"range_from_nm": 10.0, "range_to_nm": 160.0,
              "range_actual_nm": 160.0, "events": 90, "event_hz": 60.0,
-             "hold_s": 5.0},   // scenario-specific inputs, for repro
+             "hold_s": 5.0},   // scenario-specific inputs, for repro;
+                              // range_actual_nm is on rotate/pan/ladder too
+                              // (v2) -- the widget's range_nm at scenario
+                              // end, unchanged by rotate/pan, walked to the
+                              // ladder's last rung by ladder
   "counters": {                // MapPerfStats.snapshot() -- every MP6 counter
     "frames_painted": 50,
     "paint_ms": {"p50": 0.7, "p95": 1.0, "max": 5.5, "count": 50},
@@ -286,7 +292,40 @@ summary lines go to stderr so stdout stays pipeable. Each element:
               "qpointf_count": 0},
     "settle_latency_ms": 97.0, // null if no gesture completed a settle
     "probe": {"p50_ms": 10.7, "p95_ms": 10.8, "max_ms": 11.0,
-              "count": 256, "over_count": 0}
+              "count": 256, "over_count": 0,
+              "starved_ms": 3.2, "window_ms": 1503.4, "ticks": 150}
+                              // count is RING OCCUPANCY, capped at
+                              // RING_SIZE=256 (map/perf.py) -- NOT a
+                              // tick count. p50/p95/max_ms are computed
+                              // over only this trailing ring, so once it
+                              // saturates (~2.6 s at the 10 ms tick
+                              // period) they are blind to anything
+                              // earlier in a longer run; do not cite
+                              // them as run-length evidence (AER-2241,
+                              // oracle_gate.md reading rules 3-4).
+                              // over_count accumulates for the WHOLE
+                              // run -- the only p50/p95/max-family field
+                              // it is sound to gate on. ticks (v3,
+                              // AER-2240) is the honest tick count,
+                              // uncapped. starved_ms/window_ms (v3) are
+                              // GuiProbe's own O(1) accumulators --
+                              // starved_ms sums max(0, gap_ms -
+                              // interval_ms) per tick, window_ms sums
+                              // gap_ms itself -- so starved_ms /
+                              // window_ms is section 5's "GUI-thread
+                              // starved <= 10% of the gesture window"
+                              // ratio, exactly. ticks/starved_ms/
+                              // window_ms are reported here scoped to
+                              // the INTERACTION (gesture-bracket start
+                              // to settle complete, or to the last
+                              // gesture event if no settle lands), not
+                              // the whole scenario -- pinch_out's 5 s
+                              // deliberate idle hold after the gesture
+                              // would otherwise dilute a real stall by
+                              // ~4.3x. p50_ms/p95_ms/max_ms/count/
+                              // over_count are unchanged: still
+                              // whole-scenario cumulative, per the rule
+                              // above.
   },
   "summary": "pinch_out: 6.48s, 50 paints (p50=0.7 p95=1.0 max=5.5 ms), "
              "settle=97ms, gui gap p95=10.8ms max=11.0ms >50ms=0; "
@@ -294,13 +333,36 @@ summary lines go to stderr so stdout stays pipeable. Each element:
 }
 ```
 
+**v1 -> v2 (AER-2225):** added `timestamp`, `water_max_vertices`, and
+`params.range_actual_nm` on `rotate`/`pan`/`ladder`. The nine
+`schema_version: 1` lines already committed to `makerplane/perf/
+map_gestures.jsonl` are not rewritten; a consumer that reads a v1 line
+sees those three fields simply absent, which MP9b's judge treats as a
+bound rather than a zero.
+
+**v2 -> v3 (AER-2240):** added `counters.probe.starved_ms`/`window_ms`/
+`ticks`, scoped to the interaction window described above. Additive
+only, per-metric (AER-2233's comparability ruling), so every existing
+v1/v2 field and trend stays intact; a consumer reading a pre-v3 line
+sees the three fields simply absent.
+
 `--budget <path>` loads a JSON map of `{scenario: [{"path": "a.b.c",
 "max": x} | {"min": x}, ...]}`, evaluates each dotted `path` against that
 scenario's `counters` (e.g. `"layers.terrain.jobs_requested"`,
-`"settle_latency_ms"`, `"probe.max_ms"`), and exits non-zero if any bound
-is violated (a `path` absent from a run -- e.g. a layer with no data
-configured -- is skipped with a warning, not a failure). Example
-budgets file matching the acceptance table in section 5 of the brief:
+`"settle_latency_ms"`, `"probe.over_count"`), and exits non-zero if any
+bound is violated (a `path` absent from a run -- e.g. a layer with no
+data configured -- is skipped with a warning, not a failure). **Never
+gate on `probe.p95_ms`/`probe.max_ms`** -- they are computed over
+`GuiProbe`'s `RING_SIZE=256` trailing ring, which saturates in ~2.6 s at
+the 10 ms tick period regardless of how long the scenario ran, so on
+anything longer than a few seconds they are blind to a stall that has
+already scrolled out of the ring (AER-2241, oracle_gate.md reading
+rules 3-4); `probe.over_count` accumulates for the whole run and is the
+sound field.
+`tests/tools/test_bench_map_gestures.py::test_no_shipped_budget_cites_probe_percentile_bounds`
+walks every file under `tools/budgets/` and fails the suite if either
+path is cited again. Example budgets file matching the acceptance table
+in section 5 of the brief:
 
 ```json
 {
@@ -308,11 +370,19 @@ budgets file matching the acceptance table in section 5 of the brief:
     {"path": "layers.terrain.jobs_requested", "max": 1},
     {"path": "layers.terrain.jobs_superseded", "max": 0},
     {"path": "settle_latency_ms", "max": 600},
-    {"path": "probe.max_ms", "max": 50}
-  ],
-  "rotate": [{"path": "frames_painted", "max": 90}]
+    {"path": "probe.over_count", "max": 0}
+  ]
 }
 ```
+
+`rotate`'s paint-count bound is NOT a `--budget` row: the withdrawn
+`{"path": "frames_painted", "max": 90}` (AER-1121) was `30 Hz * 3.0 s`
+restated as arithmetic, and a healthy tree paints ~93 in ~2.984 s --
+computed from the measured sweep length, not a fixed constant. The live
+assertion is
+`tests/perf/test_map_gestures.py::test_rotate_sweep_paints_are_bounded_by_the_frame_clock`,
+which derives its bound from the clock and the measured sweep duration
+instead of hard-coding 90.
 
 ### 9.2 Moving-position mode (AER-679) JSON schema
 
@@ -382,10 +452,13 @@ architecture); anything else -- an exact cache hit, or promoting an
 already-finished worker's result -- is a "hit," since both cost ~0 on the
 render thread.
 
-**Pass threshold: `svs.frame_gap_ms.p95 <= 50`; `map.probe.p95_ms <= 50`.**
+**Pass threshold: `svs.frame_gap_ms.p95 <= 50`; `map.probe.over_count <= 0`.**
 (AER-1082, narrowing AER-679's original shared bound; SVS provenance
-corrected by AER-1086.) `50` is `PROBE_GAP_WARN_MS` in `map/perf.py` --
-the project's own existing GUI-thread-stall gate (MP6). For SVS,
+corrected by AER-1086; map bound corrected from `probe.p95_ms` to
+`probe.over_count` by AER-2241 -- see below.) `50` is
+`PROBE_GAP_WARN_MS` in `map/perf.py` -- the project's own existing
+GUI-thread-stall gate (MP6), and `over_count` is how many ticks crossed
+it. For SVS,
 `frame_gap_ms.p95` IS that gate: SVS redraws on its own frame clock, so
 a stalled render thread shows up directly as an inflated paint-to-paint
 gap. The bar was originally justified by an AER-677 measurement of
@@ -426,7 +499,7 @@ for defect-free code isn't a gate. `frame_gap_ms` is still reported for
 `map` (a recorded observable, useful for eyeballing update cadence) but
 nothing budgets on it.
 
-Instead the map is gated on `probe.p95_ms` -- `MapPerfStats`'s
+Instead the map is gated on `probe.over_count` -- `MapPerfStats`'s
 `GuiProbe`, a QTimer on the GUI thread measuring its own tick-to-tick
 wall-clock gap against its 10 ms period (`map/perf.py`). Because it
 free-runs independently of paint/pose gating, it is the objective
@@ -434,9 +507,27 @@ GIL-starvation detector: any worker (map or SVS) holding the GIL long
 enough to matter shows up here regardless of what triggered it, and it
 is blind to the quantization effect above. In the AER-692 run that read
 205 ms of `frame_gap_ms`, `probe` read p50 9.7 / p95 10.9 / max 13.6 ms
--- confirming that run's ~300 ms map cadence was arithmetic, not a
-stall. See `tools/budgets/moving_position.json` for a ready-to-use
-`--budget` file encoding both thresholds.
+(`over_count` 0) -- confirming that run's ~300 ms map cadence was
+arithmetic, not a stall.
+
+**Gate on `over_count`, not `p95_ms`/`max_ms` (AER-2241).** `probe`'s
+`p50_ms`/`p95_ms`/`max_ms` are computed over `_Ring(maxlen=RING_SIZE)`,
+`RING_SIZE = 256`, while `over_count` increments on every tick since the
+probe started. At the 10 ms tick period the ring saturates in ~2.6 s
+regardless of run length -- `counters.probe.count` reads exactly 256 on
+every recorded moving-position run, confirming it is always full. On
+the moving-position scenario's ~41 s duration that trailing window is
+only ~6% of the run: a GIL stall anywhere in the earlier ~38 s has
+already scrolled out of the ring by the time the run ends, leaving
+`p95_ms`/`max_ms` untouched and the gate reads a false pass
+(oracle_gate.md reading rules 3-4: `probe.p95_ms`/`probe.max_ms` are
+non-citable on any scenario for exactly this reason). `over_count` has
+no such window -- it is evidence about the whole run, so it is the only
+probe field a budget should gate on. See
+`tools/budgets/moving_position.json` for the shipped `--budget` file
+encoding both thresholds, and
+`tests/tools/test_bench_map_gestures.py::test_no_shipped_budget_cites_probe_percentile_bounds`
+for the guard that keeps a `p95_ms`/`max_ms` bound from coming back.
 
 ## 10. Phases
 

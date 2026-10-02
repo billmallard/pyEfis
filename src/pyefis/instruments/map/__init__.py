@@ -111,6 +111,15 @@ class MovingMap(LiveBindingMixin, QWidget):
         # keeps the legacy QPointF/QPolygonF/drawPath path for one
         # release of A/B (brief map_gesture_perf_plan.md section 4).
         self.water_raster = "numpy"            # or "qt"
+        # MP10c (#98): above this NOMINAL range the crisp WaterDB polygon
+        # overlay is skipped in favour of the terrain pack's own .wmask
+        # channel (one gather, already folded into the sampled elevation's
+        # water flag) -- when the pack has no mask at the chosen level,
+        # polygons still draw regardless of range (reader fallback). 20 NM
+        # is a proposal from the brief's measurements, Bill-approved
+        # 2026-09-06; if it reads coarse on the touchscreen the A/B is a
+        # step of this item, not a reopened decision.
+        self.water_polygon_max_nm = 20.0
         self.layer_roads = True
         self.highway_db_path = ""              # highways.sqlite (SVS pack)
         self.road_color = "#c0c0c0"

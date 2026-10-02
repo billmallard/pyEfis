@@ -214,8 +214,12 @@ class _FakeDenseCoastWaterDB:
     ready = True
 
     def __init__(self, lat0, lon0, pts_per_edge=1500, rotate_deg=0.0,
-                 jitter_frac=0.0):
-        d, hd = 0.03, 0.01              # outer / island half-sides
+                 jitter_frac=0.0, d=0.03, hd=0.01):
+        # d, hd: outer / island half-sides (deg). Defaults are the
+        # original moderate/coarse-case geometry; AER-1186's fine case
+        # overrides hd so the (much smaller) near-range render window
+        # actually intersects the ring instead of sitting entirely
+        # inside the island hole.
         theta = np.radians(rotate_deg)
         cos_t, sin_t = np.cos(theta), np.sin(theta)
 
@@ -526,16 +530,34 @@ def test_terrain_water_numpy_matches_qt_iou(qapp):
     non-special angle -- not near 0/45/90) puts every edge at a generic
     slope so both are actually exercised; the per-vertex jitter (see
     _FakeDenseCoastWaterDB) additionally scatters vertices off exact
-    scanline rows."""
+    scanline rows.
+
+    AER-1186: the fine case's 400x400 @ mpp=4 window has a half-extent of
+    ~798 m, smaller than the fixture's default island half-side (hd=0.01
+    deg =~ 1111 m) -- so the whole window sat inside the island hole,
+    both rasterizers produced an all-land mask, and `iou = ... if union
+    else 1.0` made the assertion pass vacuously regardless of whether the
+    fine-range path agreed with Qt at all (measured: qt_water_px=0,
+    np_water_px=0). Fixed by overriding the island to hd=0.004 deg (~445
+    m, still a comfortable ~350 m inside the window edge so the hole
+    boundary isn't clipped) for the fine case only -- moderate/coarse keep
+    the default 0.01 geometry, where the window already comfortably
+    contains the whole ring. That makes the fine case exercise real water
+    pixels (measured: qt_water_px=119557, np_water_px=119191, iou=0.9969).
+    """
     lat0, lon0 = 34.5, -120.5
     lat_cos = np.cos(np.radians(lat0))
     n = 400
 
-    # (mpp, stands in for, min IoU, rotate_deg, jitter_frac). Fine/moderate
-    # keep the axis-aligned ring (rotate_deg=0) and meet the brief's literal
-    # 0.98/0.985 floors for 10/80 NM comfortably (measured ~1.0 / ~0.993).
+    # (mpp, stands in for, min IoU, rotate_deg, jitter_frac, hd override).
+    # Fine overrides hd (see AER-1186 above); moderate keeps the default
+    # axis-aligned ring (rotate_deg=0, hd=None -> fixture default 0.01) and
+    # meets the brief's literal 0.985 floor for 80 NM comfortably (measured
+    # ~0.993). Fine's honest floor (0.99) sits a small margin below its own
+    # measured 0.9969 -- still inside the brief's literal 0.98 for 10 NM,
+    # now for real rather than vacuously.
     #
-    # Coarse now uses the rotated+jittered ring. A full 0-90 degree sweep in
+    # Coarse uses the rotated+jittered ring. A full 0-90 degree sweep in
     # 3-degree steps (see AER-667) shows non-axis-aligned geometry actually
     # IMPROVES coarse-case IoU over the axis-aligned 0.9492 -- every angle
     # tried measured between ~0.963 and ~0.972, never near the literal 0.985
@@ -550,13 +572,14 @@ def test_terrain_water_numpy_matches_qt_iou(qapp):
     # real tightening from the previously and silently relaxed 0.94. The
     # literal 0.985 still needs MP8's real fixture pack -- disclosed here,
     # not silently dropped.
-    cases = [(4.0, "fine (~10 NM stand-in)", 0.98, 0.0, 0.0),
-             (20.0, "moderate (~80 NM stand-in)", 0.985, 0.0, 0.0),
-             (60.0, "coarse (~160 NM stand-in)", 0.96, 27.0, 0.3)]
-    for mpp, label, min_iou, rotate_deg, jitter_frac in cases:
+    cases = [(4.0, "fine (~10 NM stand-in)", 0.99, 0.0, 0.0, 0.004),
+             (20.0, "moderate (~80 NM stand-in)", 0.985, 0.0, 0.0, None),
+             (60.0, "coarse (~160 NM stand-in)", 0.96, 27.0, 0.3, None)]
+    for mpp, label, min_iou, rotate_deg, jitter_frac, hd in cases:
+        kwargs = {} if hd is None else {"hd": hd}
         water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500,
                                         rotate_deg=rotate_deg,
-                                        jitter_frac=jitter_frac)
+                                        jitter_frac=jitter_frac, **kwargs)
         nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
 
         class Owner:
@@ -582,7 +605,12 @@ def test_terrain_water_numpy_matches_qt_iou(qapp):
 
         inter = int((wq & wn).sum())
         union = int((wq | wn).sum())
-        iou = (inter / union) if union else 1.0
+        # AER-1186: an empty union makes the IoU comparison below vacuous
+        # (it would pass no matter what either rasterizer drew) -- assert
+        # real water pixels exist so a fixture/window regression back to
+        # that state fails loudly instead of silently.
+        assert union > 0, "%s: no water pixels rendered by either path" % label
+        iou = inter / union
         assert iou >= min_iou, "%s: iou=%.4f < %.4f" % (label, iou, min_iou)
 
 

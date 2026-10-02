@@ -169,6 +169,51 @@ def test_fill_even_odd_rect_matches_mp5_raster_for_square_grids():
             == bm._fill_even_odd_rect(rings, n, n)).all()
 
 
+def test_fill_even_odd_band_matches_full_rect_slice():
+    """AER-2221: the row-band scanline fill must answer exactly what the
+    whole-grid fill would answer for that row range -- chunking is a
+    memory optimization, not a different algorithm."""
+    rings = [np.array([[1.3, 0.6], [8.7, 1.1], [7.9, 8.4], [0.8, 7.2]])]
+    rows, cols = 10, 10
+    full = bm._fill_even_odd_rect(rings, rows, cols)
+    for row_lo, row_hi in [(0, 4), (4, 7), (7, 10), (0, 10), (3, 3)]:
+        band = bm._fill_even_odd_band(rings, row_lo, row_hi, cols)
+        assert band.shape == (row_hi - row_lo, cols)
+        assert (band == full[row_lo:row_hi]).all()
+
+
+def test_fill_even_odd_cell_matches_full_rect_slice():
+    """AER-2221 follow-up: the row x column cell scanline fill must
+    answer exactly what the whole-grid fill would answer for that
+    sub-rectangle -- 2D chunking is a memory optimization, not a
+    different algorithm. Uses an irregular pentagon (not axis-aligned)
+    so cell boundaries cut through edges on both axes, not just corners."""
+    rings = [np.array([[1.3, 0.6], [8.7, 1.1], [9.2, 5.0],
+                        [7.9, 8.4], [0.8, 7.2]])]
+    rows, cols = 10, 12
+    full = bm._fill_even_odd_rect(rings, rows, cols)
+    for row_lo, row_hi in [(0, 4), (4, 7), (7, 10)]:
+        for col_lo, col_hi in [(0, 5), (5, 9), (9, 12)]:
+            cell = bm._fill_even_odd_cell(rings, row_lo, row_hi,
+                                           col_lo, col_hi)
+            assert cell.shape == (row_hi - row_lo, col_hi - col_lo)
+            assert (cell == full[row_lo:row_hi, col_lo:col_hi]).all()
+
+
+def test_fill_even_odd_cell_omits_polygon_entirely_outside_window():
+    """A polygon whose bbox doesn't overlap the queried cell at all can
+    be dropped from *rings* with no effect on the result -- this is what
+    lets build_mosaic_mask re-query water.sqlite per column band instead
+    of needing a running cross-cell parity state."""
+    near = np.array([[2.0, 2.0], [2.0, 4.0], [4.0, 4.0], [4.0, 2.0]])
+    far = np.array([[2.0, 20.0], [2.0, 22.0], [4.0, 22.0], [4.0, 20.0]])
+    rows, cols = 10, 10
+    with_far = bm._fill_even_odd_cell([near, far], 0, rows, 0, cols)
+    without_far = bm._fill_even_odd_cell([near], 0, rows, 0, cols)
+    assert (with_far == without_far).all()
+    assert with_far.any()   # sanity: near square still painted
+
+
 def test_mask_at_nodes_is_point_sampled_not_pixel_area():
     """A square with corners exactly on integer nodes (2,2)-(6,2)-(6,6)-(2,6):
     under point registration, nodes strictly inside are covered and nodes
@@ -410,6 +455,110 @@ def test_build_mosaic_mask_rectangular_registration(tmp_path, water_con):
     assert mask.shape == (41, 61)
     # row r -> lat = 36 - r/10 ; col c -> lon = -120 + c/10
     # lake interior e.g. lat 34.0 -> r=20 ; lon -118.0 -> c=20
+    assert mask[20, 20]
+    assert not mask[0, 0]
+
+
+def test_build_mosaic_mask_chunked_matches_unchunked(tmp_path, water_con):
+    """AER-2221: row-band chunking must not change the result. A lake
+    spanning rows 10-30 (rows != cols mosaic, spd=10) crosses several
+    chunk_rows=3 band boundaries, exercising an edge whose endpoints
+    straddle a band split -- the chunked build must still produce
+    byte-identical output to a single-band (unchunked) build."""
+    db = tmp_path / "water.sqlite"
+    _make_water_db(db, [{
+        "kind": "lake",
+        "vertices": [(33.0, -119.5), (33.0, -118.5),
+                     (35.0, -118.5), (35.0, -119.5)],
+    }])
+    water_con(db)
+    spd = 10
+    meta = {"level": 4, "rows": 41, "cols": 61, "spd": spd,
+            "lat_n": 36, "lon_w": -120}
+    root = tmp_path / "tiles" / ".mip" / "mosaic"
+    root.mkdir(parents=True)
+    jp = root / "L4.json"
+    jp.write_text(json.dumps(meta))
+    _write_hgt(root / "L4.hgt", 1)
+
+    label, written, err = bm.build_mosaic_mask(jp, force=False, chunk_rows=1000)
+    assert err is None and written
+    whole_bytes = (root / "L4.wmask").read_bytes()
+    assert any(whole_bytes)   # sanity: the lake painted something
+
+    label, written, err = bm.build_mosaic_mask(jp, force=True, chunk_rows=3)
+    assert err is None and written
+    chunked_bytes = (root / "L4.wmask").read_bytes()
+
+    assert whole_bytes == chunked_bytes
+
+
+def test_build_mosaic_mask_2d_chunked_matches_unchunked(tmp_path, water_con):
+    """AER-2221 follow-up: row-only chunking still re-queried the full
+    longitude width per band, leaving the dominant cost (decoded ring
+    geometry) unbounded -- verified live against real water-na data, that
+    alone still near-OOM'd a bench box. Column chunking must not change
+    the result either. A lake spanning rows 10-30 AND cols 15-45 (spd=10)
+    crosses several row=3 AND col=4 chunk boundaries on both axes at
+    once, exercising edges that straddle both kinds of split -- the 2D
+    chunked build must still produce byte-identical output to a
+    single-band, single-cell (unchunked) build."""
+    db = tmp_path / "water.sqlite"
+    _make_water_db(db, [{
+        "kind": "lake",
+        "vertices": [(33.0, -118.5), (33.0, -117.0),
+                     (35.0, -117.0), (35.0, -118.5)],
+    }])
+    water_con(db)
+    spd = 10
+    meta = {"level": 4, "rows": 41, "cols": 71, "spd": spd,
+            "lat_n": 36, "lon_w": -120}
+    root = tmp_path / "tiles" / ".mip" / "mosaic"
+    root.mkdir(parents=True)
+    jp = root / "L4.json"
+    jp.write_text(json.dumps(meta))
+    _write_hgt(root / "L4.hgt", 1)
+
+    label, written, err = bm.build_mosaic_mask(jp, force=False,
+                                                chunk_rows=1000, chunk_cols=1000)
+    assert err is None and written
+    whole_bytes = (root / "L4.wmask").read_bytes()
+    assert any(whole_bytes)   # sanity: the lake painted something
+
+    label, written, err = bm.build_mosaic_mask(jp, force=True,
+                                                chunk_rows=3, chunk_cols=4)
+    assert err is None and written
+    chunked_bytes = (root / "L4.wmask").read_bytes()
+
+    assert whole_bytes == chunked_bytes
+
+
+def test_build_mosaic_mask_default_chunk_rows_is_chunked_path(tmp_path, water_con):
+    """The CLI-default path (no explicit chunk_rows) must go through the
+    same chunked builder, not a separate unchunked code path."""
+    db = tmp_path / "water.sqlite"
+    _make_water_db(db, [{
+        "kind": "lake",
+        "vertices": [(33.5, -119.0), (33.5, -117.0),
+                     (34.5, -117.0), (34.5, -119.0)],
+    }])
+    water_con(db)
+    meta = {"level": 4, "rows": 41, "cols": 61, "spd": 10,
+            "lat_n": 36, "lon_w": -120}
+    root = tmp_path / "tiles" / ".mip" / "mosaic"
+    root.mkdir(parents=True)
+    jp = root / "L4.json"
+    jp.write_text(json.dumps(meta))
+    _write_hgt(root / "L4.hgt", 1)
+
+    label, written, err = bm.build_mosaic_mask(jp, force=False)
+    assert err is None and written
+    mask_bytes = (root / "L4.wmask").read_bytes()
+    rows, cols = meta["rows"], meta["cols"]
+    row_bytes = -(-cols // 8)
+    mask = np.unpackbits(
+        np.frombuffer(mask_bytes, dtype=np.uint8).reshape(rows, row_bytes),
+        axis=1)[:, :cols].astype(bool)
     assert mask[20, 20]
     assert not mask[0, 0]
 

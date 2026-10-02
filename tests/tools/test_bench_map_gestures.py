@@ -17,6 +17,7 @@ speed."""
 import importlib.util
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -94,19 +95,160 @@ def test_check_budgets_ignores_scenario_absent_from_results(bmg):
     assert bmg.check_budgets(results, budgets) == []
 
 
+# --- guard: no shipped budget cites GuiProbe's trailing-ring percentiles ---
+#
+# AER-2241: probe.p95_ms/probe.max_ms are computed over GuiProbe's
+# RING_SIZE=256 trailing ring (map/perf.py), which saturates in ~2.6 s at
+# the 10 ms tick period regardless of how long the scenario ran -- on the
+# 41 s moving_position run that is ~6% of the window, so a GIL stall
+# anywhere earlier leaves them untouched and the gate silently passes.
+# over_count accumulates for the whole run and is the sound field
+# (oracle_gate.md reading rules 3-4: probe.p95_ms/probe.max_ms are
+# non-citable on any scenario). This walks every shipped budgets file so
+# the fix can't drift back one file at a time.
+
+def test_no_shipped_budget_cites_probe_percentile_bounds():
+    budgets_dir = _ROOT / "tools" / "budgets"
+    offenders = []
+    for path in sorted(budgets_dir.glob("*.json")):
+        budget = json.loads(path.read_text())
+        for scenario, checks in budget.items():
+            if scenario == "_comment":
+                continue
+            for check in checks:
+                p = check.get("path", "")
+                if p.endswith("probe.p95_ms") or p.endswith("probe.max_ms"):
+                    offenders.append("%s: %s.%s" % (path.name, scenario, p))
+    assert offenders == []
+
+
 # --- end-to-end: real MovingMap, offscreen, no data files ------------------
 
 def test_ladder_scenario_end_to_end(bmg, qapp):
     bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
     args = bmg._parse_args(
-        ["--scenario", "ladder", "--w", "200", "--h", "200"])
+        ["--scenario", "ladder", "--w", "200", "--h", "200",
+         "--water-max-vertices", "1024"])
     r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
     assert r["scenario"] == "ladder"
-    assert r["schema_version"] == 1
+    assert r["schema_version"] == 3
     assert r["counters"]["frames_painted"] > 0
     assert r["params"]["ladder"][0] == 2.0
     assert r["params"]["ladder"][-1] == 160.0
+    # the ladder's LAST rung, not the first -- range_actual_nm is the
+    # comparability key (AER-2206), so a stale first-rung reading would
+    # silently misreport where the scenario actually ended.
+    assert r["params"]["range_actual_nm"] == 160.0
+    # echoes the cap actually in force, not --water-max-vertices' 512
+    # default -- a hardcoded default would pass a presence-only check.
+    assert r["water_max_vertices"] == 1024
+    ts = datetime.fromisoformat(r["timestamp"])
+    assert ts.tzinfo is not None and ts.utcoffset() == timedelta(0)
     assert "ladder:" in r["summary"]
+
+
+# --- schema key-set pin (AER-2232) ------------------------------------
+#
+# AER-2231's incident: v2 added three fields (timestamp, water_max_vertices,
+# params.range_actual_nm on rotate/pan/ladder) while changing zero tests, and
+# CI only went red because one unrelated assertion happened to pin the
+# literal schema_version number. A v3 that bumps that same assertion when it
+# adds/removes/renames a field would sail through green. The per-field pins
+# above (test_ladder_scenario_end_to_end et al.) prove specific values, but
+# say nothing about a field that never existed before -- only an exact
+# key-set comparison fails on that by construction.
+
+#: run_scenario()'s complete top-level key set, current as of
+#: SCHEMA_VERSION 3 (see its docstring in tools/bench_map_gestures.py).
+#: Unchanged by AER-2240 -- run_scenario() pops the per-scenario
+#: `_probe_window` (see below) out of `params` before assembling this
+#: dict, folding it into `counters.probe` instead.
+_RUN_SCENARIO_KEYS = frozenset({
+    "schema_version", "timestamp", "rev", "host", "scenario", "widget",
+    "lat", "lon", "water_max_vertices", "duration_s", "params", "counters",
+    "summary",
+})
+
+#: Each scenario's params dict key set, current as of SCHEMA_VERSION 3.
+#: `_probe_window` (AER-2240) is an internal-only field: run_scenario()
+#: pops it before a result is finalized (it never appears in
+#: run_scenario()'s own `params`, hence _RUN_SCENARIO_KEYS/
+#: test_ladder_scenario_end_to_end et al. seeing no new key there), but
+#: this test calls each scenario function directly, bypassing that pop,
+#: so it shows up here.
+_SCENARIO_PARAMS_KEYS = {
+    "pinch_out": frozenset({"range_from_nm", "range_to_nm",
+                            "range_actual_nm", "events", "event_hz",
+                            "hold_s", "_probe_window"}),
+    "pinch_in": frozenset({"range_from_nm", "range_to_nm",
+                           "range_actual_nm", "events", "event_hz",
+                           "hold_s", "_probe_window"}),
+    "rotate": frozenset({"sweep_deg", "events", "event_hz", "duration_s",
+                         "range_actual_nm", "_probe_window"}),
+    "pan": frozenset({"dx_px_per_event", "dy_px_per_event", "events",
+                      "event_hz", "hold_s", "range_actual_nm",
+                      "_probe_window"}),
+    "ladder": frozenset({"ladder", "step_hold_s", "final_hold_s",
+                         "range_actual_nm", "_probe_window"}),
+}
+
+_KEY_SET_DRIFT_MSG = (
+    "%s's key set changed -- see the SCHEMA_VERSION docstring in "
+    "tools/bench_map_gestures.py: bump SCHEMA_VERSION, add an explicit "
+    "pin for the new/removed/renamed field (a per-field test, not just "
+    "this one), then update the expected set here.")
+
+
+def test_run_scenario_top_level_key_set_is_pinned(bmg, qapp):
+    """Fails by construction on any top-level field added, removed, or
+    renamed in run_scenario()'s result -- see the section comment above."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "ladder", "--w", "150", "--h", "150"])
+    r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
+    assert set(r) == _RUN_SCENARIO_KEYS, (
+        _KEY_SET_DRIFT_MSG % "run_scenario()")
+
+
+@pytest.mark.parametrize("scenario", sorted(_SCENARIO_PARAMS_KEYS))
+def test_scenario_params_key_set_is_pinned(bmg, qapp, scenario):
+    """Same guarantee as the top-level pin above, per scenario's own
+    params dict -- fails by construction on any field added, removed, or
+    renamed in that scenario's return value."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", scenario, "--w", "150", "--h", "150"])
+    w = bmg.build_widget(args)
+    w.show()
+    params = bmg.SCENARIOS[scenario](qapp, w, args)
+    assert set(params) == _SCENARIO_PARAMS_KEYS[scenario], (
+        _KEY_SET_DRIFT_MSG % ("scenario_%s()" % scenario))
+
+
+def test_rotate_scenario_reports_actual_widget_range(bmg, qapp):
+    """rotate never touches range_nm, and build_widget() always starts a
+    widget at 10.0 -- so a hardcoded 10.0 would pass a presence-only check
+    on params.range_actual_nm without ever reading the widget for real."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "rotate", "--w", "200", "--h", "200"])
+    w = bmg.build_widget(args)
+    w.show()
+    w.range_nm = 55.0
+    params = bmg.scenario_rotate(qapp, w, args)
+    assert params["range_actual_nm"] == 55.0
+
+
+def test_pan_scenario_reports_actual_widget_range(bmg, qapp):
+    """Same pin as rotate above -- pan_by() moves lat/lon, not range_nm."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "pan", "--w", "200", "--h", "200"])
+    w = bmg.build_widget(args)
+    w.show()
+    w.range_nm = 55.0
+    params = bmg.scenario_pan(qapp, w, args)
+    assert params["range_actual_nm"] == 55.0
 
 
 def test_pinch_out_runs_full_gesture_and_settles(bmg, qapp):
@@ -224,6 +366,63 @@ def test_delta_layers_handles_a_layer_that_only_appears_after(bmg):
                          "last_render_ms": 1.0, "max_render_ms": 2.0}}
     delta = bmg._delta_layers({}, after)
     assert delta["navaids"]["jobs_requested"] == 3
+
+
+# --- GUI probe interaction window (AER-2240) ------------------------------
+
+def test_probe_window_delta_subtracts_before_from_after(bmg):
+    before = dict(starved_ms=10.0, window_ms=500.0, ticks=50)
+    after = dict(starved_ms=25.0, window_ms=1500.0, ticks=150)
+    delta = bmg._probe_window_delta(before, after)
+    assert delta == dict(starved_ms=15.0, window_ms=1000.0, ticks=100)
+
+
+def test_pinch_out_probe_window_excludes_the_deliberate_idle_hold(
+        bmg, qapp):
+    """section 5's own worked example: pinch_out's 5 s hold after a
+    1.5 s gesture would divide a real stall by ~4.3 if the ratio were
+    read over the whole scenario. counters.probe.window_ms must instead
+    reflect roughly the gesture + settle span, not duration_s -- with no
+    tile-path/water-db configured every layer settles almost instantly,
+    so window_ms should land near the ~1.5 s gesture length, nowhere
+    near the ~6.5 s total (duration_s includes the 5 s hold_s)."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "pinch_out", "--w", "200", "--h", "200"])
+    r = bmg.run_scenario(qapp, args, "pinch_out", "deadbeef", "test-host")
+    probe = r["counters"]["probe"]
+    assert probe["ticks"] > 0
+    assert probe["window_ms"] > 0.0
+    assert probe["starved_ms"] >= 0.0
+    # generous margin over the gesture's own ~1.5 s -- the point is
+    # "nowhere near duration_s" (~6.5 s), not a tight bound.
+    assert probe["window_ms"] < 0.5 * (r["duration_s"] * 1000.0)
+
+
+def test_ladder_probe_window_excludes_the_final_hold(bmg, qapp):
+    """Same guarantee as pinch_out above, for the no-gesture-bracket
+    ladder path: window_ms must exclude _LADDER_FINAL_HOLD_S (2.0 s),
+    the discrete-step counterpart to pinch_out's continuous-gesture
+    hold."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "ladder", "--w", "200", "--h", "200"])
+    r = bmg.run_scenario(qapp, args, "ladder", "deadbeef", "test-host")
+    probe = r["counters"]["probe"]
+    assert probe["ticks"] > 0
+    assert probe["window_ms"] < (r["duration_s"] * 1000.0
+                                 - bmg._LADDER_FINAL_HOLD_S * 1000.0 * 0.5)
+
+
+def test_probe_window_is_popped_off_params_not_left_behind(bmg, qapp):
+    """run_scenario() folds `_probe_window` into counters.probe and pops
+    it out of params -- it must not leak into the final params dict
+    (see _RUN_SCENARIO_KEYS / _SCENARIO_PARAMS_KEYS' comments)."""
+    bmg._bootstrap_fix_db(35.8, -78.8, 0.0, 1500.0)
+    args = bmg._parse_args(
+        ["--scenario", "rotate", "--w", "150", "--h", "150"])
+    r = bmg.run_scenario(qapp, args, "rotate", "deadbeef", "test-host")
+    assert "_probe_window" not in r["params"]
 
 
 def test_main_writes_json_array_and_exits_zero(bmg, qapp, tmp_path):
@@ -436,30 +635,39 @@ def test_moving_position_budget_gate_via_main(bmg, qapp, tmp_path):
 
 
 def test_shipped_moving_position_budget_gates_map_on_probe_not_frame_gap(bmg):
-    """AER-1082 regression: the shipped budget must not resurrect AER-679's
-    borrowed 50 ms bound on map.frame_gap_ms.p95. AER-692 showed that path
-    reads ~205 ms p50 / ~292 ms p95 for a healthy map at 10 NM/130 kt --
-    pose-quantization arithmetic, not a defect -- so a bound there fails
-    every run, forever, correctly-behaving code included."""
+    """AER-1082 regression, map bound corrected AER-2241: the shipped
+    budget must not resurrect AER-679's borrowed 50 ms bound on
+    map.frame_gap_ms.p95, and must not gate the map on probe.p95_ms/
+    max_ms either -- those percentiles are computed over GuiProbe's
+    RING_SIZE=256 trailing ring, which saturates in ~2.6 s regardless of
+    run length, so on this scenario's ~41 s duration they only see the
+    last ~6% of the run (oracle_gate.md reading rules 3-4: non-citable).
+    AER-692 showed frame_gap_ms.p95 reads ~205 ms p50 / ~292 ms p95 for a
+    healthy map at 10 NM/130 kt -- pose-quantization arithmetic, not a
+    defect -- so a bound there fails every run, forever, correctly-
+    behaving code included."""
     budget = json.loads(
         (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
     checks = {c["path"]: c for c in budget["moving_position"]}
     assert "map.frame_gap_ms.p95" not in checks
-    assert checks["map.probe.p95_ms"]["max"] == 50
+    assert "map.probe.p95_ms" not in checks
+    assert "map.probe.max_ms" not in checks
+    assert checks["map.probe.over_count"]["max"] == 0
     assert checks["svs.frame_gap_ms.p95"]["max"] == 50
 
 
 def test_shipped_moving_position_budget_passes_healthy_quantized_map(bmg):
     """A map reading AER-692's own quantization numbers (~292 ms p95
-    frame_gap_ms) but a healthy GuiProbe gap (~10.9 ms, no GIL
-    starvation) must pass the shipped budget -- it would have failed the
-    old shared 50 ms frame_gap_ms bound despite being defect-free."""
+    frame_gap_ms) but a healthy GuiProbe (over_count=0, no GIL
+    starvation over the WHOLE run) must pass the shipped budget -- it
+    would have failed the old shared 50 ms frame_gap_ms bound despite
+    being defect-free."""
     budget = json.loads(
         (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
     result = dict(scenario="moving_position", counters=dict(
         svs=dict(frame_gap_ms=dict(p95=24.1)),
         map=dict(frame_gap_ms=dict(p95=292.0),
-                 probe=dict(p95_ms=10.9))))
+                 probe=dict(p95_ms=10.9, over_count=0))))
     assert bmg.check_budgets([result], budget) == []
 
 
@@ -479,8 +687,25 @@ def test_shipped_moving_position_budget_passes_healthy_svs(bmg):
     result = dict(scenario="moving_position", counters=dict(
         svs=dict(frame_gap_ms=dict(p95=34.0)),
         map=dict(frame_gap_ms=dict(p95=292.0),
-                 probe=dict(p95_ms=10.9))))
+                 probe=dict(p95_ms=10.9, over_count=0))))
     assert bmg.check_budgets([result], budget) == []
+
+
+def test_shipped_moving_position_budget_flags_a_stall_outside_the_trailing_ring(bmg):
+    """AER-2241: the whole point of gating on over_count instead of
+    probe.p95_ms/max_ms is that a GIL stall early in a long run, outside
+    GuiProbe's 256-sample trailing ring, must still trip the gate. A map
+    reading a clean p95/max (the stall has already scrolled out of the
+    ring) but a nonzero over_count from earlier in the run must fail."""
+    budget = json.loads(
+        (_ROOT / "tools" / "budgets" / "moving_position.json").read_text())
+    result = dict(scenario="moving_position", counters=dict(
+        svs=dict(frame_gap_ms=dict(p95=24.1)),
+        map=dict(frame_gap_ms=dict(p95=292.0),
+                 probe=dict(p95_ms=10.9, max_ms=13.6, over_count=1))))
+    violations = bmg.check_budgets([result], budget)
+    assert len(violations) == 1
+    assert violations[0]["path"] == "map.probe.over_count"
 
 
 def test_moving_position_svs_target_reports_or_skips_without_gl(bmg, qapp):
