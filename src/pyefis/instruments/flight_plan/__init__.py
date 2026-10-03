@@ -151,8 +151,10 @@ class FlightPlan(QWidget):
         # Airway insertion (PA6, AER-1605): row menu -> pick an airway through
         # the selected fix -> pick an exit fix -> AirwayGraph.expand() inserts
         # the intermediate fixes collapsed into one row (brief section 3.5).
+        # PA16 (AER-2088): that row stays collapsed permanently on this page --
+        # Bill found tap-to-expand confusing and clutter-y; per-fix access
+        # lives on the map instead, which draws every fix regardless.
         self._airway_picker = None
-        self._expanded_airway_groups = set()
 
         self._entry_mode = None
         self._entry_field = ""
@@ -612,8 +614,17 @@ class FlightPlan(QWidget):
     def _row_menu_remove(self):
         i = self._row_menu_index
         self._close_row_menu()
+        # Opened from a collapsed airway row (PA16, AER-2088): the row stands
+        # in for the whole tagged span, so Remove takes the whole span, not
+        # just the one fix the row menu happened to anchor to.
+        group = self._group_containing(i)
         try:
-            self._plan.remove(i)
+            if group is not None:
+                start, end, _ident = group
+                for idx in range(end, start - 1, -1):
+                    self._plan.remove(idx)
+            else:
+                self._plan.remove(i)
         except fp_model.FlightPlanError as e:
             self._message = str(e)
             self.update()
@@ -723,20 +734,15 @@ class FlightPlan(QWidget):
                 i += 1
         return groups
 
-    def _group_key(self, group):
-        start, end, ident = group
-        rows = self._plan.waypoints
-        return (rows[start].id, ident, rows[end].id)
-
-    def _group_expanded(self, group):
-        return group[2] is not None and self._group_key(group) in self._expanded_airway_groups
-
-    def _toggle_airway_group(self, key):
-        if key in self._expanded_airway_groups:
-            self._expanded_airway_groups.discard(key)
-        else:
-            self._expanded_airway_groups.add(key)
-        self.update()
+    def _group_containing(self, i):
+        """The ``_row_groups()`` entry covering plan index *i*, or ``None`` --
+        used so an action on a collapsed airway row's index acts on the whole
+        span, not just the one member it happens to be anchored to."""
+        for group in self._row_groups():
+            start, end, ident = group
+            if ident is not None and start <= i <= end:
+                return group
+        return None
 
     def _group_row_color(self, start, end, active_idx):
         if active_idx is None:
@@ -1599,11 +1605,12 @@ class FlightPlan(QWidget):
         cols = [c for c in cols if c in COLUMN_CHOICES] or ["DTK", "DIS", "CUM"]
 
         # A collapsed airway group (PA6) is ONE visible row regardless of how
-        # many fixes it spans; an expanded one is its member count. Sizing off
-        # the visible count, not `n`, is what keeps a collapsed "V27 -> RZS"
-        # from stealing the row height every other leg gets.
+        # many fixes it spans -- and stays that way permanently now (PA16,
+        # AER-2088: no on-page expansion). Sizing off the group count, not
+        # `n`, is what keeps a collapsed "V27 -> RZS" from stealing the row
+        # height every other leg gets.
         groups = self._row_groups()
-        visible = sum((g[1] - g[0] + 1) if self._group_expanded(g) else 1 for g in groups)
+        visible = len(groups)
 
         # Cap the row height so a near-empty plan doesn't stretch one or two
         # rows into a grotesquely oversized icon/font -- a real 50-slot plan
@@ -1615,21 +1622,15 @@ class FlightPlan(QWidget):
 
         y = top
         for start, end, ident in groups:
-            if ident is not None and not self._group_expanded((start, end, ident)):
-                rh = min(row_h, bottom - y)
-                if rh <= 0:
-                    break
+            rh = min(row_h, bottom - y)
+            if rh <= 0:
+                break
+            if ident is not None:
                 self._paint_airway_summary_row(p, w, y, rh, start, end, ident, active_idx,
                                                 cols, interactive)
-                y += rh
-                continue
-            for i in range(start, end + 1):
-                rh = min(row_h, bottom - y)
-                if rh <= 0:
-                    break
-                toggle = (start, end, ident) if (ident is not None and i == start) else None
-                self._paint_one_row(p, w, y, rh, i, rows[i], active_idx, cols, interactive, toggle)
-                y += rh
+            else:
+                self._paint_one_row(p, w, y, rh, start, rows[start], active_idx, cols, interactive)
+            y += rh
 
     def _row_icon_geometry(self, rh):
         # Centre must clear its own radius: the original
@@ -1643,7 +1644,7 @@ class FlightPlan(QWidget):
         lx = max(rh * 0.5, icx + ir + 8.0)
         return ir, icx, lx
 
-    def _paint_one_row(self, p, w, y, rh, i, wp, active_idx, cols, interactive, toggle):
+    def _paint_one_row(self, p, w, y, rh, i, wp, active_idx, cols, interactive):
         p.setPen(QPen(QColor(self._row_color(i, active_idx))))
         ir, icx, lx = self._row_icon_geometry(rh)
         self._draw_type_icon(p, icx, y + rh / 2, ir, wp.type)
@@ -1668,14 +1669,6 @@ class FlightPlan(QWidget):
 
         if interactive:
             self._tap(0, y, w, rh, (lambda idx=i: self._open_row_menu(idx)))
-            if toggle is not None:
-                # An expanded group's first row also collapses it, in a tap
-                # target confined to the icon so the rest of the row still
-                # opens that fix's own row menu (mousePressEvent hit-tests in
-                # reverse registration order, so this later target wins).
-                toggle_w = icx + ir + 4.0
-                self._tap(0, y, toggle_w, rh,
-                          (lambda g=toggle: self._toggle_airway_group(self._group_key(g))))
 
     def _paint_airway_summary_row(self, p, w, y, rh, start, end, ident, active_idx, cols,
                                    interactive):
@@ -1700,8 +1693,12 @@ class FlightPlan(QWidget):
             cx += col_w
 
         if interactive:
-            key = self._group_key((start, end, ident))
-            self._tap(0, y, w, rh, (lambda k=key: self._toggle_airway_group(k)))
+            # PA16 (AER-2088): the row stands in for its last member (see the
+            # DTK/DIS comment above), so a tap opens that fix's row menu --
+            # remove takes the whole span (`_group_containing` in
+            # `_row_menu_remove`), not just this anchor fix. No path expands
+            # the row on this page any more; per-fix access is the map.
+            self._tap(0, y, w, rh, (lambda idx=end: self._open_row_menu(idx)))
 
     def _paint_footer(self, p, w, top, footer_h, interactive):
         p.setPen(QPen(QColor("#333333")))
