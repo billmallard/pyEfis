@@ -113,12 +113,14 @@ Usage, cutting from a real pack tree on a workstation that holds it
         --out dist/perf-fixtures/raleigh
 
 Add ``--publish`` to additionally push the packaged tarball to R2 under
-``test-fixtures/<scene>/`` (mirrors the existing wrangler convention in
-``.github/workflows/editor-assets.yml``: it skips cleanly with a warning,
-exit 0, when ``CLOUDFLARE_API_TOKEN``/``CLOUDFLARE_ACCOUNT_ID`` are unset
-rather than failing a CI run that has no secrets). A successful publish
-also rewrites this scene's entry in ``tools/perf_fixtures.json`` -- the
-checked-in, sha256-pinned manifest ``fetch_fixture`` reads.
+``test-fixtures/<scene>/`` via the boto3 S3 API (AER-1137: a bucket-scoped
+R2 API token authorizes S3 but not the wrangler/Cloudflare REST objects
+path, which needs a much broader account-wide grant): it skips cleanly
+with a warning, exit 0, when ``R2_ACCESS_KEY_ID``/``R2_SECRET_ACCESS_KEY``/
+``R2_ENDPOINT`` are unset rather than failing a CI run that has no
+secrets. A successful publish also rewrites this scene's entry in
+``tools/perf_fixtures.json`` -- the checked-in, sha256-pinned manifest
+``fetch_fixture`` reads.
 
 On-demand fetch side (what a perf test in ``tests/perf/`` calls)::
 
@@ -1159,32 +1161,37 @@ def _cmd_cut(args) -> int:
 
 
 def _publish(scene: str, tarball: Path, size: int, sha256: str) -> bool:
-    """Push ``tarball`` to R2 under test-fixtures/<scene>/, mirroring the
-    existing wrangler convention in .github/workflows/editor-assets.yml:
+    """Push ``tarball`` to R2 under test-fixtures/<scene>/ via the S3 API,
     skip cleanly (return False, exit 0) with a warning when credentials
     are absent -- this is a CI-safe no-op, not a failure, on a fork or a
     dev box with no secrets. On success, rewrite this scene's manifest
-    entry so fetch_fixture can find it."""
-    token = os.environ.get("CLOUDFLARE_API_TOKEN")
-    account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
-    if not token or not account:
-        print("WARNING: CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID not set "
-              "-- skipping publish (the pack was still cut and packaged "
-              f"locally at {tarball}).")
+    entry so fetch_fixture can find it.
+
+    Uses boto3 against the R2 S3-compatible endpoint, not the wrangler
+    CLI/Cloudflare REST objects API: a bucket-scoped R2 API token (Object
+    Read & Write on one bucket) authorizes the S3 API but 403s against
+    the REST objects endpoint wrangler calls, which needs account-wide
+    Workers R2 Storage: Edit -- a much broader grant this tool should not
+    require (AER-1137). Mirrors the upload convention makerplane-data's
+    own pack pipeline already uses for R2 writes."""
+    access_key = os.environ.get("R2_ACCESS_KEY_ID")
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY")
+    endpoint = os.environ.get("R2_ENDPOINT")
+    if not access_key or not secret_key or not endpoint:
+        print("WARNING: R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_ENDPOINT "
+              "not set -- skipping publish (the pack was still cut and "
+              f"packaged locally at {tarball}).")
         return False
 
-    import shutil
-    import subprocess
-    if shutil.which("npx") is None:
-        print("WARNING: npx not found -- skipping publish.")
-        return False
+    import boto3
 
     key = f"test-fixtures/{scene}/{scene}.tar.gz"
-    cmd = ["npx", "--yes", "wrangler@4", "r2", "object", "put",
-           f"makerplane-configs/{key}", "--file", str(tarball),
-           "--content-type", "application/gzip", "--remote"]
-    print(f"publishing: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    print(f"publishing: s3 upload makerplane-configs/{key} via {endpoint}")
+    client = boto3.client("s3", endpoint_url=endpoint, region_name="auto",
+                          aws_access_key_id=access_key,
+                          aws_secret_access_key=secret_key)
+    client.upload_file(str(tarball), "makerplane-configs", key,
+                        ExtraArgs={"ContentType": "application/gzip"})
 
     url = f"https://makerplane-configs.r2.dev/{key}"
     manifest = (_load_manifest() if MANIFEST_PATH.is_file()

@@ -68,6 +68,12 @@ watertools = [
     "mapbox-earcut>=1.0",
     "pyshp>=2.3",
 ]
+# tools/make_map_perf_fixture.py's --publish path only (AER-1137): pushes the
+# cut perf-fixture tarball to R2 over the S3 API. Never needed to cut/fetch a
+# fixture without --publish.
+perffixture = [
+    "boto3>=1.34",
+]
 
 [project.scripts]
 pyefis = "pyefis.main:main"
