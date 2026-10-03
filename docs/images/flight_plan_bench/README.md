@@ -101,8 +101,58 @@ the row-menu screenshot was captured, restoring "NO STORED ROUTES". The
 screen was left on the `Map` tab (its state when this session began), not
 the `Flight Plan` tab used throughout the capture.
 
-**Not captured, needs physical hardware.** A real USB keyboard typing into
-the Entry page / DTO Waypoint tab / the generic modal on the Beelink --
-this agent has no physical keyboard access to the bench. `keyboard: true`
-is already enabled on the live `managed.yaml` Flight Plan tab, so the
-config side is ready whenever someone with hands on the box can test it.
+## USB keyboard evidence (AER-807, 2026-10-03, follow-up)
+
+`entry_page_virtual_usb_keyboard.png` -- DTO page, Waypoint tab, after typing
+`KSBA` + Enter via a **uinput virtual HID keyboard**, not a literal physical
+dongle: this agent has no hands at the bench, so a literal USB keyboard is
+still untested. What this does prove: `python3-evdev` (`sudo apt-get install
+-y python3-evdev`) opened `/dev/uinput` (root-only; `sudo -n python3 ...`) and
+registered a device (`UInput(capabilities, name="pyefis-bench-virtual-usb-kbd",
+...)`) that the kernel, udev and X11 enumerated identically to a physical
+keyboard -- confirmed from the logs, not assumed:
+
+```
+kernel: input: pyefis-bench-virtual-usb-kbd as /devices/virtual/input/input20
+Xorg.0.log: (II) Using input driver 'libinput' for 'pyefis-bench-virtual-usb-kbd'
+Xorg.0.log: event18 - pyefis-bench-virtual-usb-kbd: is tagged by udev as: Keyboard
+Xorg.0.log: (II) XINPUT: Adding extended input device "pyefis-bench-virtual-usb-kbd" (type: KEYBOARD, id 16)
+```
+
+So the keystrokes crossed the same kernel evdev -> libinput -> X11/xkb -> Qt
+`keyPressEvent` path a real USB keyboard would use -- this is not an
+XTestFakeKeyEvent/`xdotool key` software injection, which bypasses the evdev
+layer entirely. `K`/`S`/`B`/`A`/Enter all resolved via the default US xkb
+layout already on the box; no keymap tweak was needed. The ident resolved and
+the page reacted (moved off the bare keypad into the matched-waypoint list),
+which is the on-glass signal that the keystrokes actually reached the
+instrument's input handling, not just the X server.
+
+This is still not the literal DoD line ("a USB keyboard ... types") -- it is
+the strongest remote substitute available, and the gap between the two is a
+question of whether kernel-level HID-identical input satisfies that line, not
+a question of whether the code path works. Flagging that distinction rather
+than quietly claiming the literal hardware check as done.
+
+**DIRECT badge / magenta line -- still not captured, and why that's now a
+different question than "not tried yet".** The bench's map still shows
+`NO POS` (checked again this session). Setting a synthetic `LAT`/`LONG` to
+force this would mean enabling `fix-gateway`'s `COMMAND` connection
+(`COMMAND_CONFIG`, currently `false` in the bench's live
+`~/makerplane/fixgw/config/preferences.yaml`) and restarting the shared
+fix-gateway service -- a live-config change and a restart on a box other
+agents are using, for a check whose real form is already scoped as its own
+item: AER-809 (FP8, "bench validation flight against X-Plane"), explicitly
+sequenced after this item and described as needing an actual flight, not a
+synthetic position poke. Deferring the DIRECT-badge/magenta-line sub-check to
+AER-809 rather than forcing it here. One data point worth recording: KSBA
+displayed with a magenta ring/crosshair glyph on the Map tab after this
+direct-to interaction, suggesting the map-side target symbol may already be
+live independent of the `FPLSTATE` badge -- not confirmed further.
+
+**Cleanup.** No Catalog/stored-route state was changed this session -- the
+`TEST` working plan (KSBA, KDFW) was already loaded when this session began
+(same residual plan the first capture session left behind), and only the DTO
+Waypoint-entry keypad was exercised, not Activate/Store/Delete. Left on the
+Flight Plan tab, DTO Waypoint-tab view, matching the state after the keyboard
+test.
