@@ -52,7 +52,14 @@ LOCK=/tmp/pyefis-bench.lock
 SCRATCH="$HOME/bench-scratch"
 MAX_AGE_S=3600
 FIX_PORT=3490
-FIX_ALLOW='fixgw|pyEfis\.py'
+# The two benches start pyEfis differently and BOTH spellings have to pass, or
+# the sweep cries wolf hourly at the legitimate display. The Pi runs
+# `.../python pyEfis.py`; the Beelink runs the installed console script
+# `/home/pyefis/pyefis-venv/bin/pyefis` (verified on both, 2026-10-04).
+# `bin/pyefis` is deliberately narrower than a bare `pyefis`: every path on the
+# Beelink contains "pyefis" somewhere, including the venv interpreter that an
+# injector would also be launched with.
+FIX_ALLOW='fixgw|pyEfis\.py|bin/pyefis'
 FINDINGS=0
 
 usage() {
@@ -261,14 +268,34 @@ echo
 
 # ---- 2. bench lock --------------------------------------------------------
 echo "[2] bench lock $LOCK"
+lock_probe() {  # 0 = free (taken and released), 1 = held, 2 = cannot open
+  # Do NOT hand the path to flock(1). It opens O_RDONLY|O_CREAT, and O_CREAT on
+  # a file you do not own in a sticky world-writable directory is refused by
+  # fs.protected_regular -- **including for root**. On the Beelink the lock is
+  # /tmp/pyefis-bench.lock owned by `pyefis`, so a root sweep got EACCES and the
+  # first version of this check reported that as "the lock is HELD", a false
+  # finding that would have fired every hour under the system unit.
+  #
+  # Opening read-only ourselves and locking the FD avoids it: O_RDONLY is not
+  # gated, and flock(2) takes an exclusive lock on a read-only fd perfectly
+  # well. The subshell means a failed redirect cannot take down the sweep, and
+  # closing the fd on subshell exit is what releases the probe lock.
+  ( : < "$1" ) 2>/dev/null || return 2
+  if ( exec 9<"$1"; flock -n 9 ) 2>/dev/null; then return 0; fi
+  return 1
+}
+
 if [ ! -e "$LOCK" ]; then
   ok "lock file does not exist (nothing holds the bench)"
-elif [ ! -r "$LOCK" ]; then
-  # flock(1) would fail to open it and we would misreport that as "held".
-  finding "lock file $LOCK is not readable by $(id -un) -- cannot determine holder"
 else
   ino=$(stat -c %i "$LOCK" 2>/dev/null)
-  if flock -n "$LOCK" -c true 2>/dev/null; then
+  lock_probe "$LOCK"
+  lock_state=$?
+  if [ "$lock_state" -eq 2 ]; then
+    finding "cannot open lock file $LOCK as $(id -un) -- holder undeterminable." \
+            "Not the same thing as held: check ownership/permissions, and note that" \
+            "fs.protected_regular denies even root an O_CREAT open here."
+  elif [ "$lock_state" -eq 0 ]; then
     ok "lock is free"
     # A record on a lock we just took means our own view is wrong; worth saying.
     if [ -n "$ino" ] && [ -n "$(lock_record_pids "$ino")" ]; then
