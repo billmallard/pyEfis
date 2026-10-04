@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
@@ -366,6 +367,36 @@ def test_capture_survives_a_malformed_sidecar(monkeypatch, tmp_path):
 
     assert png.startswith(b"\x89PNG")
     assert "X-Capture-Pyefis-Rev" not in headers
+    assert list(tmpdir.iterdir()) == []
+
+
+def test_capture_timing_out_takes_the_sidecar_too(monkeypatch, tmp_path):
+    # The 504 path has to take the sidecar as well, and it is the path most
+    # likely to strand one: svs_capture.py writes the frame and the sidecar
+    # beside it and can still hang afterwards on GL teardown, so the handler
+    # unlinks the PNG it knows about and the `.json` named after it survives.
+    # Written because the line that does this was unpinned -- deleting
+    # `take_manifest` from the timeout branch left all 19 other tests green,
+    # which makes it exactly the line a later conflict resolution drops in
+    # silence (it conflicts with AER-2658's two-lock restructure of this
+    # same block).
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path)
+    tmpdir = tmp_path / "svc-tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(mod.tempfile, "tempdir", str(tmpdir))
+
+    def hangs_after_writing_its_sidecar(argv, **kwargs):
+        out = argv[argv.index("--out") + 1]
+        Path(out).write_bytes(b"\x89PNG\r\n\x1a\nFAKE")
+        Path(out + ".json").write_text(json.dumps({"pyefis_rev": "abc1234"}))
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(mod.subprocess, "run", hangs_after_writing_its_sidecar)
+    with _capturing(mod) as capture:
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            capture()
+
+    assert caught.value.code == 504
     assert list(tmpdir.iterdir()) == []
 
 
