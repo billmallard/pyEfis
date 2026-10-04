@@ -1,7 +1,9 @@
 # FP7 HSI chain evidence (billmallard/pyEfis#189)
 
 The real pyEfis `HSI` and `nav_status` widgets, rendered offscreen while
-connected to a **real fix-gateway** (`dev` @ `aebde02`) running the
+connected to a **real fix-gateway** (branch `aer-2672/fplcrs-past-to` @
+`aa794ab`, the fix for billmallard/fix-gateway#35; first run was `dev` @
+`aebde02`) running the
 `flightplan` engine, the `compute` selects (`GPSSRC`, `NAVSRC`) and `netfix`.
 The aircraft position is synthetic: written over netfix at known cross-track
 offsets from the active leg of KSBA > GVO > RZS > KSMX. Nothing in the chain
