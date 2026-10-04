@@ -66,17 +66,46 @@ endpoint exists for are all terrain+water.
 actually running from (AER-2627). Before AER-2627 this was read from a
 sidecar file a deploy step had to remember to write, and reported "unknown"
 when it forgot -- provenance resting on another agent's timestamped word
-rather than anything this service could verify itself. Now it is resolved
-live, the exact same way `svs_capture.py` resolves its own `pyefis_rev`
-sidecar key for every frame (`tools/pyefis_rev.py`, shared by both): a git
-rev-parse against `PYEFIS_ROOT`, dirty-flagged. The two questions -- "what
-rendered this frame" and "what is this service running" -- collapse into one
-value because, now that this file lives inside the checkout it serves, they
-are literally the same checkout.
+rather than anything this service could verify itself. It is resolved from
+git the same way `svs_capture.py` resolves its own `pyefis_rev` sidecar key
+(`tools/pyefis_rev.py`, shared by both): a rev-parse against `PYEFIS_ROOT`,
+dirty-flagged.
+
+Loaded code, not the checkout on disk (AER-2657)
+------------------------------------------------
+`svs_capture.py` resolves that rev per frame and is spawned per request, so
+for it "live" and "loaded" are the same thing. **This service is
+long-running, so they are not.** It keeps executing the module Python
+imported at startup, while `bench-deploy.sh`'s `git pull --ff-only` moves
+the checkout underneath it -- and nothing in the deploy restarts this unit.
+Resolving at request time therefore answered the wrong question: between a
+pull that moved this file and the restart that picks it up, `/health` would
+report the NEW sha while the process ran the OLD code. Before AER-2627 the
+sidecar said "unknown" in that window, which is honest ignorance; a live
+rev-parse is confident error, and this is the one value QA has for the
+provenance of every render verdict in the org.
+
+So `/health` answers both questions separately and says when they differ:
+
+  service_ref   the rev resolved ONCE at import -- the code this process is
+                 running. This is the provenance key; it cannot go stale
+                 because the process it describes cannot change.
+  checkout_ref  the rev resolved live, i.e. what a pull has brought in.
+  service_stale true when a file this process loaded (`SERVICE_FILES`) no
+                 longer matches the bytes on disk -> `sudo systemctl restart
+                 svs-capture.service` to pick it up.
+
+`service_stale` is a content comparison, not a sha comparison, because the
+checkout moving is not the same question as this service's code moving:
+`tools/svs_capture.py` and `tools/bench_map_gestures.py` are spawned per
+request, so a pull that touches only those changes what renders with no
+restart at all. Only these two files are loaded in-process, and only their
+bytes are checked.
 """
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import shlex
@@ -111,6 +140,46 @@ DISPLAY = os.environ.get("CAPTURE_DISPLAY", ":0")
 
 CAPTURE_TOOL = "tools/svs_capture.py"
 BENCH_MAP_TOOL = "tools/bench_map_gestures.py"
+
+#: The files this process LOADS -- resolved from ``__file__``, not from
+#: ``PYEFIS_ROOT``, because those can be different trees (``PYEFIS_ROOT`` is
+#: overridable) and it is the loaded bytes that decide what this process
+#: executes. `pyefis_rev.py` is on the list because it is imported at module
+#: scope above; `svs_capture.py` and `bench_map_gestures.py` are NOT, because
+#: they are spawned per request and a pull updates them with no restart.
+SERVICE_FILES = tuple(
+    Path(__file__).resolve().parent / name
+    for name in ("capture_service.py", "pyefis_rev.py")
+)
+
+
+def _digest(path: Path):
+    """sha256 of a file's bytes, or None if it cannot be read.
+
+    Never raises: this feeds a metadata field, and an unreadable file (mid-pull,
+    deleted) must not take /health down with it.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+#: Captured at import -- the identity of the code this process is running.
+#: Frozen on purpose; see the module docstring (AER-2657).
+SERVICE_REF = resolve_pyefis_rev(PYEFIS_ROOT)
+_LOADED_DIGESTS = {p: _digest(p) for p in SERVICE_FILES}
+
+
+def service_is_stale():
+    """True when a loaded service file on disk no longer matches what is running.
+
+    An unreadable file counts as stale: the safe direction is to tell the
+    caller a restart is due rather than imply the running code is current.
+    """
+    return any(_digest(p) != loaded for p, loaded in _LOADED_DIGESTS.items())
+
+
 MAX_TIMEOUT = 600
 #: /bench/map runs multiple gesture scenarios in one subprocess (--scenario
 #: all); each one can hold for several seconds past its settle latency, so
@@ -332,7 +401,12 @@ class Handler(BaseHTTPRequestHandler):
             gl = f"glxinfo failed: {exc}"
         self._json(200, {
             "ok": True,
-            "service_ref": resolve_pyefis_rev(PYEFIS_ROOT),
+            # service_ref is the code this process runs (frozen at import);
+            # checkout_ref is what is on disk now. They differ for as long as
+            # a pull has landed and nobody has restarted this unit (AER-2657).
+            "service_ref": SERVICE_REF,
+            "checkout_ref": resolve_pyefis_rev(PYEFIS_ROOT),
+            "service_stale": service_is_stale(),
             "gl_renderer": gl,
             "display": DISPLAY,
             "capture_tool": str(PYEFIS_ROOT / CAPTURE_TOOL),
