@@ -236,6 +236,18 @@ def test_fail_draws_red_xxx(chip, fix):
     assert data[1] == ("XXX", nav_status._FAIL)
 
 
+def test_position_lost_blank_idents_with_failed_data(chip, fix):
+    # What the engine actually publishes when it loses position: the state
+    # stays, the idents are cleared WITHOUT a flag, distance/time fail.
+    _leg(fix, WPFROM="", WPNAME="", WPNEXT="", WPDIS=0.0, WPETE=0, FPLPHASE="")
+    fix.db.get_item("WPDIS").fail = True
+    fix.db.get_item("WPETE").fail = True
+    badge, runs, data, _ = chip.fields()
+    assert badge == "LEG"
+    assert _texts(runs) == ["____", ">", "____", ">", "____"]
+    assert data == [("XXX", nav_status._FAIL), ("XXX", nav_status._FAIL)]
+
+
 def test_old_state_greys_the_whole_chip(chip, fix):
     _leg(fix)
     fix.db.get_item("FPLSTATE").old = True
