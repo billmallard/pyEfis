@@ -20,13 +20,16 @@ AER-676 unknown-field rejection it depends on) since that moved along with
 the file and had no test coverage of its own before (it previously lived
 outside any checkout this repo's test suite could reach).
 """
+import base64
 import errno
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -219,6 +222,204 @@ def test_unreadable_service_file_counts_as_stale(monkeypatch, tmp_path):
     # Safe direction: say a restart is due rather than imply the code is
     # current, and do not take /health down over metadata.
     assert mod.service_is_stale() is True
+
+
+#: Stands in for tools/svs_capture.py: writes a frame and the `<out>.json`
+#: sidecar next to it, the way the real one does, and nothing else.
+_FAKE_CAPTURE = '''\
+import hashlib, json, sys
+out = sys.argv[sys.argv.index("--out") + 1]
+png = b"\\x89PNG\\r\\n\\x1a\\nFAKE"
+with open(out, "wb") as fh:
+    fh.write(png)
+with open(out + ".json", "w") as fh:
+    json.dump({
+        "pyefis_rev": "abc1234-dirty",
+        "capture_mode": "windowed",
+        "requested_size": [640, 400],
+        "actual_size": [640, 400],
+        "argv": " ".join(sys.argv[1:]),
+        "sha256": hashlib.sha256(png).hexdigest(),
+    }, fh)
+'''
+
+
+def _service_with_fake_capture(monkeypatch, tmp_path, body=_FAKE_CAPTURE):
+    """Load the service pointed at a PYEFIS_ROOT whose svs_capture is a stub."""
+    root = tmp_path / "root"
+    (root / "tools").mkdir(parents=True)
+    (root / "tools" / "svs_capture.py").write_text(body)
+    monkeypatch.setenv("CAPTURE_PYTHON", sys.executable)
+    return _load_capture_service(monkeypatch, tmp_path, pyefis_root=root), root
+
+
+@contextmanager
+def _capturing(mod):
+    """Run mod's handler on loopback and yield a POST /capture fetcher."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def capture(**scenario):
+        scenario.setdefault("lat", 34.4275)
+        scenario.setdefault("lon", -119.8546)
+        scenario.setdefault("alt", 500)
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/capture",
+            data=json.dumps(scenario).encode(),
+            headers={"Authorization": "Bearer test-token",
+                     "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read(), dict(resp.headers)
+
+    try:
+        yield capture
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def test_capture_response_names_the_rev_that_rendered_it(monkeypatch, tmp_path):
+    # The AER-1675 defect: the service rendered into a tempfile, returned the
+    # PNG bytes and unlinked it, so svs_capture.py's sidecar -- the only thing
+    # naming the code that drew the frame -- never reached the caller. A frame
+    # fetched over HTTP named nothing, which is the condition the issue opened
+    # on, and it survived the sidecar itself shipping.
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path)
+    with _capturing(mod) as capture:
+        png, headers = capture()
+
+    assert png.startswith(b"\x89PNG")
+    assert headers["X-Capture-Pyefis-Rev"] == "abc1234-dirty"
+
+
+def test_capture_manifest_header_ties_the_sidecar_to_these_bytes(monkeypatch, tmp_path):
+    # The sha256 is why the whole sidecar rides along and not just the rev: it
+    # is what lets an archived frame be re-attributed later rather than taken
+    # on the word of whoever filed it.
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path)
+    with _capturing(mod) as capture:
+        png, headers = capture()
+
+    manifest = json.loads(
+        base64.b64decode(headers["X-Capture-Manifest-Base64"]).decode()
+    )
+    assert manifest["sha256"] == hashlib.sha256(png).hexdigest()
+    assert manifest["capture_mode"] == "windowed"
+    assert manifest["requested_size"] == [640, 400]
+
+
+def test_capture_also_names_the_services_own_loaded_rev(monkeypatch, tmp_path):
+    # Two revs, because they answer different questions: svs_capture.py is
+    # spawned per request off disk, this service runs what it imported. Both
+    # on one response so the caller is not comparing a /capture against a
+    # later /health and assuming nothing moved in between.
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path)
+    with _capturing(mod) as capture:
+        _, headers = capture()
+
+    assert headers["X-Capture-Service-Ref"] == mod.SERVICE_REF
+
+
+def test_capture_leaves_no_orphan_sidecar_in_tmp(monkeypatch, tmp_path):
+    # 355 orphaned tmp*.png.json files had piled up in /tmp on the Beelink by
+    # the time this was found -- the service unlinked the PNG and never the
+    # sidecar named after it.
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path)
+    tmpdir = tmp_path / "svc-tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(mod.tempfile, "tempdir", str(tmpdir))
+    with _capturing(mod) as capture:
+        capture()
+
+    assert list(tmpdir.iterdir()) == []
+
+
+def test_capture_still_succeeds_when_the_sidecar_is_missing(monkeypatch, tmp_path):
+    # Provenance is metadata on a capture, never a dependency of one (the same
+    # rule resolve_pyefis_rev follows). An svs_capture.py too old to write a
+    # sidecar costs the response its rev headers and nothing else -- the Pi's
+    # checkout runs 43 commits behind the bench's, so version skew between the
+    # two arms is the normal case, not a hypothetical.
+    no_sidecar = (
+        'import sys\n'
+        'out = sys.argv[sys.argv.index("--out") + 1]\n'
+        'open(out, "wb").write(b"\\x89PNG\\r\\n\\x1a\\nFAKE")\n'
+    )
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path, body=no_sidecar)
+    with _capturing(mod) as capture:
+        png, headers = capture()
+
+    assert png.startswith(b"\x89PNG")
+    assert "X-Capture-Pyefis-Rev" not in headers
+    assert "X-Capture-Manifest-Base64" not in headers
+    # The service's own rev does not come from the sidecar, so it survives.
+    assert headers["X-Capture-Service-Ref"] == mod.SERVICE_REF
+
+
+def test_capture_survives_a_malformed_sidecar(monkeypatch, tmp_path):
+    # Truncated JSON (a capture killed mid-write) must not 500 the response or
+    # leave the half-written file behind for the next caller to inherit.
+    bad_sidecar = (
+        'import sys\n'
+        'out = sys.argv[sys.argv.index("--out") + 1]\n'
+        'open(out, "wb").write(b"\\x89PNG\\r\\n\\x1a\\nFAKE")\n'
+        'open(out + ".json", "w").write("{\\"pyefis_rev\\": ")\n'
+    )
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path, body=bad_sidecar)
+    tmpdir = tmp_path / "svc-tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(mod.tempfile, "tempdir", str(tmpdir))
+    with _capturing(mod) as capture:
+        png, headers = capture()
+
+    assert png.startswith(b"\x89PNG")
+    assert "X-Capture-Pyefis-Rev" not in headers
+    assert list(tmpdir.iterdir()) == []
+
+
+def test_capture_timing_out_takes_the_sidecar_too(monkeypatch, tmp_path):
+    # The 504 path has to take the sidecar as well, and it is the path most
+    # likely to strand one: svs_capture.py writes the frame and the sidecar
+    # beside it and can still hang afterwards on GL teardown, so the handler
+    # unlinks the PNG it knows about and the `.json` named after it survives.
+    # Written because the line that does this was unpinned -- deleting
+    # `take_manifest` from the timeout branch left all 19 other tests green,
+    # which makes it exactly the line a later conflict resolution drops in
+    # silence (it conflicts with AER-2658's two-lock restructure of this
+    # same block).
+    mod, _ = _service_with_fake_capture(monkeypatch, tmp_path)
+    tmpdir = tmp_path / "svc-tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(mod.tempfile, "tempdir", str(tmpdir))
+
+    def hangs_after_writing_its_sidecar(argv, **kwargs):
+        out = argv[argv.index("--out") + 1]
+        Path(out).write_bytes(b"\x89PNG\r\n\x1a\nFAKE")
+        Path(out + ".json").write_text(json.dumps({"pyefis_rev": "abc1234"}))
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(mod.subprocess, "run", hangs_after_writing_its_sidecar)
+    with _capturing(mod) as capture:
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            capture()
+
+    assert caught.value.code == 504
+    assert list(tmpdir.iterdir()) == []
+
+
+def test_take_manifest_removes_what_it_read(capture_service, tmp_path):
+    out = tmp_path / "frame.png"
+    sidecar = tmp_path / "frame.png.json"
+    sidecar.write_text(json.dumps({"pyefis_rev": "deadbee"}))
+
+    assert capture_service.take_manifest(str(out)) == {"pyefis_rev": "deadbee"}
+    assert not sidecar.exists()
+    # Second take finds nothing and says so rather than raising.
+    assert capture_service.take_manifest(str(out)) is None
 
 
 def test_build_argv_minimal_scenario(capture_service):
