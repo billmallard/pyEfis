@@ -268,6 +268,7 @@ echo
 
 # ---- 2. bench lock --------------------------------------------------------
 echo "[2] bench lock $LOCK"
+lock_state=0   # 0 free, 1 held, 2 cannot open -- read again by the holder-record check
 lock_probe() {  # 0 = free (taken and released), 1 = held, 2 = cannot open
   # Do NOT hand the path to flock(1). It opens O_RDONLY|O_CREAT, and O_CREAT on
   # a file you do not own in a sticky world-writable directory is refused by
@@ -358,14 +359,24 @@ fi
 # distrusting, because it is a plain file that nothing clears. Checking the
 # liveness of the pid it names is the whole point: a record naming a dead pid
 # from seven days ago is exactly what read as "someone is working" in AER-2663.
+#
+# A dead pid is only a FINDING while the lock is held (or undeterminable):
+# that is the AER-2663 shape, a live claim with nobody behind it. With the lock
+# free it is ordinary residue -- bench-deploy.sh writes the record on every run,
+# --check included, and never removes it -- so flagging it there made the first
+# timer-driven sweep after any deploy report the bench dirty (AER-2666).
 if [ -r "$LOCK.owner" ]; then
   echo "    holder record $LOCK.owner:"
   sed 's/^/      /' "$LOCK.owner" 2>/dev/null | head -5
   rec_owner_pid=$(sed -n 's/.*[[:space:]]pid=\([0-9]\{1,\}\).*/\1/p;s/^pid=\([0-9]\{1,\}\).*/\1/p' \
                     "$LOCK.owner" 2>/dev/null | head -1)
   if [ -n "$rec_owner_pid" ] && [ ! -d "/proc/$rec_owner_pid" ]; then
-    finding "the holder record claims the bench for pid $rec_owner_pid, which is NOT running --" \
-            "treat the claim as expired, not as a colleague at work"
+    if [ "$lock_state" -eq 0 ]; then
+      ok "holder record names pid $rec_owner_pid, which is not running -- residue of a finished run (the lock is free)"
+    else
+      finding "the holder record claims the bench for pid $rec_owner_pid, which is NOT running --" \
+              "treat the claim as expired, not as a colleague at work"
+    fi
   fi
 fi
 echo
