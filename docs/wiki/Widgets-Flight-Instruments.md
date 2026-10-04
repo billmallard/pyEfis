@@ -41,6 +41,7 @@ tables but not belabored.
 | `horizontal_situation_indicator` | `hsi.HSI` | `COURSE`, `CDI`, `GSI`, `HEAD`, `HEADBUG`, `TRACK`, `GS` | Rotating compass card with course pointer, heading + GPS-track bugs, CDI and glideslope |
 | `turn_coordinator` | `tc.TurnCoordinator` | `ROT`, `ALAT` | Rate-of-turn aircraft + inclinometer (slip/skid) ball |
 | `wind_display` | `wind.WindDisplay` | `HWIND`, `XWIND` | Two-row headwind/tailwind + crosswind readout |
+| `nav_status` | `nav_status.NavStatus` | `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`, `WPNEXT`, `WPDIS`, `WPETE` | One-line flight-plan from-to-next chip with state badge, distance, ETE and phase |
 
 > The `altimeter_trend_tape`'s "default key" is `ALT` per the screen-builder
 > defaults table, but the widget itself subscribes to **`VS`** — it draws a
@@ -454,6 +455,65 @@ State is shown by color and content:
   row: 6
   column: 15
   span: {rows: 14, columns: 22}
+```
+
+---
+
+# Navigation status
+
+## `nav_status`
+
+The flight plan's from-to-next field (GNX 375 Pilot's Guide 3-41/3-42) as a
+one-line chip, small enough for a PFD corner or the ND's status row:
+
+```
+[LEG] KSBA > GVO > RZS   12.4 NM  0:06  TERM
+```
+
+![nav_status states, 3x nearest-neighbour: no plan, LEG/TERM, DIRECT/ENR, SUSP at the MAP, LOI with ETE bad, position fail](../images/nav_status/contact_sheet_3x.png)
+
+- **FIX keys:** reads the fix-gateway `flightplan` engine's outputs only, and
+  writes nothing. `WPFROM` > **`WPNAME`** (the TO waypoint, in the active
+  colour, magenta by default) > `WPNEXT`; the `FPLSTATE` badge (`LEG`,
+  `DIRECT` magenta, `SUSP` yellow; no badge while no plan is active);
+  `WPDIS` (nm, one decimal under 100 nm), `WPETE` (H:MM, the FPL page's
+  format) and `FPLPHASE` (green; `LOI` yellow).
+- **No active leg** (`FPLSTATE` 0): all three idents are `____`, nothing else
+  is drawn. A single missing ident (no NEXT on the last leg, no FROM on a
+  direct-to) is `____` too. Underscores are never in the active colour.
+- **Quality:** a **fail** on `WPDIS`/`WPETE` (the engine has lost position)
+  draws a red `XXX` in that field; **bad** greys the field, and `WPETE` bad
+  (ground speed under 30 kt) is drawn as `--:--`; **old** on `FPLSTATE`
+  (the engine stopped publishing) greys the whole chip. While `FPLPHASE` is
+  `VECTORS` the distance and time are blank: the engine publishes no distance
+  on a vector leg.
+- **Missing keys:** a key the gateway does not define reads as absent; the
+  chip constructs and draws underscores rather than failing the screen.
+- **Size:** the text is fitted to a worst-case template (`DIRECT`, three
+  five-letter idents and every enabled field), so it does not change size as
+  the content changes in flight; a longer ident shrinks it further.
+- **Tap:** fires the `flightplan page fpl` action (with `hmi_group` appended
+  when set). With `tap_screen` set it first shows that screen, so a chip on
+  the PFD opens the plan on the flight-plan screen.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `show_distance` | **true** | draw `WPDIS` |
+| `show_ete` | **true** | draw `WPETE` |
+| `show_phase` | **true** | draw `FPLPHASE` |
+| `hmi_group` | `""` | `hmi_group` of the `flight_plan` instrument a tap targets; blank = all |
+| `tap_screen` | `""` | screen to show before the FPL page on a tap; blank = stay |
+| `active_color` | `#ff00ff` | TO waypoint ident colour |
+| `text_color` | `#ffffff` | FROM/NEXT idents, separators and data |
+| `font_family` / `font_percent` | from preferences | `font_percent` scales the nominal size (60% of the height) |
+
+```yaml
+- type: nav_status
+  row: 100
+  column: 0
+  span: {rows: 10, columns: 100}
+  options:
+    tap_screen: FLIGHTPLAN
 ```
 
 ---
