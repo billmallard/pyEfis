@@ -1,5 +1,6 @@
 # Stock screen for the flight_plan instrument (FP5a, billmallard/pyEfis#185).
-# Moving map on the left, flight_plan on the right, the shipped 110x200 grid.
+# Moving map on the left over the nav_status from-to-next chip (FP7,
+# billmallard/pyEfis#189), flight_plan on the right, the shipped 110x200 grid.
 # Reached from PFD via the FPL corner button (buttons/screen-flightplan-pfd.yaml).
 FLIGHTPLAN:
   module: pyefis.screens.screenbuilder
@@ -12,7 +13,14 @@ FLIGHTPLAN:
       row: 0
       column: 0
       span:
-        rows: 110
+        rows: 100
+        columns: 100
+
+    - type: nav_status
+      row: 100
+      column: 0
+      span:
+        rows: 10
         columns: 100
 
     - type: flight_plan
