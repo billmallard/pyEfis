@@ -21,6 +21,20 @@ Contract
 
 All three require `Authorization: Bearer <token>`.
 
+A `/capture` 200 carries its provenance in response headers, so the body stays
+a plain PNG:
+
+  X-Capture-Pyefis-Rev        the rev of the code that RENDERED these bytes,
+                               from the spawned `svs_capture.py`'s own sidecar
+  X-Capture-Manifest-Base64   that whole sidecar, base64 JSON -- includes the
+                               sha256 tying it to the PNG in this response
+  X-Capture-Service-Ref       this service's loaded rev (see SERVICE_REF)
+  X-Capture-Seconds / -Argv   timing and the exact argv that was run
+
+Both rev headers are present because they answer different questions and can
+legitimately differ: `svs_capture.py` is spawned per request off disk, while
+this service runs the module it imported at startup.
+
 Captures are SERIALIZED. One GL capture runs at a time: svs_capture spawns a
 fresh process per scenario by design (the visual harness carries module-global
 state, so a reused process leaks the previous pose into the next frame), and
@@ -345,6 +359,40 @@ def requested_lock_wait(p: dict) -> float:
     except (TypeError, ValueError) as exc:
         raise ValueError(f"bad lock_wait: {exc}") from exc
     return max(0.0, min(asked, BENCH_LOCK_WAIT))
+
+
+def take_manifest(out_path):
+    """Read and remove ``<out_path>.json``, the sidecar `svs_capture.py` wrote.
+
+    Returns the parsed sidecar, or None if there is not a readable one.
+
+    Taking it is not optional bookkeeping. `svs_capture.py` writes the sidecar
+    next to the frame it rendered (`pyefis_rev`, capture_mode, requested vs
+    actual size, argv, sha256 of the PNG), but this service renders into a
+    tempfile and returns the PNG bytes -- so unless the sidecar is read before
+    that tempfile goes away, every frame served over HTTP reaches the caller
+    naming nothing, which is the exact condition AER-1675 was opened on. It
+    also removes it, because 355 orphaned `tmp*.png.json` files had
+    accumulated in /tmp on the Beelink by the time this was found.
+
+    Never raises: provenance is metadata on a capture, never a dependency of
+    one (same rule as `resolve_pyefis_rev`). A missing or malformed sidecar
+    costs the response its manifest header and nothing else.
+    """
+    path = Path(str(out_path) + ".json")
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
 
 
 MAX_TIMEOUT = 600
@@ -684,6 +732,7 @@ class Handler(BaseHTTPRequestHandler):
                         capture_output=True, text=True, timeout=timeout + 30,
                     )
                 except subprocess.TimeoutExpired:
+                    take_manifest(tmp.name)
                     os.unlink(tmp.name)
                     return self._json(504, {"error": "capture timed out",
                                             "seconds": round(time.time() - started, 1),
@@ -707,10 +756,13 @@ class Handler(BaseHTTPRequestHandler):
                 "stderr": proc.stderr[-2000:],
                 "argv": " ".join(shlex.quote(a) for a in argv),
             }
+            take_manifest(tmp.name)
             os.unlink(tmp.name)
             return self._json(502, body)
 
         png = Path(tmp.name).read_bytes()
+        # Before the tempfile goes away -- the sidecar is named after it.
+        manifest = take_manifest(tmp.name)
         os.unlink(tmp.name)
         self.send_response(200)
         self.send_header("Content-Type", "image/png")
@@ -721,6 +773,27 @@ class Handler(BaseHTTPRequestHandler):
         # number a perf oracle can trust (AER-2658).
         self.send_header("X-Capture-Lock-Wait-Seconds", str(lock_wait))
         self.send_header("X-Capture-Argv", " ".join(shlex.quote(a) for a in argv))
+        # The code that rendered these bytes (AER-1675). `svs_capture.py` is
+        # spawned per request from PYEFIS_ROOT, so the sidecar's `pyefis_rev`
+        # -- not this service's frozen SERVICE_REF -- is the renderer's
+        # identity, and it is the one a cross-renderer differential needs to
+        # tell "different GPU" apart from "different code".
+        if manifest:
+            rev = manifest.get("pyefis_rev")
+            if rev:
+                self.send_header("X-Capture-Pyefis-Rev", str(rev))
+            # The whole sidecar too, so the caller keeps the sha256 that ties
+            # it to the PNG it just received, the requested-vs-actual size and
+            # the capture mode. Base64 for the same reason the perf log is:
+            # the argv it carries cannot ride raw in a header value.
+            self.send_header(
+                "X-Capture-Manifest-Base64",
+                base64.b64encode(json.dumps(manifest).encode()).decode(),
+            )
+        # This service's own loaded rev, so provenance for a frame is one
+        # response rather than a /capture plus a /health the caller has to
+        # assume nothing moved between.
+        self.send_header("X-Capture-Service-Ref", SERVICE_REF)
         if params.get("perf_log", False):
             # svs_capture.py's perf report goes to stderr (log.info, forced
             # past the profiler's own 2s interval) and is otherwise thrown
