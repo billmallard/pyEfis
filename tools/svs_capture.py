@@ -143,6 +143,11 @@ if r"C:\pylib" not in sys.path:
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Shared with capture_service.py (AER-2627) -- see pyefis_rev.py for why this
+# lives in its own dependency-light module rather than here.
+from pyefis_rev import resolve_pyefis_rev  # noqa: E402
 
 # Run against the mock FIX db, exactly as the visual harness does -- no gateway.
 import mock_db.client  # noqa: E402
@@ -311,41 +316,6 @@ def _default(path, *parts):
 def _default_water():
     found = sorted((_REPO / "water").glob("water_rtree*.sqlite"))
     return str(found[0]) if found else ""
-
-
-def resolve_pyefis_rev(repo_root=None):
-    """Identify the pyEfis checkout actually rendering this frame (AER-1675).
-
-    A cross-renderer differential (Beelink vs Pi) only localises a defect if
-    a disagreement can be attributed to *different code* vs *different GPU*
-    -- which needs the rendering identity read from the checkout that is
-    live right now, not a constant someone has to remember to bump (a
-    constant is a lie waiting to happen). Dirty is reported rather than
-    silently collapsed into the clean SHA: a frame rendered from uncommitted
-    changes is not reproducible from that SHA alone.
-
-    Never raises -- this is metadata for archival/attribution, not something
-    a capture should fail over. Returns "unknown" if this isn't a git
-    checkout or git is unavailable.
-    """
-    root = repo_root or _REPO
-    try:
-        sha = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if sha.returncode != 0:
-            return "unknown"
-        rev = sha.stdout.strip()
-        dirty = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if dirty.returncode == 0 and dirty.stdout.strip():
-            rev += "-dirty"
-        return rev
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
 
 
 def _write_manifest(
