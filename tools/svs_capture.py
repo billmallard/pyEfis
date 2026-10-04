@@ -709,6 +709,14 @@ def seed_mock_fix(args):
     return values
 
 
+def _same_source(module, reference):
+    """True if ``module`` was loaded from the same file as ``reference``."""
+    path = getattr(module, "__file__", None)
+    if not path:
+        return False
+    return Path(path).resolve() == Path(reference.__file__).resolve()
+
+
 def check_mock_fix_bound(fix_module=None):
     """Return an error string if ``pyavtools.fix`` is bound to the real client.
 
@@ -721,11 +729,17 @@ def check_mock_fix_bound(fix_module=None):
     ``main`` returns -- ``--timeout`` bounds the settle loop, not interpreter
     shutdown. One such wrapper sat on the Beelink's FIX bus for 11 days
     (AER-2667). Refuse instead.
+
+    "The mock" means the mock's source file, not this module object: the
+    repo's own conftest (and render_instrument.py) import the same file as
+    ``tests.mock_db.client``, a distinct module object that is just as offline.
+    Anything not loaded from that file -- the real client, or a module with no
+    file at all -- is refused.
     """
     if fix_module is None:
         fix_module = fix
     bound = getattr(fix_module, "client", None)
-    if bound is mock_db.client:
+    if bound is mock_db.client or _same_source(bound, mock_db.client):
         return None
     return (
         f"svs_capture: pyavtools.fix is bound to {getattr(bound, '__name__', bound)!r}, "
