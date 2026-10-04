@@ -50,7 +50,8 @@ What this tool does instead
 
 Exit codes: 0 ok, 2 never settled (timeout), 3 GL unavailable, 4 PNG write
 failed, 5 requested/delivered size mismatch (windowed path only -- see
-``--width``/``--height`` below).
+``--width``/``--height`` below), 6 the mock FIX db swap was bypassed (see
+``check_mock_fix_bound``).
 
 On success a ``<out>.json`` sidecar is written alongside the frame, naming not
 just *when* it was rendered but *which path* drew it (AER-1675, AER-1795):
@@ -169,6 +170,7 @@ EXIT_NOT_SETTLED = 2
 EXIT_GL_FAILED = 3
 EXIT_SAVE_FAILED = 4
 EXIT_SIZE_MISMATCH = 5
+EXIT_LIVE_FIX_CLIENT = 6
 
 PUMP_INTERVAL_MS = 16
 CONFIRM_FRAMES = 2  # settled must hold this many paints running
@@ -707,8 +709,38 @@ def seed_mock_fix(args):
     return values
 
 
+def check_mock_fix_bound(fix_module=None):
+    """Return an error string if ``pyavtools.fix`` is bound to the real client.
+
+    The ``sys.modules`` swap above only takes effect if nothing imported
+    ``pyavtools.fix`` first. A wrapper that imports ``pyefis.instruments.ai``
+    (to monkeypatch it) and then ``runpy``s this file gets the real network
+    client instead: ``seed_mock_fix`` then subscribes to the live gateway on
+    :3490, the gateway's values can overwrite the seeded pose, and the real
+    client's non-daemon reconnect thread keeps the process alive forever after
+    ``main`` returns -- ``--timeout`` bounds the settle loop, not interpreter
+    shutdown. One such wrapper sat on the Beelink's FIX bus for 11 days
+    (AER-2667). Refuse instead.
+    """
+    if fix_module is None:
+        fix_module = fix
+    bound = getattr(fix_module, "client", None)
+    if bound is mock_db.client:
+        return None
+    return (
+        f"svs_capture: pyavtools.fix is bound to {getattr(bound, '__name__', bound)!r}, "
+        f"not the mock FIX client -- something imported pyavtools.fix before "
+        f"this tool's mock swap, so it would connect to a live gateway. Import "
+        f"svs_capture (or runpy it) before anything that imports pyefis."
+    )
+
+
 def main(argv=None):
     args = parse_args(argv)
+    fix_error = check_mock_fix_bound()
+    if fix_error is not None:
+        print(fix_error, file=sys.stderr)
+        return EXIT_LIVE_FIX_CLIENT
     pyefis_rev = resolve_pyefis_rev()
 
     if args.perf_log:

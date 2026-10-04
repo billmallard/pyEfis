@@ -383,6 +383,7 @@ EXIT_MEANING = {
     2: "scene never settled (a half-loaded frame was refused)",
     3: "OpenGL renderer unavailable",
     4: "PNG write failed",
+    6: "mock FIX db bypassed (would have attached to the live gateway)",
 }
 
 # The full set of scenario fields this service understands. A field outside
