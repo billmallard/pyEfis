@@ -1,0 +1,503 @@
+#!/usr/bin/env python3
+"""SVS capture service -- the render tier, exposed as one HTTP capability.
+
+Why this exists
+---------------
+pyEfis renders synthetic vision through real OpenGL. The Paperclip container
+that hosts the QA agent has no GPU (the NAS is a Ryzen V1500B -- no integrated
+graphics at all, no /dev/dri), so QA cannot run the render tier itself. The
+bench can: an Intel Alder Lake-N iGPU, hardware Mesa GL 4.6, an X session, a
+pyEfis checkout, and the installed data packs.
+
+Rather than give QA a shell here, this service gives it exactly ONE capability:
+"render this pose, hand back a PNG." That is the least-privilege posture used
+elsewhere in this org -- the agent gets the capability, not the machine.
+
+Contract
+--------
+  GET  /health              -> JSON: GL renderer, tool presence, data paths
+  POST /capture             -> image/png on success, JSON on failure
+  POST /bench/map            -> JSON (the MP7 harness's own output, unmodified)
+
+All three require `Authorization: Bearer <token>`.
+
+Captures are SERIALIZED. One GL capture runs at a time: svs_capture spawns a
+fresh process per scenario by design (the visual harness carries module-global
+state, so a reused process leaks the previous pose into the next frame), and
+concurrent GL work on one iGPU buys nothing. `/bench/map` shares the SAME lock
+-- it runs offscreen (QT_QPA_PLATFORM=offscreen, no GL) so it does not need
+serializing against itself, but it does need serializing against a `/capture`
+that might be mid-render, since both touch the one pyEfis checkout and the
+live display shares the box.
+
+Lives in the checkout it serves (AER-2627)
+-------------------------------------------
+This file used to be hand-placed on the bench outside any git checkout
+(``/home/pyefis/capture_service.py``), with no deploy route of its own --
+`bench-deploy.sh`'s `git pull --ff-only` never touched it. Living in
+`tools/` instead means the regular pull carries it for free, the same
+pattern as `gpu-required` (a fork-only file that never rides upstream): the
+fourth such file, now this one is no longer a fork-only exception, it is
+just a tool shipped in the checkout.
+
+Configuration (env, with the Beelink bench's defaults):
+  CAPTURE_PORT        8085
+  CAPTURE_TOKEN_FILE  /home/pyefis/.capture-token
+  PYEFIS_ROOT         the checkout this file lives in (override only for
+                       tests, or to point at a different checkout entirely)
+  CAPTURE_PYTHON      /home/pyefis/pyefis-venv/bin/python
+  CAPTURE_TILES       /data/makerplane-data/terrain/tiles
+  CAPTURE_WATER       /data/makerplane-data/water/current/water.sqlite
+  CAPTURE_HIGHWAYS    /data/makerplane-data/highways/current/highways.sqlite
+  CAPTURE_NASR        /data/makerplane-data/navdata/current/airports.sqlite (unset by default)
+  CAPTURE_NAVAID      /data/makerplane-data/navaids/current/navaids.sqlite (unset by default)
+  CAPTURE_DOF         /data/makerplane-data/obstacles/current/obstacles.sqlite (unset by default)
+  CAPTURE_DISPLAY     :0
+
+`/bench/map` runs `tools/bench_map_gestures.py` (MP7,
+docs/moving_map_spec.md section 9.1) -- the offscreen moving-map gesture
+benchmark, distinct from `svs_capture.py`'s SVS/AI render. It needs no
+GL and no DISPLAY (QT_QPA_PLATFORM=offscreen); NASR/navaid/DOF paths are
+optional (empty string = that layer stays unconfigured, matching the
+harness's own defaults) because the moving-map section 5 budgets this
+endpoint exists for are all terrain+water.
+
+`/health` reports `service_ref` -- the identity of the checkout this file is
+actually running from (AER-2627). Before AER-2627 this was read from a
+sidecar file a deploy step had to remember to write, and reported "unknown"
+when it forgot -- provenance resting on another agent's timestamped word
+rather than anything this service could verify itself. Now it is resolved
+live, the exact same way `svs_capture.py` resolves its own `pyefis_rev`
+sidecar key for every frame (`tools/pyefis_rev.py`, shared by both): a git
+rev-parse against `PYEFIS_ROOT`, dirty-flagged. The two questions -- "what
+rendered this frame" and "what is this service running" -- collapse into one
+value because, now that this file lives inside the checkout it serves, they
+are literally the same checkout.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pyefis_rev import resolve_pyefis_rev  # noqa: E402
+
+PORT = int(os.environ.get("CAPTURE_PORT", "8085"))
+TOKEN_FILE = Path(os.environ.get("CAPTURE_TOKEN_FILE", "/home/pyefis/.capture-token"))
+PYEFIS_ROOT = Path(os.environ.get("PYEFIS_ROOT", str(Path(__file__).resolve().parent.parent)))
+PYTHON = os.environ.get("CAPTURE_PYTHON", "/home/pyefis/pyefis-venv/bin/python")
+TILES = os.environ.get("CAPTURE_TILES", "/data/makerplane-data/terrain/tiles")
+WATER = os.environ.get("CAPTURE_WATER", "/data/makerplane-data/water/current/water.sqlite")
+# Roads are OPT-IN: unlike tiles and water this is not applied unless the
+# caller asks, so existing scenarios (notably the water oracle's isolate
+# runs) keep rendering exactly what they render today.
+HIGHWAYS = os.environ.get("CAPTURE_HIGHWAYS", "/data/makerplane-data/highways/current/highways.sqlite")
+# NASR/navaid/DOF are unset by default (empty = "that layer stays
+# unconfigured", the harness's own default) -- /bench/map exists to measure
+# section 5's terrain+water budgets, not the airport/navaid/obstacle layers.
+NASR = os.environ.get("CAPTURE_NASR", "")
+NAVAID = os.environ.get("CAPTURE_NAVAID", "")
+DOF = os.environ.get("CAPTURE_DOF", "")
+DISPLAY = os.environ.get("CAPTURE_DISPLAY", ":0")
+
+CAPTURE_TOOL = "tools/svs_capture.py"
+BENCH_MAP_TOOL = "tools/bench_map_gestures.py"
+MAX_TIMEOUT = 600
+#: /bench/map runs multiple gesture scenarios in one subprocess (--scenario
+#: all); each one can hold for several seconds past its settle latency, so
+#: the default budget is generous compared to /capture's single-frame 120 s.
+BENCH_MAP_DEFAULT_TIMEOUT = 300
+_lock = threading.Lock()
+
+#: bench_map_gestures.py's own --scenario choices, mirrored here (subprocess
+#: boundary -- this service cannot import the harness's SCENARIOS dict) so a
+#: bad scenario name is rejected with a 400 instead of failing inside the
+#: subprocess (AER-676 strict-rejection convention, same as ALLOWED_FIELDS
+#: below).
+BENCH_MAP_SCENARIOS = frozenset({
+    "pinch_out", "pinch_in", "rotate", "pan", "ladder", "all",
+})
+
+# The full set of /bench/map request fields this service understands --
+# mirrors bench_map_gestures.py's own CLI, minus --out/--budget (the service
+# owns the output file; a budget check is MP9b's QA routine, not this
+# endpoint) and --moving-position/--target/--gs/--heading/--position-hz/
+# --duration (AER-679 mode; not this issue's scope -- add when a caller
+# needs it, same AER-676 discipline as ALLOWED_FIELDS below).
+BENCH_MAP_ALLOWED_FIELDS = frozenset({
+    "scenario", "w", "h", "lat", "lon", "track", "alt",
+    "range_ladder", "pinch_lo_nm", "pinch_hi_nm",
+    "tile_path", "water_db", "water_max_vertices", "water_raster",
+    "highway_db", "river_db", "nasr_db", "navaid_db", "dof_db",
+    "timeout",
+})
+
+# svs_capture's own exit codes, so a caller can tell "no GPU" from "never settled".
+EXIT_MEANING = {
+    0: "ok",
+    2: "scene never settled (a half-loaded frame was refused)",
+    3: "OpenGL renderer unavailable",
+    4: "PNG write failed",
+}
+
+# The full set of scenario fields this service understands. A field outside
+# this set is REJECTED, not ignored (AER-676): a caller believing it exercised
+# a field the service silently dropped is a false pass, and a false pass in
+# an oracle's only window onto the render tier is worse than no oracle.
+ALLOWED_FIELDS = frozenset({
+    "lat", "lon", "alt", "heading", "pitch", "roll", "range_nm",
+    "width", "height", "tiles", "water", "water_max_vertices",
+    "flat", "terrain_only", "symbology_only", "magvar",
+    "isolate", "highways", "perf_log", "timeout",
+})
+
+
+def _token() -> str:
+    return TOKEN_FILE.read_text().strip()
+
+
+def _highways_path(p: dict) -> str:
+    """Resolve the `highways` request field to an svs_capture --highways value.
+
+    Absent or false -> "" -> HighwayDB.ready is False -> no roads can be
+    drawn (highway_db.py: `if not path: return`). True -> the configured
+    pack. A string -> that path verbatim.
+    """
+    h = p.get("highways")
+    return HIGHWAYS if h is True else ("" if not h else str(h))
+
+
+def build_argv(p: dict, out: str) -> list[str]:
+    """Translate a scenario dict into svs_capture argv."""
+    # svs_capture.py rejects --terrain-only and --symbology-only together, and
+    # terrain_only defaults to true HERE, so the raw scenario field cannot be
+    # what decides argv content -- every symbology_only request would collide
+    # with a default the caller never asked for. Resolve terrain_only first:
+    # symbology_only suppresses that default, and only an EXPLICIT
+    # terrain_only: true alongside symbology_only: true is a real conflict.
+    symbology_only = bool(p.get("symbology_only", False))
+    if symbology_only:
+        terrain_only = bool(p.get("terrain_only", False))
+        if terrain_only:
+            raise ValueError(
+                "terrain_only and symbology_only are mutually exclusive"
+            )
+    else:
+        terrain_only = bool(p.get("terrain_only", True))
+
+    # AER-1002: magvar is only emitted when non-default so a magvar: 0 (or
+    # omitted) caller's argv stays byte-identical to a pre-AER-1002 caller's
+    # -- the same invariant AER-708 held for svs_capture's own --magvar.
+    magvar = float(p.get("magvar", 0.0))
+
+    argv = [
+        PYTHON, CAPTURE_TOOL,
+        "--lat", f"{float(p['lat']):.6f}",
+        "--lon", f"{float(p['lon']):.6f}",
+        "--alt", f"{float(p['alt']):.1f}",
+        "--heading", f"{float(p.get('heading', 0.0)):.2f}",
+        "--pitch", f"{float(p.get('pitch', 0.0)):.2f}",
+        "--roll", f"{float(p.get('roll', 0.0)):.2f}",
+        "--range", f"{float(p.get('range_nm', 30.0)):.2f}",
+        "--width", str(int(p.get("width", 800))),
+        "--height", str(int(p.get("height", 600))),
+        "--tiles", str(p.get("tiles", TILES)),
+        "--water", str(p.get("water", WATER)),
+        # Emitted exactly once, and here rather than under `isolate`: argparse
+        # takes the LAST occurrence, so a second copy in the isolate branch
+        # would silently override an explicit request.
+        "--highways", _highways_path(p),
+        "--out", out,
+        # ALWAYS explicit, never omitted. svs_capture's own help warns that at
+        # the 32 default _decode_vertices stride-decimates the ring while
+        # _decode_triangles keeps the ORIGINAL indices, which are then clamped
+        # -- collapsing most triangles to degenerate slivers and "silently
+        # rendering corrupt water". A render oracle must never inherit that by
+        # accident, so the cap is a first-class parameter with a stated default
+        # (1024 = what the appliance actually runs).
+        "--water-max-vertices", str(int(p.get("water_max_vertices", 1024))),
+    ]
+    if magvar != 0.0:
+        argv += ["--magvar", f"{magvar:.2f}"]
+    if p.get("flat", True):
+        argv.append("--flat")
+    if terrain_only:
+        argv.append("--terrain-only")
+    if symbology_only:
+        argv.append("--symbology-only")
+    if p.get("isolate", True):
+        # Nothing may paint over the answer: an oracle that judges one property
+        # must control every other thing that can draw.
+        # `highways` is exempt: it defaults to "" above, so isolate still
+        # suppresses roads for every caller that does not ask. A caller that
+        # DOES ask has made roads the answer.
+        argv += ["--dof", "", "--nasr", "", "--cifp", ""]
+    if p.get("perf_log", False):
+        # AER-1976: opt-in, like `highways` above -- existing callers (the
+        # water oracle's isolate runs) keep the argv they already get.
+        argv.append("--perf-log")
+    argv += ["--timeout", str(int(p.get("timeout", 120)))]
+    return argv
+
+
+def build_bench_map_argv(p: dict, out: str) -> list[str]:
+    """Translate a /bench/map request dict into bench_map_gestures.py argv.
+
+    Defaults mirror the harness's own bench-run recipe (docstring at the top
+    of tools/bench_map_gestures.py): the bench's real packs at the bench
+    widget size, Raleigh scene, --scenario all. NASR/navaid/DOF default to
+    unconfigured (empty), same rationale as HIGHWAYS in build_argv() above --
+    this endpoint measures terrain+water, and a caller that wants roads or
+    navaids configured can ask for them explicitly.
+    """
+    scenario = str(p.get("scenario", "all"))
+    if scenario not in BENCH_MAP_SCENARIOS:
+        raise ValueError(f"unknown scenario: {scenario!r}")
+    argv = [
+        PYTHON, BENCH_MAP_TOOL,
+        "--scenario", scenario,
+        "--w", str(int(p.get("w", 650))),
+        "--h", str(int(p.get("h", 1040))),
+        "--lat", f"{float(p.get('lat', 35.8)):.6f}",
+        "--lon", f"{float(p.get('lon', -78.8)):.6f}",
+        "--track", f"{float(p.get('track', 0.0)):.2f}",
+        "--alt", f"{float(p.get('alt', 1500.0)):.1f}",
+        "--range-ladder", str(p.get("range_ladder", "2,5,10,20,40,80,160")),
+        "--tile-path", str(p.get("tile_path", TILES)),
+        "--water-db", str(p.get("water_db", WATER)),
+        # ALWAYS explicit, same rationale as build_argv()'s --water-max-vertices:
+        # omitting it silently renders corrupt water through the
+        # decimation/clamp mismatch (AX-9). 1024 = what the appliance runs.
+        "--water-max-vertices", str(int(p.get("water_max_vertices", 1024))),
+        "--water-raster", str(p.get("water_raster", "numpy")),
+        "--highway-db", str(p.get("highway_db", "")),
+        "--river-db", str(p.get("river_db", "")),
+        "--nasr-db", str(p.get("nasr_db", NASR)),
+        "--navaid-db", str(p.get("navaid_db", NAVAID)),
+        "--dof-db", str(p.get("dof_db", DOF)),
+        "--out", out,
+    ]
+    if "pinch_lo_nm" in p:
+        argv += ["--pinch-lo-nm", f"{float(p['pinch_lo_nm']):.2f}"]
+    if "pinch_hi_nm" in p:
+        argv += ["--pinch-hi-nm", f"{float(p['pinch_hi_nm']):.2f}"]
+    return argv
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "svs-capture/1.0"
+
+    def log_message(self, fmt, *args):
+        print(f"[{self.log_date_time_string()}] {fmt % args}", flush=True)
+
+    # -- helpers --
+    def _json(self, code: int, obj: dict):
+        body = json.dumps(obj, indent=1).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authed(self) -> bool:
+        got = self.headers.get("Authorization", "")
+        want = f"Bearer {_token()}"
+        if len(got) != len(want) or got != want:
+            self._json(401, {"error": "unauthorized"})
+            return False
+        return True
+
+    def do_GET(self):
+        if self.path != "/health":
+            return self._json(404, {"error": "not found"})
+        if not self._authed():
+            return
+        gl = "unknown"
+        try:
+            r = subprocess.run(["glxinfo", "-B"], env={**os.environ, "DISPLAY": DISPLAY},
+                               capture_output=True, text=True, timeout=20)
+            for line in r.stdout.splitlines():
+                if "OpenGL renderer string" in line:
+                    gl = line.split(":", 1)[1].strip()
+        except Exception as exc:
+            gl = f"glxinfo failed: {exc}"
+        self._json(200, {
+            "ok": True,
+            "service_ref": resolve_pyefis_rev(PYEFIS_ROOT),
+            "gl_renderer": gl,
+            "display": DISPLAY,
+            "capture_tool": str(PYEFIS_ROOT / CAPTURE_TOOL),
+            "capture_tool_present": (PYEFIS_ROOT / CAPTURE_TOOL).is_file(),
+            "bench_map_tool": str(PYEFIS_ROOT / BENCH_MAP_TOOL),
+            "bench_map_tool_present": (PYEFIS_ROOT / BENCH_MAP_TOOL).is_file(),
+            "tiles": TILES,
+            "tiles_present": Path(TILES).is_dir(),
+            "water": WATER,
+            "water_present": Path(WATER).is_file(),
+            "highways": HIGHWAYS,
+            "highways_present": Path(HIGHWAYS).is_file(),
+            "busy": _lock.locked(),
+        })
+
+    def do_POST(self):
+        if self.path not in ("/capture", "/bench/map"):
+            return self._json(404, {"error": "not found"})
+        if not self._authed():
+            return
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            params = json.loads(self.rfile.read(n) or b"{}")
+        except Exception as exc:
+            return self._json(400, {"error": f"bad JSON body: {exc}"})
+        if self.path == "/bench/map":
+            return self._handle_bench_map(params)
+        return self._handle_capture(params)
+
+    def _handle_capture(self, params: dict):
+        unknown = sorted(set(params) - ALLOWED_FIELDS)
+        if unknown:
+            # Reject, don't ignore (AER-676): a silently-dropped field lets a
+            # caller believe it exercised something it never tested.
+            return self._json(400, {"error": f"unknown scenario field(s): {', '.join(unknown)}"})
+        for req in ("lat", "lon", "alt"):
+            if req not in params:
+                return self._json(400, {"error": f"missing required field: {req}"})
+
+        timeout = min(int(params.get("timeout", 120)), MAX_TIMEOUT)
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp.close()
+        try:
+            argv = build_argv(params, tmp.name)
+        except (KeyError, TypeError, ValueError) as exc:
+            os.unlink(tmp.name)
+            return self._json(400, {"error": f"bad scenario: {exc}"})
+
+        started = time.time()
+        # Serialize: one GL capture at a time.
+        with _lock:
+            try:
+                proc = subprocess.run(
+                    argv, cwd=str(PYEFIS_ROOT),
+                    env={**os.environ, "DISPLAY": DISPLAY},
+                    capture_output=True, text=True, timeout=timeout + 30,
+                )
+            except subprocess.TimeoutExpired:
+                os.unlink(tmp.name)
+                return self._json(504, {"error": "capture timed out",
+                                        "seconds": round(time.time() - started, 1),
+                                        "argv": " ".join(shlex.quote(a) for a in argv)})
+        elapsed = round(time.time() - started, 1)
+
+        if proc.returncode != 0 or not os.path.getsize(tmp.name):
+            body = {
+                "error": "capture failed",
+                "exit_code": proc.returncode,
+                "meaning": EXIT_MEANING.get(proc.returncode, "unknown"),
+                "seconds": elapsed,
+                "stderr": proc.stderr[-2000:],
+                "argv": " ".join(shlex.quote(a) for a in argv),
+            }
+            os.unlink(tmp.name)
+            return self._json(502, body)
+
+        png = Path(tmp.name).read_bytes()
+        os.unlink(tmp.name)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(png)))
+        # Metadata rides in headers so the body stays a plain PNG.
+        self.send_header("X-Capture-Seconds", str(elapsed))
+        self.send_header("X-Capture-Argv", " ".join(shlex.quote(a) for a in argv))
+        if params.get("perf_log", False):
+            # svs_capture.py's perf report goes to stderr (log.info, forced
+            # past the profiler's own 2s interval) and is otherwise thrown
+            # away on a successful capture -- asking for perf_log and never
+            # being able to read it back would make the field pointless.
+            # Base64 because the report is multi-line and a raw header value
+            # cannot carry embedded newlines.
+            perf_log_b64 = base64.b64encode(
+                proc.stderr[-4000:].encode()).decode()
+            self.send_header("X-Capture-Perf-Log-Base64", perf_log_b64)
+        self.end_headers()
+        self.wfile.write(png)
+
+    def _handle_bench_map(self, params: dict):
+        unknown = sorted(set(params) - BENCH_MAP_ALLOWED_FIELDS)
+        if unknown:
+            # Same AER-676 discipline as _handle_capture: reject, don't ignore.
+            return self._json(400, {"error": f"unknown scenario field(s): {', '.join(unknown)}"})
+
+        timeout = min(int(params.get("timeout", BENCH_MAP_DEFAULT_TIMEOUT)), MAX_TIMEOUT)
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tmp.close()
+        try:
+            argv = build_bench_map_argv(params, tmp.name)
+        except (KeyError, TypeError, ValueError) as exc:
+            os.unlink(tmp.name)
+            return self._json(400, {"error": f"bad scenario: {exc}"})
+
+        started = time.time()
+        # Same lock as /capture: bench_map_gestures.py needs no GL of its
+        # own (offscreen QPA), but it shares the one pyEfis checkout and the
+        # box with a /capture that might be mid-render.
+        with _lock:
+            try:
+                proc = subprocess.run(
+                    argv, cwd=str(PYEFIS_ROOT),
+                    env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+                    capture_output=True, text=True, timeout=timeout + 30,
+                )
+            except subprocess.TimeoutExpired:
+                os.unlink(tmp.name)
+                return self._json(504, {"error": "bench/map timed out",
+                                        "seconds": round(time.time() - started, 1),
+                                        "argv": " ".join(shlex.quote(a) for a in argv)})
+        elapsed = round(time.time() - started, 1)
+
+        if proc.returncode != 0 or not os.path.getsize(tmp.name):
+            body = {
+                "error": "bench/map failed",
+                "exit_code": proc.returncode,
+                "seconds": elapsed,
+                "stderr": proc.stderr[-4000:],
+                "argv": " ".join(shlex.quote(a) for a in argv),
+            }
+            os.unlink(tmp.name)
+            return self._json(502, body)
+
+        # The harness's own JSON, byte-for-byte -- this endpoint's whole
+        # contract is "runs the MP7 harness, returns the JSON unmodified"
+        # (AER-1217), so the response body is the harness's --out file read
+        # straight off disk, never re-serialized through this service.
+        payload = Path(tmp.name).read_bytes()
+        os.unlink(tmp.name)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("X-Bench-Map-Seconds", str(elapsed))
+        self.send_header("X-Bench-Map-Argv", " ".join(shlex.quote(a) for a in argv))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+def main():
+    if not TOKEN_FILE.is_file():
+        raise SystemExit(f"no token file at {TOKEN_FILE}")
+    if not (PYEFIS_ROOT / CAPTURE_TOOL).is_file():
+        raise SystemExit(f"capture tool not found at {PYEFIS_ROOT / CAPTURE_TOOL}")
+    srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"svs-capture listening on :{PORT} (DISPLAY={DISPLAY}, root={PYEFIS_ROOT})", flush=True)
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
