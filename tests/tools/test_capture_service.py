@@ -21,13 +21,17 @@ the file and had no test coverage of its own before (it previously lived
 outside any checkout this repo's test suite could reach).
 """
 import base64
+import errno
+import fcntl
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -43,6 +47,13 @@ def _load_capture_service(monkeypatch, tmp_path, source_dir=None, pyefis_root=No
     token_file = tmp_path / ".capture-token"
     token_file.write_text("test-token\n")
     monkeypatch.setenv("CAPTURE_TOKEN_FILE", str(token_file))
+    # Default the bench lock (AER-2658) into the test's own tmp dir: it is
+    # read at import, and no test may touch the real /tmp/pyefis-bench.lock,
+    # which on a bench is a live mutual exclusion between agents.
+    monkeypatch.setenv(
+        "CAPTURE_BENCH_LOCK",
+        os.environ.get("CAPTURE_BENCH_LOCK", str(tmp_path / "pyefis-bench.lock")),
+    )
     if pyefis_root is not None:
         monkeypatch.setenv("PYEFIS_ROOT", str(pyefis_root))
     source = (source_dir or (_ROOT / "tools")) / "capture_service.py"
@@ -435,3 +446,269 @@ def test_highways_path_true_uses_configured_pack(capture_service):
 
 def test_highways_path_absent_is_empty(capture_service):
     assert capture_service._highways_path({}) == ""
+
+
+# -- the bench run lock (AER-2658) --------------------------------------
+#
+# These endpoints spawn a renderer against a checkout that `bench-deploy.sh`
+# rewrites, while holding /tmp/pyefis-bench.lock for its whole run. Before
+# AER-2658 nothing in this path took that lock, so a deploy could pull and
+# bounce pyefis.service mid-render. Every test below drives the real HTTP
+# handler against a real flock on a tmp path -- the subprocess is faked, the
+# locking is not, because the locking is the thing under test.
+
+
+class _FakeRun:
+    """Stands in for subprocess.run: writes the --out file, counts calls."""
+
+    def __init__(self, exit_code=0, payload=b"\x89PNG-fake", raise_timeout=False,
+                 sleep=0.0):
+        self.exit_code = exit_code
+        self.payload = payload
+        self.raise_timeout = raise_timeout
+        self.sleep = sleep
+        self.calls = 0
+
+    def __call__(self, argv, **kwargs):
+        self.calls += 1
+        if self.raise_timeout:
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 0))
+        if self.sleep:
+            time.sleep(self.sleep)
+        out = argv[argv.index("--out") + 1]
+        Path(out).write_bytes(self.payload)
+        return subprocess.CompletedProcess(argv, self.exit_code, "", "")
+
+
+def _fake_subprocess(mod, monkeypatch, fake):
+    """Swap the loaded module's subprocess for a shim around `fake`."""
+    import types
+    monkeypatch.setattr(mod, "subprocess", types.SimpleNamespace(
+        run=fake,
+        TimeoutExpired=subprocess.TimeoutExpired,
+        CompletedProcess=subprocess.CompletedProcess,
+    ))
+    return fake
+
+
+@contextmanager
+def _posting(mod):
+    """Serve mod's handler on loopback; yield post(path, body) -> (code, hdrs, body)."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(path, body, timeout=60):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=json.dumps(body).encode(),
+            headers={"Authorization": "Bearer test-token",
+                     "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as err:
+            return err.code, dict(err.headers), err.read()
+
+    try:
+        yield post
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@contextmanager
+def _holding(lock_path, holder=None):
+    """Hold the bench lock the way bench-deploy.sh does: flock(2) on the file."""
+    if holder is not None:
+        Path(f"{lock_path}.owner").write_text(holder + "\n")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o666)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        os.close(fd)
+
+
+def _is_free(lock_path):
+    """True if the bench lock can be taken right now."""
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o666)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError as exc:
+        assert exc.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES)
+        return False
+    finally:
+        os.close(fd)
+
+
+_SCENE = {"lat": 35.8, "lon": -78.8, "alt": 1500.0}
+
+
+@pytest.fixture
+def bench_lock_service(monkeypatch, tmp_path):
+    """The service, its bench-lock path, and a fake renderer, all wired up."""
+    lock = tmp_path / "pyefis-bench.lock"
+    monkeypatch.setenv("CAPTURE_BENCH_LOCK", str(lock))
+    mod = _load_capture_service(monkeypatch, tmp_path)
+    assert mod.BENCH_LOCK == lock
+    return mod, lock
+
+
+def test_capture_waits_for_a_held_bench_lock_then_runs(bench_lock_service, monkeypatch):
+    mod, lock = bench_lock_service
+    fake = _fake_subprocess(mod, monkeypatch, _FakeRun())
+    result = {}
+
+    with _posting(mod) as post:
+        with _holding(lock):
+            thread = threading.Thread(
+                target=lambda: result.update(zip(("code", "hdrs", "body"),
+                                                 post("/capture", dict(_SCENE)))),
+                daemon=True)
+            thread.start()
+            time.sleep(0.6)
+            # The deploy still has the box: nothing may have been spawned.
+            assert fake.calls == 0, "rendered while another tenant held the lock"
+            assert not result
+        thread.join(timeout=30)
+
+    assert result["code"] == 200
+    assert result["body"] == b"\x89PNG-fake"
+    assert fake.calls == 1
+    assert float(result["hdrs"]["X-Capture-Lock-Wait-Seconds"]) >= 0.5
+
+
+def test_capture_503s_when_the_bench_stays_busy(monkeypatch, tmp_path):
+    lock = tmp_path / "pyefis-bench.lock"
+    monkeypatch.setenv("CAPTURE_BENCH_LOCK", str(lock))
+    monkeypatch.setenv("CAPTURE_BENCH_LOCK_WAIT", "0.3")
+    mod = _load_capture_service(monkeypatch, tmp_path)
+    fake = _fake_subprocess(mod, monkeypatch, _FakeRun())
+
+    with _posting(mod) as post, _holding(lock, holder="owner=QA issue=AER-9999 pid=1"):
+        code, hdrs, body = post("/capture", dict(_SCENE))
+
+    payload = json.loads(body)
+    assert code == 503
+    assert payload["error"] == "bench busy"
+    assert payload["waited_seconds"] >= 0.3
+    # Who has the box, read from the record bench-deploy.sh writes -- the same
+    # courtesy its own "BENCH BUSY -- last recorded holder" line extends.
+    assert "AER-9999" in payload["holder"]
+    assert hdrs["Retry-After"] == "30"
+    assert fake.calls == 0
+
+
+def test_bench_lock_is_released_after_a_capture(bench_lock_service, monkeypatch):
+    mod, lock = bench_lock_service
+    _fake_subprocess(mod, monkeypatch, _FakeRun())
+    with _posting(mod) as post:
+        assert post("/capture", dict(_SCENE))[0] == 200
+    assert _is_free(lock), "bench lock leaked after a successful capture"
+
+
+def test_bench_lock_is_released_after_a_capture_times_out(bench_lock_service, monkeypatch):
+    mod, lock = bench_lock_service
+    _fake_subprocess(mod, monkeypatch, _FakeRun(raise_timeout=True))
+    with _posting(mod) as post:
+        code, _hdrs, body = post("/capture", dict(_SCENE))
+    assert code == 504
+    assert "lock_wait_seconds" in json.loads(body)
+    # The path that leaks a lock is the one nobody exercises: a render that
+    # never came back must not take the bench with it.
+    assert _is_free(lock), "bench lock leaked after a capture timeout"
+
+
+def test_bench_map_takes_the_same_lock(monkeypatch, tmp_path):
+    lock = tmp_path / "pyefis-bench.lock"
+    monkeypatch.setenv("CAPTURE_BENCH_LOCK", str(lock))
+    monkeypatch.setenv("CAPTURE_BENCH_LOCK_WAIT", "0.2")
+    mod = _load_capture_service(monkeypatch, tmp_path)
+    fake = _fake_subprocess(mod, monkeypatch, _FakeRun(payload=b"{}"))
+
+    with _posting(mod) as post, _holding(lock):
+        code, _hdrs, body = post("/bench/map", {"scenario": "pan"})
+    assert code == 503 and json.loads(body)["error"] == "bench busy"
+    assert fake.calls == 0
+
+
+def test_capture_seconds_excludes_the_bench_lock_wait(bench_lock_service, monkeypatch):
+    """X-Capture-Seconds is the render; queueing is its own number.
+
+    A perf oracle reads X-Capture-Seconds. A capture that queued four minutes
+    behind a deploy and then rendered in two seconds is a two-second frame,
+    and reporting 242s would quietly poison every budget comparison.
+    """
+    mod, lock = bench_lock_service
+    _fake_subprocess(mod, monkeypatch, _FakeRun())
+    result = {}
+
+    with _posting(mod) as post:
+        with _holding(lock):
+            thread = threading.Thread(
+                target=lambda: result.update(zip(("code", "hdrs", "body"),
+                                                 post("/capture", dict(_SCENE)))),
+                daemon=True)
+            thread.start()
+            time.sleep(0.8)
+        thread.join(timeout=30)
+
+    assert result["code"] == 200
+    assert float(result["hdrs"]["X-Capture-Lock-Wait-Seconds"]) >= 0.7
+    assert float(result["hdrs"]["X-Capture-Seconds"]) < 0.5
+
+
+def test_lock_wait_field_can_only_shorten_the_wait(bench_lock_service):
+    mod, _lock = bench_lock_service
+    assert mod.requested_lock_wait({}) == mod.BENCH_LOCK_WAIT
+    assert mod.requested_lock_wait({"lock_wait": 0}) == 0.0
+    assert mod.requested_lock_wait({"lock_wait": 5}) == 5.0
+    # Clamped UP to the ceiling and DOWN at zero: one HTTP request must not be
+    # able to pin the bench for longer than the box's own policy allows.
+    assert mod.requested_lock_wait({"lock_wait": 10 ** 6}) == mod.BENCH_LOCK_WAIT
+    assert mod.requested_lock_wait({"lock_wait": -1}) == 0.0
+    with pytest.raises(ValueError):
+        mod.requested_lock_wait({"lock_wait": "soon"})
+
+
+def test_lock_wait_zero_fails_fast_instead_of_blocking(bench_lock_service, monkeypatch):
+    mod, lock = bench_lock_service
+    fake = _fake_subprocess(mod, monkeypatch, _FakeRun())
+    with _posting(mod) as post, _holding(lock):
+        started = time.monotonic()
+        code, _hdrs, body = post("/capture", dict(_SCENE, lock_wait=0))
+        waited = time.monotonic() - started
+    assert code == 503 and json.loads(body)["error"] == "bench busy"
+    assert waited < 5, "lock_wait=0 must not block"
+    assert fake.calls == 0
+
+
+def test_an_unusable_bench_lock_is_a_503_not_an_unlocked_render(monkeypatch, tmp_path):
+    """The failure path that matters: no silent fallback to running unlocked."""
+    monkeypatch.setenv("CAPTURE_BENCH_LOCK", str(tmp_path / "no-such-dir" / "lock"))
+    mod = _load_capture_service(monkeypatch, tmp_path)
+    fake = _fake_subprocess(mod, monkeypatch, _FakeRun())
+
+    with _posting(mod) as post:
+        code, _hdrs, body = post("/capture", dict(_SCENE))
+    assert code == 503
+    assert json.loads(body)["error"] == "bench lock unavailable"
+    assert fake.calls == 0, "rendered with no mutual exclusion at all"
+
+
+def test_health_reports_whether_the_bench_lock_is_held(bench_lock_service):
+    mod, lock = bench_lock_service
+    with _serving(mod) as health:
+        with _holding(lock, holder="owner=AVIONICS issue=AER-2658 pid=7"):
+            held = health()
+        free = health()
+    assert held["bench_lock_held"] is True
+    assert "AER-2658" in held["bench_lock_holder"]
+    assert held["bench_lock"] == str(lock)
+    assert free["bench_lock_held"] is False

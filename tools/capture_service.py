@@ -44,6 +44,44 @@ serializing against itself, but it does need serializing against a `/capture`
 that might be mid-render, since both touch the one pyEfis checkout and the
 live display shares the box.
 
+Serialized against the DEPLOY as well (AER-2658)
+------------------------------------------------
+That in-process lock only keeps this service's own callers off each other. The
+other tenant of this box is `bench-deploy.sh`, which takes an exclusive flock
+on `/tmp/pyefis-bench.lock` for its whole run -- pull, restart, settle,
+screenshot as one transaction -- "because the collision that actually hurts is
+not git, it is two agents bouncing pyefis.service and grabbing screenshots over
+each other, which produces evidence that belongs to neither run"
+(`makerplane/processes/bench_deploy.md`). That reasoning covers these endpoints
+exactly as written; they were simply never in the lock's scope, so a deploy
+would `git pull --ff-only` the checkout and bounce `pyefis.service` while an
+`svs_capture` subprocess was mid-render -- a frame rendered from a tree being
+rewritten under it, carrying a `pyefis_rev` sidecar that reports the post-pull
+sha. Wrong, and confidently labelled.
+
+So every spawn below is wrapped in that same flock, acquired through
+`bench_lock()`. A deploy and a capture queue behind one another instead of
+overlapping, and no caller is handed a frame rendered through a moving tree.
+
+  CAPTURE_BENCH_LOCK       /tmp/pyefis-bench.lock -- the file bench-deploy.sh
+                            locks. Both ends use flock(2) (util-linux `flock`
+                            there, `fcntl.flock` here) on the same path, so it
+                            is the same lock. The script's `mkdir` fallback is
+                            NOT honored: it engages only on a box without
+                            util-linux, and both benches have it.
+  CAPTURE_BENCH_LOCK_WAIT  900 -- seconds to wait for it, matching the 15
+                            minutes `bench-deploy.sh` itself waits. Waiting is
+                            the normal outcome; past the budget the caller gets
+                            503 + `Retry-After`, never an unserialized render.
+                            A caller may ask for LESS per request with the
+                            `lock_wait` field (0 = fail fast, for a routine
+                            that would rather retry than hold a connection
+                            open for minutes) -- it cannot ask for more.
+
+If the lock file cannot be opened at all, the request fails 503 rather than
+proceeding unlocked. The silent-skip alternative reintroduces precisely the
+defect this closes, and does it invisibly.
+
 Lives in the checkout it serves (AER-2627)
 -------------------------------------------
 This file used to be hand-placed on the bench outside any git checkout
@@ -119,6 +157,9 @@ bytes are checked.
 from __future__ import annotations
 
 import base64
+import contextlib
+import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -151,6 +192,14 @@ NASR = os.environ.get("CAPTURE_NASR", "")
 NAVAID = os.environ.get("CAPTURE_NAVAID", "")
 DOF = os.environ.get("CAPTURE_DOF", "")
 DISPLAY = os.environ.get("CAPTURE_DISPLAY", ":0")
+#: The bench run lock -- the same file, and the same flock(2), that
+#: bench-deploy.sh holds for a whole deploy (AER-2658).
+BENCH_LOCK = Path(os.environ.get("CAPTURE_BENCH_LOCK", "/tmp/pyefis-bench.lock"))
+BENCH_LOCK_WAIT = float(os.environ.get("CAPTURE_BENCH_LOCK_WAIT", "900"))
+#: bench-deploy.sh records its holder here; read back into a 503 so a blocked
+#: caller is told WHO has the box, the same courtesy the script's own
+#: "BENCH BUSY -- last recorded holder" line extends to agents with a shell.
+BENCH_LOCK_OWNER_FILE = Path(f"{BENCH_LOCK}.owner")
 
 CAPTURE_TOOL = "tools/svs_capture.py"
 BENCH_MAP_TOOL = "tools/bench_map_gestures.py"
@@ -192,6 +241,124 @@ def service_is_stale():
     caller a restart is due rather than imply the running code is current.
     """
     return any(_digest(p) != loaded for p, loaded in _LOADED_DIGESTS.items())
+
+
+#: How often the bench-lock wait re-tries. Short enough that the reported wait
+#: is honest to a fraction of a second, long enough to cost nothing over 900s.
+BENCH_LOCK_POLL = 0.25
+
+
+class BenchBusy(Exception):
+    """The bench lock did not come free inside the caller's wait budget."""
+
+    def __init__(self, waited: float, holder: str | None):
+        super().__init__(f"bench busy after {waited:.1f}s")
+        self.waited = round(waited, 1)
+        self.holder = holder
+
+
+class BenchLockUnavailable(Exception):
+    """The lock FILE could not be opened or locked -- so we refuse to run.
+
+    Distinct from BenchBusy on purpose: busy is the normal, expected outcome of
+    a shared box, this one means the mutual exclusion is broken. Running
+    anyway would be the AER-2658 defect again, with nobody told.
+    """
+
+
+def bench_lock_holder() -> str | None:
+    """bench-deploy.sh's recorded holder line, or None if there is none."""
+    try:
+        return BENCH_LOCK_OWNER_FILE.read_text().splitlines()[0].strip() or None
+    except (OSError, IndexError):
+        return None
+
+
+def _open_bench_lock() -> int:
+    """Open the lock file for locking, without disturbing its contents.
+
+    Never truncates (bench-deploy.sh appends to this file and writes the holder
+    record beside it), and falls back to read-only because flock(2) on Linux
+    takes an exclusive lock on a read-only descriptor just fine -- the file may
+    belong to another user on a box where a deploy ran under a different
+    account.
+    """
+    try:
+        return os.open(BENCH_LOCK, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o666)
+    except OSError:
+        return os.open(BENCH_LOCK, os.O_RDONLY)
+
+
+@contextlib.contextmanager
+def bench_lock(wait: float):
+    """Hold the bench run lock for the body; yield the seconds spent waiting.
+
+    Raises BenchBusy if `wait` elapses first, BenchLockUnavailable if the lock
+    cannot be operated at all. Blocking is implemented as a non-blocking retry
+    loop rather than `flock -w` so the wait can be measured and reported --
+    a capture that took four minutes because a deploy had the box must be
+    explicable from its own response, not only from a journal.
+    """
+    started = time.monotonic()
+    try:
+        fd = _open_bench_lock()
+    except OSError as exc:
+        raise BenchLockUnavailable(f"cannot open {BENCH_LOCK}: {exc}") from exc
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EWOULDBLOCK, errno.EACCES, errno.EAGAIN):
+                    raise BenchLockUnavailable(
+                        f"cannot lock {BENCH_LOCK}: {exc}") from exc
+                waited = time.monotonic() - started
+                if waited >= wait:
+                    raise BenchBusy(waited, bench_lock_holder())
+                time.sleep(min(BENCH_LOCK_POLL, wait - waited))
+        yield round(time.monotonic() - started, 1)
+    finally:
+        # Closing the descriptor releases the flock -- the lock lives on the
+        # open file description, so this covers the success path, the
+        # subprocess-timeout path and an unexpected raise alike.
+        os.close(fd)
+
+
+def bench_lock_state() -> bool | None:
+    """True if something holds the bench lock right now, None if unknowable.
+
+    A momentary probe, for /health only: acquire non-blocking and let go. Our
+    own in-flight capture counts as a holder (flock conflicts across
+    descriptors in one process), which is the honest answer -- `busy` says
+    whether that holder is us.
+    """
+    try:
+        fd = _open_bench_lock()
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def requested_lock_wait(p: dict) -> float:
+    """The caller's bench-lock wait budget, clamped to [0, BENCH_LOCK_WAIT].
+
+    A caller may ask to wait less than the configured ceiling (a routine that
+    prefers an immediate 503 and a retry of its own), never more -- nothing
+    reached through one HTTP request should be able to pin the bench for
+    longer than the box's own policy allows.
+    """
+    try:
+        asked = float(p.get("lock_wait", BENCH_LOCK_WAIT))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"bad lock_wait: {exc}") from exc
+    return max(0.0, min(asked, BENCH_LOCK_WAIT))
 
 
 def take_manifest(out_path):
@@ -255,7 +422,7 @@ BENCH_MAP_ALLOWED_FIELDS = frozenset({
     "range_ladder", "pinch_lo_nm", "pinch_hi_nm",
     "tile_path", "water_db", "water_max_vertices", "water_raster",
     "highway_db", "river_db", "nasr_db", "navaid_db", "dof_db",
-    "timeout",
+    "timeout", "lock_wait",
 })
 
 # svs_capture's own exit codes, so a caller can tell "no GPU" from "never settled".
@@ -274,7 +441,7 @@ ALLOWED_FIELDS = frozenset({
     "lat", "lon", "alt", "heading", "pitch", "roll", "range_nm",
     "width", "height", "tiles", "water", "water_max_vertices",
     "flat", "terrain_only", "symbology_only", "magvar",
-    "isolate", "highways", "perf_log", "timeout",
+    "isolate", "highways", "perf_log", "timeout", "lock_wait",
 })
 
 
@@ -425,6 +592,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _bench_busy(self, busy: BenchBusy, what: str):
+        """503 for a request that waited out its bench-lock budget."""
+        body = {
+            "error": "bench busy",
+            "detail": f"{what} did not start: another tenant holds {BENCH_LOCK}",
+            "waited_seconds": busy.waited,
+            "lock": str(BENCH_LOCK),
+            "holder": busy.holder,
+            # Transient by design, exactly as bench-deploy.sh's exit 7 is:
+            # retry, do not escalate (processes/bench_deploy.md).
+            "hint": "a deploy or another agent has the bench; retry",
+        }
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        payload = json.dumps(body, indent=1).encode()
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Retry-After", "30")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _bench_lock_broken(self, exc: BenchLockUnavailable):
+        """503 for a bench lock that cannot be operated at all.
+
+        Deliberately NOT a fallback to running unlocked: that is the AER-2658
+        defect, and it would be invisible.
+        """
+        return self._json(503, {
+            "error": "bench lock unavailable",
+            "detail": str(exc),
+            "lock": str(BENCH_LOCK),
+            "hint": "refusing to render unserialized; fix the lock file's "
+                    "permissions or set CAPTURE_BENCH_LOCK",
+        })
+
     def _authed(self) -> bool:
         got = self.headers.get("Authorization", "")
         want = f"Bearer {_token()}"
@@ -468,6 +669,14 @@ class Handler(BaseHTTPRequestHandler):
             "highways": HIGHWAYS,
             "highways_present": Path(HIGHWAYS).is_file(),
             "busy": _lock.locked(),
+            # The bench run lock (AER-2658). `busy` is this service's own
+            # queue; `bench_lock_held` includes the other tenant -- a deploy
+            # holding the box -- so a caller can tell "someone else is
+            # mid-deploy" from "I am behind my own earlier request".
+            "bench_lock": str(BENCH_LOCK),
+            "bench_lock_held": bench_lock_state(),
+            "bench_lock_holder": bench_lock_holder(),
+            "bench_lock_wait": BENCH_LOCK_WAIT,
         })
 
     def do_POST(self):
@@ -499,26 +708,42 @@ class Handler(BaseHTTPRequestHandler):
         tmp.close()
         try:
             argv = build_argv(params, tmp.name)
+            lock_wait_budget = requested_lock_wait(params)
         except (KeyError, TypeError, ValueError) as exc:
             os.unlink(tmp.name)
             return self._json(400, {"error": f"bad scenario: {exc}"})
 
-        started = time.time()
-        # Serialize: one GL capture at a time.
-        with _lock:
-            try:
-                proc = subprocess.run(
-                    argv, cwd=str(PYEFIS_ROOT),
-                    env={**os.environ, "DISPLAY": DISPLAY},
-                    capture_output=True, text=True, timeout=timeout + 30,
-                )
-            except subprocess.TimeoutExpired:
-                take_manifest(tmp.name)
-                os.unlink(tmp.name)
-                return self._json(504, {"error": "capture timed out",
-                                        "seconds": round(time.time() - started, 1),
-                                        "argv": " ".join(shlex.quote(a) for a in argv)})
-        elapsed = round(time.time() - started, 1)
+        # Serialize twice over: `_lock` keeps this service's own callers off
+        # one iGPU, `bench_lock` keeps the whole render off a deploy that is
+        # rewriting the checkout under it (AER-2658). Always in that order --
+        # one fixed order is what makes two locks deadlock-free.
+        try:
+            with _lock, bench_lock(lock_wait_budget) as lock_wait:
+                # Timed from HERE, not from the top of the handler: `seconds`
+                # is the render, and a four-minute queue behind a deploy must
+                # not be reported as a four-minute frame. The wait is its own
+                # number below.
+                started = time.time()
+                try:
+                    proc = subprocess.run(
+                        argv, cwd=str(PYEFIS_ROOT),
+                        env={**os.environ, "DISPLAY": DISPLAY},
+                        capture_output=True, text=True, timeout=timeout + 30,
+                    )
+                except subprocess.TimeoutExpired:
+                    take_manifest(tmp.name)
+                    os.unlink(tmp.name)
+                    return self._json(504, {"error": "capture timed out",
+                                            "seconds": round(time.time() - started, 1),
+                                            "lock_wait_seconds": lock_wait,
+                                            "argv": " ".join(shlex.quote(a) for a in argv)})
+                elapsed = round(time.time() - started, 1)
+        except BenchBusy as busy:
+            os.unlink(tmp.name)
+            return self._bench_busy(busy, "capture")
+        except BenchLockUnavailable as exc:
+            os.unlink(tmp.name)
+            return self._bench_lock_broken(exc)
 
         if proc.returncode != 0 or not os.path.getsize(tmp.name):
             body = {
@@ -526,6 +751,7 @@ class Handler(BaseHTTPRequestHandler):
                 "exit_code": proc.returncode,
                 "meaning": EXIT_MEANING.get(proc.returncode, "unknown"),
                 "seconds": elapsed,
+                "lock_wait_seconds": lock_wait,
                 "stderr": proc.stderr[-2000:],
                 "argv": " ".join(shlex.quote(a) for a in argv),
             }
@@ -542,6 +768,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(png)))
         # Metadata rides in headers so the body stays a plain PNG.
         self.send_header("X-Capture-Seconds", str(elapsed))
+        # Queue time, reported separately so X-Capture-Seconds stays a render
+        # number a perf oracle can trust (AER-2658).
+        self.send_header("X-Capture-Lock-Wait-Seconds", str(lock_wait))
         self.send_header("X-Capture-Argv", " ".join(shlex.quote(a) for a in argv))
         # The code that rendered these bytes (AER-1675). `svs_capture.py` is
         # spawned per request from PYEFIS_ROOT, so the sidecar's `pyefis_rev`
@@ -588,33 +817,44 @@ class Handler(BaseHTTPRequestHandler):
         tmp.close()
         try:
             argv = build_bench_map_argv(params, tmp.name)
+            lock_wait_budget = requested_lock_wait(params)
         except (KeyError, TypeError, ValueError) as exc:
             os.unlink(tmp.name)
             return self._json(400, {"error": f"bad scenario: {exc}"})
 
-        started = time.time()
-        # Same lock as /capture: bench_map_gestures.py needs no GL of its
-        # own (offscreen QPA), but it shares the one pyEfis checkout and the
-        # box with a /capture that might be mid-render.
-        with _lock:
-            try:
-                proc = subprocess.run(
-                    argv, cwd=str(PYEFIS_ROOT),
-                    env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
-                    capture_output=True, text=True, timeout=timeout + 30,
-                )
-            except subprocess.TimeoutExpired:
-                os.unlink(tmp.name)
-                return self._json(504, {"error": "bench/map timed out",
-                                        "seconds": round(time.time() - started, 1),
-                                        "argv": " ".join(shlex.quote(a) for a in argv)})
-        elapsed = round(time.time() - started, 1)
+        # Same two locks as /capture, same order: bench_map_gestures.py needs
+        # no GL of its own (offscreen QPA), but it reads the one pyEfis
+        # checkout -- which a deploy rewrites -- and shares the box with a
+        # /capture that might be mid-render.
+        try:
+            with _lock, bench_lock(lock_wait_budget) as lock_wait:
+                started = time.time()
+                try:
+                    proc = subprocess.run(
+                        argv, cwd=str(PYEFIS_ROOT),
+                        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+                        capture_output=True, text=True, timeout=timeout + 30,
+                    )
+                except subprocess.TimeoutExpired:
+                    os.unlink(tmp.name)
+                    return self._json(504, {"error": "bench/map timed out",
+                                            "seconds": round(time.time() - started, 1),
+                                            "lock_wait_seconds": lock_wait,
+                                            "argv": " ".join(shlex.quote(a) for a in argv)})
+                elapsed = round(time.time() - started, 1)
+        except BenchBusy as busy:
+            os.unlink(tmp.name)
+            return self._bench_busy(busy, "bench/map")
+        except BenchLockUnavailable as exc:
+            os.unlink(tmp.name)
+            return self._bench_lock_broken(exc)
 
         if proc.returncode != 0 or not os.path.getsize(tmp.name):
             body = {
                 "error": "bench/map failed",
                 "exit_code": proc.returncode,
                 "seconds": elapsed,
+                "lock_wait_seconds": lock_wait,
                 "stderr": proc.stderr[-4000:],
                 "argv": " ".join(shlex.quote(a) for a in argv),
             }
@@ -631,6 +871,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("X-Bench-Map-Seconds", str(elapsed))
+        self.send_header("X-Bench-Map-Lock-Wait-Seconds", str(lock_wait))
         self.send_header("X-Bench-Map-Argv", " ".join(shlex.quote(a) for a in argv))
         self.end_headers()
         self.wfile.write(payload)
