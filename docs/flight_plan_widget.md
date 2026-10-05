@@ -1,11 +1,11 @@
 # Flight plan widget
 
-Status: ACTIVE (FP5b, 2026-09-12) — touch + physical keyboard. All five
-pages (FPL, Entry, Direct To, Catalog, WPT Info) and the physical-keyboard
-input path are live. The encoder path is FP5c — not wired yet. Full plan:
+Status: ACTIVE (FP5c, 2026-10-05) — touch, physical keyboard and encoder.
+All five pages (FPL, Entry, Direct To, Catalog, WPT Info), the
+physical-keyboard input path and the encoder path are live. Full plan:
 `makerplane/briefs/flight_plan_plan.md` section 3.4-3.5; tracking epic
 pyEfis#181; the data layer is pyEfis#183 (AER-804), FP5a is pyEfis#185
-(AER-805), this item is pyEfis#187 (AER-807).
+(AER-805), FP5b is pyEfis#187 (AER-807), FP5c is pyEfis#188 (AER-810).
 
 ## Data layer (`src/pyefis/flightplan/`)
 
@@ -188,6 +188,57 @@ surface is open is shadowed by the field** — e.g. a keybinding on plain `D`
 will not fire while the Entry/DTO ident field has focus; rebind such keys
 with a modifier, or accept the shadowing while that page is open.
 
+### Encoder (FP5c)
+
+The instrument takes the screen encoder through the standard `enc_*`
+protocol (`screens/screenbuilder_encoder.py`): give it an `encoder_order`
+option on a screen that names `encoder` / `encoder_button` FIX keys. Turning
+the knob moves the screen-level highlight onto it (an orange outline round
+the whole instrument); a push takes control; it keeps control until a long
+push backs out of the FPL page or the screen's `encoder_timeout` (default
+10 s of no knob activity) expires.
+
+**What the knob walks.** Inside the instrument the knob moves a focus box
+(orange) over a ring built from the same per-frame tap targets touch uses —
+everything tappable on the topmost layer, in paint order. So the ring on the
+FPL page is the waypoint rows then the soft keys; on an open menu or confirm
+box it is only that box (never the dimmed page behind it); and a control
+added for touch later is reachable by knob with no extra code. The ring wraps.
+Scrollable menus keep their ▲/▼ rows as ring entries — push one to page the
+list.
+
+| Where | Turn | Push | Long push (>= 600 ms) |
+|-------|------|------|------------------------|
+| FPL page, nothing focused (on entry) | focus the first row / last soft key | open Direct To with the active waypoint pre-selected and **Activate** focused, so a second push activates it (guide 3-45) | release the knob to the screen |
+| FPL page, a row or soft key focused | next/previous element (the ring includes "nothing focused") | open the row menu / press the soft key | release the knob to the screen |
+| Any menu, picker, confirm box, WPT Info | next/previous item | choose it | close it (one level) |
+| Ident field (Entry page, DTO Waypoint tab) | scroll the character under the cursor through `A`-`Z`, `0`-`9`, space | a character is under the cursor: keep it and advance; blank under the cursor: accept the field, taking the FastFind prediction (cyan suffix); nothing typed yet: leave the field and walk the page (suggestions, tabs, rows, X) | cancel the page (as Escape) |
+| Entry / DTO / Catalog page, field not being edited | next/previous element | choose it (push the field to edit it again) | leave the page |
+
+Focus defaults when a surface opens: the FPL page starts with nothing
+focused; the Entry page and the DTO Waypoint tab start editing the field;
+the DTO page starts on **Activate** when it already has a target, else on the
+first row; a confirm box starts on **No**; every other menu starts on its
+first item. The on-screen keypad is left out of the ring while the field has
+the knob — the knob replaces it. Turning onto space and pushing is the same
+as pushing on a blank: the ident set has no spaces, so a space means "nothing
+here".
+
+**Long push.** `abstract.py` has no long-press convention to inherit, so the
+threshold is the instrument's `enc_long_press_ms` (600 ms,
+`ENC_LONG_PRESS_MS`). Long push is opt-in at the controller: an instrument
+in control that defines `enc_long_clicked()` and a positive
+`enc_long_press_ms` gets its pushes on *release* (`enc_clicked()`) or when
+the hold reaches the threshold (`enc_long_clicked()`, from a timer, without
+waiting for release). Every other instrument keeps the original act-on-press
+behaviour.
+
+**One knob, not two.** The guide's knob table (1-11..1-13) is a dual
+concentric: outer = field/cursor, inner = character/list. The screen
+encoder protocol carries one encoder and one button, so the cursor advance
+is a push instead of an outer-ring turn. A dual-knob mapping would need a
+second encoder key in the protocol and is not part of FP5c.
+
 ### HMI verbs
 
 Registered in `hmi/actionclass.py` and `editor/schema.py` `_ACTIONS`. The
@@ -245,7 +296,10 @@ curated schema metadata is acceptable. `tools/build_editor_assets.py` picks
 configurator-side twin work live in `makerplane-data` and are out of this PR's
 repo boundary (see the PR description).
 
-## Coming in FP5c
+## Encoder catalogue (#97)
 
-The encoder path (`enc_selectable` etc. via `encoder_order`): inner turn =
-character or list scroll, push = enter, long push = back.
+pyEfis#97 (exporting per-instrument encoder options and a capability
+catalogue to the schema) has not landed. When it does, `flight_plan` gets its
+catalogue row and an `encoder_order` Prop in whichever of the two PRs merges
+second; until then `encoder_order` is honoured from screen YAML exactly as
+for every other encoder instrument (`screenbuilder_options.apply_options`).
