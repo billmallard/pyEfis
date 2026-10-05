@@ -17,10 +17,26 @@
 import time
 from operator import itemgetter
 
+from PyQt6.QtCore import QTimer
+
 
 class EncoderController:
+    """Routes the screen's encoder keys to the instrument that holds control.
+
+    Long push (opt-in): an instrument in control that defines both
+    ``enc_long_clicked()`` and a positive ``enc_long_press_ms`` gets its clicks
+    on RELEASE instead of press -- ``enc_clicked()`` for a short hold,
+    ``enc_long_clicked()`` once the hold reaches ``enc_long_press_ms`` (fired
+    from a timer, so it does not wait for the release). Every other
+    instrument keeps the original act-on-press behaviour.
+    """
+
     def __init__(self, screen):
         self.screen = screen
+        self._press_pending = False
+        self._long_timer = QTimer()
+        self._long_timer.setSingleShot(True)
+        self._long_timer.timeout.connect(self._long_press_fired)
 
     def configure_inputs(self, fix_module):
         if len(self.screen.encoder_list) == 0:
@@ -114,6 +130,10 @@ class EncoderController:
         if not self.screen.isVisible():
             return
 
+        if self.screen.encoder_control and self._long_press_ms() > 0:
+            self._long_press_button(value)
+            return
+
         if value and not (
             (time.time_ns() // 1000000) - self.screen.encoder_timeout
             >= self.screen.encoder_timestamp
@@ -136,6 +156,50 @@ class EncoderController:
                     self.screen.encoder_timer.stop()
                     self.screen.encoder_timestamp = 0
                     self._selected_instrument().enc_highlight(False)
+
+    def _long_press_ms(self):
+        try:
+            inst = self._selected_instrument()
+        except (IndexError, KeyError, TypeError):
+            return 0
+        if not callable(getattr(inst, "enc_long_clicked", None)):
+            return 0
+        try:
+            return int(getattr(inst, "enc_long_press_ms", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _long_press_button(self, value):
+        if value:
+            if (time.time_ns() // 1000000) - self.screen.encoder_timeout \
+                    >= self.screen.encoder_timestamp:
+                return
+            self._press_pending = True
+            self._long_timer.start(self._long_press_ms())
+            return
+        if not self._press_pending:
+            # Release after the long push already fired, or a stray release.
+            return
+        self._press_pending = False
+        self._long_timer.stop()
+        self._dispatch_click(self._selected_instrument().enc_clicked)
+
+    def _long_press_fired(self):
+        if not self._press_pending or not self.screen.encoder_control:
+            self._press_pending = False
+            return
+        self._press_pending = False
+        self._dispatch_click(self._selected_instrument().enc_long_clicked)
+
+    def _dispatch_click(self, handler):
+        self.screen.encoder_control = handler()
+        if self.screen.encoder_control:
+            self.screen.encoder_timestamp = time.time_ns() // 1000000
+            self.screen.encoder_timer.start(self.screen.encoder_timeout + 500)
+        else:
+            self.screen.encoder_timer.stop()
+            self.screen.encoder_timestamp = 0
+            self._selected_instrument().enc_highlight(False)
 
     def _selected_instrument(self):
         return self.screen.instruments[
