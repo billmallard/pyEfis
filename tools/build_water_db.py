@@ -267,22 +267,21 @@ def _ring_interior_points(ring, max_points=6):
     """Up to ``max_points`` points inside a (lat, lon) ring for the hole
     verifier. Two sources, and BOTH matter:
 
-    1. The ring **centroid** and an **across-the-ring midpoint** — the
-       exact two points the oracle (auspex.pack_check) probes with. These
+    1. The ring **centroid** and an **across-the-ring midpoint**. These
        are tested FIRST and unconditionally: a hole can be covered only in
-       a small region, and if the even-odd scanline below happens to
-       sample the dry part while the oracle's centroid lands on the fill,
-       the builder must still see the covered point or it ships the very
-       #44-class island the gate then flags. (An earlier version added
-       these only as a fallback when the scanline came up short, so a hole
-       with 3 dry scanline points but a covered centroid slipped through —
-       the builder caught 1/168 of the residual instead of all of it.)
+       a small region, and the scanline points below may all land on the
+       dry part of it while the fill sits under the centre. Probing the
+       centre every time keeps that partially covered hole from being
+       judged clean and shipped as a #44-class island painted as water.
+       (An earlier version added these only as a fallback when the
+       scanline came up short, so a hole with three dry scanline points
+       but a covered centre was missed.)
     2. Even-odd **scanline** midpoints for spatial coverage of larger,
        concave holes.
 
     The centroid/midpoint candidates are kept only if ``_point_in_ring``
-    places them inside — the same even-odd sense the oracle uses — so the
-    two agree on which holes are covered."""
+    places them inside (even-odd rule), so a concave ring whose centroid
+    falls outside it contributes no false probe."""
     n = len(ring)
     if n < 3:
         return []
