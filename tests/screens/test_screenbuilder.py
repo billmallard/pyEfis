@@ -2603,6 +2603,72 @@ class TestTabSection:
         tab_section = screen.instruments[0]
         assert tab_section.tab_bar.currentIndex() == 0
 
+    def _encoder_tabs(self):
+        listbox = {
+            "type": "listbox", "row": 0, "column": 0,
+            "options": {"encoder_order": 1,
+                        "lists": [{"name": "Radio",
+                                   "file": "tests/data/listbox/list1.yaml"}]},
+        }
+        return [
+            {"label": "A", "layout": {"rows": 4, "columns": 4},
+             "instruments": [dict(listbox)]},
+            {"label": "B", "layout": {"rows": 4, "columns": 4},
+             "instruments": [dict(listbox)]},
+        ]
+
+    def _build_with_encoder(self, qtbot, tabs):
+        config = _config_with_instruments([
+            {"type": "tab_section", "row": 0, "column": 0,
+             "span": {"rows": 10, "columns": 10},
+             "options": {"default_tab": 0}, "tabs": tabs},
+        ])
+        config["encoder"] = "INT"
+        config["encoder_button"] = "HIDEBUTTON"
+        config["encoder_timeout"] = 4000
+        screen = Screen(_TestParent(config, config_path="."))
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+        screen.init_screen()
+        return screen
+
+    def test_tab_pages_inherit_the_screen_encoder_keys(self, fix, qtbot):
+        """AER-810: an encoder_order instrument inside a tab must be driven by
+        the screen's knob. Before, a page config had no encoder keys and its
+        controller never connected."""
+        screen = self._build_with_encoder(qtbot, self._encoder_tabs())
+        for page in screen.instruments[0]._pages:
+            assert page.encoder == "INT"
+            assert page.encoder_button == "HIDEBUTTON"
+            assert page.encoder_timeout == 4000
+            assert page.encoder_list_sorted == [0]
+            assert page.encoder_input is not None
+            assert page.encoder_button_input is not None
+
+    def test_only_the_visible_tab_takes_the_knob(self, fix, qtbot):
+        """Both pages connect to the same keys; the controller's isVisible()
+        guard keeps the hidden one out. Offscreen Qt reports every widget
+        hidden, so (as the other encoder tests here do) each page's
+        isVisible is pinned to the stack's current tab."""
+        screen = self._build_with_encoder(qtbot, self._encoder_tabs())
+        ts = screen.instruments[0]
+        shown, hidden = ts._pages
+        assert ts.stack.currentWidget() is shown
+        shown.isVisible = lambda: ts.stack.currentWidget() is shown
+        hidden.isVisible = lambda: ts.stack.currentWidget() is hidden
+        calls = {0: [], 1: []}
+        for n, page in enumerate((shown, hidden)):
+            page.instruments[0].enc_highlight = (
+                lambda on, n=n: calls[n].append(on))
+        fix.db.set_value("INT", 1)
+        assert calls[0] and calls[1] == []
+
+    def test_tab_pages_without_screen_encoder_stay_unconnected(self, fix, qtbot):
+        screen = self._build(qtbot, self._encoder_tabs())
+        for page in screen.instruments[0]._pages:
+            assert page.encoder is None
+            assert page.encoder_input is None
+
     def test_empty_tabs_list_gets_one_default_tab(self, fix, qtbot):
         """Never an unrenderable state: a container with no authored tabs
         still shows one placeholder tab (matches the configurator's

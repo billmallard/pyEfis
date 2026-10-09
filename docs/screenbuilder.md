@@ -1027,6 +1027,12 @@ box, never the enclosing screen's -- each tab is built through the same
 `instrument_spec.md` §"container slots" for the `containers`/`ContainerSlot`
 exporter contract this relies on).
 
+Encoder: every tab inherits the enclosing screen's `encoder`,
+`encoder_button` and `encoder_timeout`, so an instrument with `encoder_order`
+inside a tab is driven by the screen's knob. Each tab keeps its own encoder
+order, and only the tab on show responds. Turning the knob does not switch
+tabs.
+
 Options:
   * default_tab - integer, default 0. Which tab is shown on screen load /
     power-up. Always resets to this configured tab -- the last tab the pilot

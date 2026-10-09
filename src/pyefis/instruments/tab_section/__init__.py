@@ -28,6 +28,14 @@ v1 scope (see pyEfis#131 "Open questions -- RESOLVED"):
     last-selected tab (no runtime persistence);
   * a tab_section cannot be nested inside another tab_section.
 
+Encoder: each tab page inherits the enclosing screen's ``encoder`` /
+``encoder_button`` / ``encoder_timeout`` keys, so an ``encoder_order``
+instrument inside a tab is driven by the screen's knob. Without this a page
+config carried only ``layout`` + ``instruments``, the page's encoder keys were
+None, and its controller silently never connected (AER-810). Every page
+connects to the same keys, but ``EncoderController`` ignores input while its
+page is not visible, so only the shown tab responds.
+
 Each tab's nested ``instruments:`` list is built through the exact same
 ``Screen`` (screenbuilder.py) that a top-level screen uses -- the tab content
 widget below *is* a ``Screen`` instance, constructed from an explicit config
@@ -96,6 +104,8 @@ class TabSection(QWidget):
                 "layout": tab.get("layout", _EMPTY_TAB_LAYOUT),
                 "instruments": tab.get("instruments", []) or [],
             }
+            for key in ("encoder", "encoder_button", "encoder_timeout"):
+                page_config[key] = screen.get_config_item(key)
             page = ScreenBuilder(parent=config_parent, config=page_config)
             self.stack.addWidget(page)  # reparents page's Qt widget to stack
             self._pages.append(page)
