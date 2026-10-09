@@ -286,6 +286,13 @@ lock_probe() {  # 0 = free (taken and released), 1 = held, 2 = cannot open
   return 1
 }
 
+# The pid the holder record (below) claims the bench for, read up front because
+# the held-lock checks need it too.
+rec_owner_pid=""
+[ -r "$LOCK.owner" ] && \
+  rec_owner_pid=$(sed -n 's/.*[[:space:]]pid=\([0-9]\{1,\}\).*/\1/p;s/^pid=\([0-9]\{1,\}\).*/\1/p' \
+                    "$LOCK.owner" 2>/dev/null | head -1)
+
 if [ ! -e "$LOCK" ]; then
   ok "lock file does not exist (nothing holds the bench)"
 else
@@ -312,7 +319,24 @@ else
     dead_rec=""
     for p in $rec_pids; do [ -d "/proc/$p" ] || dead_rec="$dead_rec $p"; done
 
-    if [ -n "$dead_rec" ]; then
+    # A dead taker is not always an orphan. bench-deploy.sh opens the lock in
+    # its own shell (`exec 9>>`) and takes it with a flock(1) CHILD, which exits
+    # at once -- so during every locked run /proc/locks names a dead pid (or, in
+    # a container, nobody), while the shell that claimed the bench still holds
+    # the fd and is alive. That reads exactly like the orphan shape below, and
+    # reported every bench-deploy --check as dirty (AER-2901). What tells them
+    # apart is the holder record: if the pid it names is live and holds the fd,
+    # the claimant is still at work and the dead record is just the flock(1)
+    # child. In AER-2663 the record named a dead pid, so it is still caught.
+    claimant_holds=0
+    if [ -n "$rec_owner_pid" ] && [ -d "/proc/$rec_owner_pid" ]; then
+      for p in $true_pids; do [ "$p" = "$rec_owner_pid" ] && claimant_holds=1; done
+    fi
+
+    if [ "$claimant_holds" -eq 1 ] && { [ -n "$dead_rec" ] || [ -z "$rec_pids" ]; }; then
+      ok "lock taken by a flock(1) child that has exited${dead_rec:+ (pid(s)${dead_rec})};" \
+         "the holder record's pid $rec_owner_pid is live and holds the fd"
+    elif [ -n "$dead_rec" ]; then
       finding "lock is HELD but its /proc/locks record names dead pid(s)${dead_rec} --" \
               "an orphan inherited the open file description; the record is not the holder"
     fi
@@ -330,7 +354,7 @@ else
       for p in $true_pids; do
         for r in $rec_pids; do [ "$p" = "$r" ] && overlap=1; done
       done
-      if [ "$overlap" -eq 0 ] && [ -z "$dead_rec" ]; then
+      if [ "$overlap" -eq 0 ] && [ -z "$dead_rec" ] && [ "$claimant_holds" -eq 0 ]; then
         finding "lock is HELD but no /proc/locks record names any process that actually" \
                 "holds it -- the taker is gone and an orphan inherited the open file" \
                 "description (see bench_deploy.md: use \`flock -o\`)"
@@ -368,8 +392,6 @@ fi
 if [ -r "$LOCK.owner" ]; then
   echo "    holder record $LOCK.owner:"
   sed 's/^/      /' "$LOCK.owner" 2>/dev/null | head -5
-  rec_owner_pid=$(sed -n 's/.*[[:space:]]pid=\([0-9]\{1,\}\).*/\1/p;s/^pid=\([0-9]\{1,\}\).*/\1/p' \
-                    "$LOCK.owner" 2>/dev/null | head -1)
   if [ -n "$rec_owner_pid" ] && [ ! -d "/proc/$rec_owner_pid" ]; then
     if [ "$lock_state" -eq 0 ]; then
       ok "holder record names pid $rec_owner_pid, which is not running -- residue of a finished run (the lock is free)"
