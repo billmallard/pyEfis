@@ -1,0 +1,74 @@
+# Install this alongside bench-sweep.timer, in ONE of two places. Which one
+# depends on the box, and the choice is about visibility, not taste.
+#
+#   Beelink (10.110.10.241) -- /etc/systemd/system/, i.e. as root:
+#       sudo cp bench-sweep.{service,timer} /etc/systemd/system/
+#       sudo systemctl enable --now bench-sweep.timer
+#
+#   Pi 5 (10.110.10.199) -- ~/.config/systemd/user/, as wpballard:
+#       mkdir -p ~/.config/systemd/user
+#       cp bench-sweep.{service,timer} ~/.config/systemd/user/
+#       systemctl --user enable --now bench-sweep.timer
+#       sudo loginctl enable-linger wpballard   # so it sweeps with nobody logged in
+#     There is no passwordless sudo on the Pi, so a system unit is not
+#     installable there -- and it is not needed: fixgw and pyEfis both run as
+#     wpballard on that box (verified 2026-10-04), so a user-level sweep can
+#     resolve every process that matters.
+#
+# Root is still PREFERRED where it is available. The sweep resolves a FIX-bus
+# socket or a lock holder to a process by reading /proc/<pid>/fd, and a
+# non-root run cannot read the fds of a process owned by another user: on a
+# box where a helper runs as a different user, an unprivileged sweep can only
+# report "unresolved" where it should be naming the injector. The sweep says
+# which case it is in its own second line, so the limitation is never silent.
+#
+# It reads and reports; it never writes and never kills.
+#
+# The sweep itself is tools/bench_sweep.sh in the pyEfis checkout -- see that
+# file's header for what the three checks are and why they are in that order.
+#
+# REPORT ONLY. Do not add a kill, a pkill, or an ExecStopPost that reaps
+# anything. A sweep that killed would eventually take out a legitimate long
+# perf run or capture mid-flight, and the agent that owned it would never
+# learn why its evidence vanished. Deciding to end another agent's run is a
+# human/owner call (AER-2665).
+#
+# Edit the paths below to match the box. As shipped they are the Beelink's;
+# on the Pi 5 the checkout is /home/wpballard/pyEfis and the scratch dir is
+# /home/wpballard/bench-scratch.
+#
+# --scratch is passed explicitly on purpose: the script defaults it to
+# $HOME/bench-scratch, and under a system unit $HOME is root's, not the bench
+# user's -- so the default would silently watch a directory that does not
+# exist and report "no processes reference" it forever.
+#
+# The TIMER is what you enable, not the service. Run one sweep right now with
+#    systemctl [--user] start bench-sweep.service
+# and read it with
+#    journalctl [--user-unit|-u] bench-sweep.service -n 40 --no-pager
+#
+# Exit 1 means findings, and that is deliberately left to register as a unit
+# failure rather than being masked with SuccessExitStatus: it makes
+#    systemctl is-failed bench-sweep.service
+# a one-word answer to "was this bench clean an hour ago". `failed` here means
+# the BENCH is dirty, not that the sweep is broken -- read the journal to see
+# which check fired.
+#
+# It does NOT take the bench lock. The sweep is read-only, and a lock taken
+# hourly would contend with deploys for no benefit. The inverse is the useful
+# direction: take the lock around whatever you are about to do, and run the
+# sweep first to decide whether the box is worth observing at all.
+#
+[Unit]
+Description=bench-sweep (report abandoned or synthetic state on a shared bench)
+Documentation=file:/home/pyefis/src/pyEfis/tools/bench_sweep.sh
+
+[Service]
+# No User= line: a system unit is already root, and a user unit may not set
+# one at all -- leaving it out is what lets the same file serve both installs.
+Type=oneshot
+WorkingDirectory=/home/pyefis/src/pyEfis
+ExecStart=/home/pyefis/src/pyEfis/tools/bench_sweep.sh --scratch /home/pyefis/bench-scratch
+# Needs to read other processes' /proc entries, so no PrivateTmp, no
+# ProtectProc, no hidepid sandboxing here -- those would blind the very
+# checks this unit exists to run.

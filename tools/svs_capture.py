@@ -50,7 +50,8 @@ What this tool does instead
 
 Exit codes: 0 ok, 2 never settled (timeout), 3 GL unavailable, 4 PNG write
 failed, 5 requested/delivered size mismatch (windowed path only -- see
-``--width``/``--height`` below).
+``--width``/``--height`` below), 6 the mock FIX db swap was bypassed (see
+``check_mock_fix_bound``).
 
 On success a ``<out>.json`` sidecar is written alongside the frame, naming not
 just *when* it was rendered but *which path* drew it (AER-1675, AER-1795):
@@ -143,6 +144,11 @@ if r"C:\pylib" not in sys.path:
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Shared with capture_service.py (AER-2627) -- see pyefis_rev.py for why this
+# lives in its own dependency-light module rather than here.
+from pyefis_rev import resolve_pyefis_rev  # noqa: E402
 
 # Run against the mock FIX db, exactly as the visual harness does -- no gateway.
 import mock_db.client  # noqa: E402
@@ -164,6 +170,7 @@ EXIT_NOT_SETTLED = 2
 EXIT_GL_FAILED = 3
 EXIT_SAVE_FAILED = 4
 EXIT_SIZE_MISMATCH = 5
+EXIT_LIVE_FIX_CLIENT = 6
 
 PUMP_INTERVAL_MS = 16
 CONFIRM_FRAMES = 2  # settled must hold this many paints running
@@ -311,41 +318,6 @@ def _default(path, *parts):
 def _default_water():
     found = sorted((_REPO / "water").glob("water_rtree*.sqlite"))
     return str(found[0]) if found else ""
-
-
-def resolve_pyefis_rev(repo_root=None):
-    """Identify the pyEfis checkout actually rendering this frame (AER-1675).
-
-    A cross-renderer differential (Beelink vs Pi) only localises a defect if
-    a disagreement can be attributed to *different code* vs *different GPU*
-    -- which needs the rendering identity read from the checkout that is
-    live right now, not a constant someone has to remember to bump (a
-    constant is a lie waiting to happen). Dirty is reported rather than
-    silently collapsed into the clean SHA: a frame rendered from uncommitted
-    changes is not reproducible from that SHA alone.
-
-    Never raises -- this is metadata for archival/attribution, not something
-    a capture should fail over. Returns "unknown" if this isn't a git
-    checkout or git is unavailable.
-    """
-    root = repo_root or _REPO
-    try:
-        sha = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if sha.returncode != 0:
-            return "unknown"
-        rev = sha.stdout.strip()
-        dirty = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if dirty.returncode == 0 and dirty.stdout.strip():
-            rev += "-dirty"
-        return rev
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
 
 
 def _write_manifest(
@@ -737,8 +709,52 @@ def seed_mock_fix(args):
     return values
 
 
+def _same_source(module, reference):
+    """True if ``module`` was loaded from the same file as ``reference``."""
+    path = getattr(module, "__file__", None)
+    if not path:
+        return False
+    return Path(path).resolve() == Path(reference.__file__).resolve()
+
+
+def check_mock_fix_bound(fix_module=None):
+    """Return an error string if ``pyavtools.fix`` is bound to the real client.
+
+    The ``sys.modules`` swap above only takes effect if nothing imported
+    ``pyavtools.fix`` first. A wrapper that imports ``pyefis.instruments.ai``
+    (to monkeypatch it) and then ``runpy``s this file gets the real network
+    client instead: ``seed_mock_fix`` then subscribes to the live gateway on
+    :3490, the gateway's values can overwrite the seeded pose, and the real
+    client's non-daemon reconnect thread keeps the process alive forever after
+    ``main`` returns -- ``--timeout`` bounds the settle loop, not interpreter
+    shutdown. One such wrapper sat on the Beelink's FIX bus for 11 days
+    (AER-2667). Refuse instead.
+
+    "The mock" means the mock's source file, not this module object: the
+    repo's own conftest (and render_instrument.py) import the same file as
+    ``tests.mock_db.client``, a distinct module object that is just as offline.
+    Anything not loaded from that file -- the real client, or a module with no
+    file at all -- is refused.
+    """
+    if fix_module is None:
+        fix_module = fix
+    bound = getattr(fix_module, "client", None)
+    if bound is mock_db.client or _same_source(bound, mock_db.client):
+        return None
+    return (
+        f"svs_capture: pyavtools.fix is bound to {getattr(bound, '__name__', bound)!r}, "
+        f"not the mock FIX client -- something imported pyavtools.fix before "
+        f"this tool's mock swap, so it would connect to a live gateway. Import "
+        f"svs_capture (or runpy it) before anything that imports pyefis."
+    )
+
+
 def main(argv=None):
     args = parse_args(argv)
+    fix_error = check_mock_fix_bound()
+    if fix_error is not None:
+        print(fix_error, file=sys.stderr)
+        return EXIT_LIVE_FIX_CLIENT
     pyefis_rev = resolve_pyefis_rev()
 
     if args.perf_log:

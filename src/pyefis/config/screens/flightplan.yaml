@@ -2,6 +2,9 @@
 # Moving map on the left, flight_plan on the right, the shipped 110x200 grid.
 # Reached from PFD via the FPL corner button (buttons/screen-flightplan-pfd.yaml).
 FLIGHTPLAN:
+  # The screen encoder (hmi/encoder_input.yaml) drives flight_plan (FP5c, #188).
+  include:
+  - HMI_ENCODER_BUTTONS
   module: pyefis.screens.screenbuilder
   title: Flight Plan
   layout:
@@ -26,6 +29,7 @@ FLIGHTPLAN:
         nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
         navaid_db_path: /data/makerplane-data/navaids/current/navaids.sqlite
         flightplan_dir: ~/makerplane/pyefis/flightplans
+        encoder_order: 1
 
     # Small corner overlay on the map side (the data_annunciation-on-virtual_vfr
     # precedent in pfd.yaml) so it never shadows flight_plan's own footer.

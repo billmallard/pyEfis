@@ -1283,10 +1283,11 @@ _register(InstrumentSpec(
 # instrument, same "builds in isolation, construct-never-raises" shape as
 # checklist, but reads the FP1 route block via flightplan.fixbridge.FixBridge
 # instead of taking its state inline -- missing FIX keys just mean
-# `available=False` (annunciate, read-only), never a raise. Touch and
-# physical-keyboard input are both wired; the encoder path is FP5c (not
-# wired here, so no `encoder_order` Prop yet -- it isn't declared for a type
-# with no `enc_selectable`, matching every other instrument's convention).
+# `available=False` (annunciate, read-only), never a raise. Touch,
+# physical-keyboard and encoder (FP5c) input are all wired. `encoder_order`
+# is not declared as a Prop -- no encoder instrument declares it yet; it is
+# read straight from screen YAML (screenbuilder_options.apply_options) until
+# #97 exports encoder options to the schema.
 _register(InstrumentSpec(
     type="flight_plan",
     label="Flight Plan",

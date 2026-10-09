@@ -7,8 +7,8 @@ FPL page (route header, waypoint list, row menu, footer menu), Entry page
 on-screen keypad), Direct To page (Waypoint/FPL/NRST APT tabs), Catalog page
 (stored-route list and its Activate/Invert & Activate/Edit/Copy/Delete
 actions), WPT Info (lat/lon, elevation/frequency, bearing/distance, user
-waypoint Edit/Delete) and the physical-keyboard input path all live here.
-The encoder path is FP5c -- not wired yet.
+waypoint Edit/Delete), the physical-keyboard input path and the encoder
+path (FP5c, #188) all live here.
 
 Modelled on the `checklist` instrument (docs/checklist_widget.md): a thin
 QPainter view that never raises, with per-frame tap targets recorded during
@@ -34,6 +34,14 @@ so Qt's normal key-event propagation carries it up to ``gui.py``'s
 ``keyPress`` signal and ``hmi/keys.py`` bindings, same as before this
 instrument existed. A bound HMI key that collides with A-Z while an entry
 surface is open is shadowed by the field -- see docs/flight_plan_widget.md.
+
+Encoder (FP5c): the screen's ``encoder``/``encoder_button`` keys reach the
+widget through the ``enc_*`` protocol (``screens/screenbuilder_encoder.py``).
+Inside the instrument the knob walks a focus ring built from the SAME
+per-frame tap targets touch uses -- whatever is tappable on the topmost layer
+is focusable, in paint order -- so a page can never grow a touch control the
+knob cannot reach. On an ident field the turn scrolls the character at the
+cursor and a push advances it; a long push (``enc_long_press_ms``) is Back.
 """
 
 import logging
@@ -43,7 +51,7 @@ from pyefis import display_metrics
 import os
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
+from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QWidget
 
 from pyavtools import fix
@@ -73,6 +81,17 @@ _STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 _CDI_SCALE_CHOICES = ("0.3", "1.0", "2.0", "AUTO")
 _INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog")
+
+# Encoder (FP5c). The character set the knob scrolls through on an ident
+# field, in the order the brief gives (A-Z, 0-9, space); a space at the cursor
+# means "nothing here", so turning onto it and pushing accepts the field.
+ENC_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
+# Hold time that turns an encoder push into Back. abstract.py has no
+# long-press convention to inherit, so it is set here and documented in
+# docs/flight_plan_widget.md.
+ENC_LONG_PRESS_MS = 600
+# Same orange abstract.py uses for an encoder-selected gauge.
+_ENC_FOCUS_COLOR = "#ffa500"
 
 _ROW_MENU_ITEMS = (
     ("Insert Before", "_row_menu_insert_before"),
@@ -186,6 +205,23 @@ class FlightPlan(QWidget):
         self._catalog_dir_used = None
 
         self._tap_targets = []
+        # Parallel to _tap_targets: a short tag per target ("row", "soft",
+        # "key", ...) so the encoder can choose a sensible default focus and
+        # leave the on-screen keypad out of its ring (the knob replaces it).
+        self._tap_kinds = []
+
+        # Encoder state (FP5c). _enc_layer_start indexes the first tap target
+        # of the topmost layer (set by every overlay backdrop); _enc_field is
+        # the ident field painted this frame, if any.
+        self.enc_long_press_ms = ENC_LONG_PRESS_MS
+        self._enc_layer_start = 0
+        self._enc_field = None
+        self._enc_highlighted = False
+        self._enc_active = False
+        self._enc_focus = None
+        self._enc_surface_sig = None
+        self._enc_editing = False
+        self._enc_cursor = 0
         # Popup-menu scroll state (AER-1605 follow-up): keyed by the caller's
         # scroll_key, value is (n_items, offset) -- the count guards against a
         # stale offset surviving into a different (shorter) item list opened
@@ -1340,9 +1376,270 @@ class FlightPlan(QWidget):
             return
         event.accept()
 
+    # -- encoder HMI protocol (FP5c) ------------------------------------------
+    # The screen-level controller (screens/screenbuilder_encoder.py) moves the
+    # highlight between instruments; a push on this one calls enc_select and
+    # from then on every turn/push lands here until a method returns False.
+    def enc_selectable(self):
+        return True
+
+    def enc_highlight(self, onoff):
+        self._enc_highlighted = bool(onoff)
+        if not onoff:
+            # The controller drops control on timeout and on a False return;
+            # either way the next enc_select starts from the page defaults.
+            self._enc_active = False
+            self._enc_editing = False
+            self._enc_surface_sig = None
+        self.update()
+
+    def enc_select(self):
+        self._enc_active = True
+        self._enc_surface_sig = None
+        self._enc_focus = None
+        self._enc_editing = False
+        if self._bridge.available:
+            self._enc_prepare()
+        self.update()
+        return True
+
+    def enc_changed(self, data):
+        if not self._bridge.available:
+            return True
+        ring = self._enc_prepare()
+        if self._enc_editing:
+            self._enc_scroll_char(int(data))
+        elif ring:
+            slots = self._enc_slots(ring)
+            cur = slots.index(self._enc_focus) if self._enc_focus in slots else 0
+            self._enc_focus = slots[(cur + int(data)) % len(slots)]
+        self._enc_settle()
+        return True
+
+    def enc_clicked(self):
+        if not self._bridge.available:
+            return True
+        ring = self._enc_prepare()
+        if self._enc_editing:
+            self._enc_field_push(ring)
+        elif self._enc_focus is None:
+            if self._enc_base_page() == "fpl":
+                self._enc_direct_to_shortcut()
+        elif 0 <= self._enc_focus < len(ring):
+            kind, _rect, callback = ring[self._enc_focus]
+            if kind == "field":
+                self._enc_start_editing()
+            else:
+                callback()
+        self._enc_settle()
+        return True
+
+    def enc_long_clicked(self):
+        """Back one level: close the topmost overlay, else leave the page,
+        else (FPL page, nothing open) hand the knob back to the screen."""
+        if not self._bridge.available:
+            return False
+        self._enc_prepare()
+        if not self._enc_back():
+            return False
+        self._enc_settle()
+        return True
+
+    # -- encoder internals -----------------------------------------------------
+    def _enc_base_page(self):
+        return self._page if self._bridge.available else "fpl"
+
+    def _enc_refresh(self):
+        """Re-run paint offscreen so the tap targets describe the state as it
+        is NOW -- the last real paint may predate the action that opened a
+        menu or changed page, and nothing guarantees a repaint in between
+        two encoder events."""
+        img = QImage(max(1, self.width()), max(1, self.height()),
+                     QImage.Format.Format_ARGB32_Premultiplied)
+        try:
+            self._paint(img)
+        except Exception:
+            logger.warning("flight_plan: encoder refresh paint error", exc_info=True)
+
+    def _enc_ring(self):
+        """The focusable elements of the topmost layer, in paint order, as
+        ``(kind, rect, callback)``. The on-screen keypad is left out when an
+        ident field is up: the knob edits the field directly."""
+        start = self._enc_layer_start
+        field = self._enc_field if start == 0 else None
+        ring = [("field", field[0], None)] if field is not None else []
+        for target, kind in zip(self._tap_targets[start:], self._tap_kinds[start:]):
+            if field is not None and kind == "key":
+                continue
+            x, y, w, h, callback = target
+            ring.append((kind, QRectF(x, y, w, h), callback))
+        return ring
+
+    def _enc_slots(self, ring):
+        # The FPL page proper also has a "nothing focused" position -- where
+        # a push is the Direct-To shortcut (brief 3.5, guide 3-45).
+        slots = list(range(len(ring)))
+        if self._enc_base_page() == "fpl" and self._enc_layer_start == 0:
+            slots.insert(0, None)
+        return slots
+
+    def _enc_surface(self):
+        """Identity of what is on screen; when it changes, the focus resets to
+        the new surface's default instead of pointing into a stale list."""
+        picker = self._airway_picker
+        return (self._enc_base_page(), self._row_menu_index, self._role_menu_open,
+                self._menu_open, self._confirm, self._wpt_info is not None,
+                self._modal is not None, None if picker is None else picker["stage"],
+                bool(self._entry_dupe_choices), self._catalog_row_menu,
+                self._catalog_confirm is not None, self._dto_tab,
+                self._dto_target is not None)
+
+    def _enc_prepare(self):
+        self._enc_refresh()
+        ring = self._enc_ring()
+        sig = self._enc_surface()
+        if sig != self._enc_surface_sig:
+            self._enc_surface_sig = sig
+            self._enc_apply_default(ring)
+        elif self._enc_focus is not None and self._enc_focus >= len(ring):
+            self._enc_focus = len(ring) - 1 if ring else None
+        if self._enc_editing and not (ring and ring[0][0] == "field"):
+            self._enc_editing = False
+        return ring
+
+    def _enc_settle(self):
+        # Re-derive focus against what the action just opened, so the next
+        # real paint draws the ring on the new surface rather than an index
+        # into the old one.
+        self._enc_prepare()
+        self.update()
+
+    def _enc_apply_default(self, ring):
+        self._enc_editing = False
+        self._enc_focus = None
+        kinds = [k for k, _r, _c in ring]
+        if self._enc_layer_start == 0:
+            page = self._enc_base_page()
+            if page == "fpl":
+                return
+            if page == "dto" and "activate" in kinds and self._dto_target is not None:
+                self._enc_focus = kinds.index("activate")
+                return
+            if "field" in kinds:
+                self._enc_focus = kinds.index("field")
+                self._enc_start_editing()
+                return
+            if "row" in kinds:
+                self._enc_focus = kinds.index("row")
+                return
+        elif "no" in kinds:
+            # A confirm box defaults to its safe answer.
+            self._enc_focus = kinds.index("no")
+            return
+        self._enc_focus = 0 if ring else None
+
+    def _enc_start_editing(self):
+        self._enc_editing = True
+        self._enc_cursor = len(self._entry_field)
+
+    def _enc_scroll_char(self, data):
+        field = self._entry_field
+        cur = self._enc_cursor
+        ch = field[cur] if cur < len(field) else " "
+        n = len(ENC_CHARSET)
+        new = ENC_CHARSET[(ENC_CHARSET.index(ch if ch in ENC_CHARSET else " ") + data) % n]
+        if new == " ":
+            field = field[:cur]
+        elif cur < len(field):
+            field = field[:cur] + new + field[cur + 1:]
+        elif len(field) < 10:
+            field = field + new
+        self._entry_field = field
+        self._entry_message = ""
+        self._entry_nav_index = None
+
+    def _enc_field_push(self, ring):
+        if self._enc_cursor < len(self._entry_field):
+            # A character is under the cursor: keep it and move on.
+            self._enc_cursor += 1
+            return
+        if self._entry_field:
+            # Blank at the cursor: accept, taking the FastFind prediction.
+            self._entry_enter()
+            return
+        # Nothing typed: hand the turn back to the ring (tabs, rows, X).
+        self._enc_editing = False
+        self._enc_focus = 1 if len(ring) > 1 else 0
+
+    def _enc_direct_to_shortcut(self):
+        """Push with nothing focused on the FPL page: open Direct To with the
+        active waypoint pre-selected, so a second push activates it."""
+        self._open_dto_page()
+        active_leg = self._engine_value("FPLACTLEG")
+        wps = self._plan.waypoints
+        if active_leg and 0 < int(active_leg) <= len(wps):
+            idx = int(active_leg) - 1
+            self._dto_tab = "FPL"
+            self._dto_target = ("fpl", idx, wps[idx])
+
+    def _enc_back(self):
+        """Returns False when there is nothing left to back out of."""
+        if self._modal is not None:
+            self._modal_do_cancel()
+        elif self._entry_dupe_choices:
+            self._cancel_dupe_chooser()
+        elif self._row_menu_index is not None:
+            self._close_row_menu()
+        elif self._menu_open:
+            self._close_menu()
+        elif self._wpt_info is not None:
+            self._close_wpt_info()
+        elif self._airway_picker is not None:
+            self._close_airway_picker()
+        elif self._catalog_row_menu is not None:
+            self._close_catalog_row_menu()
+        elif self._catalog_confirm is not None:
+            self._catalog_confirm_no()
+        elif self._page == "entry":
+            self._entry_cancel()
+        elif self._page == "dto":
+            self._close_dto()
+        elif self._page == "catalog":
+            self._close_catalog()
+        else:
+            return False
+        return True
+
+    def _paint_enc_focus(self, p, w, h):
+        if not (self._enc_highlighted or self._enc_active):
+            return
+        pen = QPen(QColor(_ENC_FOCUS_COLOR))
+        pen.setWidthF(3.0)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        if not self._enc_active:
+            p.drawRect(QRectF(1.5, 1.5, w - 3, h - 3))
+            return
+        ring = self._enc_ring()
+        if self._enc_focus is None or not (0 <= self._enc_focus < len(ring)):
+            return
+        kind, rect, _callback = ring[self._enc_focus]
+        p.drawRect(rect.adjusted(2, 2, -2, -2))
+        if kind == "field" and self._enc_editing and self._enc_field is not None:
+            frect, font, x0 = self._enc_field
+            p.setFont(font)
+            fm = p.fontMetrics()
+            field = self._entry_field
+            cx = x0 + fm.horizontalAdvance(field[:self._enc_cursor])
+            ch = field[self._enc_cursor] if self._enc_cursor < len(field) else "W"
+            cw = fm.horizontalAdvance(ch)
+            y = frect.top() + frect.height() * 0.5 + fm.height() * 0.5
+            p.drawLine(QPointF(cx, y), QPointF(cx + cw, y))
+
     # -- input dispatch ------------------------------------------------------
-    def _tap(self, x, y, w, h, callback):
+    def _tap(self, x, y, w, h, callback, kind=None):
         self._tap_targets.append((x, y, w, h, callback))
+        self._tap_kinds.append(kind)
 
     def mousePressEvent(self, event):
         x, y = event.pos().x(), event.pos().y()
@@ -1454,12 +1751,15 @@ class FlightPlan(QWidget):
         except Exception:
             logger.warning("flight_plan: paint error", exc_info=True)
 
-    def _paint(self):
+    def _paint(self, device=None):
         if self._page not in _INSTRUMENT_PAGES:
             self._page = self.default_page if self.default_page in _INSTRUMENT_PAGES else "fpl"
         self._sync_keyboard_focus()
         self._tap_targets = []
-        p = QPainter(self)
+        self._tap_kinds = []
+        self._enc_layer_start = 0
+        self._enc_field = None
+        p = QPainter(self if device is None else device)
         try:
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             w, h = self.width(), self.height()
@@ -1473,6 +1773,7 @@ class FlightPlan(QWidget):
                 self._paint_catalog(p, w, h)
             else:
                 self._paint_fpl(p, w, h)
+            self._paint_enc_focus(p, w, h)
         finally:
             p.end()
 
@@ -1668,7 +1969,7 @@ class FlightPlan(QWidget):
             cx += col_w
 
         if interactive:
-            self._tap(0, y, w, rh, (lambda idx=i: self._open_row_menu(idx)))
+            self._tap(0, y, w, rh, (lambda idx=i: self._open_row_menu(idx)), "row")
 
     def _paint_airway_summary_row(self, p, w, y, rh, start, end, ident, active_idx, cols,
                                    interactive):
@@ -1698,7 +1999,7 @@ class FlightPlan(QWidget):
             # remove takes the whole span (`_group_containing` in
             # `_row_menu_remove`), not just this anchor fix. No path expands
             # the row on this page any more; per-fix access is the map.
-            self._tap(0, y, w, rh, (lambda idx=end: self._open_row_menu(idx)))
+            self._tap(0, y, w, rh, (lambda idx=end: self._open_row_menu(idx)), "row")
 
     def _paint_footer(self, p, w, top, footer_h, interactive):
         p.setPen(QPen(QColor("#333333")))
@@ -1715,11 +2016,14 @@ class FlightPlan(QWidget):
             x = i * seg
             p.drawText(QRectF(x, top, seg, footer_h), Qt.AlignmentFlag.AlignCenter, label)
             if interactive:
-                self._tap(x, top, seg, footer_h, callbacks[i])
+                self._tap(x, top, seg, footer_h, callbacks[i], "soft")
 
     # -- overlays ---------------------------------------------------------------
     def _paint_overlay_backdrop(self, p, w, h):
         p.fillRect(QRectF(0, 0, w, h), QColor(0, 0, 0, 160))
+        # Everything registered from here on is the topmost layer: the
+        # encoder ring walks only that, never the page dimmed behind it.
+        self._enc_layer_start = len(self._tap_targets)
 
     def _menu_scroll_by(self, key, delta):
         n_items, offset = self._menu_scroll.get(key, (0, 0))
@@ -1795,7 +2099,7 @@ class FlightPlan(QWidget):
             p.drawRect(QRectF(box_x + 2, y + 2, box_w - 4, item_h - 4))
             p.setPen(QPen(QColor("#00ffff")))
             p.drawText(QRectF(box_x, y, box_w, item_h), Qt.AlignmentFlag.AlignCenter, label)
-            self._tap(box_x, y, box_w, item_h, callback)
+            self._tap(box_x, y, box_w, item_h, callback, "row")
             y += item_h
 
         if scrollable:
@@ -1866,7 +2170,7 @@ class FlightPlan(QWidget):
         p.setPen(QPen(QColor("#80ff80")))
         p.drawText(QRectF(*no_rect), Qt.AlignmentFlag.AlignCenter, "No")
         self._tap(*yes_rect, on_yes)
-        self._tap(*no_rect, self._close_menu)
+        self._tap(*no_rect, self._close_menu, "no")
 
     def _paint_menu(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -2059,7 +2363,7 @@ class FlightPlan(QWidget):
                 label = f"{label} {role}"
             p.drawText(QRectF(6, y, w - 12, rh),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
-            self._tap(0, y, w, rh, (lambda idx=i: self._dto_select_fpl(idx)))
+            self._tap(0, y, w, rh, (lambda idx=i: self._dto_select_fpl(idx)), "row")
             y += rh
 
     def _paint_dto_nrst_tab(self, p, w, top, h):
@@ -2093,7 +2397,7 @@ class FlightPlan(QWidget):
                 p.drawText(QRectF(w * 0.68, y, w * 0.3, rh),
                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                            f"RWY {int(rwy)}FT")
-            self._tap(0, y, w, rh, (lambda w_=wp: self._dto_select_nearest(w_)))
+            self._tap(0, y, w, rh, (lambda w_=wp: self._dto_select_nearest(w_)), "row")
             y += rh
 
     def _paint_dto_footer(self, p, w, top, footer_h):
@@ -2106,7 +2410,7 @@ class FlightPlan(QWidget):
         p.setPen(QPen(QColor(color)))
         rect = (0, top, w, footer_h)
         p.drawText(QRectF(*rect), Qt.AlignmentFlag.AlignCenter, label)
-        self._tap(*rect, self._dto_activate)
+        self._tap(*rect, self._dto_activate, "activate")
 
     # -- Catalog page -------------------------------------------------------------
     def _paint_catalog(self, p, w, h):
@@ -2187,7 +2491,8 @@ class FlightPlan(QWidget):
             p.drawText(QRectF(w * 0.72, y, w * 0.26, rh),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                        entry.comment or "")
-            self._tap(0, y, w, rh, (lambda slug=entry.slug: self._catalog_open_row_menu(slug)))
+            self._tap(0, y, w, rh, (lambda slug=entry.slug: self._catalog_open_row_menu(slug)),
+                      "row")
             y += rh
 
     def _paint_catalog_footer(self, p, w, top, footer_h):
@@ -2201,7 +2506,7 @@ class FlightPlan(QWidget):
         for i, label in enumerate(labels):
             x = i * seg
             p.drawText(QRectF(x, top, seg, footer_h), Qt.AlignmentFlag.AlignCenter, label)
-            self._tap(x, top, seg, footer_h, callbacks[i])
+            self._tap(x, top, seg, footer_h, callbacks[i], "soft")
 
     def _paint_catalog_row_menu(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -2284,6 +2589,7 @@ class FlightPlan(QWidget):
         p.setFont(f)
         typed = self._entry_field
         suffix = self._entry_suffix()
+        self._enc_field = (QRectF(0, top, w, field_h), QFont(f), 8.0)
         p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(8, top, w * 0.5, field_h),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, typed)
@@ -2368,7 +2674,7 @@ class FlightPlan(QWidget):
             p.drawText(QRectF(w * 0.65, y, w * 0.34, rh),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                        f"{brg:03.0f} {dist:.0f}NM")
-            self._tap(0, y, w, rh, (lambda w_=wp: self._select_waypoint(w_)))
+            self._tap(0, y, w, rh, (lambda w_=wp: self._select_waypoint(w_)), "row")
             y += rh
 
     def _paint_keypad(self, p, w, top, keypad_h):
@@ -2386,7 +2692,7 @@ class FlightPlan(QWidget):
                 p.drawRect(QRectF(x + 1, y + 1, seg - 2, row_h - 2))
                 p.setPen(QPen(QColor("#ffffff")))
                 p.drawText(QRectF(x, y, seg, row_h), Qt.AlignmentFlag.AlignCenter, ch)
-                self._tap(x, y, seg, row_h, (lambda c=ch: self._entry_key(c)))
+                self._tap(x, y, seg, row_h, (lambda c=ch: self._entry_key(c)), "key")
             y += row_h
         seg = w / len(KEYPAD_CTRL_ROW)
         callbacks = {"BKSP": self._entry_backspace, "CLR": self._entry_clear,
@@ -2397,7 +2703,7 @@ class FlightPlan(QWidget):
             p.drawRect(QRectF(x + 1, y + 1, seg - 2, row_h - 2))
             p.setPen(QPen(QColor("#00ff00" if label == "ENT" else "#ff8080")))
             p.drawText(QRectF(x, y, seg, row_h), Qt.AlignmentFlag.AlignCenter, label)
-            self._tap(x, y, seg, row_h, callbacks[label])
+            self._tap(x, y, seg, row_h, callbacks[label], "key")
 
     def _paint_dupe_chooser(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
