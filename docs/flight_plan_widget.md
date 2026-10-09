@@ -192,7 +192,8 @@ with a modifier, or accept the shadowing while that page is open.
 
 The instrument takes the screen encoder through the standard `enc_*`
 protocol (`screens/screenbuilder_encoder.py`): give it an `encoder_order`
-option on a screen that names `encoder` / `encoder_button` FIX keys. Turning
+option on a screen that names `encoder` / `encoder_button` FIX keys (inside a
+`tab_section` tab it inherits the screen's keys -- docs/screenbuilder.md). Turning
 the knob moves the screen-level highlight onto it (an orange outline round
 the whole instrument); a push takes control; it keeps control until a long
 push backs out of the FPL page or the screen's `encoder_timeout` (default
