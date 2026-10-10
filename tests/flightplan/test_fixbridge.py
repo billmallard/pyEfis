@@ -144,24 +144,28 @@ def test_probe_keys_match_current_flightplan_yaml_contract():
 # ---------------------------------------------------------------------------
 # publish
 # ---------------------------------------------------------------------------
+def _sent(fix):
+    """Keys pyEfis actually queued for the gateway, in send order. The mock
+    client's sendqueue is a MagicMock; each put() is one ``KEY;value;flags``
+    line from ``DB_Item.output_value()``."""
+    out = []
+    for call in fix.db.clientthread.sendqueue.put.call_args_list:
+        line = call.args[0].decode()
+        key, value, _flags = line.rstrip("\n").split(";")
+        out.append((key, value))
+    return out
+
+
 def test_publish_writes_slots_in_order_and_seq_last(fix):
     _define_all_fp1_keys(fix)
     bridge = fixbridge.FixBridge(fix)
+    fix.db.clientthread.sendqueue.reset_mock()
 
-    order = []
-    real_set_value = fix.db.set_value
+    bridge.publish(_plan(2))
+    order = [key for key, _v in _sent(fix)]
 
-    def tracking_set_value(key, value):
-        order.append(key)
-        real_set_value(key, value)
-
-    fix.db.set_value = tracking_set_value
-    try:
-        bridge.publish(_plan(2))
-    finally:
-        fix.db.set_value = real_set_value
-
-    # slot 1 fields, then slot 2 fields, then count/name, then seq last
+    # On the wire, not just in pyEfis's local copy: slot 1 fields, then
+    # slot 2 fields, then count/name, then seq last.
     assert order == [
         "FPL1ID", "FPL1LAT", "FPL1LON", "FPL1TYPE", "FPL1FLAGS",
         "FPL2ID", "FPL2LAT", "FPL2LON", "FPL2TYPE", "FPL2FLAGS",
@@ -245,6 +249,33 @@ def test_role_round_trips_through_publish_and_read_route(fix):
 # ---------------------------------------------------------------------------
 # stage_direct_to
 # ---------------------------------------------------------------------------
+def test_publish_values_reach_the_gateway(fix):
+    """AER-810 bench: the editor showed three waypoints while fixgw held one,
+    because set_value() never left pyEfis. Every bridge write must be sent."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    fix.db.clientthread.sendqueue.reset_mock()
+    bridge.publish(_plan(2))
+    sent = dict(_sent(fix))
+    assert sent["FPL1ID"] == "WP00"
+    assert sent["FPL2ID"] == "WP01"
+    assert sent["FPLCOUNT"] == "2"
+    assert sent["FPLNAME"] == "TEST"
+    assert sent["FPLSEQ"] == "1"
+
+
+def test_command_and_direct_to_reach_the_gateway(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    fix.db.clientthread.sendqueue.reset_mock()
+    bridge.stage_direct_to(model.Waypoint(id="RZS", type="vor", lat=34.02, lon=-119.55))
+    bridge.command("DTO")
+    sent = _sent(fix)
+    assert [k for k, _v in sent] == ["DTOID", "DTOLAT", "DTOLON", "DTOTYPE", "FPLCMD"]
+    assert dict(sent)["DTOID"] == "RZS"
+    assert dict(sent)["FPLCMD"] == "1 DTO"
+
+
 def test_stage_direct_to_writes_dto_keys(fix):
     _define_all_fp1_keys(fix)
     bridge = fixbridge.FixBridge(fix)

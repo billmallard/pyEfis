@@ -42,6 +42,8 @@ per-frame tap targets touch uses -- whatever is tappable on the topmost layer
 is focusable, in paint order -- so a page can never grow a touch control the
 knob cannot reach. On an ident field the turn scrolls the character at the
 cursor and a push advances it; a long push (``enc_long_press_ms``) is Back.
+With a dual-concentric knob (screen ``encoder_outer``) the outer ring moves
+the cursor instead and a push on the field is always Enter.
 """
 
 import logging
@@ -214,6 +216,11 @@ class FlightPlan(QWidget):
         # of the topmost layer (set by every overlay backdrop); _enc_field is
         # the ident field painted this frame, if any.
         self.enc_long_press_ms = ENC_LONG_PRESS_MS
+        # Set True by EncoderController when the screen names an
+        # `encoder_outer` key: the outer ring then moves the cursor, so a push
+        # on the field always accepts instead of advancing (Bill, bench,
+        # 2026-10-10: push-to-advance accepted KDFW when he meant KDAL).
+        self.enc_has_outer = False
         self._enc_layer_start = 0
         self._enc_field = None
         self._enc_highlighted = False
@@ -1434,6 +1441,20 @@ class FlightPlan(QWidget):
         self._enc_settle()
         return True
 
+    def enc_outer_changed(self, data):
+        """Outer ring: on an ident field, move the cursor between character
+        positions (the GNX outer knob); anywhere else, walk the focus ring
+        exactly as the inner ring does."""
+        if not self._bridge.available:
+            return True
+        self._enc_prepare()
+        if self._enc_editing:
+            last = min(len(self._entry_field), 9)
+            self._enc_cursor = max(0, min(last, self._enc_cursor + int(data)))
+            self._enc_settle()
+            return True
+        return self.enc_changed(data)
+
     def enc_long_clicked(self):
         """Back one level: close the topmost overlay, else leave the page,
         else (FPL page, nothing open) hand the knob back to the screen."""
@@ -1546,8 +1567,13 @@ class FlightPlan(QWidget):
         field = self._entry_field
         cur = self._enc_cursor
         ch = field[cur] if cur < len(field) else " "
-        n = len(ENC_CHARSET)
-        new = ENC_CHARSET[(ENC_CHARSET.index(ch if ch in ENC_CHARSET else " ") + data) % n]
+        # Only the last character may scroll to blank (which deletes it). A
+        # character with more after it skips the blank, so spinning through
+        # the set never truncates the rest of the ident -- reachable only
+        # with the outer ring, which can put the cursor mid-field.
+        charset = ENC_CHARSET if cur >= len(field) - 1 else ENC_CHARSET.rstrip(" ")
+        idx = charset.index(ch) if ch in charset else len(charset) - 1
+        new = charset[(idx + data) % len(charset)]
         if new == " ":
             field = field[:cur]
         elif cur < len(field):
@@ -1559,6 +1585,10 @@ class FlightPlan(QWidget):
         self._entry_nav_index = None
 
     def _enc_field_push(self, ring):
+        if self.enc_has_outer and self._entry_field:
+            # The outer ring owns the cursor: a push is always Enter.
+            self._entry_enter()
+            return
         if self._enc_cursor < len(self._entry_field):
             # A character is under the cursor: keep it and move on.
             self._enc_cursor += 1

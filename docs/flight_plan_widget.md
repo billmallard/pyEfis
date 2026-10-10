@@ -219,7 +219,7 @@ list.
 | FPL page, nothing focused (on entry) | focus the first row / last soft key | open Direct To with the active waypoint pre-selected and **Activate** focused, so a second push activates it (guide 3-45) | release the knob to the screen |
 | FPL page, a row or soft key focused | next/previous element (the ring includes "nothing focused") | open the row menu / press the soft key | release the knob to the screen |
 | Any menu, picker, confirm box, WPT Info | next/previous item | choose it | close it (one level) |
-| Ident field (Entry page, DTO Waypoint tab) | scroll the character under the cursor through `A`-`Z`, `0`-`9`, space | a character is under the cursor: keep it and advance; blank under the cursor: accept the field, taking the FastFind prediction (cyan suffix); nothing typed yet: leave the field and walk the page (suggestions, tabs, rows, X) | cancel the page (as Escape) |
+| Ident field (Entry page, DTO Waypoint tab) | scroll the character under the cursor through `A`-`Z`, `0`-`9`, space | **with an outer ring:** Enter, taking the FastFind prediction. **One knob only:** a character under the cursor means keep it and advance; a blank under the cursor means accept, taking the prediction. Either way, with nothing typed yet the push leaves the field and walks the page (suggestions, tabs, rows, X) | cancel the page (as Escape) |
 | Entry / DTO / Catalog page, field not being edited | next/previous element | choose it (push the field to edit it again) | leave the page |
 
 Focus defaults when a surface opens: the FPL page starts with nothing
@@ -240,11 +240,19 @@ the hold reaches the threshold (`enc_long_clicked()`, from a timer, without
 waiting for release). Every other instrument keeps the original act-on-press
 behaviour.
 
-**One knob, not two.** The guide's knob table (1-11..1-13) is a dual
-concentric: outer = field/cursor, inner = character/list. The screen
-encoder protocol carries one encoder and one button, so the cursor advance
-is a push instead of an outer-ring turn. A dual-knob mapping would need a
-second encoder key in the protocol and is not part of FP5c.
+**Outer ring.** The guide's knob table (1-11..1-13) is a dual concentric:
+outer = field/cursor, inner = character/list. When the screen names
+`encoder_outer` (the stock `hmi/encoder_input.yaml` sets `ENC4`, the
+Knobster's outer ring), the outer ring moves the cursor along the ident
+field: left to fix an earlier character, right as far as the blank after
+the last one. A push on the field is then always Enter. Off the field, the
+outer ring walks the focus ring like the inner one. Only the last character
+can be turned to blank (which deletes it); any character with others after
+it skips the blank, so a full spin never cuts off the rest of the ident.
+Without `encoder_outer`, the one-knob fallback in the table applies: push
+advances the cursor. That fallback is what produced KDFW when Bill meant
+KDAL on the 2026-10-10 bench run: a push on the blank after `KD` accepted
+the prediction.
 
 ### HMI verbs
 
