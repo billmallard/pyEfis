@@ -133,7 +133,16 @@ class FixBridge:
         return self._fix.db.get_item(key)
 
     def _set(self, key, value) -> None:
-        self._fix.db.set_value(key, value)
+        # set_value() only updates pyEfis's local copy: pyavtools sends a key
+        # to the gateway only on output_value() (or for keys listed in the
+        # `outputs` config, which the FP1 keys are not). Without this the
+        # route, DTO staging and FPLCMD never left the display -- the editor
+        # looked right on glass while the engine saw nothing (AER-810 bench,
+        # 2026-10-10: three waypoints on screen, FPLCOUNT=1 on fixgw). Same
+        # value-then-output_value() pattern as hmi/functions.py setValue.
+        item = self._fix.db.get_item(key)
+        item.value = value
+        item.output_value()
 
     # -- publish (editor -> bus) -----------------------------------------
     def publish(self, plan) -> None:
