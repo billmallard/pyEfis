@@ -319,3 +319,89 @@ def test_highlight_without_control_outlines_the_instrument(fix, qtbot):
     assert w._enc_active is False
     c = w.grab().toImage().pixelColor(1, w.height() // 2)
     assert c.red() < 60
+
+
+# ---------------------------------------------------------------------------
+# Outer ring (dual-concentric knob): cursor on the field, push = Enter.
+# Bill, bench 2026-10-10: with push-to-advance he got KDFW when he meant KDAL.
+# ---------------------------------------------------------------------------
+def _outer_entry(fix, qtbot, tmp_path):
+    w = _widget(fix, qtbot, tmp_path)
+    w.enc_has_outer = True
+    _take_control(w)
+    w._footer_add()
+    w._enc_prepare()
+    assert w._enc_editing is True
+    return w
+
+
+def _outer_type(w, text):
+    for i, ch in enumerate(text):
+        _dial(w, ch)
+        if i < len(text) - 1:
+            w.enc_outer_changed(1)
+
+
+def test_outer_ring_moves_cursor_and_push_enters(fix, qtbot, tmp_path):
+    w = _outer_entry(fix, qtbot, tmp_path)
+    _outer_type(w, "KSMX")
+    assert w._entry_field == "KSMX"
+    assert w._enc_cursor == 3
+    w.enc_clicked()                      # push = Enter, even with a char under the cursor
+    assert [wp.id for wp in w._plan.waypoints] == ["KSMX"]
+
+
+def test_outer_ring_push_after_two_letters_takes_the_prediction(fix, qtbot, tmp_path):
+    w = _outer_entry(fix, qtbot, tmp_path)
+    _outer_type(w, "KS")
+    w.enc_clicked()
+    assert [wp.id for wp in w._plan.waypoints] == ["KSBA"]
+
+
+def test_outer_ring_corrects_a_middle_character(fix, qtbot, tmp_path):
+    w = _outer_entry(fix, qtbot, tmp_path)
+    _outer_type(w, "KSBX")
+    w.enc_outer_changed(-1)              # back onto B
+    assert w._enc_cursor == 2
+    _dial(w, "M")
+    assert w._entry_field == "KSMX"
+
+
+def test_spinning_a_middle_character_never_truncates(fix, qtbot, tmp_path):
+    w = _outer_entry(fix, qtbot, tmp_path)
+    _outer_type(w, "KSBA")
+    w.enc_outer_changed(-3)              # onto K
+    assert w._enc_cursor == 0
+    w.enc_changed(-11)                   # K -> past A, wraps to the digits
+    assert len(w._entry_field) == 4
+    assert w._entry_field[1:] == "SBA"
+    w.enc_changed(len(flight_plan.ENC_CHARSET))   # a full spin: no blank in it
+    assert len(w._entry_field) == 4
+
+
+def test_outer_ring_cursor_is_clamped_to_the_field(fix, qtbot, tmp_path):
+    w = _outer_entry(fix, qtbot, tmp_path)
+    _outer_type(w, "KS")
+    w.enc_outer_changed(5)               # only as far as the blank after S
+    assert w._enc_cursor == 2
+    w.enc_outer_changed(-9)
+    assert w._enc_cursor == 0
+
+
+def test_outer_ring_walks_the_ring_off_the_field(fix, qtbot):
+    w = _widget(fix, qtbot, n=3)
+    w.enc_has_outer = True
+    _take_control(w)
+    w.enc_outer_changed(1)
+    assert _focused(w)[0] == "row"
+
+
+def test_without_an_outer_ring_push_still_advances(fix, qtbot, tmp_path):
+    w = _widget(fix, qtbot, tmp_path)
+    assert w.enc_has_outer is False
+    _take_control(w)
+    w._footer_add()
+    w._enc_prepare()
+    _dial(w, "K")
+    w.enc_clicked()
+    assert w._page == "entry" and w._enc_cursor == 1
