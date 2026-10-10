@@ -2625,6 +2625,7 @@ class TestTabSection:
         ])
         config["encoder"] = "INT"
         config["encoder_button"] = "HIDEBUTTON"
+        config["encoder_outer"] = "INT"
         config["encoder_timeout"] = 4000
         screen = Screen(_TestParent(config, config_path="."))
         qtbot.addWidget(screen)
@@ -2641,6 +2642,8 @@ class TestTabSection:
             assert page.encoder == "INT"
             assert page.encoder_button == "HIDEBUTTON"
             assert page.encoder_timeout == 4000
+            assert page.encoder_outer == "INT"
+            assert page.encoder_outer_input is not None
             assert page.encoder_list_sorted == [0]
             assert page.encoder_input is not None
             assert page.encoder_button_input is not None
