@@ -485,6 +485,13 @@ screens:
     encoder_button: BTN9
 ```
 
+Optional: `encoder_outer` names the outer ring of a dual-concentric knob
+(the Knobster's outer ring is `ENC4` through fix-gateway's `knobster` plugin).
+Its turns go only to the instrument that currently holds the knob, and only
+if that instrument handles them (`enc_outer_changed`; today, `flight_plan`).
+Otherwise the outer ring is ignored. If the key is missing from the FIX
+database, pyEfis logs a warning and runs without an outer ring.
+
 
 # Instrument List #
 Below is a list of the instrument types, defaults and options. This is a WIP and is mostly incomplete. Basically an option is any properly of the instrument that is defined in its source. 
@@ -1028,7 +1035,7 @@ box, never the enclosing screen's -- each tab is built through the same
 exporter contract this relies on).
 
 Encoder: every tab inherits the enclosing screen's `encoder`,
-`encoder_button` and `encoder_timeout`, so an instrument with `encoder_order`
+`encoder_button`, `encoder_outer` and `encoder_timeout`, so an instrument with `encoder_order`
 inside a tab is driven by the screen's knob. Each tab keeps its own encoder
 order, and only the tab on show responds. Turning the knob does not switch
 tabs.
