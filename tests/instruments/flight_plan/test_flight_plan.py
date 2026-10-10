@@ -361,18 +361,11 @@ def test_keypad_fastfind_and_commit_writes_seq_last(fix, qtbot, tmp_path):
     assert w._entry_field == "KS"
     assert w._entry_suffix() == "BA"  # nearest match from the aircraft (0,0)
 
-    order = []
-    real_set_value = fix.db.set_value
-
-    def tracking(key, value):
-        order.append(key)
-        real_set_value(key, value)
-
-    fix.db.set_value = tracking
-    try:
-        w._entry_enter()
-    finally:
-        fix.db.set_value = real_set_value
+    fix.db.clientthread.sendqueue.reset_mock()
+    w._entry_enter()
+    # What went to the gateway, in order (each put() is a KEY;value;flags line).
+    order = [c.args[0].decode().split(";")[0]
+             for c in fix.db.clientthread.sendqueue.put.call_args_list]
 
     assert w._page == "fpl"
     assert w._plan.count == 1
