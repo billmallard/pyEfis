@@ -14,10 +14,13 @@
 #  along with this program; if not, write to the Free Software
 #  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
+import logging
 import time
 from operator import itemgetter
 
 from PyQt6.QtCore import QTimer
+
+logger = logging.getLogger(__name__)
 
 
 class EncoderController:
@@ -29,6 +32,15 @@ class EncoderController:
     ``enc_long_clicked()`` once the hold reaches ``enc_long_press_ms`` (fired
     from a timer, so it does not wait for the release). Every other
     instrument keeps the original act-on-press behaviour.
+
+    Outer ring (optional): a screen may also name ``encoder_outer``, the outer
+    ring of a dual-concentric knob. Its turns go to the instrument in control
+    as ``enc_outer_changed(steps)`` (same return contract as ``enc_changed``),
+    and only while it holds control; outside control, and for instruments
+    without the method, the outer ring is ignored. Every enrolled instrument
+    that defines ``enc_outer_changed`` gets ``enc_has_outer = True``, so it
+    can drop the one-knob fallbacks it needs without an outer ring. A missing
+    ``encoder_outer`` FIX key logs a warning and leaves the outer ring off.
     """
 
     def __init__(self, screen):
@@ -62,6 +74,42 @@ class EncoderController:
             )
 
             self.screen.encoder_timer.timeout.connect(self.screen.encoderChanged)
+            self._configure_outer(fix_module)
+
+    def _configure_outer(self, fix_module):
+        key = getattr(self.screen, "encoder_outer", None)
+        if not key:
+            return
+        try:
+            item = fix_module.db.get_item(key)
+        except KeyError:
+            logger.warning("encoder_outer key %s not in the FIX database; "
+                           "outer ring disabled", key)
+            return
+        self.screen.encoder_outer_input = item
+        item.valueWrite[int].connect(self.screen.encoderOuterChanged)
+        for index in self.screen.encoder_list_sorted:
+            inst = self.screen.instruments[index]
+            if callable(getattr(inst, "enc_outer_changed", None)):
+                inst.enc_has_outer = True
+
+    def outer_changed(self, value=0):
+        if not value or not self.screen.isVisible():
+            return
+        if not self.screen.encoder_control:
+            return
+        handler = getattr(self._selected_instrument(), "enc_outer_changed", None)
+        if not callable(handler):
+            return
+        curr_time = time.time_ns() // 1000000
+        self.screen.encoder_control = handler(value)
+        if self.screen.encoder_control:
+            self.screen.encoder_timestamp = curr_time
+            self.screen.encoder_timer.start(self.screen.encoder_timeout + 500)
+        else:
+            self.screen.encoder_timer.stop()
+            self.screen.encoder_timestamp = 0
+            self._selected_instrument().enc_highlight(False)
 
     def changed(self, value=0):
         curr_time = time.time_ns() // 1000000
