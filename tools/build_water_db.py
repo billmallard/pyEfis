@@ -98,7 +98,7 @@ def tessellate_polygon(vertices, ring_ends=None):
     # vertices BLOB length, so dense rows need no schema flag. The old
     # builder silently DROPPED all holes past the uint16 ceiling — a
     # dense cell like the lower Florida Keys (3,322 island rings) lost
-    # every island and #44 persisted there (oracle-gate residual B).
+    # every island, painting them as water (#44).
     return idx.astype(_index_dtype(len(vertices)))
 
 
@@ -366,8 +366,8 @@ def _triangle_cover_tester(vertices, tri_idx):
 
 def _covered_hole_indices(all_verts, ring_ends, tri_idx):
     """Indices (into the hole list) of hole rings whose interior is
-    covered by the row's fill triangles — the residual-A defect class
-    of #44: decimation can hand earcut a self-intersecting or outer-
+    covered by the row's fill triangles — a #44 defect class:
+    decimation can hand earcut a self-intersecting or outer-
     crossing hole, and earcut then fills it instead of subtracting
     it. Judged on the STORED rings and triangles, i.e. exactly what
     the renderer will draw."""
@@ -405,9 +405,8 @@ def _strip_hole_triangles(all_verts, ring_ends, tri_idx):
     with its neighbouring fill, and those triangles hold no interior point
     of the hole, so they survive. The earlier centroid-in-hole-only test
     missed a large triangle covering a small island (its centroid sits
-    outside the island), leaving ~0.02% of inland island interiors covered
-    at continental scale — the residual behind the #44/#103 "0 inland"
-    gate slip. Biased toward land — painting an island as water is the
+    outside the island), leaving some inland island interiors covered
+    (#44/#103). Biased toward land — painting an island as water is the
     dangerous direction for an EFIS (#44)."""
     v = np.asarray(all_verts, dtype=np.float64)
     t = np.asarray(tri_idx, dtype=np.int64).reshape(-1, 3)
@@ -500,8 +499,8 @@ def _distinct_ring_len(ring):
     vertices is a point or a line — zero area, no island to preserve — and
     such a ring must not be emitted as a hole: decimation can crush a
     sub-resolution islet down to two points, and the resulting degenerate
-    ring has no interior the verifier can probe, yet the pack-check oracle
-    still flags it (a residual behind the #44/#103 gate slip). Dropping it
+    ring has no interior the verifier can probe, so it can neither be
+    confirmed clear nor usefully subtracted (#44/#103). Dropping it
     fills that sub-40 m spot as water — the islet is below display
     resolution anyway."""
     if not ring:
@@ -526,8 +525,7 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
     per-ring decimation runs before earcut sees the rings, and an
     aggressively simplified ring can self-intersect or cross its outer
     ring — earcut then fills the hole instead of subtracting it
-    (oracle-gate residual A of #44: 54/770 hole interiors covered in
-    a Keys probe build). On a failed verification the decimation cap
+    (#44: seen on Florida Keys hole rings). On a failed verification the decimation cap
     escalates (doubling up to _MAX_ESCALATED_CAP, then the raw source
     rings); if the raw rings still fail, fill triangles whose centroid
     lands in a hole are stripped as a last resort — biased toward
