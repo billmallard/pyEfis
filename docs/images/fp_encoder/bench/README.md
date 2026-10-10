@@ -40,3 +40,19 @@ ENC4 writes for the outer ring.
   Turning the inner ring first puts a letter in that position.
 - `o2_after_long_push_*`: a long push (0.9 s hold) cancels the entry, back on
   the FPL page with the plan untouched.
+
+## Bill's knob run, and the bus write fix (2026-10-10 01:07-01:20Z)
+
+- `final_4wpt_*`: the grab taken right after Bill accepted the retest (01:07Z).
+  The widget shows KSBA, KDAL and KGPM, but `fixgwc read` at the same moment
+  returned `FPLCOUNT=1`, `FPL2ID=` and `FPLSEQ=1`. **Nothing the editor wrote
+  had reached fix-gateway.** `FixBridge._set` used `fix.db.set_value()`, which
+  updates only pyEfis's local copy. Fixed on `aer-810/fixbridge-output-to-gateway`.
+- `fix_after_reentry_*`: bench at `6cf30cb` (the combined bench branch plus
+  that fix). The restart dropped the local-only KDAL/KGPM, so I re-entered them
+  with FIX-injected knob input (`inject_knob_entry.sh`, run on the bench under
+  the bench lock). fixgw then read
+  `FPLCOUNT=2 FPLSEQ=2 ... FPL2ID=KDAL` after the first entry and
+  `FPLCOUNT=3 FPLSEQ=3 FPL1ID=KSBA FPL2ID=KDAL FPL3ID=KGPM` after the second.
+  Glass and bus agree. KDAL went in with the outer ring stepping the cursor:
+  inner to K, outer, inner to D, outer, inner to A, outer, inner to L, push.
