@@ -16,13 +16,19 @@ The HSI is not modified by the flight plan epic. It reads only `COURSE`,
 `CDI`, `TOFROM`, `NAVSRC` and `NAVTYPE`. This checks that those keys carry the
 engine's guidance with the right sense.
 
-**Setup (2026-10-04).** A real fix-gateway, `dev` @ `aebde02`, with only
+**Setup (2026-10-04).** A real fix-gateway with only
 `netfix`, `compute` and `flightplan` enabled; the real pyEfis `HSI` and
 `nav_status` widgets connected to it and rendered offscreen. Route KSBA > GVO >
 RZS > KSMX published as the route block. Position, `GS = 120`, `MAGVAR = 0`
 and `HEAD` written over netfix at known offsets from the active leg. Nothing
 between the route block and the HSI is mocked. Driver, renders and the full
 key dump: `docs/images/fp7_hsi/` (README has the commands).
+
+First run against `dev` @ `aebde02`: the course pointer turned to the
+reciprocal past KSMX (billmallard/fix-gateway#35). Re-run against the fix,
+branch `aer-2672/fplcrs-past-to` @ `aa794ab`; the table and renders below are
+from that run. The four points before KSMX are byte-identical between the two
+runs.
 
 This is not the Beelink bench. X-Plane was not feeding the bench gateway at
 the time (`LAT`/`LONG` old), and the bench was holding another branch for
@@ -39,8 +45,8 @@ is offscreen Qt rather than the kiosk.
 | KSBA-GVO 1.0 nm right | 296.98 | 296.98 | +0.995 | -0.995 | -0.995 | 1 TO | full scale left (TERM, 1.0 nm) |
 | KSBA-GVO 2.0 nm right | 296.98 | 296.98 | +1.995 | -1.000 | -1.000 | 1 TO | pegged left |
 | RZS-KSMX 1 nm before KSMX | 304.41 | 304.41 | -0.007 | +0.007 | +0.007 | 1 TO | bar centred |
-| 1 nm past KSMX | **124.39** | **124.39** | +0.007 | -0.007 | -0.007 | 2 FROM | pointer turned 180 deg |
-| 1 nm past KSMX, 0.5 nm right | **124.39** | **124.39** | +0.507 | -0.507 | -0.507 | 2 FROM | bar right of the 124 pointer (reversed) |
+| 1 nm past KSMX | 304.39 | 304.39 | +0.007 | -0.007 | -0.007 | 2 FROM | bar centred, pointer holds 304 |
+| 1 nm past KSMX, 0.5 nm right | 304.39 | 304.39 | +0.507 | -0.507 | -0.507 | 2 FROM | bar left of the 304 pointer (fly left) |
 
 `FPLPHASE` was `TERM`, `CDISCALE` 1.0, throughout (every point is inside 30 nm
 of KSBA or KSMX).
@@ -51,7 +57,7 @@ of KSBA or KSMX).
 | `CDI == FPLCDI == -FPLXTK / CDISCALE`, clamped at +-1 | **PASS** |
 | Sense: right of track -> bar left of centre (fly left), and the reverse | **PASS** |
 | TO/FROM flips after the last waypoint, no sequencing | **PASS** (flag) |
-| Course and sense hold FROM the last waypoint | **FAIL** -- the engine swings `FPLCRS` to the reciprocal once along-track goes negative, so the needle reverses. billmallard/fix-gateway#35. The same path runs at the MAP, where the brief requires guidance to continue along the extended final approach course. |
+| Course and sense hold FROM the last waypoint | **PASS** -- after billmallard/fix-gateway#35. On `aebde02` this was a FAIL: `FPLCRS` swung to the reciprocal (124.39) once along-track went negative, so the needle reversed. The fix keeps the extended leg course (304.39; the 0.02 deg from 304.41 is great-circle convergence over 2 nm). The same path runs at the MAP and in SUSP past a fix; both are pinned by fix-gateway engine tests rather than this render. |
 
 ## 2. Internal plan vs X-Plane's FMS (`GPSSRC = 1`)
 
