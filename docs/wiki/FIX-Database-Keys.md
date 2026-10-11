@@ -94,6 +94,9 @@ EXTCRS} -> GPSCRS` etc. into the canonical `GPSCRS`/`GPSCDI`/`GPSTF`, which
 `NAVSRC` then carries on into `COURSE`/`CDI`/`TOFROM` as usual — the HSI is
 unmodified by this epic.
 
+The `nav_status` chip reads `FPLSTATE`, `FPLPHASE`, `WPFROM`/`WPNAME`/`WPNEXT`
+and `WPDIS`/`WPETE` (see [Widgets-Flight-Instruments](Widgets-Flight-Instruments#nav_status)).
+
 ## Engine / EMS (representative)
 
 These are bound to gauges through [Preferences](Preferences-and-Styling)
