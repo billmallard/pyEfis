@@ -38,9 +38,10 @@
 # /home/wpballard/bench-scratch.
 #
 # --scratch is passed explicitly on purpose: the script defaults it to
-# $HOME/bench-scratch, and under a system unit $HOME is root's, not the bench
-# user's -- so the default would silently watch a directory that does not
-# exist and report "no processes reference" it forever.
+# $HOME/bench-scratch, and a system unit with no User= line gets no HOME from
+# systemd at all (verified on the Beelink, AER-3036) -- and even with one it
+# would be root's, not the bench user's. Without --scratch the script refuses
+# to run (exit 2) rather than watch a directory that does not exist.
 #
 # The TIMER is what you enable, not the service. Run one sweep right now with
 #    systemctl [--user] start bench-sweep.service

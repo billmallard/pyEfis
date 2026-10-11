@@ -67,3 +67,28 @@ def test_dead_claimant_is_still_a_finding(tmp_path):
 
 def test_sweep_is_executable():
     assert os.access(SWEEP, os.X_OK)
+
+
+def _run_without_home(*args):
+    # A root system unit with no User= line: systemd sets no HOME (AER-3036).
+    env = {k: v for k, v in os.environ.items() if k != "HOME"}
+    return subprocess.run(
+        [str(SWEEP), "--fix-port", "1", *args],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+
+
+def test_runs_with_home_unset_when_scratch_given(tmp_path):
+    # The shipped unit passes --scratch. It must not trip `set -u` on HOME.
+    p = _run_without_home("--lock", str(tmp_path / "bench.lock"),
+                          "--scratch", str(tmp_path))
+    assert "unbound variable" not in p.stderr, p.stderr
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "bench-sweep: clean." in p.stdout
+
+
+def test_home_unset_without_scratch_is_a_usage_error(tmp_path):
+    # Defaulting to "/bench-scratch" would report a clean [3] forever.
+    p = _run_without_home("--lock", str(tmp_path / "bench.lock"))
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "HOME is unset" in p.stderr

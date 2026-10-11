@@ -49,7 +49,11 @@
 set -u
 
 LOCK=/tmp/pyefis-bench.lock
-SCRATCH="$HOME/bench-scratch"
+# Defaulted from $HOME only AFTER argument parsing. A root system unit with no
+# User= line gets no HOME at all from systemd, so reading it here tripped
+# `set -u` before --scratch was even seen, and the hourly unit failed on every
+# run -- which reads as "the bench is dirty" (AER-3036).
+SCRATCH=""
 MAX_AGE_S=3600
 FIX_PORT=3490
 # The two benches start pyEfis differently and BOTH spellings have to pass, or
@@ -94,6 +98,14 @@ while [ $# -gt 0 ]; do
     *) die_usage "unknown argument '$1'" ;;
   esac
 done
+
+# No --scratch and no HOME: refuse rather than watch "/bench-scratch", which
+# would print "no processes reference" it forever -- a clean verdict
+# manufactured by a directory that does not exist.
+if [ -z "$SCRATCH" ]; then
+  [ -n "${HOME:-}" ] || die_usage "HOME is unset; pass --scratch DIR"
+  SCRATCH="$HOME/bench-scratch"
+fi
 
 finding() { FINDINGS=$((FINDINGS + 1)); echo "FINDING: $*"; }
 ok()      { echo "ok: $*"; }
