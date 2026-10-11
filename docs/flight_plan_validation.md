@@ -8,7 +8,8 @@ and the playback fixture. Spec: `makerplane/briefs/flight_plan_plan.md`
 sections 3.3, 3.6 and 6 (maos-workspace).
 
 Each item carries a verdict: **PASS**, **FAIL** (with the defect filed), or
-**NOT RUN** (with what it is waiting on).
+**NOT RUN** (with what it is waiting on), or **MOVED TO** another item
+(with the item that now owns it).
 
 ## 1. HSI driven by the internal plan (`NAVSRC = 2`, `GPSSRC = 0`)
 
@@ -61,7 +62,11 @@ of KSBA or KSMX).
 
 ## 2. Internal plan vs X-Plane's FMS (`GPSSRC = 1`)
 
-**NOT RUN.** Needs X-Plane flying the same route with its FMS feeding
+**MOVED TO FP8** (AER-809, billmallard/pyEfis#190). Not deleted and not
+waived: FP8 does not close until this table carries results from a real sim
+session. Moved on 2026-10-11 as a sequencing decision inside the epic (AER-808
+thread), because FP8 already needs a sim session and one sit-down covers both.
+It needs X-Plane flying the same route with its FMS feeding
 `EXTCRS`/`EXTCDI`/`EXTTF` into the bench gateway. On 2026-10-04 the Beelink
 gateway's `LAT`/`LONG`/`GS` were old (no simulator connected).
 
