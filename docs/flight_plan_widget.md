@@ -23,9 +23,10 @@ themselves). Every DB-backed object is construct-never-raises with
   the on-device `airports.sqlite`/`navaids.sqlite` packs, FastFind (`prefix`),
   `nearest`, plus `UserWaypointStore` and `RecentList`.
 - **`airways.py`** (PA2, procedures epic) — `AirwayGraph`: lookup + expansion
-  over the `procedures` pack's `airways`/`airway_legs` tables (`expand()`
-  emits ordinary `type="fix"` waypoints; no leg model needed for an airway
-  segment).
+  over the `procedures` pack's `airways`/`airway_legs` tables. `expand()`
+  emits `type="fix"` legs, each carrying the MEA of the airway leg that ends
+  at it as its packed altitude constraint (`"+7000"`); `cycle(ident)` reports
+  the AIRAC cycle an airway was built from.
 - **`procedures.py`** (PA5, procedures epic) — `ProcedureIndex`: lookup over
   the same pack's `procedures`/`transitions`/`legs` tables (departures,
   arrivals, approaches) by airport/kind/runway/transition. Query-only — it
@@ -35,31 +36,65 @@ themselves). Every DB-backed object is construct-never-raises with
   `procedures_db_path` option and `_ensure_procedure_index()`, lazily, the
   same pattern as `nasr_db_path`/`navaid_db_path` -> `_ensure_waypoint_index`
   — PA7's PROC page is the first real consumer.
-- **`model.py`** (FP4) — `Waypoint` and `FlightPlan`, the editor's working
-  copy of a route: `insert_before`/`insert_after`/`remove` (mutate in place —
-  the editor commits every edit immediately, per section 3.4), `invert()`
-  (returns a new plan with roles cleared — an approach does not survive
-  reversal), `set_role()` (at most one FAF and one MAP, the MAP must follow
-  the FAF), `approach()`, `leg(i)`/`cumulative(i)`/`total_nm` (the FPL page's
-  DTK/DIS/CUM columns), and `to_json()`/`from_json()` for the `"mp-route/1"`
-  schema (Appendix B of the brief), preserving any field neither this version
-  nor the schema currently knows about.
+- **`model.py`** (FP4, RS2) — `Waypoint`, `Segment` and `FlightPlan`, the
+  editor's working copy of a route. A route is an ordered list of segments
+  (RS2, billmallard/pyEfis#305, route segments brief section 4): a plain
+  waypoint is a one-leg `waypoint` segment, an airway is one `airway`
+  segment holding every fix from its entry to its exit inclusive, and the
+  procedure kinds (`departure`/`arrival`/`approach`/`missed`) are reserved for
+  PA7. A segment's `entry`/`exit` are its first and last legs, so they can
+  never disagree with them. `waypoints` is the derived flat view (a tuple;
+  every pre-RS2 reader keeps working). Each `Waypoint` carries the PA3 leg
+  fields (`pt`, coded `crs`, `dst`, packed `alt` constraint, `spd`, non-role
+  `flags`, arc centre, `turn`). Edits mutate in place (the editor commits
+  every edit immediately, per section 3.4): `insert_before`/`insert_after`/
+  `remove` on flat indices (landing inside an airway cuts it in two; a
+  remnant too short to be an airway becomes a plain waypoint — no leg is ever
+  orphaned), and the segment operations `insert_airway`, `remove_segment`
+  (an airway leaves its entry fix behind — the undo of `insert_airway`),
+  `change_exit`, `change_entry` and `split_at`. `invert(graph)` returns a new
+  plan: segments and legs reversed, roles cleared, each airway's entry and
+  exit swapped with the one-way direction check re-run — a reversal across a
+  one-way leg, or any airway with no pack to check it against, is refused
+  with the reason; a procedure segment comes back as plain waypoints.
+  `set_role()` (at most one FAF and one MAP, the MAP must follow the FAF),
+  `approach()`, `leg(i)`/`cumulative(i)`/`total_nm` (the FPL page's
+  DTK/DIS/CUM columns), and `to_json()`/`from_json()` for the `"mp-route/2"`
+  schema (segments, each airway with its AIRAC cycle), preserving any field
+  neither this version nor the schema currently knows about. `"mp-route/1"`
+  (Appendix B of the brief) still loads, as plain waypoints, and is
+  rewritten as v2 on the next save.
 - **`catalog.py`** (FP4) — `Catalog(dir)` over
   `<userdir>/routes/<slug>.json` (atomic tmp-file + `os.replace` writes):
   `list`/`load`/`save`/`delete`/`copy`/`invert`. Slugs beginning `managed_`
   are reserved for configurator-delivered routes (FP9) and are read-only on
   the device. `invert()` returns the inverted plan without persisting it —
   "the stored plan is unchanged" (GNX guide 3-36); `copy()` is the catalog
-  write that duplicates a stored route under a new name.
-- **`fixbridge.py`** (FP4) — `FixBridge(fix_module)` wraps `pyavtools.fix`:
-  `publish(plan)` writes the Appendix A route block (every slot, blanking
-  whatever a shorter previous plan left behind, then `FPLCOUNT`/`FPLNAME`,
-  then `FPLSEQ` last), `stage_direct_to(wp)`, `command(verb, arg, on_ack)`
-  (writes `FPLCMD`, delivers the `FPLCMDACK`/`FPLMSG` answer to a plain
-  callback), and `read_route()`/`read_engine()` plus `add_listener()` for the
-  bus-driven read-back (fires on `FPLSEQ` or any engine-output change).
-  `available` is False — every method a no-op — if the gateway does not
-  define the FP1 keys yet.
+  write that duplicates a stored route under a new name. `load(slug, graph)`
+  re-expands every airway whose stored cycle differs from the installed
+  pack's: a changed fix list is applied and reported in `plan.notices`
+  ("V27 changed since this plan was saved (...)"), and an airway the new data
+  can no longer expand keeps its stored fixes with a notice. The plan always
+  loads (route segments brief guardrail 3); the FPL page shows the notices.
+- **`fixbridge.py`** (FP4, RS2) — `FixBridge(fix_module)` wraps
+  `pyavtools.fix`: `publish(plan)` writes every slot field (`ID`/`LAT`/`LON`/
+  `TYPE`/`PT`/`CRS`/`DST`/`ALT`/`SPD`/`SGI`/`FLAGS`/`CTRLAT`/`CTRLON`/`TURN`)
+  and the RS1 segment table (`FPLS<k>KIND`/`ID`/`ENT`/`EXT`/`FIRST`/`LAST`),
+  blanking whatever a shorter previous plan left behind, then
+  `FPLSEGCNT`/`FPLCOUNT`/`FPLNAME`/`FPLDBCYC`, then `FPLSEQ` last.
+  `FPLfCRS` is magnetic: a leg with no coded course gets the great-circle
+  course into its fix plus the current `MAGVAR` (MAG = TRUE + VAR, the
+  engine's own conversion). `FPLDBCYC` carries the airways' AIRAC cycle so a
+  reader gets it back. `read_plan()` rebuilds a `FlightPlan`, segments and
+  all, from the bus alone; a table that does not describe the slots (which
+  the engine would reject anyway) reads as plain waypoints with a log line.
+  Also `stage_direct_to(wp)`, `command(verb, arg, on_ack)` (writes `FPLCMD`,
+  delivers the `FPLCMDACK`/`FPLMSG` answer to a plain callback), and
+  `read_route()`/`read_engine()` plus `add_listener()` for the bus-driven
+  read-back (fires on `FPLSEQ` or any engine-output change). `available` is
+  False — every method a no-op — if the gateway does not define the route
+  block, including the RS1 segment table (fix-gateway#40).
+  `route_key_specs()` lists every key it writes, for test doubles.
 
 ## FIX keys
 
@@ -73,7 +108,8 @@ authoritative registry (types, ranges, CAN-FIX IDs) lives in fix-gateway.
 `checklist` precedent, [checklist_widget.md](checklist_widget.md)): a working
 copy of a `flightplan.model.FlightPlan` that commits through
 `flightplan.fixbridge.FixBridge.publish` after every edit, then re-reads the
-bus (`FixBridge.read_route()`/`read_engine()`) so a second display agrees.
+bus (`FixBridge.read_plan()`/`read_engine()`) so a second display agrees —
+the bus is the truth, segments included (RS2).
 When `FixBridge.available` is False (the gateway does not define the FP1
 keys), the instrument annunciates `FPL: GATEWAY KEYS MISSING` and the pages
 render read-only — it never raises.
@@ -99,20 +135,19 @@ render read-only — it never raises.
 - **Load Airway** (PA6, AER-1605, brief section 3.5) — offers every airway
   through the tapped fix (`AirwayGraph.airways_through_fix`, PA2), then an
   exit fix from that airway's ordered points, each annotated with its
-  published MEA/ceiling when the pack carries one; `AirwayGraph.expand()`
-  inserts the intermediate fixes (never the entry fix again) right after the
-  tapped row, tagged `extra["airway"]`. A run of consecutively tagged fixes
-  paints as one collapsed row ("V27 → RZS"); tapping it expands the run into
-  its member fixes (each still an ordinary row, with its own row menu), and
-  tapping the expanded run's first row collapses it again. An
-  `AirwayError` (unknown airway, a fix not on it, a one-way violation) or a
-  route already too close to `MAX_WAYPOINTS` for the whole segment leaves the
-  plan untouched and shows the reason — never a partial airway. The tag is
-  display-only: the FP1 bus (`fixbridge.RouteSlot`) carries id/lat/lon/type/
-  role per slot, nothing that says "this fix came from an airway", so
-  `_sync_plan_from_bridge` carries it forward across a commit's publish/
-  read-back by matching id + lat/lon at the same slot — a safe no-op the
-  moment anything else shifts that slot.
+  published MEA/ceiling when the pack carries one; `FlightPlan.insert_airway`
+  makes the tapped fix and the expansion one `airway` segment (RS2). The
+  fixes after the entry paint as one collapsed row ("V27 → RZS"); tapping it
+  expands the run into its member fixes (each still an ordinary row, with its
+  own row menu), and tapping the expanded run's first row collapses it again
+  (RS3 redesigns these rows). An `AirwayError` (unknown airway, a fix not on
+  it, a one-way violation) or a route already too close to `MAX_WAYPOINTS`
+  for the whole segment leaves the plan untouched and shows the reason —
+  never a partial airway. The airway is on the bus as a segment-table row, so
+  it survives a pyEfis restart, shows on a second display, inverts (Menu >
+  Invert re-runs the one-way check, and refuses with the reason) and
+  stores/loads. Before RS2 it was a display-only tag re-attached after every
+  read-back by guessing, which lost it in all four cases.
 - **Entry** (Add/Insert) — an ident field with FastFind: typed characters
   white, the predicted suffix (nearest match by distance from a mode-dependent
   reference point — the aircraft when appending to an empty plan, the last
