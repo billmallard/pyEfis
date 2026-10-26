@@ -118,6 +118,25 @@ While nothing is selected, the same icon appears **dimmed** on every value you
 can touch-select, so you can see which ones the knob can be pointed at. (A panel
 can turn this off with `editIconAtRest: false`.)
 
+#### Heading bug and course on the HSI
+
+When the panel turns it on, the HSI's **HDG** and **CRS** readouts work this way:
+
+- **HDG** sets the **heading bug**. The inner knob moves it 1 degree, the outer
+  ring 10 degrees, and it wraps through 360. **Push** syncs the bug to your
+  current heading. If the heading itself is flagged, push just clears the ring.
+- **CRS** sets the **course on the selected nav radio**: NAV1 when the source
+  tab reads VLOC1 (or VOR1/LOC1), NAV2 for VLOC2. Same 1 and 10 degree steps.
+  **Push** centres the needle on the VOR with a TO indication. On a localizer, or
+  with no usable bearing to the station, push just clears the ring.
+- **On GPS, CRS cannot be selected.** The course comes from the flight plan, so
+  there is no ring and no icon on CRS.
+- The bug and the course move **as you turn**. Letting the ring time out keeps
+  the value you turned to. Nothing snaps back.
+- **Changing the nav source** while CRS is selected clears the ring, because the
+  knob would otherwise be on a different radio than the one you picked.
+- **Touching the source tab** still cycles GPS / VLOC1 / VLOC2, as before.
+
 ### Hiding the buttons
 
 The **Units / Show Menu** button doubles as a menu toggle. When the buttons are

@@ -66,7 +66,9 @@ subscriptions):
 | `COURSE` | selected-course pointer (magenta) | canonical, fed by `select` from `NAVSRC` |
 | `CDI` | lateral deviation bar | canonical; `cdi_enabled` |
 | `GSI` | glideslope/glidepath needle | canonical; `gsi_enabled` |
-| `HEADBUG` | selected-heading bug (cyan) | `heading_bug_enabled` |
+| `HEADBUG` | selected-heading bug (cyan); HDG readout; **written** by the HDG knob edit | `heading_bug_enabled`; edit: `touch_edit` |
+| `NAV1CRS` / `NAV2CRS` | **written** by the CRS knob edit, per `NAVSRC` (never `COURSE`) | `touch_edit` |
+| `VOR1BRG` / `VOR2BRG` | read on CRS push, to centre the CDI | `touch_edit` |
 | `TRACK` + `GS` | GPS ground-track diamond (magenta) | `track_indicator_enabled`, gated by `track_min_speed` |
 
 **Editor options (category 1, today):** `cdi_enabled`, `gsi_enabled`,
@@ -560,6 +562,15 @@ second knob), with a clear highlight and an edit timeout. pyEfis already has an
 `hmi/menu.py`) — this is an *extension* of it with a touch-to-select layer, not a
 new subsystem. Should be **web-UI toggleable** (enable/disable touch editing per
 panel).
+
+*Status: implemented for HDG and CRS (pyEfis #309, on the #308 foundation).* The
+`touch_edit` option (editor: "Touch to set HDG / CRS", off by default) makes the
+HDG readout set `HEADBUG` and the CRS readout set `NAV1CRS` / `NAV2CRS` for the
+selected VLOC source. CRS is not editable on GPS, and `COURSE` is never written,
+because it is the NAVSRC `select` output. Inner ring 1 deg, outer ring 10 deg,
+wrapping through 360, written as turned. Push syncs HDG to `HEAD` and centres
+the CDI on CRS by setting the course to `VOR1BRG` / `VOR2BRG`. The nav-source
+tab tap is unchanged. Full table: `docs/wiki/Widgets-Flight-Instruments.md`.
 
 **C. Dedicated controller surface (optional).** A second Pi with a 5" touch
 display as a control head. Because fix-gateway is **networked (TCP)**, a second
