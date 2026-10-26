@@ -601,23 +601,21 @@ class Altimeter_Tape(QGraphicsView):
             self._baro_refresh()
 
     def _baro_refresh(self):
-        """Repaint after a box state change, then once more shortly after.
+        """Repaint now, synchronously, after a box state change.
 
-        On the live X11 panel (QOpenGLWidget in the window) a single update()
-        of this overlay sometimes did not reach the glass while the rest of
-        the screen was static: the focus ring stayed up after the timeout, or
-        did not appear on a touch, until the next unrelated repaint (bench
-        probe, AER-3914). The state was right; only the frame was stale. The
-        deferred second update flushes it. Both are coalesced by Qt, so the
-        cost is at most one extra paint of this small widget."""
-        self.viewport().update()
-        QTimer.singleShot(120, self._baro_refresh_late)
-
-    def _baro_refresh_late(self):
-        try:
-            self.viewport().update()
-        except RuntimeError:  # the widget was deleted in the meantime
-            pass
+        On the live X11 panel (SVS QOpenGLWidget in the window, tape with
+        edge_fade) a queued viewport update() of the box reached the glass
+        0.5-8 s late when nothing else on the screen was changing: the focus
+        ring appeared late after a touch, or stayed up after the timeout.
+        The focus state itself was right and a touch_edit numeric_display on
+        the same screen was not affected (bench probes, AER-3914). repaint()
+        paints and flushes immediately; it runs only on state changes (touch,
+        knob, timeout, units, BARO), never per frame."""
+        vp = self.viewport()
+        if vp.isVisible():
+            vp.repaint()
+        else:
+            vp.update()
 
     def _baro_limits(self):
         lo, hi = BARO_MIN_INHG, BARO_MAX_INHG
