@@ -30,3 +30,25 @@ Regenerate:
 ```sh
 QT_QPA_PLATFORM=offscreen PYTHONPATH=src python3 tools/render_hsi_touch_edit_evidence.py OUTDIR
 ```
+
+## Bench (Beelink, X11, live pyEfis + fix-gateway)
+
+`bench_beelink_1x.png` and `bench_beelink_panel_4x.png` are `x11grab` frames
+of the live PFD on the Beelink bench (`10.110.10.241`, 1920x1080). The branch
+was staged with `bench-deploy.sh --ref aer-3913/tk2-hsi-touch-hdg-crs` at
+`24a9ad0`, and `touch_edit: true` was added to the live HSI in
+`screens/managed.yaml` for the test, then reverted. Taps were real X pointer
+clicks (`xdotool`) on the readouts. The knob was driven by writing the
+Knobster's own FIX keys (`ENC3` inner, `ENC4` outer, `BTN3` push) with
+`fixgwc`, the same keys the attached Knobster publishes. No X-Plane runs on this
+bench, so `HEADBUG` / `NAV1CRS` have no sim writer. Every value below was
+read back **from fix-gateway**, not from pyEfis:
+
+| Step | fix-gateway after |
+|---|---|
+| touch HDG, inner +1, outer +1 | `HEADBUG` 0 -> 11 |
+| push | `HEADBUG` 20 (= `HEAD` 20) |
+| touch CRS on VLOC1, inner +1, outer +1 | `NAV1CRS` 11, `COURSE` 11 (via the compute select), `NAV2CRS` untouched |
+| `VOR1BRG` 77, push | `NAV1CRS` 77, `COURSE` 77, still focused (next click: 78) |
+| `NAVSRC` 2 (GPS), touch CRS, turn | nothing written (`NAV1CRS` 78, `NAV2CRS` 0) |
+| touch HDG, turn, wait 12 s, turn again | 21, then still 21 (timeout released the knob) |
