@@ -24,6 +24,7 @@ from pyefis.instruments import altimeter
 from pyefis.instruments import button
 from pyefis.instruments import checklist
 from pyefis.instruments import flight_plan
+from pyefis.instruments import nav_status
 from pyefis.instruments import data_status
 from pyefis.instruments import gauges
 from pyefis.instruments import hsi
@@ -226,6 +227,13 @@ def build_flight_plan(screen, config, font_percent=None, font_family=None, repla
     return flight_plan.FlightPlan(screen, font_family=font_family,
                                   font_percent=font_percent)
 
+
+
+def build_nav_status(screen, config, font_percent=None, font_family=None, replace=None):
+    # font_percent is a multiplier on the chip's height-derived text size, the
+    # same reading build_flight_plan gives it.
+    return nav_status.NavStatus(screen, font_family=font_family,
+                                font_percent=font_percent)
 
 # Every instrument type is migrated -- these legacy lookup tables are populated
 # entirely from REGISTRY by the fold-back below. They remain (empty here) for
@@ -1345,6 +1353,47 @@ _register(InstrumentSpec(
     ],
     preview={"name": "KSBA-GVO-KSMX",
              "waypoints": [{"id": "KSBA"}, {"id": "GVO"}, {"id": "KSMX"}]},
+))
+
+# `nav_status` (FP7, billmallard/pyEfis#189): the GNX 375 from-to-next field
+# (guide 3-41/3-42) as a one-line chip -- WPFROM > WPNAME > WPNEXT, the
+# FPLSTATE badge, optional WPDIS/WPETE and FPLPHASE. Reads engine outputs
+# only; undefined keys read as absent (underscores), never a raise. A tap fires
+# the `flightplan page fpl` HMI action (after `show screen <tap_screen>` when
+# set), so a PFD-corner chip can open the plan on the flight-plan screen.
+_register(InstrumentSpec(
+    type="nav_status",
+    label="Nav Status",
+    category="navigation",
+    builder=build_nav_status,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=["FPLSTATE", "FPLPHASE", "WPFROM", "WPNAME", "WPNEXT", "WPDIS",
+            "WPETE"],
+    properties=[
+        Prop("show_distance", "boolean", default=True, label="Show distance",
+             help="distance to the TO waypoint (WPDIS), nm"),
+        Prop("show_ete", "boolean", default=True, label="Show ETE",
+             help="time to the TO waypoint (WPETE), H:MM; '--:--' below 30 kt "
+                  "ground speed"),
+        Prop("show_phase", "boolean", default=True, label="Show phase",
+             help="flight phase / CDI scale annunciation (FPLPHASE): ENR, "
+                  "TERM, LNAV, ... green; LOI yellow"),
+        Prop("hmi_group", "string", default="", label="HMI group",
+             help="hmi_group of the flight_plan instrument a tap opens; blank "
+                  "= every flight_plan instrument"),
+        Prop("tap_screen", "string", default="", label="Tap screen",
+             help="screen to show before opening the FPL page on a tap (the "
+                  "screen holding the flight_plan instrument); blank = stay on "
+                  "this screen"),
+        Prop("active_color", "color", default="#ff00ff",
+             label="Active waypoint colour",
+             help="colour of the TO waypoint ident (WPNAME)"),
+        Prop("text_color", "color", default="#ffffff", label="Text colour",
+             help="colour of the FROM/NEXT idents, separators and data"),
+    ],
+    preview={"state": "LEG", "from": "KSBA", "to": "GVO", "next": "RZS",
+             "dis": "12.4 NM", "ete": "0:06", "phase": "TERM"},
 ))
 
 _register(InstrumentSpec(
