@@ -239,8 +239,8 @@ def test_altimeter_tape_unit_switching(fix,qtbot):
 # Passing tests verify shipped behaviour. The xfail(strict) tests are the
 # executable gap tracker for the unimplemented AC 23.1311-1C sec 17.8 cues: the
 # 500/1000-ft tick tiers (AL-MARK-001), the 6-second altitude trend
-# (AL-TREND-001), and the altitude reference bug (AL-BUG-001, data-blocked -- no
-# selected-altitude FIX key yet). Spec sec 5 carries the case<->requirement map.
+# (AL-TREND-001), and the altitude reference bug (AL-BUG-001, on ALTSEL since
+# pyEfis #310). Spec sec 5 carries the case<->requirement map.
 # =============================================================================
 
 
@@ -331,11 +331,18 @@ def test_al_cat_trend_defaults_off_for_vs_tape(fix, qtbot):
     assert forced.show_trend is True                     # explicit config wins
 
 
-@pytest.mark.xfail(strict=True, reason="AL-BUG-001 data-blocked: no selected-altitude FIX key")
 def test_al_cat_altitude_reference_bug(fix, qtbot):
     """AL-TC-005 | AL-BUG-001 | An altitude reference bug marks the selected altitude on the
-    tape (level-off cue). AC 23.1311-1C sec 17.8.a (p.43). Data-blocked: fix-gateway
-    publishes no selected-altitude key yet. Contract: w.selected_altitude + w.alt_bug."""
+    tape (level-off cue). AC 23.1311-1C sec 17.8.a (p.43). Source: FIX key ALTSEL (pyEfis
+    #310). Contract: alt_bug_y() places the bug on the selected-altitude tick; the edit
+    rules and the off-tape peg are covered in test_altsel.py."""
+    fix.db.define_item("ALTSEL", "Selected Altitude", "int", -1000, 60000, "ft", 50000, "")
+    fix.db.set_value("ALTSEL", 1200)
+    item = fix.db.get_item("ALTSEL")
+    item.bad = False
+    item.fail = False
     widget = _show_alt_tape(qtbot)
-    assert getattr(widget, "selected_altitude", None) is not None
-    assert getattr(widget, "alt_bug", None) is not None
+    widget.setAltimeter(1000)
+    y, off = widget.alt_bug_y()
+    assert off == 0
+    assert y < widget.viewport().height() / 2            # above the pointer: 1200 > 1000

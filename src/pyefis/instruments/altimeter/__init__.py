@@ -25,6 +25,8 @@ import pyavtools.fix as fix
 from pyefis.instruments.NumericalDisplay import NumericalDisplay
 import pyefis.hmi as hmi
 from pyefis.instruments import helpers
+from pyefis.instruments.helpers import bugs
+from pyefis.instruments.altimeter import altsel
 
 
 class Altimeter(QWidget):
@@ -235,6 +237,10 @@ class Altimeter_Tape(QGraphicsView):
         trend_lookahead=6.0,
         trend_window=3.0,
         trend_min_change=20.0,
+        altsel_box=None,
+        alt_bug_enabled=None,
+        alt_bug_color="#00ffff",
+        alt_bug_dbkey="ALTSEL",
     ):
         super(Altimeter_Tape, self).__init__(parent)
         # Checkbox option: alpha-fade the scrolling scale into the
@@ -288,6 +294,21 @@ class Altimeter_Tape(QGraphicsView):
         self.trend_min_change = trend_min_change
         self._trend_history = []   # (monotonic_time, altitude) samples
         self._trend_px = 0.0
+
+        # Selected altitude (pyEfis #310): a touch-selectable ALTSEL box at the
+        # top of the tape, and the matching bug on the scale. Like the trend
+        # these are ALTITUDE cues: on by default for an ALT tape only. The bug
+        # follows the box unless set on its own.
+        self.altsel_box = (dbkey == "ALT") if altsel_box is None else altsel_box
+        self.alt_bug_enabled = alt_bug_enabled
+        self.alt_bug_color = alt_bug_color
+        self.alt_bug_dbkey = alt_bug_dbkey
+        self._altsel = None          # bugs.BugBinding, made on first use
+        self._altsel_editor = None
+        self.altsel_display = None   # the box widget, made in resizeEvent
+        self._altsel_highlight = False
+        if self.altsel_box or self.alt_bug_enabled:
+            self._altsel_binding()
 
         self.conversionFunction1 = lambda x: x
         self.conversionFunction2 = lambda x: x
@@ -373,6 +394,7 @@ class Altimeter_Tape(QGraphicsView):
             self.numerical_display.value = self._altimeter
         else:
             self.numerical_display = None
+        self._layout_altsel_box()
         # Read-pointer position (drawn in paintEvent) — same spot whether or not
         # the numeric box is shown, so the tape stays readable.
         self.numeric_box_pos.setX(self.numeric_box_pos.x() + box_w)
@@ -432,6 +454,8 @@ class Altimeter_Tape(QGraphicsView):
         h = self.height()
         p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        self._paint_alt_bug(p)
 
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
 
@@ -533,6 +557,131 @@ class Altimeter_Tape(QGraphicsView):
     def setAltFail(self, b):
         if self.numerical_display is not None:
             self.numerical_display.fail = b
+
+    # --- selected altitude: box, bug and knob editing (pyEfis #310) ---------
+
+    def _altsel_binding(self):
+        if self._altsel is None:
+            self._altsel = bugs.BugBinding(self.alt_bug_dbkey, self)
+            self._altsel.changed.connect(self.viewport().update)
+            self._altsel_editor = altsel.AltSelEditor(
+                self._altsel, self._current_alt_ft)
+        return self._altsel
+
+    def _current_alt_ft(self):
+        # Sync reads the ALT item itself (feet on the bus), not the displayed,
+        # possibly unit-converted value.
+        item = self.item
+        return item.value, not (item.fail or item.bad)
+
+    def _bug_on(self):
+        if self.alt_bug_enabled is None:
+            return bool(self.altsel_box)
+        return bool(self.alt_bug_enabled)
+
+    @property
+    def touch_edit(self):
+        """The screen's EncoderController enrols the tape for touch focus
+        when it shows an ALTSEL box over a key that exists."""
+        return bool(self.altsel_box) and self._altsel_binding().item is not None
+
+    @touch_edit.setter
+    def touch_edit(self, on):
+        # A `touch_edit` screen option on the tape means the ALTSEL box.
+        self.altsel_box = bool(on)
+
+    def _layout_altsel_box(self):
+        if not self.altsel_box:
+            if self.altsel_display is not None:
+                self.altsel_display.hide()
+            return
+        binding = self._altsel_binding()
+        if self.altsel_display is None:
+            self.altsel_display = altsel.AltSelBox(
+                self, binding, font_family=self.font_family)
+            self.altsel_display.color = QColor(self.alt_bug_color)
+        bh = max(16, qRound(self.width() * 0.34))
+        self.altsel_display.setGeometry(0, 0, self.width(), bh)
+        self.altsel_display.show()
+
+    def alt_bug_y(self):
+        """Where the bug goes, in viewport pixels, and whether it is pegged
+        off the visible tape: ``(y, off)``, ``off`` -1 above, +1 below. None
+        when there is no bug to draw."""
+        if not self._bug_on():
+            return None
+        binding = self._altsel_binding()
+        if not binding.drawable():
+            return None
+        target = self.conversionFunction(binding.value)
+        y = self.mapFromScene(
+            QPointF(0, self.y_offset(target + self.maxalt))).y()
+        top = 0
+        if self.altsel_display is not None and self.altsel_display.isVisible():
+            top = self.altsel_display.geometry().bottom() + 1
+        y, off = bugs.clamp_to_span(y, top, self.viewport().height())
+        # Up the screen is up the tape: beyond the top edge = above.
+        return y, off
+
+    def _paint_alt_bug(self, p):
+        placed = self.alt_bug_y()
+        if placed is None:
+            return
+        y, _off = placed
+        w = self.width()
+        bug_w = max(5.0, w * 0.12)
+        bug_h = max(10.0, w * 0.26)
+        color = self._altsel.color(QColor(self.alt_bug_color))
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(color))
+        # On the tick edge, notch facing the scale: the left edge carries the
+        # scale labels, which a bug there would cover.
+        p.drawPath(bugs.tape_bug_path(float(w), y, bug_w, bug_h,
+                                      point_right=False))
+        p.restore()
+
+    def enc_selectable(self):
+        return self.touch_edit
+
+    def enc_highlight(self, onoff):
+        self._altsel_highlight = bool(onoff)
+        if self.altsel_display is not None:
+            self.altsel_display.highlighted = bool(onoff)
+            if not onoff:
+                self.altsel_display.focused = False
+            self.altsel_display.update()
+
+    def enc_select(self):
+        if not self.touch_edit:
+            return False
+        if self.altsel_display is not None:
+            self.altsel_display.focused = True
+            self.altsel_display.update()
+        return True
+
+    def enc_changed(self, steps):
+        self._altsel_binding()
+        return self._altsel_editor.step(altsel.FINE_STEP_FT * steps)
+
+    def enc_outer_changed(self, steps):
+        self._altsel_binding()
+        return self._altsel_editor.step(altsel.COARSE_STEP_FT * steps)
+
+    def enc_clicked(self):
+        # Push: sync to the current altitude and end the edit. With no valid
+        # altitude nothing is written and the box stays focused.
+        self._altsel_binding()
+        return not self._altsel_editor.sync()
+
+    def edit_focus_hit(self, global_pos):
+        """Only the box is the focused value; a press elsewhere on the tape
+        releases focus like a press anywhere else."""
+        box = self.altsel_display
+        if box is None or not box.isVisible():
+            return False
+        local = box.mapFromGlobal(global_pos)
+        return box.rect().contains(local.toPoint())
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
