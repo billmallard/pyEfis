@@ -270,6 +270,18 @@ def _show(qtbot, host):
     qtbot.waitExposed(host)
 
 
+def test_value_text_does_not_jump_when_an_edit_starts(fix, qtbot):
+    host = _Host()
+    g = _gauge(fix, host)
+    g.font_mask = "XXXXXX"
+    _show(qtbot, host)
+    at_rest = g.valueText
+    qtbot.mouseClick(g, Qt.MouseButton.LeftButton, pos=QPoint(80, 30))
+    assert g.encoder_selected is True
+    assert g.valueText == at_rest
+    assert len(g.valueText) == len("XXXXXX")
+
+
 def test_gauge_touch_fine_coarse_and_push(fix, qtbot):
     host = _Host()
     g = _gauge(fix, host)
@@ -358,7 +370,9 @@ def test_marks_fit_inside_the_rect_they_were_inset_for():
         -edit_focus.RING_WIDTH_PX / 2, -edit_focus.RING_WIDTH_PX / 2,
         edit_focus.RING_WIDTH_PX / 2, edit_focus.RING_WIDTH_PX / 2)
     assert outer.contains(ring)
-    assert outer.contains(edit_focus.icon_rect(value))
+    assert outer.contains(edit_focus.icon_rect(value, bounds=outer))
+    # Without bounds the icon badges the ring corner and pokes outside it.
+    assert not outer.contains(edit_focus.icon_rect(value))
 
 
 def _render(focused, hint):
@@ -367,7 +381,8 @@ def _render(focused, hint):
     img.fill(QColor(0, 0, 0))
     p = QPainter(img)
     edit_focus.draw_edit_marks(
-        p, edit_focus.inset_for_marks(QRectF(0, 0, 160, 60)), focused)
+        p, edit_focus.inset_for_marks(QRectF(0, 0, 160, 60)), focused,
+        bounds=QRectF(0, 0, 160, 60))
     p.end()
     return img
 

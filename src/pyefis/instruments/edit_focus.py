@@ -97,12 +97,20 @@ def edit_icon_path(size):
     return arc, head, pen_w
 
 
-def icon_rect(value_rect):
+def icon_rect(value_rect, bounds=None):
     """Where the icon goes for a value drawn in ``value_rect``: centred on the
-    top-right corner of the focus ring, like a badge."""
+    top-right corner of the focus ring, like a badge -- or, when that would
+    cross ``bounds`` (the widget's own edge), pulled inside it, sitting in the
+    ring's corner."""
     s = icon_size(value_rect)
     ring = ring_rect(value_rect)
-    return QRectF(ring.right() - s / 2.0, ring.top() - s / 2.0, s, s)
+    r = QRectF(ring.right() - s / 2.0, ring.top() - s / 2.0, s, s)
+    if bounds is not None:
+        b = QRectF(bounds)
+        dx = min(0.0, b.right() - r.right())
+        dy = max(0.0, b.top() - r.top())
+        r.translate(dx, dy)
+    return r
 
 
 def ring_rect(value_rect):
@@ -110,16 +118,13 @@ def ring_rect(value_rect):
     return QRectF(value_rect).adjusted(-out, -out, out, out)
 
 
-def marks_margin(value_rect):
-    """How far the marks reach outside ``value_rect`` (ring + half the icon)."""
-    return RING_GAP_PX + RING_WIDTH_PX + icon_size(value_rect) / 2.0
-
-
 def inset_for_marks(rect):
-    """The value rect to pass to :func:`draw_edit_marks` so the marks fit
-    inside ``rect`` -- for a widget whose value fills its own bounds."""
+    """The value rect to pass to :func:`draw_edit_marks` (with
+    ``bounds=rect``) for a widget whose value fills its own bounds: the ring
+    then hugs the widget edge, clear of the value, and the icon sits inside
+    the ring's top-right corner."""
     rect = QRectF(rect)
-    m = marks_margin(rect)
+    m = RING_GAP_PX + RING_WIDTH_PX + 0.5
     return rect.adjusted(m, m, -m, -m)
 
 
@@ -161,19 +166,21 @@ def draw_focus_highlight(painter, value_rect, color=None):
     painter.restore()
 
 
-def draw_edit_marks(painter, value_rect, focused):
+def draw_edit_marks(painter, value_rect, focused, bounds=None):
     """The one entry point widgets call: ring + icon when ``focused``, the dim
     icon alone when not focused and the at-rest hint is on, else nothing.
 
-    ``value_rect`` is the value's box in the painter's coordinates; the marks
-    extend RING_GAP_PX + RING_WIDTH_PX beyond it, so leave that much room (or
-    clip, as a widget at its own edge will)."""
+    ``value_rect`` is the value's box in the painter's coordinates. The ring
+    is drawn RING_GAP_PX outside it; the icon badges the ring's top-right
+    corner, kept inside ``bounds`` when given. A widget whose value fills its
+    own bounds passes ``inset_for_marks(self.rect())`` and
+    ``bounds=self.rect()``."""
     value_rect = QRectF(value_rect)
     if focused:
         draw_focus_highlight(painter, value_rect)
-        draw_edit_icon(painter, icon_rect(value_rect))
+        draw_edit_icon(painter, icon_rect(value_rect, bounds))
     elif _at_rest_hint:
-        draw_edit_icon(painter, icon_rect(value_rect), dim=True)
+        draw_edit_icon(painter, icon_rect(value_rect, bounds), dim=True)
 
 
 # --- panel-wide single focus ------------------------------------------------

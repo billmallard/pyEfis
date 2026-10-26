@@ -188,7 +188,10 @@ class AbstractGauge(QWidget):
                     # Return normal value
                     return self.encoder_num_string
             elif self.encoder_selected:
-                # Return normal value
+                # Return normal value, in the same field width as at rest so
+                # the digits do not jump when an edit starts.
+                if self.font_mask != None:
+                    return '{0:{1}.{2}f}'.format(float(self.encoder_set_value), len(self.font_mask), self.decimal_places)
                 return '{0:.{1}f}'.format(float(self.encoder_set_value), self.decimal_places)
             else:
                 # return properly formatted value
@@ -538,7 +541,7 @@ class AbstractGauge(QWidget):
             return
         edit_focus.draw_edit_marks(
             painter, edit_focus.inset_for_marks(self.rect()),
-            focused=self.encoder_selected)
+            focused=self.encoder_selected, bounds=QRectF(self.rect()))
 
     def enc_clicked(self):
         if self.encoder_num_mask:

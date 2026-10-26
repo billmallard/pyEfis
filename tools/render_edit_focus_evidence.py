@@ -119,7 +119,8 @@ def render_hsi(app, layout, state):
                 cell = QRectF(x, y, w / len(segments), h)
                 # Inside a sectioned panel the ring must fit the cell.
                 edit_focus.draw_edit_marks(
-                    c, edit_focus.inset_for_marks(cell), state == "focused")
+                    c, edit_focus.inset_for_marks(cell), state == "focused",
+                    bounds=cell)
 
         def _draw_readout_box(self, c, ax, ay, anchor, label, value, color):
             super()._draw_readout_box(c, ax, ay, anchor, label, value, color)
