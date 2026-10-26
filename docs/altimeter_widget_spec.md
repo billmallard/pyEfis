@@ -38,7 +38,7 @@ pointer). Already present:
 |-----------|-----|--------|-------|
 | `ALT` (value) | present altitude → pointer + read-out + tape scroll | ADC (baro) | primary |
 | `BARO` | altimeter (Kollsman) setting | pilot / ADC | shown by a separate baro widget; sets the `ALT` datum |
-| **selected altitude** | **altitude reference bug (AL-BUG-001)** — not published by fix-gateway | autopilot / alt preselect (future) | **no FIX key yet** |
+| `ALTSEL` | selected altitude: the box at the top of the tape + the reference bug (AL-BUG-001) | pilot (this tape, touch + knob), GCU, autopilot | fix-gateway `custom.yaml`; CAN-FIX 461 Selected Altitude (not yet mapped in fix-gateway's CAN-FIX map) |
 
 **Altitude markings are not V-speeds** — there are no per-airplane band values here; the
 markings are geometric (every 500/1,000 ft) and the trend is derived from the `ALT` time
@@ -62,7 +62,7 @@ anchor the test catalog (§5). **Status** is the widget as of this writing.
 | **AL-ANN-001** | Altitude-invalid annunciation | `ALT` fail / old / bad | Read-out `XXX` on fail; blank (not a stale number) on old/bad | §18; §2 governing principle | **DONE** |
 | **AL-MARK-001** | **Standard 500-/1,000-ft increment denotation** | always | Distinct emphasis at 1,000-ft (label + longest tick) and 500-ft (intermediate tick), above the minor ticks | §17.8.a p.43 | **DONE** — three tick tiers |
 | **AL-TREND-001** | **6-second altitude-trend indicator** | always (unless a VSI is adjacent right) | A trend vector predicting altitude ~6 s ahead (level-off look-ahead) | §17.8.b p.43 | **DONE** — cyan trend vector (`show_trend`, ALT-default) |
-| **AL-BUG-001** | **Altitude reference bug** | selected altitude set | A bug on the tape at the selected altitude (glance cue for level-off) | §17.8.a p.43 | **GAP — data-blocked** (no selected-altitude FIX key yet) |
+| **AL-BUG-001** | **Altitude reference bug** | selected altitude set | A bug on the tape at the selected altitude (glance cue for level-off) | §17.8.a p.43 | **DONE** — cyan bug on `ALTSEL`, pegs half-visible at the edge off-scale; settable from the box (pyEfis #310) |
 
 **Contract for the gap cues.**
 
@@ -75,10 +75,12 @@ anchor the test catalog (§5). **Status** is the widget as of this writing.
 - **AL-MARK-001** — the tape renders **three tick tiers**: 1,000-ft (longest + numeric
   label), 500-ft (intermediate length), and `minorDiv` (short), so the pilot gets the
   standard 500/1,000 sense of altitude independent of the `majorDiv` label spacing.
-- **AL-BUG-001** — when a selected-altitude key exists, a reference bug is drawn on the
-  tape edge at that altitude (clamped to the visible window with an off-scale indication).
-  **Blocked** until fix-gateway publishes the key (autopilot / altitude-preselect path) —
-  tracked, not yet implementable, like the AI's data-blocked pitch-limit.
+- **AL-BUG-001** — the bug is drawn on the tick edge of the tape at `ALTSEL`
+  (`alt_bug_y()`), and is clamped to the visible window by the shared
+  `helpers/bugs.py` off-scale policy: half the glyph shows at the edge. The top
+  edge is the bottom of the selected-altitude box. The box (`altsel_box`, on for
+  an ALT tape) shows the value and is the touch target for knob editing.
+  `instruments/altimeter/altsel.py` holds the edit rules (pyEfis #310).
 
 Colour (§22.2 Table 4): scales/ticks **white**; the trend vector uses a **cyan** cue
 (consistent with the airspeed tape); no red/amber here — altitude carries no
@@ -90,7 +92,8 @@ The executable catalog is in
 [`tests/instruments/altimeter/test_altimeter.py`](../tests/instruments/altimeter/test_altimeter.py),
 keyed to the §4 IDs. Passing tests verify shipped behaviour; the `xfail(strict)` tests are
 the **gap tracker** — each flips the run red when its cue is implemented, forcing the
-marker's removal. `AL-BUG-001` stays `xfail` until a selected-altitude key exists.
+marker's removal. `AL-BUG-001` passed once pyEfis #310 shipped on `ALTSEL`; the box's edit
+rules are in `test_altsel.py`.
 
 | AL-TC | Requirement | Test (`test_al_cat_…`) | Status |
 |-------|-------------|------------------------|--------|
@@ -98,7 +101,7 @@ marker's removal. `AL-BUG-001` stays `xfail` until a selected-altitude key exist
 | 002 | AL-ANN-001 | `altitude_invalid_annunciation` | pass |
 | 003 | **AL-MARK-001** | `standard_500_1000_ticks` | pass |
 | 004 | **AL-TREND-001** | `six_second_trend_indicator` (+ `trend_defaults_off_for_vs_tape`) | pass |
-| 005 | **AL-BUG-001** | `altitude_reference_bug` | xfail — data-blocked |
+| 005 | **AL-BUG-001** | `altitude_reference_bug` (+ `test_altsel.py`) | pass |
 
 ## 6. Conventions and standards basis
 
@@ -109,9 +112,8 @@ Symbology is industry convention grounded in open references: **AC 23.1311-1C** 
 
 ## 7. Open items
 
-- **AL-BUG-001 is data-blocked:** publish a **selected-altitude** key from fix-gateway
-  (autopilot / altitude-preselect) to unblock the reference bug — the same pattern as the
-  AI's AOA-blocked pitch-limit.
+- **Altitude deviation alerting** (EFIS-ALTSEL-005/006, recoloring the bug on deviation)
+  is not implemented; it is computed in fix-gateway by design.
 - The `Altimeter_Tape` class is shared with the VS tape (`dbkey="VS"`); keep the trend
   opt-out-able so a VS instance (or a tape beside a VSI, §17.8.b) can disable it.
 - **Baro (Kollsman) setting** display is a separate widget/requirement, not part of this

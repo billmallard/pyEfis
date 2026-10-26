@@ -268,9 +268,8 @@ marking. Governing "glance-readable, no misleading info" per §2.
 **pyEfis status.** `Altimeter_Tape` ships the moving-scale tape + fixed pointer + quality-
 aware digital read-out (the §17.8 format). **Done:** distinct **500/1,000-ft** tick tiers
 (AL-MARK-001) and the **6-second altitude trend** (AL-TREND-001, cyan; ALT-default so the
-shared VS tape stays quiet). **Data-blocked (the only remaining gap):** the **altitude
-reference bug** (AL-BUG-001) waits on a selected-altitude key from fix-gateway, like the
-AI's AOA-blocked pitch-limit (§5.2 A.2.4).
+shared VS tape stays quiet), and the **altitude reference bug** (AL-BUG-001) on `ALTSEL`,
+with a touch-settable selected-altitude box at the top of the tape (pyEfis #310).
 
 ### 6.4 pyEfis status
 

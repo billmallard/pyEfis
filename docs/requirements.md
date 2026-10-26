@@ -104,14 +104,16 @@ Two computation methods are defined. GPS-based FPM (implemented first) uses GPS 
 
 ### Selected Altitude (Altitude Alerting)
 
-- **EFIS-ALTSEL-001:** The altimeter tape shall display a selected (target) altitude bug as a white box at the tape position corresponding to the selected altitude value.
-- **EFIS-ALTSEL-002:** Selected altitude shall be sourced from FIX database key `ALT_SEL`; if the key is absent or has no value set, no bug shall be drawn.
-- **EFIS-ALTSEL-003:** The selected altitude value shall be displayed numerically inside or adjacent to the bug box for unambiguous readout.
-- **EFIS-ALTSEL-004:** When the bug is outside the visible tape range, a caret or clipped indicator shall appear at the appropriate tape edge to indicate direction to the selected altitude.
-- **EFIS-ALTSEL-005:** fix-gateway shall compute altitude deviation as `ALT - ALT_SEL` and set the `ALT_SEL` annunciate flag when the absolute deviation exceeds a configurable threshold (default ±200 ft).
-- **EFIS-ALTSEL-006:** When the annunciate flag is active, the altitude bug box shall change from white to amber/red to provide a continuous visual deviation alert; the alert shall clear automatically when the aircraft returns within the threshold band.
-- **EFIS-ALTSEL-007:** `ALT_SEL` shall be a writable FIX database key; the EFIS display is read-only — it shall not provide a knob or entry interface for setting the selected altitude.
-- **EFIS-ALTSEL-008:** `ALT_SEL` shall be settable by any connected FIX client, including an autopilot controller panel or ground-configuration tool; the architecture shall not assume a specific input device.
+The selected altitude is FIX key `ALTSEL` (int, ft, -1000 to 60000; fix-gateway `config/database/custom.yaml`). It mirrors CAN-FIX parameter 461 "Selected Altitude". The original text spelled it `ALT_SEL`, a key that never existed (corrected 2026-10-26, pyEfis #310).
+
+- **EFIS-ALTSEL-001:** The altimeter tape shall display a selected (target) altitude bug at the tape position corresponding to the selected altitude value, drawn in the pilot-selected colour (cyan, `docs/instrument_bugs_design.md`). *(Implemented, pyEfis #310: a notched bug on the tick edge of the tape.)*
+- **EFIS-ALTSEL-002:** Selected altitude shall be sourced from FIX database key `ALTSEL`; if the key is absent or has no valid value (failed), no bug shall be drawn and the readout shall show dashes. *(Implemented, pyEfis #310.)*
+- **EFIS-ALTSEL-003:** The selected altitude value shall be displayed numerically for unambiguous readout. *(Implemented, pyEfis #310: the selected-altitude box at the top of the tape.)*
+- **EFIS-ALTSEL-004:** When the bug is outside the visible tape range, a clipped indicator shall appear at the appropriate tape edge to indicate direction to the selected altitude. *(Implemented, pyEfis #310: the bug pegs half-visible at the edge.)*
+- **EFIS-ALTSEL-005:** fix-gateway shall compute altitude deviation as `ALT - ALTSEL` and set the `ALTSEL` annunciate flag when the absolute deviation exceeds a configurable threshold (default ±200 ft).
+- **EFIS-ALTSEL-006:** When the annunciate flag is active, the altitude bug shall change colour to amber/red to provide a continuous visual deviation alert; the alert shall clear automatically when the aircraft returns within the threshold band.
+- **EFIS-ALTSEL-007:** *(Reversed 2026-10-25, Bill; pyEfis #310 supersedes #7.)* The EFIS is a writer of `ALTSEL`. The selected-altitude box at the top of the altimeter tape is touch-selectable. Once it has focus, the inner knob steps 100 ft and the outer knob steps 1000 ft. A push syncs the value to the current altitude, rounded to the nearest 100 ft. Every step is clamped to the `ALTSEL` min/max and written to the bus immediately. The original requirement made the EFIS read-only for selected altitude.
+- **EFIS-ALTSEL-008:** `ALTSEL` shall be settable by any connected FIX client, including the EFIS (007), an autopilot controller panel or ground-configuration tool; the architecture shall not assume a specific input device.
 - **EFIS-ALTSEL-009:** The alerting threshold shall be configurable in fix-gateway config without code changes (default 200 ft).
 - **EFIS-ALTSEL-010:** The altitude deviation alert shall be computed and annunciated in fix-gateway so the logic is available to all connected displays and clients, not only the EFIS.
 
