@@ -598,7 +598,26 @@ class Altimeter_Tape(QGraphicsView):
 
     def _baro_repaint(self, *args):
         if self.baro_shown():
+            self._baro_refresh()
+
+    def _baro_refresh(self):
+        """Repaint after a box state change, then once more shortly after.
+
+        On the live X11 panel (QOpenGLWidget in the window) a single update()
+        of this overlay sometimes did not reach the glass while the rest of
+        the screen was static: the focus ring stayed up after the timeout, or
+        did not appear on a touch, until the next unrelated repaint (bench
+        probe, AER-3914). The state was right; only the frame was stale. The
+        deferred second update flushes it. Both are coalesced by Qt, so the
+        cost is at most one extra paint of this small widget."""
+        self.viewport().update()
+        QTimer.singleShot(120, self._baro_refresh_late)
+
+    def _baro_refresh_late(self):
+        try:
             self.viewport().update()
+        except RuntimeError:  # the widget was deleted in the meantime
+            pass
 
     def _baro_limits(self):
         lo, hi = BARO_MIN_INHG, BARO_MAX_INHG
@@ -640,7 +659,7 @@ class Altimeter_Tape(QGraphicsView):
     def _write_baro(self, value):
         self._baro_item.value = value
         self._baro_item.output_value()
-        self.viewport().update()
+        self._baro_refresh()
 
     def configure_baro(self, preferences=None, other_readout=False):
         """Called by the screen builder once the whole screen is built.
@@ -683,7 +702,7 @@ class Altimeter_Tape(QGraphicsView):
             self.baro_hpa = command == "hpa"
         else:
             return
-        self.viewport().update()
+        self._baro_refresh()
 
     # Touch-select + knob edit, the EncoderController protocol (#308).
 
@@ -702,14 +721,14 @@ class Altimeter_Tape(QGraphicsView):
         self._baro_walk = bool(onoff)
         if not onoff:
             self.encoder_selected = False
-        self.viewport().update()
+        self._baro_refresh()
 
     def enc_select(self):
         if not self.baro_shown():
             return False
         self._baro_walk = False
         self.encoder_selected = True
-        self.viewport().update()
+        self._baro_refresh()
         return True
 
     def enc_changed(self, data):

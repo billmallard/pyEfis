@@ -382,3 +382,28 @@ def test_default_screens_show_one_baro_readout(name):
     opts = alt_tapes[0]["options"]
     assert opts.get("show_baro", True) is True
     assert "encoder_order" in opts
+
+
+@pytest.mark.parametrize("action", ["select", "clear", "step", "units"])
+def test_state_change_repaints_twice(baro, qtbot, monkeypatch, action):
+    # On the live X11 panel one update() of the box sometimes did not reach
+    # the glass while the screen was otherwise static (AER-3914 bench probe);
+    # every state change schedules a second, deferred repaint.
+    hmi.initialize({})
+    t = _tape(qtbot)
+    t.configure_baro({})
+    if action == "clear":
+        t.enc_select()
+        qtbot.wait(200)
+    vp = t.viewport()
+    calls = []
+    monkeypatch.setattr(vp, "update", lambda *a: calls.append(1))
+    {"select": t.enc_select,
+     "clear": lambda: t.enc_highlight(False),
+     "step": lambda: t.enc_changed(1),
+     "units": lambda: hmi.actions.trigger("Set Instrument Units",
+                                          "Pressure:hPa")}[action]()
+    n = len(calls)
+    assert n >= 1
+    qtbot.wait(250)
+    assert len(calls) > n
