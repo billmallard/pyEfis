@@ -142,6 +142,27 @@ FIX database.
 
 ---
 
+## `units`
+
+The unit each **unit group** starts in at boot. Instruments that switch units
+(`temperature`, `pressure` or `altitude: true` in their options) belong to the
+groups `Temperature` (°F / °C), `Pressure` (inHg / hPa) and `Altitude`
+(Ft / M), and start in the first unit unless this block names the other one:
+
+```yaml
+units:
+  Pressure: hPa   # altimeter setting in hectopascals on every screen
+```
+
+Names match case-insensitively. An unknown name is logged and ignored, and the
+instrument keeps its first unit. The configurator writes `units.Pressure` from
+the aircraft's "Altimeter setting units" choice. The runtime
+`set instrument units` action (e.g. `Pressure:Toggle` on the Units screen) still
+works from either start, and also accepts a unit name (`Pressure:hPa`) to select
+it directly.
+
+---
+
 ## `includes`
 
 The `includes` section maps a **named slot** to an actual include file, so a
