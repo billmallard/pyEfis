@@ -170,3 +170,74 @@ class TestTerrainHFOVPinnedAcrossPitchDegreesShown:
         unpinned_sx = DEG_PER_RAD * live_ppd * 2.0 / w
         assert vp[0, 0] == pytest.approx(expected_sx)
         assert vp[0, 0] != pytest.approx(unpinned_sx)
+
+
+class TestTerrainRollRegistration:
+    """pyEfis #304: the terrain horizon must tilt by the bank angle, the
+    same as the AI widget's horizon line and pitch ladder, whatever the
+    ratio of the terrain's horizontal and vertical scales.
+
+    Before the fix, roll was applied before the unequal pixel scale and
+    a horizon rolled by phi landed at atan((sy/sx) tan phi): 19.1 deg at
+    30 deg of bank with the default pitchDegreesShown=50 and the 30 deg
+    HFOV pin, 34.7 deg with the Pi bench's pitchDegreesShown=25.
+    """
+
+    @staticmethod
+    def _horizon_px(vp, w, h, alt=300.0):
+        # Two far points at eye level, either side of the nose, in screen
+        # pixels relative to the viewport centre (y up).
+        d = 200e3
+        out = []
+        for az in (-5.0, 5.0):
+            a = math.radians(az)
+            x, y, cw = project(vp, d * math.sin(a), d * math.cos(a), alt)
+            assert cw > 0
+            out.append(((x / cw) * w / 2.0, (y / cw) * h / 2.0))
+        return out
+
+    @pytest.mark.parametrize("pitch_degrees_shown", [25.0, 40.0, 50.0])
+    @pytest.mark.parametrize("roll", [15.0, 30.0, -30.0, 45.0, 60.0, -60.0])
+    def test_horizon_tilt_equals_roll(self, pitch_degrees_shown, roll):
+        from pyefis.instruments.ai.svs_gl import _TERRAIN_HFOV_PITCH_DEG
+
+        w, h = 1248, 1200
+        vp = view_projection(0.0, 0.0, 300.0, 0.0, 0.0, roll,
+                             h / pitch_degrees_shown, w, h,
+                             pixels_per_deg_h=h / _TERRAIN_HFOV_PITCH_DEG)
+        (x1, y1), (x2, y2) = self._horizon_px(vp, w, h)
+        tilt = math.degrees(math.atan2(y2 - y1, x2 - x1))
+        # The AI widget rolls its ladder by -roll in Qt's y-down space,
+        # which is +roll in this y-up frame.
+        assert tilt == pytest.approx(roll, abs=1e-6)
+
+    @pytest.mark.parametrize("roll", [30.0, 90.0, 180.0])
+    def test_horizon_pivots_on_the_raised_reference(self, roll):
+        # horizon_position raises the AI's horizon by offset_px and rolls
+        # the ladder about that point; svs.py depresses the terrain camera
+        # by the same angle. The rolled terrain horizon must still pass
+        # through the raised point, or the two horizons are parallel but
+        # apart by offset_px * (1 - cos roll).
+        from pyefis.instruments.ai.svs_gl import _TERRAIN_HFOV_PITCH_DEG
+
+        w, h, pds = 1248, 1200, 25.0
+        ppd = h / pds
+        offset_deg = 0.18 * pds          # horizon_position = 68
+        offset_px = offset_deg * ppd
+        vp = view_projection(0.0, 0.0, 300.0, 0.0, -offset_deg, roll,
+                             ppd, w, h,
+                             pixels_per_deg_h=h / _TERRAIN_HFOV_PITCH_DEG,
+                             roll_pivot_px=offset_px)
+        (x1, y1), (x2, y2) = self._horizon_px(vp, w, h)
+        # Perpendicular distance from the pivot (0, offset_px) to the line.
+        dist = abs((x2 - x1) * (y1 - offset_px) - (y2 - y1) * x1) / math.hypot(
+            x2 - x1, y2 - y1)
+        # tan vs linear for the 4.5 deg depression is ~0.45 px; allow 1.
+        assert dist < 1.0
+
+    def test_wings_level_matrix_is_unchanged_by_the_pivot(self):
+        a = view_projection(0.0, 0.0, 300.0, 30.0, 5.0, 0.0, 24.0, 1248, 1200,
+                            pixels_per_deg_h=40.0)
+        b = view_projection(0.0, 0.0, 300.0, 30.0, 5.0, 0.0, 24.0, 1248, 1200,
+                            pixels_per_deg_h=40.0, roll_pivot_px=216.0)
+        assert (a == b).all()
