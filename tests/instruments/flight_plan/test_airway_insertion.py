@@ -250,7 +250,6 @@ def test_airway_survives_a_restart(fix, qtbot, pack_path):
     from, so the airway came back as three plain waypoints."""
     w = _widget(qtbot, fix, pack_path)
     _insert_v27(w)
-    w.deleteLater()
 
     restarted = flight_plan.FlightPlan(None)
     qtbot.addWidget(restarted)
