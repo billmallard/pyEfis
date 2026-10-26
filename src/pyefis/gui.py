@@ -25,6 +25,7 @@ import logging
 import sys
 import yaml
 from pyefis import hmi
+from pyefis.instruments import edit_focus
 import pyavtools.fix as fix
 import pyavtools.scheduler as scheduler
 
@@ -108,6 +109,10 @@ class Main(QMainWindow):
             self.screenDiagonalInches = None
 
         self.screenColor = config["main"]["screenColor"]
+        # Panel-wide: dim edit icon on every touch-editable value at rest
+        # (pyEfis #308). On by default (Bill, 2026-10-26: it tells the pilot
+        # which values the knob can be pointed at).
+        edit_focus.set_at_rest_hint(edit_focus.at_rest_hint_from_config(config["main"]))
         self.nodeID = config["main"].get('nodeID', 1)
 
         self.setObjectName("EFIS")
