@@ -967,10 +967,10 @@ class HSI(QGraphicsView):
                 lf = QFont(self.font_family)
                 lf.setPixelSize(int(self.fontSize))
                 c.setFont(lf)
-                lx = qRound(self.width() * 0.03)
-                ly = qRound(self.fontSize * 1.2)
-                c.drawText(lx, ly, label)
                 fm = c.fontMetrics()
+                lx = qRound(self.width() * 0.03)
+                ly = self._source_label_baseline(fm)
+                c.drawText(lx, ly, label)
                 pad = int(self.fontSize * 0.5)
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2*pad,
@@ -1003,7 +1003,7 @@ class HSI(QGraphicsView):
             th = fm.height()
             _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
             c.setPen(QPen(_bc))
-            ly = qRound(self.height() - self.fontSize * 0.5)
+            ly = self._bearing_label_baseline(fm)
             if _n == 1:
                 lx = qRound(self.width() * 0.03)
             else:
@@ -1299,6 +1299,32 @@ class HSI(QGraphicsView):
         c.drawText(QRectF(left, top, tab_w, th),
                    int(Qt.AlignmentFlag.AlignCenter), label)
         self._source_label_rect = (left, top, tab_w, th)
+
+    def _readout_box_reach(self):
+        """How far a free-standing readout box (``_draw_readout_box``) reaches
+        in from the top or bottom edge: its margin plus its height."""
+        return self.fontSize * 0.5 + self.fontSize * 2.4
+
+    def _source_label_baseline(self, fm):
+        """Baseline of the plain nav-source label (top-left). In ``corners``
+        the HDG box owns the top-left corner, and the label used to sit under
+        it -- hidden, with its tap target covering most of the box -- so there
+        it moves down to clear the box."""
+        if getattr(self, "readout_layout", "top_panel") == "corners":
+            pad = int(self.fontSize * 0.5)
+            return qRound(self._readout_box_reach() + self.fontSize * 0.15
+                          + pad + fm.ascent())
+        return qRound(self.fontSize * 1.2)
+
+    def _bearing_label_baseline(self, fm):
+        """Baseline of the bearing-source labels (bottom corners). In
+        ``split`` the CRS and HDG boxes own those corners, so the labels move
+        up to clear them, for the same reason as the source label."""
+        if getattr(self, "readout_layout", "top_panel") == "split":
+            pad = int(self.fontSize * 0.5)
+            return qRound(self.height() - self._readout_box_reach()
+                          - self.fontSize * 0.15 - pad - fm.descent())
+        return qRound(self.height() - self.fontSize * 0.5)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
@@ -1833,10 +1859,10 @@ class HSI(QGraphicsView):
             if label:
                 c.setPen(QPen(self._source_color() or QColor(self.course_color)))
                 lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize))
-                c.setFont(lf)
-                lx = qRound(self.width() * 0.03); ly = qRound(self.fontSize * 1.2)
+                c.setFont(lf); fm = c.fontMetrics()
+                lx = qRound(self.width() * 0.03); ly = self._source_label_baseline(fm)
                 c.drawText(lx, ly, label)
-                fm = c.fontMetrics(); pad = int(self.fontSize * 0.5)
+                pad = int(self.fontSize * 0.5)
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2 * pad,
                                            fm.height() + 2 * pad)
@@ -1865,7 +1891,7 @@ class HSI(QGraphicsView):
             tw = fm.horizontalAdvance(txt); th = fm.height()
             _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
             c.setPen(QPen(_bc))
-            ly = qRound(self.height() - self.fontSize * 0.5)
+            ly = self._bearing_label_baseline(fm)
             lx = qRound(self.width() * 0.03) if _n == 1 else qRound(self.width() * 0.97 - tw)
             c.drawText(lx, ly, txt)
             pad = int(self.fontSize * 0.5)
