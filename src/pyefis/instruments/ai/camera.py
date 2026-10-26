@@ -49,13 +49,21 @@ Z_FAR = 800e3
 
 def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
                     pixels_per_deg, viewport_w, viewport_h,
-                    pixels_per_deg_h=None):
+                    pixels_per_deg_h=None, roll_pivot_px=0.0):
     """Build the 4x4 view-projection matrix (numpy float64, row-major)
     mapping ENU-metre world positions to GL clip space.
 
-    Composition: translate(-aircraft) -> heading -> pitch -> roll ->
-    pixel scale. Signs and order match the proven Phase-4b perspective
-    shader exactly.
+    Composition: translate(-aircraft) -> heading -> pitch -> pixel
+    scale -> roll. Roll is about the forward axis, which for a camera is
+    exactly a rotation of the image, so it is applied last, in pixel
+    space -- the same way the AI widget rolls its pitch ladder. Applying
+    it before the scale (as this function used to) is only equivalent
+    when the two scales are equal; with them unequal a horizon rolled by
+    phi lands at atan((sy/sx) tan phi) (pyEfis #304).
+
+    *roll_pivot_px* is the screen point the roll turns about, in pixels
+    above the viewport centre. Pass the AI widget's horizon offset so the
+    terrain rolls about the same point as the ladder (horizon_position).
 
     *pixels_per_deg_h* (AER-1806) lets the horizontal (terrain HFOV)
     scale be set independently of the vertical pitch-ladder scale;
@@ -81,12 +89,6 @@ def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
                   [0, cp, sp,  0],
                   [0, -sp, cp, 0],
                   [0, 0,   0,  1.0]])
-    # roll about the forward axis
-    R = np.array([[cr, 0, -sr, 0],
-                  [0,  1,  0,  0],
-                  [sr, 0,  cr, 0],
-                  [0,  0,  0,  1.0]])
-
     # No unit factor here: clip x/y and clip w are both in camera-frame
     # metres, so the ratio GL forms at the divide is the pure tangent —
     # DEG_PER_RAD * ppd then maps small angles to angle_deg * ppd pixels.
@@ -104,7 +106,24 @@ def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
                   [0,  za, 0,  zb],
                   [0,  1,  0,  0.0]])
 
-    return C @ R @ P @ H @ T
+    M = C @ P @ H @ T
+    if not roll_deg:
+        return M
+    # Roll in pixel space: clip (x, y) -> pixels (x*W/2, y*H/2), rotate
+    # about (0, roll_pivot_px), back to clip. Linear in homogeneous clip
+    # space (translations ride on clip w), so it is still one matrix and
+    # GL clipping, depth and the perspective divide are unchanged.
+    S = np.diag([viewport_w / 2.0, viewport_h / 2.0, 1.0, 1.0])
+    S_inv = np.diag([2.0 / viewport_w, 2.0 / viewport_h, 1.0, 1.0])
+    up = np.eye(4)
+    up[1, 3] = roll_pivot_px
+    down = np.eye(4)
+    down[1, 3] = -roll_pivot_px
+    rot = np.array([[cr, -sr, 0, 0],
+                    [sr,  cr, 0, 0],
+                    [0,   0,  1, 0],
+                    [0,   0,  0, 1.0]])
+    return S_inv @ up @ rot @ down @ S @ M
 
 
 def project(vp, e, n, u):
