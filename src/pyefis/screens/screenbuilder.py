@@ -434,6 +434,12 @@ class Screen(QWidget):
         if event is not None:
             super().closeEvent(event)
 
+    def hideEvent(self, event):
+        # Changing screens clears edit focus (pyEfis #308): a value must never
+        # stay armed for the knob on a screen the pilot cannot see.
+        self.encoder_controller.release_focus()
+        super().hideEvent(event)
+
     def encoderChanged(self, value=0):
         self.encoder_controller.changed(value)
 

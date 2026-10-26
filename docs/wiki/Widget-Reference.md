@@ -61,6 +61,7 @@ Each also exists as `ganged_<type>` for grouped strips.
 | `button` | `button.Button` | *(button config)* | Interactive button: state, conditions, actions |
 | `listbox` | `listbox.ListBox` | *(per list)* | Selectable list (radio freqs, waypoints) |
 | `flight_plan` | `flight_plan.FlightPlan` | `FPLCOUNT`,`FPLNAME`,`FPLSEQ`,`FPLSTATE`,`FPLACTLEG`,`FPLAPR`,`FPLINTEG` | App-like flight-plan editor: FPL/Entry pages, on-screen keypad, FastFind (touch; FP5a) |
+| `nav_status` | `nav_status.NavStatus` | `FPLSTATE`,`FPLPHASE`,`WPFROM`,`WPNAME`,`WPNEXT`,`WPDIS`,`WPETE` | Flight-plan from-to-next chip: state badge, idents, distance/ETE, phase; tap opens the FPL page (FP7). See [Widgets-Flight-Instruments](Widgets-Flight-Instruments#nav_status) |
 
 ## System & status — [Widgets-System](Widgets-System)
 
