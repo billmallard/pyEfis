@@ -1390,6 +1390,63 @@ class TestScreenBuilderPreferencesAndOptions:
         assert widget.unitsOverride2 == unit2
         assert widget.conversionFunction2(1) == converted
 
+    @pytest.mark.parametrize(
+        "preferences,expected",
+        [
+            (None, "inHg"),                          # no units block: unit 1
+            ({"units": {"Pressure": "hPa"}}, "hPa"),
+            ({"units": {"Pressure": "HPA"}}, "hPa"),  # case-insensitive
+            ({"units": {"Pressure": "mmHg"}}, "inHg"),  # unknown: ignored
+            ({"units": {"Altitude": "M"}}, "inHg"),  # other group only
+            ({"units": None}, "inHg"),
+            ({"units": "hPa"}, "inHg"),               # malformed block
+        ],
+    )
+    def test_units_preference_sets_boot_unit(self, fix, qtbot, preferences, expected):
+        # AER-3916: the aircraft-level altimeter-setting unit arrives as
+        # preferences units.Pressure and every pressure instrument boots in it.
+        # pressure listed BEFORE dbkey: the default must not depend on order.
+        config = _config_with_instruments([
+            {
+                "type": "numeric_display",
+                "row": 0,
+                "column": 0,
+                "options": {"pressure": True, "dbkey": "NUMOK"},
+            }
+        ])
+        screen = Screen(_TestParent(config, preferences=preferences))
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+
+        screen.init_screen()
+
+        widget = screen.instruments[0]
+        assert widget.unitsOverride == expected
+        hpa = expected == "hPa"
+        assert widget.conversionFunction(1) == pytest.approx(
+            33.863889532610884 if hpa else 1)
+        # The runtime units button still flips it from either start.
+        hmi.actions.trigger("Set Instrument Units", "Pressure:Toggle")
+        assert widget.unitsOverride == ("inHg" if hpa else "hPa")
+
+    def test_units_preference_applies_to_altimeter_tape(self, fix, qtbot):
+        config = _config_with_instruments([
+            {
+                "type": "altimeter_tape",
+                "row": 0,
+                "column": 0,
+                "options": {"altitude": True},
+            }
+        ])
+        screen = Screen(_TestParent(
+            config, preferences={"units": {"Altitude": "M"}}))
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+
+        screen.init_screen()
+
+        assert screen.instruments[0].unitsOverride == "M"
+
     def test_dbkey_option_sets_plain_attribute_when_widget_has_no_setter(self, fix, qtbot):
         config = _config_with_instruments([
             {

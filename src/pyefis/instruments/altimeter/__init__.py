@@ -200,6 +200,14 @@ class Altimeter(QWidget):
                     self.unitsOverride = self.unitsOverride1
                     self.conversionFunction = self.conversionFunction1
                     self.__currentUnits = 1
+            elif command == str(self.unitsOverride1).lower():
+                self.unitsOverride = self.unitsOverride1
+                self.conversionFunction = self.conversionFunction1
+                self.__currentUnits = 1
+            elif command == str(self.unitsOverride2).lower():
+                self.unitsOverride = self.unitsOverride2
+                self.conversionFunction = self.conversionFunction2
+                self.__currentUnits = 2
             # self.setAuxData(item.aux) # Trigger conversion for aux data
             self.altimeter = self.item.value  # Trigger the conversion for value
 
@@ -484,6 +492,14 @@ class Altimeter_Tape(QGraphicsView):
                     self.unitsOverride = self.unitsOverride1
                     self.conversionFunction = self.conversionFunction1
                     self.__currentUnits = 1
+            elif command == str(self.unitsOverride1).lower():
+                self.unitsOverride = self.unitsOverride1
+                self.conversionFunction = self.conversionFunction1
+                self.__currentUnits = 1
+            elif command == str(self.unitsOverride2).lower():
+                self.unitsOverride = self.unitsOverride2
+                self.conversionFunction = self.conversionFunction2
+                self.__currentUnits = 2
             # self.setAuxData(item.aux) # Trigger conversion for aux data
             self.altimeter = self.item.value  # Trigger the conversion for value
 

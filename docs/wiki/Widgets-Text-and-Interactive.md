@@ -284,7 +284,7 @@ families exist: **HMI actions** (system behavior) and **style actions**
 | `activate menu` | menu name | open a named menu |
 | `menu encoder` | value | drive the menu with an encoder step |
 | `set menu focus` | — | move focus into the menu |
-| `set instrument units` | — | trigger instrument unit switching |
+| `set instrument units` | `GROUPS:Toggle` or `GROUPS:<unit>` | toggle a unit group, or select a named unit (`Pressure:hPa`) |
 | `exit` | `true` | exit pyEFIS |
 | `evaluate` | expression | evaluate an expression (advanced/escape hatch) |
 
