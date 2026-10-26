@@ -14,6 +14,8 @@
 #  along with this program; if not, write to the Free Software
 #  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
+import logging
+import math
 import time
 
 from PyQt6.QtGui import *
@@ -24,7 +26,20 @@ import pyavtools.fix as fix
 
 from pyefis.instruments.NumericalDisplay import NumericalDisplay
 import pyefis.hmi as hmi
+from pyefis.instruments import edit_focus
 from pyefis.instruments import helpers
+
+logger = logging.getLogger(__name__)
+
+# Baro setting box (pyEfis #311). BARO is inHg on the bus in both display
+# units; only the readout and the knob steps convert.
+HPA_PER_INHG = 33.863889532610884
+BARO_STD_INHG = 29.92
+# Settable range, per docs/gcu_design.md (BARO: min 27.5, max 31.5), further
+# narrowed by the FIX item's own min/max.
+BARO_MIN_INHG = 27.5
+BARO_MAX_INHG = 31.5
+BARO_COLOR = QColor(0, 255, 255)  # pilot-selected value (gcu_design.md sec 3)
 
 
 class Altimeter(QWidget):
@@ -243,6 +258,7 @@ class Altimeter_Tape(QGraphicsView):
         trend_lookahead=6.0,
         trend_window=3.0,
         trend_min_change=20.0,
+        show_baro=None,
     ):
         super(Altimeter_Tape, self).__init__(parent)
         # Checkbox option: alpha-fade the scrolling scale into the
@@ -296,6 +312,33 @@ class Altimeter_Tape(QGraphicsView):
         self.trend_min_change = trend_min_change
         self._trend_history = []   # (monotonic_time, altitude) samples
         self._trend_px = 0.0
+
+        # Baro setting box at the bottom of the tape (pyEfis #311), touch-
+        # selectable and knob-edited through the shared edit focus (#308).
+        # Like show_trend it defaults on only for an ALT tape; an explicit
+        # show_baro always wins. With the default, a screen that already has
+        # its own BARO readout turns the box off (configure_baro), so an older
+        # screen never shows two.
+        self.show_baro = (dbkey == "ALT") if show_baro is None else show_baro
+        self._show_baro_explicit = show_baro is not None
+        self.baro_hpa = False          # display unit: inHg, or hPa when True
+        self._baro_walk = False        # knob-walk highlight (not in control)
+        self.encoder_selected = False  # holds edit focus
+        self.enc_has_outer = False
+        self._touch_edit = True
+        self._baro_units_hooked = False
+        try:
+            self._baro_item = fix.db.get_item("BARO")
+        except KeyError:
+            logger.warning("Altimeter_Tape: FIX key BARO not found; "
+                           "no baro setting box")
+            self._baro_item = None
+        if self._baro_item is not None:
+            for sig in (self._baro_item.valueChanged[float],
+                        self._baro_item.oldChanged[bool],
+                        self._baro_item.badChanged[bool],
+                        self._baro_item.failChanged[bool]):
+                sig.connect(self._baro_repaint)
 
         self.conversionFunction1 = lambda x: x
         self.conversionFunction2 = lambda x: x
@@ -408,6 +451,10 @@ class Altimeter_Tape(QGraphicsView):
         self.centerOn(
             self.scene.width() / 2, self.y_offset(self._altimeter + self.maxalt)
         )
+        if self.baro_shown():
+            # centerOn() may blit-scroll the viewport, which would drag the
+            # fixed baro box along with the scale; repaint it in place.
+            self.viewport().update()
         if self.numerical_display is not None:
             if self.round_to:
                 self.numerical_display.value = (
@@ -467,6 +514,239 @@ class Altimeter_Tape(QGraphicsView):
                            QPointF(x0 - arrow, trend_y - arrow),
                            QPointF(x0 + arrow, trend_y - arrow)]
                 p.drawPolygon(QPolygonF(tip))
+
+        if self.baro_shown():
+            p.resetTransform()
+            self._paint_baro(p)
+
+    # --- baro setting box (pyEfis #311) -------------------------------------
+
+    def baro_shown(self):
+        return bool(self.show_baro) and self._baro_item is not None
+
+    def _baro_zone(self):
+        """The strip at the bottom of the tape that the box and its focus
+        marks live in, in viewport coordinates."""
+        vw = self.viewport().width()
+        vh = self.viewport().height()
+        zone_h = max(18.0, min(vh * 0.055, vw * 0.42))
+        return QRectF(0, vh - zone_h, vw, zone_h)
+
+    def baro_box_rect(self):
+        """The baro box itself, inset so the focus ring fits around it."""
+        return edit_focus.inset_for_marks(self._baro_zone())
+
+    def baro_text(self):
+        """(value, unit) as displayed: ``("29.92", "IN")`` or
+        ``("1013", "HPA")``."""
+        v = self._baro_item.value
+        if self.baro_hpa:
+            return "{0:d}".format(int(round(v * HPA_PER_INHG))), "HPA"
+        return "{0:.2f}".format(v), "IN"
+
+    def _paint_baro(self, p):
+        item = self._baro_item
+        box = self.baro_box_rect()
+        p.save()
+        # Mask the scale under the whole strip, so ticks do not show through
+        # the margin left for the focus ring.
+        p.fillRect(self._baro_zone(), QColor(Qt.GlobalColor.black))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        border = QColor(255, 165, 0) if self._baro_walk else QColor(Qt.GlobalColor.white)
+        p.setPen(QPen(border, 2 if self._baro_walk else 1))
+        p.setBrush(QBrush(QColor(Qt.GlobalColor.black)))
+        p.drawRect(box)
+
+        if item.fail:
+            value, unit, color = "XXX", "", QColor(Qt.GlobalColor.red)
+        else:
+            value, unit = self.baro_text()
+            color = QColor(Qt.GlobalColor.gray) if (item.old or item.bad) else BARO_COLOR
+        # Size the value to the widest reading in either unit so the digits do
+        # not jump when the unit changes.
+        vf = QFont(self.font_family)
+        vf.setPixelSize(max(6, int(box.height() * 0.78)))
+        uf = QFont(vf)
+        uf.setPixelSize(max(5, int(vf.pixelSize() * 0.6)))
+        gap = box.height() * 0.12
+        need = (QFontMetricsF(vf).horizontalAdvance("88.88")
+                + gap + QFontMetricsF(uf).horizontalAdvance("HPA"))
+        avail = box.width() * 0.92
+        if need > avail:
+            scale = avail / need
+            vf.setPixelSize(max(6, int(vf.pixelSize() * scale)))
+            uf.setPixelSize(max(5, int(uf.pixelSize() * scale)))
+            gap *= scale
+        vw = QFontMetricsF(vf).horizontalAdvance(value)
+        uw = QFontMetricsF(uf).horizontalAdvance(unit) if unit else 0.0
+        total = vw + (gap + uw if unit else 0.0)
+        x = box.center().x() - total / 2.0
+        p.setPen(QPen(color))
+        p.setFont(vf)
+        p.drawText(QRectF(x, box.top(), vw + 1, box.height()),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, value)
+        if unit:
+            # Unit sits on the value's baseline.
+            base = box.center().y() + (QFontMetricsF(vf).ascent()
+                                       - QFontMetricsF(vf).descent()) / 2.0
+            p.setFont(uf)
+            p.drawText(QPointF(x + vw + gap, base), unit)
+        p.restore()
+        if self.touch_edit or self.encoder_selected:
+            edit_focus.draw_edit_marks(p, box, focused=self.encoder_selected,
+                                       bounds=self._baro_zone())
+
+    def _baro_repaint(self, *args):
+        if self.baro_shown():
+            self.viewport().update()
+
+    def _baro_limits(self):
+        lo, hi = BARO_MIN_INHG, BARO_MAX_INHG
+        item = self._baro_item
+        try:
+            if item.min is not None:
+                lo = max(lo, float(item.min))
+            if item.max is not None:
+                hi = min(hi, float(item.max))
+        except (TypeError, ValueError):
+            pass
+        return lo, hi
+
+    def baro_step(self, steps, coarse=False):
+        """Move BARO by ``steps`` knob detents: 0.01 / 0.10 inHg, or 1 / 10 hPa.
+
+        In hPa the step is taken in whole hPa from the displayed (rounded)
+        value and the result is converted back to inHg once, so every step
+        lands on a whole hPa however many steps are taken. Clamped to
+        BARO_MIN_INHG..BARO_MAX_INHG and the FIX item's own range."""
+        item = self._baro_item
+        lo, hi = self._baro_limits()
+        if self.baro_hpa:
+            step = 10 if coarse else 1
+            lo_h = math.ceil(lo * HPA_PER_INHG - 1e-9)
+            hi_h = math.floor(hi * HPA_PER_INHG + 1e-9)
+            hpa = int(round(item.value * HPA_PER_INHG)) + int(steps) * step
+            new = max(lo_h, min(hi_h, hpa)) / HPA_PER_INHG
+        else:
+            step = 0.10 if coarse else 0.01
+            new = round(round(item.value, 2) + int(steps) * step, 2)
+            new = max(lo, min(hi, new))
+        self._write_baro(new)
+
+    def baro_set_standard(self):
+        """Push: standard pressure. 29.92 inHg, which reads 1013 in hPa."""
+        self._write_baro(BARO_STD_INHG)
+
+    def _write_baro(self, value):
+        self._baro_item.value = value
+        self._baro_item.output_value()
+        self.viewport().update()
+
+    def configure_baro(self, preferences=None, other_readout=False):
+        """Called by the screen builder once the whole screen is built.
+
+        ``other_readout``: the screen already shows BARO in another widget (an
+        older screen's numeric_display), so a defaulted box stays off and the
+        screen keeps one readout. ``preferences``: the ``units: Pressure``
+        boot unit (inHg | hPa). Also follows the Units action for the
+        Pressure group, independently of the tape's own Altitude unit."""
+        if other_readout and not self._show_baro_explicit:
+            self.show_baro = False
+        if not self.baro_shown():
+            return
+        if not self._baro_units_hooked:
+            hmi.actions.setInstUnits.connect(self._baro_units_action)
+            self._baro_units_hooked = True
+        try:
+            wanted = ((preferences or {}).get("units") or {}).get("Pressure")
+        except AttributeError:
+            wanted = None
+        if wanted is not None:
+            if str(wanted).lower() in ("inhg", "hpa"):
+                self.baro_hpa = str(wanted).lower() == "hpa"
+            else:
+                logger.warning("preferences units.Pressure: '%s' is not inHg "
+                               "or hPa; baro box keeps inHg", wanted)
+
+    def _baro_units_action(self, args):
+        try:
+            names, command = args.split(":")
+        except (AttributeError, ValueError):
+            return
+        names = names.split(",")
+        if not ("Pressure" in names or "BARO" in names or "*" in names):
+            return
+        command = command.strip().lower()
+        if command == "toggle":
+            self.baro_hpa = not self.baro_hpa
+        elif command in ("inhg", "hpa"):
+            self.baro_hpa = command == "hpa"
+        else:
+            return
+        self.viewport().update()
+
+    # Touch-select + knob edit, the EncoderController protocol (#308).
+
+    @property
+    def touch_edit(self):
+        return self._touch_edit and self.baro_shown()
+
+    @touch_edit.setter
+    def touch_edit(self, on):
+        self._touch_edit = bool(on)
+
+    def enc_selectable(self):
+        return self.baro_shown()
+
+    def enc_highlight(self, onoff):
+        self._baro_walk = bool(onoff)
+        if not onoff:
+            self.encoder_selected = False
+        self.viewport().update()
+
+    def enc_select(self):
+        if not self.baro_shown():
+            return False
+        self._baro_walk = False
+        self.encoder_selected = True
+        self.viewport().update()
+        return True
+
+    def enc_changed(self, data):
+        self.baro_step(data)
+        return True
+
+    def enc_outer_changed(self, data):
+        self.baro_step(data, coarse=True)
+        return True
+
+    def enc_clicked(self):
+        # Push sets standard and keeps focus; the value is live, so there is
+        # nothing to accept. Focus clears on the timeout or a touch elsewhere.
+        self.baro_set_standard()
+        return True
+
+    def edit_focus_hit(self, global_pos):
+        local = self.viewport().mapFromGlobal(global_pos.toPoint())
+        return self._baro_zone().contains(QPointF(local))
+
+    def mousePressEvent(self, event):
+        if self.touch_edit and self._baro_zone().contains(event.position()):
+            ctl = self._encoder_controller()
+            if ctl is not None:
+                ctl.touch_focus(self)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def _encoder_controller(self):
+        w = self.parent()
+        while w is not None:
+            ctl = getattr(w, "encoder_controller", None)
+            if ctl is not None:
+                return ctl
+            w = w.parent()
+        return None
 
     def setUnitSwitching(self):
         """When this function is called the unit switching features are used"""

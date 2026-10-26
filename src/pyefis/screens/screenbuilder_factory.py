@@ -78,7 +78,7 @@ def build_altimeter_tape(
     kwargs = {}
     for k in ("dbkey", "maxalt", "majorDiv", "minorDiv", "total_decimals",
               "font_mask", "round_to", "numeric_box", "font_scale",
-              "show_trend", "trend_lookahead"):
+              "show_trend", "trend_lookahead", "show_baro"):
         if k in opts:
             kwargs[k] = opts[k]
     return altimeter.Altimeter_Tape(
@@ -651,6 +651,10 @@ _register(InstrumentSpec(
              help="show the boxed numeric altitude over the tape"),
         Prop("font_scale", "number", default=1.0, label="Scale-number font scale", apply="special",
              help="multiplier on the tape scale-number font size"),
+        Prop("show_baro", "boolean", default=True, label="Baro setting box", apply="special",
+             help="touch-selectable altimeter setting box at the bottom of the "
+                  "tape (on for an ALT tape unless the screen has its own BARO "
+                  "readout; off for a VS tape)"),
     ],
     preview={"value": 3500},
 ))
