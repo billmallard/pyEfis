@@ -14,10 +14,10 @@ dbkey: TSBTN{id}12
 ```
 In this example `nodeID: 1` would use key `TSBTN112` where `nodeID: 2` would use `TSBTN212`
 
-`editIconAtRest` (default `false`): when true, every touch-editable value (see
+`editIconAtRest` (default `true`): every touch-editable value (see
 "Touch-select + knob edit" below) shows the edit icon dimmed while nothing has
-focus, so the pilot can see which values a touch will select. When false the
-icon appears only on the focused value.
+focus, so the pilot can see which values a touch will select. Set it to `false`
+to show the icon only on the focused value.
 
 ## Module name
 To use the screen builder you need to set the module to `module: pyefis.screens.screenbuilder`

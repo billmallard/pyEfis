@@ -114,8 +114,9 @@ means the knob now changes it.
 - **Touching anywhere else**, or changing screens, also clears it. Only one
   value is ever selected, so touching a different value moves the ring there.
 
-If your panel is set up to show it (`editIconAtRest`), the same icon appears
-**dimmed** on every value you can touch-select while nothing is selected.
+While nothing is selected, the same icon appears **dimmed** on every value you
+can touch-select, so you can see which ones the knob can be pointed at. (A panel
+can turn this off with `editIconAtRest: false`.)
 
 ### Hiding the buttons
 

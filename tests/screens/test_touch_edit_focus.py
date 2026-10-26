@@ -402,6 +402,13 @@ def test_focused_draws_ring_and_icon_unfocused_draws_nothing():
     assert _cyanish(_render(False, False)) == 0
 
 
+def test_at_rest_hint_is_on_unless_the_panel_turns_it_off():
+    assert edit_focus.at_rest_hint_from_config({}) is True
+    assert edit_focus.at_rest_hint_from_config(None) is True
+    assert edit_focus.at_rest_hint_from_config({"editIconAtRest": False}) is False
+    assert edit_focus.at_rest_hint_from_config({"editIconAtRest": True}) is True
+
+
 def test_at_rest_hint_draws_only_a_small_dim_icon():
     img = _render(False, True)
     n = _cyanish(img)

@@ -51,7 +51,7 @@ RING_WIDTH_PX = 2.0
 RING_GAP_PX = 2.0
 HINT_ALPHA = 110  # at-rest icon, of 255
 
-_at_rest_hint = False
+_at_rest_hint = True
 
 
 def set_at_rest_hint(on):
@@ -59,6 +59,12 @@ def set_at_rest_hint(on):
     nothing has focus. Set once at start-up from ``main: editIconAtRest``."""
     global _at_rest_hint
     _at_rest_hint = bool(on)
+
+
+def at_rest_hint_from_config(main_config):
+    """``main: editIconAtRest``; on unless the panel turns it off (Bill,
+    2026-10-26, pyEfis #308)."""
+    return bool((main_config or {}).get("editIconAtRest", True))
 
 
 def at_rest_hint():

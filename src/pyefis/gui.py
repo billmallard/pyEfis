@@ -110,8 +110,9 @@ class Main(QMainWindow):
 
         self.screenColor = config["main"]["screenColor"]
         # Panel-wide: dim edit icon on every touch-editable value at rest
-        # (pyEfis #308). Off by default.
-        edit_focus.set_at_rest_hint(config["main"].get("editIconAtRest", False))
+        # (pyEfis #308). On by default (Bill, 2026-10-26: it tells the pilot
+        # which values the knob can be pointed at).
+        edit_focus.set_at_rest_hint(edit_focus.at_rest_hint_from_config(config["main"]))
         self.nodeID = config["main"].get('nodeID', 1)
 
         self.setObjectName("EFIS")
