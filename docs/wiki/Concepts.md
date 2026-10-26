@@ -215,7 +215,8 @@ A widget's `options:` block is applied by `apply_options`
 - **`encoder_order`** → registers the widget in the screen's encoder selection list,
 - **`egt_mode_switching: true`** (on `vertical_bar_gauge`) → connects the EGT mode signal,
 - **`temperature` / `pressure` / `altitude: true`** (on gauges/`numeric_display`/
-  the altimeter) → enables unit switching.
+  the altimeter) → enables unit switching, starting in the unit named by
+  [preferences `units`](Preferences-and-Styling#units) if set.
 
 **Every other option is applied as a direct attribute on the widget instance**
 (`setattr(instrument, option, value)`). The practical consequence — and the

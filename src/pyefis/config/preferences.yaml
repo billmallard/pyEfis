@@ -104,6 +104,12 @@ enabled:
   DIMMER: false
   BUTTONS: true  # enabled/disable navigation buttons
 
+# Starting unit for each unit group (Temperature, Pressure, Altitude).
+# Without an entry an instrument starts in its first unit (F, inHg, Ft).
+# The configurator sets Pressure from the aircraft's altimeter-setting units.
+#units:
+#  Pressure: hPa
+
 # Here you can define what include files are used to render some
 # portion of the screen so you can customize as needed easily
 includes:
