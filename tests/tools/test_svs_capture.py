@@ -414,3 +414,69 @@ def test_write_manifest_sha256_matches_the_frame_bytes(svs_capture, tmp_path):
     assert manifest["capture_mode"] == "offscreen"
     assert manifest["requested_size"] == [1920, 1200]
     assert manifest["actual_size"] == [1920, 1200]
+
+
+# --- AER-2667: the mock FIX swap must not be silently bypassed -------------
+
+def test_mock_fix_guard_accepts_the_mock_client(svs_capture):
+    # Loaded the normal way, the tool's own swap took: fix.client is the mock.
+    assert svs_capture.check_mock_fix_bound() is None
+
+
+def test_mock_fix_guard_rejects_the_real_client(svs_capture):
+    import types
+    real = types.ModuleType("pyavtools.fix.client")
+    err = svs_capture.check_mock_fix_bound(types.SimpleNamespace(client=real))
+    assert err is not None and "pyavtools.fix.client" in err
+
+
+def _load_module_as(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_mock_fix_guard_accepts_the_mock_under_another_import_name(svs_capture):
+    # The root conftest binds pyavtools.fix.client to tests.mock_db.client --
+    # the same file as the tool's mock_db.client, but a distinct module object.
+    # In a full-suite run pyavtools.fix keeps that binding, so an identity-only
+    # guard refused a perfectly offline mock (pyEfis #284's red build).
+    other = _load_module_as(
+        "tests.mock_db.client", _ROOT / "tests" / "mock_db" / "client.py"
+    )
+    assert other is not svs_capture.mock_db.client
+    import types
+    assert svs_capture.check_mock_fix_bound(types.SimpleNamespace(client=other)) is None
+
+
+def test_mock_fix_guard_rejects_a_client_from_another_file(svs_capture, tmp_path):
+    impostor = tmp_path / "client.py"
+    impostor.write_text("# not the mock\n")
+    mod = _load_module_as("pyavtools.fix.client", impostor)
+    import types
+    err = svs_capture.check_mock_fix_bound(types.SimpleNamespace(client=mod))
+    assert err is not None and "not the mock FIX client" in err
+
+
+def test_wrapper_that_imports_fix_first_is_refused():
+    # The AER-2667 shape: a wrapper imports pyavtools.fix (via pyefis) before
+    # runpy-ing svs_capture, so the sys.modules swap is too late. Without the
+    # guard the tool attaches to a live gateway and its non-daemon reconnect
+    # thread outlives main() forever; with it, main refuses with exit 6 before
+    # fix.initialize ever runs.
+    wrapper = (
+        "import runpy, sys\n"
+        "import pyavtools.fix\n"
+        f"sys.argv = [{str(_ROOT / 'tools' / 'svs_capture.py')!r}, "
+        "'--out', '/nonexistent/x.png', '--lat', '34.4', '--lon', '-119.8', "
+        "'--alt', '3000', '--timeout', '1']\n"
+        f"runpy.run_path({str(_ROOT / 'tools' / 'svs_capture.py')!r}, "
+        "run_name='__main__')\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", wrapper],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 6, proc.stderr
+    assert "not the mock FIX client" in proc.stderr

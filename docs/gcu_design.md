@@ -1,7 +1,47 @@
 # Open GCU — control head for pyEfis (design)
 
-Status: DRAFT v1 (2026-07-03). Home: pyEfis docs for now; parts of this
+Status: DRAFT v1 (2026-07-03), amended 2026-10-26 by the focus-ownership
+decision below (pyEfis #308). Home: pyEfis docs for now; parts of this
 contract belong in fix-gateway once implementation starts.
+
+## 0. Decision (2026-10-26, pyEfis #308): who owns edit focus
+
+**pyEfis owns edit focus for the values it displays.** It does not wait for a
+fix-gateway `gcu` mapper. This amends section 3 ("Written ONLY by the mapper")
+and section 4 for the PFD.
+
+- **Why.** Touch-select is a pyEfis event. A tap lands on a widget, and the
+  widget is the only thing that knows which value it hit. Sending that tap out
+  to a mapper over the bus and back would add a round trip, plus a failure mode
+  where the knob is armed but the screen does not show it. pyEfis already
+  routes its knob to "the instrument in control" (`EncoderController`, the
+  `enc_*` protocol), so focus already exists there. A touch is a second way
+  into that same state.
+- **What pyEfis implements (TK1).** `pyefis.instruments.edit_focus` holds the
+  panel-wide single focus. A touch or a knob push claims it, and only one value
+  on the panel holds it at a time. The inner knob gives fine steps, the outer
+  ring (`encoder_outer`) coarse steps, and push runs the value's action. Focus
+  clears after `encoder_timeout` (default 10 s; the TTL in section 3), on a
+  touch anywhere else, or on a screen change. The visual language is a cyan
+  ring outset from the value plus a 10 px circular-arrow icon, drawn by one
+  shared helper (`draw_edit_marks`).
+- **`GCUSEL` becomes an annunciation output, not the source of truth.** If and
+  when `GCUSEL` is added, pyEfis may *publish* its focused target there so
+  other displays (the GCU faceplate) can annunciate it. pyEfis remains the one
+  writer for PFD focus. Not implemented in TK1: the key does not exist in
+  fix-gateway yet.
+- **Left to the GCU work.** Reconciling this with the mapper's own focus
+  machine (the unmerged `origin/gcu` branch in fix-gateway) is open. The likely
+  shape: the mapper owns focus only for targets that no pyEfis display is
+  editing, or it forwards its function buttons to pyEfis as focus requests.
+  The bar either way is that two writers never fight over `GCUSEL`
+  (one-key/one-writer).
+- **Colour check.** Section 3 suggests cyan. The HSI's selected-heading readout
+  box is already cyan-bordered and its heading bug is cyan, so a cyan *recolour*
+  or a ring drawn on the box edge would be invisible there. The focus ring is
+  therefore **outset from the value with a gap**, and it reads as a second,
+  separate outline even around a cyan box. The colour stays a one-line change
+  (`edit_focus.FOCUS_COLOR`) if the glass says otherwise.
 
 ## 1. Purpose
 
@@ -170,8 +210,9 @@ Deliberately NO direct pyEfis coupling.
 
 - `ALTSEL` naming vs any emerging upstream convention (check canfix spec
   for an existing selected-altitude parameter before inventing).
-- Focus annunciation on instruments: widget option (`gcusel_highlight`) vs
-  a generic screenbuilder decoration.
+- ~~Focus annunciation on instruments: widget option (`gcusel_highlight`) vs
+  a generic screenbuilder decoration.~~ Resolved by section 0: a shared
+  drawing helper (`edit_focus.draw_edit_marks`) that each widget calls.
 - Does the GCU faceplate need its own encoder-editable fields (touch +
   knob), or is it display/softkeys only? (v1: display + softkeys only.)
 - Multi-GCU (two seats) — out of scope for v1; contract doesn't preclude.

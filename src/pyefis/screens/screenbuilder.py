@@ -90,6 +90,8 @@ class Screen(QWidget):
         self.encoder_input = None
         self.encoder_button = None
         self.encoder_button_input = None
+        self.encoder_outer = None
+        self.encoder_outer_input = None
         self.encoder_list = list()
         self.encoder_list_sorted = list()
         self.encoder_current_selection = None
@@ -242,6 +244,7 @@ class Screen(QWidget):
         self.layout = self.get_config_item("layout")
         self.encoder = self.get_config_item("encoder")
         self.encoder_button = self.get_config_item("encoder_button")
+        self.encoder_outer = self.get_config_item("encoder_outer")
         self.encoder_timeout = (
             self.get_config_item("encoder_timeout") or self.encoder_timeout
         )
@@ -431,8 +434,17 @@ class Screen(QWidget):
         if event is not None:
             super().closeEvent(event)
 
+    def hideEvent(self, event):
+        # Changing screens clears edit focus (pyEfis #308): a value must never
+        # stay armed for the knob on a screen the pilot cannot see.
+        self.encoder_controller.release_focus()
+        super().hideEvent(event)
+
     def encoderChanged(self, value=0):
         self.encoder_controller.changed(value)
 
     def encoderButtonChanged(self, value):
         self.encoder_controller.button_changed(value)
+
+    def encoderOuterChanged(self, value=0):
+        self.encoder_controller.outer_changed(value)

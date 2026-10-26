@@ -1,0 +1,26 @@
+# Place this in /etc/systemd/system/ alongside bench-sweep.service, then:
+#    sudo systemctl enable --now bench-sweep.timer
+#    systemctl list-timers bench-sweep.timer --no-pager
+#
+# Hourly is chosen against the failure it exists to catch: AER-2663's pose
+# injector ran for SEVEN DAYS unnoticed. An hour of a dirty bench is a cheap
+# loss; the thing that matters is that the state is recorded at all, every
+# hour, in the journal -- so a sweep whose output stops changing is itself a
+# signal, which is the heartbeat rule in bench_deploy.md applied to the sweep.
+#
+# Persistent=true so a box that was powered off through its window sweeps once
+# on boot rather than silently skipping. RandomizedDelaySec keeps the sweep
+# from landing on the same instant as an hourly deploy routine every time.
+#
+[Unit]
+Description=Hourly bench-sweep (abandoned/synthetic bench state)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+AccuracySec=1m
+Unit=bench-sweep.service
+
+[Install]
+WantedBy=timers.target

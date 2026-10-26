@@ -101,6 +101,23 @@ keys, or driven by a **rotary encoder**:
   or instrument; press to activate it (or to start editing a selected value);
   press again to confirm; stop touching it and it times out back to normal.
 
+### Touch a value, then turn the knob
+
+Some settable values can also be selected by **touching them**. A touched value
+gets a **cyan ring** with a small **circular-arrow icon** on its corner: that
+means the knob now changes it.
+
+- **Inner knob:** small steps. **Outer ring:** big steps.
+- **Push the knob** to accept the value. The ring goes away.
+- **Leave it alone for about 10 seconds** and the ring goes away by itself, so a
+  knob bumped later cannot quietly change anything.
+- **Touching anywhere else**, or changing screens, also clears it. Only one
+  value is ever selected, so touching a different value moves the ring there.
+
+While nothing is selected, the same icon appears **dimmed** on every value you
+can touch-select, so you can see which ones the knob can be pointed at. (A panel
+can turn this off with `editIconAtRest: false`.)
+
 ### Hiding the buttons
 
 The **Units / Show Menu** button doubles as a menu toggle. When the buttons are

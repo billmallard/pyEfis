@@ -41,6 +41,19 @@ after construction, then `runpy`s the real `tools/svs_capture.py` unmodified
 with the original CLI). It carries no code change and was not committed --
 `pitchDegreesShown` itself is each checkout's real, unmodified default.
 
+**Provenance caveat (found later, AER-2667).** Because the wrapper imported
+`pyefis.instruments.ai` *before* `runpy`-ing `svs_capture.py`, the tool's
+mock-FIX `sys.modules` swap was too late: these runs used the real
+`pyavtools.fix` client, subscribed to the Beelink's live gateway on :3490, and
+so the gateway's values could overwrite the seeded pose. The frames show the
+KSBA coastline heading east, consistent with the seeded pose, and the
+dev-vs-fix comparison holds regardless (both runs saw the same bus), but the
+exact pose is not proven by construction. The same bug left one such run
+attached to the bus for 11 days: the real client's non-daemon reconnect thread
+outlives `main()`, so `--timeout` never ends the process. `svs_capture.py` now
+refuses this (exit 6). A wrapper must `runpy` the tool before importing pyefis,
+or patch after the tool's own imports.
+
 ## Result
 
 ```
