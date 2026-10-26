@@ -1,3 +1,5 @@
+import gc
+
 import pytest
 # Patch pyavtools.fix so it can run in memory without a fix server
 import sys
@@ -393,4 +395,14 @@ def fix():
     fix.db.get_item("XWIND").bad = False
     fix.db.get_item("XWIND").fail = False
 
-    return fix
+    yield fix
+
+    # Each test's initialize() abandons the previous Database and every
+    # DB_Item (a QObject) on it. Left to the cyclic GC, they are freed on
+    # whichever thread happens to trigger a collection -- including the map
+    # layers' daemon worker threads -- and destroying a QObject off the GUI
+    # thread is undefined in Qt. Collect here, on the main thread, after
+    # qtbot has closed the test's widgets. Surfaced by RS2 (AER-3791), whose
+    # route block grew the flight-plan tests' key set fourfold: CI segfaulted
+    # in a later test's paintEvent on 2 of 3 runs.
+    gc.collect()
