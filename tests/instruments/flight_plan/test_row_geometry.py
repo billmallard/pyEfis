@@ -131,17 +131,19 @@ def _plan_of(n):
 
 
 def _plan_with_collapsed_airway_group():
-    """GVO, [POM, RZS] tagged ``extra["airway"]="V27"`` (a collapsed group,
-    PA6/AER-1605), KSMX -- three visible rows: GVO, "V27 -> RZS", KSMX. Built
-    directly off the ``extra`` tag rather than through ``AirwayGraph``/a pack
-    fixture -- collapsing is purely a function of that tag, so this stands
-    alone the same way the rest of this file does."""
+    """A V27 airway segment GVO -> POM -> RZS (PA6/AER-1605, a segment since
+    RS2), then KSMX -- three visible rows: GVO, "V27 -> RZS", KSMX. Built
+    directly as segments rather than through ``AirwayGraph``/a pack fixture
+    -- collapsing is purely a function of the segment, so this stands alone
+    the same way the rest of this file does."""
     from pyefis.flightplan import model as fp_model
-    return fp_model.FlightPlan(name="TEST", waypoints=[
-        fp_model.Waypoint(id="GVO", type="fix", lat=34.5, lon=-120.1),
-        fp_model.Waypoint(id="POM", type="fix", lat=34.1, lon=-117.8, extra={"airway": "V27"}),
-        fp_model.Waypoint(id="RZS", type="fix", lat=34.0, lon=-119.6, extra={"airway": "V27"}),
-        fp_model.Waypoint(id="KSMX", type="airport", lat=34.9, lon=-120.5),
+    return fp_model.FlightPlan(name="TEST", segments=[
+        fp_model.Segment(kind="airway", ident="V27", legs=[
+            fp_model.Waypoint(id="GVO", type="fix", lat=34.5, lon=-120.1),
+            fp_model.Waypoint(id="POM", type="fix", lat=34.1, lon=-117.8),
+            fp_model.Waypoint(id="RZS", type="fix", lat=34.0, lon=-119.6)]),
+        fp_model.waypoint_segment(
+            fp_model.Waypoint(id="KSMX", type="airport", lat=34.9, lon=-120.5)),
     ])
 
 
@@ -221,9 +223,11 @@ def test_collapsed_airway_row_sizes_by_visible_count_not_raw_count(fix, qtbot):
     w = _widget(qtbot)
     wps = [fp_model.Waypoint(id=f"WP{i:02d}", type="fix", lat=float(i), lon=float(i))
            for i in range(40)]
-    for wp in wps[10:16]:
-        wp.extra = {"airway": "V27"}
-    w._plan = fp_model.FlightPlan(name="TEST", waypoints=wps)
+    # V27 enters at WP09, so its folded fixes are WP10..WP15.
+    w._plan = fp_model.FlightPlan(name="TEST", segments=(
+        [fp_model.waypoint_segment(wp) for wp in wps[:9]]
+        + [fp_model.Segment(kind="airway", ident="V27", legs=wps[9:16])]
+        + [fp_model.waypoint_segment(wp) for wp in wps[16:]]))
     # 40 waypoints, 6 of them (10..15) collapsed to 1 row -> 35 visible rows.
     groups = w._row_groups()
     assert next(g for g in groups if g[2] == "V27") == (10, 15, "V27")

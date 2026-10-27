@@ -301,28 +301,12 @@ class FlightPlan(QWidget):
 
     # -- bridge sync -------------------------------------------------------
     def _sync_plan_from_bridge(self):
-        route = self._bridge.read_route()
-        if route is None:
-            return
-        # The FP1 bus contract (fixbridge.RouteSlot) carries id/lat/lon/type/
-        # role only -- there is no per-slot "which airway did this fix come
-        # from" key (brief 3.4: an airway segment is an ordinary TF leg, no
-        # leg model needed). So a plain re-read after every commit would
-        # silently un-collapse every airway row it had just drawn. Carry the
-        # display-only `extra` dict (PA6, AER-1605) forward by matching id +
-        # lat/lon at the same slot against the plan as it stood before this
-        # sync -- true immediately after our own publish, and a safe no-op
-        # (falls back to expanded, ordinary rows) the moment anything shifts.
-        old = self._plan.waypoints
-        waypoints = []
-        for i, s in enumerate(route.waypoints):
-            extra = {}
-            if (i < len(old) and old[i].id == s.id
-                    and abs(old[i].lat - s.lat) < 1e-5 and abs(old[i].lon - s.lon) < 1e-5):
-                extra = dict(old[i].extra)
-            waypoints.append(fp_model.Waypoint(id=s.id, type=s.type, lat=s.lat, lon=s.lon,
-                                                role=s.role, extra=extra))
-        self._plan = fp_model.FlightPlan(name=route.name, waypoints=waypoints)
+        # The bus is the truth (RS2, route segments brief guardrail 1): the
+        # segment table says which slots are an airway, so there is nothing
+        # to carry over from the plan as it stood before this sync.
+        plan = self._bridge.read_plan()
+        if plan is not None:
+            self._plan = plan
 
     def _sync_engine_from_bridge(self):
         self._engine = self._bridge.read_engine() or {}
@@ -726,10 +710,10 @@ class FlightPlan(QWidget):
 
     def _insert_airway_segment(self, entry_index, ident, expansion):
         """*expansion* is the published fix sequence of *ident* from the entry
-        fix to the chosen exit fix, inclusive of both (``AirwayGraph.expand``).
-        The entry fix is already in the plan at *entry_index* -- only the
-        fixes after it are new. Inserted whole or not at all: a route already
-        near ``MAX_WAYPOINTS`` must not accept half an airway."""
+        fix at *entry_index* to the chosen exit fix, inclusive of both
+        (``AirwayGraph.expand``). ``FlightPlan.insert_airway`` makes it one
+        airway segment, whole or not at all: a route already near
+        ``MAX_WAYPOINTS`` must not accept half an airway."""
         new_wps = expansion[1:]
         if not new_wps:
             return
@@ -737,33 +721,30 @@ class FlightPlan(QWidget):
             self._message = f"ROUTE FULL -- {ident} NEEDS {len(new_wps)} MORE SLOTS"
             self.update()
             return
-        idx = entry_index
-        for wp in new_wps:
-            self._plan.insert_after(idx, fp_model.Waypoint(
-                id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon, extra={"airway": ident}))
-            idx += 1
+        try:
+            self._plan.insert_airway(entry_index, ident, expansion[-1].id,
+                                     self._ensure_airway_graph())
+        except fp_model.FlightPlanError as e:
+            self._message = str(e)
+            self.update()
+            return
         self._plan_dirty = True
         self._commit()
 
     def _row_groups(self):
         """Partitions ``self._plan.waypoints`` into ``(start, end, ident)``
-        runs: a plain row (``start == end``, ``ident is None``) or a
-        contiguous run of fixes sharing the same ``extra["airway"]`` tag --
-        one collapsible group, regardless of how it currently displays."""
-        rows = self._plan.waypoints
+        runs: a plain row (``start == end``, ``ident is None``) or the fixes
+        of an airway segment after its entry fix -- one collapsible group,
+        regardless of how it currently displays. The entry fix stays its own
+        row, as PA6 drew it; RS3 redesigns these rows."""
         groups = []
-        i, n = 0, len(rows)
-        while i < n:
-            ident = (rows[i].extra or {}).get("airway")
-            if ident:
-                j = i + 1
-                while j < n and (rows[j].extra or {}).get("airway") == ident:
-                    j += 1
-                groups.append((i, j - 1, ident))
-                i = j
+        for k, seg in enumerate(self._plan.segments):
+            first, last = self._plan.segment_span(k)
+            if seg.kind == "airway":
+                groups.append((first, first, None))
+                groups.append((first + 1, last, seg.ident))
             else:
-                groups.append((i, i, None))
-                i += 1
+                groups.extend((i, i, None) for i in range(first, last + 1))
         return groups
 
     def _group_key(self, group):
@@ -808,8 +789,22 @@ class FlightPlan(QWidget):
         self._confirm = None
         self.update()
 
+    def _show_plan_notices(self, plan):
+        # An airway re-expanded against a newer AIRAC cycle (catalog.py) is
+        # surfaced on the FPL page, never swapped in silently (route
+        # segments brief guardrail 3). Notices are not on the bus, so they
+        # are read here, before _commit() re-reads the plan from it.
+        if plan.notices:
+            self._message = "; ".join(plan.notices)
+
     def _menu_invert(self):
-        self._plan = self._plan.invert()
+        try:
+            self._plan = self._plan.invert(self._ensure_airway_graph())
+        except fp_model.FlightPlanError as e:
+            self._message = str(e)
+            self._menu_open = False
+            self.update()
+            return
         self._plan_dirty = True
         self._menu_open = False
         self._commit()
@@ -980,7 +975,7 @@ class FlightPlan(QWidget):
 
     def _catalog_do_activate(self, slug):
         try:
-            plan = self._ensure_catalog().load(slug)
+            plan = self._ensure_catalog().load(slug, self._ensure_airway_graph())
         except fp_catalog.CatalogError as e:
             self._catalog_message = str(e)
             self._catalog_confirm = None
@@ -989,6 +984,7 @@ class FlightPlan(QWidget):
         self._plan = plan
         self._plan_dirty = False
         self._catalog_confirm = None
+        self._show_plan_notices(plan)
         self._commit()
         self._close_catalog()
 
@@ -1002,8 +998,8 @@ class FlightPlan(QWidget):
 
     def _catalog_do_invert_activate(self, slug):
         try:
-            plan = self._ensure_catalog().invert(slug)
-        except fp_catalog.CatalogError as e:
+            plan = self._ensure_catalog().invert(slug, self._ensure_airway_graph())
+        except (fp_catalog.CatalogError, fp_model.FlightPlanError) as e:
             self._catalog_message = str(e)
             self._catalog_confirm = None
             self.update()
@@ -1011,6 +1007,7 @@ class FlightPlan(QWidget):
         self._plan = plan
         self._plan_dirty = False
         self._catalog_confirm = None
+        self._show_plan_notices(plan)
         self._commit()
         self._close_catalog()
 
@@ -1021,13 +1018,14 @@ class FlightPlan(QWidget):
         commits or Store is used."""
         self._catalog_row_menu = None
         try:
-            plan = self._ensure_catalog().load(slug)
+            plan = self._ensure_catalog().load(slug, self._ensure_airway_graph())
         except fp_catalog.CatalogError as e:
             self._catalog_message = str(e)
             self.update()
             return
         self._plan = plan
-        self._plan_dirty = False
+        self._plan_dirty = bool(plan.notices)
+        self._show_plan_notices(plan)
         self._page = "fpl"
         self.update()
 

@@ -66,15 +66,24 @@ The flight-plan **engine lives in fix-gateway** (`flightplan` plugin, FP2);
 pyEFIS's `src/pyefis/flightplan/fixbridge.py` (FP4) publishes the route to
 these keys and reads the engine's guidance back. See
 `makerplane/briefs/flight_plan_plan.md` section 3.2 Appendix A and
-billmallard/pyEfis#181 for the full contract; this table covers what the
-bridge touches.
+billmallard/pyEfis#181 for the full contract; the authoritative key table
+is fix-gateway's `doc/flightplan_keys.md`. This table covers what the bridge
+touches.
 
 | Key | Units | Meaning | Written by |
 |-----|-------|---------|------------|
-| `FPLfID` / `FPLfLAT` / `FPLfLON` (`f`=1..50) | str/deg/deg | Route slot ident + position | editor |
-| `FPLfTYPE` / `FPLfROLE` | int | Slot type (0 unk..6 map) / approach role (0 none..4 mahp) | editor |
-| `FPLCOUNT` | — | Slots in use (0..50) | editor |
+| `FPLfID` / `FPLfLAT` / `FPLfLON` (`f`=1..100) | str/deg/deg | Route slot ident + position | editor |
+| `FPLfTYPE` / `FPLfFLAGS` | int | Slot type (0 unk..6 map) / flags (`0x01` fly-over, `0x02` IAF, `0x04` FAF, `0x08` MAP, `0x10` MAHP, `0x20` coded procedure) | editor |
+| `FPLfPT` / `FPLfCRS` / `FPLfDST` | —/deg mag/nm | Leg path terminator (`TF` default) / course / distance or radius | editor |
+| `FPLfALT` / `FPLfSPD` | —/kt | Packed altitude constraint (`"+7000"`; an airway leg's MEA) / speed constraint | editor |
+| `FPLfCTRLAT` / `FPLfCTRLON` / `FPLfTURN` | deg/deg/— | Arc centre / turn direction (`RF`/`AF`/holds) | editor |
+| `FPLfSGI` | — | Segment-table row this slot belongs to (1..`FPLSEGCNT`) | editor |
+| `FPLSfKIND` / `FPLSfID` | — | Segment kind (0 waypoint, 1 airway, 2 departure, 3 arrival, 4 approach, 5 missed) / ident (`V27`) | editor |
+| `FPLSfENT` / `FPLSfEXT` / `FPLSfFIRST` / `FPLSfLAST` | — | Segment entry/exit idents and first/last slot | editor |
+| `FPLSEGCNT` | — | Segment rows in use | editor |
+| `FPLCOUNT` | — | Slots in use (0..100) | editor |
 | `FPLNAME` | — | Route name | editor |
+| `FPLDBCYC` | — | AIRAC cycle the airways/procedures came from | editor |
 | `FPLSEQ` | — | Commit counter — consumers act only on this changing, written last | editor |
 | `DTOID` / `DTOLAT` / `DTOLON` / `DTOTYPE` | — | Direct-to staging | editor |
 | `FPLCMD` | — | `"<seq> VERB [arg]"` (`ACT`/`DTO`/`DTOX`/`SUSP`/`RESUME`/`SCALE`) | editor |
@@ -86,6 +95,7 @@ bridge touches.
 | `WPDIS` / `WPETE` | nm / s | Distance / time to the TO waypoint | engine |
 | `WPFROM` / `WPNEXT` | — | FROM / NEXT idents | engine |
 | `FPLREMDIS` / `FPLREMETE` | nm / s | Remaining distance / time to the end of the plan | engine |
+| `FPLACTSEG` / `FPLSEGREM` | — / nm | Segment of the TO slot / distance left in it | engine |
 | `GPSSRC` | — | 0 = internal plan, 1 = external navigator | pilot |
 
 `WPLAT`/`WPLON`/`WPNAME` (existing keys, see Navigation & position above) are
