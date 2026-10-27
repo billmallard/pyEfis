@@ -57,6 +57,7 @@ from PyQt6.QtOpenGL import (  # noqa: E402
 
 from pyefis.instruments.ai.camera import (  # noqa: E402
     view_projection, M_PER_DEG_LAT, M_PER_FT, EARTH_CURVATURE,
+    TERRAIN_HFOV_PITCH_DEG,
 )
 
 log = logging.getLogger(__name__)
@@ -68,8 +69,9 @@ log = logging.getLogger(__name__)
 # the camera.view_projection(pixels_per_deg_h=...) hook precisely so a later
 # pitchDegreesShown change (AER-1973: 30 -> 50, widening the pitch ladder's
 # vertical gain) does not also widen the terrain picture horizontally. Do not
-# derive this from the AI widget's live pitchDegreesShown.
-_TERRAIN_HFOV_PITCH_DEG = 30.0
+# derive this from the AI widget's live pitchDegreesShown. The value lives in
+# camera.py so the AI widget's horizontal symbology can share it (#304).
+_TERRAIN_HFOV_PITCH_DEG = TERRAIN_HFOV_PITCH_DEG
 
 
 # Shader source bodies — the #version header gets prepended at compile
@@ -685,7 +687,7 @@ class SVSGLRenderer:
     # ------------------------------------------------------------------
     def draw(self, painter, w, h, ac_lat, ac_lon, ac_alt_ft,
              pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-             range_nm=None, device_pixel_ratio=1.0):
+             range_nm=None, device_pixel_ratio=1.0, roll_pivot_px=0.0):
         """Render terrain + overlays directly into the painter's GL
         surface between begin/endNativePainting. Requires the AI view
         to carry a QOpenGLWidget viewport; raises when no GL context
@@ -719,7 +721,7 @@ class SVSGLRenderer:
             self._ensure_heightmap(ac_lat, ac_lon)
             self._update_camera(w, h, ac_lat, ac_lon, ac_alt_ft,
                                 pitch_deg, roll_deg, heading_deg,
-                                pixels_per_deg)
+                                pixels_per_deg, roll_pivot_px)
             # Qt leaves the GL viewport undefined inside native
             # painting; set it to the full backing store (device
             # pixels, hence the DPR scale).
@@ -777,7 +779,8 @@ class SVSGLRenderer:
     # Internals
     # ------------------------------------------------------------------
     def _update_camera(self, w, h, ac_lat, ac_lon, ac_alt_ft,
-                       pitch_deg, roll_deg, heading_deg, pixels_per_deg):
+                       pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                       roll_pivot_px=0.0):
         """Build the per-frame unified camera (P3): aircraft ENU
         position relative to the heightmap patch origin, the 4x4
         view-projection matrix, and the ENU conversion factors used
@@ -796,7 +799,8 @@ class SVSGLRenderer:
         pixels_per_deg_h = h / _TERRAIN_HFOV_PITCH_DEG
         vp = view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg,
                              roll_deg, pixels_per_deg, w, h,
-                             pixels_per_deg_h=pixels_per_deg_h)
+                             pixels_per_deg_h=pixels_per_deg_h,
+                             roll_pivot_px=roll_pivot_px)
         self._frame_vp = QMatrix4x4(*[float(x) for x in vp.ravel()])
         self._frame_ac_e = ac_e
         self._frame_ac_n = ac_n
