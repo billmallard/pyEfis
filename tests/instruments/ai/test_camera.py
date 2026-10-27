@@ -241,3 +241,30 @@ class TestTerrainRollRegistration:
         b = view_projection(0.0, 0.0, 300.0, 30.0, 5.0, 0.0, 24.0, 1248, 1200,
                             pixels_per_deg_h=40.0, roll_pivot_px=216.0)
         assert (a == b).all()
+
+
+class TestTerrainHorizontalPx:
+    """terrain_horizontal_px must be where view_projection actually puts a
+    horizon point at that bearing -- it is what the AI widget uses to place
+    heading ticks and the FPM over the terrain (#304)."""
+
+    @pytest.mark.parametrize("bearing", [-40.0, -10.0, 0.0, 5.0, 20.0, 35.0])
+    @pytest.mark.parametrize("pitch_degrees_shown", [25.0, 50.0])
+    def test_matches_projection(self, bearing, pitch_degrees_shown):
+        from pyefis.instruments.ai.camera import (
+            terrain_horizontal_px, TERRAIN_HFOV_PITCH_DEG)
+
+        w, h = 1248, 1200
+        vp = view_projection(0.0, 0.0, 300.0, 0.0, 0.0, 0.0,
+                             h / pitch_degrees_shown, w, h,
+                             pixels_per_deg_h=h / TERRAIN_HFOV_PITCH_DEG)
+        d = 100e3
+        b = math.radians(bearing)
+        x, _, cw = project(vp, d * math.sin(b), d * math.cos(b), 300.0)
+        assert terrain_horizontal_px(bearing, h) == pytest.approx(
+            (x / cw) * w / 2.0, abs=1e-6)
+
+    def test_svs_gl_alias_is_the_same_pin(self):
+        from pyefis.instruments.ai.camera import TERRAIN_HFOV_PITCH_DEG
+        from pyefis.instruments.ai.svs_gl import _TERRAIN_HFOV_PITCH_DEG
+        assert _TERRAIN_HFOV_PITCH_DEG == TERRAIN_HFOV_PITCH_DEG
