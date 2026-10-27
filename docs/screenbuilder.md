@@ -598,6 +598,16 @@ Options:
     Units action). When left at its default, the box turns itself off on a screen that
     already shows `BARO` in another visible widget, so a screen never shows two baro
     readouts.
+  * altsel_box - default True for an ALT tape, False for a VS tape. Draws the
+    touch-settable selected-altitude box (`ALTSEL`) at the top of the tape:
+    inner knob 100 ft, outer ring 1000 ft, push syncs to the current altitude
+    rounded to 100 ft and ends the edit (pyEfis #310). Needs no `encoder_order`; one may still
+    be given to put the tape in the knob walk, which lands on the ALTSEL box
+    first, then the baro box. A touch on either box focuses that box.
+  * alt_bug_enabled - default follows `altsel_box`. Draws the selected-altitude
+    bug on the scale; pegs half-visible at the tape edge when off-scale.
+  * alt_bug_color - default '#00ffff'
+  * alt_bug_dbkey - default 'ALTSEL'
 
 ## altimeter_trend_tape
 

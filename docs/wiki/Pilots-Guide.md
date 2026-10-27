@@ -166,6 +166,27 @@ held. A screen shows one or the other, never both.
 **+ / −** dimmer buttons step the display brightness (`DIM`) and repeat when
 held — for day/night and changing light.
 
+### Setting the selected altitude
+
+The **cyan box at the top of the altimeter tape** is the selected (target)
+altitude, `ALTSEL`, the altitude the autopilot is told to capture. A **cyan
+bug** marks the same altitude on the tape. When the target is above or below
+the part of the tape you can see, the bug parks **half-visible at that edge**,
+so it still points the way to go.
+
+- **Touch the box** to select it (cyan ring and knob icon, as described in
+  [Touch a value, then turn the knob](#touch-a-value-then-turn-the-knob)).
+- **Inner knob:** 100 ft per click. **Outer ring:** 1000 ft per click.
+- **Push the knob** to set the target to your **current altitude**, rounded to
+  the nearest 100 ft (for example, 4,130 ft sets 4,100). The selection then ends.
+- Each click is sent out right away. There is no separate "accept" step.
+- **Dashes (`-----`)** mean no selected altitude has been set yet. There is no
+  bug while dashes show. Touch the box and turn the knob to set one. The first
+  click starts from your current altitude.
+
+The selected altitude is only a target. pyEfis does not fly to it, and it does
+not alert on a deviation yet.
+
 ### Units
 
 The **Units** button toggles units for temperature (**°C ⇄ °F**), pressure

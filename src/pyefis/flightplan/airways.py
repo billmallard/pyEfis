@@ -10,15 +10,15 @@ indexes ``idx_awy_ident``, ``idx_awyleg_awy(airway_id, seq)`` and
 ``idx_awyleg_fix(fix_id)``. Every query here is shaped to hit one of those
 three indexes -- none of them is a table scan.
 
-An airway segment is a ``TF`` leg (great circle, fly-by), so no leg model is
-needed to route one: :meth:`AirwayGraph.expand` returns ordinary
-``model.Waypoint`` (``type="fix"``) instances the caller inserts straight
-into a :class:`pyefis.flightplan.model.FlightPlan`, exactly as the brief
-specifies ("the expansion is inserted collapsed... and emits the
-intermediate fixes as ordinary TYPE=fix waypoints"). Per-leg altitude
-constraints are a different thing (PA3's leg model owns those) and are
-deliberately not smuggled onto the emitted waypoints; see
-:meth:`AirwayGraph.altitude_range` for the MEA/ceiling check instead.
+Every airway leg is a ``TF`` leg (great circle, fly-by):
+:meth:`AirwayGraph.expand` returns ordinary ``model.Waypoint``
+(``type="fix"``) legs, which :meth:`pyefis.flightplan.model.FlightPlan.insert_airway`
+wraps in one ``airway`` segment (RS2, billmallard/pyEfis#305). Each leg
+carries the MEA of the airway leg that ends at it as its packed altitude
+constraint (``alt="+7000"``), so the bridge can publish it as ``FPLfALT``
+(route segments brief section 3); the entry fix carries none, because the
+leg into it is not on the airway. :meth:`AirwayGraph.altitude_range` still
+answers the segment-wide MEA/ceiling question.
 
 Construction never raises: a missing or unreadable pack just leaves
 ``ready`` False and every query answers as if the airway table were empty
@@ -168,9 +168,30 @@ class AirwayGraph:
         :class:`AirwayDirectionError` if the requested direction crosses a
         leg coded one-way against it."""
         segment = self._resolve_segment(ident, entry_fix_id, exit_fix_id)
-        return [model.Waypoint(id=leg.fix_id, type="fix",
-                                lat=leg.lat, lon=leg.lon)
-                for leg in segment]
+        # The MEA of a leg is coded on the row of the fix that ends it in
+        # published (ascending seq) order -- the same row as its Direction
+        # Restriction, see _resolve_segment. Flying backward, the leg into a
+        # fix is the published leg that ends at the fix BEFORE it in travel
+        # order.
+        forward = len(segment) < 2 or segment[0].seq < segment[1].seq
+        out = []
+        for n, leg in enumerate(segment):
+            mea = None
+            if n > 0:
+                mea = leg.min_alt_ft if forward else segment[n - 1].min_alt_ft
+            out.append(model.Waypoint(id=leg.fix_id, type="fix", lat=leg.lat, lon=leg.lon,
+                                       alt=f"+{int(mea)}" if mea else ""))
+        return out
+
+    def cycle(self, ident: str) -> str | None:
+        """The AIRAC cycle *ident* was built from (``airways.cycle``), or
+        ``None`` if not ready or unknown. A stored route compares this with
+        the cycle it saved to decide whether to re-expand (RS2)."""
+        if not self.ready:
+            return None
+        row = self._con.execute("SELECT cycle FROM airways WHERE ident = ? LIMIT 1",
+                                 (_norm(ident),)).fetchone()
+        return None if row is None else (row["cycle"] or None)
 
     def altitude_range(self, ident: str, entry_fix_id: str,
                         exit_fix_id: str) -> tuple[int | None, int | None]:
