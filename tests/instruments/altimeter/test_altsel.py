@@ -183,9 +183,10 @@ def test_no_value_shows_dashes_no_bug_and_touch_still_sets(alt_db, qtbot):
 
 def test_missing_key_builds_shows_dashes_and_is_not_touchable(fix, qtbot):
     _define(fix, "ALT", "float", -2000, 60000, 4130.0)
-    t = _tape(qtbot)                          # no ALTSEL in the database
+    t = _tape(qtbot, show_baro=False)         # no ALTSEL in the database
     assert t.altsel_display.text() == altsel.DASHES
     assert t.alt_bug_y() is None
+    assert t._altsel_touchable() is False
     assert t.touch_edit is False
     assert t.enc_selectable() is False
     assert t.enc_select() is False
@@ -225,7 +226,8 @@ def test_bug_off_tape_pegs_at_the_edge(alt_db, qtbot):
     sel.value = 1000                          # far below
     y, off = t.alt_bug_y()
     assert off == 1
-    assert y == t.viewport().height()
+    bottom = t._baro_zone().top() if t.baro_shown() else t.viewport().height()
+    assert y == bottom                        # above the baro box when shown
 
 
 def test_clamp_to_span():
@@ -329,3 +331,89 @@ def test_timeout_clears_focus(alt_db, qtbot):
     qtbot.waitUntil(lambda: host.encoder_control is False, timeout=2000)
     assert t.altsel_display.focused is False
     assert edit_focus.owner() is None
+
+
+# --- one tape, two boxes: ALTSEL (#310) and baro (#311) -----------------------
+
+def _baro_click(qtbot, t):
+    z = t._baro_zone()
+    qtbot.mouseClick(t.viewport(), Qt.MouseButton.LeftButton,
+                     pos=QPoint(int(z.center().x()), int(z.center().y())))
+
+
+def test_each_box_takes_its_own_focus_and_knob(alt_db, qtbot):
+    fix, _alt, sel = alt_db
+    baro = fix.db.get_item("BARO")
+    host = _Host()
+    qtbot.addWidget(host)
+    t = _tape(qtbot, host)
+    assert t.baro_shown(), "fixture needs BARO for this test"
+    ctl = host.encoder_controller
+    ctl.configure_inputs(None)
+    b0 = baro.value
+
+    qtbot.mouseClick(t.altsel_display, Qt.MouseButton.LeftButton,
+                     pos=t.altsel_display.rect().center())
+    assert t._edit_box == "altsel"
+    assert t.altsel_display.focused and not t.encoder_selected
+    ctl.changed(1)
+    assert sel.value == 4600 and baro.value == b0
+
+    _baro_click(qtbot, t)                     # touch moves to the baro box
+    assert ctl.focused_instrument() is t
+    assert t._edit_box == "baro"
+    assert t.encoder_selected and not t.altsel_display.focused
+    ctl.changed(1)
+    assert sel.value == 4600                  # ALTSEL untouched
+    assert baro.value == pytest.approx(round(b0, 2) + 0.01)
+
+    qtbot.mouseClick(t.altsel_display, Qt.MouseButton.LeftButton,
+                     pos=t.altsel_display.rect().center())
+    assert t._edit_box == "altsel" and not t.encoder_selected
+    ctl.outer_changed(1)
+    assert sel.value == 5600
+
+
+def test_focus_hit_counts_only_the_focused_box(alt_db, qtbot):
+    host = _Host()
+    qtbot.addWidget(host)
+    t = _tape(qtbot, host)
+    host.encoder_controller.configure_inputs(None)
+    t._touch_box("altsel")
+    z = t._baro_zone()
+    baro_pt = QPointF(t.viewport().mapToGlobal(z.center().toPoint()))
+    box_pt = QPointF(t.altsel_display.mapToGlobal(
+        t.altsel_display.rect().center()))
+    assert t.edit_focus_hit(box_pt) is True
+    assert t.edit_focus_hit(baro_pt) is False
+
+
+def test_push_semantics_differ_per_box(alt_db, qtbot):
+    """ALTSEL push syncs and ends the edit (Bill, 2026-10-27); baro push sets
+    standard and keeps focus (#311)."""
+    host = _Host()
+    qtbot.addWidget(host)
+    t = _tape(qtbot, host)
+    ctl = host.encoder_controller
+    ctl.configure_inputs(None)
+    t._touch_box("baro")
+    ctl.button_changed(True)
+    assert ctl.focused_instrument() is t
+    t._touch_box("altsel")
+    ctl.button_changed(True)
+    assert ctl.focused_instrument() is None
+    assert t._edit_box is None
+
+
+def test_knob_walk_lands_on_altsel_first(alt_db, qtbot):
+    t = _tape(qtbot)
+    assert t.enc_selectable() is True
+    t.enc_highlight(True)
+    assert t.enc_select() is True
+    assert t._edit_box == "altsel"
+    t.enc_highlight(False)
+    assert t._edit_box is None
+    vs_like = _tape(qtbot, altsel_box=False)
+    vs_like.enc_highlight(True)
+    vs_like.enc_select()
+    assert vs_like._edit_box == ("baro" if vs_like.baro_shown() else None)

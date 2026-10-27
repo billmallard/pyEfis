@@ -90,11 +90,57 @@ def configure_unit_switching(
     instrument.setUnitSwitching()
 
 
+def apply_unit_default(screen, instrument):
+    """Start a unit-switching instrument in its group's configured unit.
+
+    The default comes from the ``units`` block of preferences, keyed by unit
+    group, e.g. ``units: {Pressure: hPa}`` (the configurator's aircraft-level
+    altimeter-setting unit lands here via preferences.yaml.custom). Without an
+    entry the instrument keeps its first unit. An unknown unit name is logged
+    and ignored -- a typo in the profile must not stop the screen building.
+    The runtime "Set Instrument Units" toggle still works from either start.
+    """
+    try:
+        units = screen.parent.preferences.get("units") or {}
+        wanted = units.get(instrument.unitGroup)
+    except AttributeError:
+        return
+    if wanted is None:
+        return
+    choices = (instrument.unitsOverride1, instrument.unitsOverride2)
+    if str(wanted).lower() not in [str(c).lower() for c in choices]:
+        log.warning(
+            "preferences units.%s: '%s' is not one of %s; keeping %s",
+            instrument.unitGroup, wanted, list(choices), choices[0])
+        return
+    instrument.setUnits(f"{instrument.unitGroup}:{wanted}")
+
+
+def configure_tape_baro(screen):
+    """Once a screen is built, settle each altimeter tape's baro box (pyEfis
+    #311): a defaulted box stays off when the screen already shows BARO in
+    another widget (an older screen's numeric_display), so no screen shows
+    two readouts; and the box starts in the ``units: Pressure`` preference."""
+    instruments = list(getattr(screen, "instruments", {}).values())
+    other = any(
+        getattr(i, "dbkey", None) == "BARO" and not i.isHidden()
+        for i in instruments
+        if not callable(getattr(i, "configure_baro", None)))
+    try:
+        prefs = screen.parent.preferences
+    except AttributeError:
+        prefs = None
+    for inst in instruments:
+        if callable(getattr(inst, "configure_baro", None)):
+            inst.configure_baro(prefs, other_readout=other)
+
+
 def apply_options(screen, index, config, state=False):
     if "options" not in config:
         return
 
     instrument = screen.instruments[index]
+    unit_switching = False
     for option, value in config["options"].items():
         if "encoder_order" == option and not state:
             if callable(getattr(instrument, "enc_selectable", None)):
@@ -139,6 +185,7 @@ def apply_options(screen, index, config, state=False):
                 funcTempF,
                 funcTempC,
             )
+            unit_switching = True
             continue
 
         elif (
@@ -154,6 +201,7 @@ def apply_options(screen, index, config, state=False):
                 funcPressInHg,
                 funcPressHpa,
             )
+            unit_switching = True
             continue
 
         elif (
@@ -172,9 +220,14 @@ def apply_options(screen, index, config, state=False):
                 funcAltitudeFeet,
                 funcAltitudeMeters,
             )
+            unit_switching = True
             continue
 
         else:
             _warn_undeclared_option(config["type"], option)
             setattr(instrument, option,
                     _coerce_to_attr_type(instrument, option, value))
+
+    # After the loop, so dbkey is set whatever the option order in the YAML.
+    if unit_switching:
+        apply_unit_default(screen, instrument)

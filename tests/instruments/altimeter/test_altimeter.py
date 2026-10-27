@@ -230,6 +230,31 @@ def test_altimeter_tape_unit_switching(fix,qtbot):
     widget.setUnitSwitching()
 
 
+@pytest.mark.parametrize("cls", ["Altimeter", "Altimeter_Tape"])
+def test_altimeter_set_units_by_unit_name(fix, qtbot, cls):
+    # AER-3916: named-unit command, as used by the preferences units default.
+    hmi.initialize({})
+    widget = getattr(altimeter, cls)()
+    qtbot.addWidget(widget)
+    widget.conversionFunction1 = funcAltitudeFeet
+    widget.unitsOverride1 = 'Ft'
+    widget.conversionFunction2 = funcAltitudeMeters
+    widget.unitsOverride2 = 'M'
+    widget.unitGroup = 'Altitude'
+    fix.db.get_item("ALT").value = 1100
+    widget.setUnitSwitching()
+    hmi.actions.trigger("Set Instrument Units", "Altitude:M")
+    assert widget.unitsOverride == 'M'
+    assert widget._altimeter == pytest.approx(funcAltitudeMeters(1100))
+    hmi.actions.trigger("Set Instrument Units", "Altitude:M")
+    assert widget.unitsOverride == 'M'
+    hmi.actions.trigger("Set Instrument Units", "Altitude:Toggle")
+    assert widget.unitsOverride == 'Ft'
+    assert widget._altimeter == 1100
+    hmi.actions.trigger("Set Instrument Units", "Altitude:ft")
+    assert widget.unitsOverride == 'Ft'
+
+
 # =============================================================================
 # Altimeter-tape requirements test catalog -- keyed to altimeter_widget_spec.md
 # sec 4 (Markings, Awareness Cues & Annunciation) and avionics_reference.md

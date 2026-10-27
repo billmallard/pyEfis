@@ -172,24 +172,16 @@ class AltSelBox(QWidget):
         p.setPen(fg)
         p.setFont(self._font(r))
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.text())
-        if self.tape.touch_edit:
+        if self._editable() or self.focused:
             edit_focus.draw_edit_marks(p, r, focused=self.focused,
                                        bounds=QRectF(self.rect()))
         p.end()
 
+    def _editable(self):
+        return self.tape._touch_edit and self.tape._altsel_touchable()
+
     def mousePressEvent(self, event):
-        ctl = self._encoder_controller()
-        if ctl is not None and self.tape.touch_edit:
-            ctl.touch_focus(self.tape)
+        if self._editable() and self.tape._touch_box("altsel"):
             event.accept()
             return
         super().mousePressEvent(event)
-
-    def _encoder_controller(self):
-        w = self.tape.parent()
-        while w is not None:
-            ctl = getattr(w, "encoder_controller", None)
-            if ctl is not None:
-                return ctl
-            w = w.parent()
-        return None

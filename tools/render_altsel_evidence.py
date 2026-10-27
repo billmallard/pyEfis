@@ -56,6 +56,12 @@ def _mock_fix():
 
     define("ALT", "float", -2000, 60000, 4130.0)
     define("ALTSEL", "int", -1000, 60000, 4500)
+    # The baro box (#311) shares the tape; define BARO so the renders show
+    # the composed tape the panel shows.
+    fix.db.define_item("BARO", "BARO", "float", 0, 35, "inHg", 50000, "")
+    fix.db.set_value("BARO", 29.92)
+    b = fix.db.get_item("BARO")
+    b.old = b.bad = b.fail = False
     return fix
 
 
