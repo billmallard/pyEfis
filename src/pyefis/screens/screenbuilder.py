@@ -260,6 +260,7 @@ class Screen(QWidget):
             if screenbuilder_config.is_disabled(i, self.parent.preferences):
                 continue
             count = self.load_instrument(i, count)
+        screenbuilder_options.configure_tape_baro(self)
         # Place instruments:
         self.grid_layout()
         self.init = True
