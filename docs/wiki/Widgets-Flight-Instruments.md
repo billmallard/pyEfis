@@ -373,6 +373,7 @@ forwards `font_percent`.
 | `course_color` | `#ff00ff` | selected-course pointer (the magenta CRS triangle) |
 | `heading_bug_enabled` | **false** | draw the cyan heading bug at `HEADBUG` |
 | `heading_bug_color` | `#00ffff` | heading-bug colour |
+| `touch_edit` | **true** | touch the HDG or CRS readout to set it with the knob (see below) |
 | `track_indicator_enabled` | **true** | draw the GPS ground-track diamond at `TRACK` |
 | `track_color` | `#ff00ff` | track-diamond colour |
 | `track_min_speed` | **5** | hide the track diamond below this groundspeed (kt) |
@@ -387,6 +388,40 @@ forwards `font_percent`.
 > `True`, re-setting them to `false` from `options:` after construction will not
 > retroactively unsubscribe the keys — these are best treated as fixed for this
 > widget type.
+
+### Touch to set HDG and CRS (`touch_edit`, pyEfis #309)
+
+With `touch_edit` on (the default; set `touch_edit: false` to turn it off), touching the **HDG** or **CRS** readout gives it edit
+focus through the screen's knob (`encoder` / `encoder_outer` /
+`encoder_button`). It uses the shared focus ring and edit icon, the timeout and
+the touch-away behaviour from pyEfis #308. The HSI does not need, and ignores,
+an `encoder_order`. It is reached by touch only, not by the knob walk.
+
+| Readout | Writes | Inner (fine) | Outer (coarse) | Push |
+|---|---|---|---|---|
+| HDG | `HEADBUG` | 1 deg | 10 deg | sync to `HEAD`. If `HEAD` is failed or bad, it only ends the edit |
+| CRS, `NAVSRC` 0 | `NAV1CRS` | 1 deg | 10 deg | set to `VOR1BRG` (bearing TO the station: CDI centred, TO). On a localizer, or with that key absent or flagged, it only ends the edit |
+| CRS, `NAVSRC` 1 | `NAV2CRS` | 1 deg | 10 deg | the same, with `VOR2BRG` |
+| CRS, `NAVSRC` 2 (GPS) | not editable | | | |
+
+- Values step from the whole degree shown and wrap through 360. Each step is
+  written and sent to fix-gateway as it is turned, so a timeout keeps the value
+  and nothing is reverted.
+- **`COURSE` is never written.** It is the output of fix-gateway's NAVSRC
+  `select` (`connections/compute.yaml`), which would overwrite a direct write.
+  While CRS is being edited, the readout shows the key being turned, because
+  `COURSE` only follows it once fix-gateway's select has run.
+- A NAVSRC change while CRS has focus ends the edit.
+- Hit targets: the readout cell in `top_panel`, the box in `corners` and
+  `split`, grown to at least 12.7 mm for a gloved finger. `none` has nothing to
+  touch. The source tab and the bearing-source labels keep their taps, and they
+  win where a grown target overlaps them.
+- In `corners` the plain nav-source label now sits below the HDG box, and in
+  `split` the bearing-source labels sit above the bottom boxes. Before this
+  change both were drawn underneath a readout box, hidden, with their tap
+  targets over it.
+- On the X-Plane bench `NAV1CRS`, `NAV2CRS` and `HEADBUG` are also fed from sim
+  datarefs, so the sim can overwrite a value set here on its next update.
 
 ---
 
