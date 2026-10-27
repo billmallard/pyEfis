@@ -7,6 +7,15 @@ Slugs beginning ``managed_`` are reserved for configurator-delivered routes
 (FP9) and are read-only on the device -- ``save``/``delete`` refuse them so a
 device-authored edit can never collide with a cloud-authored one.
 
+Routes are stored as ``mp-route/2`` (RS2, billmallard/pyEfis#305): segments,
+each airway with the AIRAC cycle it was expanded from. ``load`` given an
+``AirwayGraph`` re-expands any airway whose cycle differs from the installed
+pack, and when the fix list changed it says so in ``FlightPlan.notices``
+("V27 changed since this plan was saved") -- the plan always loads, and never
+silently keeps flying fixes the current data no longer publishes (route
+segments brief guardrail 3). ``mp-route/1`` files load as plain waypoints
+and are rewritten as ``mp-route/2`` on their next save.
+
 ``invert()`` returns the inverted plan without writing it to the catalog,
 matching the GNX guide's "Invert & Activate (a copy; the stored plan is
 unchanged)" -- the caller decides whether to activate it, save it under a new
@@ -25,7 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .model import FlightPlan
+from .model import FlightPlan, FlightPlanError
 
 MANAGED_PREFIX = "managed_"
 
@@ -89,11 +98,17 @@ class Catalog:
                 mtime=path.stat().st_mtime))
         return entries
 
-    def load(self, slug: str) -> FlightPlan:
+    def load(self, slug: str, graph=None) -> FlightPlan:
+        """*graph*, an ``airways.AirwayGraph``, enables the AIRAC check:
+        without it (or with no pack loaded) the stored legs are used as
+        saved."""
         path = self._path(slug)
         if not path.is_file():
             raise CatalogError(f"no stored route {slug!r}")
-        return FlightPlan.from_json(json.loads(path.read_text(encoding="utf-8")))
+        plan = FlightPlan.from_json(json.loads(path.read_text(encoding="utf-8")))
+        if graph is not None and getattr(graph, "ready", False):
+            refresh_airways(plan, graph)
+        return plan
 
     def save(self, plan: FlightPlan, slug: str | None = None) -> str:
         """Save *plan* under *slug* (default: slugified plan name). Atomic:
@@ -127,8 +142,36 @@ class Catalog:
         plan.created = ""
         return self.save(plan, slugify(new_name))
 
-    def invert(self, slug: str) -> FlightPlan:
+    def invert(self, slug: str, graph=None) -> FlightPlan:
         """Return *slug*'s plan inverted (roles cleared). Not persisted --
         the stored plan is unchanged; save the result under a new slug to
-        keep it."""
-        return self.load(slug).invert()
+        keep it. A plan with airways needs *graph* for the one-way check;
+        a refusal raises ``FlightPlanError`` with the reason."""
+        plan = self.load(slug, graph)
+        inverted = plan.invert(graph)
+        inverted.notices = list(plan.notices)
+        return inverted
+
+
+def refresh_airways(plan: FlightPlan, graph) -> None:
+    """Re-expand every airway in *plan* whose stored AIRAC cycle differs from
+    the one *graph* has installed, in place. A changed fix list is applied
+    and noted; an airway that can no longer be expanded (withdrawn, a fix
+    gone, now one-way against the route) keeps its stored legs and is
+    noted, so the plan still loads and the pilot is told."""
+    for k, seg in enumerate(plan.segments):
+        if seg.kind != "airway":
+            continue
+        installed = graph.cycle(seg.ident)
+        if installed is not None and installed == seg.cycle:
+            continue
+        before = [w.id for w in seg.legs]
+        try:
+            new = plan.change_exit(k, seg.exit, graph)
+        except FlightPlanError as e:
+            plan.notices.append(f"{seg.ident} could not be checked against the current "
+                                f"data ({e}); flying the fixes saved with the plan")
+            continue
+        if [w.id for w in new.legs] != before:
+            plan.notices.append(f"{seg.ident} changed since this plan was saved "
+                                f"({' '.join(before)} -> {' '.join(w.id for w in new.legs)})")
