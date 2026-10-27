@@ -209,8 +209,20 @@ configurable per instance.
 | `round_to` | **0** | round the numeric box to this step (0 = off); e.g. `100` snaps a jittery source to 100-unit steps while the tape stays smooth |
 | `numeric_box` | **true** | when false, omit the numeric readout box and show only the scrolling tape + read pointer |
 | `font_scale` | **1.0** | multiplier on the tick-label font size |
+| `show_baro` | **true** for `ALT`, false otherwise | draw the touch-selectable altimeter setting (`BARO`) box at the bottom of the tape; see below |
 | `font_family`, `font_percent` | from preferences | |
 | `altitude` | false | special-cased: enables ft/m unit switching |
+
+**Baro setting box (`show_baro`).** The box shows `BARO` as `29.92 IN` or `1013 HPA`,
+following the `Pressure` unit group (the `units: Pressure` preference sets the start,
+and the Units action switches it; the tape's own ft/m switching is separate). Touch the
+box to select it for the knob: the inner knob steps 0.01 inHg or 1 hPa, the outer ring
+0.10 inHg or 10 hPa, and push sets standard (29.92 inHg). `BARO` stays inHg on the bus.
+In hPa every step lands on a whole hPa. The setting is limited to 27.50-31.50 inHg, or
+less if the FIX item's own min/max is narrower. Give the tape an `encoder_order` to reach
+the box on the knob walk as well. Left at its default, the box turns itself off when the
+screen already shows `BARO` in another visible widget (an older screen with a separate
+`numeric_display`), so no screen shows two baro readouts.
 
 > Because this class is also used for the VS tape, `round_to` and `numeric_box`
 > exist primarily to tame a jittery VS source — see the prose in the source.

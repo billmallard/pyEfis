@@ -61,6 +61,11 @@ Home: `src/pyefis/instruments/helpers/` (e.g. `bugs.py`).
    Matches the shipped `heading_bug_enabled` / `heading_bug_color` on
    the HSI.
 
+**Status (2026-10-26, pyEfis #310):** `helpers/bugs.py` exists with
+`BugBinding`, `clamp_to_span` and the tape-edge glyph `tape_bug_path`. The
+altimeter tape's `ALTSEL` bug is its first user. The HSI heading bug is not
+yet refactored onto it (build-order step 1 is still open).
+
 ## 4. What stays per-instrument
 
 **Placement.** Each instrument already owns its value→pixel math — the

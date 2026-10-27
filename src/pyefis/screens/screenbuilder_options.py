@@ -116,6 +116,25 @@ def apply_unit_default(screen, instrument):
     instrument.setUnits(f"{instrument.unitGroup}:{wanted}")
 
 
+def configure_tape_baro(screen):
+    """Once a screen is built, settle each altimeter tape's baro box (pyEfis
+    #311): a defaulted box stays off when the screen already shows BARO in
+    another widget (an older screen's numeric_display), so no screen shows
+    two readouts; and the box starts in the ``units: Pressure`` preference."""
+    instruments = list(getattr(screen, "instruments", {}).values())
+    other = any(
+        getattr(i, "dbkey", None) == "BARO" and not i.isHidden()
+        for i in instruments
+        if not callable(getattr(i, "configure_baro", None)))
+    try:
+        prefs = screen.parent.preferences
+    except AttributeError:
+        prefs = None
+    for inst in instruments:
+        if callable(getattr(inst, "configure_baro", None)):
+            inst.configure_baro(prefs, other_readout=other)
+
+
 def apply_options(screen, index, config, state=False):
     if "options" not in config:
         return

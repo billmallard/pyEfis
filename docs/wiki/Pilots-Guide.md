@@ -46,7 +46,8 @@ The PFD combines the classic "T" with synthetic vision:
   the aircraft's configured speeds. A TAS readout and a short **trend arrow**
   (projected speed a few seconds ahead) may appear.
 - **Altimeter tape** (right) — indicated altitude, with the **barometric
-  setting** shown nearby (see [Setting the altimeter](#setting-the-altimeter-baro)).
+  setting** in a box at the bottom of the tape (see
+  [Setting the altimeter](#setting-the-altimeter-baro)).
 - **VSI** — vertical speed, as a tape/pointer beside the altimeter.
 - **Heading** — a heading tape or card across the top/bottom.
 - **HSI** — course pointer with **CDI** (course deviation) and, on an approach,
@@ -149,14 +150,55 @@ bring the bar back. (Under the hood it toggles the `HIDEBUTTON` key.)
 
 ### Setting the altimeter (baro)
 
-The altimeter has **+ / −** buttons (often invisible regions near the baro
-setting) that step the barometric setting `BARO` by 0.01 inHg. They **repeat**
-if held.
+The altimeter setting is the box at the **bottom of the altimeter tape**. It
+reads **29.92 IN** or **1013 HPA**, depending on the aircraft's units.
+
+1. **Touch the box.** It gets the cyan ring and the circular-arrow icon (see
+   [Touch a value, then turn the knob](#touch-a-value-then-turn-the-knob)).
+   On a panel with no touchscreen, turn the knob until the box is outlined in
+   orange and push.
+2. **Turn the inner knob** for small steps (0.01 inHg or 1 hPa) and the
+   **outer ring** for big steps (0.10 inHg or 10 hPa). The altimeter follows as
+   you turn; there is nothing to confirm.
+3. **Push the knob** to set standard pressure (29.92 inHg / 1013 hPa). Push
+   does **not** "accept" here, because every turn is already set: pushing
+   always resets to standard.
+4. Leave it alone for about 10 seconds, or touch anywhere else, and the ring
+   goes away.
+
+The setting stays between 27.50 and 31.50 inHg (932-1066 hPa). The **Units**
+button switches the box between inHg and hPa along with the other pressure
+readouts.
+
+Older screens may instead show a separate **Baro:** readout beside the tape,
+with invisible **+ / −** touch regions that step it by 0.01 inHg and repeat if
+held. A screen shows one or the other, never both.
 
 ### Display brightness (dimmer)
 
 **+ / −** dimmer buttons step the display brightness (`DIM`) and repeat when
 held — for day/night and changing light.
+
+### Setting the selected altitude
+
+The **cyan box at the top of the altimeter tape** is the selected (target)
+altitude, `ALTSEL`, the altitude the autopilot is told to capture. A **cyan
+bug** marks the same altitude on the tape. When the target is above or below
+the part of the tape you can see, the bug parks **half-visible at that edge**,
+so it still points the way to go.
+
+- **Touch the box** to select it (cyan ring and knob icon, as described in
+  [Touch a value, then turn the knob](#touch-a-value-then-turn-the-knob)).
+- **Inner knob:** 100 ft per click. **Outer ring:** 1000 ft per click.
+- **Push the knob** to set the target to your **current altitude**, rounded to
+  the nearest 100 ft (for example, 4,130 ft sets 4,100). The selection then ends.
+- Each click is sent out right away. There is no separate "accept" step.
+- **Dashes (`-----`)** mean no selected altitude has been set yet. There is no
+  bug while dashes show. Touch the box and turn the knob to set one. The first
+  click starts from your current altitude.
+
+The selected altitude is only a target. pyEfis does not fly to it, and it does
+not alert on a deviation yet.
 
 ### Units
 
