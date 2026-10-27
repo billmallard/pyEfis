@@ -233,8 +233,8 @@ class HSI(QGraphicsView):
 
         # Touch-select + knob edit of the HDG and CRS readouts (pyEfis #309):
         # touching one gives it edit focus through the screen's
-        # EncoderController (pyEfis #308). Off by default; a panel opts in.
-        self.touch_edit = False
+        # EncoderController (pyEfis #308). On by default; a panel opts out.
+        self.touch_edit = True
         self.enc_has_outer = False
         self._edit_field = None     # "hdg" | "crs" while one holds focus
         self._edit_pending = None   # the field a touch is asking to focus

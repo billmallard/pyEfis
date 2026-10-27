@@ -735,7 +735,7 @@ _register(InstrumentSpec(
              help="show the cyan heading bug at the selected heading (HEADBUG)"),
         Prop("heading_bug_color", "color", default="#00ffff",
              label="Heading bug color", help="heading-bug colour"),
-        Prop("touch_edit", "boolean", default=False,
+        Prop("touch_edit", "boolean", default=True,
              label="Touch to set HDG / CRS",
              help="touch the HDG or CRS readout, then turn the knob to set it: "
                   "HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the "

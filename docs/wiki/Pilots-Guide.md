@@ -121,7 +121,7 @@ can turn this off with `editIconAtRest: false`.)
 
 #### Heading bug and course on the HSI
 
-When the panel turns it on, the HSI's **HDG** and **CRS** readouts work this way:
+Unless the panel turns it off, the HSI's **HDG** and **CRS** readouts work this way:
 
 - **HDG** sets the **heading bug**. The inner knob moves it 1 degree, the outer
   ring 10 degrees, and it wraps through 360. **Push** syncs the bug to your

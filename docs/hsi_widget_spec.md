@@ -564,7 +564,7 @@ new subsystem. Should be **web-UI toggleable** (enable/disable touch editing per
 panel).
 
 *Status: implemented for HDG and CRS (pyEfis #309, on the #308 foundation).* The
-`touch_edit` option (editor: "Touch to set HDG / CRS", off by default) makes the
+`touch_edit` option (editor: "Touch to set HDG / CRS", on by default) makes the
 HDG readout set `HEADBUG` and the CRS readout set `NAV1CRS` / `NAV2CRS` for the
 selected VLOC source. CRS is not editable on GPS, and `COURSE` is never written,
 because it is the NAVSRC `select` output. Inner ring 1 deg, outer ring 10 deg,

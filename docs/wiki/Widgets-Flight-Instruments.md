@@ -373,7 +373,7 @@ forwards `font_percent`.
 | `course_color` | `#ff00ff` | selected-course pointer (the magenta CRS triangle) |
 | `heading_bug_enabled` | **false** | draw the cyan heading bug at `HEADBUG` |
 | `heading_bug_color` | `#00ffff` | heading-bug colour |
-| `touch_edit` | **false** | touch the HDG or CRS readout to set it with the knob (see below) |
+| `touch_edit` | **true** | touch the HDG or CRS readout to set it with the knob (see below) |
 | `track_indicator_enabled` | **true** | draw the GPS ground-track diamond at `TRACK` |
 | `track_color` | `#ff00ff` | track-diamond colour |
 | `track_min_speed` | **5** | hide the track diamond below this groundspeed (kt) |
@@ -391,7 +391,7 @@ forwards `font_percent`.
 
 ### Touch to set HDG and CRS (`touch_edit`, pyEfis #309)
 
-With `touch_edit: true`, touching the **HDG** or **CRS** readout gives it edit
+With `touch_edit` on (the default; set `touch_edit: false` to turn it off), touching the **HDG** or **CRS** readout gives it edit
 focus through the screen's knob (`encoder` / `encoder_outer` /
 `encoder_button`). It uses the shared focus ring and edit icon, the timeout and
 the touch-away behaviour from pyEfis #308. The HSI does not need, and ignores,

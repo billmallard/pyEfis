@@ -153,6 +153,20 @@ def test_layout_none_has_nothing_to_touch(nav, qtbot):
     assert host.encoder_control is False
 
 
+def test_touch_edit_is_on_by_default(nav, qtbot):
+    """Bill's call on pyEfis #317: an HSI touch-edits HDG and CRS unless the
+    panel turns it off, and the editor offers the same default."""
+    from pyefis.editor import schema as eschema
+    host = _Host()
+    qtbot.addWidget(host)
+    assert hsi.HSI(host, font_percent=0.05, cdi_enabled=True).touch_edit is True
+    opts = eschema.build_schema()["instruments"][
+        "horizontal_situation_indicator"]["options"]
+    opt = opts["touch_edit"] if isinstance(opts, dict) else next(
+        o for o in opts if o.get("name") == "touch_edit")
+    assert opt["default"] is True
+
+
 def test_touch_edit_off_leaves_the_readouts_inert(nav, qtbot):
     host, w = _hsi(qtbot, touch_edit=False)
     _tap(qtbot, w, _centre(w, "hdg"))
