@@ -254,7 +254,11 @@ def main():
     ap.add_argument("--live", metavar="HOST:PORT")
     a = ap.parse_args()
     if a.live:
-        sys.exit(live(a.live))
+        rc = live(a.live)
+        # pyavtools leaves non-daemon threads (scheduler) running, which
+        # would hold interpreter shutdown forever; the check is complete.
+        sys.stdout.flush()
+        os._exit(rc)
     if not a.outdir:
         ap.error("OUTDIR is required unless --live is given")
     render(a.outdir)
