@@ -354,6 +354,202 @@ def test_real_screen_hide_event_releases_focus(qtbot):
     assert v.calls[-1] == ("highlight", False)
 
 
+# --- the mouse as the knob (pyEfis #321) ------------------------------------
+
+class _WidgetValue(QWidget):
+    """A _Value that is also a widget, so focus_hit() can test the pointer
+    against it. Records wheel events that reach it (i.e. passed through)."""
+
+    touch_edit = True
+
+    def __init__(self, parent, click_keeps=False):
+        super().__init__(parent)
+        self.calls = []
+        self.wheels_seen = 0
+        self.click_keeps = click_keeps
+
+    enc_selectable = _Value.enc_selectable
+    enc_highlight = _Value.enc_highlight
+    enc_changed = _Value.enc_changed
+    enc_outer_changed = _Value.enc_outer_changed
+    enc_clicked = _Value.enc_clicked
+
+    def enc_select(self):
+        self.calls.append(("select",))
+        return True
+
+    def wheelEvent(self, event):
+        self.wheels_seen += 1
+        event.accept()
+
+
+def _wheel_host(qtbot, click_keeps=False):
+    """A screen with NO encoder keys (the Pi-with-a-mouse case): a value at
+    the left, and a bystander (stands in for the map) at the right."""
+    host = _Host()
+    v = _WidgetValue(host, click_keeps=click_keeps)
+    v.setGeometry(0, 0, 160, 60)
+    other = _WidgetValue(host)
+    other.setGeometry(200, 100, 100, 60)
+    host.instruments = {0: v, 1: other}
+    _show(qtbot, host)
+    return host, v, other
+
+
+def _wheel(widget, dy=0, dx=0, shift=False, inverted=False):
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QApplication
+    local = QPointF(10, 10)
+    mods = (Qt.KeyboardModifier.ShiftModifier if shift
+            else Qt.KeyboardModifier.NoModifier)
+    ev = QWheelEvent(local, QPointF(widget.mapToGlobal(local)),
+                     QPoint(0, 0), QPoint(dx, dy), Qt.MouseButton.NoButton,
+                     mods, Qt.ScrollPhase.NoScrollPhase, inverted)
+    QApplication.sendEvent(widget, ev)
+
+
+def _steps(v):
+    return [c for c in v.calls if c[0] in ("fine", "coarse")]
+
+
+def test_wheel_notch_is_one_inner_step_up_increases(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    _wheel(v, dy=120)
+    _wheel(v, dy=-120)
+    _wheel(v, dy=240)
+    assert _steps(v) == [("fine", 1), ("fine", -1), ("fine", 2)]
+    assert v.wheels_seen == 0          # consumed: the value never sees it
+
+
+def test_hi_res_wheel_accumulates_to_one_step_per_notch(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    for _ in range(3):
+        _wheel(v, dy=30)
+    assert _steps(v) == []
+    _wheel(v, dy=30)
+    assert _steps(v) == [("fine", 1)]
+
+
+def test_reversing_drops_the_part_notch(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    _wheel(v, dy=60)
+    _wheel(v, dy=-120)
+    assert _steps(v) == [("fine", -1)]
+
+
+def test_shift_wheel_and_horizontal_wheel_are_the_outer_ring(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    _wheel(v, dy=120, shift=True)
+    _wheel(v, dx=-120, shift=True)     # Shift reported on the x axis
+    _wheel(v, dx=120)                  # tilt wheel
+    assert _steps(v) == [("coarse", 1), ("coarse", -1), ("coarse", 1)]
+
+
+def test_natural_scrolling_steps_by_the_physical_wheel(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    _wheel(v, dy=-120, inverted=True)
+    assert _steps(v) == [("fine", 1)]
+
+
+def test_wheel_over_another_widget_passes_through(qtbot):
+    host, v, other = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    _wheel(other, dy=120)
+    assert _steps(v) == []
+    assert other.wheels_seen == 1      # the map would have zoomed
+    assert host.encoder_control is True
+
+
+def test_real_map_still_zooms_while_a_value_is_focused(fix, qtbot):
+    from pyefis.instruments import map as moving_map
+    host, v, _ = _wheel_host(qtbot)
+    m = moving_map.MovingMap(host)
+    m.range_ladder = "2,5,10,20,40,80,160"
+    m.setGeometry(200, 0, 180, 90)
+    m.show()
+    m.range_nm = 10.0
+    host.encoder_controller.touch_focus(v)
+    _wheel(m, dy=120)                  # wheel up over the map: zoom in
+    assert m.range_nm < 10.0
+    _wheel(m, dy=-240)                 # and back out past where it was
+    assert m.range_nm > 10.0
+    assert _steps(v) == []
+    assert host.encoder_control is True
+
+
+def test_wheel_without_focus_does_nothing(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    _wheel(v, dy=120)
+    assert v.calls == []
+    assert v.wheels_seen == 1          # reaches the widget, as before #321
+    assert host.encoder_control is False
+
+
+def test_wheel_through_the_window_steps_once(qtbot):
+    # A real wheel arrives at the window before the widget, and the filter
+    # sees every hop; one notch must still be exactly one step.
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QApplication
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    pos = QPointF(20, 20)
+    ev = QWheelEvent(pos, QPointF(host.mapToGlobal(pos)), QPoint(0, 0),
+                     QPoint(0, 120), Qt.MouseButton.NoButton,
+                     Qt.KeyboardModifier.NoModifier,
+                     Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(host.windowHandle(), ev)
+    assert _steps(v) == [("fine", 1)]
+
+
+def test_wheel_step_restarts_the_timeout(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_timeout = 200
+    host.encoder_controller.touch_focus(v)
+    for _ in range(4):                 # 4 x 120 ms > one timeout
+        qtbot.wait(120)
+        _wheel(v, dy=120)
+    assert host.encoder_control is True
+
+
+def test_middle_click_on_the_value_is_the_push(qtbot):
+    host, v, _ = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    qtbot.mouseClick(v, Qt.MouseButton.MiddleButton, pos=QPoint(80, 30))
+    assert ("push",) in v.calls
+    assert host.encoder_control is False
+    assert edit_focus.owner() is None
+
+
+def test_middle_click_elsewhere_just_clears_focus(qtbot):
+    host, v, other = _wheel_host(qtbot)
+    host.encoder_controller.touch_focus(v)
+    qtbot.mouseClick(other, Qt.MouseButton.MiddleButton, pos=QPoint(10, 10))
+    assert ("push",) not in v.calls
+    assert host.encoder_control is False
+
+
+def test_wheel_edits_a_real_gauge(fix, qtbot):
+    host = _Host()
+    g = _gauge(fix, host)
+    _show(qtbot, host)
+    qtbot.mouseClick(g, Qt.MouseButton.LeftButton, pos=QPoint(80, 30))
+    start = g.encoder_set_value
+    _wheel(g, dy=240)                  # inner: 2 x 0.01
+    assert g.encoder_set_value == pytest.approx(start + 0.02)
+    _wheel(g, dy=120, shift=True)      # outer: 1 x 0.01 x 10
+    assert g.encoder_set_value == pytest.approx(start + 0.12)
+    qtbot.mouseClick(g, Qt.MouseButton.MiddleButton, pos=QPoint(80, 30))
+    assert g.encoder_selected is False
+    assert fix.db.get_item("NUMOK").value == pytest.approx(start + 0.12)
+
+
 # --- the shared visual language --------------------------------------------
 
 def test_icon_is_at_most_10px_square():

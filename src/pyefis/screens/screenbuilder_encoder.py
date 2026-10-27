@@ -53,6 +53,11 @@ class EncoderController:
     ``encoder_order``. Entering control by either path claims the panel-wide
     focus (``edit_focus.claim``): only one value has focus across every
     screen, a press anywhere else releases it, and so does hiding the screen.
+
+    Mouse (pyEfis #321): while a value has focus, the wheel over it is the
+    inner knob, Shift + wheel or a horizontal wheel the outer ring, and a
+    middle-click the push (:meth:`wheel_turn` / :meth:`wheel_push`, fed by
+    ``edit_focus``). That works on a screen with no encoder keys at all.
     """
 
     def __init__(self, screen):
@@ -340,6 +345,26 @@ class EncoderController:
             return inst.rect().contains(local.toPoint())
         except (AttributeError, RuntimeError):
             return False
+
+    # --- mouse as the knob (pyEfis #321) -------------------------------------
+
+    def wheel_turn(self, steps, outer=False):
+        """The mouse wheel turned ``steps`` notches over the focused value:
+        the inner knob, or the outer ring when ``outer``, through the same
+        path as an encoder step (so the timeout restarts the same way). The
+        ENC FIX keys are not written; this is local input, like a touch."""
+        if self.focused_instrument() is None:
+            return
+        if outer:
+            self.outer_changed(steps)
+        else:
+            self.changed(steps)
+
+    def wheel_push(self, pressed):
+        """Middle button down/up over the focused value: the knob push."""
+        if pressed and self.focused_instrument() is None:
+            return
+        self.button_changed(bool(pressed))
 
     def focused_instrument(self):
         """The instrument holding edit focus on this screen, or None."""
