@@ -107,6 +107,23 @@ _ROW_MENU_ITEMS = (
 )
 _ROLE_MENU_ORDER = ("none", "iaf", "faf", "map", "mahp")
 
+# RS3 (AER-3792, brief route_segments_plan.md section 6): a tap on an airway's
+# segment row opens this menu instead of the per-fix one. PA7 reuses the row
+# and the menu for procedures with its own verbs.
+_SEG_MENU_ITEMS = (
+    ("Change Exit", "_seg_menu_change_exit"),
+    ("Change Entry", "_seg_menu_change_entry"),
+    ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Activate", "_seg_menu_activate"),
+    ("Remove Airway", "_seg_menu_remove"),
+)
+# One fix inside a segment: from a nested working row or the Show Fixes sheet.
+_SEG_FIX_MENU_ITEMS = (
+    ("Direct To", "_seg_fix_direct_to"),
+    ("Activate Leg", "_seg_fix_activate_leg"),
+    ("WPT Info", "_seg_fix_wpt_info"),
+)
+
 # Every text size below is a fraction of some *height* (header/footer/row/box),
 # while the rects the text sits in are fractions of the *width*. In a pane
 # taller than it is wide (the Beelink's ~657x1003 Flight Plan tab) the text
@@ -173,7 +190,12 @@ class FlightPlan(QWidget):
         # the selected fix -> pick an exit fix -> AirwayGraph.expand() inserts
         # the intermediate fixes collapsed into one row (brief section 3.5).
         self._airway_picker = None
-        self._expanded_airway_groups = set()
+
+        # RS3 segment rows (AER-3792): the segment menu and the Show Fixes
+        # sheet are keyed by segment index; the fix menu by flat index.
+        self._seg_menu = None
+        self._seg_fixes = None
+        self._seg_fix_menu = None
 
         self._entry_mode = None
         self._entry_field = ""
@@ -271,6 +293,9 @@ class FlightPlan(QWidget):
             return
         if page == "fpl":
             self._row_menu_index = None
+            self._seg_menu = None
+            self._seg_fixes = None
+            self._seg_fix_menu = None
             self._menu_open = False
             self._wpt_info = None
             self._close_entry()
@@ -731,43 +756,196 @@ class FlightPlan(QWidget):
         self._plan_dirty = True
         self._commit()
 
-    def _row_groups(self):
-        """Partitions ``self._plan.waypoints`` into ``(start, end, ident)``
-        runs: a plain row (``start == end``, ``ident is None``) or the fixes
-        of an airway segment after its entry fix -- one collapsible group,
-        regardless of how it currently displays. The entry fix stays its own
-        row, as PA6 drew it; RS3 redesigns these rows."""
-        groups = []
+    # -- FPL page: segment rows (RS3, AER-3792) --------------------------------
+    def _active_index(self):
+        active_leg = self._engine_value("FPLACTLEG")
+        return int(active_leg) - 1 if active_leg else None
+
+    def _display_rows(self, active_idx):
+        """What the list draws, top to bottom (brief section 6).
+
+        ``("wpt", i)`` is one plain fix. An airway is its entry fix as a plain
+        row (the leg into it is not part of the airway) and then one
+        ``("seg", k)`` row standing for every leg inside it. When the active
+        leg is one of those, the segment opens into nested working rows --
+        ``("fix", i, role)`` for the FROM fix, the active TO fix and the next
+        fix -- and the rest ahead fold into ``("fold", k, n)``. Passed fixes
+        before FROM are not repeated: the header still names the entry."""
+        rows = []
         for k, seg in enumerate(self._plan.segments):
             first, last = self._plan.segment_span(k)
-            if seg.kind == "airway":
-                groups.append((first, first, None))
-                groups.append((first + 1, last, seg.ident))
-            else:
-                groups.extend((i, i, None) for i in range(first, last + 1))
-        return groups
+            if seg.kind != "airway":
+                rows.extend(("wpt", i) for i in range(first, last + 1))
+                continue
+            rows.append(("wpt", first))
+            rows.append(("seg", k))
+            if active_idx is None or not (first < active_idx <= last):
+                continue
+            rows.append(("fix", active_idx - 1, "from"))
+            rows.append(("fix", active_idx, "to"))
+            if active_idx + 1 <= last:
+                rows.append(("fix", active_idx + 1, "next"))
+            ahead = last - (active_idx + 1)
+            if ahead > 0:
+                rows.append(("fold", k, ahead))
+        return rows
 
-    def _group_key(self, group):
-        start, end, ident = group
-        rows = self._plan.waypoints
-        return (rows[start].id, ident, rows[end].id)
+    def _segment_active(self, k, active_idx):
+        first, last = self._plan.segment_span(k)
+        return active_idx is not None and first < active_idx <= last
 
-    def _group_expanded(self, group):
-        return group[2] is not None and self._group_key(group) in self._expanded_airway_groups
+    def _segment_color(self, k, active_idx):
+        first, last = self._plan.segment_span(k)
+        if active_idx is None or active_idx <= first:
+            return self.future_color
+        if active_idx <= last:
+            return self.active_color
+        return self.past_color
 
-    def _toggle_airway_group(self, key):
-        if key in self._expanded_airway_groups:
-            self._expanded_airway_groups.discard(key)
-        else:
-            self._expanded_airway_groups.add(key)
+    def _segment_length(self, k):
+        first, last = self._plan.segment_span(k)
+        return sum(self._plan.leg(i)[1] for i in range(first, last))
+
+    @staticmethod
+    def _mea_text(wp):
+        alt = (wp.alt or "").strip()
+        return alt.lstrip("+") if alt.startswith("+") else alt
+
+    def _segment_mea(self, k):
+        """Highest leg minimum inside the segment -- the altitude that keeps
+        the whole airway legal, which is what a pilot wants in one number."""
+        seg = self._plan.segments[k]
+        meas = []
+        for wp in seg.legs[1:]:
+            try:
+                meas.append(int(self._mea_text(wp)))
+            except ValueError:
+                pass
+        return max(meas) if meas else None
+
+    def _magvar(self):
+        return self._bridge._magvar() if self._bridge.available else 0.0
+
+    def _leg_in(self, i):
+        """``(dtk_magnetic, dist_nm)`` of the leg INTO flat fix *i*, or None
+        for the first fix. Magnetic with the bridge's MAGVAR -- the same
+        conversion the engine applies to ``FPLCRS`` (positive west,
+        MAG = TRUE + VAR), so the active row's DTK equals ``FPLCRS``."""
+        if i <= 0:
+            return None
+        wp = self._plan.waypoints[i]
+        dtk_true, dist = self._plan.leg(i - 1)
+        dtk = wp.crs if wp.crs is not None else (dtk_true + self._magvar()) % 360.0
+        return dtk, dist
+
+    # -- segment menu ------------------------------------------------------------
+    def _open_seg_menu(self, k):
+        self._seg_menu = k
         self.update()
 
-    def _group_row_color(self, start, end, active_idx):
-        if active_idx is None:
-            return self.future_color
-        if start <= active_idx <= end:
-            return self.active_color
-        return self.future_color if active_idx < start else self.past_color
+    def _close_seg_menu(self):
+        self._seg_menu = None
+        self.update()
+
+    def _seg_menu_change_exit(self):
+        self._open_segment_picker(self._seg_menu, "exit")
+
+    def _seg_menu_change_entry(self):
+        self._open_segment_picker(self._seg_menu, "entry")
+
+    def _open_segment_picker(self, k, end):
+        seg = self._plan.segments[k]
+        self._seg_menu = None
+        keep = seg.entry if end == "exit" else seg.exit
+        legs = [leg for leg in self._ensure_airway_graph().legs(seg.ident)
+                if leg.fix_id.strip().upper() != keep.strip().upper()]
+        if not legs:
+            self._message = f"NO OTHER FIXES ON {seg.ident}"
+            self.update()
+            return
+        self._airway_picker = {"stage": f"change_{end}", "seg": k, "ident": seg.ident,
+                                "legs": legs, "message": ""}
+        self.update()
+
+    def _segment_picker_pick(self, fix_id):
+        picker = self._airway_picker
+        graph = self._ensure_airway_graph()
+        try:
+            if picker["stage"] == "change_exit":
+                self._plan.change_exit(picker["seg"], fix_id, graph)
+            else:
+                self._plan.change_entry(picker["seg"], fix_id, graph)
+        except fp_model.FlightPlanError as e:
+            picker["message"] = str(e)
+            self.update()
+            return
+        self._airway_picker = None
+        self._plan_dirty = True
+        self._commit()
+
+    def _seg_menu_show_fixes(self):
+        k = self._seg_menu
+        self._seg_menu = None
+        self._open_seg_fixes(k)
+
+    def _open_seg_fixes(self, k):
+        self._seg_fixes = k
+        self.update()
+
+    def _close_seg_fixes(self):
+        self._seg_fixes = None
+        self.update()
+
+    def _seg_menu_activate(self):
+        # "Activate (to entry)": fly to the airway's entry fix, so the
+        # sequencer then carries on into the airway.
+        first, _ = self._plan.segment_span(self._seg_menu)
+        self._close_seg_menu()
+        if self._bridge.available:
+            self._bridge.command("ACT", first + 1)
+
+    def _seg_menu_remove(self):
+        k = self._seg_menu
+        self._close_seg_menu()
+        try:
+            self._plan.remove_segment(k)
+        except fp_model.FlightPlanError as e:
+            self._message = str(e)
+            self.update()
+            return
+        self._plan_dirty = True
+        self._commit()
+
+    # -- one fix inside a segment -------------------------------------------------
+    def _open_seg_fix_menu(self, i):
+        self._seg_fix_menu = i
+        self.update()
+
+    def _close_seg_fix_menu(self):
+        self._seg_fix_menu = None
+        self.update()
+
+    def _seg_fix_direct_to(self):
+        i = self._seg_fix_menu
+        self._seg_fix_menu = None
+        self._seg_fixes = None
+        if self._bridge.available:
+            self._bridge.stage_direct_to(self._plan.waypoints[i])
+            self._bridge.command("DTO", i + 1)
+        self.update()
+
+    def _seg_fix_activate_leg(self):
+        i = self._seg_fix_menu
+        self._seg_fix_menu = None
+        self._seg_fixes = None
+        if self._bridge.available:
+            self._bridge.command("ACT", i + 1)
+        self.update()
+
+    def _seg_fix_wpt_info(self):
+        i = self._seg_fix_menu
+        self._seg_fix_menu = None
+        self._open_wpt_info(self._plan.waypoints[i])
 
     # -- FPL page: footer / menu ---------------------------------------------
     def _footer_add(self):
@@ -1505,7 +1683,8 @@ class FlightPlan(QWidget):
                 self._modal is not None, None if picker is None else picker["stage"],
                 bool(self._entry_dupe_choices), self._catalog_row_menu,
                 self._catalog_confirm is not None, self._dto_tab,
-                self._dto_target is not None)
+                self._dto_target is not None, self._seg_menu, self._seg_fixes,
+                self._seg_fix_menu)
 
     def _enc_prepare(self):
         self._enc_refresh()
@@ -1612,6 +1791,14 @@ class FlightPlan(QWidget):
             self._cancel_dupe_chooser()
         elif self._row_menu_index is not None:
             self._close_row_menu()
+        elif self._seg_menu is not None:
+            self._close_seg_menu()
+        elif self._wpt_info is not None and self._seg_fixes is not None:
+            self._close_wpt_info()
+        elif self._seg_fix_menu is not None:
+            self._close_seg_fix_menu()
+        elif self._seg_fixes is not None:
+            self._close_seg_fixes()
         elif self._menu_open:
             self._close_menu()
         elif self._wpt_info is not None:
@@ -1823,12 +2010,22 @@ class FlightPlan(QWidget):
 
         if self._row_menu_index is not None:
             self._paint_row_menu(p, w, h)
+        elif self._seg_menu is not None:
+            self._paint_seg_menu(p, w, h)
         elif self._menu_open:
             self._paint_menu(p, w, h)
-        elif self._wpt_info is not None:
-            self._paint_wpt_info(p, w, h)
-            if self._modal is not None:
-                self._paint_modal(p, w, h)
+        elif self._seg_fixes is not None or self._wpt_info is not None:
+            # WPT Info opened from the Show Fixes sheet stacks on top of it.
+            if self._seg_fixes is not None:
+                self._paint_seg_fixes(p, w, h)
+                if self._seg_fix_menu is not None:
+                    self._paint_seg_fix_menu(p, w, h)
+            if self._wpt_info is not None:
+                self._paint_wpt_info(p, w, h)
+                if self._modal is not None:
+                    self._paint_modal(p, w, h)
+        elif self._seg_fix_menu is not None:
+            self._paint_seg_fix_menu(p, w, h)
         elif self._airway_picker is not None:
             self._paint_airway_picker(p, w, h)
 
@@ -1877,18 +2074,36 @@ class FlightPlan(QWidget):
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "LOI")
 
     def _column_text(self, col, i, active_idx):
-        n = len(self._plan.waypoints)
+        """Column *col* of flat fix *i*. DTK and DIS are the leg INTO the fix
+        (the leg you fly to reach it), so the active TO row carries the
+        engine's ``FPLCRS``; CUM is the distance from the first fix to it."""
         try:
-            if col == "DTK":
-                return f"{self._plan.leg(i)[0]:03.0f}" if i < n - 1 else ""
-            if col == "DIS":
-                return f"{self._plan.leg(i)[1]:.0f}" if i < n - 1 else ""
+            if col in ("DTK", "DIS"):
+                leg = self._leg_in(i)
+                if leg is None:
+                    return ""
+                return f"{leg[0]:03.0f}°" if col == "DTK" else f"{leg[1]:.0f}"
             if col == "CUM":
                 return f"{self._plan.cumulative(i):.0f}"
             if col == "ETE":
                 return self._fmt_ete(self._engine_value("WPETE")) if i == active_idx else ""
             if col == "ETA":
                 return ""
+        except fp_model.FlightPlanError:
+            return ""
+        return ""
+
+    def _segment_column_text(self, col, k, active_idx):
+        """A segment row's columns: DTK blank (an airway changes course), DIS
+        the segment's own length, CUM to its exit fix."""
+        try:
+            if col == "DIS":
+                return f"{self._segment_length(k):.0f}"
+            if col == "CUM":
+                return f"{self._plan.cumulative(self._plan.segment_span(k)[1]):.0f}"
+            if col == "ETE":
+                return (self._fmt_ete(self._engine_value("WPETE"))
+                        if self._segment_active(k, active_idx) else "")
         except fp_model.FlightPlanError:
             return ""
         return ""
@@ -1910,10 +2125,41 @@ class FlightPlan(QWidget):
                                       QPointF(cx - r, cy + r)]))
         p.restore()
 
+    def _columns(self):
+        cols = [c.strip().upper() for c in (self.columns or "").split(",") if c.strip()]
+        return [c for c in cols if c in COLUMN_CHOICES] or ["DTK", "DIS", "CUM"]
+
+    @staticmethod
+    def _column_rects(w, cols):
+        col_w = (w * 0.55) / len(cols)
+        return [(w * 0.42 + n * col_w, col_w) for n in range(len(cols))]
+
+    def _paint_column_headers(self, p, w, top, hh, row_h, cols):
+        """RS3: the list finally says what its numbers are."""
+        _, _, lx = self._row_icon_geometry(row_h)
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(row_h * 0.36), 8))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#9a9a9a")))
+        p.drawText(QRectF(lx, top, w * 0.4, hh),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "WPT / SEGMENT")
+        for c, (cx, cw) in zip(cols, self._column_rects(w, cols)):
+            p.drawText(QRectF(cx, top, cw, hh),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, c)
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(0, top + hh - 1), QPointF(w, top + hh - 1))
+
+    def _list_metrics(self, top, bottom, max_row_h, n_rows):
+        """``(header_h, row_h)``. The header strip is half a physical row;
+        rows size off the count of DISPLAY rows, not of fixes, so a folded
+        airway never steals the height every other row gets."""
+        hh = max(14.0, max_row_h * 0.5)
+        row_h = max(14, min((bottom - top - hh) / max(n_rows, 1), max_row_h))
+        return hh, row_h
+
     def _paint_list(self, p, w, top, bottom, max_row_h, interactive):
         rows = self._plan.waypoints
-        n = len(rows)
-        if n == 0:
+        if not rows:
             p.setPen(QPen(QColor("#808080")))
             f = QFont(self.font_family)
             f.setPixelSize(self._px(min(int((bottom - top) * 0.08), int(max_row_h * 0.5)), 10))
@@ -1922,43 +2168,36 @@ class FlightPlan(QWidget):
                        Qt.AlignmentFlag.AlignCenter, "NO WAYPOINTS")
             return
 
-        active_leg = self._engine_value("FPLACTLEG")
-        active_idx = int(active_leg) - 1 if active_leg else None
-        cols = [c.strip().upper() for c in (self.columns or "").split(",") if c.strip()]
-        cols = [c for c in cols if c in COLUMN_CHOICES] or ["DTK", "DIS", "CUM"]
+        active_idx = self._active_index()
+        cols = self._columns()
+        display = self._display_rows(active_idx)
+        hh, row_h = self._list_metrics(top, bottom, max_row_h, len(display))
+        self._paint_column_headers(p, w, top, hh, row_h, cols)
 
-        # A collapsed airway group (PA6) is ONE visible row regardless of how
-        # many fixes it spans; an expanded one is its member count. Sizing off
-        # the visible count, not `n`, is what keeps a collapsed "V27 -> RZS"
-        # from stealing the row height every other leg gets.
-        groups = self._row_groups()
-        visible = sum((g[1] - g[0] + 1) if self._group_expanded(g) else 1 for g in groups)
-
-        # Cap the row height so a near-empty plan doesn't stretch one or two
-        # rows into a grotesquely oversized icon/font -- a real 50-slot plan
-        # is what sizes rows down to fit, not the list area's leftover space.
-        row_h = max(14, min((bottom - top) / max(visible, 1), max_row_h))
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(row_h * 0.5), 9))
-        p.setFont(f)
-
-        y = top
-        for start, end, ident in groups:
-            if ident is not None and not self._group_expanded((start, end, ident)):
-                rh = min(row_h, bottom - y)
-                if rh <= 0:
-                    break
-                self._paint_airway_summary_row(p, w, y, rh, start, end, ident, active_idx,
-                                                cols, interactive)
-                y += rh
-                continue
-            for i in range(start, end + 1):
-                rh = min(row_h, bottom - y)
-                if rh <= 0:
-                    break
-                toggle = (start, end, ident) if (ident is not None and i == start) else None
-                self._paint_one_row(p, w, y, rh, i, rows[i], active_idx, cols, interactive, toggle)
-                y += rh
+        y = top + hh
+        nest_top = None
+        for row in display:
+            rh = min(row_h, bottom - y)
+            if rh <= 0:
+                break
+            p.setFont(f)
+            kind = row[0]
+            if kind == "wpt":
+                self._paint_one_row(p, w, y, rh, row[1], rows[row[1]], active_idx, cols,
+                                    interactive)
+            elif kind == "seg":
+                self._paint_segment_row(p, w, y, rh, row[1], active_idx, cols, interactive)
+                nest_top = y + rh
+            elif kind == "fix":
+                self._paint_nested_fix_row(p, w, y, rh, row[1], row[2], active_idx, cols,
+                                           interactive)
+                self._paint_nest_guide(p, rh, nest_top, y)
+            elif kind == "fold":
+                self._paint_fold_row(p, w, y, rh, row[1], row[2], interactive)
+                self._paint_nest_guide(p, rh, nest_top, y)
+            y += rh
 
     def _row_icon_geometry(self, rh):
         # Centre must clear its own radius: the original
@@ -1972,7 +2211,31 @@ class FlightPlan(QWidget):
         lx = max(rh * 0.5, icx + ir + 8.0)
         return ir, icx, lx
 
-    def _paint_one_row(self, p, w, y, rh, i, wp, active_idx, cols, interactive, toggle):
+    def _nest_indent(self, rh):
+        """How far a segment's working rows sit right of a plain row: one
+        icon column, so the nested icons line up under the header's label."""
+        ir, icx, lx = self._row_icon_geometry(rh)
+        return lx - (icx - ir)
+
+    def _paint_nest_guide(self, p, rh, nest_top, y):
+        """The tree line: a vertical rule down from the segment header's icon
+        and a short tick into each nested row."""
+        if nest_top is None:
+            return
+        ir, icx, _ = self._row_icon_geometry(rh)
+        mid = y + rh / 2
+        p.save()
+        p.setPen(QPen(QColor("#5a5a5a"), 2))
+        p.drawLine(QPointF(icx, y if y > nest_top else nest_top - rh * 0.2), QPointF(icx, mid))
+        p.drawLine(QPointF(icx, mid), QPointF(icx + self._nest_indent(rh) - ir - 4, mid))
+        p.restore()
+
+    def _paint_row_columns(self, p, w, y, rh, cols, texts):
+        for (cx, cw), text in zip(self._column_rects(w, cols), texts):
+            p.drawText(QRectF(cx, y, cw, rh),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
+
+    def _paint_one_row(self, p, w, y, rh, i, wp, active_idx, cols, interactive):
         p.setPen(QPen(QColor(self._row_color(i, active_idx))))
         ir, icx, lx = self._row_icon_geometry(rh)
         self._draw_type_icon(p, icx, y + rh / 2, ir, wp.type)
@@ -1981,56 +2244,102 @@ class FlightPlan(QWidget):
         role = ROLE_ABBREV.get(wp.role, "")
         if role:
             label = f"{label} {role}"
-        ident = (wp.extra or {}).get("airway")
-        if ident:
-            label = f"{label} {ident}"
-        p.drawText(QRectF(lx, y, w * 0.35, rh),
+        p.drawText(QRectF(lx, y, w * 0.4 - lx, rh),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
-
-        col_w = (w * 0.55) / len(cols)
-        cx = w * 0.42
-        for c in cols:
-            p.drawText(QRectF(cx, y, col_w, rh),
-                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       self._column_text(c, i, active_idx))
-            cx += col_w
-
+        self._paint_row_columns(p, w, y, rh, cols,
+                                [self._column_text(c, i, active_idx) for c in cols])
         if interactive:
             self._tap(0, y, w, rh, (lambda idx=i: self._open_row_menu(idx)), "row")
-            if toggle is not None:
-                # An expanded group's first row also collapses it, in a tap
-                # target confined to the icon so the rest of the row still
-                # opens that fix's own row menu (mousePressEvent hit-tests in
-                # reverse registration order, so this later target wins).
-                toggle_w = icx + ir + 4.0
-                self._tap(0, y, toggle_w, rh,
-                          (lambda g=toggle: self._toggle_airway_group(self._group_key(g))))
 
-    def _paint_airway_summary_row(self, p, w, y, rh, start, end, ident, active_idx, cols,
-                                   interactive):
-        p.setPen(QPen(QColor(self._group_row_color(start, end, active_idx))))
+    def _draw_airway_icon(self, p, cx, cy, r):
+        """A segment's glyph: a short dog-leg route through three fixes, so
+        it never reads as one of the fix-type shapes."""
+        p.save()
+        color = p.pen().color()
+        p.setPen(QPen(color, max(2.0, r * 0.22)))
+        pts = [QPointF(cx - r, cy + r * 0.55), QPointF(cx - r * 0.15, cy - r * 0.55),
+               QPointF(cx + r * 0.35, cy + r * 0.25), QPointF(cx + r, cy - r * 0.55)]
+        p.drawPolyline(QPolygonF(pts))
+        p.setBrush(QBrush(color))
+        p.setPen(Qt.PenStyle.NoPen)
+        for pt in pts:
+            p.drawEllipse(pt, r * 0.2, r * 0.2)
+        p.restore()
+
+    def _paint_segment_row(self, p, w, y, rh, k, active_idx, cols, interactive):
+        """One airway: ident and entry -> exit on the first line, the fix
+        count and MEA beneath it in a smaller face. Same geometry whether or
+        not the segment is active, so opening it never shifts the row."""
+        seg = self._plan.segments[k]
+        color = QColor(self._segment_color(k, active_idx))
+        p.setPen(QPen(color))
         ir, icx, lx = self._row_icon_geometry(rh)
-        self._draw_type_icon(p, icx, y + rh / 2, ir, "fix")
+        self._draw_airway_icon(p, icx, y + rh / 2, ir)
 
-        exit_id = self._plan.waypoints[end].id
-        label = f"{ident} → {exit_id}"
-        p.drawText(QRectF(lx, y, w * 0.35, rh),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        top_h = rh * 0.58
+        base = p.font()
+        bold = QFont(base)
+        bold.setBold(True)
+        p.setFont(bold)
+        ident_w = p.fontMetrics().horizontalAdvance(seg.ident + "  ")
+        p.drawText(QRectF(lx, y, w * 0.42 - lx, top_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, seg.ident)
+        p.setFont(base)
+        p.drawText(QRectF(lx + ident_w, y, w * 0.42 - lx - ident_w, top_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                   f"{seg.entry} → {seg.exit}")
 
-        # The collapsed row stands in for its last member: DTK/DIS are the
-        # leg leaving `end` (same meaning every other row's DTK/DIS carries),
-        # and CUM/ETE follow the same convention -- see `_column_text`.
-        col_w = (w * 0.55) / len(cols)
-        cx = w * 0.42
-        for c in cols:
-            p.drawText(QRectF(cx, y, col_w, rh),
-                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       self._column_text(c, end, active_idx))
-            cx += col_w
-
+        detail = f"{len(seg.legs)} fixes"
+        mea = self._segment_mea(k)
+        if mea is not None:
+            detail += f"   MEA {mea}"
+        small = QFont(base)
+        small.setPixelSize(max(9, int(base.pixelSize() * 0.86)))
+        p.setFont(small)
+        dim = QColor(color)
+        dim.setAlpha(190)
+        p.setPen(QPen(dim))
+        p.drawText(QRectF(lx, y + top_h, w * 0.42 - lx, rh - top_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, detail)
+        p.setFont(base)
+        p.setPen(QPen(color))
+        # Columns share line 1's baseline, so they read with the ident.
+        for (cx, cw), c in zip(self._column_rects(w, cols), cols):
+            p.drawText(QRectF(cx, y, cw, top_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
+                       self._segment_column_text(c, k, active_idx))
         if interactive:
-            key = self._group_key((start, end, ident))
-            self._tap(0, y, w, rh, (lambda k=key: self._toggle_airway_group(k)), "row")
+            self._tap(0, y, w, rh, (lambda kk=k: self._open_seg_menu(kk)), "row")
+
+    _NEST_ROLE_TEXT = {"from": "from", "to": "", "next": ""}
+
+    def _paint_nested_fix_row(self, p, w, y, rh, i, role, active_idx, cols, interactive):
+        wp = self._plan.waypoints[i]
+        color = {"from": self.past_color, "to": self.active_color}.get(role, self.future_color)
+        p.setPen(QPen(QColor(color)))
+        ir, icx, lx = self._row_icon_geometry(rh)
+        dx = self._nest_indent(rh)
+        self._draw_type_icon(p, icx + dx, y + rh / 2, ir * 0.85, wp.type)
+        label = wp.id
+        if role == "from":
+            label = f"{wp.id}  (from)"
+        p.drawText(QRectF(lx + dx, y, w * 0.42 - lx - dx, rh),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        if role != "from":
+            self._paint_row_columns(p, w, y, rh, cols,
+                                    [self._column_text(c, i, active_idx) for c in cols])
+        if interactive:
+            self._tap(0, y, w, rh, (lambda idx=i: self._open_seg_fix_menu(idx)), "row")
+
+    def _paint_fold_row(self, p, w, y, rh, k, n, interactive):
+        ir, icx, lx = self._row_icon_geometry(rh)
+        dx = self._nest_indent(rh)
+        p.setPen(QPen(QColor("#00ffff")))
+        p.drawText(QRectF(lx + dx, y, w * 0.9 - lx - dx, rh),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"+ {n} more  ▸")
+        if interactive:
+            self._tap(0, y, w, rh, (lambda kk=k: self._open_seg_fixes(kk)), "row")
 
     def _paint_footer(self, p, w, top, footer_h, interactive):
         p.setPen(QPen(QColor("#333333")))
@@ -2061,7 +2370,7 @@ class FlightPlan(QWidget):
         self._menu_scroll[key] = (n_items, offset + delta)
         self.update()
 
-    def _paint_menu_list(self, p, w, h, items, on_cancel, scroll_key=None):
+    def _paint_menu_list(self, p, w, h, items, on_cancel, scroll_key=None, title=None):
         """Popup menu of *items* (label, callback) plus a trailing Cancel row.
 
         Row height is physical (``_row_h_cap()``), not a fraction of the
@@ -2111,6 +2420,12 @@ class FlightPlan(QWidget):
         f.setPixelSize(self._px(int(item_h * 0.4), 10))
         p.setFont(f)
         box_h = item_h * box_rows
+        if title:
+            # Names what the menu acts on (RS3: which airway). Sits above
+            # the box so the item rows keep their physical pitch.
+            p.setPen(QPen(QColor("#ffffff")))
+            p.drawText(QRectF(box_x - w * 0.1, box_top - item_h, box_w + w * 0.2, item_h),
+                       Qt.AlignmentFlag.AlignCenter, title)
         p.setPen(QPen(QColor("#ffffff")))
         p.setBrush(QBrush(QColor("#202020")))
         p.drawRect(QRectF(box_x, box_top, box_w, box_h))
@@ -2158,6 +2473,132 @@ class FlightPlan(QWidget):
             items.append((label, self._open_role_menu if attr is None else getattr(self, attr)))
         self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu")
 
+    def _segment_title(self, k):
+        seg = self._plan.segments[k]
+        return f"{seg.ident}  {seg.entry} → {seg.exit}"
+
+    def _paint_seg_menu(self, p, w, h):
+        self._paint_overlay_backdrop(p, w, h)
+        k = self._seg_menu
+        first, _ = self._plan.segment_span(k)
+        items = []
+        for label, attr in _SEG_MENU_ITEMS:
+            if attr == "_seg_menu_activate":
+                label = f"Activate to {self._plan.waypoints[first].id}"
+            items.append((label, getattr(self, attr)))
+        self._paint_menu_list(p, w, h, items, self._close_seg_menu, scroll_key="seg_menu",
+                              title=self._segment_title(k))
+
+    def _paint_seg_fix_menu(self, p, w, h):
+        self._paint_overlay_backdrop(p, w, h)
+        i = self._seg_fix_menu
+        items = [(label, getattr(self, attr)) for label, attr in _SEG_FIX_MENU_ITEMS]
+        self._paint_menu_list(p, w, h, items, self._close_seg_fix_menu,
+                              scroll_key="seg_fix_menu", title=self._plan.waypoints[i].id)
+
+    def _seg_fixes_scroll_by(self, delta):
+        self._menu_scroll_by("seg_fixes", delta)
+
+    def _paint_seg_fixes(self, p, w, h):
+        """Show Fixes: every fix of one airway, read-only, with the leg course
+        (magnetic), distance and MEA of the leg into it. A tap on a fix opens
+        the one-fix menu (Direct To, Activate Leg, WPT Info) -- per-fix access
+        without putting every fix on the route list."""
+        self._paint_overlay_backdrop(p, w, h)
+        k = self._seg_fixes
+        seg = self._plan.segments[k]
+        first, last = self._plan.segment_span(k)
+        active_idx = self._active_index()
+
+        row_h = self._row_h_cap()
+        box_x, box_w = w * 0.04, w * 0.92
+        box_top = h * 0.06
+        box_h = h * 0.88
+        title_h = row_h
+        head_h = row_h * 0.5
+        foot_h = row_h
+        list_top = box_top + title_h + head_h
+        list_h = box_h - title_h - head_h - foot_h
+        n = last - first + 1
+        fit = max(1, int(list_h // row_h))
+        scrollable = n > fit
+        visible = max(1, fit - 1) if scrollable else n
+        stored_n, offset = self._menu_scroll.get("seg_fixes", (n, 0))
+        offset = max(0, min(offset if stored_n == n else 0, n - visible))
+        self._menu_scroll["seg_fixes"] = (n, offset)
+
+        p.setPen(QPen(QColor("#ffffff")))
+        p.setBrush(QBrush(QColor("#202020")))
+        p.drawRect(QRectF(box_x, box_top, box_w, box_h))
+
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(row_h * 0.5), 9))
+        bold = QFont(f)
+        bold.setBold(True)
+        p.setFont(bold)
+        p.drawText(QRectF(box_x + 12, box_top, box_w - 24, title_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._segment_title(k))
+        small = QFont(f)
+        small.setPixelSize(self._px(int(row_h * 0.36), 8))
+        p.setFont(small)
+        p.setPen(QPen(QColor("#9a9a9a")))
+        if seg.cycle:
+            p.drawText(QRectF(box_x + 12, box_top, box_w - 24, title_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       f"AIRAC {seg.cycle}")
+
+        # FIX | CRS | DIS | MEA, columns right-aligned like the route list.
+        col_x = [box_x + box_w * f_ for f_ in (0.40, 0.58, 0.76)]
+        col_w = box_w * 0.18
+        hy = box_top + title_h
+        ir, icx, lx = self._row_icon_geometry(row_h)
+        p.drawText(QRectF(box_x + lx, hy, box_w * 0.3, head_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "FIX")
+        for x, label in zip(col_x, ("CRS", "DIS", "MEA")):
+            p.drawText(QRectF(x, hy, col_w, head_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, label)
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(box_x, hy + head_h - 1), QPointF(box_x + box_w, hy + head_h - 1))
+
+        y = list_top
+        for i in range(first + offset, first + offset + visible):
+            wp = self._plan.waypoints[i]
+            color = self._row_color(i, active_idx)
+            p.setFont(f)
+            p.setPen(QPen(QColor(color)))
+            self._draw_type_icon(p, box_x + icx, y + row_h / 2, ir * 0.85, wp.type)
+            p.drawText(QRectF(box_x + lx, y, box_w * 0.4 - lx, row_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, wp.id)
+            leg = self._leg_in(i) if i > first else None
+            texts = ("", "", "") if leg is None else (
+                f"{leg[0]:03.0f}°", f"{leg[1]:.0f}", self._mea_text(wp))
+            for x, text in zip(col_x, texts):
+                p.drawText(QRectF(x, y, col_w, row_h),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
+            self._tap(box_x, y, box_w, row_h, (lambda idx=i: self._open_seg_fix_menu(idx)), "row")
+            y += row_h
+
+        if scrollable:
+            # Up and down share one row under the list, left and right.
+            half = box_w / 2
+            can_up, can_down = offset > 0, offset + visible < n
+            for n_, (label, ok, d) in enumerate((("▲", can_up, -visible),
+                                                 ("▼", can_down, visible))):
+                rx = box_x + n_ * half
+                p.setPen(QPen(QColor("#00ffff" if ok else "#505050")))
+                p.drawText(QRectF(rx, y, half, row_h), Qt.AlignmentFlag.AlignCenter, label)
+                if ok:
+                    self._tap(rx, y, half, row_h, (lambda dd=d: self._seg_fixes_scroll_by(dd)))
+
+        fy = box_top + box_h - foot_h
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(box_x, fy), QPointF(box_x + box_w, fy))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(box_x, fy, box_w, foot_h), Qt.AlignmentFlag.AlignCenter, "Close")
+        self._tap(box_x, fy, box_w, foot_h, self._close_seg_fixes)
+
     def _paint_airway_picker(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
         picker = self._airway_picker
@@ -2172,7 +2613,9 @@ class FlightPlan(QWidget):
                     lo = leg.min_alt_ft if leg.min_alt_ft is not None else "-"
                     hi = leg.max_alt_ft if leg.max_alt_ft is not None else "-"
                     label = f"{label}  {lo}-{hi}FT"
-                items.append((label, (lambda fid=leg.fix_id: self._airway_picker_pick_exit(fid))))
+                pick = (self._airway_picker_pick_exit if picker["stage"] == "exit"
+                        else self._segment_picker_pick)
+                items.append((label, (lambda fid=leg.fix_id, f=pick: f(fid))))
         self._paint_menu_list(p, w, h, items, self._close_airway_picker,
                                scroll_key=f"airway_picker_{picker['stage']}")
         if picker["message"]:
