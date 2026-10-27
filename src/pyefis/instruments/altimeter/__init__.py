@@ -327,6 +327,9 @@ class Altimeter_Tape(QGraphicsView):
         self.enc_has_outer = False
         self._touch_edit = True
         self._baro_units_hooked = False
+        # Push-to-standard undo (AER-4009): the setting a push replaced, held
+        # until a second push restores it or anything else changes BARO.
+        self._baro_saved = None
         try:
             self._baro_item = fix.db.get_item("BARO")
         except KeyError:
@@ -339,6 +342,7 @@ class Altimeter_Tape(QGraphicsView):
                         self._baro_item.badChanged[bool],
                         self._baro_item.failChanged[bool]):
                 sig.connect(self._baro_repaint)
+            self._baro_item.valueChanged[float].connect(self._baro_value_changed)
 
         self.conversionFunction1 = lambda x: x
         self.conversionFunction2 = lambda x: x
@@ -596,6 +600,12 @@ class Altimeter_Tape(QGraphicsView):
             edit_focus.draw_edit_marks(p, box, focused=self.encoder_selected,
                                        bounds=self._baro_zone())
 
+    def _baro_value_changed(self, value):
+        # Any BARO change drops a saved setting: a knob step on this box,
+        # another display, the gateway, a script. The push's own write lands
+        # here too, which is why baro_set_standard saves only after it.
+        self._baro_saved = None
+
     def _baro_repaint(self, *args):
         if self.baro_shown():
             self._baro_refresh()
@@ -651,8 +661,23 @@ class Altimeter_Tape(QGraphicsView):
         self._write_baro(new)
 
     def baro_set_standard(self):
-        """Push: standard pressure. 29.92 inHg, which reads 1013 in hPa."""
-        self._write_baro(BARO_STD_INHG)
+        """Push: standard pressure, or back to the setting it replaced.
+
+        The first push saves the current BARO and sets standard (29.92 inHg,
+        which reads 1013 in hPa). A second push restores the saved value
+        exactly as it was on the bus. Anything else that changes BARO in
+        between, a knob step on this box or a write from another source,
+        drops the saved value, so a later push sets standard again. Pushed
+        with BARO already at standard (to 0.01 inHg) and nothing saved, it
+        does nothing."""
+        item = self._baro_item
+        if self._baro_saved is not None:
+            saved, self._baro_saved = self._baro_saved, None
+            self._write_baro(saved)
+        elif round(item.value, 2) != BARO_STD_INHG:
+            saved = item.value
+            self._write_baro(BARO_STD_INHG)
+            self._baro_saved = saved    # after the write, which clears it
 
     def _write_baro(self, value):
         self._baro_item.value = value
@@ -738,7 +763,8 @@ class Altimeter_Tape(QGraphicsView):
         return True
 
     def enc_clicked(self):
-        # Push sets standard and keeps focus; the value is live, so there is
+        # Push sets standard, or restores the setting the last push replaced
+        # (baro_set_standard), and keeps focus; the value is live, so there is
         # nothing to accept. Focus clears on the timeout or a touch elsewhere.
         self.baro_set_standard()
         return True

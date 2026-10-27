@@ -3,7 +3,7 @@
 
 BARO stays inHg on the bus. The box shows inHg (29.92) or hPa (1013); the inner
 knob steps 0.01 inHg / 1 hPa, the outer ring 0.10 inHg / 10 hPa, push sets
-standard. In hPa every step must land on a whole hPa after the round trip.
+standard and a second push restores the setting it replaced. In hPa every step must land on a whole hPa after the round trip.
 """
 
 import os
@@ -142,6 +142,129 @@ def test_push_sets_standard(baro, qtbot, hpa):
     assert t.enc_clicked() is True        # keeps focus
     assert baro.value == pytest.approx(29.92)
     assert t.baro_text()[0] == ("1013" if hpa else "29.92")
+
+
+# --- second push restores (AER-4009) -----------------------------------------
+
+@pytest.mark.parametrize("hpa", [False, True])
+def test_second_push_restores_the_exact_prior_setting(baro, qtbot, hpa):
+    t = _tape(qtbot)
+    t.baro_hpa = hpa
+    # An off-grid bus value (another source wrote it): the restore must give
+    # it back bit for bit, not re-rounded to 0.01 inHg or a whole hPa.
+    baro.value = 30.1234567
+    t.enc_clicked()
+    assert baro.value == pytest.approx(29.92)
+    assert t.baro_text()[0] == ("1013" if hpa else "29.92")
+    t.enc_clicked()
+    assert baro.value == 30.1234567
+    # The toggle is one level deep and repeats: standard, back, standard.
+    t.enc_clicked()
+    assert baro.value == pytest.approx(29.92)
+    t.enc_clicked()
+    assert baro.value == 30.1234567
+
+
+def test_second_push_restores_an_hpa_setting_on_its_whole_hpa(baro, qtbot):
+    t = _tape(qtbot)
+    t.baro_hpa = True
+    t.baro_step(-17)                       # 996 hPa
+    before = baro.value
+    t.enc_clicked()
+    assert t.baro_text()[0] == "1013"
+    t.enc_clicked()
+    assert baro.value == before
+    assert _hpa(baro) == pytest.approx(996, abs=1e-9)
+
+
+def test_restore_reaches_the_gateway(baro, qtbot, monkeypatch):
+    sent = []
+    monkeypatch.setattr(baro, "output_value", lambda: sent.append(baro.value))
+    t = _tape(qtbot)
+    baro.value = 30.05
+    t.enc_clicked()
+    t.enc_clicked()
+    assert sent == [pytest.approx(29.92), 30.05]
+
+
+@pytest.mark.parametrize("coarse", [False, True])
+def test_knob_turn_after_push_clears_the_saved_setting(baro, qtbot, coarse):
+    t = _tape(qtbot)
+    baro.value = 30.05
+    t.enc_clicked()                        # standard, 30.05 saved
+    t.baro_step(1, coarse=coarse)          # 29.93 / 30.02
+    t.baro_step(-1, coarse=coarse)         # back on 29.92
+    t.enc_clicked()
+    # Already standard with nothing saved: no-op, 30.05 is not resurrected.
+    assert baro.value == pytest.approx(29.92)
+    t.baro_step(3)
+    t.enc_clicked()
+    assert baro.value == pytest.approx(29.92)
+    t.enc_clicked()
+    assert baro.value == pytest.approx(29.95)
+
+
+def test_external_baro_change_clears_the_saved_setting(baro, qtbot):
+    t = _tape(qtbot)
+    baro.value = 30.05
+    t.enc_clicked()                        # standard, 30.05 saved
+    baro.value = 29.80                     # another display / the gateway
+    t.enc_clicked()                        # standard again, 29.80 saved
+    assert baro.value == pytest.approx(29.92)
+    t.enc_clicked()
+    assert baro.value == pytest.approx(29.80)
+
+
+def test_external_write_back_to_standard_still_clears(baro, qtbot):
+    t = _tape(qtbot)
+    baro.value = 30.05
+    t.enc_clicked()                        # standard, 30.05 saved
+    baro.value = 30.10                     # elsewhere: changed ...
+    baro.value = 29.92                     # ... and back to standard
+    t.enc_clicked()
+    assert baro.value == pytest.approx(29.92)   # no-op, nothing saved
+
+
+def test_gateway_echo_of_our_own_write_keeps_the_saved_setting(baro, qtbot):
+    t = _tape(qtbot)
+    baro.value = 30.05
+    t.enc_clicked()
+    baro.value = baro.value                # same value back: no valueChanged
+    t.enc_clicked()
+    assert baro.value == 30.05
+
+
+@pytest.mark.parametrize("hpa", [False, True])
+def test_push_at_standard_with_nothing_saved_is_a_no_op(baro, qtbot, hpa,
+                                                        monkeypatch):
+    sent = []
+    monkeypatch.setattr(baro, "output_value", lambda: sent.append(baro.value))
+    t = _tape(qtbot)
+    t.baro_hpa = hpa
+    assert t.enc_clicked() is True         # still keeps focus
+    assert t.enc_clicked() is True
+    assert baro.value == 29.92
+    assert sent == []
+
+
+def test_saved_setting_survives_a_unit_switch(baro, qtbot):
+    t = _tape(qtbot)
+    baro.value = 30.05
+    t.enc_clicked()
+    t.baro_hpa = True                      # display only; BARO is unchanged
+    t.enc_clicked()
+    assert baro.value == 30.05
+    assert t.baro_text()[0] == str(int(round(30.05 * K)))
+
+
+def test_two_tapes_keep_their_own_saved_setting(baro, qtbot):
+    a, b = _tape(qtbot), _tape(qtbot)
+    baro.value = 30.05
+    a.enc_clicked()                        # a saves 30.05; to b it is external
+    b.enc_clicked()                        # standard already, nothing saved
+    assert baro.value == pytest.approx(29.92)
+    a.enc_clicked()
+    assert baro.value == 30.05
 
 
 def test_steps_are_sent_to_the_gateway(baro, qtbot, monkeypatch):
