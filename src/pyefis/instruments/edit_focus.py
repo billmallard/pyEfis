@@ -191,19 +191,86 @@ def draw_edit_marks(painter, value_rect, focused, bounds=None):
 
 # --- panel-wide single focus ------------------------------------------------
 
+# One wheel notch, in QWheelEvent.angleDelta() units (eighths of a degree).
+WHEEL_NOTCH = 120
+
+_MIDDLE_PRESS = (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick)
+
+
 class _TouchAwayFilter(QObject):
     """Application event filter, installed only while a value has focus: a
     press that does not land on the focused value releases focus. It never
-    consumes the event, so the press still reaches whatever was touched (which
-    may itself take focus)."""
+    consumes the press, so it still reaches whatever was touched (which may
+    itself take focus).
+
+    It is also the mouse's knob (pyEfis #321). Over the focused value the
+    wheel is the inner knob, Shift + wheel or a horizontal wheel the outer
+    ring, and a middle-click the push; those events are consumed. Anywhere
+    else they pass through untouched, so the map keeps its wheel zoom."""
+
+    def __init__(self):
+        super().__init__()
+        self._wheel_acc = {False: 0, True: 0}   # outer? -> pending eighths
+        self._middle_down = False
 
     def eventFilter(self, obj, event):
         t = event.type()
+        owner = _owner
+        if owner is None:
+            return False
         if t in (QEvent.Type.MouseButtonPress, QEvent.Type.TouchBegin):
-            owner = _owner
-            if owner is not None and not owner.focus_hit(_global_pos(event)):
+            if not owner.focus_hit(_global_pos(event)):
                 owner.release_focus()
+                return False
+        # The window sees each mouse event before the widget under the
+        # pointer does; act once, at the widget.
+        if not obj.isWidgetType():
+            return False
+        if t == QEvent.Type.Wheel:
+            return self._wheel(owner, event)
+        if t in _MIDDLE_PRESS or t == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.MiddleButton:
+                return self._middle(owner, event, t in _MIDDLE_PRESS)
         return False
+
+    def _wheel(self, owner, event):
+        turn = getattr(owner, "wheel_turn", None)
+        if not callable(turn) or not owner.focus_hit(_global_pos(event)):
+            return False
+        d = event.angleDelta()
+        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        # Some platforms report Shift + wheel on the x axis; take whichever
+        # axis moved. A horizontal wheel alone is the outer ring too.
+        outer = shift or not d.y()
+        delta = d.y() or d.x()
+        if event.inverted():   # natural scrolling: step by the physical wheel
+            delta = -delta
+        if delta:
+            acc = self._wheel_acc[outer]
+            if (acc < 0) != (delta < 0):
+                acc = 0        # reversing drops the unspent part-notch
+            acc += delta
+            steps = int(acc / WHEEL_NOTCH)
+            self._wheel_acc[outer] = acc - steps * WHEEL_NOTCH
+            if steps:
+                turn(steps, outer)
+        return True
+
+    def _middle(self, owner, event, pressed):
+        push = getattr(owner, "wheel_push", None)
+        if not callable(push):
+            return False
+        if pressed:
+            if not owner.focus_hit(_global_pos(event)):
+                return False
+            self._middle_down = True
+            push(True)
+            return True
+        if not self._middle_down:
+            return False
+        self._middle_down = False
+        push(False)
+        return True
 
 
 def _global_pos(event):
@@ -227,7 +294,9 @@ def claim(controller):
     """``controller`` takes panel-wide focus; any other holder is released
     first (through its ``release_focus()``, which calls :func:`release`). The
     controller must provide ``release_focus()`` and
-    ``focus_hit(global_pos) -> bool``."""
+    ``focus_hit(global_pos) -> bool``; it may provide ``wheel_turn(steps,
+    outer)`` and ``wheel_push(pressed)`` to take the mouse wheel and middle
+    button over the focused value."""
     global _owner, _filter
     if _owner is not None and _owner is not controller:
         prev = _owner
