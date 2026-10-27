@@ -115,6 +115,19 @@ means the knob now changes it.
 - **Touching anywhere else**, or changing screens, also clears it. Only one
   value is ever selected, so touching a different value moves the ring there.
 
+**With a mouse instead of a knob** (a bench unit or a desktop run), point at
+the selected value and use the wheel the same way:
+
+| Mouse, pointer on the selected value | Same as |
+|---|---|
+| Scroll wheel, one click up / down | Inner knob, one small step up / down |
+| Shift + scroll wheel, or tilting the wheel sideways | Outer ring, one big step |
+| Middle-click (press the wheel) | Pushing the knob |
+
+The wheel only edits the value under the pointer, and only once it is selected
+(click it first). Anywhere else the wheel works as it always has, so the map
+still zooms.
+
 While nothing is selected, the same icon appears **dimmed** on every value you
 can touch-select, so you can see which ones the knob can be pointed at. (A panel
 can turn this off with `editIconAtRest: false`.)
