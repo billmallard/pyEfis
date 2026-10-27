@@ -75,11 +75,19 @@ is configured for.
 
 Controls
 
-'[' and ']' Keys changes the Altimeter Setting
+Default key bindings (``src/pyefis/config/keybindings/default.yaml``):
+
+'a' and 's' select the previous and next screen; 'p' shows the PFD.
 
 'm' Changes Airspeed mode from IAS , TAS, and GS
 
-'a' and 's' select the different screens.
+'1' to '4' set the EGT mode (normalize, peak, lean, reset peak).
+
+'x' exits.
+
+There is no key binding for the altimeter setting. Set it with the baro box at
+the bottom of the altimeter tape: touch it and turn the knob. See "Setting the
+altimeter (baro)" in docs/wiki/Pilots-Guide.md.
 
 Virtual VFR
 -----------------------------

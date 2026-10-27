@@ -111,7 +111,7 @@ and the mapper consumes it (encoder keys are relative by convention).
 | `BARO` | exists (`ahrs.yaml`) | inHg; fine 0.01, coarse 0.1 |
 | `HEADBUG` | exists (`ahrs.yaml`) | degrees; wraps 0-359 (see `changeValueWrap`) |
 | `COURSE` | exists (`ahrs.yaml`) | degrees; wraps; proven via X-Plane RREF work |
-| `ALTSEL` | **to add** | selected altitude / altitude bug, ft; fine 100, coarse 1000. Add to `custom.yaml` first, upstream later |
+| `ALTSEL` | exists (`custom.yaml`) | selected altitude / altitude bug, ft; fine 100, coarse 1000. CAN-FIX 461 Selected Altitude matches it (DINT ft, -1000 to 60000). pyEfis also writes it from the tape box (#310) |
 | COM/NAV freqs | later | `com_radio.yaml` already defines radio keys; phase 3 |
 
 ### Edit focus (the one genuinely new idea)
@@ -208,8 +208,10 @@ Deliberately NO direct pyEfis coupling.
 
 ## 8. Open questions
 
-- `ALTSEL` naming vs any emerging upstream convention (check canfix spec
-  for an existing selected-altitude parameter before inventing).
+- ~~`ALTSEL` naming vs any emerging upstream convention.~~ Resolved: CAN-FIX
+  already defines 461 Selected Altitude, which matches `ALTSEL`'s type and
+  range. fix-gateway's CAN-FIX map does not carry it yet. That mapping belongs
+  in fix-gateway, not in a second key.
 - ~~Focus annunciation on instruments: widget option (`gcusel_highlight`) vs
   a generic screenbuilder decoration.~~ Resolved by section 0: a shared
   drawing helper (`edit_focus.draw_edit_marks`) that each widget calls.
