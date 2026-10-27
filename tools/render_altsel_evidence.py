@@ -178,8 +178,21 @@ def render(outdir):
     print("wrote", outdir)
 
 
+def _netfix_connect(host, port, attempts=10):
+    """A fresh netfix socket, retried: fix-gateway's netfix server re-binds
+    its listening socket after every accept, so a connect made right after
+    another one can be refused (billmallard/fix-gateway#43)."""
+    for i in range(attempts):
+        try:
+            return socket.create_connection((host, port), timeout=3)
+        except ConnectionRefusedError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.5)
+
+
 def _netfix_read(host, port, key):
-    with socket.create_connection((host, port), timeout=3) as s:
+    with _netfix_connect(host, port) as s:
         s.sendall(f"@r{key}\n".encode())
         buf = b""
         while not buf.endswith(b"\n"):
@@ -190,19 +203,10 @@ def _netfix_read(host, port, key):
     return line.split(";")[1]
 
 
-def _netfix_write(host, port, key, value, attempts=10):
-    """Write over a fresh netfix socket. Retries: on the Pi bench a connect
-    was refused once right after the check, which left ALTSEL changed."""
-    for i in range(attempts):
-        try:
-            with socket.create_connection((host, port), timeout=3) as s:
-                s.sendall(f"{key};{value};0000\n".encode())
-                time.sleep(0.2)
-            return
-        except OSError:
-            if i == attempts - 1:
-                raise
-            time.sleep(1.0)
+def _netfix_write(host, port, key, value):
+    with _netfix_connect(host, port) as s:
+        s.sendall(f"{key};{value};0000\n".encode())
+        time.sleep(0.2)
 
 
 def live(hostport):
