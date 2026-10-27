@@ -217,7 +217,11 @@ configurable per instance.
 following the `Pressure` unit group (the `units: Pressure` preference sets the start,
 and the Units action switches it; the tape's own ft/m switching is separate). Touch the
 box to select it for the knob: the inner knob steps 0.01 inHg or 1 hPa, the outer ring
-0.10 inHg or 10 hPa, and push sets standard (29.92 inHg). `BARO` stays inHg on the bus.
+0.10 inHg or 10 hPa, and push sets standard (29.92 inHg). A second push restores the exact
+`BARO` value the first push replaced; any other change to `BARO` in between (a knob step,
+or a write from another display or the gateway) drops the saved value, so the next push
+sets standard again. With `BARO` already at standard and nothing saved, push does nothing.
+`BARO` stays inHg on the bus.
 In hPa every step lands on a whole hPa. The setting is limited to 27.50-31.50 inHg, or
 less if the FIX item's own min/max is narrower. Give the tape an `encoder_order` to reach
 the box on the knob walk as well. Left at its default, the box turns itself off when the

@@ -590,7 +590,9 @@ Options:
   * show_baro - default on for an `ALT` tape, off for any other `dbkey`; draws the
     altimeter setting (`BARO`) in a box at the bottom of the tape. A touch selects it
     for the knob (see "Touch-select + knob edit"): inner knob 0.01 inHg / 1 hPa, outer
-    ring 0.10 inHg / 10 hPa, push sets standard (29.92 inHg, which reads 1013 hPa). Add
+    ring 0.10 inHg / 10 hPa, push sets standard (29.92 inHg, which reads 1013 hPa) and a
+    second push restores the setting it replaced, unless `BARO` changed any other way
+    in between (a knob step, another display, the gateway). Add
     an `encoder_order` to the tape to reach the box on the knob walk too. It reads inHg
     or hPa from the `Pressure` unit group (`units: Pressure` in preferences, and the
     Units action). When left at its default, the box turns itself off on a screen that

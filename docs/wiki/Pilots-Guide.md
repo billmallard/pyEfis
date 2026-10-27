@@ -142,8 +142,14 @@ reads **29.92 IN** or **1013 HPA**, depending on the aircraft's units.
    **outer ring** for big steps (0.10 inHg or 10 hPa). The altimeter follows as
    you turn; there is nothing to confirm.
 3. **Push the knob** to set standard pressure (29.92 inHg / 1013 hPa). Push
-   does **not** "accept" here, because every turn is already set: pushing
-   always resets to standard.
+   does **not** "accept" here, because every turn is already set.
+   **Push again** to put back the setting you had before: if you pushed
+   standard by accident, one more push undoes it. The box remembers only
+   the setting that push replaced, and forgets it as soon as the setting
+   changes any other way (you turn the knob, or another display or the
+   gateway changes it). After that a push sets standard again. Pushing
+   when the box already reads standard and there is nothing to put back
+   does nothing.
 4. Leave it alone for about 10 seconds, or touch anywhere else, and the ring
    goes away.
 
