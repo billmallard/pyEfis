@@ -190,10 +190,19 @@ def _netfix_read(host, port, key):
     return line.split(";")[1]
 
 
-def _netfix_write(host, port, key, value):
-    with socket.create_connection((host, port), timeout=3) as s:
-        s.sendall(f"{key};{value};0000\n".encode())
-        time.sleep(0.2)
+def _netfix_write(host, port, key, value, attempts=10):
+    """Write over a fresh netfix socket. Retries: on the Pi bench a connect
+    was refused once right after the check, which left ALTSEL changed."""
+    for i in range(attempts):
+        try:
+            with socket.create_connection((host, port), timeout=3) as s:
+                s.sendall(f"{key};{value};0000\n".encode())
+                time.sleep(0.2)
+            return
+        except OSError:
+            if i == attempts - 1:
+                raise
+            time.sleep(1.0)
 
 
 def live(hostport):
@@ -254,7 +263,12 @@ def main():
     ap.add_argument("--live", metavar="HOST:PORT")
     a = ap.parse_args()
     if a.live:
-        rc = live(a.live)
+        try:
+            rc = live(a.live)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            rc = 2
         # pyavtools leaves non-daemon threads (scheduler) running, which
         # would hold interpreter shutdown forever; the check is complete.
         sys.stdout.flush()
