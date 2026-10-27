@@ -447,6 +447,10 @@ and the two paths end up in the same state. A gauge that is knob-edited with the
 `encoder_order` walk also shows the ring and icon instead of the orange text while it is
 being edited. The orange highlight still marks the walk itself.
 
+The HSI (`horizontal_situation_indicator`) takes the same `touch_edit` option for its HDG and
+CRS readouts (pyEfis #309), but there it is **on by default**; set `touch_edit: false` to
+turn it off. See its section in `docs/wiki/Widgets-Flight-Instruments.md`.
+
 Widgets draw these marks with `pyefis.instruments.edit_focus.draw_edit_marks()`, the one
 shared helper, so every settable value looks the same.
 

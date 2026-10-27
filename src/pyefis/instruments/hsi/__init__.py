@@ -26,6 +26,8 @@ from pyefis import common
 import pyavtools.fix as fix
 from pyefis import common
 from pyefis.instruments import helpers
+from pyefis.instruments import edit_focus
+from pyefis import display_metrics
 
 # TODO: Add CDI and Glide Slope indicators and tick marks but make them
 #       configurable.
@@ -46,6 +48,23 @@ ROSE_GLOW_WIDTH_RATIO = 0.06
 #: read at close range, the rose is a large disc read at a glance, and the two
 #: do not want the same strength.
 ROSE_SHADOW_ALPHA = 0.45
+#: Knob steps for the HDG / CRS readouts (pyEfis #309): inner ring fine, outer
+#: ring coarse, in degrees.
+EDIT_FINE_DEG = 1
+EDIT_COARSE_DEG = 10
+#: Smallest touch target for an editable readout, in millimetres on the glass
+#: (half an inch, a gloved fingertip). A drawn box smaller than this is grown
+#: to it for hit-testing only.
+EDIT_TOUCH_MM = 12.7
+#: The FIX key the CRS readout edits for each NAVSRC (0=NAV1, 1=NAV2). GPS (2)
+#: has no entry: its course is the active flight-plan leg (GPSCRS), not
+#: pilot-set. COURSE itself is never written -- it is the output of
+#: fix-gateway's NAVSRC select (connections/compute.yaml), which would
+#: overwrite a direct write on its next run.
+CRS_EDIT_KEYS = {0: "NAV1CRS", 1: "NAV2CRS"}
+#: Bearing TO the station for each NAVSRC: what a push on CRS centres the CDI
+#: on (course = bearing to station gives a centred needle with TO).
+CRS_CENTRE_KEYS = {0: "VOR1BRG", 1: "VOR2BRG"}
 
 
 class HSI(QGraphicsView):
@@ -211,6 +230,16 @@ class HSI(QGraphicsView):
             self.hdgbugdb.valueChanged[float].connect(self.setHdgBug)
         except Exception:
             self.hdgbugdb = None
+
+        # Touch-select + knob edit of the HDG and CRS readouts (pyEfis #309):
+        # touching one gives it edit focus through the screen's
+        # EncoderController (pyEfis #308). On by default; a panel opts out.
+        self.touch_edit = True
+        self.enc_has_outer = False
+        self._edit_field = None     # "hdg" | "crs" while one holds focus
+        self._edit_pending = None   # the field a touch is asking to focus
+        self._edit_item = None      # the FIX item the focused field writes
+        self._edit_rects = {}       # field -> (box, marks rect, marks bounds)
 
         # GPS ground track (TRACK) + ground speed (GS) for the track diamond.
         # Subscribe always (the marker is drawn only when enabled); guarded so a
@@ -661,6 +690,10 @@ class HSI(QGraphicsView):
             self._hdgBug = common.bounds(0, 360, value)
             if self.hdg_bug_item is not None:
                 self.hdg_bug_item.setPolygon(self._hdg_bug_polygon())
+            # The HDG readout shows this value too, so a knob step (or any
+            # other writer) repaints it now, not on the next heading change.
+            if self.isVisible():
+                self.update()
 
     def _track_diamond_polygon(self):
         # Small diamond on the rose face near the outer edge, rotated to the GPS
@@ -967,10 +1000,10 @@ class HSI(QGraphicsView):
                 lf = QFont(self.font_family)
                 lf.setPixelSize(int(self.fontSize))
                 c.setFont(lf)
-                lx = qRound(self.width() * 0.03)
-                ly = qRound(self.fontSize * 1.2)
-                c.drawText(lx, ly, label)
                 fm = c.fontMetrics()
+                lx = qRound(self.width() * 0.03)
+                ly = self._source_label_baseline(fm)
+                c.drawText(lx, ly, label)
                 pad = int(self.fontSize * 0.5)
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2*pad,
@@ -1003,7 +1036,7 @@ class HSI(QGraphicsView):
             th = fm.height()
             _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
             c.setPen(QPen(_bc))
-            ly = qRound(self.height() - self.fontSize * 0.5)
+            ly = self._bearing_label_baseline(fm)
             if _n == 1:
                 lx = qRound(self.width() * 0.03)
             else:
@@ -1123,6 +1156,7 @@ class HSI(QGraphicsView):
         c.drawText(QRectF(x, vy, bw, vh),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
                    value)
+        return box
 
     def _draw_readouts(self, c):
         """Integral readout boxes: actual heading (HEAD), selected heading
@@ -1130,6 +1164,7 @@ class HSI(QGraphicsView):
         config-selectable via readout_layout so the configurator can offer
         vendor-style presets (Bill 2026-08-02)."""
         layout = getattr(self, "readout_layout", "garmin")
+        self._edit_rects = {}
         if layout == "none":
             return
 
@@ -1140,7 +1175,7 @@ class HSI(QGraphicsView):
                 return "---°"
 
         hdg = _deg(self._heading)                                  # actual
-        crs = _deg(self._courseSelect)                             # selected course
+        crs = _deg(self._crs_display())                            # selected course
         sel = _deg(getattr(self, "_hdgBug", 0.0) or 0.0)          # selected heading (bug)
         white = QColor(self.fg_color)
         cyan = QColor(getattr(self, "heading_bug_color", "#00ffff"))
@@ -1163,17 +1198,42 @@ class HSI(QGraphicsView):
             self._draw_source_tab(c, px, py, ph)
             self._draw_readout_panel(c, px, py, pw, ph, "h",
                 [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
+            # Inside the sectioned panel the focus ring hugs the cell, so it
+            # cannot cross into the neighbouring cell or the source tab.
+            for field, i in (("hdg", 0), ("crs", 2)):
+                cell = QRectF(px + pw * i / 3.0, py, pw / 3.0, ph)
+                self._edit_rects[field] = (
+                    cell, edit_focus.inset_for_marks(cell), cell)
         elif layout == "corners":
             # selected-heading (cyan) top-left, course (source) top-right; actual
             # heading read from the rose.
-            self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
-            self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
+            hbox = self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
+            cbox = self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
+            self._set_box_edit_rects(hbox, cbox)
         elif layout == "split":
             # Actual-heading box ABOVE the rose (top gutter, outside), course +
             # selected heading in the bottom corners (Bill 2026-08-02).
             self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, white)
-            self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
-            self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
+            cbox = self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
+            hbox = self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
+            self._set_box_edit_rects(hbox, cbox)
+        self._draw_edit_marks(c)
+
+    def _set_box_edit_rects(self, hbox, cbox):
+        # A free-standing box: the ring goes OUTSIDE its (cyan / source-
+        # coloured) border, kept inside the widget.
+        bounds = QRectF(self.rect())
+        self._edit_rects["hdg"] = (hbox, hbox, bounds)
+        self._edit_rects["crs"] = (cbox, cbox, bounds)
+
+    def _draw_edit_marks(self, c):
+        """The shared focus ring + edit icon (pyEfis #308) on each editable
+        readout: ring and icon on the focused one, the dim at-rest icon on the
+        others. A readout that cannot be edited now (CRS on GPS) gets none."""
+        for field, (_box, marks, bounds) in self._edit_rects.items():
+            if self._field_editable(field):
+                edit_focus.draw_edit_marks(
+                    c, marks, self._edit_field == field, bounds=bounds)
 
     def _draw_readout_panel(self, c, x, y, w, h, orientation, segments):
         """One sectioned readout panel (P5a iter4b): a single rounded container
@@ -1300,6 +1360,32 @@ class HSI(QGraphicsView):
                    int(Qt.AlignmentFlag.AlignCenter), label)
         self._source_label_rect = (left, top, tab_w, th)
 
+    def _readout_box_reach(self):
+        """How far a free-standing readout box (``_draw_readout_box``) reaches
+        in from the top or bottom edge: its margin plus its height."""
+        return self.fontSize * 0.5 + self.fontSize * 2.4
+
+    def _source_label_baseline(self, fm):
+        """Baseline of the plain nav-source label (top-left). In ``corners``
+        the HDG box owns the top-left corner, and the label used to sit under
+        it -- hidden, with its tap target covering most of the box -- so there
+        it moves down to clear the box."""
+        if getattr(self, "readout_layout", "top_panel") == "corners":
+            pad = int(self.fontSize * 0.5)
+            return qRound(self._readout_box_reach() + self.fontSize * 0.15
+                          + pad + fm.ascent())
+        return qRound(self.fontSize * 1.2)
+
+    def _bearing_label_baseline(self, fm):
+        """Baseline of the bearing-source labels (bottom corners). In
+        ``split`` the CRS and HDG boxes own those corners, so the labels move
+        up to clear them, for the same reason as the source label."""
+        if getattr(self, "readout_layout", "top_panel") == "split":
+            pad = int(self.fontSize * 0.5)
+            return qRound(self.height() - self._readout_box_reach()
+                          - self.fontSize * 0.15 - pad - fm.descent())
+        return qRound(self.height() - self.fontSize * 0.5)
+
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
         red). Black fill keeps it legible over the compass card."""
@@ -1403,6 +1489,11 @@ class HSI(QGraphicsView):
     def setNavsrc(self, value):
         if value != self._navsrc:
             self._navsrc = value
+            # The CRS readout edits a per-source key (NAV1CRS / NAV2CRS), and
+            # none at all on GPS: a source change ends a CRS edit rather than
+            # leaving the knob on a key the readout no longer shows.
+            if self._edit_field == "crs":
+                self._release_edit_focus()
             # Recolour the course pointer now; the CDI/GSI recolour on next paint.
             if getattr(self, "course_pointer", None) is not None:
                 _cp = self._course_pointer_color()
@@ -1833,10 +1924,10 @@ class HSI(QGraphicsView):
             if label:
                 c.setPen(QPen(self._source_color() or QColor(self.course_color)))
                 lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize))
-                c.setFont(lf)
-                lx = qRound(self.width() * 0.03); ly = qRound(self.fontSize * 1.2)
+                c.setFont(lf); fm = c.fontMetrics()
+                lx = qRound(self.width() * 0.03); ly = self._source_label_baseline(fm)
                 c.drawText(lx, ly, label)
-                fm = c.fontMetrics(); pad = int(self.fontSize * 0.5)
+                pad = int(self.fontSize * 0.5)
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2 * pad,
                                            fm.height() + 2 * pad)
@@ -1865,7 +1956,7 @@ class HSI(QGraphicsView):
             tw = fm.horizontalAdvance(txt); th = fm.height()
             _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
             c.setPen(QPen(_bc))
-            ly = qRound(self.height() - self.fontSize * 0.5)
+            ly = self._bearing_label_baseline(fm)
             lx = qRound(self.width() * 0.03) if _n == 1 else qRound(self.width() * 0.97 - tw)
             c.drawText(lx, ly, txt)
             pad = int(self.fontSize * 0.5)
@@ -1903,7 +1994,203 @@ class HSI(QGraphicsView):
                 self._cycle_bearing_src(_n)
                 event.accept()
                 return
+        # Touching the HDG or CRS readout gives it edit focus for the knob
+        # (pyEfis #309). Checked after the source taps above, so those keep
+        # working exactly as before wherever they overlap.
+        field = self._edit_field_at(event.position())
+        if field is not None:
+            ctl = self._encoder_controller()
+            if ctl is not None:
+                self._edit_pending = field
+                try:
+                    ctl.touch_focus(self)
+                finally:
+                    self._edit_pending = None
+                event.accept()
+                return
         super(HSI, self).mousePressEvent(event)
+
+    # --- touch-select + knob edit: HDG -> HEADBUG, CRS -> NAV1CRS/NAV2CRS ----
+    # (pyEfis #309). The screen's EncoderController owns focus, the timeout and
+    # the knob routing (pyEfis #308); this widget answers its enc_* calls for
+    # whichever readout was touched. Every step is written straight to the
+    # bus, the way a heading or OBS knob moves the bug as it turns, so a
+    # timeout ends the edit and keeps the value -- there is nothing to revert.
+
+    def _fix_item(self, key):
+        if not key:
+            return None
+        try:
+            return fix.db.get_item(key)
+        except Exception:
+            return None
+
+    def _navsrc_index(self):
+        if self._navsrc is None:
+            return None
+        try:
+            return int(round(self._navsrc))
+        except (TypeError, ValueError):
+            return None
+
+    def _edit_key(self, field):
+        """The FIX key a readout writes, or None when it is not editable now:
+        CRS has no key on a GPS source (or with no NAVSRC)."""
+        if field == "hdg":
+            return "HEADBUG" if self.hdgbugdb is not None else None
+        if field == "crs":
+            return CRS_EDIT_KEYS.get(self._navsrc_index())
+        return None
+
+    def _field_editable(self, field):
+        if not getattr(self, "touch_edit", False):
+            return False
+        return self._fix_item(self._edit_key(field)) is not None
+
+    def _crs_display(self):
+        """The course the CRS readout shows. While CRS is being edited that is
+        the edited key itself: COURSE only follows it after fix-gateway's
+        select runs, and the knob has to answer at once."""
+        if self._edit_field == "crs" and self._edit_item is not None:
+            return self._edit_item.value
+        return self._courseSelect
+
+    def _min_touch_px(self):
+        main = getattr(getattr(self, "myparent", None), "parent", None)
+        try:
+            qscreen = self.screen()
+        except Exception:
+            qscreen = None
+        try:
+            return display_metrics.mm_to_px(
+                EDIT_TOUCH_MM, getattr(main, "screenWidth", None),
+                getattr(main, "screenHeight", None),
+                getattr(main, "screenDiagonalInches", None), qscreen)
+        except Exception:
+            return display_metrics.mm_to_px(EDIT_TOUCH_MM)
+
+    def _touch_rect(self, box):
+        """``box`` grown to the gloved-finger minimum (hit-testing only)."""
+        m = self._min_touch_px()
+        dx = max(0.0, (m - box.width()) / 2.0)
+        dy = max(0.0, (m - box.height()) / 2.0)
+        return QRectF(box).adjusted(-dx, -dy, dx, dy)
+
+    def _edit_field_at(self, pos):
+        """The editable readout under ``pos`` (viewport coordinates), or None.
+        Where two grown targets overlap, the nearer box centre wins."""
+        best = None
+        for field, (box, _marks, _bounds) in self._edit_rects.items():
+            if not self._field_editable(field):
+                continue
+            if not self._touch_rect(box).contains(QPointF(pos)):
+                continue
+            d = QLineF(box.center(), QPointF(pos)).length()
+            if best is None or d < best[0]:
+                best = (d, field)
+        return best[1] if best else None
+
+    def edit_focus_hit(self, global_pos):
+        """EncoderController.focus_hit: is a press on the focused readout? A
+        press anywhere else -- including the other readout -- releases focus,
+        and the press then reaches mousePressEvent, which may refocus."""
+        if self._edit_field is None:
+            return False
+        try:
+            local = self.viewport().mapFromGlobal(QPointF(global_pos))
+        except (AttributeError, RuntimeError):
+            return False
+        return self._edit_field_at(local) == self._edit_field
+
+    def _encoder_controller(self):
+        w = self.parent()
+        while w is not None:
+            ctl = getattr(w, "encoder_controller", None)
+            if ctl is not None:
+                return ctl
+            w = w.parent()
+        return None
+
+    def _release_edit_focus(self):
+        ctl = self._encoder_controller()
+        if ctl is not None and ctl.focused_instrument() is self:
+            ctl.release_focus()
+        else:
+            self.enc_highlight(False)
+
+    def enc_select(self):
+        field = self._edit_pending
+        if not self._field_editable(field):
+            return False
+        self._edit_field = field
+        self._edit_item = self._fix_item(self._edit_key(field))
+        self.update()
+        return True
+
+    def enc_highlight(self, onoff):
+        if not onoff:
+            self._edit_field = None
+            self._edit_item = None
+            self.update()
+
+    def enc_changed(self, steps):
+        return self._edit_step(steps * EDIT_FINE_DEG)
+
+    def enc_outer_changed(self, steps):
+        return self._edit_step(steps * EDIT_COARSE_DEG)
+
+    def _edit_step(self, delta):
+        item = self._edit_item
+        if self._edit_field is None or item is None:
+            return False
+        # Step from the whole degree the readout shows, wrapping through 360.
+        try:
+            cur = int(round(float(item.value or 0.0)))
+        except (TypeError, ValueError):
+            cur = 0
+        self._write_edit((cur + int(delta)) % 360)
+        return True
+
+    def _write_edit(self, value):
+        """Write the focused key and send it to fix-gateway. A local
+        ``value`` assignment alone never leaves pyEfis (pyEfis #294)."""
+        item = self._edit_item
+        item.value = float(value)
+        item.output_value()
+        self.update()
+
+    def enc_clicked(self):
+        """Push. HDG: sync the bug to the current heading. CRS: centre the
+        CDI with a TO indication by setting the course to the bearing to the
+        station. Where the push cannot act -- heading invalid, a localizer, or
+        no valid bearing -- it ends the edit instead."""
+        if self._edit_field == "hdg":
+            if self._HeadFail or self._HeadBad:
+                return False
+            self._write_edit(int(round(float(self._heading or 0.0))) % 360)
+            return True
+        if self._edit_field == "crs":
+            brg = self._station_bearing()
+            if brg is None:
+                return False
+            self._write_edit(int(round(brg)) % 360)
+            return True
+        return False
+
+    def _station_bearing(self):
+        """Bearing TO the selected VOR (VOR1BRG / VOR2BRG), or None when there
+        is none to centre on: no key, a flagged value, or a localizer (its
+        course is fixed by the runway, not set by the OBS)."""
+        nt = None if self._navtype is None else int(round(self._navtype))
+        if nt in (2, 3):
+            return None
+        item = self._fix_item(CRS_CENTRE_KEYS.get(self._navsrc_index()))
+        if item is None or item.old or item.bad or item.fail:
+            return None
+        try:
+            return float(item.value)
+        except (TypeError, ValueError):
+            return None
 
     def _source_label(self):
         """Nav-source annunciation text: "GPS" for a GPS source, "VOR{n}" /

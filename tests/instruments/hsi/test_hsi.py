@@ -1136,6 +1136,53 @@ def test_hsi_non_top_panel_layouts_keep_floating_label(fix, qtbot, layout):
     assert r[0] == expected_x
 
 
+def _corner_box(w, h_anchor, v_anchor):
+    """The rect _draw_readout_box draws for a corner box (same formula)."""
+    m = w.fontSize * 0.5
+    bw, bh = w.fontSize * 3.6, w.fontSize * 2.4
+    x = m if h_anchor == "l" else w.width() - m - bw
+    y = m if v_anchor == "t" else w.height() - m - bh
+    return QRectF(x, y, bw, bh)
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_corners_source_label_is_not_hidden_under_the_hdg_box(fix, qtbot, orientation):
+    """In corners the HDG box owns the top-left corner. The plain source
+    label used to be drawn underneath it, hidden, with its tap target over
+    most of the box; it now sits below the box."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.readout_layout = "corners"
+    widget.orientation = orientation
+    widget.navsrcdb = object()
+    widget._navsrc = 2
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    label = QRectF(*widget._source_label_rect)
+    box = _corner_box(widget, "l", "t")
+    assert not label.intersects(box)
+    assert label.top() >= box.bottom()
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_split_bearing_labels_are_not_hidden_under_the_bottom_boxes(fix, qtbot, orientation):
+    """In split the CRS and HDG boxes own the bottom corners; the bearing-
+    source labels now sit above them instead of underneath."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.readout_layout = "split"
+    widget.orientation = orientation
+    for n in (1, 2):
+        setattr(widget, "bearing%d_enabled" % n, True)
+        widget.brgdb[n] = object()
+        widget._brg[n] = 0.0
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgSrc[n] = 0
+    widget._HeadFail = widget._HeadBad = widget._HeadOld = False
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    for n, h_anchor in ((1, "l"), (2, "r")):
+        assert widget._brg_label_rect[n] is not None
+        label = QRectF(*widget._brg_label_rect[n])
+        assert not label.intersects(_corner_box(widget, h_anchor, "b")), n
+
+
 def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
     """pyEfis#140 acceptance #5: the whole tab rect (not just the glyphs) is
     the tap target, and mousePressEvent still cycles NAVSRC unchanged."""
