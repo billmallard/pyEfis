@@ -466,6 +466,23 @@ def test_wheel_over_another_widget_passes_through(qtbot):
     assert host.encoder_control is True
 
 
+def test_real_map_still_zooms_while_a_value_is_focused(fix, qtbot):
+    from pyefis.instruments import map as moving_map
+    host, v, _ = _wheel_host(qtbot)
+    m = moving_map.MovingMap(host)
+    m.range_ladder = "2,5,10,20,40,80,160"
+    m.setGeometry(200, 0, 180, 90)
+    m.show()
+    m.range_nm = 10.0
+    host.encoder_controller.touch_focus(v)
+    _wheel(m, dy=120)                  # wheel up over the map: zoom in
+    assert m.range_nm < 10.0
+    _wheel(m, dy=-240)                 # and back out past where it was
+    assert m.range_nm > 10.0
+    assert _steps(v) == []
+    assert host.encoder_control is True
+
+
 def test_wheel_without_focus_does_nothing(qtbot):
     host, v, _ = _wheel_host(qtbot)
     _wheel(v, dy=120)
