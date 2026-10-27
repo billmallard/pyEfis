@@ -57,6 +57,7 @@ from PyQt6.QtOpenGL import (  # noqa: E402
 
 from pyefis.instruments.ai.camera import (  # noqa: E402
     view_projection, M_PER_DEG_LAT, M_PER_FT, EARTH_CURVATURE,
+    TERRAIN_HFOV_PITCH_DEG,
 )
 
 log = logging.getLogger(__name__)
@@ -68,8 +69,9 @@ log = logging.getLogger(__name__)
 # the camera.view_projection(pixels_per_deg_h=...) hook precisely so a later
 # pitchDegreesShown change (AER-1973: 30 -> 50, widening the pitch ladder's
 # vertical gain) does not also widen the terrain picture horizontally. Do not
-# derive this from the AI widget's live pitchDegreesShown.
-_TERRAIN_HFOV_PITCH_DEG = 30.0
+# derive this from the AI widget's live pitchDegreesShown. The value lives in
+# camera.py so the AI widget's horizontal symbology can share it (#304).
+_TERRAIN_HFOV_PITCH_DEG = TERRAIN_HFOV_PITCH_DEG
 
 
 # Shader source bodies — the #version header gets prepended at compile

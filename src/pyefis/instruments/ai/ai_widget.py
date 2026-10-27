@@ -26,6 +26,7 @@ import pyavtools.fix as fix
 from pyefis import common
 from pyefis.instruments.ai.svs import SVSRenderer, make_svs_item
 from pyefis.instruments.ai.pose import PoseSource
+from pyefis.instruments.ai.camera import terrain_horizontal_px
 
 log = logging.getLogger(__name__)
 
@@ -980,7 +981,8 @@ class AI(QGraphicsView):
 
         ppd = getattr(self, 'pixelsPerDeg', self.height() / self.pitchDegreesShown)
         sym_r = self.bankMarkSize * 0.65
-        x_roll = drift_deg * ppd
+        x_roll = self._horizontal_px(drift_deg, ppd)
+        self._fpm_x_px = x_roll  # pre-clamp; observability for #304 tests
         # The flight path is measured from the HORIZON, not the boresight. The
         # aircraft symbol sits `pitch` above the horizon, so the FPM belongs
         # (pitch - fpa) below the symbol -- i.e. fpa above the horizon. In
@@ -1126,7 +1128,9 @@ class AI(QGraphicsView):
 
         for mk in range(0, 360, interval):
             d = ((mk - head + 180.0) % 360.0) - 180.0
-            x = d * ppd
+            if abs(d) >= 89.0:
+                continue
+            x = self._horizontal_px(d, ppd)
             if abs(x) > cull:
                 continue
             p.drawLine(QPointF(x, horizon_y), QPointF(x, horizon_y - tick_len))
@@ -1138,6 +1142,19 @@ class AI(QGraphicsView):
                 p.drawText(QPointF(-fm.horizontalAdvance(lbl) / 2.0, -3.0), lbl)
                 p.restore()
         p.restore()
+
+    def _horizontal_px(self, deg, ppd):
+        """Screen-x offset for something *deg* off the nose on the horizon
+        (a heading tick, the FPM's drift). With SVS configured it uses the
+        terrain's own horizontal projection, so the mark sits over the
+        terrain at that bearing; the vertical ppd is the wrong scale there
+        (h/pitchDegreesShown vs the terrain's pinned h/30) and linear where
+        the terrain is a tangent (pyEfis #304). Without SVS there is no
+        terrain to register with, so the long-standing linear scale stays."""
+        s = self._live_svs()
+        if s is not None and getattr(s, "enabled", False):
+            return terrain_horizontal_px(deg, self.height())
+        return deg * ppd
 
     @staticmethod
     def _heading_label(deg):
