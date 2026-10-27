@@ -28,6 +28,8 @@ from pyefis.instruments.NumericalDisplay import NumericalDisplay
 import pyefis.hmi as hmi
 from pyefis.instruments import edit_focus
 from pyefis.instruments import helpers
+from pyefis.instruments.helpers import bugs
+from pyefis.instruments.altimeter import altsel
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,10 @@ BARO_STD_INHG = 29.92
 BARO_MIN_INHG = 27.5
 BARO_MAX_INHG = 31.5
 BARO_COLOR = QColor(0, 255, 255)  # pilot-selected value (gcu_design.md sec 3)
+
+# The two settable boxes on the tape (see the enc_* dispatch).
+EDIT_ALTSEL = "altsel"
+EDIT_BARO = "baro"
 
 
 class Altimeter(QWidget):
@@ -259,6 +265,10 @@ class Altimeter_Tape(QGraphicsView):
         trend_window=3.0,
         trend_min_change=20.0,
         show_baro=None,
+        altsel_box=None,
+        alt_bug_enabled=None,
+        alt_bug_color="#00ffff",
+        alt_bug_dbkey="ALTSEL",
     ):
         super(Altimeter_Tape, self).__init__(parent)
         # Checkbox option: alpha-fade the scrolling scale into the
@@ -339,6 +349,21 @@ class Altimeter_Tape(QGraphicsView):
                         self._baro_item.badChanged[bool],
                         self._baro_item.failChanged[bool]):
                 sig.connect(self._baro_repaint)
+        # Selected altitude (pyEfis #310): a touch-selectable ALTSEL box at the
+        # top of the tape, and the matching bug on the scale. Like the trend
+        # these are ALTITUDE cues: on by default for an ALT tape only. The bug
+        # follows the box unless set on its own.
+        self.altsel_box = (dbkey == "ALT") if altsel_box is None else altsel_box
+        self.alt_bug_enabled = alt_bug_enabled
+        self.alt_bug_color = alt_bug_color
+        self.alt_bug_dbkey = alt_bug_dbkey
+        self._altsel = None          # bugs.BugBinding, made on first use
+        self._altsel_editor = None
+        self.altsel_display = None   # the box widget, made in resizeEvent
+        self._edit_box = None        # EDIT_ALTSEL / EDIT_BARO holding focus
+        self._touch_pending = None
+        if self.altsel_box or self.alt_bug_enabled:
+            self._altsel_binding()
 
         self.conversionFunction1 = lambda x: x
         self.conversionFunction2 = lambda x: x
@@ -424,6 +449,7 @@ class Altimeter_Tape(QGraphicsView):
             self.numerical_display.value = self._altimeter
         else:
             self.numerical_display = None
+        self._layout_altsel_box()
         # Read-pointer position (drawn in paintEvent) — same spot whether or not
         # the numeric box is shown, so the tape stays readable.
         self.numeric_box_pos.setX(self.numeric_box_pos.x() + box_w)
@@ -487,6 +513,8 @@ class Altimeter_Tape(QGraphicsView):
         h = self.height()
         p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        self._paint_alt_bug(p)
 
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
 
@@ -702,26 +730,16 @@ class Altimeter_Tape(QGraphicsView):
             return
         self._baro_refresh()
 
-    # Touch-select + knob edit, the EncoderController protocol (#308).
+    # Baro box half of the EncoderController protocol (#308); the tape-level
+    # enc_* methods below dispatch here or to the ALTSEL box.
 
-    @property
-    def touch_edit(self):
-        return self._touch_edit and self.baro_shown()
-
-    @touch_edit.setter
-    def touch_edit(self, on):
-        self._touch_edit = bool(on)
-
-    def enc_selectable(self):
-        return self.baro_shown()
-
-    def enc_highlight(self, onoff):
+    def _baro_highlight(self, onoff):
         self._baro_walk = bool(onoff)
         if not onoff:
             self.encoder_selected = False
         self._baro_refresh()
 
-    def enc_select(self):
+    def _baro_select(self):
         if not self.baro_shown():
             return False
         self._baro_walk = False
@@ -729,29 +747,28 @@ class Altimeter_Tape(QGraphicsView):
         self._baro_refresh()
         return True
 
-    def enc_changed(self, data):
+    def _baro_changed(self, data):
         self.baro_step(data)
         return True
 
-    def enc_outer_changed(self, data):
+    def _baro_outer_changed(self, data):
         self.baro_step(data, coarse=True)
         return True
 
-    def enc_clicked(self):
+    def _baro_clicked(self):
         # Push sets standard and keeps focus; the value is live, so there is
         # nothing to accept. Focus clears on the timeout or a touch elsewhere.
         self.baro_set_standard()
         return True
 
-    def edit_focus_hit(self, global_pos):
+    def _baro_hit(self, global_pos):
         local = self.viewport().mapFromGlobal(global_pos.toPoint())
         return self._baro_zone().contains(QPointF(local))
 
     def mousePressEvent(self, event):
-        if self.touch_edit and self._baro_zone().contains(event.position()):
-            ctl = self._encoder_controller()
-            if ctl is not None:
-                ctl.touch_focus(self)
+        if self._touch_edit and self.baro_shown() \
+                and self._baro_zone().contains(event.position()):
+            if self._touch_box(EDIT_BARO):
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -846,6 +863,222 @@ class Altimeter_Tape(QGraphicsView):
     def setAltFail(self, b):
         if self.numerical_display is not None:
             self.numerical_display.fail = b
+
+    # --- selected altitude: box, bug and knob editing (pyEfis #310) ---------
+
+    def _altsel_binding(self):
+        if self._altsel is None:
+            self._altsel = bugs.BugBinding(self.alt_bug_dbkey, self)
+            self._altsel.changed.connect(self._baro_refresh)
+            self._altsel_editor = altsel.AltSelEditor(
+                self._altsel, self._current_alt_ft)
+        return self._altsel
+
+    def _current_alt_ft(self):
+        # Sync reads the ALT item itself (feet on the bus), not the displayed,
+        # possibly unit-converted value.
+        item = self.item
+        return item.value, not (item.fail or item.bad)
+
+    def _bug_on(self):
+        if self.alt_bug_enabled is None:
+            return bool(self.altsel_box)
+        return bool(self.alt_bug_enabled)
+
+    def _altsel_touchable(self):
+        return bool(self.altsel_box) and self._altsel_binding().item is not None
+
+    def _layout_altsel_box(self):
+        if not self.altsel_box:
+            if self.altsel_display is not None:
+                self.altsel_display.hide()
+            return
+        binding = self._altsel_binding()
+        if self.altsel_display is None:
+            self.altsel_display = altsel.AltSelBox(
+                self, binding, font_family=self.font_family)
+            self.altsel_display.color = QColor(self.alt_bug_color)
+        bh = max(16, qRound(self.width() * 0.34))
+        self.altsel_display.setGeometry(0, 0, self.width(), bh)
+        self.altsel_display.show()
+
+    def alt_bug_y(self):
+        """Where the bug goes, in viewport pixels, and whether it is pegged
+        off the visible tape: ``(y, off)``, ``off`` -1 above, +1 below. None
+        when there is no bug to draw. The span runs from the bottom of the
+        ALTSEL box to the top of the baro box, whichever are shown."""
+        if not self._bug_on():
+            return None
+        binding = self._altsel_binding()
+        if not binding.drawable():
+            return None
+        target = self.conversionFunction(binding.value)
+        y = self.mapFromScene(
+            QPointF(0, self.y_offset(target + self.maxalt))).y()
+        top = 0
+        if self.altsel_display is not None and self.altsel_display.isVisible():
+            top = self.altsel_display.geometry().bottom() + 1
+        bottom = self.viewport().height()
+        if self.baro_shown():
+            bottom = self._baro_zone().top()
+        y, off = bugs.clamp_to_span(y, top, bottom)
+        return y, off
+
+    def _paint_alt_bug(self, p):
+        placed = self.alt_bug_y()
+        if placed is None:
+            return
+        y, _off = placed
+        w = self.width()
+        bug_w = max(5.0, w * 0.12)
+        bug_h = max(10.0, w * 0.26)
+        color = self._altsel.color(QColor(self.alt_bug_color))
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(color))
+        # On the tick edge, notch facing the scale: the left edge carries the
+        # scale labels, which a bug there would cover.
+        p.drawPath(bugs.tape_bug_path(float(w), y, bug_w, bug_h,
+                                      point_right=False))
+        p.restore()
+
+    def _altsel_refresh(self):
+        # Paint now, not queued: the same late-repaint trap the baro box hit
+        # on the live panel (see _baro_refresh) applies to this tape.
+        box = self.altsel_display
+        if box is not None and box.isVisible():
+            box.repaint()
+
+    def _altsel_highlight(self, onoff):
+        if self.altsel_display is not None:
+            self.altsel_display.highlighted = bool(onoff)
+            if not onoff:
+                self.altsel_display.focused = False
+            self._altsel_refresh()
+
+    def _altsel_select(self):
+        if not self._altsel_touchable():
+            return False
+        if self.altsel_display is not None:
+            self.altsel_display.focused = True
+            self._altsel_refresh()
+        return True
+
+    def _altsel_changed(self, steps):
+        self._altsel_binding()
+        return self._altsel_editor.step(altsel.FINE_STEP_FT * steps)
+
+    def _altsel_outer_changed(self, steps):
+        self._altsel_binding()
+        return self._altsel_editor.step(altsel.COARSE_STEP_FT * steps)
+
+    def _altsel_clicked(self):
+        # Push: sync to the current altitude and end the edit (Bill,
+        # 2026-10-27, AER-3915). With no valid altitude nothing is written and
+        # the box stays focused.
+        self._altsel_binding()
+        return not self._altsel_editor.sync()
+
+    def _altsel_hit(self, global_pos):
+        box = self.altsel_display
+        if box is None or not box.isVisible():
+            return False
+        local = box.mapFromGlobal(global_pos)
+        return box.rect().contains(local.toPoint())
+
+    # --- the EncoderController protocol (#308), dispatched per box ----------
+    #
+    # The tape is ONE encoder instrument carrying two settable boxes: ALTSEL
+    # at the top (#310) and baro at the bottom (#311). A touch names its box
+    # (_touch_box); the knob walk, which only knows the tape, lands on the
+    # first box shown, top to bottom. Every enc_* call goes to the box that
+    # holds focus, and edit_focus_hit counts only that box, so a press on the
+    # other box or on the scale releases focus.
+
+    @property
+    def touch_edit(self):
+        return self._touch_edit and bool(self._edit_boxes())
+
+    @touch_edit.setter
+    def touch_edit(self, on):
+        self._touch_edit = bool(on)
+
+    def _edit_boxes(self):
+        boxes = []
+        if self._altsel_touchable():
+            boxes.append(EDIT_ALTSEL)
+        if self.baro_shown():
+            boxes.append(EDIT_BARO)
+        return boxes
+
+    def _active_box(self):
+        if self._edit_box is not None:
+            return self._edit_box
+        boxes = self._edit_boxes()
+        return boxes[0] if boxes else None
+
+    def _touch_box(self, which):
+        """A press on box ``which``: give the tape focus for that box. A tape
+        already in control for the OTHER box is released first, since the
+        controller would otherwise just restart its timeout."""
+        ctl = self._encoder_controller()
+        if ctl is None:
+            return False
+        if ctl.focused_instrument() is self and self._edit_box != which:
+            ctl.release_focus()
+        self._touch_pending = which
+        try:
+            ctl.touch_focus(self)
+        finally:
+            self._touch_pending = None
+        return True
+
+    def _claim_pending(self):
+        if self._touch_pending is not None:
+            self._edit_box = self._touch_pending
+
+    def _dispatch(self, name, *args):
+        box = self._active_box()
+        if box is None:
+            return False
+        return getattr(self, "_%s_%s" % (box, name))(*args)
+
+    def enc_selectable(self):
+        return bool(self._edit_boxes())
+
+    def enc_highlight(self, onoff):
+        if onoff:
+            self._claim_pending()
+            self._dispatch("highlight", True)
+            return
+        # Clear both: whichever held the walk highlight or focus lets go.
+        if self.altsel_display is not None:
+            self._altsel_highlight(False)
+        if self._baro_item is not None:
+            self._baro_highlight(False)
+        self._edit_box = None
+
+    def enc_select(self):
+        self._claim_pending()
+        box = self._active_box()
+        if box is None:
+            return False
+        self._edit_box = box
+        return self._dispatch("select")
+
+    def enc_changed(self, steps):
+        return self._dispatch("changed", steps)
+
+    def enc_outer_changed(self, steps):
+        return self._dispatch("outer_changed", steps)
+
+    def enc_clicked(self):
+        return self._dispatch("clicked")
+
+    def edit_focus_hit(self, global_pos):
+        if self._edit_box is None:
+            return False
+        return self._dispatch("hit", global_pos)
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
