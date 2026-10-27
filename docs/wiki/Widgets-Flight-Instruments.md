@@ -209,8 +209,24 @@ configurable per instance.
 | `round_to` | **0** | round the numeric box to this step (0 = off); e.g. `100` snaps a jittery source to 100-unit steps while the tape stays smooth |
 | `numeric_box` | **true** | when false, omit the numeric readout box and show only the scrolling tape + read pointer |
 | `font_scale` | **1.0** | multiplier on the tick-label font size |
+| `show_baro` | **true** for `ALT`, false otherwise | draw the touch-selectable altimeter setting (`BARO`) box at the bottom of the tape; see below |
 | `font_family`, `font_percent` | from preferences | |
 | `altitude` | false | special-cased: enables ft/m unit switching |
+
+**Baro setting box (`show_baro`).** The box shows `BARO` as `29.92 IN` or `1013 HPA`,
+following the `Pressure` unit group (the `units: Pressure` preference sets the start,
+and the Units action switches it; the tape's own ft/m switching is separate). Touch the
+box to select it for the knob: the inner knob steps 0.01 inHg or 1 hPa, the outer ring
+0.10 inHg or 10 hPa, and push sets standard (29.92 inHg). A second push restores the exact
+`BARO` value the first push replaced; any other change to `BARO` in between (a knob step,
+or a write from another display or the gateway) drops the saved value, so the next push
+sets standard again. With `BARO` already at standard and nothing saved, push does nothing.
+`BARO` stays inHg on the bus.
+In hPa every step lands on a whole hPa. The setting is limited to 27.50-31.50 inHg, or
+less if the FIX item's own min/max is narrower. Give the tape an `encoder_order` to reach
+the box on the knob walk as well. Left at its default, the box turns itself off when the
+screen already shows `BARO` in another visible widget (an older screen with a separate
+`numeric_display`), so no screen shows two baro readouts.
 
 > Because this class is also used for the VS tape, `round_to` and `numeric_box`
 > exist primarily to tame a jittery VS source — see the prose in the source.
@@ -361,6 +377,7 @@ forwards `font_percent`.
 | `course_color` | `#ff00ff` | selected-course pointer (the magenta CRS triangle) |
 | `heading_bug_enabled` | **false** | draw the cyan heading bug at `HEADBUG` |
 | `heading_bug_color` | `#00ffff` | heading-bug colour |
+| `touch_edit` | **true** | touch the HDG or CRS readout to set it with the knob (see below) |
 | `track_indicator_enabled` | **true** | draw the GPS ground-track diamond at `TRACK` |
 | `track_color` | `#ff00ff` | track-diamond colour |
 | `track_min_speed` | **5** | hide the track diamond below this groundspeed (kt) |
@@ -375,6 +392,40 @@ forwards `font_percent`.
 > `True`, re-setting them to `false` from `options:` after construction will not
 > retroactively unsubscribe the keys — these are best treated as fixed for this
 > widget type.
+
+### Touch to set HDG and CRS (`touch_edit`, pyEfis #309)
+
+With `touch_edit` on (the default; set `touch_edit: false` to turn it off), touching the **HDG** or **CRS** readout gives it edit
+focus through the screen's knob (`encoder` / `encoder_outer` /
+`encoder_button`). It uses the shared focus ring and edit icon, the timeout and
+the touch-away behaviour from pyEfis #308. The HSI does not need, and ignores,
+an `encoder_order`. It is reached by touch only, not by the knob walk.
+
+| Readout | Writes | Inner (fine) | Outer (coarse) | Push |
+|---|---|---|---|---|
+| HDG | `HEADBUG` | 1 deg | 10 deg | sync to `HEAD`. If `HEAD` is failed or bad, it only ends the edit |
+| CRS, `NAVSRC` 0 | `NAV1CRS` | 1 deg | 10 deg | set to `VOR1BRG` (bearing TO the station: CDI centred, TO). On a localizer, or with that key absent or flagged, it only ends the edit |
+| CRS, `NAVSRC` 1 | `NAV2CRS` | 1 deg | 10 deg | the same, with `VOR2BRG` |
+| CRS, `NAVSRC` 2 (GPS) | not editable | | | |
+
+- Values step from the whole degree shown and wrap through 360. Each step is
+  written and sent to fix-gateway as it is turned, so a timeout keeps the value
+  and nothing is reverted.
+- **`COURSE` is never written.** It is the output of fix-gateway's NAVSRC
+  `select` (`connections/compute.yaml`), which would overwrite a direct write.
+  While CRS is being edited, the readout shows the key being turned, because
+  `COURSE` only follows it once fix-gateway's select has run.
+- A NAVSRC change while CRS has focus ends the edit.
+- Hit targets: the readout cell in `top_panel`, the box in `corners` and
+  `split`, grown to at least 12.7 mm for a gloved finger. `none` has nothing to
+  touch. The source tab and the bearing-source labels keep their taps, and they
+  win where a grown target overlaps them.
+- In `corners` the plain nav-source label now sits below the HDG box, and in
+  `split` the bearing-source labels sit above the bottom boxes. Before this
+  change both were drawn underneath a readout box, hidden, with their tap
+  targets over it.
+- On the X-Plane bench `NAV1CRS`, `NAV2CRS` and `HEADBUG` are also fed from sim
+  datarefs, so the sim can overwrite a value set here on its next update.
 
 ---
 

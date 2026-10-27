@@ -226,7 +226,7 @@ def test_default_name():
 
 
 # ---------------------------------------------------------------------------
-# JSON round-trip (Appendix B, "mp-route/1")
+# JSON round-trip (Appendix B; "mp-route/2" since RS2)
 # ---------------------------------------------------------------------------
 def test_json_round_trip_basic():
     plan = FlightPlan(name="KSBA-KSMX", comment="test route",
@@ -234,7 +234,8 @@ def test_json_round_trip_basic():
     data = plan.to_json()
     assert data["schema"] == SCHEMA
     assert data["name"] == "KSBA-KSMX"
-    assert [w["id"] for w in data["waypoints"]] == ["KSBA", "GVO", "USR001", "KSMX"]
+    assert [s["kind"] for s in data["segments"]] == ["waypoint"] * 4
+    assert [s["legs"][0]["id"] for s in data["segments"]] == ["KSBA", "GVO", "USR001", "KSMX"]
 
     back = FlightPlan.from_json(data)
     assert back.name == plan.name
@@ -256,7 +257,7 @@ def test_json_round_trip_preserves_roles():
 def test_json_round_trip_preserves_unknown_plan_fields():
     data = {
         "schema": SCHEMA, "name": "X", "comment": "", "created": "", "modified": "",
-        "source": "device", "waypoints": [], "future_field": {"nested": True},
+        "source": "device", "segments": [], "future_field": {"nested": True},
     }
     plan = FlightPlan.from_json(data)
     assert plan.extra == {"future_field": {"nested": True}}
@@ -268,17 +269,18 @@ def test_json_round_trip_preserves_unknown_waypoint_fields():
     data = {
         "schema": SCHEMA, "name": "X", "comment": "", "created": "", "modified": "",
         "source": "device",
-        "waypoints": [{"id": "KSBA", "type": "airport", "lat": 1.0, "lon": 2.0,
-                       "future_field": "kept"}],
+        "segments": [{"kind": "waypoint", "legs": [
+            {"id": "KSBA", "type": "airport", "lat": 1.0, "lon": 2.0,
+             "future_field": "kept"}]}],
     }
     plan = FlightPlan.from_json(data)
     assert plan.waypoints[0].extra == {"future_field": "kept"}
-    assert plan.to_json()["waypoints"][0]["future_field"] == "kept"
+    assert plan.to_json()["segments"][0]["legs"][0]["future_field"] == "kept"
 
 
 def test_from_json_rejects_unknown_schema():
     with pytest.raises(FlightPlanError):
-        FlightPlan.from_json({"schema": "mp-route/2", "waypoints": []})
+        FlightPlan.from_json({"schema": "mp-route/3", "segments": []})
 
 
 def test_to_json_falls_back_to_default_name():
@@ -286,7 +288,9 @@ def test_to_json_falls_back_to_default_name():
     assert plan.to_json()["name"] == "KSBA-KSMX"
 
 
-def test_appendix_b_example_round_trips():
+def test_appendix_b_v1_example_loads_and_saves_as_v2():
+    """An ``mp-route/1`` file (FP4's Appendix B example) loads as one
+    waypoint segment per waypoint and is rewritten as ``mp-route/2``."""
     data = {
         "schema": "mp-route/1",
         "name": "KSBA-KSMX",
@@ -308,10 +312,14 @@ def test_appendix_b_example_round_trips():
     plan = FlightPlan.from_json(data)
     assert plan.count == 6
     assert plan.approach() == (3, 4)
+    assert [s.kind for s in plan.segments] == ["waypoint"] * 6
     back = plan.to_json()
-    assert back["waypoints"][3]["role"] == "faf"
-    assert back["waypoints"][4]["role"] == "map"
-    assert "role" not in back["waypoints"][0]  # default role omitted
+    assert back["schema"] == "mp-route/2"
+    legs = [s["legs"][0] for s in back["segments"]]
+    assert legs[3]["role"] == "faf"
+    assert legs[4]["role"] == "map"
+    assert "role" not in legs[0]  # default role omitted
+    assert "pt" not in legs[0]    # default leg fields omitted
 
 
 # ---------------------------------------------------------------------------

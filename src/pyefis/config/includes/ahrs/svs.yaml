@@ -59,6 +59,10 @@ instruments:
       altitude: true
       majorDiv: 100
       font_scale: 1.1
+      # Baro setting box (on by default for an ALT tape): touch it, or reach
+      # it on the knob walk, then turn the knob. Replaces the separate
+      # Baro: readout and +/- buttons (pyEfis #311).
+      encoder_order: 200079
   - type: vsi_pfd
     disabled: VSI_BALL
     row: 0
@@ -128,52 +132,6 @@ instruments:
       fg_color: "#FFFFFF"
       #fontSize: 5 #47
       #font_percent: 0.65
-  - type: static_text
-    disabled: BARO_CONTROLS
-    row: 90
-    column: 118
-    span:
-      rows: 4
-      columns: 10
-    options:
-      text: "Baro:"
-      font_mask: "XXXXX"
-      alignment: AlignRight
-  - type: numeric_display
-    disabled: BARO_CONTROLS
-    row: 90
-    column: 129
-    span:
-      rows: 4
-      columns: 12
-    options:
-      font_mask: "XXXXXX"
-      dbkey: BARO
-      decimal_places: 2
-      pressure: true
-      clipping: True
-      encoder_order: 200079
-      encoder_set_real_time: true
-      encoder_multiplier: 0.01
-      #encoder_num_mask: "00.00"
-  - type: button
-    disabled: BARO_CONTROLS
-    row: 83
-    column: 118
-    span:
-      rows: 7
-      columns: 10
-    options:
-      config: buttons/baro-down-invisible.yaml
-  - type: button
-    disabled: BARO_CONTROLS
-    row: 83
-    column: 129
-    span:
-      rows: 7
-      columns: 10
-    options:
-      config: buttons/baro-up-invisible.yaml
   - type: static_text
     disabled: PRESSURE_DISPLAY
     row: 95

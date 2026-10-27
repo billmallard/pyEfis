@@ -30,6 +30,7 @@ _ENGINE_DTYPES = {
     "WPNAME": "str", "WPLAT": "float", "WPLON": "float", "WPFROM": "str",
     "WPNEXT": "str", "WPDIS": "float", "WPETE": "int", "FPLREMDIS": "float",
     "FPLREMETE": "int", "FPLALERT": "bool", "GPSSRC": "int",
+    "FPLACTSEG": "int", "FPLSEGREM": "float",
 }
 _ENGINE_DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "str": ""}
 
@@ -43,23 +44,8 @@ def _define(fix, key, dtype, value):
 
 
 def _define_all_fp1_keys(fix):
-    for n in range(1, fixbridge.MAX_SLOTS + 1):
-        id_key, lat_key, lon_key, type_key, flags_key = fixbridge._slot_keys(n)
-        _define(fix, id_key, "str", "")
-        _define(fix, lat_key, "float", 0.0)
-        _define(fix, lon_key, "float", 0.0)
-        _define(fix, type_key, "int", 0)
-        _define(fix, flags_key, "int", 0)
-    _define(fix, "FPLCOUNT", "int", 0)
-    _define(fix, "FPLNAME", "str", "")
-    _define(fix, "FPLSEQ", "int", 0)
-    _define(fix, "DTOID", "str", "")
-    _define(fix, "DTOLAT", "float", 0.0)
-    _define(fix, "DTOLON", "float", 0.0)
-    _define(fix, "DTOTYPE", "int", 0)
-    _define(fix, "FPLCMD", "str", "")
-    _define(fix, "FPLCMDACK", "int", 0)
-    _define(fix, "FPLMSG", "str", "")
+    for key, dtype, blank in fixbridge.route_key_specs():
+        _define(fix, key, dtype, blank)
     for key, dtype in _ENGINE_DTYPES.items():
         _define(fix, key, dtype, _ENGINE_DEFAULTS[dtype])
 
@@ -203,10 +189,11 @@ def test_full_flow_inserts_expansion_collapsed_between_entry_and_exit(fix, qtbot
     assert w._airway_picker is None  # the flow closes itself on success
     ids = [wp.id for wp in w._plan.waypoints]
     assert ids == ["KSBA", "GVO", "POM", "RZS", "KSMX"]
-    assert w._plan.waypoints[1].extra.get("airway") is None       # GVO: the entry, untagged
-    assert w._plan.waypoints[2].extra["airway"] == "V27"          # POM: inserted
-    assert w._plan.waypoints[3].extra["airway"] == "V27"          # RZS: inserted
-    assert w._plan.waypoints[4].extra.get("airway") is None       # KSMX: untouched
+    # One airway segment, entered at GVO (its own first leg, RS1), between
+    # two plain waypoints.
+    assert [(s.kind, s.ident, s.entry, s.exit) for s in w._plan.segments] == [
+        ("waypoint", "", "KSBA", "KSBA"), ("airway", "V27", "GVO", "RZS"),
+        ("waypoint", "", "KSMX", "KSMX")]
 
     groups = w._row_groups()
     assert groups == [(0, 0, None), (1, 1, None), (2, 3, "V27"), (4, 4, None)]
@@ -214,11 +201,7 @@ def test_full_flow_inserts_expansion_collapsed_between_entry_and_exit(fix, qtbot
     w.grab()  # renders the collapsed "V27 -> RZS" row without raising
 
 
-def test_airway_tag_survives_the_fix_bus_round_trip(fix, qtbot, pack_path):
-    """The FP1 bus contract carries id/lat/lon/type/role only (no per-slot
-    "which airway" key) -- `_commit()` publishes and immediately reads back,
-    so a naive re-read would silently un-collapse the row it had just drawn."""
-    w = _widget(qtbot, fix, pack_path)
+def _insert_v27(w):
     w._plan = _plan(fp_model.Waypoint(id="GVO", type="vor", lat=GVO[0], lon=GVO[1]))
     w._commit()
     w._row_menu_index = 0
@@ -226,15 +209,65 @@ def test_airway_tag_survives_the_fix_bus_round_trip(fix, qtbot, pack_path):
     w._airway_picker_pick_ident("V27")
     w._airway_picker_pick_exit("RZS")
 
-    assert fix.db.get_item("FPLCOUNT").value == 3  # actually published, not just local
-    assert w._plan.waypoints[1].extra.get("airway") == "V27"
-    assert w._plan.waypoints[2].extra.get("airway") == "V27"
 
-    # An unrelated commit (e.g. another edit) re-reads the route back off the
-    # bus; the tag must still be there afterwards.
+def _airways(plan):
+    return [(s.ident, [wp.id for wp in s.legs]) for s in plan.segments if s.kind == "airway"]
+
+
+def test_airway_is_published_as_a_segment_on_the_bus(fix, qtbot, pack_path):
+    """The segment table and every slot field reach the gateway (RS2) --
+    not just ID/LAT/LON/TYPE/FLAGS, and not a display-only tag."""
+    w = _widget(qtbot, fix, pack_path)
+    _insert_v27(w)
+
+    db = fix.db
+    assert db.get_item("FPLCOUNT").value == 3  # actually published, not just local
+    assert db.get_item("FPLSEGCNT").value == 1
+    assert [db.get_item(f"FPLS1{k}").value for k in ("KIND", "ID", "ENT", "EXT", "FIRST", "LAST")] \
+        == [1, "V27", "GVO", "RZS", 1, 3]
+    assert [db.get_item(f"FPL{n}SGI").value for n in (1, 2, 3)] == [1, 1, 1]
+    # The MEA of each airway leg rides on FPLfALT -- coded on the row of the
+    # fix that ends the leg (POM 6000, RZS 4000 in the fixture). The leg into
+    # the entry fix is not on the airway, so it carries none.
+    assert [db.get_item(f"FPL{n}ALT").value for n in (1, 2, 3)] == ["", "+6000", "+4000"]
+    assert [db.get_item(f"FPL{n}PT").value for n in (1, 2, 3)] == ["TF", "TF", "TF"]
+
+
+def test_airway_survives_a_recommit(fix, qtbot, pack_path):
+    """`_commit()` publishes and immediately reads back. Before RS2 the page
+    kept the airway in a display-only tag and re-attached it by guessing;
+    now the segment comes back off the bus."""
+    w = _widget(qtbot, fix, pack_path)
+    _insert_v27(w)
     w._commit()
-    assert w._plan.waypoints[1].extra.get("airway") == "V27"
-    assert w._plan.waypoints[2].extra.get("airway") == "V27"
+    assert _airways(w._plan) == [("V27", ["GVO", "POM", "RZS"])]
+
+
+def test_airway_survives_a_restart(fix, qtbot, pack_path):
+    """A display constructed after the route was published (pyEfis restart
+    against a running gateway) reads the airway off the bus. Fails on the
+    re-attach heuristic: a fresh widget had no prior plan to copy the tag
+    from, so the airway came back as three plain waypoints."""
+    w = _widget(qtbot, fix, pack_path)
+    _insert_v27(w)
+
+    restarted = flight_plan.FlightPlan(None)
+    qtbot.addWidget(restarted)
+    assert _airways(restarted._plan) == [("V27", ["GVO", "POM", "RZS"])]
+    assert restarted._row_groups() == [(0, 0, None), (1, 2, "V27")]
+
+
+def test_a_second_display_reading_the_bus_sees_the_airway(fix, qtbot, pack_path):
+    """Two FPL pages on one gateway: an airway entered on one appears on the
+    other through the FPLSEQ listener, with no shared Python state."""
+    editor = _widget(qtbot, fix, pack_path)
+    other = flight_plan.FlightPlan(None)
+    qtbot.addWidget(other)
+    assert other._plan.count == 0
+
+    _insert_v27(editor)
+    assert _airways(other._plan) == [("V27", ["GVO", "POM", "RZS"])]
+    assert other._plan.waypoints[1].alt == "+6000"
 
 
 def test_expand_collapse_toggle(fix, qtbot, pack_path):

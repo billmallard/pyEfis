@@ -30,7 +30,7 @@ All seven areas below are **verified + deployed to the Pi**. "Code gaps" counts
 | **HSI** | [hsi_widget_spec.md](hsi_widget_spec.md) | 25 pass | none (3 warning flags done) | — |
 | **Attitude (AI)** | [ai_widget_spec.md](ai_widget_spec.md) | 22 pass / 1 xfail | none | **AI-LIM-001** pitch-limit → AOA |
 | **Airspeed tape** | [airspeed_widget_spec.md](airspeed_widget_spec.md) | 12 pass | none | — |
-| **Altimeter tape** | [altimeter_widget_spec.md](altimeter_widget_spec.md) | 13 pass / 1 xfail | none | **AL-BUG-001** alt reference bug → ALT_SEL |
+| **Altimeter tape** | [altimeter_widget_spec.md](altimeter_widget_spec.md) | 14 pass (+ `test_altsel.py`) | none | — (AL-BUG-001 shipped on `ALTSEL`, pyEfis #310) |
 | **VSI** | [vsi_widget_spec.md](vsi_widget_spec.md) | 11 pass | none | — |
 | **Turn coordinator / slip-skid** | [tc_widget_spec.md](tc_widget_spec.md) | 9 pass | none | — |
 | **Heading / compass** | [heading_widget_spec.md](heading_widget_spec.md) | (in HSI suite) 29 pass | none | — |
@@ -56,13 +56,12 @@ and excessive-slip the same way, off the same FIX keys.
 
 ## Data-blocked gaps (need a fix-gateway key)
 
-Both are specified, contracted, and carry `xfail(strict)` gap-tracker tests; they will
-auto-close (flip the run red) the moment the key is published.
+The remaining gap is specified, contracted, and carries an `xfail(strict)` gap-tracker test; it will
+auto-close (flip the run red) the moment the key is published. (AL-BUG-001 closed with pyEfis #310.)
 
 | pyEfis gap | Needs | fix-gateway tracking |
 |------------|-------|----------------------|
 | **AI-LIM-001** — pitch-limit / stall-margin on the AI (A.2.4) | an **AOA / stall-margin** key | **[billmallard/fix-gateway#13](https://github.com/billmallard/fix-gateway/issues/13)** (EFIS-AOA-001) |
-| **AL-BUG-001** — altimeter **reference bug** at selected altitude (§17.8.a) | an **`ALT_SEL`** key | **billmallard/fix-gateway [#7](https://github.com/billmallard/fix-gateway/issues/7)/#6/#8/#9** (EFIS-ALTSEL-*) |
 
 ## Open enhancements (non-blocking, tracked in the specs)
 

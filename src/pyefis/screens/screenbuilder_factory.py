@@ -78,7 +78,8 @@ def build_altimeter_tape(
     kwargs = {}
     for k in ("dbkey", "maxalt", "majorDiv", "minorDiv", "total_decimals",
               "font_mask", "round_to", "numeric_box", "font_scale",
-              "show_trend", "trend_lookahead"):
+              "show_trend", "trend_lookahead", "show_baro", "altsel_box",
+              "alt_bug_enabled", "alt_bug_color", "alt_bug_dbkey"):
         if k in opts:
             kwargs[k] = opts[k]
     return altimeter.Altimeter_Tape(
@@ -651,6 +652,26 @@ _register(InstrumentSpec(
              help="show the boxed numeric altitude over the tape"),
         Prop("font_scale", "number", default=1.0, label="Scale-number font scale", apply="special",
              help="multiplier on the tape scale-number font size"),
+        Prop("show_baro", "boolean", default=True, label="Baro setting box", apply="special",
+             help="touch-selectable altimeter setting box at the bottom of the "
+                  "tape (on for an ALT tape unless the screen has its own BARO "
+                  "readout; off for a VS tape)"),
+        # Selected altitude (pyEfis #310). Defaults follow the FIX key: on for
+        # an ALT tape, off for a VS tape (the two share this class).
+        Prop("altsel_box", "boolean", default=True,
+             label="Selected-altitude box", apply="special",
+             help="touch-settable ALTSEL box at the top of the tape "
+                  "(on for an ALT tape, off for a VS tape)"),
+        Prop("alt_bug_enabled", "boolean", default=True,
+             label="Altitude bug", apply="special",
+             help="draw the selected-altitude bug on the scale "
+                  "(follows the box unless set)"),
+        Prop("alt_bug_color", "color", default="#00ffff",
+             label="Altitude bug color", apply="special",
+             help="colour of the selected-altitude box text and bug"),
+        Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
+             label="Selected-altitude key", apply="special",
+             help="FIX key holding the selected altitude (default ALTSEL)"),
     ],
     preview={"value": 3500},
 ))
@@ -714,6 +735,13 @@ _register(InstrumentSpec(
              help="show the cyan heading bug at the selected heading (HEADBUG)"),
         Prop("heading_bug_color", "color", default="#00ffff",
              label="Heading bug color", help="heading-bug colour"),
+        Prop("touch_edit", "boolean", default=True,
+             label="Touch to set HDG / CRS",
+             help="touch the HDG or CRS readout, then turn the knob to set it: "
+                  "HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the "
+                  "selected VLOC source (not editable on GPS). Inner ring 1 "
+                  "deg, outer ring 10 deg; push syncs HDG to the heading or "
+                  "centres the CDI on CRS"),
         Prop("track_indicator_enabled", "boolean", default=True,
              label="Track diamond",
              help="show the magenta GPS ground-track diamond (TRACK), "

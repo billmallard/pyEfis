@@ -40,6 +40,7 @@ _ENGINE_DTYPES = {
     "WPNAME": "str", "WPLAT": "float", "WPLON": "float", "WPFROM": "str",
     "WPNEXT": "str", "WPDIS": "float", "WPETE": "int", "FPLREMDIS": "float",
     "FPLREMETE": "int", "FPLALERT": "bool", "GPSSRC": "int",
+    "FPLACTSEG": "int", "FPLSEGREM": "float",
 }
 _ENGINE_DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "str": ""}
 
@@ -47,23 +48,8 @@ _ENGINE_DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "str": ""}
 def _define_all_fp1_keys(fix):
     """Defines the full PA3 route block (all ``MAX_SLOTS`` slots), staging,
     command and engine-output keys on the fixture's mock FIX database."""
-    for n in range(1, fixbridge.MAX_SLOTS + 1):
-        id_key, lat_key, lon_key, type_key, flags_key = fixbridge._slot_keys(n)
-        _define(fix, id_key, "str", "")
-        _define(fix, lat_key, "float", 0.0)
-        _define(fix, lon_key, "float", 0.0)
-        _define(fix, type_key, "int", 0)
-        _define(fix, flags_key, "int", 0)
-    _define(fix, "FPLCOUNT", "int", 0)
-    _define(fix, "FPLNAME", "str", "")
-    _define(fix, "FPLSEQ", "int", 0)
-    _define(fix, "DTOID", "str", "")
-    _define(fix, "DTOLAT", "float", 0.0)
-    _define(fix, "DTOLON", "float", 0.0)
-    _define(fix, "DTOTYPE", "int", 0)
-    _define(fix, "FPLCMD", "str", "")
-    _define(fix, "FPLCMDACK", "int", 0)
-    _define(fix, "FPLMSG", "str", "")
+    for key, dtype, blank in fixbridge.route_key_specs():
+        _define(fix, key, dtype, blank)
     for key, dtype in _ENGINE_DTYPES.items():
         _define(fix, key, dtype, _ENGINE_DEFAULTS[dtype])
 
@@ -164,13 +150,18 @@ def test_publish_writes_slots_in_order_and_seq_last(fix):
     bridge.publish(_plan(2))
     order = [key for key, _v in _sent(fix)]
 
-    # On the wire, not just in pyEfis's local copy: slot 1 fields, then
-    # slot 2 fields, then count/name, then seq last.
-    assert order == [
-        "FPL1ID", "FPL1LAT", "FPL1LON", "FPL1TYPE", "FPL1FLAGS",
-        "FPL2ID", "FPL2LAT", "FPL2LON", "FPL2TYPE", "FPL2FLAGS",
-        "FPLCOUNT", "FPLNAME", "FPLSEQ",
-    ]
+    # On the wire, not just in pyEfis's local copy: every field of slot 1,
+    # then of slot 2, then the segment table rows, then the counts (RS1
+    # writer order: FPLSEGCNT and FPLCOUNT after the rows), name and
+    # cycle, then seq last.
+    slot = [name for name, _, _ in fixbridge.SLOT_FIELDS]
+    row = [name for name, _, _ in fixbridge.SEGMENT_FIELDS]
+    assert slot == ["ID", "LAT", "LON", "TYPE", "PT", "CRS", "DST", "ALT", "SPD", "SGI",
+                    "FLAGS", "CTRLAT", "CTRLON", "TURN"]
+    assert order == (
+        [f"FPL1{f}" for f in slot] + [f"FPL2{f}" for f in slot]
+        + [f"FPLS1{f}" for f in row] + [f"FPLS2{f}" for f in row]
+        + ["FPLSEGCNT", "FPLCOUNT", "FPLNAME", "FPLDBCYC", "FPLSEQ"])
     assert fix.db.get_item("FPL1ID").value == "WP00"
     assert fix.db.get_item("FPL2ID").value == "WP01"
     assert fix.db.get_item("FPLCOUNT").value == 2
@@ -194,12 +185,14 @@ def test_publish_blanks_trailing_slots_on_shrink(fix):
 
     bridge.publish(_plan(3))
     assert fix.db.get_item("FPLCOUNT").value == 3
+    assert fix.db.get_item("FPLSEGCNT").value == 3
     for n in range(4, 21):
-        id_key, lat_key, lon_key, type_key, flags_key = fixbridge._slot_keys(n)
-        assert fix.db.get_item(id_key).value == "", f"slot {n} id not blanked"
-        assert fix.db.get_item(lat_key).value == 0.0, f"slot {n} lat not blanked"
-        assert fix.db.get_item(type_key).value == 0, f"slot {n} type not blanked"
-        assert fix.db.get_item(flags_key).value == 0, f"slot {n} flags not blanked"
+        for name, _dtype, blank in fixbridge.SLOT_FIELDS:
+            assert fix.db.get_item(f"FPL{n}{name}").value == blank, \
+                f"slot {n} {name} not blanked"
+        for name, _dtype, blank in fixbridge.SEGMENT_FIELDS:
+            assert fix.db.get_item(f"FPLS{n}{name}").value == blank, \
+                f"segment row {n} {name} not blanked"
     # untouched, in-use slots survive
     assert fix.db.get_item("FPL1ID").value == "WP00"
     assert fix.db.get_item("FPL3ID").value == "WP02"

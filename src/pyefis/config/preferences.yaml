@@ -85,7 +85,7 @@ enabled:
   TRIM_CONTROLS: false
   WIND_DISPLAY: false
   PRESSURE_DISPLAY: false
-  BARO_CONTROLS: true
+  BARO_CONTROLS: true  # older screens' Baro: readout + buttons; stock screens draw the box on the altimeter tape (#311)
   VSI_BALL: false
   VSI_TAPE: true
   AUTO_PILOT: true

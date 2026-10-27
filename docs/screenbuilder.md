@@ -447,6 +447,10 @@ and the two paths end up in the same state. A gauge that is knob-edited with the
 `encoder_order` walk also shows the ring and icon instead of the orange text while it is
 being edited. The orange highlight still marks the walk itself.
 
+The HSI (`horizontal_situation_indicator`) takes the same `touch_edit` option for its HDG and
+CRS readouts (pyEfis #309), but there it is **on by default**; set `touch_edit: false` to
+turn it off. See its section in `docs/wiki/Widgets-Flight-Instruments.md`.
+
 Widgets draw these marks with `pyefis.instruments.edit_focus.draw_edit_marks()`, the one
 shared helper, so every settable value looks the same.
 
@@ -587,6 +591,27 @@ Options:
   * font_mask - default 00000
   * dbkey - default 'ALT'
   * maxalt - default 50000
+  * show_baro - default on for an `ALT` tape, off for any other `dbkey`; draws the
+    altimeter setting (`BARO`) in a box at the bottom of the tape. A touch selects it
+    for the knob (see "Touch-select + knob edit"): inner knob 0.01 inHg / 1 hPa, outer
+    ring 0.10 inHg / 10 hPa, push sets standard (29.92 inHg, which reads 1013 hPa) and a
+    second push restores the setting it replaced, unless `BARO` changed any other way
+    in between (a knob step, another display, the gateway). Add
+    an `encoder_order` to the tape to reach the box on the knob walk too. It reads inHg
+    or hPa from the `Pressure` unit group (`units: Pressure` in preferences, and the
+    Units action). When left at its default, the box turns itself off on a screen that
+    already shows `BARO` in another visible widget, so a screen never shows two baro
+    readouts.
+  * altsel_box - default True for an ALT tape, False for a VS tape. Draws the
+    touch-settable selected-altitude box (`ALTSEL`) at the top of the tape:
+    inner knob 100 ft, outer ring 1000 ft, push syncs to the current altitude
+    rounded to 100 ft and ends the edit (pyEfis #310). Needs no `encoder_order`; one may still
+    be given to put the tape in the knob walk, which lands on the ALTSEL box
+    first, then the baro box. A touch on either box focuses that box.
+  * alt_bug_enabled - default follows `altsel_box`. Draws the selected-altitude
+    bug on the scale; pegs half-visible at the tape edge when off-scale.
+  * alt_bug_color - default '#00ffff'
+  * alt_bug_dbkey - default 'ALTSEL'
 
 ## altimeter_trend_tape
 
