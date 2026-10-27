@@ -25,6 +25,16 @@ and section 4 for the PFD.
   touch anywhere else, or on a screen change. The visual language is a cyan
   ring outset from the value plus a 10 px circular-arrow icon, drawn by one
   shared helper (`draw_edit_marks`).
+- **The mouse as the knob (TK7, pyEfis #321).** A bench or desktop unit with a
+  mouse and no encoder can still edit a focused value. While a value has
+  focus, and only with the pointer over it, the wheel is the inner knob (one
+  step per 120-unit notch, wheel up = increase, no acceleration), Shift + wheel
+  or a horizontal wheel is the outer ring, and a middle-click is the push.
+  The `edit_focus` filter routes these into the same `EncoderController` path
+  as an encoder step, so the timeout restarts the same way; the ENC FIX keys
+  are not written. Anywhere else the wheel passes through, so the moving map
+  keeps its wheel zoom. With nothing focused the wheel does nothing, as
+  before; it never selects a value.
 - **`GCUSEL` becomes an annunciation output, not the source of truth.** If and
   when `GCUSEL` is added, pyEfis may *publish* its focused target there so
   other displays (the GCU faceplate) can annunciate it. pyEfis remains the one
