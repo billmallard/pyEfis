@@ -119,9 +119,15 @@ render read-only — it never raises.
 - **FPL** (default) — header: route name, `FPLREMDIS`/`FPLREMETE`, a state
   badge (LEG/DIRECT/SUSP from `FPLSTATE`), approach state
   (APR ARM/LNAV/MISSED from `FPLAPR`) and `LOI` (`FPLINTEG` false). List: type
-  icon, ident (+ role abbreviation IAF/FAF/MAP/MAHP when set), the `columns`
-  option's data columns (DTK/DIS/CUM computed from `flightplan.geo`; ETE from
-  `WPETE` on the active row only; ETA not yet computed). The TO row
+  a column-header strip (WPT / SEGMENT and the column names), then per row a
+  type icon, ident (+ role abbreviation IAF/FAF/MAP/MAHP when set) and the
+  `columns` option's data columns. DTK and DIS are the leg **into** the row's
+  fix -- the leg you fly to reach it -- and DTK is **magnetic** (great-circle
+  course + `MAGVAR`, or the coded course), the same number the bridge
+  publishes as that slot's `FPLfCRS` and the engine flies as `FPLCRS`; the
+  first fix has none. CUM is the distance from the first fix (all from
+  `flightplan.geo`; ETE from `WPETE` on the active row only; ETA not yet
+  computed). RS3 changed DTK/DIS from the leg leaving the fix, in true. The TO row
   (`FPLACTLEG`) is `active_color`, earlier rows `past_color`, later rows
   `future_color`. Tapping a row opens a menu: Insert Before, Insert After,
   **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`),
@@ -136,11 +142,8 @@ render read-only — it never raises.
   through the tapped fix (`AirwayGraph.airways_through_fix`, PA2), then an
   exit fix from that airway's ordered points, each annotated with its
   published MEA/ceiling when the pack carries one; `FlightPlan.insert_airway`
-  makes the tapped fix and the expansion one `airway` segment (RS2). The
-  fixes after the entry paint as one collapsed row ("V27 → RZS"); tapping it
-  expands the run into its member fixes (each still an ordinary row, with its
-  own row menu), and tapping the expanded run's first row collapses it again
-  (RS3 redesigns these rows). An `AirwayError` (unknown airway, a fix not on
+  makes the tapped fix and the expansion one `airway` segment (RS2). An
+  `AirwayError` (unknown airway, a fix not on
   it, a one-way violation) or a route already too close to `MAX_WAYPOINTS`
   for the whole segment leaves the plan untouched and shows the reason —
   never a partial airway. The airway is on the bus as a segment-table row, so
@@ -148,6 +151,25 @@ render read-only — it never raises.
   Invert re-runs the one-way check, and refuses with the reason) and
   stores/loads. Before RS2 it was a display-only tag re-attached after every
   read-back by guessing, which lost it in all four cases.
+- **Airway segment rows** (RS3, AER-3792, `route_segments_plan.md` section 6)
+  -- the entry fix stays its own row; every leg inside the airway is ONE
+  two-line segment row: a route glyph, the ident in bold with
+  "entry → exit", and beneath it "N fixes  MEA m" (N counts the entry; m is
+  the highest leg minimum). DTK is blank (an airway changes course), DIS is
+  the airway's own length and CUM runs to its exit. While the active leg is
+  inside the airway, its working rows nest under it, indented one icon
+  column on a grey tree line: the FROM fix (`past_color`, "(from)"), the
+  active TO fix and the next fix; the fixes still ahead fold into
+  "+ N more ▸", which opens Show Fixes. Fixes already passed before FROM are
+  not repeated. Tapping the segment row opens the **segment menu**: Change
+  Exit / Change Entry (the airway's other fixes through the same picker as
+  Load Airway; `FlightPlan.change_exit`/`change_entry` re-expand the same
+  segment), Show Fixes, Activate to <entry> (`ACT` on the entry slot) and
+  Remove Airway (`remove_segment`, which leaves the entry fix). **Show
+  Fixes** is a read-only sheet of every fix with the magnetic course,
+  distance and MEA of the leg into it; tapping a fix (there, or a nested
+  working row) offers Direct To, Activate Leg and WPT Info for that one fix.
+  Renders: `docs/images/rs3_fpl_segments/` (`tools/render_fpl_segments.py`).
 - **Entry** (Add/Insert) — an ident field with FastFind: typed characters
   white, the predicted suffix (nearest match by distance from a mode-dependent
   reference point — the aircraft when appending to an empty plan, the last

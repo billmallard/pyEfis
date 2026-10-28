@@ -195,10 +195,9 @@ def test_full_flow_inserts_expansion_collapsed_between_entry_and_exit(fix, qtbot
         ("waypoint", "", "KSBA", "KSBA"), ("airway", "V27", "GVO", "RZS"),
         ("waypoint", "", "KSMX", "KSMX")]
 
-    groups = w._row_groups()
-    assert groups == [(0, 0, None), (1, 1, None), (2, 3, "V27"), (4, 4, None)]
-    assert w._group_expanded(groups[2]) is False  # collapsed by default
-    w.grab()  # renders the collapsed "V27 -> RZS" row without raising
+    # No active leg: the airway is ONE segment row after its entry fix.
+    assert w._display_rows(None) == [("wpt", 0), ("wpt", 1), ("seg", 1), ("wpt", 4)]
+    w.grab()  # renders the "V27 GVO -> RZS" segment row without raising
 
 
 def _insert_v27(w):
@@ -254,7 +253,7 @@ def test_airway_survives_a_restart(fix, qtbot, pack_path):
     restarted = flight_plan.FlightPlan(None)
     qtbot.addWidget(restarted)
     assert _airways(restarted._plan) == [("V27", ["GVO", "POM", "RZS"])]
-    assert restarted._row_groups() == [(0, 0, None), (1, 2, "V27")]
+    assert restarted._display_rows(None) == [("wpt", 0), ("seg", 0)]
 
 
 def test_a_second_display_reading_the_bus_sees_the_airway(fix, qtbot, pack_path):
@@ -270,21 +269,45 @@ def test_a_second_display_reading_the_bus_sees_the_airway(fix, qtbot, pack_path)
     assert other._plan.waypoints[1].alt == "+6000"
 
 
-def test_expand_collapse_toggle(fix, qtbot, pack_path):
+def test_segment_menu_change_exit_reexpands_the_airway(fix, qtbot, pack_path):
+    """RS3 segment menu -> Change Exit: the exit picker offers the airway's
+    other fixes, and picking one re-expands the SAME segment (PA16's open
+    "change exit fix" scope)."""
     w = _widget(qtbot, fix, pack_path)
-    w._plan = _plan(fp_model.Waypoint(id="GVO", type="vor", lat=GVO[0], lon=GVO[1]))
-    w._commit()
-    w._row_menu_index = 0
-    w._row_menu_load_airway()
-    w._airway_picker_pick_ident("V27")
-    w._airway_picker_pick_exit("RZS")
+    _insert_v27(w)
+    w._open_seg_menu(0)
+    w._seg_menu_change_exit()
+    assert w._airway_picker["stage"] == "change_exit"
+    assert [leg.fix_id for leg in w._airway_picker["legs"]] == ["POM", "RZS"]
+    w.grab()
+    w._segment_picker_pick("POM")
+    assert w._airway_picker is None
+    assert _airways(w._plan) == [("V27", ["GVO", "POM"])]
+    assert fix.db.get_item("FPLS1EXT").value == "POM"  # published, not just local
 
-    group = next(g for g in w._row_groups() if g[2] == "V27")
-    assert w._group_expanded(group) is False
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is True
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is False
+
+def test_segment_menu_change_entry_reexpands_the_airway(fix, qtbot, pack_path):
+    w = _widget(qtbot, fix, pack_path)
+    _insert_v27(w)
+    w._open_seg_menu(0)
+    w._seg_menu_change_entry()
+    assert w._airway_picker["stage"] == "change_entry"
+    assert [leg.fix_id for leg in w._airway_picker["legs"]] == ["GVO", "POM"]
+    w._segment_picker_pick("POM")
+    assert _airways(w._plan) == [("V27", ["POM", "RZS"])]
+
+
+def test_segment_menu_change_exit_error_keeps_the_picker_and_the_plan(fix, qtbot, pack_path):
+    """Picking the entry as the exit is refused by the airway graph; the
+    reason is shown in the picker and the route is untouched."""
+    w = _widget(qtbot, fix, pack_path)
+    _insert_v27(w)
+    before = w._plan.to_json()
+    w._open_seg_menu(0)
+    w._seg_menu_change_exit()
+    w._segment_picker_pick("GVO")
+    assert w._airway_picker is not None and w._airway_picker["message"]
+    assert w._plan.to_json() == before
 
 
 # ---------------------------------------------------------------------------
