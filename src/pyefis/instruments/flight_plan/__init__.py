@@ -2257,13 +2257,17 @@ class FlightPlan(QWidget):
         p.save()
         color = p.pen().color()
         p.setPen(QPen(color, max(2.0, r * 0.22)))
-        pts = [QPointF(cx - r, cy + r * 0.55), QPointF(cx - r * 0.15, cy - r * 0.55),
-               QPointF(cx + r * 0.35, cy + r * 0.25), QPointF(cx + r, cy - r * 0.55)]
+        # Spans 0.8 r each side so the end dots (0.18 r) and the pen stay
+        # inside the icon box every other row type uses -- at full r they
+        # clipped the pane's left edge and touched the label.
+        a = r * 0.8
+        pts = [QPointF(cx - a, cy + a * 0.55), QPointF(cx - a * 0.15, cy - a * 0.55),
+               QPointF(cx + a * 0.35, cy + a * 0.25), QPointF(cx + a, cy - a * 0.55)]
         p.drawPolyline(QPolygonF(pts))
         p.setBrush(QBrush(color))
         p.setPen(Qt.PenStyle.NoPen)
         for pt in pts:
-            p.drawEllipse(pt, r * 0.2, r * 0.2)
+            p.drawEllipse(pt, r * 0.18, r * 0.18)
         p.restore()
 
     def _paint_segment_row(self, p, w, y, rh, k, active_idx, cols, interactive):
