@@ -21,3 +21,26 @@ live display):
 
     QT_QPA_PLATFORM=offscreen PYTHONPATH=src python3 tools/render_fpl_segments.py OUTDIR \
         --procedures /data/makerplane-data/procedures/current/procedures.sqlite
+
+## Live bench screenshots (Beelink, after Bill accepted the mock)
+
+`bench_*.png` are pyEfis's own SIGUSR1 screenshots of the live Beelink panel
+running branch `aer-3792/rs3-fpl-segments` (staged with `bench-deploy.sh
+--ref`), cropped to the Flight Plan tab at 1:1. `*_fullscreen.png` are the
+uncropped 1920x1080 frames (the SVS panel is blank in a SIGUSR1 grab; that is
+expected on the Beelink, a `QOpenGLWidget` does not render into it). The route
+was entered on the glass with synthetic taps (`xdotool`): KSBA and GVO from the
+entry page, Load Airway V27 exit AVOLS from GVO's row menu, KSMX appended.
+Live MAGVAR on the bench was -14.0.
+
+| File | How it was reached |
+|---|---|
+| `bench_1_summary.png` | GVO row menu > Activate Leg (`FPLACTLEG` 2) |
+| `bench_2_in_airway.png` | V27 row > Show Fixes > DEANO > Activate Leg (`FPLACTLEG` 5) |
+| `bench_3_segment_menu.png` | tap on the V27 row |
+| `bench_4_show_fixes.png` | Show Fixes from that menu |
+| `bench_sheet.png` | all four side by side |
+
+On the bus after state 2: `FPLACTLEG 5`, `FPL5ID DEANO`, `FPL5CRS 70.6` (the
+page shows 071°), segment 2 = `KIND 1, ID V27, ENT GVO, EXT AVOLS`. X-Plane was
+not connected (position keys flagged old), so `FPLCRS` itself was not live.
