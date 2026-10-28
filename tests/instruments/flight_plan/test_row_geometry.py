@@ -189,7 +189,10 @@ def test_row_label_does_not_collide_with_the_type_icon(fix, qtbot):
     # hardcoding the old 0.16 * h put this scanline in the wrong place the
     # moment the chrome became physical, which is the same trap this file
     # exists to close.
-    y = int(w._chrome_h(993, 2.0, 0.26) + cap / 2)
+    # Plus the RS3 column-header strip above the first row.
+    top = w._chrome_h(993, 2.0, 0.26)
+    hh, rh = w._list_metrics(top, 993 - w._chrome_h(993, 1.3, 0.18), cap, 4)
+    y = int(top + hh + rh / 2)
     runs = _runs_on_line(img, y, 0, int(w.width() * 0.35))
     assert len(runs) >= 2, f"expected an icon and a label on the row line, got {runs}"
     icon_end, label_start = runs[0][1], runs[1][0]
@@ -198,62 +201,20 @@ def test_row_label_does_not_collide_with_the_type_icon(fix, qtbot):
 
 
 # --------------------------------------------------------------------------
-# collapsed airway rows (PA6, AER-1605) -- must not reintroduce the #219/#234
-# overlap: a collapsed "V27 -> RZS" row is drawn through the same icon/label
-# geometry as an ordinary row, so it inherits these two fixes for free as
-# long as it goes through `_paint_one_row`/`_paint_airway_summary_row`'s
-# shared `_row_icon_geometry`, which is what these tests pin.
+# airway segment rows (RS3, AER-3792) -- must not reintroduce the #219/#234
+# overlap: the segment row and its nested working rows go through the same
+# `_row_icon_geometry` as an ordinary row. Row partitioning, sizing and the
+# menus are pinned in test_segment_rows.py.
 # --------------------------------------------------------------------------
 
-def test_collapsed_airway_row_partitions_correctly(fix, qtbot):
-    w = _widget(qtbot)
-    w._plan = _plan_with_collapsed_airway_group()
-    w._commit()
-    assert w._row_groups() == [(0, 0, None), (1, 2, "V27"), (3, 3, None)]
-    w.grab()  # must not raise
+def _first_list_row(w, n_rows):
+    top = w._chrome_h(w.height(), 2.0, 0.26)
+    bottom = w.height() - w._chrome_h(w.height(), 1.3, 0.18)
+    hh, rh = w._list_metrics(top, bottom, w._row_h_cap(), n_rows)
+    return top + hh, rh
 
 
-def test_collapsed_airway_row_sizes_by_visible_count_not_raw_count(fix, qtbot):
-    """The whole point of collapsing: an N-fix run must size like ONE row --
-    otherwise a long "V27 -> RZS" run steals the row height every other leg
-    gets. Reads the actual geometry `_paint_list` used (via the tap targets
-    it registers, one per visible row) rather than re-deriving the formula,
-    so this fails if the row-height math regresses back to the raw count."""
-    from pyefis.flightplan import model as fp_model
-    w = _widget(qtbot)
-    wps = [fp_model.Waypoint(id=f"WP{i:02d}", type="fix", lat=float(i), lon=float(i))
-           for i in range(40)]
-    # V27 enters at WP09, so its folded fixes are WP10..WP15.
-    w._plan = fp_model.FlightPlan(name="TEST", segments=(
-        [fp_model.waypoint_segment(wp) for wp in wps[:9]]
-        + [fp_model.Segment(kind="airway", ident="V27", legs=wps[9:16])]
-        + [fp_model.waypoint_segment(wp) for wp in wps[16:]]))
-    # 40 waypoints, 6 of them (10..15) collapsed to 1 row -> 35 visible rows.
-    groups = w._row_groups()
-    assert next(g for g in groups if g[2] == "V27") == (10, 15, "V27")
-    assert len(groups) == 35
-
-    from PyQt6.QtGui import QPainter, QPixmap
-    header_h = int(w._chrome_h(w.height(), 2.0, 0.26))
-    footer_h = int(w._chrome_h(w.height(), 1.3, 0.18))
-    pixmap = QPixmap(w.width(), w.height())
-    painter = QPainter(pixmap)
-    w._tap_targets = []
-    # `interactive=True` directly -- this widget has no gateway keys defined,
-    # so `_bridge.available` (what `_paint_fpl` derives it from) is False and
-    # a real paint pass would register no taps at all.
-    w._paint_list(painter, w.width(), header_h, w.height() - footer_h, w._row_h_cap(), True)
-    painter.end()
-    # One tap target per visible row -- 35, not 40 (no toggle sub-rect: the
-    # group is collapsed, so it registers exactly one tap like any other row).
-    assert len(w._tap_targets) == 35
-    list_h = w.height() - header_h - footer_h
-    expected_rh = max(14, min(list_h / 35, w._row_h_cap()))
-    used_rh = w._tap_targets[0][3]
-    assert used_rh == pytest.approx(expected_rh)
-
-
-def test_collapsed_airway_row_icon_is_never_drawn_off_the_left_edge(fix, qtbot):
+def test_airway_segment_row_icon_is_never_drawn_off_the_left_edge(fix, qtbot):
     w = _widget(qtbot)
     w._plan = _plan_with_collapsed_airway_group()
     w._commit()
@@ -265,36 +226,20 @@ def test_collapsed_airway_row_icon_is_never_drawn_off_the_left_edge(fix, qtbot):
     assert not lit_at_zero, f"content flush against the left edge at y={lit_at_zero[:5]}"
 
 
-def test_collapsed_airway_row_label_does_not_collide_with_the_type_icon(fix, qtbot):
+def test_airway_segment_row_label_does_not_collide_with_its_icon(fix, qtbot):
     w = _widget(qtbot)
     w._plan = _plan_with_collapsed_airway_group()
     w._commit()
     img = w.grab().toImage()
-    cap = w._row_h_cap()
-    header_h = w._chrome_h(993, 2.0, 0.26)
-    # Row 1 (index 1 in the visible list) is the collapsed "V27 -> RZS" row.
-    y = int(header_h + cap * 1.5)
+    # Display rows: GVO, the V27 segment row, KSMX. The segment row's first
+    # line (ident, entry -> exit) sits in its top 58%.
+    y0, rh = _first_list_row(w, 3)
+    y = int(y0 + rh + rh * 0.4)
     runs = _runs_on_line(img, y, 0, int(w.width() * 0.35))
-    assert len(runs) >= 2, f"expected an icon and a label on the collapsed row, got {runs}"
+    assert len(runs) >= 2, f"expected an icon and a label on the segment row, got {runs}"
     icon_end, label_start = runs[0][1], runs[1][0]
     assert label_start - icon_end >= 3, (
         f"label starts {label_start - icon_end}px after the icon ends -- they touch")
-
-
-def test_collapsed_airway_row_expands_to_its_members_on_toggle(fix, qtbot):
-    w = _widget(qtbot)
-    w._plan = _plan_with_collapsed_airway_group()
-    w._commit()
-    group = w._row_groups()[1]
-    assert group == (1, 2, "V27")
-    assert w._group_expanded(group) is False
-
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is True
-    w.grab()  # expanded rendering must not raise
-
-    w._toggle_airway_group(w._group_key(group))
-    assert w._group_expanded(group) is False
 
 
 def test_a_long_plan_still_shrinks_rows_to_fit(fix, qtbot):
