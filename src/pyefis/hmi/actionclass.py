@@ -52,6 +52,14 @@ class ActionClass(QWidget):
     # flight_plan instrument on the screen (the checklist broadcast precedent).
     flightplanPage = pyqtSignal(object)
     flightplanDirectTo = pyqtSignal(object)
+    # Moving-map banner -> flight_plan instrument (FP10, billmallard/pyEfis#186).
+    # In-process only, deliberately NOT in signalMap: the payload is a
+    # flightplan.waypoints.Waypoint (Info) or a (lat, lon) tuple (Create WPT),
+    # which a screen YAML button cannot express. Every flight_plan instrument
+    # on the screen receives it and shows the page, switching its tab_section
+    # tab if it is on a hidden one.
+    flightplanWptInfo = pyqtSignal(object)
+    flightplanCreateWaypoint = pyqtSignal(object)
 
     def __init__(self):
         super(ActionClass, self).__init__()
