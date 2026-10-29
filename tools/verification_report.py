@@ -227,7 +227,11 @@ def collect(args):
         classname = case.get("classname", "")
         parts = classname.split(".")
         cls = parts[-1] if parts and parts[-1][:1].isupper() else None
-        if not file_attr:
+        if not classname and "." in name:
+            # A collection error: pytest reports the module as the name.
+            file_attr = file_attr or name.replace(".", "/") + ".py"
+            name = func = "(collection)"
+        elif not file_attr:
             mod_parts = parts[:-1] if cls else parts
             file_attr = "/".join(mod_parts) + ".py"
         src = index.get((file_attr, cls, func), {})
