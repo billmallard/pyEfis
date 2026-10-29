@@ -123,6 +123,16 @@ class TabSection(QWidget):
         self.tab_bar.blockSignals(False)
         self.stack.setCurrentIndex(index)
 
+    def show_tab_containing(self, widget):
+        """Show the tab whose page holds *widget*. Returns False if no page
+        of this section is an ancestor of it."""
+        for i in range(self.stack.count()):
+            page = self.stack.widget(i)
+            if page is widget or page.isAncestorOf(widget):
+                self._show_tab(i)
+                return True
+        return False
+
     @property
     def fg_color(self):
         return self._fg_color
@@ -219,3 +229,16 @@ class TabSection(QWidget):
                 logger.exception("tab_section: error closing a tab page")
         if event is not None:
             super().closeEvent(event)
+
+
+def reveal(widget):
+    """Bring *widget* on screen by switching every enclosing ``TabSection``
+    (nested ones included) to the tab that holds it. A widget not inside any
+    tab section is left alone. FP10: the map banner's Info and Create WPT
+    open pages on a flight_plan instrument that is usually on another tab of
+    the same section (the Beelink bench's Map / Flight Plan tabs)."""
+    w = widget.parentWidget() if widget is not None else None
+    while w is not None:
+        if isinstance(w, TabSection):
+            w.show_tab_containing(widget)
+        w = w.parentWidget()

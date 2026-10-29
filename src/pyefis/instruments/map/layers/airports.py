@@ -19,7 +19,9 @@ import time
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
 
-from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
+from pyefis.flightplan.waypoints import Waypoint
+from pyefis.instruments.map.layers import (MapLayer, hit_distance, range_bucket,
+                                           register_layer)
 
 MAGENTA = QColor(197, 36, 125)
 
@@ -126,6 +128,26 @@ class AirportsLayer(MapLayer):
                     QRectF(c.x() - 60, c.y() + r + 1, 120,
                            f.pixelSize() + 4),
                     Qt.AlignmentFlag.AlignHCenter, a["icao"])
+
+    def hit(self, x, px, py, tol_px):
+        """FP10: airports whose symbol centre is within *tol_px* -- the
+        snapshot ``paint()`` draws from, under the same range gate."""
+        if self._db_all is None or not self._db_all.ready \
+                or x.range_nm > _SYMBOL_RANGE:
+            return []
+        with self._lock:
+            snap = self._snap
+        if snap is None:
+            return []
+        out = []
+        for a in snap[1]:
+            if not a["icao"]:
+                continue
+            d = hit_distance(x, a["lat"], a["lon"], px, py, tol_px)
+            if d is not None:
+                out.append((d, Waypoint(id=a["icao"], type="airport",
+                                        lat=a["lat"], lon=a["lon"])))
+        return out
 
     def _runway_strips(self, p, x, a, half_len_px):
         """Runway strips at TRUE orientation: white fill, magenta edge,

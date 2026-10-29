@@ -17,7 +17,9 @@ import time
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
 
-from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
+from pyefis.flightplan.waypoints import Waypoint
+from pyefis.instruments.map.layers import (MapLayer, hit_distance, range_bucket,
+                                           register_layer)
 
 BLUE = QColor(70, 110, 200)
 DARKBLUE = QColor(40, 60, 130)
@@ -78,6 +80,15 @@ class _DbLayer(MapLayer):
                     name="map-" + self.id, daemon=True)
                 self._worker.start()
         return snap[1] if snap else None
+
+    def _painted_rows(self, x):
+        """FP10 hit-test: the rows the last ``paint()`` drew from, under
+        the same range gate -- never a new query."""
+        if not self._path or x.range_nm > self._MAX_RANGE:
+            return []
+        with self._lock:
+            snap = self._snap
+        return snap[1] if snap else []
 
     def _worker_loop(self):
         last = None
@@ -152,6 +163,17 @@ class NavaidsLayer(_DbLayer):
             "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
             (a, b, c, d)).fetchall()
 
+    def hit(self, x, px, py, tol_px):
+        out = []
+        for nid, ntype, freq, lat, lon in self._painted_rows(x):
+            d = hit_distance(x, lat, lon, px, py, tol_px)
+            if d is not None and nid:
+                # Same type rule as flightplan.waypoints.WaypointIndex.
+                wtype = "ndb" if "NDB" in (ntype or "").upper() else "vor"
+                out.append((d, Waypoint(id=nid, type=wtype, lat=lat, lon=lon,
+                                        freq=freq or None)))
+        return out
+
     def paint(self, p, x):
         rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
@@ -211,6 +233,14 @@ class FixesLayer(_DbLayer):
             "SELECT id, lat, lon FROM fixes "
             "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
             "LIMIT 400", (a, b, c, d)).fetchall()
+
+    def hit(self, x, px, py, tol_px):
+        out = []
+        for fid, lat, lon in self._painted_rows(x):
+            d = hit_distance(x, lat, lon, px, py, tol_px)
+            if d is not None and fid:
+                out.append((d, Waypoint(id=fid, type="fix", lat=lat, lon=lon)))
+        return out
 
     def paint(self, p, x):
         rows = self._snapshot(x, self._MAX_RANGE)

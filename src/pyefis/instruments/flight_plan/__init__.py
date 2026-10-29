@@ -274,6 +274,8 @@ class FlightPlan(QWidget):
         for signal, handler in (
             (a.flightplanPage, self._act_page),
             (a.flightplanDirectTo, self._act_direct_to),
+            (a.flightplanWptInfo, self._act_wpt_info),
+            (a.flightplanCreateWaypoint, self._act_create_waypoint),
         ):
             try:
                 signal.connect(handler)
@@ -305,6 +307,50 @@ class FlightPlan(QWidget):
             self._open_dto_page()
         elif page == "catalog":
             self._open_catalog_page()
+
+    def _show_fpl_base(self):
+        """Close every menu, overlay and entry surface and show the FPL
+        page -- the clean base the ``flightplan page fpl`` verb returns to."""
+        self._row_menu_index = None
+        self._seg_menu = None
+        self._seg_fixes = None
+        self._seg_fix_menu = None
+        self._menu_open = False
+        self._wpt_info = None
+        self._modal = None
+        self._uwpt_new = None
+        self._uwpt_edit = None
+        self._close_entry()
+        self._page = "fpl"
+
+    def _reveal(self):
+        # Deferred import: tab_section pulls in the screenbuilder.
+        from pyefis.instruments.tab_section import reveal
+        reveal(self)
+
+    def _act_wpt_info(self, wp):
+        """Moving-map banner Info (FP10): WPT Info for *wp* (a
+        ``flightplan.waypoints.Waypoint``), over the FPL page."""
+        if wp is None:
+            return
+        self._show_fpl_base()
+        self._open_wpt_info(wp)
+        self._reveal()
+
+    def _act_create_waypoint(self, pos):
+        """Moving-map banner Create WPT (FP10): the FP5b user-waypoint form
+        with LAT/LON prefilled from the map pointer *pos* ``(lat, lon)``,
+        opened where it always lives -- over the Entry page's User tab, so
+        the new waypoint is listed there to add once it is saved."""
+        try:
+            lat, lon = float(pos[0]), float(pos[1])
+        except (TypeError, ValueError, IndexError):
+            return
+        self._show_fpl_base()
+        self._open_entry({"kind": "append"})
+        self._entry_tab = "User"
+        self._open_user_wpt_creator(prefill=(lat, lon))
+        self._reveal()
 
     def _act_direct_to(self, arg=""):
         parts = str(arg or "").split(None, 1)
@@ -1360,8 +1406,10 @@ class FlightPlan(QWidget):
         return f"{part(lat, 'N', 'S')}  {part(lon, 'E', 'W')}"
 
     # -- user waypoint create (Entry page User tab) / edit (WPT Info) --------
-    def _open_user_wpt_creator(self):
-        self._uwpt_new = {}
+    def _open_user_wpt_creator(self, prefill=None):
+        """*prefill* ``(lat, lon)`` seeds the LAT/LON fields instead of the
+        aircraft position (the moving-map Create WPT, FP10)."""
+        self._uwpt_new = {"prefill": prefill}
         self._modal_open("IDENT (BLANK=AUTO)", "", False, fp_waypoints.USER_ID_MAX_LEN,
                           self._uwpt_new_ident)
 
@@ -1372,7 +1420,7 @@ class FlightPlan(QWidget):
 
     def _uwpt_new_comment(self, value):
         self._uwpt_new["comment"] = value
-        ref_lat, ref_lon = self._aircraft_position()
+        ref_lat, ref_lon = self._uwpt_new.get("prefill") or self._aircraft_position()
         self._modal_open("LAT", self._fmt_latlon_entry(ref_lat, True), True, 10,
                           self._uwpt_new_lat)
 
@@ -1383,7 +1431,7 @@ class FlightPlan(QWidget):
             self.update()
             return
         self._uwpt_new["lat"] = lat
-        ref_lat, ref_lon = self._aircraft_position()
+        ref_lat, ref_lon = self._uwpt_new.get("prefill") or self._aircraft_position()
         self._modal_open("LON", self._fmt_latlon_entry(ref_lon, False), True, 11,
                           self._uwpt_new_lon)
 
