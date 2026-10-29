@@ -142,6 +142,35 @@ jobs:
           npx --yes wrangler@4 pages project create "$PAGES_PROJECT" --production-branch dev
         npx --yes wrangler@4 pages deploy site --project-name "$PAGES_PROJECT" \
           --branch "$BRANCH" --commit-hash "${{ github.event.pull_request.head.sha || github.sha }}"
+    - name: Attach the custom domain (dev only, idempotent)
+      if: env.CLOUDFLARE_API_TOKEN != '' && github.event_name == 'push' && env.BRANCH == 'dev'
+      shell: bash # -eo pipefail, so a failed curl in a pipe fails the step
+      env:
+        DOMAIN: testing.aerocommons.org
+      run: |
+        # Adds DOMAIN to the Pages project and, only if no record exists for it yet, a
+        # proxied CNAME to the project's pages.dev address. An existing record is
+        # reported, never overwritten. Needs Pages Edit plus DNS Edit on the zone.
+        api=https://api.cloudflare.com/client/v4
+        auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+        proj="$api/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT"
+        if [ "$(curl -sS "${auth[@]}" "$proj/domains/$DOMAIN" | jq -r .success)" != "true" ]; then
+          curl -sS --fail-with-body "${auth[@]}" -X POST "$proj/domains" -d "{\"name\":\"$DOMAIN\"}" \
+            | jq -c '.result | {name, status}'
+        fi
+        zone=$(curl -sS --fail-with-body "${auth[@]}" "$api/zones?name=${DOMAIN#*.}" | jq -r '.result[0].id')
+        if [ -z "$zone" ] || [ "$zone" = "null" ]; then
+          echo "::error::the token cannot see the ${DOMAIN#*.} zone (needs Zone > DNS > Edit on it)"; exit 1
+        fi
+        records=$(curl -sS --fail-with-body "${auth[@]}" "$api/zones/$zone/dns_records?name=$DOMAIN")
+        if [ "$(echo "$records" | jq '.result | length')" = "0" ]; then
+          curl -sS --fail-with-body "${auth[@]}" -X POST "$api/zones/$zone/dns_records" \
+            -d "{\"type\":\"CNAME\",\"name\":\"$DOMAIN\",\"content\":\"$PAGES_PROJECT.pages.dev\",\"proxied\":true}" \
+            | jq -c '.result | {name, type, content}'
+        else
+          echo "$records" | jq -c '.result[] | {name, type, content}'
+        fi
+        curl -sS --fail-with-body "${auth[@]}" "$proj/domains/$DOMAIN" | jq -c '.result | {name, status}'
     - name: No deploy token
       if: env.CLOUDFLARE_API_TOKEN == ''
       run: echo "::notice::CLOUDFLARE_PAGES_TOKEN is not available to this run; the page was built, not deployed"

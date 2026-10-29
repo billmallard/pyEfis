@@ -22,9 +22,12 @@ The `evidence-page` job (pyEfis only) takes this run's record and fix-gateway's 
 `dev` record, renders `index.html` with `tools/verification_report.py page`, and deploys
 it to the Cloudflare Pages project `avionics-test-evidence`. `dev` is the production
 branch; any other branch or PR gets its own preview URL. It deploys
-with the `CLOUDFLARE_PAGES_TOKEN` secret (a Cloudflare API token with Account >
-Cloudflare Pages > Edit; the R2 token `editor-assets.yml` uses has no Pages access) and
-the existing `CLOUDFLARE_ACCOUNT_ID`. Without that token (a fork's PR, for example) the
+with the `CLOUDFLARE_PAGES_TOKEN` secret and the existing `CLOUDFLARE_ACCOUNT_ID`. The
+token needs Account > Cloudflare Pages > Edit, plus Zone > DNS > Edit on aerocommons.org
+for the custom domain; the R2 token `editor-assets.yml` uses has no Pages access. On a
+`dev` push the job also attaches `testing.aerocommons.org` to the project (Bill's D1
+pick) and, if the zone has no record for that name yet, creates a proxied CNAME to the
+`pages.dev` address. It never overwrites an existing record. Without that token (a fork's PR, for example) the
 page is built and kept as the `evidence-page` artifact but not deployed. The first
 deploy creates the project.
 
