@@ -21,9 +21,12 @@ These steps run even when tests fail, so a red run keeps its record too.
 The `evidence-page` job (pyEfis only) takes this run's record and fix-gateway's latest
 `dev` record, renders `index.html` with `tools/verification_report.py page`, and deploys
 it to the Cloudflare Pages project `avionics-test-evidence`. `dev` is the production
-branch; any other branch or PR gets its own preview URL. Without a
-`CLOUDFLARE_API_TOKEN` secret (a fork's PR, for example) the page is built and kept as
-the `evidence-page` artifact but not deployed.
+branch; any other branch or PR gets its own preview URL. It deploys
+with the `CLOUDFLARE_PAGES_TOKEN` secret (a Cloudflare API token with Account >
+Cloudflare Pages > Edit; the R2 token `editor-assets.yml` uses has no Pages access) and
+the existing `CLOUDFLARE_ACCOUNT_ID`. Without that token (a fork's PR, for example) the
+page is built and kept as the `evidence-page` artifact but not deployed. The first
+deploy creates the project.
 
 Sections:
 

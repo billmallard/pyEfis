@@ -98,7 +98,8 @@ jobs:
       group: evidence-page-${{ github.head_ref || github.ref_name }}
       cancel-in-progress: true
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # A Pages-only token, separate from the R2 token editor-assets.yml uses.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PAGES_PROJECT: avionics-test-evidence
       BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -143,4 +144,4 @@ jobs:
           --branch "$BRANCH" --commit-hash "${{ github.event.pull_request.head.sha || github.sha }}"
     - name: No deploy token
       if: env.CLOUDFLARE_API_TOKEN == ''
-      run: echo "::notice::CLOUDFLARE_API_TOKEN is not available to this run; the page was built, not deployed"
+      run: echo "::notice::CLOUDFLARE_PAGES_TOKEN is not available to this run; the page was built, not deployed"
