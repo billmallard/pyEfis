@@ -41,8 +41,32 @@ jobs:
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 src test --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
+      id: pytest
       run: |
-        pytest
+        # JUnit (xunit1 keeps each case's file and line) is the record the job summary
+        # and the test-evidence page are built from (TV11).
+        pytest --junitxml=reports/junit.xml -o junit_family=xunit1
+
+    - name: Test evidence record and job summary
+      if: always() && steps.pytest.outcome != 'skipped'
+      env:
+        REF: ${{ github.head_ref || github.ref_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        python tools/verification_report.py collect --junit reports/junit.xml --tests tests \
+          --docs docs --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --ref "$REF" \
+          --run-url "$RUN_URL" --out reports/verification.json
+        python tools/verification_report.py summary reports/verification.json >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Keep the test results
+      if: always() && steps.pytest.outcome != 'skipped'
+      uses: actions/upload-artifact@v6
+      with:
+        name: test-results
+        path: |
+          reports/junit.xml
+          reports/verification.json
+        retention-days: 90
 
     - name: Coverage comment
       id: coverage_comment
@@ -58,4 +82,95 @@ jobs:
         name: python-coverage-comment-action
         # If you use a different name, update COMMENT_FILENAME accordingly
         path: python-coverage-comment-action.txt
-        
+
+  # TV11: render the test-evidence page from this run's record plus fix-gateway's latest
+  # dev record, and deploy it to Cloudflare Pages. dev is the production branch; every
+  # other branch gets its own preview URL. A separate job so a Pages outage can never
+  # fail the required `build` check.
+  evidence-page:
+    needs: build
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: evidence-page-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: true
+    env:
+      # A Pages-only token, separate from the R2 token editor-assets.yml uses.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAGES_PROJECT: avionics-test-evidence
+      BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/download-artifact@v6
+      continue-on-error: true
+      with:
+        name: test-results
+        path: records/pyefis
+    - name: Fetch fix-gateway's latest dev record
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        run_id=$(gh run list -R billmallard/fix-gateway -w CI -b dev --status completed -L 10 \
+          --json databaseId,conclusion -q '[.[] | select(.conclusion != "cancelled")][0].databaseId')
+        if [ -n "$run_id" ]; then
+          gh run download "$run_id" -R billmallard/fix-gateway -n test-results -D records/fgw
+        fi
+    - name: Render the page
+      run: |
+        mkdir -p records/pyefis records/fgw
+        records=""
+        [ -f records/pyefis/verification.json ] && records="$records records/pyefis/verification.json"
+        [ -f records/fgw/verification.json ] && records="$records records/fgw/verification.json"
+        python tools/verification_report.py page $records --expect pyEfis fix-gateway --out site
+    - uses: actions/upload-artifact@v6
+      with:
+        name: evidence-page
+        path: site/
+    - uses: actions/setup-node@v5
+      if: env.CLOUDFLARE_API_TOKEN != ''
+      with:
+        node-version: "22" # wrangler 4 requires Node >= 22
+    - name: Deploy to Cloudflare Pages
+      if: env.CLOUDFLARE_API_TOKEN != ''
+      run: |
+        npx --yes wrangler@4 pages project list | grep -q "$PAGES_PROJECT" || \
+          npx --yes wrangler@4 pages project create "$PAGES_PROJECT" --production-branch dev
+        npx --yes wrangler@4 pages deploy site --project-name "$PAGES_PROJECT" \
+          --branch "$BRANCH" --commit-hash "${{ github.event.pull_request.head.sha || github.sha }}"
+    - name: Attach the custom domain (dev only, idempotent)
+      if: env.CLOUDFLARE_API_TOKEN != '' && github.event_name == 'push' && env.BRANCH == 'dev'
+      shell: bash # -eo pipefail, so a failed curl in a pipe fails the step
+      env:
+        DOMAIN: testing.aerocommons.org
+      run: |
+        # Adds DOMAIN to the Pages project and, only if no record exists for it yet, a
+        # proxied CNAME to the project's pages.dev address. An existing record is
+        # reported, never overwritten. Needs Pages Edit plus DNS Edit on the zone.
+        api=https://api.cloudflare.com/client/v4
+        auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+        proj="$api/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT"
+        if [ "$(curl -sS "${auth[@]}" "$proj/domains/$DOMAIN" | jq -r .success)" != "true" ]; then
+          curl -sS --fail-with-body "${auth[@]}" -X POST "$proj/domains" -d "{\"name\":\"$DOMAIN\"}" \
+            | jq -c '.result | {name, status}'
+        fi
+        zone=$(curl -sS --fail-with-body "${auth[@]}" "$api/zones?name=${DOMAIN#*.}" | jq -r '.result[0].id')
+        if [ -z "$zone" ] || [ "$zone" = "null" ]; then
+          echo "::error::the token cannot see the ${DOMAIN#*.} zone (needs Zone > DNS > Edit on it)"; exit 1
+        fi
+        records=$(curl -sS --fail-with-body "${auth[@]}" "$api/zones/$zone/dns_records?name=$DOMAIN")
+        if [ "$(echo "$records" | jq '.result | length')" = "0" ]; then
+          curl -sS --fail-with-body "${auth[@]}" -X POST "$api/zones/$zone/dns_records" \
+            -d "{\"type\":\"CNAME\",\"name\":\"$DOMAIN\",\"content\":\"$PAGES_PROJECT.pages.dev\",\"proxied\":true}" \
+            | jq -c '.result | {name, type, content}'
+        else
+          echo "$records" | jq -c '.result[] | {name, type, content}'
+        fi
+        curl -sS --fail-with-body "${auth[@]}" "$proj/domains/$DOMAIN" | jq -c '.result | {name, status}'
+    - name: No deploy token
+      if: env.CLOUDFLARE_API_TOKEN == ''
+      run: echo "::notice::CLOUDFLARE_PAGES_TOKEN is not available to this run; the page was built, not deployed"
