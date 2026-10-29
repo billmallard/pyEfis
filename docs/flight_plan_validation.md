@@ -100,6 +100,7 @@ excluded.
 | missed, RW30-HANNU (TERM) | 147 | 0.010 | 0.0016 | same | **PASS** |
 | HANNU-WINCH incl. both offsets (TERM) | 390 | 0.001 | 0.0049 | same | **PASS** |
 | WINCH hold, as flown on `2666bc4` | - | 178.6 | - | **opposite** | **FAIL** -- billmallard/fix-gateway#45, fixed by #49 after this flight (see below) |
+| WINCH hold inbound leg, the same flight replayed through `dev` with #49 | 5 Hz trace | 1.4 | 0.07 | same | **PASS** -- on the replay, accepted by Bill as closing this line (2026-10-29, below) |
 
 | Check | Result | Verdict |
 |---|---|---|
@@ -128,8 +129,14 @@ full scale. That replay is the playback fixture's
 `test_hold_inbound_leg_matches_xplane`, and it fails on `2666bc4`. The entry
 minute and the turns differ by design: the engine flies the AIM entry and
 turns the course with the aircraft (Bill's call on AER-4076), while X-Plane
-holds 120. The live-flown verdict stays FAIL; the fix is only proven on the
+holds 120. The live-flown verdict stays FAIL. The fix is proven on the
 replay, not on a second flight.
+
+**Ruling (Bill, 2026-10-29, AER-809):** the replay closes the hold line
+if it meets this section's acceptance. It does: DTK 1.4 deg, the same sign,
+and within 0.07 of full scale through the inbound leg, out to pegged. It was
+re-run on fix-gateway `dev` @ `686e382`: 9 of 9 pass. No second flight was
+queued.
 
 ![GPSSRC 0 then 1 in LNAV, 1.9 nm before CIMSO: the HSI holds 319 and the bar stays centred when the source swaps to X-Plane's FMS](images/fp8_bench/s2_lnav_gpssrc0.jpg)
 ![Same moment on GPSSRC = 1](images/fp8_bench/s2_lnav_gpssrc1.jpg)
