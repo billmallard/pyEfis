@@ -81,6 +81,23 @@ class MapLayer:
         block the settle measurement."""
         return True
 
+    def hit(self, xform, x, y, tol_px):
+        """FP10 (billmallard/pyEfis#186): the objects this layer painted
+        within *tol_px* screen pixels of ``(x, y)``, as
+        ``(distance_px, flightplan.waypoints.Waypoint)`` pairs. Only what
+        the last ``paint()`` would actually show is hittable -- the same
+        range gates, the same snapshot, nothing off screen -- and like
+        ``paint()`` it never queries a database. Default: nothing."""
+        return []
+
+
+def hit_distance(xform, lat, lon, x, y, tol_px):
+    """Screen distance from ``(x, y)`` to the projected ``(lat, lon)``, or
+    None if it is farther than *tol_px* (inclusive: exactly *tol_px* hits)."""
+    c = xform.to_screen(lat, lon)
+    d = math.hypot(c.x() - x, c.y() - y)
+    return d if d <= tol_px else None
+
 
 @register_layer
 class RangeRingsLayer(MapLayer):
