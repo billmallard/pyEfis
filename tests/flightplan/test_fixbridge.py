@@ -396,3 +396,17 @@ def test_package_source_never_imports_qt_directly():
             if stripped.startswith("import PyQt") or stripped.startswith("from PyQt"):
                 offenders.append(f"{path.name}:{lineno}: {stripped}")
     assert offenders == [], "flightplan package must not import Qt directly:\n" + "\n".join(offenders)
+
+
+def test_two_bridges_never_reuse_a_command_seq(fix):
+    """FP10: the map and the FPL page each own a FixBridge, and both write
+    FPLCMD. Appendix C: strictly increasing per session -- the second writer
+    continues from the bus."""
+    _define_all_fp1_keys(fix)
+    fpl = fixbridge.FixBridge(fix)
+    mapb = fixbridge.FixBridge(fix)
+    assert fpl.command("SUSP") == 1
+    assert mapb.command("DTO") == 2
+    assert fpl.command("RESUME") == 3
+    fix.db.set_value("FPLCMDACK", -9)      # another display got to 9
+    assert mapb.command("DTOX") == 10

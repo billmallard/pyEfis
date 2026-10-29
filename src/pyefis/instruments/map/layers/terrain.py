@@ -554,6 +554,22 @@ class TerrainLayer(MapLayer):
             perf.water.record(n_polys, n_verts, n_polys_after,
                                n_verts_after, n_qpointf)
 
+    def elevation_ft(self, lat, lon):
+        """FP10 map pointer: terrain elevation in feet at one point, or None
+        when this layer has no tiles there (no tile path, a void, water --
+        water has no elevation the pointer should claim). One bilinear at
+        the finest level; called on a tap, never per frame."""
+        if self._cache is None:
+            return None
+        try:
+            elev_m, water, _hit = self._sample(
+                np.array([float(lat)]), np.array([float(lon)]), 0)
+        except Exception:
+            return None
+        if bool(water[0, 0]):
+            return None
+        return float(elev_m[0, 0]) * 3.28084
+
     def _sample(self, lats, lons, mip):
         """Vectorised elevation sampling straight off the TileCache.
 

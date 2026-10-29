@@ -30,7 +30,8 @@ from pyavtools import fix as pyavtools_fix
 
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
-from pyefis.instruments.map.layers import MapLayer, register_layer
+from pyefis.flightplan.waypoints import WAYPOINT_TYPES, Waypoint
+from pyefis.instruments.map.layers import MapLayer, hit_distance, register_layer
 
 PAST = QColor("#808080")
 ACTIVE = QColor("#ff00ff")
@@ -285,6 +286,23 @@ class FlightPlanLayer(MapLayer):
                 p.setPen(QPen(color))
                 p.drawText(QRectF(c.x() - 60, c.y() + r + 1, 120, f.pixelSize() + 4),
                            Qt.AlignmentFlag.AlignHCenter, label)
+
+    def hit(self, x, px, py, tol_px):
+        """FP10: the plan's waypoint symbols within *tol_px* -- the only way
+        to tap a user or map waypoint, which no database layer draws."""
+        if self._bridge is None or not self._bridge.available \
+                or x.range_nm > _SYMBOL_RANGE:
+            return []
+        route = self._bridge.read_route()
+        if route is None:
+            return []
+        out = []
+        for s in route.waypoints:
+            d = hit_distance(x, s.lat, s.lon, px, py, tol_px)
+            if d is not None and s.id:
+                wtype = s.type if s.type in WAYPOINT_TYPES else "fix"
+                out.append((d, Waypoint(id=s.id, type=wtype, lat=s.lat, lon=s.lon)))
+        return out
 
     @staticmethod
     def _draw_symbol(p, c, r, wtype, color):

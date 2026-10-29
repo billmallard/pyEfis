@@ -34,6 +34,14 @@ from . import model
 
 log = logging.getLogger(__name__)
 
+
+def _cmd_seq(text) -> int:
+    """The seq at the head of an ``FPLCMD`` string, 0 if there is none."""
+    try:
+        return int(str(text or "").split()[0])
+    except (IndexError, ValueError):
+        return 0
+
 MAX_SLOTS = 100
 
 TYPE_TO_FPLTYPE = {"unknown": 0, "airport": 1, "vor": 2, "ndb": 3, "fix": 4, "user": 5, "map": 6}
@@ -186,7 +194,7 @@ class FixBridge:
 
     def __init__(self, fix_module):
         self._fix = fix_module
-        self._seq_counter = 0
+        self._last_seq = 0
         self._published_count = 0
         self._published_segcnt = 0
         self._ack_callbacks: dict[int, callable] = {}
@@ -307,13 +315,25 @@ class FixBridge:
         Returns the seq, or None if the bridge is unavailable."""
         if not self.available:
             return None
-        self._seq_counter += 1
-        seq = self._seq_counter
+        seq = self._next_seq()
         text = f"{seq} {verb}" if arg is None else f"{seq} {verb} {arg}"
         if on_ack is not None:
             self._ack_callbacks[seq] = on_ack
         self._set("FPLCMD", text)
         return seq
+
+    def _next_seq(self) -> int:
+        """One past the highest seq this bridge has sent or seen on the bus.
+        Appendix C wants the seq strictly increasing per editor session, and
+        one display can hold several bridges -- the flight_plan instrument's
+        and the moving map's (FP10, billmallard/pyEfis#186) -- each writing
+        ``FPLCMD``. Private counters would both start at 1, re-send an
+        identical string and answer each other's ``FPLCMDACK``; the last
+        command and ack on the bus are shared by every writer."""
+        seen = max(_cmd_seq(self._get("FPLCMD").value),
+                   abs(int(self._get("FPLCMDACK").value or 0)))
+        self._last_seq = max(self._last_seq, seen) + 1
+        return self._last_seq
 
     def _on_cmdack(self, value):
         seq = abs(int(value))

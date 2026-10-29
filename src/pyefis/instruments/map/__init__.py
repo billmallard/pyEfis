@@ -7,12 +7,17 @@
 import math
 import time
 
-from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QPinchGesture, QWidget
 
 import pyavtools.fix as fix
 
+from pyefis import hmi
+from pyefis.flightplan import fixbridge as fp_fixbridge
+from pyefis.flightplan import geo as fp_geo
+from pyefis.flightplan import model as fp_model
+from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map import layers as map_layers
 from pyefis.instruments.map.perf import MapPerfStats
@@ -22,19 +27,68 @@ NM_M = 1852.0
 
 #: desktop-parity drag: degrees of map rotation per pixel of a modifier-drag.
 _ROTATE_DEG_PER_PX = 0.5
-#: a press/release with less than this much travel is a tap (-> recenter),
-#: not a drag.
+#: a press/release with less than this much travel is a tap (-> select,
+#: FP10), not a drag.
 _TAP_PX = 4.0
 #: gesture-settle debounce (MP1): render is deferred until this long after
 #: the last gesture/wheel/drag event, so a continuous pinch/wheel/drag
 #: coalesces into one worker render instead of one per event.
 _SETTLE_MS = 150
+#: FP10 (billmallard/pyEfis#186): a tap selects a painted object whose symbol
+#: centre is within this many px (inclusive) -- touch-sized, ~3 mm on the
+#: bench panels.
+HIT_TOL_PX = 12.0
+#: ident and type of a bare map point sent direct-to or inserted (guide 3-46).
+MAPWPT_ID = "MAPWPT"
+#: stacked-object chooser shows at most this many rows.
+_CHOOSER_MAX = 6
+#: how long a banner result ("DIRECT TO RZS", a rejection) stays on screen.
+_TOAST_MS = 3000
 
 
 def _wrap180(deg):
     """Normalise degrees to the half-open range (-180, 180]."""
     d = (float(deg) + 180.0) % 360.0 - 180.0
     return 180.0 if d == -180.0 else d
+
+
+def _leg_distance_nm(a, b, lat, lon):
+    """Distance from ``(lat, lon)`` to the great-circle leg a->b, clamped to
+    the leg's ends: off either end it is the distance to that end.
+    ``along_track_distance_nm`` is unsigned (an acos), so "behind the start"
+    is tested separately: the point bears more than 90 deg off the leg."""
+    to_a = fp_geo.distance_nm(lat, lon, a.lat, a.lon)
+    leg = fp_geo.distance_nm(a.lat, a.lon, b.lat, b.lon)
+    if leg <= 0.0 or to_a <= 0.0:
+        return to_a
+    off = math.radians(fp_geo.initial_bearing(a.lat, a.lon, lat, lon)
+                       - fp_geo.initial_bearing(a.lat, a.lon, b.lat, b.lon))
+    if math.cos(off) <= 0.0:
+        return to_a
+    try:
+        atd = fp_geo.along_track_distance_nm(lat, lon, a.lat, a.lon, b.lat, b.lon)
+    except ValueError:      # acos a hair past 1.0: the point is on the leg line
+        atd = to_a
+    if atd >= leg:
+        return fp_geo.distance_nm(lat, lon, b.lat, b.lon)
+    return abs(fp_geo.cross_track_nm(lat, lon, a.lat, a.lon, b.lat, b.lon))
+
+
+def insert_index(waypoints, lat, lon):
+    """FP10 banner Insert: the flat index to ``insert_before`` so the new
+    waypoint splits the plan leg nearest ``(lat, lon)``, or None to append
+    (a plan with no leg yet: empty, or one waypoint). Ties go to the earlier
+    leg. A point beyond the last waypoint is nearest the last leg's end, so
+    it lands before the destination, not after it -- extending the plan is
+    the FPL page's Add Waypoint."""
+    if len(waypoints) < 2:
+        return None
+    best_k, best_d = None, None
+    for k in range(1, len(waypoints)):
+        d = _leg_distance_nm(waypoints[k - 1], waypoints[k], lat, lon)
+        if best_d is None or d < best_d:
+            best_k, best_d = k, d
+    return best_k
 
 
 class MapTransform:
@@ -72,8 +126,22 @@ class MapTransform:
         return QPointF(self.cx + de * self._px_per_m,
                        self.cy - dn * self._px_per_m)
 
+    def to_world(self, x, y):
+        """Inverse of :meth:`to_screen`: screen px -> ``(lat, lon)`` (FP10
+        map pointer)."""
+        de = (x - self.cx) / self._px_per_m
+        dn = (self.cy - y) / self._px_per_m
+        if self.rot:
+            c, s = math.cos(self.rot), math.sin(self.rot)
+            de, dn = de * c + dn * s, -de * s + dn * c
+        return (self.lat0 + dn / M_PER_DEG_LAT,
+                self.lon0 + de / (M_PER_DEG_LAT * self._coslat))
+
 
 class MovingMap(LiveBindingMixin, QWidget):
+    #: FP10: an FPLCMD rejection reason, queued from the FIX thread to the GUI.
+    _ack_toast = pyqtSignal(str)
+
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
         super(MovingMap, self).__init__(parent)
         self.setStyleSheet("background: transparent; border: 0px")
@@ -190,11 +258,26 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._settle_timer = QTimer(self)
         self._settle_timer.setSingleShot(True)
         self._settle_timer.timeout.connect(self.update)
+        self._ack_toast.connect(self.show_toast)
 
         self._lat = self._lon = 0.0
         self._track = 0.0
         self._alt_ft = 0.0
         self._old = {}
+
+        # --- map pointer + banner (FP10, billmallard/pyEfis#186) -------------
+        # _pointer is None, or {"lat", "lon", "objects": [Waypoint],
+        # "target": Waypoint | None, "choosing": bool, "elev_ft"}: target None
+        # is a bare map point (MAPWPT). _ui_targets are this frame's banner /
+        # chooser / CTR-chip tap rects, recorded during paint (the
+        # flight_plan instrument's per-frame tap-target pattern).
+        self._pointer = None
+        self._ui_targets = []
+        self._fp_bridge = None
+        self._toast = ""
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._clear_toast)
         # Frame clock (#89, mirrors the AI's P4 pattern): inputs only
         # store values; the clock repaints at a bounded rate and only
         # when the pose moved enough to change pixels. X-Plane/GPS can
@@ -499,8 +582,8 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def _restart_revert_timer(self):
         """(Re)start the single shared last-touch timer; ``gesture_timeout``=0
-        disables auto-revert (the view stays where left until a tap / HMI
-        recenter)."""
+        disables auto-revert (the view stays where left until a double-tap,
+        the CTR chip or an HMI recenter)."""
         try:
             secs = float(self.gesture_timeout)
         except (TypeError, ValueError):
@@ -558,7 +641,8 @@ class MovingMap(LiveBindingMixin, QWidget):
     def recenter(self):
         """Re-lock the view to ownship: clear the pan offset AND the rotation
         offset (full re-lock, decision C) and stop the auto-revert timer. Safe
-        to call any time -- a tap, an HMI action, or the timer firing."""
+        to call any time -- a double-tap, the CTR chip, an HMI action, or the
+        timer firing."""
         changed = self.is_offset
         self._pan_e = self._pan_n = 0.0
         self._rot_offset = 0.0
@@ -566,6 +650,184 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._revert_timer.stop()
         if changed:
             self.update()
+
+    # --- map pointer, hit-test and banner (FP10, billmallard/pyEfis#186) ---
+    def hit_test(self, x, y, tol_px=HIT_TOL_PX):
+        """Every painted object within *tol_px* of screen ``(x, y)``, nearest
+        first, one entry per ``(ident, type)`` (an airport the flight_plan
+        layer also draws is listed once). Only enabled layers answer, and
+        each answers only for what it paints."""
+        if not self._layers_built:
+            return []
+        xf = self._transform()
+        found = {}
+        for layer in self._layers:
+            if not layer.enabled:
+                continue
+            try:
+                hits = layer.hit(xf, x, y, tol_px)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "map %s hit-test failed", layer.id)
+                continue
+            for d, wp in hits:
+                key = (wp.id, wp.type)
+                if key not in found or d < found[key][0]:
+                    found[key] = (d, wp)
+        return [wp for _d, wp in sorted(found.values(), key=lambda t: t[0])]
+
+    @property
+    def pointer(self):
+        """The live map pointer state (see ``__init__``), or None."""
+        return self._pointer
+
+    def _terrain_elevation_ft(self, lat, lon):
+        for layer in self._layers:
+            if layer.enabled and hasattr(layer, "elevation_ft"):
+                return layer.elevation_ft(lat, lon)
+        return None
+
+    def place_pointer(self, x, y):
+        """A tap at screen ``(x, y)`` with no pointer up: one object in reach
+        -> its banner; several -> the stacked chooser; none -> a bare map
+        point there."""
+        objs = self.hit_test(x, y)
+        if objs and len(objs) == 1:
+            lat, lon = objs[0].lat, objs[0].lon
+        else:
+            lat, lon = self._transform().to_world(x, y)
+        self._pointer = {"lat": lat, "lon": lon, "objects": objs,
+                         "target": objs[0] if len(objs) == 1 else None,
+                         "choosing": len(objs) > 1, "elev_ft": None}
+        if len(objs) <= 1:
+            self._pointer["elev_ft"] = self._terrain_elevation_ft(lat, lon)
+        self.update()
+        return self._pointer
+
+    def choose(self, wp):
+        """Stacked chooser pick: the banner now acts on *wp*."""
+        if self._pointer is None:
+            return
+        self._pointer.update(target=wp, choosing=False, lat=wp.lat, lon=wp.lon,
+                             elev_ft=self._terrain_elevation_ft(wp.lat, wp.lon))
+        self.update()
+
+    def clear_pointer(self):
+        if self._pointer is not None:
+            self._pointer = None
+            self.update()
+
+    def pointer_waypoint(self):
+        """What the banner acts on: the chosen object, or a ``MAPWPT`` map
+        point (type ``map``) at the pointer."""
+        p = self._pointer
+        if p is None or p["choosing"]:
+            return None
+        if p["target"] is not None:
+            return p["target"]
+        return Waypoint(id=MAPWPT_ID, type="map", lat=p["lat"], lon=p["lon"])
+
+    def _flightplan_bridge(self):
+        """Lazily built: the map only needs the bus on a banner action."""
+        if self._fp_bridge is None:
+            self._fp_bridge = fp_fixbridge.FixBridge(fix)
+        return self._fp_bridge if self._fp_bridge.available else None
+
+    def show_toast(self, text):
+        self._toast = str(text or "")
+        if self._toast:
+            self._toast_timer.start(_TOAST_MS)
+        self.update()
+
+    def _clear_toast(self):
+        self._toast = ""
+        self.update()
+
+    def _ack_handler(self, done_text):
+        """An ``FPLCMDACK`` callback that toasts *done_text* on success and
+        the engine's ``FPLMSG`` on rejection -- the banner reports what the
+        engine did, not what was asked. The ack arrives on the FIX client
+        thread; the signal queues the toast onto the GUI thread."""
+        def on_ack(_seq, ok, msg):
+            self._ack_toast.emit(done_text if ok else "REJECTED: %s" % (msg or "?"))
+        return on_ack
+
+    def banner_direct_to(self):
+        """Stage ``DTO*`` for the object (or ``MAPWPT`` at the pointer) and
+        issue ``DTO``. A plan waypoint is matched to its slot by the engine
+        (Appendix C: ident and position within 0.001 deg)."""
+        wp = self.pointer_waypoint()
+        if wp is None:
+            return
+        bridge = self._flightplan_bridge()
+        if bridge is None:
+            self.show_toast("NO FLIGHT PLAN")
+            return
+        bridge.stage_direct_to(wp)
+        bridge.command("DTO", on_ack=self._ack_handler("DIRECT TO %s" % wp.id))
+        self.clear_pointer()
+
+    def banner_insert(self):
+        """Insert into the plan on the bus at the leg nearest the pointer
+        (append when it has no leg yet) and publish -- every flight_plan
+        instrument re-reads it on ``FPLSEQ``."""
+        wp = self.pointer_waypoint()
+        if wp is None:
+            return
+        bridge = self._flightplan_bridge()
+        if bridge is None:
+            self.show_toast("NO FLIGHT PLAN")
+            return
+        plan = bridge.read_plan()
+        new = fp_model.Waypoint(id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon,
+                                name=wp.name or "")
+        p = self._pointer
+        idx = insert_index(plan.waypoints, p["lat"], p["lon"])
+        try:
+            if idx is None:
+                plan.insert_after(plan.count - 1, new)
+            else:
+                plan.insert_before(idx, new)
+        except fp_model.FlightPlanError as e:
+            self.show_toast(str(e))
+            return
+        bridge.publish(plan)
+        self.clear_pointer()
+        self.show_toast("INSERTED %s" % wp.id)
+
+    def banner_create_wpt(self):
+        """Open the flight_plan instrument's user-waypoint form, prefilled
+        with the pointer position."""
+        p = self._pointer
+        if p is None:
+            return
+        if hmi.actions is not None:
+            hmi.actions.flightplanCreateWaypoint.emit((p["lat"], p["lon"]))
+        self.clear_pointer()
+
+    def banner_info(self):
+        """WPT Info for the object (or the map point) on the flight_plan
+        instrument."""
+        wp = self.pointer_waypoint()
+        if wp is None:
+            return
+        if hmi.actions is not None:
+            hmi.actions.flightplanWptInfo.emit(wp)
+        self.clear_pointer()
+
+    def _on_tap(self, x, y):
+        """A tap (press/release under ``_TAP_PX`` of travel): a banner,
+        chooser or CTR-chip control under the finger runs; otherwise a live
+        pointer is cleared (a second tap away), else a pointer is placed."""
+        for rect, cb in reversed(self._ui_targets):
+            if rect.contains(QPointF(x, y)):
+                cb()
+                return
+        if self._pointer is not None:
+            self.clear_pointer()
+            return
+        self.place_pointer(x, y)
 
     def _gesture_phase(self, state):
         """(Re)arm the settle debounce off a QGesture's state (MP1). Fake
@@ -700,7 +962,7 @@ class MovingMap(LiveBindingMixin, QWidget):
                 return True
         return super().event(e)
 
-    # --- desktop parity: drag = pan, modifier-drag = rotate, tap = recenter
+    # --- desktop parity: drag = pan, modifier-drag = rotate, tap = select
     def mousePressEvent(self, e):
         if self._pinch_active:
             # A synthesized mouse press from the same two fingers driving an
@@ -740,10 +1002,23 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._set_gesture_active(False)
             self._settle_timer.start(_SETTLE_MS)
             if tap:
-                self.recenter()          # click/tap with no drag re-locks
+                # FP10: a tap selects (map pointer / banner). Recenter is the
+                # double-tap or the CTR chip.
+                pos = e.position()
+                self._on_tap(pos.x(), pos.y())
             e.accept()
             return
         super().mouseReleaseEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        """Double-tap = recenter (FP10 moved it off the single tap). The
+        first tap of the pair has already placed a pointer; drop it."""
+        if getattr(self, "touch_gestures", True):
+            self.clear_pointer()
+            self.recenter()
+            e.accept()
+            return
+        super().mouseDoubleClickEvent(e)
 
     def wheelEvent(self, e):
         """Desktop / configurator zoom, mirroring pinch (wheel-up = zoom in).
@@ -783,6 +1058,7 @@ class MovingMap(LiveBindingMixin, QWidget):
             # emissions) and can touch layers; doing that inside paintEvent risks
             # re-entering the painter. singleShot(0) runs it after this paint.
             QTimer.singleShot(0, self._init_live_bindings_once)
+        self._ui_targets = []
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor(16, 24, 32))
@@ -831,7 +1107,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         # small top-RIGHT chip (distinct from the top-left range chip) signals
         # the pending auto-revert -- "CTR" plus the remaining seconds while a
         # timer runs (amber = action pending; no countdown when gesture_timeout
-        # is 0, so the view holds until a tap / HMI recenter).
+        # is 0, so the view holds until a double-tap / CTR tap / HMI
+        # recenter).
         if self.is_offset:
             rem = self._revert_timer.remainingTime()
             label = "CTR %ds" % int(math.ceil(rem / 1000.0)) \
@@ -848,6 +1125,12 @@ class MovingMap(LiveBindingMixin, QWidget):
             p.drawRoundedRect(box, 4.0, 4.0)
             p.setPen(QPen(QColor(255, 190, 60)))
             p.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
+            # The chip is also the recenter soft key (FP10: a single tap on
+            # the map selects now). Padded to a touch-sized target.
+            self._ui_targets.append(
+                (box.adjusted(-8.0, -4.0, 6.0, 8.0), self.recenter))
+
+        self._paint_pointer(p, x)
 
         # --- MP6 perf accounting -------------------------------------------
         self.perf.record_paint_ms((time.perf_counter() - _perf_t0) * 1000.0)
@@ -862,6 +1145,184 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._paint_perf_overlay(p)
         if self._map_perf_log:
             self.perf.maybe_report()
+
+    # --- FP10 pointer / banner / chooser painting ---------------------------
+    _TYPE_LABEL = {"airport": "APT", "vor": "VOR", "ndb": "NDB", "fix": "FIX",
+                   "user": "USER", "map": "MAP"}
+    _POINTER_COLOR = QColor(0, 255, 255)
+
+    def _magvar(self):
+        """``MAGVAR`` (positive west, MAG = TRUE + VAR), or None if the
+        gateway does not publish it."""
+        try:
+            return float(fix.db.get_item("MAGVAR").value or 0.0)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _fmt_dm(lat, lon):
+        def part(v, pos, neg, width):
+            hemi = pos if v >= 0 else neg
+            v = abs(v)
+            d = int(v)
+            return "%0*d %05.2f%s" % (width, d, (v - d) * 60.0, hemi)
+        return "%s %s" % (part(lat, "N", "S", 2), part(lon, "E", "W", 3))
+
+    def pointer_banner_text(self):
+        """``(title, info)`` for the banner -- what it is, then bearing and
+        distance from present position, elevation if the terrain layer can
+        answer, and a navaid's frequency."""
+        wp = self.pointer_waypoint()
+        if wp is None:
+            return "", ""
+        if wp.type == "map" and wp.id == MAPWPT_ID:
+            title = "MAP POINT  " + self._fmt_dm(wp.lat, wp.lon)
+        else:
+            title = "%s  %s" % (wp.id, self._TYPE_LABEL.get(wp.type, wp.type.upper()))
+        brg = fp_geo.initial_bearing(self._lat, self._lon, wp.lat, wp.lon)
+        var = self._magvar()
+        if var is None:
+            brg_txt = "%03d°T" % (int(round(brg)) % 360 or 360)
+        else:
+            brg_txt = "%03d°" % (int(round(brg + var)) % 360 or 360)
+        dist = fp_geo.distance_nm(self._lat, self._lon, wp.lat, wp.lon)
+        info = "%s  %s NM" % (brg_txt, ("%.1f" % dist) if dist < 100 else "%d" % round(dist))
+        elev = self._pointer.get("elev_ft") if self._pointer else None
+        if elev is not None:
+            info += "  ELEV %d FT" % int(round(elev))
+        if wp.freq:
+            info += "  " + wp.freq
+        return title, info
+
+    def _ui_metrics(self):
+        w, h = self.width(), self.height()
+        fs = max(11, int(min(w, h) * 0.035))
+        btn_h = max(36.0, min(64.0, h * 0.08))   # touch-sized soft keys
+        return fs, btn_h, 6.0
+
+    def _paint_pointer(self, p, x):
+        ptr = self._pointer
+        if ptr is not None:
+            c = x.to_screen(ptr["lat"], ptr["lon"])
+            pen = QPen(self._POINTER_COLOR)
+            pen.setWidthF(2.0)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            r = HIT_TOL_PX
+            p.drawEllipse(c, r, r)
+            p.drawLine(QPointF(c.x() - 1.6 * r, c.y()), QPointF(c.x() - 0.5 * r, c.y()))
+            p.drawLine(QPointF(c.x() + 0.5 * r, c.y()), QPointF(c.x() + 1.6 * r, c.y()))
+            p.drawLine(QPointF(c.x(), c.y() - 1.6 * r), QPointF(c.x(), c.y() - 0.5 * r))
+            p.drawLine(QPointF(c.x(), c.y() + 0.5 * r), QPointF(c.x(), c.y() + 1.6 * r))
+            if ptr["choosing"]:
+                self._paint_chooser(p)
+            else:
+                self._paint_banner(p)
+        if self._toast:
+            self._paint_toast(p)
+
+    def _panel(self, p, rect):
+        p.setPen(QPen(QColor(90, 90, 90), 1))
+        p.setBrush(QBrush(QColor(20, 20, 24, 225)))
+        p.drawRoundedRect(rect, 6.0, 6.0)
+
+    def _soft_key(self, p, rect, label, cb, enabled=True):
+        p.setPen(QPen(QColor(150, 150, 150) if enabled else QColor(70, 70, 70), 1))
+        p.setBrush(QBrush(QColor(45, 45, 52) if enabled else QColor(30, 30, 34)))
+        p.drawRoundedRect(rect, 4.0, 4.0)
+        p.setPen(QPen(QColor(255, 255, 255) if enabled else QColor(100, 100, 100)))
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
+        if enabled:
+            self._ui_targets.append((QRectF(rect), cb))
+
+    def _paint_banner(self, p):
+        w, h = self.width(), self.height()
+        fs, btn_h, pad = self._ui_metrics()
+        line_h = fs * 1.35
+        bh = pad + 2 * line_h + pad + btn_h + pad
+        panel = QRectF(pad, h - bh - pad, w - 2 * pad, bh)
+        self._panel(p, panel)
+        # The banner swallows taps: a tap on its body must not count as a
+        # "second tap away" and close it.
+        self._ui_targets.append((QRectF(panel), lambda: None))
+        title, info = self.pointer_banner_text()
+        f = QFont(self.font_family)
+        f.setPixelSize(fs)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(self._POINTER_COLOR))
+        tx = panel.x() + pad
+        tw = panel.width() - 2 * pad
+        p.drawText(QRectF(tx, panel.y() + pad, tw, line_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
+        f.setBold(False)
+        p.setFont(f)
+        p.setPen(QPen(QColor(235, 235, 235)))
+        p.drawText(QRectF(tx, panel.y() + pad + line_h, tw, line_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, info)
+        bus = self._flightplan_bridge() is not None
+        keys = (("DIRECT TO", self.banner_direct_to, bus, 1.25),
+                ("INSERT", self.banner_insert, bus, 1.0),
+                ("CREATE WPT", self.banner_create_wpt, True, 1.25),
+                ("INFO", self.banner_info, True, 0.85),
+                ("X", self.clear_pointer, True, 0.6))
+        total = sum(k[3] for k in keys)
+        gap = pad
+        unit = (tw - gap * (len(keys) - 1)) / total
+        bf = QFont(self.font_family)
+        bf.setPixelSize(max(10, min(fs, int(btn_h * 0.36))))
+        p.setFont(bf)
+        bx = tx
+        by = panel.bottom() - pad - btn_h
+        for label, cb, enabled, weight in keys:
+            r = QRectF(bx, by, unit * weight, btn_h)
+            self._soft_key(p, r, label, cb, enabled)
+            bx += unit * weight + gap
+
+    def _paint_chooser(self, p):
+        w, h = self.width(), self.height()
+        fs, btn_h, pad = self._ui_metrics()
+        objs = self._pointer["objects"][:_CHOOSER_MAX]
+        row_h = btn_h
+        line_h = fs * 1.35
+        n = len(objs) + 1            # + CANCEL
+        ch = pad + line_h + n * (row_h + pad) + pad
+        ch = min(ch, h - 2 * pad)
+        panel = QRectF(pad, h - ch - pad, w - 2 * pad, ch)
+        self._panel(p, panel)
+        self._ui_targets.append((QRectF(panel), lambda: None))
+        f = QFont(self.font_family)
+        f.setPixelSize(fs)
+        p.setFont(f)
+        p.setPen(QPen(self._POINTER_COLOR))
+        tx = panel.x() + pad
+        tw = panel.width() - 2 * pad
+        p.drawText(QRectF(tx, panel.y() + pad, tw, line_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "%d OBJECTS HERE - SELECT ONE" % len(self._pointer["objects"]))
+        y = panel.y() + pad + line_h + pad
+        for wp in objs:
+            dist = fp_geo.distance_nm(self._lat, self._lon, wp.lat, wp.lon)
+            label = "%s   %s   %.1f NM" % (
+                wp.id, self._TYPE_LABEL.get(wp.type, wp.type.upper()), dist)
+            self._soft_key(p, QRectF(tx, y, tw, row_h), label,
+                           lambda wp=wp: self.choose(wp))
+            y += row_h + pad
+        self._soft_key(p, QRectF(tx, y, tw, row_h), "CANCEL", self.clear_pointer)
+
+    def _paint_toast(self, p):
+        w, h = self.width(), self.height()
+        fs, btn_h, pad = self._ui_metrics()
+        f = QFont(self.font_family)
+        f.setPixelSize(fs)
+        p.setFont(f)
+        tw = p.fontMetrics().horizontalAdvance(self._toast) + 4 * pad
+        r = QRectF((w - tw) / 2.0, h * 0.12, tw, fs * 1.8)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(20, 20, 24, 225)))
+        p.drawRoundedRect(r, 4.0, 4.0)
+        p.setPen(QPen(self._POINTER_COLOR))
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, self._toast)
 
     def _paint_perf_overlay(self, p):
         """map_perf_overlay: true (dev only) -- a small bottom-left stats

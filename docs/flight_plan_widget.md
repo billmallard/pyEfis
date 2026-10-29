@@ -317,6 +317,38 @@ screen, the `checklist` broadcast precedent).
 | `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog` open those pages |
 | `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
 
+### From the moving map (FP10)
+
+The moving map's tap banner (`docs/moving_map_spec.md` section 7.1) edits
+the plan two ways:
+
+- **Direct To and Insert go over the bus**, not through this widget. The
+  map holds its own `FixBridge`: Direct To stages `DTO*` and issues `DTO`;
+  Insert reads the plan, inserts, and publishes. This widget re-reads the
+  plan on the `FPLSEQ` change like any second display. Both bridges write
+  `FPLCMD`, so `FixBridge.command` takes the next seq from the highest one
+  on the bus (the last `FPLCMD` and `FPLCMDACK`), not from a private
+  counter: Appendix C's "strictly increasing per session" holds with two
+  writers, and neither answers the other's ack.
+- **Create WPT and Info open pages here**, through two in-process HMI
+  signals, `flightplanCreateWaypoint` (payload `(lat, lon)`) and
+  `flightplanWptInfo` (payload a `flightplan.waypoints.Waypoint`). Every
+  `flight_plan` instrument on the screen receives them (no `hmi_group`
+  filter). Each closes whatever menu or page is open, then opens the page:
+  - Create WPT: the Entry page on the User tab with the user-waypoint form
+    up, LAT and LON prefilled from the map pointer instead of the aircraft
+    position. Once saved, the waypoint is in the User list to add.
+  - Info: WPT Info over the FPL page.
+
+  Then `tab_section.reveal()` switches any enclosing tab section to the
+  tab holding this widget, so a Flight Plan tab behind the Map tab comes
+  forward. A `flight_plan` instrument on a different *screen* is not
+  shown; that would need a `tap_screen`-style option, which FP10 does not
+  add.
+
+  These are not screen-YAML verbs (not in `signalMap` or `_ACTIONS`):
+  their payload is a waypoint or a position, which a button cannot express.
+
 ### Options (`InstrumentSpec` Props)
 
 | Option | Default | Meaning |

@@ -74,6 +74,8 @@ class MapLayer:                    # pyefis/instruments/map/layers/base.py
                                             # the view window (worker thread)
     def paint(self, painter, xform): ...    # SYNC: draw cached results
     def on_toggle(self, on): ...            # free/acquire resources
+    def hit(self, xform, x, y, tol_px): ... # FP10: [(dist_px, Waypoint)]
+                                            # painted within tol_px; default []
 ```
 
 - **Registry**: `LAYER_REGISTRY` dict + entry-point-style registration
@@ -202,6 +204,76 @@ touch / encoder is screen YAML, decided when the controller exists:
   friendly single-button UX, mirrors the existing listbox patterns).
 A transient on-map legend chip shows current range + active layers
 for 3 s after any action (so button UX works blind of the menu).
+
+### 7.1 Touch: select, map pointer and banner (FP10, billmallard/pyEfis#186)
+
+Graphical flight plan editing, the guide's third way to build a route
+(GNX 375 Pilot's Guide 3-14..3-19, 3-46 "MAPWPT"). Drag-to-pan,
+two-finger pinch/rotate and the wheel are unchanged; what a **tap** (a
+press/release with under 4 px of travel) does has changed.
+
+| Input | Result |
+|-------|--------|
+| Tap on one painted object (within **12 px**, inclusive) | Map pointer on it + its banner |
+| Tap where several objects are within 12 px | Pointer + a stacked chooser listing all of them, nearest first, one row each (at most 6) + CANCEL; a row opens that object's banner |
+| Tap on nothing | Pointer on a bare **map point** there + its banner |
+| Tap away while a pointer is up | Clears the pointer (does not place a new one) |
+| Banner **X** / chooser **CANCEL** | Clears the pointer |
+| **Double-tap** | Recenter (pan + rotation re-lock) and clear the pointer |
+| Tap the **CTR** chip (top right, shown while panned/rotated) | Recenter |
+
+**Recenter moved off the single tap.** Before FP10 a single tap re-locked
+the view; now a single tap selects. Recenter is the double-tap or the CTR
+chip — the chip is visible exactly when there is something to recenter,
+so it is the soft key. The auto-revert timer (`gesture_timeout`) still
+re-locks on its own, and does not clear a pointer.
+
+**Hit-test.** `MapLayer.hit()` (section 4) answers only for what the
+layer's last `paint()` would show: the same range gates (airports <=80 NM,
+navaids <=160 NM, fixes <=20 NM and only when the fixes layer is on, plan
+waypoints <=160 NM), the same snapshot, nothing from a disabled layer, and
+never a database query. `MovingMap.hit_test()` merges the layers' answers,
+nearest first, one entry per `(ident, type)` (an airport the flight plan
+also draws is listed once). The flight plan layer's answer is the only way
+to tap a user or map waypoint, which no database layer draws.
+
+**Banner** (bottom of the map): ident and type (or `MAP POINT` and its
+position), then bearing and distance from present position — magnetic
+when the gateway publishes `MAGVAR`, otherwise labelled `°T` — terrain
+elevation at the point when the terrain layer has tiles there (none over
+water), and a navaid's frequency. Soft keys, touch-sized (36-64 px tall):
+
+- **DIRECT TO** — stages `DTO*` for the object, or `MAPWPT` (`DTOTYPE` 6,
+  `map`) at the pointer, and issues `FPLCMD DTO`. A plan waypoint is
+  matched to its slot by the engine (Appendix C: ident and position within
+  0.001 deg). A toast reports the engine's answer, not the request:
+  `DIRECT TO <ident>` on a positive `FPLCMDACK`, `REJECTED: <FPLMSG>` on a
+  negative one (e.g. `NO POSITION` with no GPS), nothing until it answers.
+- **INSERT** — reads the plan on the bus, inserts the object (or `MAPWPT`)
+  before the far end of the plan leg nearest the pointer, and publishes.
+  Distance to a leg is clamped to its ends, so a point beyond the
+  destination lands before it; extending the plan is the FPL page's Add
+  Waypoint. A plan with no leg yet (empty, or one waypoint) is appended
+  to. Every `flight_plan` instrument re-reads the plan on `FPLSEQ`.
+- **CREATE WPT** — opens the `flight_plan` instrument's user-waypoint form
+  (Entry page, User tab) with LAT/LON prefilled from the pointer.
+- **INFO** — opens WPT Info for the object or point on the `flight_plan`
+  instrument.
+
+DIRECT TO and INSERT draw disabled when the flight plan keys are not on the
+bus (no gateway `flightplan` plugin); the banner still shows. CREATE WPT
+and INFO reach the `flight_plan` instrument through two in-process HMI
+signals (`flightplanCreateWaypoint`, `flightplanWptInfo`), which switch its
+`tab_section` tab into view — on the bench the Map and Flight Plan are tabs
+of one section. There is no screen-YAML verb for them: the payload is a
+waypoint or a position, which a button cannot express.
+
+The pointer is geographic: it stays on its point as the aircraft moves and
+the view pans, until cleared. Taps need `touch_gestures` on (the same
+option that gates drag and pinch).
+
+**Out of FP10, follow-on:** drag-a-leg editing — the guide's temporary
+flight plan with Done/Cancel and nine-level Undo (3-17..3-19).
 
 ## 8. Configurator integration (standard pipeline)
 

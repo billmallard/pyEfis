@@ -1050,13 +1050,16 @@ _register(InstrumentSpec(
         Prop("touch_gestures", "boolean", default=True,
              label="Touch gestures",
              help="two-finger pinch=zoom, drag=pan, twist=rotate; mouse wheel "
-                  "zooms and left-drag pans / Shift-drag rotates on desktop, "
-                  "and a tap re-centres. Off = touch/wheel/drag input ignored"),
+                  "zooms and left-drag pans / Shift-drag rotates on desktop; "
+                  "a tap selects (map pointer, Direct To / Insert banner) and "
+                  "a double-tap or the CTR chip re-centres. Off = touch/wheel/"
+                  "drag/tap input ignored"),
         Prop("gesture_timeout", "number", default=30, minimum=0, maximum=600,
              label="Gesture auto-revert (s)",
              help="seconds after a two-finger pan/rotate before the view "
                   "re-locks to ownship and the configured orientation. "
-                  "0 = stay where left until a tap or an HMI recenter"),
+                  "0 = stay where left until a double-tap, the CTR chip or "
+                  "an HMI recenter"),
         Prop("gesture_frame_rate", "number", default=30, minimum=10,
              maximum=60, label="Gesture frame rate (Hz)",
              help="repaint clock rate while a pinch/pan/rotate gesture is "
