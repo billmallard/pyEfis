@@ -325,6 +325,28 @@ def test_direct_to_bare_point_writes_mapwpt_and_issues_dto(fix, qtbot):
     assert m.pointer is None
 
 
+def test_direct_to_toast_reports_the_engine_answer(fix, qtbot):
+    """The banner says what the engine did: nothing until FPLCMDACK, then
+    DIRECT TO on success or FPLMSG on rejection (bench: NO POSITION)."""
+    _define_all_fp1_keys(fix)
+    m = _map(qtbot)
+    _put_navaids(m, [("RZS", "VORTAC", "114.90", LAT0, LON0)])
+    x = m._transform()
+    _tap(m, x.cx, x.cy)
+    m.banner_direct_to()
+    assert m._toast == ""
+    seq = int(fix.db.get_item("FPLCMD").value.split()[0])
+    fix.db.set_value("FPLMSG", "NO POSITION")
+    fix.db.set_value("FPLCMDACK", -seq)
+    assert m._toast == "REJECTED: NO POSITION"
+    _tap(m, x.cx, x.cy)
+    m.banner_direct_to()
+    seq = int(fix.db.get_item("FPLCMD").value.split()[0])
+    fix.db.set_value("FPLMSG", "")
+    fix.db.set_value("FPLCMDACK", seq)
+    assert m._toast == "DIRECT TO RZS"
+
+
 def test_direct_to_object_stages_its_ident_and_type(fix, qtbot):
     _define_all_fp1_keys(fix)
     m = _map(qtbot)

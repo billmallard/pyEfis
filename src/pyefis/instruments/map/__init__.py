@@ -744,11 +744,14 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._toast = ""
         self.update()
 
-    def _on_ack(self, _seq, ok, msg):
-        # FPLCMDACK arrives on the FIX client thread; the signal queues the
-        # toast onto the GUI thread.
-        if not ok:
-            self._ack_toast.emit("REJECTED: %s" % (msg or "?"))
+    def _ack_handler(self, done_text):
+        """An ``FPLCMDACK`` callback that toasts *done_text* on success and
+        the engine's ``FPLMSG`` on rejection -- the banner reports what the
+        engine did, not what was asked. The ack arrives on the FIX client
+        thread; the signal queues the toast onto the GUI thread."""
+        def on_ack(_seq, ok, msg):
+            self._ack_toast.emit(done_text if ok else "REJECTED: %s" % (msg or "?"))
+        return on_ack
 
     def banner_direct_to(self):
         """Stage ``DTO*`` for the object (or ``MAPWPT`` at the pointer) and
@@ -762,9 +765,8 @@ class MovingMap(LiveBindingMixin, QWidget):
             self.show_toast("NO FLIGHT PLAN")
             return
         bridge.stage_direct_to(wp)
-        bridge.command("DTO", on_ack=self._on_ack)
+        bridge.command("DTO", on_ack=self._ack_handler("DIRECT TO %s" % wp.id))
         self.clear_pointer()
-        self.show_toast("DIRECT TO %s" % wp.id)
 
     def banner_insert(self):
         """Insert into the plan on the bus at the leg nearest the pointer

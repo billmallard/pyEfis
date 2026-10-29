@@ -246,7 +246,9 @@ water), and a navaid's frequency. Soft keys, touch-sized (36-64 px tall):
 - **DIRECT TO** — stages `DTO*` for the object, or `MAPWPT` (`DTOTYPE` 6,
   `map`) at the pointer, and issues `FPLCMD DTO`. A plan waypoint is
   matched to its slot by the engine (Appendix C: ident and position within
-  0.001 deg). A rejection (`FPLCMDACK` negative) shows `FPLMSG` in a toast.
+  0.001 deg). A toast reports the engine's answer, not the request:
+  `DIRECT TO <ident>` on a positive `FPLCMDACK`, `REJECTED: <FPLMSG>` on a
+  negative one (e.g. `NO POSITION` with no GPS), nothing until it answers.
 - **INSERT** — reads the plan on the bus, inserts the object (or `MAPWPT`)
   before the far end of the plan leg nearest the pointer, and publishes.
   Distance to a leg is clamped to its ends, so a point beyond the
