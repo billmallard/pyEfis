@@ -300,7 +300,11 @@ Each item: what it does, the input(s), the convention.
     localizer**: an ILS GS diamond shows only with a captured localizer, never on
     its own — a real HSI does not present vertical guidance without lateral. This
     is enforced upstream in fix-gateway (`GSV = min(NAV#DH, not
-    nav#_flag_glideslope)`), so the widget just reads `GSV`. Follow the widget
+    nav#_flag_glideslope)`), so the widget just reads `GSV`. The lateral needle
+    has the same gate: fix-gateway publishes `CDIV` (`NAV#CDIV` from `NAV#DH`,
+    routed by `NAVSRC`; the GPS leg is not gated), and `CDIV` = 0 removes the
+    bar and raises the NAV flag; an absent `CDIV` leaves the CDI on its own
+    quality (fix-gateway#20). Follow the widget
     convention: `fail` → remove / red flag; `old`/`bad` → grey. Never show stale
     or sourceless guidance.
 
@@ -326,7 +330,7 @@ failed, and is removed only when a valid signal drives the needle.*
 | ID | Flag | Trigger | Required response | Cite | Status |
 |----|------|---------|-------------------|------|--------|
 | **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag; compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
-| **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) fail/bad/absent | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
+| **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) fail/bad/absent, or no lateral signal received (`CDIV` = 0) | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
 | **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (ILS tuned, LOC valid) but the GS signal is invalid/unstable/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **DONE** — red GS flag; diamond suppressed |
 
 The HSI-ANN-003 distinction matters: **no glideslope tuned/expected → no GS scale**
@@ -342,6 +346,7 @@ convention, and no element is left showing its last-good value after loss:
 | `HEAD` | normal | grey card | grey + HDG flag (ANN-001) | HDG flag, freeze/blank card | HDG flag |
 | `COURSE` | normal | grey pointer | grey pointer | remove pointer | pointer removed |
 | `CDI` | normal | hide bar | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
+| `CDIV` | CDI on its own quality | — | — | — | CDI on its own quality; `CDIV` = 0 → hide bar + NAV flag (ANN-002) |
 | `GSI`/`GSV` | normal | hide diamond | hide diamond | hide/flag (ANN-003) | no scale |
 | `HEADBUG` | normal | grey bug | grey bug | remove bug | no bug |
 | `TRACKM`/`GS` | normal | hide diamond | hide diamond | hide diamond | no diamond |
@@ -473,6 +478,7 @@ will flip the run red the moment a flag is implemented, forcing removal of the m
 | 101 | **HSI-ANN-001** (HDG flag) | `hdg_flag_on_head_fail` | pass |
 | 102 | **HSI-ANN-002** (NAV flag) | `nav_flag_on_cdi_invalid` | pass |
 | 103 | **HSI-ANN-003** (GS flag) | `gs_flag_on_gs_lost` | pass |
+| 104 | **HSI-ANN-002** (no lateral signal) | `nav_flag_on_no_lateral_signal` | pass |
 
 Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
 `quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;
