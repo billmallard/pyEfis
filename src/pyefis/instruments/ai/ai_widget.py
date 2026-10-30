@@ -333,6 +333,12 @@ class AI(QGraphicsView):
         self._svs_lon  = 0.0
         self._svs_alt  = 0.0
         self.svs: SVSRenderer | None = None
+        # AER-4243: position quality. A LAT/LONG that is old, bad or failed
+        # removes the terrain (SVS UNAVAIL), the way a GL failure does --
+        # terrain held at a frozen position while the aircraft flies on is
+        # hazardously misleading. A missing key counts as invalid.
+        self._svs_pos_flags = {k: {"old": True, "bad": True, "fail": True}
+                               for k in ("LAT", "LONG")}
         for key, attr in (("LAT", "_svs_lat"), ("LONG", "_svs_lon"), ("ALT", "_svs_alt")):
             try:
                 _item = fix.db.get_item(key)
@@ -343,6 +349,11 @@ class AI(QGraphicsView):
             _item.valueChanged[float].connect(
                 lambda v, k=key: self._positionValueChanged(k, v))
             setattr(self, attr, _item.value)
+            if key in self._svs_pos_flags:
+                for flag in ("old", "bad", "fail"):
+                    getattr(_item, f"{flag}Changed")[bool].connect(
+                        lambda s, k=key, f=flag: self._positionFlagChanged(k, f, s))
+                    self._svs_pos_flags[key][flag] = getattr(_item, flag)
         if self._svs_lat or self._svs_lon:
             self._pose.set_position(self._svs_lat, self._svs_lon)
         if self._svs_alt:
@@ -845,6 +856,19 @@ class AI(QGraphicsView):
             self._pose.set_altitude(value)
         self._frame_dirty = True
 
+    def _positionFlagChanged(self, key, flag, state):
+        """LAT/LONG old/bad/fail. Repaint at once, like the attitude flags:
+        dropping the terrain is an alert, not a frame-clock sample."""
+        self._svs_pos_flags[key][flag] = state
+        self._frame_dirty = True
+        self._update_land_brush()
+        if self.isVisible():
+            self.update()
+
+    def _svs_position_valid(self):
+        """True when LAT and LONG are both current, not bad and not failed."""
+        return not any(any(f.values()) for f in self._svs_pos_flags.values())
+
     def set_frame_rate(self, fps):
         """(Re)start the display frame clock at *fps* (clamped 5-60)."""
         fps = max(5.0, min(60.0, float(fps)))
@@ -904,14 +928,16 @@ class AI(QGraphicsView):
 
     def _svs_drawing(self):
         """True when the SVS is genuinely painting terrain — enabled, ready,
-        not GL-failed, and it actually drew terrain on the last frame. Used to
-        decide whether the artificial brown ground can be replaced by sky."""
+        not GL-failed, the position is valid, and it actually drew terrain on
+        the last frame. Used to decide whether the artificial brown ground can
+        be replaced by sky."""
         s = self._live_svs()
         if s is None:
             return False
         return (getattr(s, "enabled", False)
                 and getattr(s, "ready", False)
                 and not getattr(s, "gl_failed", False)
+                and self._svs_position_valid()
                 and getattr(s, "drew_terrain", False))
 
     def _update_land_brush(self):
@@ -1321,10 +1347,13 @@ class AI(QGraphicsView):
         # as if terrain awareness were available. Resolve the renderer
         # clobber-safe (self.svs is often the YAML config DICT, on which
         # every getattr returns False — which would suppress this warning).
+        # A LAT/LONG that is old, bad or failed removes the terrain too
+        # (AER-4243), so it gets the same annunciation.
         _svs = self._live_svs()
         if (_svs is not None
                 and getattr(_svs, "enabled", False)
-                and getattr(_svs, "gl_failed", False)):
+                and (getattr(_svs, "gl_failed", False)
+                     or not self._svs_position_valid())):
             p.save()
             _af = QFont(self.font_family, -1, QFont.Weight.Bold)
             _af.setPixelSize(max(12, qRound(self.fontSize * 0.9)))
