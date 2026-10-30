@@ -2462,6 +2462,11 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             if self._renderer is None or not self._renderer.ready:
                 return
             ai = self._ai
+            # AER-4243: no terrain for a position that is old, bad or failed.
+            # Clear drew_terrain so the AI falls back to its brown ground.
+            if not ai._svs_position_valid():
+                self._renderer.drew_terrain = False
+                return
             vp = ai.viewport()
             ppd = getattr(ai, 'pixelsPerDeg',
                           vp.height() / ai.pitchDegreesShown)
