@@ -28,7 +28,8 @@ ladder). Already present:
 - **Aircraft symbol** + **Flight Path Marker** (FPM, gated below `_FPM_MIN_GS_KT`, #70).
 - **Failure annunciation** — `setFail(fail, item)` swaps to a `fail_scene` that shows
   **"XXX"** (attitude removed); `old`/`bad` grey the sky/land; **SVS UNAVAIL**
-  annunciates when GL is absent.
+  annunciates when GL is absent, or when `LAT`/`LONG` is old, bad or failed (the
+  terrain is removed, AER-4243).
 - **P4 frame clock** — setters store state + mark `_frame_dirty`; `_frame_tick`
   repaints.
 
@@ -40,6 +41,7 @@ ladder). Already present:
 | `ALAT` | slip/skid ball (lateral accel) | AHRS |
 | `TAS` | standard-rate bank marker | ADC |
 | `VS`,`GS`,`TRACK`,`HEAD`,`VPATH` | FPM solution | GPS/AHRS |
+| `LAT`,`LONG`,`ALT` | SVS camera position; `LAT`/`LONG` quality gates the terrain (AI-SVS-001) | GPS / ADC |
 | **`AOA` / stall-margin** | **pitch-limit (AI-LIM-001) — not yet published by fix-gateway** | AOA vane / OnSpeed (future) |
 
 Quality is tracked per key in `_AIOld`/`_AIBad`/`_AIFail` (`PITCH`/`ROLL`/`ALAT`/`TAS`);
@@ -60,6 +62,7 @@ test catalog (§5). **Status** is the widget as of this writing.
 |----|-------------|---------|-------------------|------|--------|
 | **AI-ANN-001** | Attitude-fail annunciation | `PITCH`/`ROLL` fail | Remove attitude; show a clear fail display ("XXX") | Table 4-1 p.27; §25.1301 | **DONE** — `fail_scene` |
 | **AI-FAIL-001** | Degraded (stale/invalid) attitude greyed | `PITCH`/`ROLL`/`ALAT`/`TAS` old or bad | Grey sky/land | widget convention; AC 25-11B §4.2 | **DONE** |
+| **AI-SVS-001** | No synthetic terrain without a valid position | `LAT`/`LONG` old, bad or fail | Remove the terrain, brown attitude ground, amber **SVS UNAVAIL**; restore when both are valid | widget convention (same state as a GL failure); `svs_rendering.md` failure policy | **DONE** — `_svs_position_valid` |
 | **AI-SLIP-001** | Sideslip shown (slip/skid ball) | `ALAT` | Ball deflects with lateral accel | App A §A.2.6 p.70 | **DONE** |
 | **AI-CHEV-001** | Unusual-attitude **recovery chevrons** | pitch beyond the unusual-attitude threshold, OR the true horizon line off-scale | Large chevrons pointing to the nearest horizon, enabling recovery < 1 s | App A §A.2.2 p.70; AC 23.1311-1C 8.5(b) | **DONE** — amber chevrons, `_draw_recovery_chevrons` |
 | **AI-BANK-001** | **Excessive-bank** annunciation | roll beyond threshold (before stall buffet) | Salient bank alert (amber/red) | App A §A.2.5 p.70 | **DONE** — amber bank scale |
@@ -102,6 +105,7 @@ removal. `AI-LIM-001` stays `xfail` until an `AOA`/stall-margin key exists.
 | 001 | AI-ANN-001 | `attitude_fail_shows_fail_scene` | pass |
 | 002 | AI-FAIL-001 | `degraded_attitude_stays_greyed` | pass |
 | 003 | AI-SLIP-001 | `slip_ball_tracks_lateral_accel` | pass |
+| 004 | AI-SVS-001 | `test_svs_position_quality.py` (drives LAT/LONG old/bad/fail through the fix item) | pass |
 | 101 | **AI-CHEV-001** | `recovery_chevrons_at_extreme_pitch`, `recovery_chevrons_at_horizon_off_scale` | pass |
 | 102 | **AI-BANK-001** | `excessive_bank_annunciation` | pass |
 | 103 | **AI-DCL-001** | `declutter_at_unusual_attitude` | pass |
