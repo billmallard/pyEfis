@@ -47,3 +47,35 @@ The bus log carries `FPLCRS`/`FPLCDI` (ours) and `EXTCRS`/`EXTCDI`
 navigator. The same trace, trimmed, is the playback fixture in fix-gateway:
 `tests/sim/fixtures/fp8_xplane_2026-10-29.csv.gz`, replayed by
 `tests/sim/test_fp8_xplane_replay.py`.
+
+## G42: FPL page DTK beside the HSI (pyEfis #325, AER-4237)
+
+Session 1 found the FPL page's DTK column in true course while the HSI's CRS
+box was magnetic: `s1_dto_rzs_active_fplpage.jpg` (built before #324) shows
+RZS at 295 on the page. #324 (AER-3792, `49628ed`) made the column the
+magnetic course into each fix, `dtk_true + MAGVAR`, the conversion the
+engine applies to `FPLCRS`. These two frames show it on the bench.
+
+- `g42_leg1_ksba_gvo.jpg`: active leg KSBA-GVO. Page DTK 285, HSI CRS 285
+  (`FPLCRS` 285.19).
+- `g42_leg2_gvo_rzs.jpg`: after sequencing GVO. Page DTK 083, HSI CRS 083
+  (`FPLCRS` 82.79).
+
+Bench: Beelink, pyEfis `b73d836` (dev), fix-gateway `15e9baf`, 2026-10-30,
+1920x1080 `x11grab` scaled to 1280 wide. X-Plane was idle, so the position
+is synthetic: `bench_scripts/g42_dtk_mag.py` writes a static
+LAT/LONG/GS/HEAD/TRACK with `MAGVAR` -11.9 over netfix at 2 Hz, on each leg
+in turn. That is why the altitude, attitude and terrain colours do not
+match the place. The plan is published as plain TF legs (no coded course),
+so the page has to derive DTK itself. The script snapshots the bench's
+route block first and republishes it afterwards, then re-activates the
+leg that was active. On this run an earlier attempt had already left the
+old plan loaded but inactive, so leg 11 was re-activated by hand with the
+script's `act(11)`. The bus values at each grab are in `data/g42_keys.log`.
+
+Run on the bench, under the lock:
+
+```sh
+cd ~/bench-scratch/aer4237   # g42_dtk_mag.py + nfx.py
+flock -o -w 900 /tmp/pyefis-bench.lock python3 g42_dtk_mag.py shots
+```
