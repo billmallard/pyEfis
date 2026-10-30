@@ -303,6 +303,18 @@ class HSI(QGraphicsView):
             self.gsvdb.valueChanged[float].connect(self.setGsv)
         except Exception:
             self.gsvdb = None
+        # Lateral guidance validity for the selected source (CDIV: 1 = the radio
+        # is receiving lateral guidance, 0 = none). A localizer tuned but not
+        # received otherwise draws a centred bar from no signal (fix-gateway#20);
+        # CDIV=0 removes the bar and raises the NAV flag. Defensive, like GSV;
+        # absent -> the CDI shows on its own quality, as on an older gateway.
+        self._cdiv = None
+        try:
+            self.cdivdb = fix.db.get_item("CDIV")
+            self._cdiv = self.cdivdb.value
+            self.cdivdb.valueChanged[float].connect(self.setCdiv)
+        except Exception:
+            self.cdivdb = None
         # VOR TO/FROM for the selected source (TOFROM: 0=off/flag, 1=TO, 2=FROM).
         # Drawn as a triangle on the course line; hidden when 0 (LOC/GPS or no
         # signal). Defensive; absent -> not shown.
@@ -927,7 +939,8 @@ class HSI(QGraphicsView):
 
             ext = self.r - self.fontSize * 2.0
             bar = self.cdippw
-            self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad)
+            self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad) \
+                and not self._no_lateral_signal()
             self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
                 and not (self._GsiOld or self._GsiBad or self._GsiFail)
 
@@ -1054,7 +1067,8 @@ class HSI(QGraphicsView):
             self._draw_flag(c, "HDG", self.cx, self.fontSize * 1.1)
         # NAV (lateral) flag: selected lateral source invalid. The CDI bar is
         # already removed by _showCDI; the flag positively annunciates the loss.
-        self._showNavFlag = self._CdiFail or self._CdiBad
+        self._showNavFlag = self._CdiFail or self._CdiBad \
+            or (self.cdi_enabled and self._no_lateral_signal())
         if self._showNavFlag:
             self._draw_flag(c, "NAV", self.cx - self.r * 0.4, self.cy)
         # GS flag: glideslope expected (present per GSV) but its signal is
@@ -1514,6 +1528,16 @@ class HSI(QGraphicsView):
             if self.isVisible():
                 self.update()
 
+    def setCdiv(self, value):
+        if value != self._cdiv:
+            self._cdiv = value
+            if self.isVisible():
+                self.update()
+
+    def _no_lateral_signal(self):
+        # CDIV published and 0: the selected radio receives no lateral guidance.
+        return self._cdiv is not None and self._cdiv < 0.5
+
     def setTofrom(self, value):
         if value != self._tofrom:
             self._tofrom = value
@@ -1775,7 +1799,8 @@ class HSI(QGraphicsView):
             if self._bearing_visible(_n):
                 self._draw_arc_bearing_needle(c, _n, cx, own_y)
 
-        self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad)
+        self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad) \
+            and not self._no_lateral_signal()
         self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
             and not (self._GsiOld or self._GsiBad or self._GsiFail)
         if self.cdi_enabled or self.gsi_enabled:
@@ -1810,7 +1835,8 @@ class HSI(QGraphicsView):
         self._showHdgFlag = self._HeadFail or self._HeadBad
         if self._showHdgFlag:
             self._draw_flag(c, "HDG", cx, top_y)
-        self._showNavFlag = self._CdiFail or self._CdiBad
+        self._showNavFlag = self._CdiFail or self._CdiBad \
+            or (self.cdi_enabled and self._no_lateral_signal())
         if self._showNavFlag:
             self._draw_flag(c, "NAV", cx, own_y - self.fontSize * 2.0)
         self._showGsFlag = (self.gsi_enabled and self._gsv is not None

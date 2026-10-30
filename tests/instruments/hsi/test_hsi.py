@@ -571,6 +571,59 @@ def test_hsi_cat_nav_flag_on_cdi_invalid(fix, qtbot):
     assert w._showCDI is False        # flag + remove the deviation bar
 
 
+def test_hsi_cat_nav_flag_on_no_lateral_signal(fix, qtbot):
+    """HSI-TC-104 | HSI-ANN-002 (no-signal case) | A localizer tuned but not received
+    (CDIV=0, fix-gateway#20) removes the CDI bar and shows the NAV flag, instead of a
+    centred bar from no signal. CDIV=1 shows the bar on its own quality; an absent
+    CDIV (older gateway) leaves the CDI exactly as before."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    assert w.cdivdb is None and w._cdiv is None       # the fixture has no CDIV key
+    w._CdiOld = w._CdiBad = w._CdiFail = False
+    w.setCdi(0.0)                                     # the centred bar from #20
+
+    w.paintEvent(QPaintEvent(w.rect()))               # absent -> own quality
+    assert w._showCDI is True and w._showNavFlag is False
+
+    w.setCdiv(0)                                      # tuned, not received
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False
+    assert w._showNavFlag is True
+
+    w.setCdiv(1)                                      # receiving
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is True and w._showNavFlag is False
+
+    w.setCdiv(0)
+    w.setTofrom(1)                                    # no TO/FROM without a signal
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False
+
+
+def test_hsi_cdiv_read_from_the_fix_key(fix, qtbot):
+    """The widget reads a published CDIV at construction and follows its changes."""
+    fix.db.define_item("CDIV", "CDI valid", "float", 0, 1, "", 2000, "")
+    fix.db.set_value("CDIV", 0.0)
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    assert w.cdivdb is not None and w._cdiv == 0.0
+    fix.db.set_value("CDIV", 1.0)
+    assert w._cdiv == 1.0
+    fix.db.set_value("CDIV", 0.0)
+    assert w._cdiv == 0.0
+
+
+def test_hsi_arc_layout_gates_cdi_on_cdiv(fix, qtbot):
+    """The arc (ND-style) paint path applies the same CDIV gate as the rose."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.orientation = "arc"
+    w._CdiOld = w._CdiBad = w._CdiFail = False
+    w.setCdiv(0)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False and w._showNavFlag is True
+    w.setCdiv(1)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is True and w._showNavFlag is False
+
+
 def test_hsi_cat_gs_flag_on_gs_lost(fix, qtbot):
     """HSI-TC-103 | HSI-ANN-003 | When a glideslope is expected (present) but its signal
     is lost/failed, the HSI shows a GS warning flag and no diamond -- distinct from 'no GS
