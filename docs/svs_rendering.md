@@ -231,6 +231,13 @@ Any exception during `SVSGLRenderer.__init__` or any `draw()` sets
 process; the AI widget annunciates SVS UNAVAIL. One-shot — GL is
 never re-attempted.
 
+A position that is not valid gives the same picture, but it is not
+one-shot. While `LAT` or `LONG` is old, bad or failed, the SVS item
+skips the draw. The AI shows its brown ground and SVS UNAVAIL, and the
+terrain returns when both keys are valid again (AER-4243). Terrain
+held at the last fix while the aircraft flies on would look live and
+be wrong.
+
 ### Heightmap texture
 
 A 2x2-tile patch (2402×2402 R32F = ~22 MB) is uploaded once per
