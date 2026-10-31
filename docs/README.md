@@ -63,6 +63,7 @@ specs with requirement IDs: [ai](ai_widget_spec.md) ·
 | [instrument_bugs_design.md](instrument_bugs_design.md) | DRAFT — selected-value bug markers (companion to GCU) |
 | [fixgw_canaerospace_in_spec.md](fixgw_canaerospace_in_spec.md) | Spec, future work (untracked; out of landing scope) |
 | [fixgw_dronecan_in_spec.md](fixgw_dronecan_in_spec.md) | Spec, future work (untracked; out of landing scope) |
+| [fixgw_onspeed_in_spec.md](fixgw_onspeed_in_spec.md) | Spec, ready to implement (AER-4329) -- OnSpeed serial-in -> `AOA`/`AOA.Warn`; unblocks AI-LIM-001 |
 | [SVS_QUICKSTART.md](SVS_QUICKSTART.md) | WIP quickstart (untracked) |
 | [moving_map_spec.md](moving_map_spec.md) | Spec — NOTE: its "development not started" header is stale; Phases A–D shipped and are flying |
 
