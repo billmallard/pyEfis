@@ -1597,6 +1597,24 @@ class SVSGLRenderer:
                         finally:
                             prog.bind()
 
+            # PAPI (CIFP1): real installed boxes only, at the published
+            # glide path angle. The red/white split follows altitude, so
+            # this is the one overlay drawn uncached -- a few quads. No
+            # haze: the lights read through it, as real ones do.
+            if (getattr(p, "airport_db", None) is not None
+                    and p.airport_db.ready
+                    and getattr(p, "papi_enabled", False)):
+                with p._perf.time("papi"):
+                    papi = p._collect_papi(ac_lat, ac_lon, ac_alt_ft,
+                                           heading_deg, pixels_per_deg)
+                    if papi is not None:
+                        self._draw_overlay_primitive(
+                            papi["red"], (1.0, 0.12, 0.12, 1.0),
+                            gl.GL_TRIANGLES)
+                        self._draw_overlay_primitive(
+                            papi["white"], (1.0, 1.0, 1.0, 1.0),
+                            gl.GL_TRIANGLES)
+
             # Phase 5 — airport flags + identifier text. Pole =
             # GL_LINES, flag rectangle = yellow triangles, identifier
             # = black glyph quads INSIDE the flag body (issue #36)

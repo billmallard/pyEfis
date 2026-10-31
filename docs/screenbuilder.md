@@ -1224,10 +1224,19 @@ Options:
 
 ![Virtual VFR](/docs/images/virtual_vfr.png)
 
+**Deprecated (legacy CIFP overlay).** The 2D runway/airport overlay drawn from
+the raw FAA CIFP file is deprecated and will be removed; Synthetic Vision
+replaces it. With the `svs:` block's `enabled: true` the legacy overlay is not
+loaded and no CIFP data (`screens/virtualvfr_db.yaml`) is needed -- SVS draws
+airports, runways and the PAPI from the NASR airports pack. See
+[Widgets-Attitude-and-SVS](wiki/Widgets-Attitude-and-SVS.md).
+
 Options:
   * font_percent
   * font_family - default 'DejaVu Sans Condensed'
-  * gsi
+  * gsi - legacy overlay only (deprecated): write the assumed-3-degree
+    deviation to `GSI`
+  * svs - nested Synthetic Vision block
 
 ## vsi_dial
 
