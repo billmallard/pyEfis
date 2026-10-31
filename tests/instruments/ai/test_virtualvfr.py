@@ -1272,3 +1272,77 @@ def test_yvec_points_east_wraps_theta_differences(vector_theta, pov_theta, expec
         )
         is expected
     )
+
+
+# --- CIFP1: no legacy CIFP overlay under SVS ---------------------------------
+
+
+def _make_svs_widget(fix, fake_pov, qtbot, tmp_path, enabled=True):
+    """A VirtualVfr whose screen carries NO CIFP config at all (no dbpath /
+    indexpath -- the state of a panel with no CIFP download), with the SVS
+    configured before first show, as build_virtual_vfr does."""
+    _set_vfr_values(fix)
+    parent = ConfigParent()
+    parent.config = {"refresh_period": 0.25}
+    widget = VirtualVfr(font_percent=0.15)
+    widget.myparent = parent
+    tiles = tmp_path / "tiles"
+    tiles.mkdir()
+    widget.set_svs_config({"enabled": enabled, "tile_path": str(tiles)})
+    _show_widget(qtbot, widget)
+    return widget
+
+
+def test_svs_enabled_skips_cifp_load_and_needs_no_dbpath(
+    fix, fake_pov, qtbot, tmp_path, caplog
+):
+    with caplog.at_level("INFO", logger=vfr_module.log.name):
+        widget = _make_svs_widget(fix, fake_pov, qtbot, tmp_path)
+        widget.resize(400, 300)            # a second resize: still nothing
+        qtbot.wait(10)
+    assert fake_pov.instances == []
+    assert widget.pov is None
+    assert "legacy CIFP overlay skipped" in caplog.text
+
+
+def test_svs_enabled_fix_updates_do_not_touch_the_absent_overlay(
+    fix, fake_pov, qtbot, tmp_path
+):
+    widget = _make_svs_widget(fix, fake_pov, qtbot, tmp_path)
+    widget.setLatitude(40.1)
+    widget.setLongitude(-83.2)
+    widget.setAltitude(1200)
+    widget.setHeading(35)
+    assert (widget.lat, widget.lng, widget.altitude) == (40.1, -83.2, 1200)
+    # The quality signals still reach the widget (they drive sky/ground).
+    fix.db.get_item("LAT").bad = True
+    assert widget._VFRBad["LAT"] is True
+    fix.db.get_item("LAT").bad = False
+    assert widget._VFRBad["LAT"] is False
+
+
+def test_svs_configured_but_disabled_keeps_the_legacy_overlay(
+    fix, fake_pov, qtbot, tmp_path
+):
+    _set_vfr_values(fix)
+    parent = ConfigParent()
+    widget = VirtualVfr(font_percent=0.15)
+    widget.myparent = parent
+    tiles = tmp_path / "tiles"
+    tiles.mkdir()
+    widget.set_svs_config({"enabled": False, "tile_path": str(tiles)})
+    _show_widget(qtbot, widget)
+    assert len(fake_pov.instances) >= 1
+    assert widget.pov is fake_pov.instances[-1]
+
+
+def test_fix_signals_connect_once_across_resizes(fix, fake_pov, qtbot):
+    widget, _parent, _pov = _make_widget(fix, fake_pov, qtbot)
+    widget.resize(400, 300)
+    widget.resize(500, 350)
+    qtbot.wait(10)
+    pov = widget.pov
+    pov.render.reset_mock()
+    fix.db.set_value("LAT", 40.25)
+    # One render per FIX update, not one per resize the widget has seen.
+    assert pov.render.call_count == 1

@@ -34,7 +34,7 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QProcess, qRound
+from PyQt6.QtCore import Qt, QEvent, QTimer, QRectF, QProcess, qRound
 from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import (QWidget, QPushButton, QCheckBox, QScrollArea,
                              QVBoxLayout, QHBoxLayout, QLabel)
@@ -62,6 +62,10 @@ _BTN_STYLE = (
 )
 
 _SEV_RANK = {"none": 0, "white": 1, "amber": 2}
+
+# `pyefis-data update` exit code when the software notice is not accepted
+# (mirrors pyefis_data.cli.NOTICE_RC). Nothing was installed.
+NOTICE_RC = 3
 
 
 def load_status(status_path):
@@ -471,6 +475,74 @@ class PackPicker(QWidget):
             self._chooser = None
 
 
+class NoticeAccept(QWidget):
+    """Full-screen software notice shown when ``update`` refuses because the
+    notice has not been accepted (``notice_required``). The text is the
+    updater's, shown in full; Accept re-runs the install with
+    ``--accept-notice``, which records that this screen displayed it and the
+    user accepted. Only ever reached from the picker, i.e. on the ground.
+
+    Callbacks: ``on_accept()``, ``on_decline()``."""
+
+    def __init__(self, parent=None, *, notice="", font_family="DejaVu Sans Condensed",
+                 on_accept=None, on_decline=None):
+        super().__init__(parent)
+        self.font_family = font_family
+        self._on_accept = on_accept or (lambda: None)
+        self._on_decline = on_decline or (lambda: None)
+        # Opaque, like PackPicker: nothing behind may bleed through the text.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background:#0B1015;")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(40, 24, 40, 20)
+        outer.setSpacing(16)
+        title = QLabel("Software notice")
+        title.setStyleSheet("color:#EEEEEE;")
+        title.setFont(self._f(22, bold=True))
+        outer.addWidget(title)
+        self.text_label = QLabel(notice)
+        self.text_label.setStyleSheet("color:#EEEEEE;")
+        self.text_label.setFont(self._f(21))
+        self.text_label.setWordWrap(True)
+        outer.addWidget(self.text_label)
+        sub = QLabel("Accept to continue the install. Decline installs nothing.")
+        sub.setStyleSheet("color:#8FA0AB;")
+        sub.setFont(self._f(15))
+        sub.setWordWrap(True)
+        outer.addWidget(sub)
+        outer.addStretch(1)
+        foot = QHBoxLayout()
+        self.btn_decline = QPushButton("Decline")
+        self.btn_accept = QPushButton("Accept")
+        for b in (self.btn_decline, self.btn_accept):
+            b.setStyleSheet(_BTN_STYLE)
+            b.setFont(self._f(18))
+            b.setMinimumSize(170, 54)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_decline.clicked.connect(lambda: self._on_decline())
+        self.btn_accept.clicked.connect(lambda: self._on_accept())
+        foot.addWidget(self.btn_decline)
+        foot.addStretch(1)
+        foot.addWidget(self.btn_accept)
+        outer.addLayout(foot)
+        if parent is not None:
+            # Track the host's size without the host having to know about us.
+            parent.installEventFilter(self)
+            self.setGeometry(0, 0, parent.width(), parent.height())
+
+    def _f(self, px, bold=False):
+        f = QFont(self.font_family)
+        f.setPixelSize(px)
+        f.setBold(bold)
+        return f
+
+    def eventFilter(self, obj, event):
+        if obj is self.parent() and event.type() == QEvent.Type.Resize:
+            self.setGeometry(0, 0, obj.width(), obj.height())
+        return False
+
+
 class DataStatus(QWidget):
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  status_path=DEFAULT_STATUS_PATH, continue_screen="PFD",
@@ -494,6 +566,11 @@ class DataStatus(QWidget):
         self._source = None
         self._prog = None             # install progress: {index,total,name,pct}
         self._canceling = False       # True between Cancel tap and process exit
+        # Software-notice gate: the `notice_required` event of a refused
+        # install, the args to re-run on Accept, and the overlay showing it.
+        self._notice = None
+        self._install_args = None
+        self.notice_panel = None
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
@@ -710,6 +787,11 @@ class DataStatus(QWidget):
             args += ["--source", self._source]
         if chosen_root:                          # picker storage chooser changed it
             args += ["--root", chosen_root]
+        self._start_install(args)
+
+    def _start_install(self, args):
+        self._notice = None
+        self._install_args = args
         self._run(args, self._after_install, on_line=self._on_progress_line)
 
     def _on_progress_line(self, line):
@@ -732,6 +814,9 @@ class DataStatus(QWidget):
             if self._prog is None:
                 self._prog = {"total": 0, "index": 0, "name": ""}
             self._prog["pct"] = ev.get("pct")
+        elif kind == "notice_required":
+            self._notice = ev                     # acted on when the run exits
+            return
         else:
             return
         if self.mode == "busy":
@@ -778,6 +863,9 @@ class DataStatus(QWidget):
                 else:
                     self._fail("Update canceled — your data is unchanged.")
                 return
+        if code == NOTICE_RC and (self._notice or {}).get("notice"):
+            self._show_notice(self._notice["notice"])
+            return
         self._close_picker()
         self.mode = "status"
         self._prog = None
@@ -787,6 +875,46 @@ class DataStatus(QWidget):
                         "still in place. See the rows above.")
         self._sync_visibility()
         self.reload()                 # the updater also rewrote status.json
+
+    def _show_notice(self, text):
+        """The updater refused: nothing was installed. Show its notice in full
+        over the (hidden) picker; the selection survives for the re-run."""
+        self._close_notice()
+        self.notice_panel = NoticeAccept(
+            self, notice=text, font_family=self.font_family,
+            on_accept=self._accept_notice, on_decline=self._decline_notice)
+        self.mode = "notice"
+        self.message = ""
+        self._prog = None
+        self._sync_visibility()
+        self.notice_panel.show()
+        self.notice_panel.raise_()
+        self.update()
+
+    def _accept_notice(self):
+        """Re-run the same install, telling the updater this screen showed the
+        full notice and the user accepted (it records that, then installs)."""
+        if self._proc is not None or self._install_args is None:
+            return
+        args = list(self._install_args)
+        if "--accept-notice" not in args:
+            args.append("--accept-notice")
+        self._close_notice()
+        self.mode = "busy"
+        self.message = "Installing… large packs can take several minutes."
+        self._sync_visibility()
+        self.update()
+        self._start_install(args)
+
+    def _decline_notice(self):
+        self._close_notice()
+        self._fail("Notice not accepted — nothing was installed.")
+
+    def _close_notice(self):
+        if self.notice_panel is not None:
+            self.notice_panel.hide()
+            self.notice_panel.deleteLater()
+            self.notice_panel = None
 
     def _close_picker(self):
         if self.picker is not None:

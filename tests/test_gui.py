@@ -20,6 +20,13 @@ def app(qtbot):
 
 
 @pytest.fixture(autouse=True)
+def isolated_startup_notice(tmp_path, monkeypatch):
+    # Keep initialize() from reading the real acknowledgment log.
+    monkeypatch.setenv("MAKERPLANE_ACK_LOG",
+                       str(tmp_path / "acknowledgments.jsonl"))
+
+
+@pytest.fixture(autouse=True)
 def reset_gui_state():
     gui.screens.clear()
     gui.log = logging.getLogger("tests.pyefis.gui")
@@ -363,14 +370,19 @@ def test_initialize_loads_screens_menu_fms_window_and_button_timeout(
 
     gui.initialize(config, "/config", {"includes": {}})
 
-    # gui._ensure_data_status_boot injects the data-status screen and forces it
-    # as the boot screen for everyone, so it is appended and becomes the default;
-    # the configured defaultScreen ("SECOND") becomes the Continue target.
+    # gui._ensure_data_status_screen injects the data-status screen (the
+    # annunciation opens it) but boots the configured flight screen, with the
+    # startup notice as a banner over it -- nothing blocking (BACKLOG L3).
+    # gui._ensure_about_screen then appends the built-in About screen (L4).
     assert [screen.name for screen in gui.screens] == ["FIRST", "SECOND", "DataStatus", "About"]
     assert gui.screens[0].default is False
-    assert gui.screens[1].default is False
-    assert gui.screens[2].default is True
-    assert gui.mainWindow.running_screen == 2
+    assert gui.screens[1].default is True
+    assert gui.screens[2].default is False
+    assert gui.mainWindow.running_screen == 1
+    assert gui.screens[1].object.isVisible()
+    banner = gui.mainWindow.startupNotice
+    assert banner is not None and banner.isVisible()
+    assert banner.parentWidget() is gui.mainWindow
     menu_class.assert_called_once_with(gui.mainWindow, {"items": []})
     menu_instance.start.assert_called_once_with()
     qtui.FMSUI.assert_called_once_with("/tmp/plans", gui.mainWindow)
@@ -387,7 +399,8 @@ def test_initialize_loads_screens_menu_fms_window_and_button_timeout(
     assert timer.started is True
 
 
-def test_initialize_boots_data_status_screen_and_fullscreen(app, monkeypatch):
+def test_initialize_boots_flight_screen_not_data_status_and_fullscreen(
+        app, monkeypatch):
     _screen_module("tests.fake_gui_screen_initialize_full")
     config = {
         "main": {
@@ -405,11 +418,11 @@ def test_initialize_boots_data_status_screen_and_fullscreen(app, monkeypatch):
 
     gui.initialize(config, ".", {})
 
-    # gui._ensure_data_status_boot injects the data-status screen and forces it
-    # as the boot/default screen, even with no configured defaultScreen.
+    # With no configured defaultScreen, screen 0 boots; the injected
+    # data-status and About screens are loaded but not booted.
     assert [screen.name for screen in gui.screens] == ["FIRST", "DataStatus", "About"]
-    assert gui.screens[0].default is False
-    assert gui.screens[1].default is True
+    assert gui.screens[0].default is True
+    assert gui.screens[1].default is False
     show_full_screen.assert_called_once_with()
 
 
