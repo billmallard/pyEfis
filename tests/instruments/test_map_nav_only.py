@@ -22,8 +22,8 @@ LAT0, LON0 = 34.5, -120.5
 
 # The pre-G12 literals, copied from dev @ eed5e72 (map/__init__.py fillRect,
 # layers/__init__.py RangeRingsLayer, airports.MAGENTA, navaids.BLUE /
-# DARKBLUE / the airway pen, terrain.py's water fill, the road and river
-# Prop defaults). Standard must keep every one.
+# DARKBLUE / the airway pen, flight_plan.PAST, terrain.py's water fill,
+# the road and river Prop defaults). Standard must keep every one.
 PRE_G12 = {
     "background": (16, 24, 32, 255),
     "water": (60, 110, 160, 255),
@@ -34,6 +34,7 @@ PRE_G12 = {
     "fix": (40, 60, 130, 255),
     "fix_width": 1.2,
     "airway": (90, 130, 210, 170),
+    "route_past": (128, 128, 128, 255),
     "road_default": "#c0c0c0",
     "river_default": "#4a6d8c",
 }
@@ -48,6 +49,7 @@ NAV_ONLY = {
     "fix": (120, 160, 230, 255),
     "fix_width": 1.5,
     "airway": (100, 140, 220, 255),
+    "route_past": (144, 144, 144, 255),
     "road_default": "#808080",
     "river_default": "#4088a8",
 }

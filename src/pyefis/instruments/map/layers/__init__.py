@@ -58,6 +58,7 @@ STANDARD_PALETTE = {
     "fix": (40, 60, 130, 255),
     "fix_width": 1.2,
     "airway": (90, 130, 210, 170),
+    "route_past": (128, 128, 128, 255),
     "road_default": "#c0c0c0",
     "river_default": "#4a6d8c",
 }
@@ -68,7 +69,8 @@ STANDARD_PALETTE = {
 #: the water fill, labels >= 4.5:1; range rings and roads are reference
 #: lines kept recessive (>= 3:1 against the background only). Water is a
 #: dark fill so symbols stay readable on top of it. Labels, runway fill,
-#: flight-plan legs and ownship already pass and are unchanged. Computed
+#: the active/future flight-plan legs and ownship already pass and are
+#: unchanged; the past leg is lifted to clear 3:1 over the water fill. Computed
 #: ratios are a bound, not the device check (PR body, G12).
 NAV_ONLY_PALETTE = {
     "background": (0, 0, 0, 255),
@@ -80,6 +82,7 @@ NAV_ONLY_PALETTE = {
     "fix": (120, 160, 230, 255),
     "fix_width": 1.5,
     "airway": (100, 140, 220, 255),
+    "route_past": (144, 144, 144, 255),
     "road_default": "#808080",
     "river_default": "#4088a8",
 }

@@ -31,7 +31,9 @@ from pyavtools import fix as pyavtools_fix
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan.waypoints import WAYPOINT_TYPES, Waypoint
-from pyefis.instruments.map.layers import MapLayer, hit_distance, register_layer
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           hit_distance, qcolor,
+                                           register_layer)
 
 PAST = QColor("#808080")
 ACTIVE = QColor("#ff00ff")
@@ -234,10 +236,17 @@ class FlightPlanLayer(MapLayer):
             return
         dto = self._bridge.read_direct_to()
 
+        # build_legs/build_symbols speak in the PAST/ACTIVE/FUTURE status
+        # constants; the map_style palette only re-tints PAST (G12).
+        past = qcolor(getattr(x, "palette", STANDARD_PALETTE)["route_past"])
+
+        def tint(color):
+            return past if color == PAST else color
+
         pen = QPen()
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         for color, (la1, lo1), (la2, lo2) in build_legs(route, engine):
-            pen.setColor(color)
+            pen.setColor(tint(color))
             pen.setWidthF(_ACTIVE_WIDTH if color == ACTIVE else _LEG_WIDTH)
             p.setPen(pen)
             p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
@@ -272,6 +281,7 @@ class FlightPlanLayer(MapLayer):
         p.setFont(f)
         r = max(5.0, min(12.0, x.w * 0.016))
         for color, lat, lon, wtype, label, ringed in symbols:
+            color = tint(color)
             c = x.to_screen(lat, lon)
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
