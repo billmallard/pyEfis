@@ -138,6 +138,9 @@ render read-only — it never raises.
   Clear, Suspend/Resume, CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
   Delete both confirm and both reset the working plan; a distinct "Delete"
   semantic can be added if the guide's usage turns out to need one).
+  Result and error messages (STORED, NO AIRWAYS AT x, ROUTE FULL, ...) show
+  as a toast that clears itself after `TOAST_MS` (4 s; each new message
+  restarts it) or on the next tap anywhere on the page (pyEfis #323).
 - **Load Airway** (PA6, AER-1605, brief section 3.5) — offers every airway
   through the tapped fix (`AirwayGraph.airways_through_fix`, PA2), then an
   exit fix from that airway's ordered points, each annotated with its
