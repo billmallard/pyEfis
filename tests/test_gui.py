@@ -373,7 +373,8 @@ def test_initialize_loads_screens_menu_fms_window_and_button_timeout(
     # gui._ensure_data_status_screen injects the data-status screen (the
     # annunciation opens it) but boots the configured flight screen, with the
     # startup notice as a banner over it -- nothing blocking (BACKLOG L3).
-    assert [screen.name for screen in gui.screens] == ["FIRST", "SECOND", "DataStatus"]
+    # gui._ensure_about_screen then appends the built-in About screen (L4).
+    assert [screen.name for screen in gui.screens] == ["FIRST", "SECOND", "DataStatus", "About"]
     assert gui.screens[0].default is False
     assert gui.screens[1].default is True
     assert gui.screens[2].default is False
@@ -418,8 +419,8 @@ def test_initialize_boots_flight_screen_not_data_status_and_fullscreen(
     gui.initialize(config, ".", {})
 
     # With no configured defaultScreen, screen 0 boots; the injected
-    # data-status screen is loaded but not booted.
-    assert [screen.name for screen in gui.screens] == ["FIRST", "DataStatus"]
+    # data-status and About screens are loaded but not booted.
+    assert [screen.name for screen in gui.screens] == ["FIRST", "DataStatus", "About"]
     assert gui.screens[0].default is True
     assert gui.screens[1].default is False
     show_full_screen.assert_called_once_with()

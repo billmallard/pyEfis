@@ -36,6 +36,8 @@ screens = []
 # set in config (a panel/config push can drop it), but never booted: it is a
 # click-through. See _ensure_data_status_screen().
 DATA_STATUS_SCREEN = "DataStatus"
+# Built-in About/System screen (BACKLOG L4); see _ensure_about_screen().
+ABOUT_SCREEN = "About"
 
 # This class is just a structure to hold information about a single
 # screen that will be loaded.
@@ -305,6 +307,33 @@ def _ensure_data_status_screen(config, configured_default):
         return configured_default
 
 
+def _ensure_about_screen(config):
+    """Guarantee the About/System screen (BACKLOG L4) is loaded.
+
+    The notice must be reachable at any time without a reboot, so it cannot
+    depend on a panel/config push keeping the screen in the screen set. If the
+    config does not define it, inject the bundled definition. Returns True when
+    the screen is present; any failure logs and returns False so boot never
+    breaks."""
+    try:
+        if ABOUT_SCREEN in config.setdefault("screens", {}):
+            return True
+        path = os.path.join(os.path.dirname(__file__), "config", "screens",
+                            "about.yaml")
+        with open(path) as f:
+            scr_config = (yaml.safe_load(f) or {}).get(ABOUT_SCREEN)
+        if not scr_config:
+            return False
+        config["screens"][ABOUT_SCREEN] = scr_config
+        screens.append(Screen(ABOUT_SCREEN, scr_config["module"], scr_config))
+        log.info("about screen: absent from config; injected the bundled "
+                 "definition")
+        return True
+    except Exception as e:
+        log.error("about screen: could not load the built-in screen (%s)", e)
+        return False
+
+
 def initialize(config, config_path, preferences):
     global mainWindow
     global log
@@ -331,6 +360,7 @@ def initialize(config, config_path, preferences):
     # annunciation opens it) with its Continue sent to the configured default.
     boot = _ensure_data_status_screen(config, d)
     setDefaultScreen(boot)
+    _ensure_about_screen(config)
 
     mainWindow = Main(config, config_path, preferences)
     hmi.actions.showNextScreen.connect(mainWindow.showNextScreen)
