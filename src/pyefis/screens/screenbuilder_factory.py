@@ -140,11 +140,13 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
             screen,
             config_file=os.path.join(screen.parent.config_path, opts["config"]),
             font_family=font_family,
+            font_percent=font_percent,
         )
     # Inline: the instrument's options ARE the button definition (authored in the
     # configurator). Needs at least a dbkey to bind to.
     if opts.get("dbkey"):
-        return button.Button(screen, config=dict(opts), font_family=font_family)
+        return button.Button(screen, config=dict(opts), font_family=font_family,
+                             font_percent=font_percent)
     raise ValueError(
         "button needs options: either 'config:' (an external YAML) or inline "
         "fields including 'dbkey:'")

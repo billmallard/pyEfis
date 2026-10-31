@@ -146,3 +146,32 @@ def test_tab_section_font_percent_survives_fg_color_stylesheet(fix, qtbot):
     base = _tab(qtbot)
     assert _label_px(t) == round(base._base_label_px() * 1.5)
 
+
+# -- button (#229) ------------------------------------------------------------
+
+_BUTTON = {"dbkey": "TSBTN{id}0", "text": "Units"}
+
+
+def test_button_font_percent_scales_label(fix, qtbot):
+    base = _build(qtbot, "button", _BUTTON)
+    half = _build(qtbot, "button", {**_BUTTON, "font_percent": 50})
+    h = base.height()
+    assert base._button.font().pixelSize() == qRound(h * 38 / 100)
+    assert half._button.font().pixelSize() == qRound(h * 38 / 100 * 0.5)
+
+
+def test_button_font_percent_never_grows_past_the_mask_fit(fix, qtbot):
+    """With a font_mask the auto-fit is the largest label that fits, so the
+    multiplier shrinks it but a value over 100% is clamped to the fit."""
+    base = _build(qtbot, "button", {**_BUTTON, "font_mask": "XXXXX"})
+    half = _build(qtbot, "button",
+                  {**_BUTTON, "font_mask": "XXXXX", "font_percent": 0.5})
+    big = _build(qtbot, "button",
+                 {**_BUTTON, "font_mask": "XXXXX", "font_percent": 150})
+    for b in (base, half, big):
+        b.setStyle()
+    fitted = base._button.font().pointSizeF()
+    assert fitted > 0
+    assert half._button.font().pointSizeF() == pytest.approx(fitted * 0.5)
+    assert big._button.font().pointSizeF() == pytest.approx(fitted)
+
