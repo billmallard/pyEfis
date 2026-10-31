@@ -219,7 +219,9 @@ def live(hostport, outdir):
         writer.close()
         base._netfix_write(host_, port, "ALTSEL", original)
         print("restored ALTSEL:", read("ALTSEL"))
-        fix.stop()
+        # No fix.stop(): its timers live on pyavtools' scheduler thread, and
+        # stopping them from here segfaulted at exit on the Pi. os._exit ends
+        # the process anyway.
     print("LIVE CHECK", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
