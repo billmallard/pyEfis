@@ -56,6 +56,11 @@ def render(style, args, app):
     from pyavtools import fix
     from pyefis.instruments.map import MovingMap
 
+    # render_instrument's auto-define gives unknown keys a 0..100 range,
+    # which would clamp a western longitude to 0 -- define real ranges.
+    for key, lo, hi in (("LAT", -90.0, 90.0), ("LONG", -180.0, 180.0),
+                        ("TRACKM", 0.0, 360.0), ("ALT", -1000.0, 60000.0)):
+        fix.db.define_item(key, key, "float", lo, hi, "", 50000, "")
     for key, val in (("LAT", args.lat), ("LONG", args.lon),
                      ("TRACKM", args.track), ("ALT", args.alt)):
         it = fix.db.get_item(key)

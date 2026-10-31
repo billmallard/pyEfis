@@ -255,6 +255,10 @@ class TerrainLayer(MapLayer):
             # a coastline reads as mirrored on east/west tracks (#90).
             p.rotate(-math.degrees(x.rot))
         s = mpp * x._px_per_m               # screen px per image px
+        if self._flat:
+            # A hard black/blue coastline shows the window image's pixel
+            # steps (up to ~2 screen px each) that relief texture hides.
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         w = qimg.width() * s
         h = qimg.height() * s
         p.drawImage(QRectF(-w / 2.0, -h / 2.0, w, h), qimg)
