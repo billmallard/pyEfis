@@ -648,6 +648,7 @@ class FlightPlan(QWidget):
             if self._bridge.available:
                 self._bridge.stage_direct_to(new_wp)
                 self._bridge.command("DTO")
+            self._message = ""  # a SELECT A WAYPOINT prompt is answered (#326)
             self._close_entry()
             return
         try:
@@ -1121,6 +1122,9 @@ class FlightPlan(QWidget):
         self.update()
 
     def _close_dto(self):
+        # The DTO page's prompt must not outlive the page: it would read as
+        # "the direct-to did not take" over the FPL header (#326).
+        self._message = ""
         self._entry_mode = None
         self._entry_field = ""
         self._entry_dupe_choices = None
@@ -1136,10 +1140,12 @@ class FlightPlan(QWidget):
 
     def _dto_select_fpl(self, i):
         self._dto_target = ("fpl", i, self._plan.waypoints[i])
+        self._message = ""
         self.update()
 
     def _dto_select_nearest(self, wp):
         self._dto_target = ("wp", None, wp)
+        self._message = ""
         self.update()
 
     def _dto_activate(self):
