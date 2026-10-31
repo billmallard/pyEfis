@@ -372,19 +372,44 @@ on the bus by this spec (§6, D8).
 ### 4.8 Ownship filtering
 
 The receiver hears our own ADS-B Out (and possibly a TIS-B rebroadcast of it).
+
+**Rule (Bill, 2026-10-31, F6): ownship is filtered by identity, set by the
+user, and never by geometry.** No near or co-altitude test, in the writer or
+in the display. A target that matches no ownship identity is shown.
+
 The writer:
 
-1. Learns ownship identity from each Ownship Report (`0x0A`): `t` and
-   `aaaaaa` in the same layout as G§3.5.1 (G§3.4). A plugin setting
-   `ownship_address` (hex) supplies it when the receiver does not.
-2. Drops any Traffic Report whose 24-bit address equals ownship's and whose
-   type is 0 or 2 (ICAO address, ADS-B or TIS-B). Type 1 (self-assigned) is
-   dropped only when ownship's own type is also 1.
+1. Takes ownship identity from two sources and filters on both:
+   - the plugin setting `ownship_address` (24-bit ICAO address, hex). The
+     configurator sets it from the aircraft registration the pilot enters:
+     for a US N-number it derives the address, and a hex override covers
+     other states (§9, F6). This is the authoritative source.
+   - each Ownship Report (`0x0A`): `t` and `aaaaaa`, in the same layout as
+     G§3.5.1 (G§3.4).
+
+   If both are present and disagree, the writer logs it once per change and
+   filters both. The disagreement means the receiver or the registration is
+   misconfigured, and either one may be our own transmission.
+2. Drops any Traffic Report whose 24-bit address equals an ownship address
+   and whose type is 0 or 2 (ICAO address, ADS-B or TIS-B). Type 1
+   (self-assigned) is dropped only when it equals the `0x0A` identity and
+   that identity is also type 1. A configured ICAO address never matches a
+   self-assigned one.
 3. Does **not** filter type 3 (TIS-B track file ID). A track-file shadow of
    ownship -- the case G§3.5.1.2 explicitly warns about -- carries no ownship
-   address and cannot be recognised from GDL90 fields alone. A geometric
-   filter (near and co-altitude) would hide a real close target, which is
-   the target that matters most, so it is left to a decision by Bill (§9, F6).
+   address. Under the rule it matches no ownship identity, so it is shown.
+   That is the safe way to fail: a shadow costs the pilot a false target
+   beside the ownship symbol, while a filter that guessed wrong would hide a
+   real close target, the one that matters most.
+4. Does **not** match the registration against a target's call sign
+   (`cc`, G§3.5.1.11). That match was considered as a way to catch type-3
+   shadows and rejected. G§3.5.1.11 says the call sign "should not be relied
+   on as a unique target identifier". GDL90 also says nothing about what a
+   track-file report carries in the field. A shadow exists because the
+   ground fusion failed to associate the radar track with our ADS-B, so
+   nothing shows that it would carry our flight ID. A false match hides a
+   real target, the direction the rule forbids. Revisit only with a bench
+   capture of an ownship shadow that carries our call sign.
 
 ### 4.9 Altitude reference
 
@@ -450,6 +475,9 @@ Must not assume:
   missing and `TFCDROP > 0`; a display that wants to say so reads it.
 - That the gateway has applied any threat logic beyond the source's own
   alert bit.
+- That the block is free of ownship. Ownship is removed by identity only
+  (§4.8). A TIS-B track-file shadow of ownship can still appear, close to the
+  ownship symbol. The display shows it and must not hide it by geometry.
 - That a position is current to the instant: see §6, D1.
 
 ---
@@ -478,9 +506,12 @@ Every deviation, flagged as the item requires:
   guarantees (G§3.5); a Stratux can report more. Overflow is counted
   (`TFCDROP`), and the nearest-kept rule follows G§2.3, but the farthest
   targets are not on the bus. Raising `k` is one number.
-- **D5 Ownship TIS-B track-file shadows are not filtered** (§4.8, item 3).
-  G§3.5.1.2 asks the display vendor to "cope" with this; this spec leaves it to
-  the display and to a decision on a geometric filter.
+- **D5 Ownship TIS-B track-file shadows are not filtered** (§4.8, items 3-4).
+  G§3.5.1.2 asks the display vendor to "cope" with this. By Bill's ruling (F6)
+  ownship is filtered by identity only, never by geometry, in the writer or
+  the display. A type-3 shadow matches no ownship identity, so it reaches the
+  bus and is drawn. It shows as a false target near ownship, the safe way to
+  fail. Call-sign matching is not used either (§4.8, item 4).
 - **D6 Call sign is trimmed.** Trailing pad spaces are removed; a pre-Mod-D
   `-` for an unavailable character is passed through unchanged.
 - **D7 The gateway does not extrapolate.** The source's own extrapolation is
@@ -544,7 +575,12 @@ evicts the farthest. With ownship position `bad`, newcomers are dropped.
 
 **T6 Ownship filter.** `0x0A` with type 0 address A, then `0x14` with address
 A types 0 and 2: no slot. Type 3 with A: slotted. `ownship_address` config
-with no `0x0A`: same result. Ownship never appears in the block.
+with no `0x0A`: same result. Config address B and `0x0A` address A: both A
+and B (types 0 and 2) get no slot, and one mismatch line is logged. A type-3
+report whose trimmed call sign equals the registration: slotted (pins §4.8
+item 4). Two reports at ownship's position and altitude with other
+addresses: both slotted (no geometric filter). Ownship's ICAO address never
+appears in the block.
 
 **T7 Identity collision.** Two alternating reports, same identity, positions
 1 nm apart: one slot whose position alternates. Pins D3.
@@ -596,7 +632,12 @@ existing route conformance tests (pyEfis #339) remain the guard.
   periodic can run in that loop. F1 should fix the decoder; the `IAS` write
   is a defect on its own.
 - **F5** Two ADS-B receivers into one block (roadmap §9 item 3).
-- **F6** Decision for Bill: filter suspected TIS-B ownship shadows by geometry,
-  or leave them to the display (§4.8, D5).
+- **F6** *Ruled by Bill, 2026-10-31:* "This needs to be user setting in the
+  configurator. The end user should be able to specify the self-aircraft
+  registration to make it easier to filter." Ownship is filtered by identity
+  only, never by geometry (§4.8, §5, D5). The follow-on is a configurator
+  setting for the aircraft registration. It derives the ICAO address for a US
+  N-number, takes a hex override for other states, and writes the writer's
+  `ownship_address`. That setting is BACKLOG `P3e` in maos-workspace.
 - **F7** After F1 merges, add a ratified "Traffic" block to roadmap §9.1 and
   close the §10 "Dynamic lists over FIX" row.
