@@ -515,8 +515,12 @@ def _approach_plan():
     ])
 
 
-def _suspended_widget(fix, qtbot, act_leg, tf):
+def _suspended_widget(fix, qtbot, act_leg, tf, susp_map=1):
+    """Suspended on the approach. susp_map is the engine's FPLSUSPMAP;
+    None leaves the key undefined, as on a gateway older than G49."""
     _define_all_fp1_keys(fix)
+    if susp_map is not None:
+        _define(fix, "FPLSUSPMAP", "int", susp_map)
     w = flight_plan.FlightPlan(None)
     qtbot.addWidget(w)
     w.resize(480, 320)
@@ -546,29 +550,54 @@ def _banner_target(w):
 
 
 def test_map_auto_suspend_reads_fly_the_missed(fix, qtbot, monkeypatch):
-    # Engine auto-suspend: TO slot 4 is the MAP and the aircraft is past it.
-    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2)
-    assert w._plan.waypoints[3].role == "map"   # the role survived the bus round trip
+    # The engine says suspended at the MAP (FPLSUSPMAP = 1).
+    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2, susp_map=1)
     assert w._suspended_at_map() is True
     assert "Fly the missed" in _menu_labels(w, monkeypatch)
     assert "Resume" not in _menu_labels(w, monkeypatch)
 
 
 @pytest.mark.parametrize("act_leg,tf", [
-    (2, 2),   # pilot SUSP past an IAF: not the MAP
+    (2, 2),   # pilot SUSP past an IAF
     (3, 1),   # pilot SUSP on the leg to the FAF
-    (4, 1),   # pilot SUSP on final, short of the MAP: TO, not FROM
+    (4, 1),   # pilot SUSP on final, short of the MAP
+    # A pilot SUSP past the MAP: held from before it, or after a missed with
+    # no MAHP. Active leg on the MAP and FROM, the very state the old
+    # inference called "at the MAP"; the engine says 0, so it is a plain
+    # suspend and RESUME only un-suspends.
+    (4, 2),
 ])
 def test_suspend_elsewhere_keeps_resume(fix, qtbot, monkeypatch, act_leg, tf):
-    w = _suspended_widget(fix, qtbot, act_leg=act_leg, tf=tf)
+    w = _suspended_widget(fix, qtbot, act_leg=act_leg, tf=tf, susp_map=0)
     assert w._suspended_at_map() is False
     labels = _menu_labels(w, monkeypatch)
     assert "Resume" in labels and "Fly the missed" not in labels
     assert _banner_target(w) is None
 
 
+def test_older_gateway_without_fplsuspmap_keeps_resume(fix, qtbot, monkeypatch):
+    # The MAP auto-suspend's own state on the other keys, but no FPLSUSPMAP:
+    # pre-G49 behaviour, nothing inferred.
+    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2, susp_map=None)
+    assert w._bridge.available is True
+    assert w._suspended_at_map() is False
+    labels = _menu_labels(w, monkeypatch)
+    assert "Resume" in labels and "Fly the missed" not in labels
+    assert _banner_target(w) is None
+
+
+def test_fplsuspmap_change_alone_brings_up_the_banner(fix, qtbot):
+    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2, susp_map=0)
+    assert _banner_target(w) is None
+    fix.db.set_value("FPLSUSPMAP", 1)   # no explicit sync: the bridge listener
+    assert w._suspended_at_map() is True
+    assert _banner_target(w) is not None
+
+
 def test_not_suspended_reads_suspend_and_shows_no_banner(fix, qtbot, monkeypatch):
     w = _suspended_widget(fix, qtbot, act_leg=4, tf=2)
+    # FPLSTATE lands before FPLSUSPMAP clears (one key at a time on the bus):
+    # no banner in between, and the menu already reads "Suspend".
     fix.db.set_value("FPLSTATE", 1)
     w._sync_engine_from_bridge()
     assert "Suspend" in _menu_labels(w, monkeypatch)

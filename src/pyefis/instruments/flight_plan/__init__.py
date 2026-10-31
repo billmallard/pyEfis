@@ -81,7 +81,6 @@ KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
 
 _STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
 _STATE_SUSP = 3
-_TF_FROM = 2   # FPLTF: past the active TO fix
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 _CDI_SCALE_CHOICES = ("0.3", "1.0", "2.0", "AUTO")
 _INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog")
@@ -404,22 +403,18 @@ class FlightPlan(QWidget):
         return _STATE_BADGES.get(int(self._engine_value("FPLSTATE", 0) or 0), "")
 
     def _suspended_at_map(self):
-        """True when the plan is suspended because the aircraft passed the
-        MAP (G49, pyEfis #330).
+        """True when the plan is suspended at the MAP auto-suspend (G49,
+        pyEfis #330), where RESUME flies the missed approach.
 
-        The gateway has no key for this, so it is inferred: FPLSTATE is
-        SUSP, the active TO slot carries the MAP role (FPLfFLAGS 0x08) and
-        FPLTF says FROM -- the aircraft is past it. That is exactly the state
-        the engine's auto-suspend leaves behind, and RESUME from it flies the
-        missed approach. A pilot SUSP on the final leg short of the MAP reads
-        TO, so it is not mistaken for one."""
-        if int(self._engine_value("FPLSTATE", 0) or 0) != _STATE_SUSP:
-            return False
-        if int(self._engine_value("FPLTF", 0) or 0) != _TF_FROM:
-            return False
-        idx = self._active_index()
-        wps = self._plan.waypoints
-        return idx is not None and 0 <= idx < len(wps) and wps[idx].role == "map"
+        The engine says so on FPLSUSPMAP. pyEfis does not work it out from
+        FPLSTATE / the active slot / FPLTF: the engine is the authority, and
+        that inference mislabels a pilot SUSP past the MAP. An older gateway
+        without the key reads as not-at-the-MAP, so it keeps "Resume".
+        FPLSTATE is checked too because the two keys arrive one at a time:
+        right after RESUME, FPLSTATE can already read LEG while FPLSUSPMAP
+        still reads 1, and the banner must not flash a "Suspend" button."""
+        return (int(self._engine_value("FPLSTATE", 0) or 0) == _STATE_SUSP
+                and int(self._engine_value("FPLSUSPMAP", 0) or 0) == 1)
 
     def _suspend_label(self):
         """The menu's suspend/continue item. "Fly the missed" at the MAP

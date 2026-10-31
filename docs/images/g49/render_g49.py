@@ -14,16 +14,17 @@ import os
 from PyQt6.QtGui import QFontDatabase
 
 from tests.instruments.flight_plan.test_flight_plan import (
-    _approach_plan, _define_all_fp1_keys)
+    _approach_plan, _define, _define_all_fp1_keys)
 from pyefis.instruments import flight_plan
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# name, FPLSTATE, FPLACTLEG, FPLTF, menu open
+# name, FPLSTATE, FPLSUSPMAP, FPLACTLEG, FPLTF, menu open
 SHOTS = (
-    ("map_auto_susp", 3, 4, 2, False),       # engine auto-suspend past the MAP
-    ("map_auto_susp_menu", 3, 4, 2, True),   # same, MENU open
-    ("pilot_susp_final", 3, 4, 1, True),     # pilot SUSP on final, short of the MAP
+    ("map_auto_susp", 3, 1, 4, 2, False),       # engine auto-suspend past the MAP
+    ("map_auto_susp_menu", 3, 1, 4, 2, True),   # same, MENU open
+    ("pilot_susp_final", 3, 0, 4, 1, True),     # pilot SUSP on final, short of the MAP
+    ("pilot_susp_past_map", 3, 0, 4, 2, True),  # pilot SUSP held past the MAP
 )
 
 
@@ -40,6 +41,7 @@ def _register_font():
 
 def test_render_g49(fix, qtbot):
     _define_all_fp1_keys(fix)
+    _define(fix, "FPLSUSPMAP", "int", 0)
     family = _register_font()
     w = flight_plan.FlightPlan(None)
     if family:
@@ -50,8 +52,9 @@ def test_render_g49(fix, qtbot):
     w._commit()
     fix.db.set_value("FPLINTEG", True)   # the test defaults leave LOI showing
     fix.db.set_value("FPLAPR", 2)        # LNAV
-    for name, state, act_leg, tf, menu in SHOTS:
+    for name, state, susp_map, act_leg, tf, menu in SHOTS:
         fix.db.set_value("FPLSTATE", state)
+        fix.db.set_value("FPLSUSPMAP", susp_map)
         fix.db.set_value("FPLACTLEG", act_leg)
         fix.db.set_value("FPLTF", tf)
         w._sync_engine_from_bridge()
