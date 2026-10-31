@@ -160,6 +160,7 @@ def build_tab_section(
         tabs=config.get("tabs") or [],
         default_tab=opts.get("default_tab", 0),
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 

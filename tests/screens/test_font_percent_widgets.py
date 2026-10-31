@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QTabBar
 
 import pyefis.hmi as hmi
 from pyefis.instruments.helpers import font_scale
+from pyefis.instruments.tab_section import _MIN_TAB_LABEL_PX
 from pyefis.screens.screenbuilder import Screen
 from tests.screens.test_screenbuilder import (
     _TestParent, _config_with_instruments)
@@ -69,4 +70,79 @@ def _build(qtbot, inst_type, options=None, tabs=None, config_path=""):
 ])
 def test_font_scale(value, expected):
     assert font_scale(value) == expected
+
+
+# -- tab_section (#223) -------------------------------------------------------
+
+_TABS = [{"label": "Engine", "layout": {"rows": 1, "columns": 1},
+          "instruments": []},
+         {"label": "Nav", "layout": {"rows": 1, "columns": 1},
+          "instruments": []}]
+
+
+def _tab(qtbot, **options):
+    return _build(qtbot, "tab_section", options, tabs=_TABS)
+
+
+def _label_px(tab_section):
+    """The scaled label size -- an explicit pixel size on the bar's font."""
+    return tab_section.tab_bar.font().pixelSize()
+
+
+def test_tab_section_unset_keeps_todays_label_size(fix, qtbot):
+    tab_section = _tab(qtbot)
+    # Today's size is the inherited QTabBar font with the family applied.
+    reference = QTabBar()
+    qtbot.addWidget(reference)
+    font = QFont(reference.font())
+    font.setFamily("DejaVu Sans Condensed")
+    assert tab_section.font_percent is None
+    assert tab_section.tab_bar.font() == font
+
+
+@pytest.mark.parametrize("position", ["top", "bottom", "left", "right"])
+def test_tab_section_font_percent_grows_bar_and_shrinks_content(
+        fix, qtbot, position):
+    """150 (a whole-number percent, 1.5 after normalising) grows the labels;
+    _layout_pages() reserves the bigger sizeHint() on every edge and the
+    content area gives up exactly that much."""
+    base = _tab(qtbot, tab_position=position)
+    big = _tab(qtbot, tab_position=position, font_percent=150)
+
+    assert big.font_percent == pytest.approx(1.5)
+    assert _label_px(big) == round(base._base_label_px() * 1.5)
+
+    side = position in ("left", "right")
+    hint = (lambda t: t.tab_bar.sizeHint().width()) if side else \
+        (lambda t: t.tab_bar.sizeHint().height())
+    assert hint(big) > hint(base)
+    for t in (base, big):
+        if side:
+            assert t.tab_bar.width() == hint(t)
+            assert t.stack.width() == W - hint(t)
+            assert t.stack.height() == H
+        else:
+            assert t.tab_bar.height() == hint(t)
+            assert t.stack.height() == H - hint(t)
+            assert t.stack.width() == W
+    if side:
+        assert big.stack.width() < base.stack.width()
+    else:
+        assert big.stack.height() < base.stack.height()
+
+
+def test_tab_section_small_font_percent_stops_at_legibility_floor(fix, qtbot):
+    """0.2 is what Bill's bench panel carries; 20% of the default label is
+    unreadable, so it lands on the floor instead."""
+    base = _tab(qtbot)
+    small = _tab(qtbot, font_percent=0.2)
+    assert round(base._base_label_px() * 0.2) < _MIN_TAB_LABEL_PX
+    assert _label_px(small) == _MIN_TAB_LABEL_PX
+    assert small.tab_bar.sizeHint().height() < base.tab_bar.sizeHint().height()
+
+
+def test_tab_section_font_percent_survives_fg_color_stylesheet(fix, qtbot):
+    t = _tab(qtbot, fg_color="#ffff00", font_percent=150)
+    base = _tab(qtbot)
+    assert _label_px(t) == round(base._base_label_px() * 1.5)
 
