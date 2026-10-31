@@ -223,6 +223,7 @@ def build_checklist(screen, config, font_percent=None, font_family=None, replace
         screen,
         checklists=opts.get("checklists"),
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 

@@ -18,6 +18,7 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QTabBar
 
 import pyefis.hmi as hmi
+from pyefis.instruments.checklist import Checklist
 from pyefis.instruments.helpers import font_scale
 from pyefis.instruments.tab_section import _MIN_TAB_LABEL_PX
 from pyefis.screens.screenbuilder import Screen
@@ -228,3 +229,38 @@ def test_data_annunciation_font_percent_scales_flag_text(fix, qtbot, tmp_path):
     assert half.font.pixelSize() == max(8, qRound(h * 0.7 * 0.5))
     assert half.font.pixelSize() < base.font.pixelSize()
 
+
+# -- checklist (#233) ---------------------------------------------------------
+
+def test_checklist_font_percent_reaches_painted_text(fix, qtbot):
+    base = _build(qtbot, "checklist")
+    half = _build(qtbot, "checklist", {"font_percent": 0.5})
+    h = base.height()
+    assert base._line_metrics(h) == (max(12.0, h / 16.0),
+                                     max(8, int(max(12.0, h / 16.0) * 0.7)))
+    assert half._line_metrics(h)[1] < base._line_metrics(h)[1]
+
+
+@pytest.mark.parametrize("scale", [None, 0.05, 0.5, 1.0, 1.5, 3.0])
+@pytest.mark.parametrize("h", [20, 100, 192, 480, 1080])
+def test_checklist_text_always_fits_its_row(qtbot, scale, h):
+    """Closed form, every pane height and scale: the text never exceeds the
+    line pitch, so rows never overlap -- including a pane small enough to
+    hit the floor, where the pitch holds at 12 px and the list shows fewer
+    rows instead."""
+    w = Checklist(font_percent=scale)
+    qtbot.addWidget(w)
+    line_h, text_px = w._line_metrics(h)
+    assert line_h >= 12.0
+    assert text_px >= 8
+    assert text_px < line_h
+    expected = max(12.0, h / 16.0 * (scale or 1.0))
+    assert line_h == pytest.approx(expected)
+
+
+def test_checklist_floor_shows_fewer_rows_not_overlap(qtbot):
+    tiny = Checklist(font_percent=0.05)
+    qtbot.addWidget(tiny)
+    line_h, text_px = tiny._line_metrics(100)
+    assert (line_h, text_px) == (12.0, 8)
+    assert math.floor(100 / line_h) == 8   # rows that fit: fewer, not overlapping
