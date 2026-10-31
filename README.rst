@@ -131,7 +131,7 @@ obstacles, and airports/runways drawn in 3D over the live attitude.
 * **Major roads** — OSM motorway / trunk overlays.
 
 Terrain and the chart databases are supplied by the companion
-`makerplane-data <https://github.com/makerplane/makerplane-data>`_
+`makerplane-data <https://github.com/billmallard/makerplane-data>`_
 navigation-data system — an over-the-air / USB updater that keeps signed
 terrain, airport, obstacle, water, and road packs current — or by
 user-supplied local files. A boot-time **Data Status** screen and a subtle
