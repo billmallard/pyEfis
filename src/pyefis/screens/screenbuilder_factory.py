@@ -371,7 +371,11 @@ def _svs_props():
     dev = " (rendered on the device; not shown in the editor preview)"
     return [
         Prop("svs_enabled", "boolean", default=False, apply="special",
-             label="Synthetic vision enabled", help="master on/off" + dev),
+             label="Synthetic vision enabled",
+             help="master on/off" + dev + ". Off falls back to the legacy "
+                  "CIFP Virtual VFR overlay, which is DEPRECATED (to be "
+                  "removed) and needs a separate FAA CIFP download; on needs "
+                  "no CIFP data"),
         Prop("svs_tile_path", "string", default="", apply="special",
              label="Terrain tile path",
              help="SRTM3 HGT tile directory on the device"),
