@@ -268,6 +268,7 @@ class Altimeter_Tape(QGraphicsView):
         altsel_box=None,
         alt_bug_enabled=None,
         alt_bug_color="#00ffff",
+        alt_bug_alert_color="#ffb000",
         alt_bug_dbkey="ALTSEL",
     ):
         super(Altimeter_Tape, self).__init__(parent)
@@ -360,6 +361,9 @@ class Altimeter_Tape(QGraphicsView):
         self.altsel_box = (dbkey == "ALT") if altsel_box is None else altsel_box
         self.alt_bug_enabled = alt_bug_enabled
         self.alt_bug_color = alt_bug_color
+        # Box and bug colour while the gateway annunciates an altitude
+        # deviation on the key (EFIS-ALTSEL-006).
+        self.alt_bug_alert_color = alt_bug_alert_color
         self.alt_bug_dbkey = alt_bug_dbkey
         self._altsel = None          # bugs.BugBinding, made on first use
         self._altsel_editor = None
@@ -924,6 +928,7 @@ class Altimeter_Tape(QGraphicsView):
             self.altsel_display = altsel.AltSelBox(
                 self, binding, font_family=self.font_family)
             self.altsel_display.color = QColor(self.alt_bug_color)
+            self.altsel_display.alert_color = QColor(self.alt_bug_alert_color)
         bh = max(16, qRound(self.width() * 0.34))
         self.altsel_display.setGeometry(0, 0, self.width(), bh)
         self.altsel_display.show()
@@ -958,7 +963,8 @@ class Altimeter_Tape(QGraphicsView):
         w = self.width()
         bug_w = max(5.0, w * 0.12)
         bug_h = max(10.0, w * 0.26)
-        color = self._altsel.color(QColor(self.alt_bug_color))
+        color = self._altsel.color(QColor(self.alt_bug_color),
+                                   QColor(self.alt_bug_alert_color))
         p.save()
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(color))

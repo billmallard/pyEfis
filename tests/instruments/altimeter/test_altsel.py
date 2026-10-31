@@ -272,10 +272,12 @@ def test_build_altimeter_tape_forwards_altsel_options(monkeypatch):
                         lambda screen, **kw: seen.update(kw) or object())
     sf.build_altimeter_tape(None, {"options": {
         "altsel_box": False, "alt_bug_enabled": True,
-        "alt_bug_color": "#ff00ff", "alt_bug_dbkey": "ALTSEL2"}})
+        "alt_bug_color": "#ff00ff", "alt_bug_alert_color": "#ff0000",
+        "alt_bug_dbkey": "ALTSEL2"}})
     assert seen["altsel_box"] is False
     assert seen["alt_bug_enabled"] is True
     assert seen["alt_bug_color"] == "#ff00ff"
+    assert seen["alt_bug_alert_color"] == "#ff0000"
     assert seen["alt_bug_dbkey"] == "ALTSEL2"
 
 
@@ -440,7 +442,6 @@ def _rgb(c):
     return (c.red(), c.green(), c.blue())
 
 
-@pytest.mark.xfail(strict=True, reason="EFIS-ALTSEL-006 not built yet")
 def test_annunciate_recolours_bug_and_box_and_clears(alt_db, qtbot):
     """EFIS-ALTSEL-006: while ALTSEL.annunciate is set the bug and the box
     leave cyan; when the gateway clears the flag they return to cyan."""
@@ -458,3 +459,45 @@ def test_annunciate_recolours_bug_and_box_and_clears(alt_db, qtbot):
     sel.annunciate = False
     assert _rgb(_bug_pixel(t)) == cyan
     assert _rgb(box.binding.color(box.color)) == cyan
+
+
+def test_annunciate_default_is_amber_and_configurable(alt_db, qtbot):
+    _fix, _alt, sel = alt_db
+    t = _tape(qtbot)
+    sel.annunciate = True
+    assert _rgb(_bug_pixel(t)) == _rgb(bugs.BUG_ALERT_COLOR) == (255, 176, 0)
+    red = _tape(qtbot, alt_bug_alert_color="#ff0000")
+    assert _rgb(_bug_pixel(red)) == (255, 0, 0)
+    assert _rgb(red.altsel_display.alert_color) == (255, 0, 0)
+
+
+def test_annunciate_outranks_degraded_but_not_fail(alt_db, qtbot):
+    """As on the gauges and value_text: the alert beats old/bad grey; a failed
+    key draws no bug and dashes, flag or not."""
+    _fix, _alt, sel = alt_db
+    t = _tape(qtbot)
+    sel.old = True
+    sel.annunciate = True
+    assert t._altsel.alerting is True
+    assert _rgb(_bug_pixel(t)) == _rgb(bugs.BUG_ALERT_COLOR)
+    sel.fail = True
+    assert t._altsel.alerting is False
+    assert t.alt_bug_y() is None
+    assert t.altsel_display.text() == altsel.DASHES
+
+
+def test_annunciate_change_repaints(alt_db, qtbot):
+    """The flag alone (no value change) must reach the glass."""
+    _fix, _alt, sel = alt_db
+    t = _tape(qtbot)
+    seen = []
+    t._altsel.changed.connect(lambda: seen.append(1))
+    sel.annunciate = True
+    sel.annunciate = False
+    assert len(seen) == 2
+
+
+def test_missing_key_never_alerts(fix, qtbot):
+    b = bugs.BugBinding("NO_SUCH_KEY")
+    assert b.alerting is False
+    assert _rgb(b.color()) == _rgb(bugs.BUG_COLOR)

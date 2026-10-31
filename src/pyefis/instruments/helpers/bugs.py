@@ -16,7 +16,8 @@ A bug is one FIX set-point painted into an instrument's own geometry. What
 every bug repeats lives here; where the bug goes stays with the instrument:
 
 - :class:`BugBinding` -- the guarded FIX subscription and the visibility
-  policy (hidden on fail, greyed on old/bad, absent when the key is missing).
+  policy (hidden on fail, greyed on old/bad, absent when the key is missing),
+  plus the alert colour while the key's annunciate flag is set.
 - :func:`tape_bug_path` -- the tape-edge glyph (a notched block, the notch
   pointing at the scale).
 - :func:`clamp_to_span` -- the off-scale policy: a target beyond the visible
@@ -39,6 +40,9 @@ logger = logging.getLogger(__name__)
 BUG_COLOR = QColor(0, 255, 255)
 #: A bug whose source is old or bad is drawn in this colour instead.
 BUG_DEGRADED_COLOR = QColor(128, 128, 128)
+#: A bug whose key is annunciated (a deviation the gateway flagged, e.g. the
+#: ALTSEL altitude alert, EFIS-ALTSEL-006) is drawn in amber: a caution.
+BUG_ALERT_COLOR = QColor(255, 176, 0)
 
 STATE_MISSING = "missing"    # the key is not in the FIX database
 STATE_INVALID = "invalid"    # failed: no usable value (draw dashes, no bug)
@@ -69,7 +73,7 @@ class BugBinding(QObject):
         except (KeyError, TypeError):
             self.item.valueChanged[float].connect(self._emit)
         for sig in (self.item.oldChanged, self.item.badChanged,
-                    self.item.failChanged):
+                    self.item.failChanged, self.item.annunciateChanged):
             sig.connect(self._emit)
 
     def _emit(self, *_):
@@ -89,8 +93,21 @@ class BugBinding(QObject):
             return STATE_DEGRADED
         return STATE_OK
 
-    def color(self, normal=None):
+    @property
+    def alerting(self):
+        """Is the key's annunciate flag set on a drawable value?
+
+        The flag is the only input: whoever computes the alert (fix-gateway's
+        annunciate plugin for ALTSEL) owns the threshold and the arming. As on
+        the gauges and ``value_text``, the alert outranks old/bad but not
+        fail, which draws no bug at all."""
+        return (self.item is not None and bool(self.item.annunciate)
+                and not self.item.fail)
+
+    def color(self, normal=None, alert=None):
         """The colour to draw the bug in for the current state."""
+        if self.alerting:
+            return QColor(alert if alert is not None else BUG_ALERT_COLOR)
         if self.state == STATE_DEGRADED:
             return QColor(BUG_DEGRADED_COLOR)
         return QColor(normal if normal is not None else BUG_COLOR)
