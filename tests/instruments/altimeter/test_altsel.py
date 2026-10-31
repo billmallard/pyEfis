@@ -9,6 +9,7 @@ fix-gateway, not on the local item (a local-only set never reaches the bus).
 
 import pytest
 from PyQt6.QtCore import QPoint, QPointF, QTimer, Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QWidget
 
 from pyefis.instruments import altimeter, edit_focus
@@ -417,3 +418,43 @@ def test_knob_walk_lands_on_altsel_first(alt_db, qtbot):
     vs_like.enc_highlight(True)
     vs_like.enc_select()
     assert vs_like._edit_box == ("baro" if vs_like.baro_shown() else None)
+
+
+# --- deviation alert (EFIS-ALTSEL-006) ---------------------------------------
+#
+# fix-gateway computes the deviation and sets the ALTSEL annunciate flag
+# (EFIS-ALTSEL-005/-010, fix-gateway #90). pyEfis reads the flag and nothing
+# else: no ALT - ALTSEL arithmetic here (engine state goes on the bus).
+
+def _bug_pixel(tape):
+    """The colour painted in the solid part of the bug, above its notch."""
+    y, _off = tape.alt_bug_y()
+    w = tape.width()
+    bug_w = max(5.0, w * 0.12)
+    bug_h = max(10.0, w * 0.26)
+    img = tape.grab().toImage()
+    return img.pixelColor(int(w - bug_w / 2), int(y - bug_h * 0.4))
+
+
+def _rgb(c):
+    return (c.red(), c.green(), c.blue())
+
+
+@pytest.mark.xfail(strict=True, reason="EFIS-ALTSEL-006 not built yet")
+def test_annunciate_recolours_bug_and_box_and_clears(alt_db, qtbot):
+    """EFIS-ALTSEL-006: while ALTSEL.annunciate is set the bug and the box
+    leave cyan; when the gateway clears the flag they return to cyan."""
+    _fix, alt, sel = alt_db
+    t = _tape(qtbot)
+    cyan = _rgb(bugs.BUG_COLOR)
+    assert _rgb(_bug_pixel(t)) == cyan
+    alt.value = 4130.0                        # unchanged: the flag is the input
+    sel.annunciate = True
+    alert = _rgb(t._altsel.color(QColor(t.alt_bug_color)))
+    assert alert not in (cyan, _rgb(bugs.BUG_DEGRADED_COLOR))
+    assert _rgb(_bug_pixel(t)) == alert
+    box = t.altsel_display
+    assert _rgb(box.binding.color(box.color)) == alert
+    sel.annunciate = False
+    assert _rgb(_bug_pixel(t)) == cyan
+    assert _rgb(box.binding.color(box.color)) == cyan
