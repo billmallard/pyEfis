@@ -22,11 +22,13 @@ import threading
 import time
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
-from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
+from pyefis.instruments.map.layers import (MapLayer, RenderHistory,
+                                          paint_window_images,
+                                          range_bucket, register_layer)
 
 #: per-window vertex budget (worker-side; metro windows are dense)
 _MAX_VERTICES = 150000
@@ -79,6 +81,7 @@ class RoadsLayer(MapLayer):
         self._db = None
         self._color = self._DEFAULT_COLOR
         self._img = None            # (QImage, key, meta)
+        self._history = RenderHistory()   # MP13: recent images, pinch-out
         self._job = None
         self._worker = None
         self._lock = threading.Lock()
@@ -139,21 +142,7 @@ class RoadsLayer(MapLayer):
             have = img is not None and img[1] == key
         if not have and not getattr(x, "defer_render", False):
             self._request(key, x)
-        if img is None:
-            return
-        qimg, _, (clat, clon, mpp) = img
-        c = x.to_screen(clat, clon)
-        p.save()
-        p.translate(c)
-        if x.rot:
-            # north-up image onto an R(+rot) screen: painter -rot (#90)
-            p.rotate(-math.degrees(x.rot))
-        s = mpp * x._px_per_m
-        w = qimg.width() * s
-        h = qimg.height() * s
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.drawImage(QRectF(-w / 2.0, -h / 2.0, w, h), qimg)
-        p.restore()
+        paint_window_images(p, x, img, self._history, key, smooth=True)
 
     # --- async build ------------------------------------------------------
     def _request(self, key, x):
@@ -205,6 +194,7 @@ class RoadsLayer(MapLayer):
             with self._lock:
                 superseded = self._job != job
                 self._img = (img, job[0], meta)
+            self._history.add(self._img)
             if ls is not None:
                 ls.record_render_ms(ms)
                 ls.jobs_published += 1
