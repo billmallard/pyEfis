@@ -177,7 +177,9 @@ Suggested (full SVS unit)
   render SVS correctly but slowly.)
 * **Storage — an M.2 HAT + NVMe SSD is strongly preferred.** The
   navigation-data packs are large: terrain regions run tens of GB and a full
-  North-America terrain set is ~90 GB. Either use a large, high-quality
+  North-America terrain set is about 120 GB on disk (about 91 GB of GLO-30
+  tiles plus about 31 GB of mip pyramid; about 60 GB as a compressed
+  download). Either use a large, high-quality
   (A2-rated) microSD card, or — better — add an **M.2 HAT with an NVMe SSD**
   for the data store and keep the OS on the microSD. The reference unit boots
   from a 64 GB microSD and stores data on a ~500 GB NVMe SSD mounted at
