@@ -17,8 +17,9 @@ leftmost panel of each strip is `font_percent` unset, which is today's size.
 
 The dark-on-dark tab labels are a harness artifact. The renderer doesn't
 apply the central screen palette that `screenbuilder.py` sets on the device.
-Values over 1 are whole-number percents (150 = 150%). Only hand-written YAML
-can reach them, because the configurator's Font size field is capped at 1.0.
+Values over 1 are whole-number percents (150 = 150%). A builder can type one
+into the configurator: the schema's `max: 1` is metadata the inspector does
+not enforce.
 
 ## How to regenerate
 
