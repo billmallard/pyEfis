@@ -1,5 +1,19 @@
 ## Installing pyEFIS and FIX-Gateway
-The following instructions are specific to the latest 64bit Raspbian bullseye and may not work on other versions or operating systems.
+
+> **These snap instructions are out of date for this fork.** The `fixgateway`
+> and `pyefis` snaps are behind this repository and lack Synthetic Vision,
+> navigation-data currency and the other features added here. To run the
+> current code, install from source instead:
+>
+> - [docs/running_from_source.md](docs/running_from_source.md) - clone, venv,
+>   `[qt,svs]` extras, and running pyEfis against FIX-Gateway.
+> - [docs/wiki/Headless-Linux-Appliance.md](docs/wiki/Headless-Linux-Appliance.md) -
+>   turning a box with no desktop into a boot-to-EFIS appliance.
+>
+> The reference flight unit is a Raspberry Pi 5 running Raspberry Pi OS
+> (Debian 13 "trixie"), 64-bit, Python 3.13.
+
+The snap instructions below were written for 64-bit Raspbian bullseye and may not work on other versions or operating systems.
 
 ### Install the latest updates
 Open a terminal window and run:

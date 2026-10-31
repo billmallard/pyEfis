@@ -96,18 +96,23 @@ In order to take advantage of virtual
 VFR chart object rendering, download the latest FAA CIFP file from here:
 https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/
 
-Extract the FAACIFP18 file into the pyEfis/CIFP directory. Make note of the FAA
-disclaimers also in the zip file.
+Extract the FAACIFP18 file into ``~/makerplane/pyefis/CIFP/``. Make note of
+the FAA disclaimers also in the zip file.
 
-Create an index file:
-'''
-./MakeCIFPIndex.py CIFP/FAACIFP18
-'''
+Create an index file with the indexer that ships with pyavtools (a pyEfis
+dependency; it is not a pyEfis script)::
 
-This creates an index.bin file in CIFP directory
+    cd ~/makerplane/pyefis/CIFP
+    python -m pyavtools.utils.MakeCIFPIndex FAACIFP18 -o index.bin
 
-Update the config file [Screen.PFD] section dbpath and indexpath
-with the path names of the FAACIFP18 and index.bin files respectively.
+This creates ``index.bin`` beside ``FAACIFP18``. See docs/svs_data_refresh.md
+for the full CIFP refresh procedure.
+
+The paths are set by ``dbpath`` and ``indexpath`` in
+``screens/virtualvfr_db.yaml`` (included by the shipped screens). The defaults
+are ``~/makerplane/pyefis/CIFP/FAACIFP18`` and
+``~/makerplane/pyefis/CIFP/index.bin``; edit that file only if you keep the
+data elsewhere.
 
 Synthetic Vision (SVS)
 -----------------------------
@@ -126,7 +131,7 @@ obstacles, and airports/runways drawn in 3D over the live attitude.
 * **Major roads** — OSM motorway / trunk overlays.
 
 Terrain and the chart databases are supplied by the companion
-`makerplane-data <https://github.com/makerplane/makerplane-data>`_
+`makerplane-data <https://github.com/billmallard/makerplane-data>`_
 navigation-data system — an over-the-air / USB updater that keeps signed
 terrain, airport, obstacle, water, and road packs current — or by
 user-supplied local files. A boot-time **Data Status** screen and a subtle
@@ -172,7 +177,9 @@ Suggested (full SVS unit)
   render SVS correctly but slowly.)
 * **Storage — an M.2 HAT + NVMe SSD is strongly preferred.** The
   navigation-data packs are large: terrain regions run tens of GB and a full
-  North-America terrain set is ~90 GB. Either use a large, high-quality
+  North-America terrain set is about 120 GB on disk (about 91 GB of GLO-30
+  tiles plus about 31 GB of mip pyramid; about 60 GB as a compressed
+  download). Either use a large, high-quality
   (A2-rated) microSD card, or — better — add an **M.2 HAT with an NVMe SSD**
   for the data store and keep the OS on the microSD. The reference unit boots
   from a 64 GB microSD and stores data on a ~500 GB NVMe SSD mounted at
