@@ -371,7 +371,11 @@ def _svs_props():
     dev = " (rendered on the device; not shown in the editor preview)"
     return [
         Prop("svs_enabled", "boolean", default=False, apply="special",
-             label="Synthetic vision enabled", help="master on/off" + dev),
+             label="Synthetic vision enabled",
+             help="master on/off" + dev + ". Off falls back to the legacy "
+                  "CIFP Virtual VFR overlay, which is DEPRECATED (to be "
+                  "removed) and needs a separate FAA CIFP download; on needs "
+                  "no CIFP data"),
         Prop("svs_tile_path", "string", default="", apply="special",
              label="Terrain tile path",
              help="SRTM3 HGT tile directory on the device"),
@@ -453,6 +457,11 @@ def _svs_props():
              help="hard cap on extruded vertices per array (casing/fill "
                   "each); over the cap, far-tier ramps are dropped first, "
                   "then far-tier trunks" + dev),
+        Prop("svs_papi", "boolean", default=True, apply="special",
+             label="PAPI lights",
+             help="draw the installed PAPI at its published glide path angle "
+                  "and side, from the NASR airports pack (only where one is "
+                  "installed)" + dev),
         Prop("svs_perf_log", "boolean", default=False, apply="special",
              label="Perf: log summary",
              help="print an SVS per-frame profiler summary every 2s "

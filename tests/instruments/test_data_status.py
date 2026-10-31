@@ -411,6 +411,100 @@ def test_cancel_button_only_visible_when_busy(app, tmp_path):
     assert not w.btn_cancel_dl.isHidden()          # busy mode: shown
 
 
+# --- Software-notice gate (BACKLOG L2): `update` refuses with notice_required ---
+
+NOTICE = ("pyEfis is experimental software for Experimental / Amateur-Built "
+          "aircraft. It is not certified. It is provided as-is with no warranty, "
+          "and any use of it is at your own risk.")
+
+
+def _refuse_with_notice(w, calls, index=2):
+    """The updater's refusal: one notice_required line, then exit 3."""
+    w._on_progress_line(json.dumps({"event": "notice_required", "notice": NOTICE,
+                                    "notice_id": "pyefis-software-2026-10-30"}))
+    calls[index][1](data_status.NOTICE_RC, "")
+
+
+def test_notice_required_shows_full_notice_not_failure(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    _refuse_with_notice(w, calls)
+    assert w.mode == "notice" and w.notice_panel is not None
+    assert w.notice_panel.text_label.text() == NOTICE        # the full text, verbatim
+    assert w.notice_panel.geometry() == w.rect()             # covers the screen
+    assert w.btn_continue.isHidden() and w.btn_update.isHidden()
+    assert w.btn_cancel_dl.isHidden()
+    assert w.picker is not None and w.picker.isHidden()      # kept for the re-run
+    assert "problems" not in w.message                       # not reported as a failure
+    assert not w.grab().isNull()
+
+
+def test_notice_accept_reruns_same_install_with_accept_flag(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    first = calls[2][0]
+    _refuse_with_notice(w, calls)
+    w.notice_panel.btn_accept.click()
+    assert w.notice_panel is None and w.mode == "busy"
+    assert calls[3][0] == first + ["--accept-notice"]        # same selection, accepted
+    calls[3][1](0, "  water-na  installed 2026q2r4\n")
+    assert w.mode == "status" and "complete" in w.message.lower()
+    assert w.picker is None and w.btn_update.isEnabled()
+
+
+def test_notice_decline_installs_nothing(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    _refuse_with_notice(w, calls)
+    w.notice_panel.btn_decline.click()
+    assert len(calls) == 3                                   # no re-run
+    assert w.mode == "status" and w.notice_panel is None and w.picker is None
+    assert "nothing was installed" in w.message
+    assert w.btn_update.isEnabled()
+
+
+def test_exit_3_without_notice_text_is_a_plain_failure(app, tmp_path):
+    """No notice to show (an older updater, a lost line): never offer an Accept
+    for text the user has not seen."""
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    calls[2][1](data_status.NOTICE_RC, "")
+    assert w.mode == "status" and w.notice_panel is None
+    assert "problems" in w.message
+
+
+def test_notice_from_an_earlier_run_does_not_leak(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    _refuse_with_notice(w, calls)
+    w.notice_panel.btn_accept.click()
+    calls[3][1](data_status.NOTICE_RC, "")                   # re-run refused, no event
+    assert w.mode == "status" and w.notice_panel is None
+
+
+def test_notice_panel_follows_resize(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    calls = _stub_run(w)
+    _drive_to_busy(w, calls)
+    _refuse_with_notice(w, calls)
+    w.show()                       # Qt defers resize events for hidden widgets
+    w.resize(1024, 600)
+    app.processEvents()
+    assert w.notice_panel.geometry() == w.rect()
+    w.hide()
+
+
 # --- DataAnnunciation (persistent PFD flag) ---
 
 def test_worst_severity():

@@ -140,9 +140,9 @@ If you are starting new or only have a single display just edit the `preferences
 For more information on how to customize the display see [Screen Builder Documentation](https://github.com/makerplane/pyEfis/blob/master/docs/screenbuilder.md)
 
 
-### Data needed for Virtual VFR
-The virtual VFR feature uses FAA CIFP data to display runways and glide slop indicators in the atitude indicator.<br>
-When using the snap installation method, outlined above, this data is automatically downloaded and periodically auto updated.
+### Data needed for Virtual VFR (legacy, deprecated)
+The legacy Virtual VFR overlay uses FAA CIFP data to display runways and PAPI lights in the attitude indicator. It is **deprecated** and will be removed: Synthetic Vision replaces it, and with SVS enabled the legacy overlay is not loaded and **no CIFP data is needed** (SVS uses the NASR airports pack from the makerplane-data updater). See README.rst, "Virtual VFR (legacy, deprecated)".<br>
+When using the snap installation method, outlined above, the CIFP data is automatically downloaded and periodically auto updated.
 
 ### Important information:
 NOTE: Upon starting a folder named makerplane will be created in your home folder and default configs copied into that folder.<br>
@@ -165,7 +165,7 @@ Commands:
   * fixgateway: `fixgateway.server --config-file=$HOME/makerplane/fixgw/config/default.yaml --debug`
   * fixgateway client: `fixgateway.client`
   * running fixgateway in FDR playback mode: `sudo snap start fixgateway.daemon; fixgateway.server --playback-start-time 2024-07-13-18:51:10`
-  * CIFP index builder: `pyefis.makecifpindex`
+  * CIFP index builder (legacy Virtual VFR only): `pyefis.makecifpindex`
 
 Installing pyefis, FAA CIFP data, and fixgateway updates:
 ```
