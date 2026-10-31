@@ -96,18 +96,23 @@ In order to take advantage of virtual
 VFR chart object rendering, download the latest FAA CIFP file from here:
 https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/
 
-Extract the FAACIFP18 file into the pyEfis/CIFP directory. Make note of the FAA
-disclaimers also in the zip file.
+Extract the FAACIFP18 file into ``~/makerplane/pyefis/CIFP/``. Make note of
+the FAA disclaimers also in the zip file.
 
-Create an index file:
-'''
-./MakeCIFPIndex.py CIFP/FAACIFP18
-'''
+Create an index file with the indexer that ships with pyavtools (a pyEfis
+dependency; it is not a pyEfis script)::
 
-This creates an index.bin file in CIFP directory
+    cd ~/makerplane/pyefis/CIFP
+    python -m pyavtools.utils.MakeCIFPIndex FAACIFP18 -o index.bin
 
-Update the config file [Screen.PFD] section dbpath and indexpath
-with the path names of the FAACIFP18 and index.bin files respectively.
+This creates ``index.bin`` beside ``FAACIFP18``. See docs/svs_data_refresh.md
+for the full CIFP refresh procedure.
+
+The paths are set by ``dbpath`` and ``indexpath`` in
+``screens/virtualvfr_db.yaml`` (included by the shipped screens). The defaults
+are ``~/makerplane/pyefis/CIFP/FAACIFP18`` and
+``~/makerplane/pyefis/CIFP/index.bin``; edit that file only if you keep the
+data elsewhere.
 
 Synthetic Vision (SVS)
 -----------------------------
