@@ -4,6 +4,25 @@ from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
 
+
+def font_scale(font_percent):
+    """The common Font size option read as a multiplier on a widget's own
+    built-in text size (pyEfis #223, #229-#233; the #219 flight_plan shape).
+
+    The value arrives already normalised to a fraction by
+    ``screenbuilder_preferences.normalize_font_percent`` on both paths (the
+    builder and ``apply_options``), so it is NOT normalised again here: that
+    would turn a hand-written 150 (1.5 after normalising) into 1.5%. Unset,
+    zero, negative, non-finite or non-numeric means 1.0 -- today's size."""
+    try:
+        scale = float(font_percent)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(scale) or scale <= 0:
+        return 1.0
+    return scale
+
+
 #: Shared readout-panel design tokens.
 #:
 #: The HSI's integral readout panel (P5a) established the house look for a

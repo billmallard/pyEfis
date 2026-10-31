@@ -38,11 +38,15 @@ import time
 from pyefis.instruments import helpers
 
 class Button(QWidget):
-    def __init__(self, parent=None, config_file=None, config=None, font_family="DejaVu Sans Condensed"):
+    def __init__(self, parent=None, config_file=None, config=None, font_family="DejaVu Sans Condensed",
+                 font_percent=None):
         super(Button, self).__init__(parent)
 
         self.parent = parent
         self.font_family = font_family
+        # Font size: a multiplier on the label size setStyle() derives (see
+        # there). apply_options also setattr's it after construction.
+        self.font_percent = font_percent
         self.font_mask = None
         self.font_size = None
         # A button is defined either by an external YAML file (config_file --
@@ -321,12 +325,16 @@ class Button(QWidget):
 
         self._style['border_size'] = qRound(self._button.height() * 6/100)
         self.font = QFont(self.font_family)
+        # Font size multiplies whichever size applies. With a font_mask the
+        # auto-fit is the largest size that fits the button, so the multiplier
+        # can shrink the label but never grow it past the fit (pyEfis #229).
+        scale = helpers.font_scale(self.font_percent)
         if self.font_mask:
             if not self.font_size:
                 self.font_size = helpers.fit_to_mask(self.width()-(self._style['border_size']*2.5),self.height()-(self._style['border_size']*2.5),self.font_mask,self.font_family)
-            self.font.setPointSizeF(self.font_size)
+            self.font.setPointSizeF(self.font_size * min(1.0, scale))
         else:
-            self.font.setPixelSize(qRound(self.height() * 38/100))
+            self.font.setPixelSize(max(1, qRound(self.height() * 38/100 * scale)))
         bg_color = self._style.get('bg_override', None) or self._style['bg']
         if self._style['transparent']:
             self._button.setStyleSheet(f"QPushButton {{border: 1px solid {bg_color.name()}; background: transparent;border-radius: 6px}}")# border-style: outset; border-width: {self._style['border_size']}px;color:{self._style['fg'].name()}}} QPushButton:pressed {{background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 {self._style['bg'].name()}, stop: 1 {self._style['bg'].lighter(110).name()});border-style:inset}} QPushButton:checked {{background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 {self._style['bg'].name()}, stop: 1 {self._style['bg'].lighter(110).name()});border-style:inset}}")
