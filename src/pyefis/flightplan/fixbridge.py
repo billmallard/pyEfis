@@ -235,10 +235,17 @@ class FixBridge:
         """Local variation (``MAGVAR``, positive west, MAG = TRUE + VAR) --
         the value the engine converts ``FPLCRS`` with. 0 when the gateway
         does not publish it."""
+        var = self.magvar_or_none()
+        return 0.0 if var is None else var
+
+    def magvar_or_none(self):
+        """``MAGVAR`` as :meth:`_magvar`, but None when the gateway does not
+        publish it, so a display can label the bearing true instead of
+        passing it off as magnetic."""
         try:
             return float(self._get("MAGVAR").value or 0.0)
         except (KeyError, TypeError, ValueError):
-            return 0.0
+            return None
 
     def publish(self, plan) -> None:
         """Write every slot field and the segment table, blanking whatever
