@@ -6,7 +6,14 @@
 - `datastatus_1024x600.png`: the Data Status screen with the new About button
   between Continue and Update.
 
-Both are offscreen Qt renders against a sample `status.json` (in the script),
+- `bench_beelink_datastatus.png`, `bench_beelink_about.png`: live x11grab
+  captures from the Beelink bench (1920x1080, X11) at `2b5a0fd` / `35f606c`,
+  before the pack-label change: the real boot screen, then the About screen
+  after a tap on About. Every installed pack there predates the L1 field, so
+  each says it has no notice; the seven terrain packs all read "Terrain",
+  which is what the label change (pack id appended) fixes.
+
+The first two are offscreen Qt renders against a sample `status.json` (in the script),
 not bench captures. Regenerate:
 
 ```bash
@@ -17,3 +24,7 @@ QT_QPA_PLATFORM=offscreen PYTHONPATH=src \
 
 These were made with matplotlib's bundled DejaVu fonts, so glyph shapes may
 differ slightly from the panel's DejaVu Sans Condensed.
+
+The bench captures came from `bench-deploy.sh --ref aer-4341/about-system-screen`,
+then a `pyefis.service` restart, `ffmpeg -f x11grab` of the boot frame,
+`xdotool` click at (0.50w, 0.90h) on About, and a second grab.
