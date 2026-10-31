@@ -647,6 +647,7 @@ class FlightPlan(QWidget):
             if self._bridge.available:
                 self._bridge.stage_direct_to(new_wp)
                 self._bridge.command("DTO")
+            self._message = ""  # a SELECT A WAYPOINT prompt is answered (#326)
             self._close_entry()
             return
         try:
@@ -899,6 +900,15 @@ class FlightPlan(QWidget):
     def _magvar(self):
         return self._bridge._magvar() if self._bridge.available else 0.0
 
+    def _brg_text(self, brg_true):
+        """A bearing for display: magnetic with ``MAGVAR``, the same as the
+        HSI and the map (``map.pointer_banner_text``); suffixed ``°T`` and
+        left true when the gateway publishes no variation (pyEfis #335)."""
+        var = self._bridge.magvar_or_none() if self._bridge.available else None
+        if var is None:
+            return "%03d°T" % (int(round(brg_true)) % 360 or 360)
+        return "%03d°" % (int(round(brg_true + var)) % 360 or 360)
+
     def _leg_in(self, i):
         """``(dtk_magnetic, dist_nm)`` of the leg INTO flat fix *i*, or None
         for the first fix. Magnetic with the bridge's MAGVAR -- the same
@@ -1120,6 +1130,9 @@ class FlightPlan(QWidget):
         self.update()
 
     def _close_dto(self):
+        # The DTO page's prompt must not outlive the page: it would read as
+        # "the direct-to did not take" over the FPL header (#326).
+        self._message = ""
         self._entry_mode = None
         self._entry_field = ""
         self._entry_dupe_choices = None
@@ -1135,10 +1148,12 @@ class FlightPlan(QWidget):
 
     def _dto_select_fpl(self, i):
         self._dto_target = ("fpl", i, self._plan.waypoints[i])
+        self._message = ""
         self.update()
 
     def _dto_select_nearest(self, wp):
         self._dto_target = ("wp", None, wp)
+        self._message = ""
         self.update()
 
     def _dto_activate(self):
@@ -2800,7 +2815,7 @@ class FlightPlan(QWidget):
             extra.append(str(freq))
         if extra:
             lines.append("  ".join(extra))
-        lines.append(f"{brg:03.0f}°  {dist:.1f} NM")
+        lines.append(f"{self._brg_text(brg)}  {dist:.1f} NM")
         comment = getattr(wp, "comment", "")
         if comment:
             lines.append(comment)
@@ -2976,7 +2991,7 @@ class FlightPlan(QWidget):
             p.setPen(QPen(QColor("#00ffff" if selected else "#ffffff")))
             p.drawText(QRectF(6, y, w * 0.3, rh),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, wp.id)
-            mid = f"{brg:03.0f}° {dist:.0f}NM"
+            mid = f"{self._brg_text(brg)} {dist:.0f}NM"
             p.drawText(QRectF(w * 0.32, y, w * 0.38, rh),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, mid)
             if rwy:
@@ -3259,7 +3274,7 @@ class FlightPlan(QWidget):
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, wp.type)
             p.drawText(QRectF(w * 0.65, y, w * 0.34, rh),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       f"{brg:03.0f} {dist:.0f}NM")
+                       f"{self._brg_text(brg)} {dist:.0f}NM")
             self._tap(0, y, w, rh, (lambda w_=wp: self._select_waypoint(w_)), "row")
             y += rh
 
