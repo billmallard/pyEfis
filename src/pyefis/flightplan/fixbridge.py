@@ -72,6 +72,13 @@ ENGINE_OUTPUT_KEYS = (
     "FPLREMDIS", "FPLREMETE", "FPLALERT", "GPSSRC", "FPLACTSEG", "FPLSEGREM",
 )
 
+# Engine outputs newer than the base contract. They are read and watched
+# when the gateway has them, but never probed: an older gateway without one
+# keeps the bridge available, and read_engine() just leaves the key out, so
+# the reader falls back to its pre-key behaviour (the HSI's absent CDIV/GSV
+# precedent). FPLSUSPMAP (G49): 1 = suspended at the MAP auto-suspend.
+OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP",)
+
 _STATIC_KEYS = (
     "FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSEGCNT", "FPLDBCYC",
     "DTOID", "DTOLAT", "DTOLON", "DTOTYPE",
@@ -356,9 +363,18 @@ class FixBridge:
         whatever it needs via :meth:`read_route` / :meth:`read_engine`."""
         self._listeners.append(callback)
 
+    def _optional_items(self):
+        for key in OPTIONAL_ENGINE_OUTPUT_KEYS:
+            try:
+                yield key, self._get(key)
+            except KeyError:
+                continue
+
     def _connect_readback(self):
         for key in ("FPLSEQ",) + ENGINE_OUTPUT_KEYS:
             item = self._get(key)
+            item.valueWrite[item.dtype].connect(self._notify)
+        for _key, item in self._optional_items():
             item.valueWrite[item.dtype].connect(self._notify)
         ack_item = self._get("FPLCMDACK")
         ack_item.valueWrite[ack_item.dtype].connect(self._on_cmdack)
@@ -413,6 +429,8 @@ class FixBridge:
         out = {}
         for key in ENGINE_OUTPUT_KEYS:
             item = self._get(key)
+            out[key] = ItemValue(value=item.value, old=item.old, bad=item.bad, fail=item.fail)
+        for key, item in self._optional_items():
             out[key] = ItemValue(value=item.value, old=item.old, bad=item.bad, fail=item.fail)
         return out
 

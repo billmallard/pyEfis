@@ -80,6 +80,7 @@ KEYPAD_NUMERIC_ROWS = ("789", "456", "123", "0.-", "NSEW")
 KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
 
 _STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
+_STATE_SUSP = 3
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 _CDI_SCALE_CHOICES = ("0.3", "1.0", "2.0", "AUTO")
 _INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog")
@@ -400,6 +401,27 @@ class FlightPlan(QWidget):
 
     def _state_badge(self):
         return _STATE_BADGES.get(int(self._engine_value("FPLSTATE", 0) or 0), "")
+
+    def _suspended_at_map(self):
+        """True when the plan is suspended at the MAP auto-suspend (G49,
+        pyEfis #330), where RESUME flies the missed approach.
+
+        The engine says so on FPLSUSPMAP. pyEfis does not work it out from
+        FPLSTATE / the active slot / FPLTF: the engine is the authority, and
+        that inference mislabels a pilot SUSP past the MAP. An older gateway
+        without the key reads as not-at-the-MAP, so it keeps "Resume".
+        FPLSTATE is checked too because the two keys arrive one at a time:
+        right after RESUME, FPLSTATE can already read LEG while FPLSUSPMAP
+        still reads 1, and the banner must not flash a "Suspend" button."""
+        return (int(self._engine_value("FPLSTATE", 0) or 0) == _STATE_SUSP
+                and int(self._engine_value("FPLSUSPMAP", 0) or 0) == 1)
+
+    def _suspend_label(self):
+        """The menu's suspend/continue item. "Fly the missed" at the MAP
+        auto-suspend, "Resume" for any other suspend; both send RESUME."""
+        if int(self._engine_value("FPLSTATE", 0) or 0) != _STATE_SUSP:
+            return "Suspend"
+        return "Fly the missed" if self._suspended_at_map() else "Resume"
 
     def _approach_text(self):
         return _APR_TEXT.get(int(self._engine_value("FPLAPR", 0) or 0), "")
@@ -1078,7 +1100,7 @@ class FlightPlan(QWidget):
     def _menu_suspend_resume(self):
         if self._bridge.available:
             state = int(self._engine_value("FPLSTATE", 0) or 0)
-            self._bridge.command("RESUME" if state == 3 else "SUSP")
+            self._bridge.command("RESUME" if state == _STATE_SUSP else "SUSP")
         self._menu_open = False
         self.update()
 
@@ -2066,10 +2088,22 @@ class FlightPlan(QWidget):
         header_h = int(self._chrome_h(h, 2.0, 0.26))
         footer_h = int(self._chrome_h(h, 1.3, 0.18))
 
+        # Suspended at the MAP (G49): the alert takes a soft-key-high strip
+        # above the footer, and the list lays out above it so the active leg
+        # and the missed approach fixes stay visible.
+        banner_h = footer_h if interactive and self._suspended_at_map() else 0
+
         self._paint_header(p, w, header_h, interactive)
-        self._paint_list(p, w, header_h, h - footer_h,
+        self._paint_list(p, w, header_h, h - footer_h - banner_h,
                          self._row_h_cap(), interactive)
         self._paint_footer(p, w, h - footer_h, footer_h, interactive)
+        overlay_open = (self._row_menu_index is not None or self._seg_menu is not None
+                        or self._menu_open or self._seg_fixes is not None
+                        or self._wpt_info is not None or self._seg_fix_menu is not None
+                        or self._airway_picker is not None)
+        if banner_h:
+            # Under an overlay it is drawn (and dimmed) but not tappable.
+            self._paint_map_susp_banner(p, w, h - footer_h, banner_h, not overlay_open)
 
         if self._row_menu_index is not None:
             self._paint_row_menu(p, w, h)
@@ -2094,6 +2128,28 @@ class FlightPlan(QWidget):
 
         if self._message:
             self._paint_toast(p, w, h, self._message)
+
+    def _paint_map_susp_banner(self, p, w, bottom, banner_h, tappable):
+        """Alert above the soft keys while suspended at the MAP (G49): the
+        SUSP badge alone is easy to miss at the moment the pilot has to
+        decide, so say it and put the continue action under a finger."""
+        top = bottom - banner_h
+        p.setBrush(QBrush(QColor("#302000")))
+        p.setPen(QPen(QColor("#ffaa00"), 2))
+        p.drawRect(QRectF(1, top, w - 2, banner_h - 1))
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(banner_h * 0.34), 9))
+        p.setFont(f)
+        p.drawText(QRectF(8, top, w * 0.5 - 8, banner_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "SUSP AT MAP")
+        btn = (w * 0.5, top + banner_h * 0.12, w * 0.5 - 6, banner_h * 0.76)
+        p.setBrush(QBrush(QColor("#ffaa00")))
+        p.drawRect(QRectF(*btn))
+        p.setPen(QPen(QColor("#000000")))
+        p.drawText(QRectF(*btn), Qt.AlignmentFlag.AlignCenter, self._suspend_label())
+        if tappable:
+            self._tap(*btn, self._menu_suspend_resume, "soft")
 
     def _paint_header(self, p, w, header_h, interactive):
         f = QFont(self.font_family)
@@ -2720,8 +2776,7 @@ class FlightPlan(QWidget):
             on_yes = self._menu_clear_confirm if self._confirm == "clear" else self._menu_delete_confirm
             self._paint_confirm(p, w, h, text, on_yes)
             return
-        state = int(self._engine_value("FPLSTATE", 0) or 0)
-        susp_label = "Resume" if state == 3 else "Suspend"
+        susp_label = self._suspend_label()
         items = [
             ("Invert", self._menu_invert),
             ("Store", self._menu_store),
