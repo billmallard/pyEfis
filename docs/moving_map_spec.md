@@ -283,6 +283,13 @@ flight plan with Done/Cancel and nine-level Undo (3-17..3-19).
   `layer_airways`, `layer_flight_plan`, `layer_range_rings`),
   `terrain_mode`, symbol options, `db paths` (default to
   /data/makerplane-data locations).
+- Range rings (G13, #136): `range_ring_fractions` (comma list of range
+  fractions, default `0.5,1`), `range_ring_labels`,
+  `range_ring_label_angle` (screen clock degrees, 0 = top),
+  `range_ring_color` + `range_ring_opacity` (%), `range_ring_width` and
+  `range_ring_label_size` (px, 0 = auto). Defaults draw the original
+  half/full rings; the current range is always in the status chip, never
+  only in a ring label.
 - Editor twin: static top-down preview — a canvas rendering a small
   baked terrain patch (the SVS preview-patch pattern; one scene is
   enough) with sample airport/navaid symbols honoring the layer
