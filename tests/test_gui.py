@@ -366,7 +366,7 @@ def test_initialize_loads_screens_menu_fms_window_and_button_timeout(
     # gui._ensure_data_status_boot injects the data-status screen and forces it
     # as the boot screen for everyone, so it is appended and becomes the default;
     # the configured defaultScreen ("SECOND") becomes the Continue target.
-    assert [screen.name for screen in gui.screens] == ["FIRST", "SECOND", "DataStatus"]
+    assert [screen.name for screen in gui.screens] == ["FIRST", "SECOND", "DataStatus", "About"]
     assert gui.screens[0].default is False
     assert gui.screens[1].default is False
     assert gui.screens[2].default is True
@@ -407,7 +407,7 @@ def test_initialize_boots_data_status_screen_and_fullscreen(app, monkeypatch):
 
     # gui._ensure_data_status_boot injects the data-status screen and forces it
     # as the boot/default screen, even with no configured defaultScreen.
-    assert [screen.name for screen in gui.screens] == ["FIRST", "DataStatus"]
+    assert [screen.name for screen in gui.screens] == ["FIRST", "DataStatus", "About"]
     assert gui.screens[0].default is False
     assert gui.screens[1].default is True
     show_full_screen.assert_called_once_with()
