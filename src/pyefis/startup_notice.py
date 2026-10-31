@@ -23,29 +23,28 @@ banner sits on top of it, lets every touch through to the instruments beneath,
 and hides itself on a timer. There is nothing to clear.
 
 The blocking, provable acknowledgment happens on the ground, in the installer /
-updater (BACKLOG L2), which appends a record to ``DEFAULT_ACK_PATH``. This
-module only READS that record, to decide how the banner behaves:
+updater (BACKLOG L2, ``pyefis-data``), which appends a record to the log at
+``ack_log_path()``. This module only READS that record, to decide how the
+banner behaves:
 
-* the running pyEfis version and installed pack cycles match a recorded
-  acknowledgment -> short banner, logged at INFO;
-* anything else -- record missing, unreadable, corrupt, or for a different
-  version -> the longer banner plus a WARNING naming the condition.
+* a record accepts THIS notice text (``notice_sha256``) for THIS pyEfis version
+  (``software.pyefis``) -> short banner, logged at INFO;
+* anything else -- log missing, unreadable, corrupt, or no such record -> the
+  longer banner plus a WARNING naming the condition.
 
 Neither outcome blocks. Every failure path falls toward the non-blocking banner:
 ``evaluate`` never raises, and an unreadable state file never blanks the PFD.
 
-Record format (the contract L2 writes to): JSON Lines, append-only, one object
-per acknowledgment::
-
-    {"schema": 1, "timestamp": "2026-10-31T14:02:11Z",
-     "software": {"pyefis": "2.2.1"},
-     "packs": {"airports-us": "2610", "terrain-na": "2026.09"},
-     "user": "wpballard", "host": "pyefis"}
-
-``packs`` maps pack id to its installed ``cycle``, as reported in the updater's
-status.json.
+The record is defined by makerplane-data ``docs/install_acknowledgment.md``:
+JSON Lines, append-only, schema 1, one ``{"event": "accept", ...}`` object per
+accept. ``software.pyefis`` is present only when the pyEfis installer names it
+(``pyefis-data accept --software pyefis=<ver>``); a record written by a plain
+``pyefis-data update`` carries only ``pyefis-data`` and does not count here.
+Pack cycles are deliberately not matched: ``packs`` is the state BEFORE the
+install the accept gated, and a pack-only timer update adds no record.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -57,7 +56,6 @@ from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import QWidget
 
 import pyefis
-from pyefis.instruments.data_status import DEFAULT_STATUS_PATH, load_status
 
 log = logging.getLogger(__name__)
 
@@ -68,11 +66,25 @@ NOTICE_TEXT = (
     "it is at your own risk."
 )
 
-# Outside the config tree (~/makerplane/pyefis/config), beside the updater's
-# status.json, so a config reset does not erase the acknowledgment history.
-DEFAULT_ACK_PATH = "~/.makerplane/pyefis/acknowledgments.jsonl"
+# Byte-identical to pyefis_data.acknowledge.NOTICE_TEXT: a record covers the
+# notice only if its notice_sha256 equals this.
+NOTICE_SHA256 = hashlib.sha256(NOTICE_TEXT.encode("utf-8")).hexdigest()
 
 ACK_SCHEMA = 1
+
+
+def ack_log_path():
+    """Resolve the log the way the writer does: ``MAKERPLANE_ACK_LOG``, else
+    ``$XDG_STATE_HOME/makerplane/acknowledgments.jsonl``, else
+    ``~/.local/state/makerplane/acknowledgments.jsonl``. Outside both config
+    trees, so resetting either does not erase it."""
+    env = os.environ.get("MAKERPLANE_ACK_LOG")
+    if env:
+        return Path(os.path.expanduser(env))
+    state = os.environ.get("XDG_STATE_HOME")
+    base = Path(os.path.expanduser(state)) if state else \
+        Path(os.path.expanduser("~/.local/state"))
+    return base / "makerplane" / "acknowledgments.jsonl"
 
 # How long the banner stays up. Acknowledged installs get the short one.
 ACKNOWLEDGED_MS = 8_000
@@ -94,37 +106,27 @@ class NoticeState:
         return ACKNOWLEDGED_MS if self.acknowledged else UNACKNOWLEDGED_MS
 
 
-def installed_packs(status_path=DEFAULT_STATUS_PATH):
-    """Installed pack cycles from the updater's status.json as ``{id: cycle}``,
-    or None when the status is unavailable. Never raises."""
-    status = load_status(status_path)
-    if not status or not status.get("ok"):
-        return None
-    try:
-        return {str(p["id"]): str(p.get("cycle")) for p in status.get("packs", [])}
-    except Exception:
-        return None
-
-
 def _valid_record(rec):
-    return (isinstance(rec, dict)
+    """An accept line this reader understands. Later schemas and other event
+    types are skipped, as is a line whose sha256 does not cover its own text."""
+    if not (isinstance(rec, dict)
             and rec.get("schema") == ACK_SCHEMA
+            and rec.get("event") == "accept"
             and isinstance(rec.get("timestamp"), str)
-            and isinstance(rec.get("software"), dict)
-            and isinstance(rec.get("software", {}).get("pyefis"), str)
-            and isinstance(rec.get("packs"), dict))
-
-
-def _matches(rec, software_version, packs):
-    if rec["software"]["pyefis"] != software_version:
+            and isinstance(rec.get("notice_text"), str)
+            and isinstance(rec.get("notice_sha256"), str)
+            and isinstance(rec.get("software"), dict)):
         return False
-    if packs is None:
-        # Pack state unknown at boot: cannot prove a match.
-        return False
-    return {str(k): str(v) for k, v in rec["packs"].items()} == packs
+    return hashlib.sha256(rec["notice_text"].encode("utf-8")).hexdigest() \
+        == rec["notice_sha256"]
 
 
-def evaluate(ack_path=DEFAULT_ACK_PATH, software_version=None, packs=None):
+def _matches(rec, software_version):
+    return (rec["notice_sha256"] == NOTICE_SHA256
+            and rec["software"].get("pyefis") == software_version)
+
+
+def evaluate(ack_path=None, software_version=None):
     """Decide the notice state from the acknowledgment record.
 
     Never raises: any unexpected failure returns the not-acknowledged state,
@@ -132,7 +134,8 @@ def evaluate(ack_path=DEFAULT_ACK_PATH, software_version=None, packs=None):
     at WARNING with the path and the condition."""
     if software_version is None:
         software_version = pyefis.__version__
-    path = Path(os.path.expanduser(str(ack_path)))
+    path = Path(os.path.expanduser(str(ack_path))) if ack_path else \
+        ack_log_path()
     try:
         try:
             text = path.read_text("utf-8")
@@ -168,12 +171,12 @@ def evaluate(ack_path=DEFAULT_ACK_PATH, software_version=None, packs=None):
                         "valid record (corrupt); showing the non-blocking "
                         "banner", path)
             return NoticeState(False, "corrupt")
-        if any(_matches(r, software_version, packs) for r in valid):
-            log.info("startup notice: pyEfis %s and installed packs are "
-                     "acknowledged in %s", software_version, path)
+        if any(_matches(r, software_version) for r in valid):
+            log.info("startup notice: this notice is accepted for pyEfis %s "
+                     "in %s", software_version, path)
             return NoticeState(True, "acknowledged")
-        log.warning("startup notice: no acknowledgment in %s matches pyEfis %s "
-                    "with the installed packs; showing the non-blocking banner",
+        log.warning("startup notice: no record in %s accepts this notice for "
+                    "pyEfis %s; showing the non-blocking banner",
                     path, software_version)
         return NoticeState(False, "not-acknowledged")
     except Exception as e:
@@ -230,14 +233,12 @@ class StartupNoticeBanner(QWidget):
                     self.text)
 
 
-def show_banner(parent, ack_path=None, status_path=None):
+def show_banner(parent, ack_path=None):
     """Evaluate the record and put the banner over ``parent``. Returns the
     banner, or None if it could not be built -- a failure here is logged and
     never propagates into boot."""
     try:
-        state = evaluate(ack_path or DEFAULT_ACK_PATH,
-                         packs=installed_packs(status_path
-                                               or DEFAULT_STATUS_PATH))
+        state = evaluate(ack_path)
         banner = StartupNoticeBanner(parent, state.duration_ms)
         banner.show()
         banner.raise_()

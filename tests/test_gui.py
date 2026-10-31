@@ -21,12 +21,9 @@ def app(qtbot):
 
 @pytest.fixture(autouse=True)
 def isolated_startup_notice(tmp_path, monkeypatch):
-    # Keep initialize() from reading the real ~/.makerplane records.
-    from pyefis import startup_notice
-    monkeypatch.setattr(startup_notice, "DEFAULT_ACK_PATH",
-                        str(tmp_path / "acknowledgments.jsonl"))
-    monkeypatch.setattr(startup_notice, "DEFAULT_STATUS_PATH",
-                        str(tmp_path / "status.json"))
+    # Keep initialize() from reading the real acknowledgment log.
+    monkeypatch.setenv("MAKERPLANE_ACK_LOG",
+                       str(tmp_path / "acknowledgments.jsonl"))
 
 
 @pytest.fixture(autouse=True)

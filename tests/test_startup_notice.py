@@ -14,6 +14,7 @@
 between two NON-blocking banners, every failure falls toward the banner and is
 logged, and the banner never takes input away from the instruments."""
 
+import hashlib
 import json
 import logging
 
@@ -24,7 +25,10 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from pyefis import startup_notice as sn
 
 VERSION = "2.2.1"
-PACKS = {"airports-us": "2610", "terrain-na": "2026.09"}
+# sha256 of pyefis_data.acknowledge.NOTICE_TEXT (makerplane-data #131). If this
+# moves, the two repos no longer show the same words and no record will match.
+WRITER_NOTICE_SHA256 = \
+    "6f9882fe66c4084b33381282439d971766762377c3208258a870695c19c722ab"
 
 
 @pytest.fixture
@@ -33,11 +37,20 @@ def app(qtbot):
 
 
 def _record(**over):
-    rec = {"schema": 1, "timestamp": "2026-10-31T14:02:11Z",
-           "software": {"pyefis": VERSION}, "packs": dict(PACKS),
-           "user": "pilot", "host": "efis"}
+    """A schema-1 accept as pyefis-data writes it (install_acknowledgment.md)."""
+    rec = {"schema": 1, "event": "accept", "timestamp": "2026-10-31T14:05:09Z",
+           "notice_id": "pyefis-software-2026-10-30",
+           "notice_sha256": sn.NOTICE_SHA256, "notice_text": sn.NOTICE_TEXT,
+           "software": {"pyefis-data": "0.4.0", "pyefis": VERSION},
+           "packs": {}, "user": "pi", "host": "pyefis", "via": "caller",
+           "trigger": "pyefis-install"}
     rec.update(over)
     return rec
+
+
+def _other_notice(text="Some other wording."):
+    return {"notice_text": text,
+            "notice_sha256": hashlib.sha256(text.encode()).hexdigest()}
 
 
 def _write(path, *lines):
@@ -51,12 +64,31 @@ def test_notice_text_is_the_approved_wording():
         "pyEfis is experimental software for Experimental / Amateur-Built "
         "aircraft. It is not certified. It is provided as-is with no warranty, "
         "and any use of it is at your own risk.")
+    assert sn.NOTICE_SHA256 == WRITER_NOTICE_SHA256
+
+
+def test_log_path_resolves_like_the_writer(monkeypatch, tmp_path):
+    monkeypatch.delenv("MAKERPLANE_ACK_LOG", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert sn.ack_log_path() == \
+        tmp_path / ".local/state/makerplane/acknowledgments.jsonl"
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "st"))
+    assert sn.ack_log_path() == tmp_path / "st/makerplane/acknowledgments.jsonl"
+    monkeypatch.setenv("MAKERPLANE_ACK_LOG", str(tmp_path / "x.jsonl"))
+    assert sn.ack_log_path() == tmp_path / "x.jsonl"
+
+
+def test_evaluate_defaults_to_the_resolved_log(monkeypatch, tmp_path):
+    p = _write(tmp_path / "ack.jsonl", _record())
+    monkeypatch.setenv("MAKERPLANE_ACK_LOG", str(p))
+    assert sn.evaluate(software_version=VERSION).acknowledged
 
 
 def test_matching_record_is_acknowledged(tmp_path, caplog):
     p = _write(tmp_path / "ack.jsonl", _record())
     with caplog.at_level(logging.INFO, logger=sn.__name__):
-        st = sn.evaluate(p, VERSION, PACKS)
+        st = sn.evaluate(p, VERSION)
     assert st == sn.NoticeState(True, "acknowledged")
     assert st.duration_ms == sn.ACKNOWLEDGED_MS
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
@@ -65,12 +97,12 @@ def test_matching_record_is_acknowledged(tmp_path, caplog):
 def test_any_earlier_matching_record_counts(tmp_path):
     p = _write(tmp_path / "ack.jsonl", _record(),
                _record(software={"pyefis": "9.9.9"}))
-    assert sn.evaluate(p, VERSION, PACKS).acknowledged
+    assert sn.evaluate(p, VERSION).acknowledged
 
 
 def test_missing_record_gives_banner_and_log(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger=sn.__name__):
-        st = sn.evaluate(tmp_path / "nope.jsonl", VERSION, PACKS)
+        st = sn.evaluate(tmp_path / "nope.jsonl", VERSION)
     assert st == sn.NoticeState(False, "missing")
     assert st.duration_ms == sn.UNACKNOWLEDGED_MS
     assert "missing" in caplog.text
@@ -79,8 +111,9 @@ def test_missing_record_gives_banner_and_log(tmp_path, caplog):
 @pytest.mark.parametrize("content", [
     b"{not json at all\n",
     b'{"schema": 1, "software": "2.2.1"}\n',        # wrong shape
-    b'{"schema": 99, "timestamp": "t", "software": {"pyefis": "2.2.1"},'
-    b' "packs": {}}\n',                               # unknown schema
+    json.dumps(_record(schema=99)).encode() + b"\n",            # unknown schema
+    json.dumps(_record(event="revoke")).encode() + b"\n",       # not an accept
+    json.dumps(_record(notice_sha256="0" * 64)).encode() + b"\n",  # hash != text
     b"\x00\x00\x00\x00",                              # zero-filled after power loss
     b"[1, 2, 3]\n",
 ])
@@ -88,7 +121,7 @@ def test_corrupt_record_gives_banner_and_log(tmp_path, caplog, content):
     p = tmp_path / "ack.jsonl"
     p.write_bytes(content)
     with caplog.at_level(logging.WARNING, logger=sn.__name__):
-        st = sn.evaluate(p, VERSION, PACKS)
+        st = sn.evaluate(p, VERSION)
     assert st == sn.NoticeState(False, "corrupt")
     assert "corrupt" in caplog.text
 
@@ -97,7 +130,7 @@ def test_torn_last_line_keeps_the_valid_records(tmp_path, caplog):
     p = tmp_path / "ack.jsonl"
     p.write_text(json.dumps(_record()) + "\n" + '{"schema": 1, "times')
     with caplog.at_level(logging.WARNING, logger=sn.__name__):
-        st = sn.evaluate(p, VERSION, PACKS)
+        st = sn.evaluate(p, VERSION)
     assert st.acknowledged
     assert "1 corrupt line" in caplog.text
 
@@ -106,47 +139,44 @@ def test_unreadable_record_gives_banner_and_log(tmp_path, caplog):
     p = tmp_path / "ack.jsonl"
     p.write_bytes(b"\xff\xfe\xfa not utf-8")
     with caplog.at_level(logging.WARNING, logger=sn.__name__):
-        st = sn.evaluate(p, VERSION, PACKS)
+        st = sn.evaluate(p, VERSION)
     assert st == sn.NoticeState(False, "unreadable")
     assert "unreadable" in caplog.text
 
 
 def test_record_path_is_a_directory(tmp_path):
-    assert sn.evaluate(tmp_path, VERSION, PACKS) == \
+    assert sn.evaluate(tmp_path, VERSION) == \
         sn.NoticeState(False, "unreadable")
 
 
 def test_unexpected_failure_never_raises(tmp_path, monkeypatch):
     p = _write(tmp_path / "ack.jsonl", _record())
     monkeypatch.setattr(sn, "_matches", lambda *a: 1 / 0)
-    assert sn.evaluate(p, VERSION, PACKS) == \
+    assert sn.evaluate(p, VERSION) == \
         sn.NoticeState(False, "unreadable")
 
 
-@pytest.mark.parametrize("version,packs", [
-    ("2.3.0", PACKS),                                   # software updated
-    (VERSION, {**PACKS, "terrain-na": "2026.10"}),      # pack updated
-    (VERSION, {"airports-us": "2610"}),                 # pack removed
-    (VERSION, None),                                    # pack state unknown
+@pytest.mark.parametrize("record", [
+    _record(software={"pyefis-data": "0.4.0", "pyefis": "2.1.0"}),  # older pyEfis
+    _record(software={"pyefis-data": "0.4.0"}),      # plain `pyefis-data update`
+    _record(**_other_notice()),                      # a different notice wording
 ])
-def test_other_versions_are_not_acknowledged(tmp_path, caplog, version, packs):
-    p = _write(tmp_path / "ack.jsonl", _record())
+def test_records_not_for_this_notice_and_version_do_not_count(
+        tmp_path, caplog, record):
+    p = _write(tmp_path / "ack.jsonl", record)
     with caplog.at_level(logging.WARNING, logger=sn.__name__):
-        st = sn.evaluate(p, version, packs)
+        st = sn.evaluate(p, VERSION)
     assert st == sn.NoticeState(False, "not-acknowledged")
     assert st.duration_ms == sn.UNACKNOWLEDGED_MS
-    assert "no acknowledgment" in caplog.text
+    assert "no record" in caplog.text
 
 
-def test_installed_packs_from_status(tmp_path):
-    p = tmp_path / "status.json"
-    p.write_text(json.dumps({"ok": True, "packs": [
-        {"id": "airports-us", "cycle": "2610"},
-        {"id": "terrain-na", "cycle": "2026.09"}]}))
-    assert sn.installed_packs(p) == PACKS
-    assert sn.installed_packs(tmp_path / "missing.json") is None
-    p.write_text('{"ok": false}')
-    assert sn.installed_packs(p) is None
+def test_pack_state_is_not_matched(tmp_path):
+    # packs is the state before the gated install; a timer pack update adds no
+    # record. Neither may turn an accepted version into a long banner.
+    p = _write(tmp_path / "ack.jsonl",
+               _record(packs={"airports-conus": "2606"}))
+    assert sn.evaluate(p, VERSION).acknowledged
 
 
 def test_banner_overlays_bottom_passes_input_and_self_dismisses(app, qtbot):
@@ -171,8 +201,7 @@ def test_show_banner_with_corrupt_record_shows_long_banner(app, tmp_path):
     parent = QWidget()
     parent.resize(320, 240)
     parent.show()
-    banner = sn.show_banner(parent, ack_path=p,
-                            status_path=tmp_path / "status.json")
+    banner = sn.show_banner(parent, ack_path=p)
     assert banner is not None and banner.isVisible()
     assert banner._timer.interval() == sn.UNACKNOWLEDGED_MS
     parent.close()
