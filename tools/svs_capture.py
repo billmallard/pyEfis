@@ -149,6 +149,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Shared with capture_service.py (AER-2627) -- see pyefis_rev.py for why this
 # lives in its own dependency-light module rather than here.
 from pyefis_rev import resolve_pyefis_rev  # noqa: E402
+# The TV12 evidence-sidecar convention (docs/evidence.md): commit, run, device.
+from evidence_sidecar import build_sidecar  # noqa: E402
 
 # Run against the mock FIX db, exactly as the visual harness does -- no gateway.
 import mock_db.client  # noqa: E402
@@ -346,6 +348,9 @@ def _write_manifest(
         "argv": " ".join(sys.argv),
         "sha256": hashlib.sha256(out_path.read_bytes()).hexdigest(),
     }
+    # The same file is also a TV12 evidence sidecar: schema, commit, run, device,
+    # created_utc on top of the keys above (which stay, for capture_service.py).
+    manifest = build_sidecar(out_path, commit=pyefis_rev, extra=manifest)
     manifest_path.write_text(json.dumps(manifest, indent=1))
 
 
