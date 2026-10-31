@@ -706,6 +706,57 @@ def test_dto_activate_without_a_target_shows_message(fix, qtbot):
     assert w._page == "dto"
 
 
+def _dto_prompted(fix, qtbot, tab):
+    """A DTO page showing the SELECT A WAYPOINT prompt on `tab` (#326)."""
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w._plan = _plan(3)
+    w._commit()
+    w._open_dto_page()
+    w._select_dto_tab(tab)
+    w._dto_activate()
+    assert w._message == "SELECT A WAYPOINT"
+    return w
+
+
+def test_dto_prompt_clears_on_fpl_selection_and_activation(fix, qtbot):
+    w = _dto_prompted(fix, qtbot, "FPL")
+    w._dto_select_fpl(1)
+    assert w._message == ""
+    w._dto_activate()
+    assert fix.db.get_item("FPLCMD").value == "1 DTO 2"
+    assert w._page == "fpl"
+    assert w._message == ""
+
+
+def test_dto_prompt_clears_on_nearest_selection(fix, qtbot, tmp_path):
+    w = _dto_prompted(fix, qtbot, "NRST APT")
+    _install_index(w, _build_fixture_index(tmp_path))
+    wp = w._ensure_waypoint_index().lookup("KSBA")[0]
+    w._dto_select_nearest(wp)
+    assert w._message == ""
+
+
+def test_dto_prompt_clears_on_waypoint_tab_activation(fix, qtbot, tmp_path):
+    # The FP8 bench repro: ACTIVATE with nothing typed, then type and enter.
+    w = _dto_prompted(fix, qtbot, "Waypoint")
+    _install_index(w, _build_fixture_index(tmp_path))
+    for ch in "KSBA":
+        w._entry_key(ch)
+    w._entry_enter()
+    assert fix.db.get_item("FPLCMD").value == "1 DTO"
+    assert w._page == "fpl"
+    assert w._message == ""
+
+
+def test_dto_prompt_clears_when_the_page_is_cancelled(fix, qtbot):
+    w = _dto_prompted(fix, qtbot, "FPL")
+    w._close_dto()
+    assert w._page == "fpl"
+    assert w._message == ""
+
+
 # ---------------------------------------------------------------------------
 # Catalog page (FP5b)
 # ---------------------------------------------------------------------------
