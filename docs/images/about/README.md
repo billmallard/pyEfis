@@ -7,11 +7,9 @@
   between Continue and Update.
 
 - `bench_beelink_datastatus.png`, `bench_beelink_about.png`: live x11grab
-  captures from the Beelink bench (1920x1080, X11) at `2b5a0fd` / `35f606c`,
-  before the pack-label change: the real boot screen, then the About screen
-  after a tap on About. Every installed pack there predates the L1 field, so
-  each says it has no notice; the seven terrain packs all read "Terrain",
-  which is what the label change (pack id appended) fixes.
+  captures from the Beelink bench (1920x1080, X11): the real boot screen at
+  `35f606c`, then the About screen after a tap on About at `a894867`. Every
+  installed pack there predates the L1 field, so each says it has no notice.
 
 The first two are offscreen Qt renders against a sample `status.json` (in the script),
 not bench captures. Regenerate:
