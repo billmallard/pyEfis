@@ -89,30 +89,40 @@ There is no key binding for the altimeter setting. Set it with the baro box at
 the bottom of the altimeter tape: touch it and turn the knob. See "Setting the
 altimeter (baro)" in docs/wiki/Pilots-Guide.md.
 
-Virtual VFR
------------------------------
+Virtual VFR (legacy, deprecated)
+--------------------------------
 
-In order to take advantage of virtual
-VFR chart object rendering, download the latest FAA CIFP file from here:
-https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/
+The legacy Virtual VFR view -- the 2D runway outlines, airport labels and
+assumed-3-degree PAPI drawn from the raw FAA CIFP file -- is **deprecated**
+and will be removed. Synthetic Vision (below) replaces it: SVS draws airports,
+runways with surface markings, and a PAPI at the runway's **published** visual
+glide path angle (only where one is installed), all from the NASR airports
+pack the makerplane-data updater already installs.
 
-Extract the FAACIFP18 file into ``~/makerplane/pyefis/CIFP/``. Make note of
-the FAA disclaimers also in the zip file.
+**With SVS enabled** (``enabled: true`` in the ``virtual_vfr`` instrument's
+``svs:`` options) the legacy overlay is not loaded at all, and **no CIFP
+download is needed**.
 
-Create an index file with the indexer that ships with pyavtools (a pyEfis
-dependency; it is not a pyEfis script)::
+Only a ``virtual_vfr`` instrument *without* SVS still reads CIFP. To keep it
+running until it is removed:
 
-    cd ~/makerplane/pyefis/CIFP
-    python -m pyavtools.utils.MakeCIFPIndex FAACIFP18 -o index.bin
+1. Download the current cycle from
+   https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/
+   and extract ``FAACIFP18`` into ``~/makerplane/pyefis/CIFP/``. Note the FAA
+   disclaimers in the zip.
+2. Build the index with pyAvTools' indexer (installed with pyEfis)::
 
-This creates ``index.bin`` beside ``FAACIFP18``. See docs/svs_data_refresh.md
-for the full CIFP refresh procedure.
+     python3 -m pyavtools.utils.MakeCIFPIndex ~/makerplane/pyefis/CIFP/FAACIFP18 \
+         -o ~/makerplane/pyefis/CIFP/index.bin
 
-The paths are set by ``dbpath`` and ``indexpath`` in
-``screens/virtualvfr_db.yaml`` (included by the shipped screens). The defaults
-are ``~/makerplane/pyefis/CIFP/FAACIFP18`` and
-``~/makerplane/pyefis/CIFP/index.bin``; edit that file only if you keep the
-data elsewhere.
+   (The snap ships the same tool as ``pyefis.makecifpindex``, and installs the
+   data itself from the ``faa-cifp-data`` snap.)
+3. The paths are read from ``screens/virtualvfr_db.yaml`` in your config tree
+   (``~/makerplane/pyefis/config``): ``dbpath`` and ``indexpath`` default to
+   the two files above. Screens include it with
+   ``include: [screens/virtualvfr_db.yaml]``.
+
+See docs/svs_data_refresh.md for the full CIFP refresh procedure.
 
 Synthetic Vision (SVS)
 -----------------------------
@@ -128,6 +138,8 @@ obstacles, and airports/runways drawn in 3D over the live attitude.
   by lighting and conflict with the aircraft altitude.
 * **Airports & runways** — runway quads with FAA surface markings (threshold
   bars, centreline, designators, aiming point, TDZ) and identifier flags.
+* **PAPI** — the installed PAPI row, on the published side and visual glide
+  path angle from the NASR airports pack (``papi: false`` turns it off).
 * **Major roads** — OSM motorway / trunk overlays.
 
 Terrain and the chart databases are supplied by the companion
