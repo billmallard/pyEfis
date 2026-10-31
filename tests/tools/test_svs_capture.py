@@ -394,8 +394,15 @@ def test_write_manifest_writes_sidecar_json_beside_the_frame(svs_capture, tmp_pa
         "actual_size": [800, 600],
         "argv": written["argv"],
         "sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
+        # The TV12 evidence-sidecar keys (docs/evidence.md).
+        "schema": "evidence-sidecar/1",
+        "commit": "abc1234-dirty",
+        "run": written["run"],
+        "device": written["device"],
+        "created_utc": written["created_utc"],
     }
     assert written["argv"]  # non-empty; exact value is the pytest invocation
+    assert written["run"] and written["device"]
 
 
 def test_write_manifest_sha256_matches_the_frame_bytes(svs_capture, tmp_path):

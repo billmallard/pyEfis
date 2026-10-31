@@ -1,0 +1,266 @@
+"""The common Font size option reaches six widgets that used to drop it
+(pyEfis #223, #229-#233): tab_section, button, listbox, data_status,
+data_annunciation and checklist.
+
+Every case builds the instrument through the real Screen path -- YAML
+``options.font_percent`` -> screenbuilder_preferences.apply_preferences ->
+screenbuilder_factory.build_*() -> apply_options -- so a builder that drops the
+value again fails here. Font size is a multiplier on each widget's own built-in
+text size (the #219 flight_plan shape), so leaving it unset must keep today's
+size exactly.
+"""
+import math
+import re
+
+import pytest
+from PyQt6.QtCore import qRound
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QTabBar
+
+import pyefis.hmi as hmi
+from pyefis.instruments.checklist import Checklist
+from pyefis.instruments.helpers import font_scale
+from pyefis.instruments.tab_section import _MIN_TAB_LABEL_PX
+from pyefis.screens.screenbuilder import Screen
+from tests.screens.test_screenbuilder import (
+    _TestParent, _config_with_instruments)
+
+W, H = 800, 480
+
+
+@pytest.fixture(autouse=True)
+def hmi_actions(qtbot):
+    """Real HMI signal object (button and checklist subscribe on build);
+    qtbot first so a QApplication exists."""
+    hmi.initialize({})
+    yield
+
+
+def _build(qtbot, inst_type, options=None, tabs=None, config_path=""):
+    inst = {
+        "type": inst_type, "row": 0, "column": 0,
+        "span": {"rows": 10, "columns": 10},
+        "options": dict(options or {}),
+    }
+    if tabs is not None:
+        inst["tabs"] = tabs
+    parent = _TestParent(_config_with_instruments([inst]),
+                         config_path=config_path)
+    screen = Screen(parent)
+    screen.screenName = "TEST"      # set by gui.Main in the app; button reads it
+    qtbot.addWidget(screen)
+    screen.resize(W, H)
+    screen.init_screen()
+    # Showing delivers the instruments' resizeEvents, where most of them
+    # derive their fonts; an unshown widget only gets them lazily.
+    qtbot.addWidget(parent)
+    parent.resize(W, H)
+    parent.show()
+    qtbot.waitExposed(parent)
+    return screen.instruments[0]
+
+
+# -- the shared multiplier ----------------------------------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    (None, 1.0), (0, 1.0), (-0.5, 1.0), (float("nan"), 1.0),
+    (float("inf"), 1.0), ("big", 1.0),
+    (0.5, 0.5), (1.0, 1.0),
+    # Already normalised upstream: 1.5 is 150%, not 1.5%.
+    (1.5, 1.5),
+])
+def test_font_scale(value, expected):
+    assert font_scale(value) == expected
+
+
+# -- tab_section (#223) -------------------------------------------------------
+
+_TABS = [{"label": "Engine", "layout": {"rows": 1, "columns": 1},
+          "instruments": []},
+         {"label": "Nav", "layout": {"rows": 1, "columns": 1},
+          "instruments": []}]
+
+
+def _tab(qtbot, **options):
+    return _build(qtbot, "tab_section", options, tabs=_TABS)
+
+
+def _label_px(tab_section):
+    """The scaled label size -- an explicit pixel size on the bar's font."""
+    return tab_section.tab_bar.font().pixelSize()
+
+
+def test_tab_section_unset_keeps_todays_label_size(fix, qtbot):
+    tab_section = _tab(qtbot)
+    # Today's size is the inherited QTabBar font with the family applied.
+    reference = QTabBar()
+    qtbot.addWidget(reference)
+    font = QFont(reference.font())
+    font.setFamily("DejaVu Sans Condensed")
+    assert tab_section.font_percent is None
+    assert tab_section.tab_bar.font() == font
+
+
+@pytest.mark.parametrize("position", ["top", "bottom", "left", "right"])
+def test_tab_section_font_percent_grows_bar_and_shrinks_content(
+        fix, qtbot, position):
+    """150 (a whole-number percent, 1.5 after normalising) grows the labels;
+    _layout_pages() reserves the bigger sizeHint() on every edge and the
+    content area gives up exactly that much."""
+    base = _tab(qtbot, tab_position=position)
+    big = _tab(qtbot, tab_position=position, font_percent=150)
+
+    assert big.font_percent == pytest.approx(1.5)
+    assert _label_px(big) == round(base._base_label_px() * 1.5)
+
+    side = position in ("left", "right")
+    hint = (lambda t: t.tab_bar.sizeHint().width()) if side else \
+        (lambda t: t.tab_bar.sizeHint().height())
+    assert hint(big) > hint(base)
+    for t in (base, big):
+        if side:
+            assert t.tab_bar.width() == hint(t)
+            assert t.stack.width() == W - hint(t)
+            assert t.stack.height() == H
+        else:
+            assert t.tab_bar.height() == hint(t)
+            assert t.stack.height() == H - hint(t)
+            assert t.stack.width() == W
+    if side:
+        assert big.stack.width() < base.stack.width()
+    else:
+        assert big.stack.height() < base.stack.height()
+
+
+def test_tab_section_small_font_percent_stops_at_legibility_floor(fix, qtbot):
+    """0.2 is what Bill's bench panel carries; 20% of the default label is
+    unreadable, so it lands on the floor instead."""
+    base = _tab(qtbot)
+    small = _tab(qtbot, font_percent=0.2)
+    assert round(base._base_label_px() * 0.2) < _MIN_TAB_LABEL_PX
+    assert _label_px(small) == _MIN_TAB_LABEL_PX
+    assert small.tab_bar.sizeHint().height() < base.tab_bar.sizeHint().height()
+
+
+def test_tab_section_font_percent_survives_fg_color_stylesheet(fix, qtbot):
+    t = _tab(qtbot, fg_color="#ffff00", font_percent=150)
+    base = _tab(qtbot)
+    assert _label_px(t) == round(base._base_label_px() * 1.5)
+
+
+# -- button (#229) ------------------------------------------------------------
+
+_BUTTON = {"dbkey": "TSBTN{id}0", "text": "Units"}
+
+
+def test_button_font_percent_scales_label(fix, qtbot):
+    base = _build(qtbot, "button", _BUTTON)
+    half = _build(qtbot, "button", {**_BUTTON, "font_percent": 50})
+    h = base.height()
+    assert base._button.font().pixelSize() == qRound(h * 38 / 100)
+    assert half._button.font().pixelSize() == qRound(h * 38 / 100 * 0.5)
+
+
+def test_button_font_percent_never_grows_past_the_mask_fit(fix, qtbot):
+    """With a font_mask the auto-fit is the largest label that fits, so the
+    multiplier shrinks it but a value over 100% is clamped to the fit."""
+    base = _build(qtbot, "button", {**_BUTTON, "font_mask": "XXXXX"})
+    half = _build(qtbot, "button",
+                  {**_BUTTON, "font_mask": "XXXXX", "font_percent": 0.5})
+    big = _build(qtbot, "button",
+                 {**_BUTTON, "font_mask": "XXXXX", "font_percent": 150})
+    for b in (base, half, big):
+        b.setStyle()
+    fitted = base._button.font().pointSizeF()
+    assert fitted > 0
+    assert half._button.font().pointSizeF() == pytest.approx(fitted * 0.5)
+    assert big._button.font().pointSizeF() == pytest.approx(fitted)
+
+
+# -- listbox (#230) -----------------------------------------------------------
+
+_LISTBOX = {"lists": [{"name": "List 1", "file": "list1.yaml"}]}
+
+
+def _listbox(qtbot, **extra):
+    return _build(qtbot, "listbox", {**_LISTBOX, **extra},
+                  config_path="tests/data/listbox/")
+
+
+def _sheet_px(listbox):
+    sizes = set(re.findall(r"font-size: (\d+)px;", listbox.table.styleSheet()))
+    assert len(sizes) == 1, sizes   # body and header carry the same size
+    return int(sizes.pop())
+
+
+def test_listbox_font_percent_scales_text_and_rows(fix, qtbot):
+    base = _listbox(qtbot)
+    half = _listbox(qtbot, font_percent=50)
+    h = base.height()
+    assert _sheet_px(base) == qRound(h * 7 / 100)
+    assert _sheet_px(half) == qRound(h * 7 / 100 * 0.5)
+    # Rows follow the font through resizeRowsToContents().
+    assert half.table.rowHeight(0) < base.table.rowHeight(0)
+
+
+# -- data_status (#231) / data_annunciation (#232) ----------------------------
+
+def test_data_status_font_percent_scales_every_text_size(fix, qtbot, tmp_path):
+    opts = {"status_path": str(tmp_path / "none.json")}
+    base = _build(qtbot, "data_status", opts)
+    half = _build(qtbot, "data_status", {**opts, "font_percent": 0.5})
+    row_h = base.row_h
+    assert half.row_h == row_h            # geometry does not scale
+    assert base.font.pixelSize() == qRound(row_h * 0.62)
+    assert base.title_font.pixelSize() == qRound(row_h * 0.85)
+    assert half.font.pixelSize() == qRound(row_h * 0.62 * 0.5)
+    assert half.title_font.pixelSize() == qRound(row_h * 0.85 * 0.5)
+    assert (half.btn_continue.font().pixelSize()
+            < base.btn_continue.font().pixelSize())
+    assert half.btn_continue.geometry() == base.btn_continue.geometry()
+
+
+def test_data_annunciation_font_percent_scales_flag_text(fix, qtbot, tmp_path):
+    opts = {"status_path": str(tmp_path / "none.json")}
+    base = _build(qtbot, "data_annunciation", opts)
+    half = _build(qtbot, "data_annunciation", {**opts, "font_percent": 0.5})
+    h = base.height()
+    assert base.font.pixelSize() == max(8, qRound(h * 0.7))
+    assert half.font.pixelSize() == max(8, qRound(h * 0.7 * 0.5))
+    assert half.font.pixelSize() < base.font.pixelSize()
+
+
+# -- checklist (#233) ---------------------------------------------------------
+
+def test_checklist_font_percent_reaches_painted_text(fix, qtbot):
+    base = _build(qtbot, "checklist")
+    half = _build(qtbot, "checklist", {"font_percent": 0.5})
+    h = base.height()
+    assert base._line_metrics(h) == (max(12.0, h / 16.0),
+                                     max(8, int(max(12.0, h / 16.0) * 0.7)))
+    assert half._line_metrics(h)[1] < base._line_metrics(h)[1]
+
+
+@pytest.mark.parametrize("scale", [None, 0.05, 0.5, 1.0, 1.5, 3.0])
+@pytest.mark.parametrize("h", [20, 100, 192, 480, 1080])
+def test_checklist_text_always_fits_its_row(qtbot, scale, h):
+    """Closed form, every pane height and scale: the text never exceeds the
+    line pitch, so rows never overlap -- including a pane small enough to
+    hit the floor, where the pitch holds at 12 px and the list shows fewer
+    rows instead."""
+    w = Checklist(font_percent=scale)
+    qtbot.addWidget(w)
+    line_h, text_px = w._line_metrics(h)
+    assert line_h >= 12.0
+    assert text_px >= 8
+    assert text_px < line_h
+    expected = max(12.0, h / 16.0 * (scale or 1.0))
+    assert line_h == pytest.approx(expected)
+
+
+def test_checklist_floor_shows_fewer_rows_not_overlap(qtbot):
+    tiny = Checklist(font_percent=0.05)
+    qtbot.addWidget(tiny)
+    line_h, text_px = tiny._line_metrics(100)
+    assert (line_h, text_px) == (12.0, 8)
+    assert math.floor(100 / line_h) == 8   # rows that fit: fewer, not overlapping
