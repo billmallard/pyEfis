@@ -418,6 +418,27 @@ def test_read_engine_reports_values_and_quality(fix):
     assert engine["FPLCRS"].bad is True
 
 
+# ---------------------------------------------------------------------------
+# Optional engine outputs (FPLSUSPMAP, G49): read when present, never probed
+# ---------------------------------------------------------------------------
+def test_older_gateway_without_fplsuspmap_stays_available_and_omits_it(fix):
+    _define_all_fp1_keys(fix)   # the base contract, no FPLSUSPMAP
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.available is True
+    assert "FPLSUSPMAP" not in bridge.read_engine()
+
+
+def test_fplsuspmap_is_read_and_watched_when_the_gateway_has_it(fix):
+    _define_all_fp1_keys(fix)
+    _define(fix, "FPLSUSPMAP", "int", 0)
+    bridge = fixbridge.FixBridge(fix)
+    calls = []
+    bridge.add_listener(lambda: calls.append(1))
+    fix.db.set_value("FPLSUSPMAP", 1)
+    assert calls, "a change of FPLSUSPMAP alone must repaint the FPL page"
+    assert bridge.read_engine()["FPLSUSPMAP"].value == 1
+
+
 def test_read_direct_to_none_when_unavailable(fix):
     bridge = fixbridge.FixBridge(fix)
     assert bridge.read_direct_to() is None
