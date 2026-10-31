@@ -409,6 +409,26 @@ def test_insert_before_after_remove_reorder(fix, qtbot, tmp_path):
     assert [wp.id for wp in w._plan.waypoints] == ["GVO", "KSMX"]
 
 
+def test_header_name_tracks_keypad_appends_until_named(fix, qtbot, tmp_path):
+    """pyEfis #327, the bench repro: KSBA GVO KSMX entered on the keypad
+    stayed "KSBA-KSBA" in the header and on FPLNAME."""
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    _install_index(w, _build_fixture_index(tmp_path))
+
+    seen = []
+    for ident in ("KSBA", "GVO", "KSMX"):
+        w._open_entry({"kind": "append", "index": None})
+        for ch in ident:
+            w._entry_key(ch)
+        w._entry_enter()
+        seen.append((w._plan.name or w._plan.default_name(),
+                     fix.db.get_item("FPLNAME").value))
+    assert seen == [("KSBA-KSBA", "KSBA-KSBA"), ("KSBA-GVO", "KSBA-GVO"),
+                    ("KSBA-KSMX", "KSBA-KSMX")]
+
+
 # ---------------------------------------------------------------------------
 # set role + refusals
 # ---------------------------------------------------------------------------
