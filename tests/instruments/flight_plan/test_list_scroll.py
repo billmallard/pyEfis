@@ -181,12 +181,27 @@ def test_drag_past_the_threshold_scrolls_and_never_taps(fix, qtbot, clock, monke
     clock.t += 0.5            # finger rests before lift-off: no fling
     _release(w, 200, y0 - thr - 100)
     assert w._row_menu_index is None, "the drag also selected the row it started on"
-    # Re-anchored at the first move past the threshold: the list follows
-    # the finger from there, it does not jump by the threshold.
-    step = (thr + 100) / 10
-    crossed = next(k for k in range(1, 11) if k * step >= thr) * step
-    assert w._list_scroll == pytest.approx(thr + 100 - crossed)
+    # Anchored at the threshold: the list moves by the finger's travel less
+    # the threshold, wherever the move events happened to land.
+    assert w._list_scroll == pytest.approx(100)
     assert not w._fling_timer.isActive()
+
+
+def test_a_coalesced_drag_still_scrolls_its_whole_travel(fix, qtbot, clock, monkeypatch):
+    """Under load Qt's xcb backend merges queued motion events, so a whole
+    drag can arrive as press, ONE move far past the threshold, release. Found
+    on the Beelink: re-anchoring at that first move threw the travel away and
+    the list did not move at all. Only the threshold itself may be lost."""
+    w = _widget(fix, qtbot, clock, monkeypatch)
+    v = _view(w)
+    thr = w._drag_threshold_px()
+    _press(w, 200, v["bottom"] - 20)
+    clock.t += 0.4
+    _move(w, 200, v["bottom"] - 420)
+    clock.t += 0.6
+    _release(w, 200, v["bottom"] - 420)
+    assert w._list_scroll == pytest.approx(400 - thr)
+    assert w._row_menu_index is None
 
 
 def test_sideways_slip_cancels_the_tap(fix, qtbot, clock, monkeypatch):

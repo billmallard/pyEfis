@@ -2052,10 +2052,15 @@ class FlightPlan(QWidget):
             super().mouseMoveEvent(event)
             return
         x, y = event.position().x(), event.position().y()
-        if not press["drag"] and math.hypot(x - press["x"], y - press["y"]) >= self._drag_threshold_px():
-            # A drag now: release will not tap the row it started on.
-            # Re-anchor here so the list does not jump by the threshold.
-            press.update(drag=True, y=y, scroll=self._list_scroll)
+        thr = self._drag_threshold_px()
+        if not press["drag"] and math.hypot(x - press["x"], y - press["y"]) >= thr:
+            # A drag now: release will not tap the row it started on. Anchor
+            # at the threshold, not at this event, so the list neither jumps
+            # by the threshold nor loses travel Qt merged into this one move
+            # (xcb coalesces queued motion under load; the Beelink lost whole
+            # drags that way).
+            dy = y - press["y"]
+            press.update(drag=True, y=press["y"] + max(-thr, min(dy, thr)))
         if press["drag"]:
             self._scroll_list_to(press["scroll"] - (y - press["y"]))
             self._last_pilot_scroll = self._now()
