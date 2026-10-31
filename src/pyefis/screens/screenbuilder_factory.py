@@ -26,6 +26,7 @@ from pyefis.instruments import checklist
 from pyefis.instruments import flight_plan
 from pyefis.instruments import nav_status
 from pyefis.instruments import data_status
+from pyefis.instruments import about
 from pyefis.instruments import gauges
 from pyefis.instruments import hsi
 from pyefis.instruments import listbox
@@ -183,7 +184,21 @@ def build_data_status(
         kwargs["continue_screen"] = opts["continue_screen"]
     if "update_command" in opts:
         kwargs["update_command"] = opts["update_command"]
+    if "about_screen" in opts:
+        kwargs["about_screen"] = opts["about_screen"]
     return data_status.DataStatus(**kwargs)
+
+
+def build_about(
+    screen, config, font_percent=None, font_family=None, replace=None
+):
+    opts = (config or {}).get("options", {}) or {}
+    kwargs = {"parent": screen, "font_family": font_family}
+    if "status_path" in opts:
+        kwargs["status_path"] = opts["status_path"]
+    if "back_screen" in opts:
+        kwargs["back_screen"] = opts["back_screen"]
+    return about.AboutSystem(**kwargs)
 
 
 def build_data_annunciation(
@@ -1439,6 +1454,21 @@ _register(InstrumentSpec(
     # The builder also accepts optional status_path / continue_screen /
     # update_command; left out of the panel (they default sensibly) until there
     # is a reason to expose host-path plumbing in the editor.
+))
+
+_register(InstrumentSpec(
+    type="about",
+    label="About / System",
+    category="system",
+    builder=build_about,
+    builds_in_isolation=False,
+    # Built-in like data_status (gui injects the bundled About screen), so it
+    # is not a user-placed instrument.
+    hidden=True,
+    properties=[
+        Prop("back_screen", "string", default="DataStatus",
+             label="Back screen", help="screen the Back button returns to"),
+    ],
 ))
 
 _register(InstrumentSpec(
