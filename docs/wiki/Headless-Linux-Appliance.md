@@ -61,6 +61,10 @@ On first run each app auto-seeds its config under `$HOME`
 [Running from Source](Running-from-Source#first-run-behavior-and-file-locations).
 `fixgw` binds `0.0.0.0:3490`; verify with `ss -ltn | grep :3490`.
 
+**Install is not finished until the software notice is accepted** — install the
+nav-data updater, then run `pyefis-accept-notice`. See
+[Accept the software notice](#accept-the-software-notice-install-and-every-update).
+
 ---
 
 ## Display backend (the big one)
@@ -237,6 +241,48 @@ ln -sf ~/pyefis-data-venv/bin/pyefis-data ~/.local/bin/pyefis-data
 
 ---
 
+## Accept the software notice (install and every update)
+
+A fresh install and every pyEFIS update end with an explicit accept of this
+notice, at a terminal, before pyEFIS is started:
+
+> pyEfis is experimental software for Experimental / Amateur-Built aircraft. It is
+> not certified. It is provided as-is with no warranty, and any use of it is at
+> your own risk.
+
+```bash
+pyefis-accept-notice          # or: python -m pyefis.install_ack (from the pyEFIS venv)
+```
+
+It shows the full notice and requires the typed word `accept`. Anything else
+stops with exit code 3 and records nothing. Once accepted, re-running it for the
+same pyEFIS version just reports when and by whom. After a pyEFIS update
+(`git pull` + `pip install -e ~/src/pyEfis[qt,svs]`, or a new release), run it
+again: a new pyEFIS version needs a new accept.
+
+The record is written by the **updater**, not by pyEFIS: `pyefis-accept-notice`
+hands over to `pyefis-data accept --software pyefis=<version>`, so the updater
+must be installed first ([above](#the-nav-data-updater-is-a-separate-package)).
+It looks for it in `$PYEFIS_DATA`, then on `PATH`, then at
+`~/pyefis-data-venv/bin/pyefis-data`; `--pyefis-data <path>` overrides all three. The record is an append-only log at
+`~/.local/state/makerplane/acknowledgments.jsonl`, outside both config trees, so a
+config reset does not erase it. Its schema is in makerplane-data
+`docs/install_acknowledgment.md`.
+
+- `pyefis-accept-notice --check` exits 0 if this pyEFIS version is accepted and 3
+  if not, without prompting — for an install script.
+- Installing or updating **data** asks too. `pyefis-data update` at a terminal
+  asks on its own. On the touchscreen, the Data Status screen's **Update** picker
+  shows the same notice full-screen with **Accept** / **Decline** the first time
+  (and after a `pyefis-data` upgrade); Decline installs nothing.
+- Nothing here runs at boot. The accept is asked for only on the ground, during
+  install or update; pyEFIS itself never puts a modal in front of the
+  instruments.
+- An `ssh` session without a terminal (`ssh host cmd`) cannot accept; use
+  `ssh -t`.
+
+---
+
 ## Debugging aids
 
 - **`ldd <plugin>.so | grep 'not found'`** is the fastest way to diagnose
@@ -257,6 +303,7 @@ ln -sf ~/pyefis-data-venv/bin/pyefis-data ~/.local/bin/pyefis-data
 - [ ] `systemctl is-active fixgw pyefis` → active/active; `NRestarts=0` after a
       cold reboot
 - [ ] `pyefis-data status` lists the pack catalog (`sources` shows `network: yes`)
+- [ ] `pyefis-accept-notice --check` → exit 0 (notice accepted for this pyEFIS version)
 - [ ] instruments come alive once a FIX source is pointed at `fixgw:3490` — until
       then they read stale / `XXX`, which is expected (see
       [Concepts](Concepts#1-the-fix-database-the-data-bus))

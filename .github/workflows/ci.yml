@@ -109,6 +109,8 @@ jobs:
       BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
     - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0 # the evidence index names the commit that added each directory (TV12)
     - uses: actions/download-artifact@v6
       continue-on-error: true
       with:
@@ -131,6 +133,12 @@ jobs:
         [ -f records/pyefis/verification.json ] && records="$records records/pyefis/verification.json"
         [ -f records/fgw/verification.json ] && records="$records records/fgw/verification.json"
         python tools/verification_report.py page $records --expect pyEfis fix-gateway --out site
+    - name: Render the evidence index
+      run: |
+        # TV12: every committed evidence image and what its sidecar says, as evidence.html.
+        # A broken sidecar fails the build job's tests, not this deploy.
+        python tools/evidence_index.py --html site/evidence.html \
+          --repo "$GITHUB_REPOSITORY" --sha "${{ github.event.pull_request.head.sha || github.sha }}"
     - uses: actions/upload-artifact@v6
       with:
         name: evidence-page
@@ -167,3 +175,69 @@ jobs:
     - name: No deploy token
       if: env.CLOUDFLARE_API_TOKEN == ''
       run: echo "::notice::CLOUDFLARE_API_TOKEN is not available to this run; the page was built, not deployed"
+
+  # TV12: each qa -> master promotion (a push to master) gets a GitHub Release carrying
+  # that commit's test report: the job summary as the notes, the JSON and JUnit records,
+  # and the rendered evidence site as a zip. A red promotion still gets its release, as
+  # a pre-release that says so, so the record is never missing. Separate job: a Release
+  # API failure cannot fail the required `build` check.
+  release:
+    needs: [build, evidence-page]
+    if: >-
+      always() && github.event_name == 'push' && github.ref_name == 'master'
+      && (needs.build.result == 'success' || needs.build.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/download-artifact@v6
+      with:
+        name: test-results
+        path: records
+    - uses: actions/download-artifact@v6
+      continue-on-error: true
+      with:
+        name: evidence-page
+        path: site
+    - name: Create the release (once per commit)
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BUILD_RESULT: ${{ needs.build.result }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        short=${GITHUB_SHA::7}
+        tag="promotion-$short"
+        if gh release view "$tag" >/dev/null 2>&1; then
+          echo "::notice::$tag already exists; not re-creating it"
+          exit 0
+        fi
+        assets="records/verification.json records/junit.xml"
+        if [ -f site/index.html ]; then
+          (cd site && python -m zipfile -c ../evidence-site.zip *) && assets="$assets evidence-site.zip"
+        fi
+        {
+          echo "Promotion of \`qa\` to \`master\` at $GITHUB_SHA ([CI run]($RUN_URL))."
+          echo
+          if [ "$BUILD_RESULT" != "success" ]; then
+            echo "**The test run for this commit did not pass.** It is published as a pre-release so the record exists; see the failing tests below."
+            echo
+          fi
+          echo "Attached: \`verification.json\` and \`junit.xml\`, the test records."
+          if [ -f evidence-site.zip ]; then
+            echo "\`evidence-site.zip\` is the test-evidence page and the evidence-image index as rendered for this commit."
+          else
+            echo "The evidence-page job left no site for this run, so no \`evidence-site.zip\` is attached."
+          fi
+          echo
+          python tools/verification_report.py summary records/verification.json
+        } > notes.md
+        if [ "$(wc -c < notes.md)" -gt 120000 ]; then
+          head -c 118000 notes.md > notes.cut
+          printf '\n\n_Report truncated to fit a release body; the full record is verification.json._\n' >> notes.cut
+          mv notes.cut notes.md
+        fi
+        flags=""
+        [ "$BUILD_RESULT" = "success" ] || flags="--prerelease"
+        gh release create "$tag" --target "$GITHUB_SHA" $flags \
+          --title "Promotion $(date -u +%Y-%m-%d) ($short)" --notes-file notes.md $assets

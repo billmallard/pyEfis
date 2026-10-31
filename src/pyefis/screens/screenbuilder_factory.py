@@ -140,11 +140,13 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
             screen,
             config_file=os.path.join(screen.parent.config_path, opts["config"]),
             font_family=font_family,
+            font_percent=font_percent,
         )
     # Inline: the instrument's options ARE the button definition (authored in the
     # configurator). Needs at least a dbkey to bind to.
     if opts.get("dbkey"):
-        return button.Button(screen, config=dict(opts), font_family=font_family)
+        return button.Button(screen, config=dict(opts), font_family=font_family,
+                             font_percent=font_percent)
     raise ValueError(
         "button needs options: either 'config:' (an external YAML) or inline "
         "fields including 'dbkey:'")
@@ -160,6 +162,7 @@ def build_tab_section(
         tabs=config.get("tabs") or [],
         default_tab=opts.get("default_tab", 0),
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 
@@ -176,7 +179,8 @@ def build_data_status(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = (config or {}).get("options", {}) or {}
-    kwargs = {"parent": screen, "font_family": font_family}
+    kwargs = {"parent": screen, "font_family": font_family,
+              "font_percent": font_percent}
     if "status_path" in opts:
         kwargs["status_path"] = opts["status_path"]
     if "continue_screen" in opts:
@@ -190,7 +194,8 @@ def build_data_annunciation(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = (config or {}).get("options", {}) or {}
-    kwargs = {"parent": screen, "font_family": font_family}
+    kwargs = {"parent": screen, "font_family": font_family,
+              "font_percent": font_percent}
     if "status_path" in opts:
         kwargs["status_path"] = opts["status_path"]
     if "target_screen" in opts:
@@ -204,6 +209,7 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
         lists=config["options"]["lists"],
         replace=replace,
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 
@@ -217,6 +223,7 @@ def build_checklist(screen, config, font_percent=None, font_family=None, replace
         screen,
         checklists=opts.get("checklists"),
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 
@@ -371,7 +378,11 @@ def _svs_props():
     dev = " (rendered on the device; not shown in the editor preview)"
     return [
         Prop("svs_enabled", "boolean", default=False, apply="special",
-             label="Synthetic vision enabled", help="master on/off" + dev),
+             label="Synthetic vision enabled",
+             help="master on/off" + dev + ". Off falls back to the legacy "
+                  "CIFP Virtual VFR overlay, which is DEPRECATED (to be "
+                  "removed) and needs a separate FAA CIFP download; on needs "
+                  "no CIFP data"),
         Prop("svs_tile_path", "string", default="", apply="special",
              label="Terrain tile path",
              help="SRTM3 HGT tile directory on the device"),
@@ -453,6 +464,11 @@ def _svs_props():
              help="hard cap on extruded vertices per array (casing/fill "
                   "each); over the cap, far-tier ramps are dropped first, "
                   "then far-tier trunks" + dev),
+        Prop("svs_papi", "boolean", default=True, apply="special",
+             label="PAPI lights",
+             help="draw the installed PAPI at its published glide path angle "
+                  "and side, from the NASR airports pack (only where one is "
+                  "installed)" + dev),
         Prop("svs_perf_log", "boolean", default=False, apply="special",
              label="Perf: log summary",
              help="print an SVS per-frame profiler summary every 2s "
