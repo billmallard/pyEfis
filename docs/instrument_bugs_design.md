@@ -84,17 +84,17 @@ set-point parameters, so FIX keys mirror them 1:1:
 | Bug | FIX key | Status | CAN-FIX parameter |
 |---|---|---|---|
 | Heading | `HEADBUG` | exists (`ahrs.yaml`) | **gap — no Selected Heading in the spec** (candidate addition via the canfix-spec fork) |
-| Course | `COURSE` | exists (`ahrs.yaml`) | 61 Selected Course |
-| Altitude | `ALTSEL` | exists (`custom.yaml`, GCU P0) | 65 Selected Altitude |
-| Airspeed (FLC) | `IASSEL` | **to add** (fix-gateway) | 64 Selected Airspeed |
-| Vertical speed | `VSSEL` | later | 63 Selected Vertical Speed |
-| Glidepath | — | later | 62 Selected Glidepath Angle |
+| Course | `COURSE` | exists (`ahrs.yaml`) | 457 (0x1C9) Selected Course |
+| Altitude | `ALTSEL` | exists (`custom.yaml`, GCU P0) | 461 (0x1CD) Selected Altitude |
+| Airspeed (FLC) | `IASSEL` | **to add** (fix-gateway) | 460 (0x1CC) Selected Airspeed |
+| Vertical speed | `VSSEL` | later | 459 (0x1CB) Selected Vertical Speed |
+| Glidepath | — | later | 458 (0x1CA) Selected Glidepath Angle |
 
 Notes:
 
 - `ALTSEL` naming vs upstream (open question in `gcu_design.md` §8) is
-  resolved by alignment with CAN-FIX 65 Selected Altitude.
-- fix-gateway's `canfix/map.yaml` gets entries for 63/64/65 when the
+  resolved by alignment with CAN-FIX 461 Selected Altitude.
+- fix-gateway's `canfix/map.yaml` gets entries for 459/460/461 when the
   bus actually carries them; keys work via netfix writers (GCU mapper,
   X-Plane datarefs) meanwhile.
 - One key, one writer: set-points are written on user action by the
