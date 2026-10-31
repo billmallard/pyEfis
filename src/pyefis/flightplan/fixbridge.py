@@ -446,7 +446,17 @@ def route_to_plan(route: RouteBlock) -> model.FlightPlan:
             log.warning("FixBridge: segment table does not describe the %d slots on the "
                         "bus; reading them as plain waypoints", len(wps))
         segments = [model.waypoint_segment(w) for w in wps]
-    return model.FlightPlan(name=route.name, segments=segments)
+    plan = model.FlightPlan(segments=segments)
+    # FPLNAME carries a name whether or not the pilot gave one: publish()
+    # fills an unnamed plan with its default "FIRST-LAST". Reading that back
+    # as an explicit name froze it at the first waypoint ("KSBA-KSBA" for a
+    # route to KSMX, pyEfis #327), so a name that is still the default for
+    # the slots it was published with reads back as unnamed and keeps
+    # tracking the route. A pilot name that happens to equal the endpoints
+    # is indistinguishable on the wire and tracks too.
+    if route.name != plan.default_name():
+        plan.name = route.name
+    return plan
 
 
 def _segments_from_table(route: RouteBlock, wps):
