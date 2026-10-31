@@ -453,6 +453,11 @@ def _svs_props():
              help="hard cap on extruded vertices per array (casing/fill "
                   "each); over the cap, far-tier ramps are dropped first, "
                   "then far-tier trunks" + dev),
+        Prop("svs_papi", "boolean", default=True, apply="special",
+             label="PAPI lights",
+             help="draw the installed PAPI at its published glide path angle "
+                  "and side, from the NASR airports pack (only where one is "
+                  "installed)" + dev),
         Prop("svs_perf_log", "boolean", default=False, apply="special",
              label="Perf: log summary",
              help="print an SVS per-frame profiler summary every 2s "
