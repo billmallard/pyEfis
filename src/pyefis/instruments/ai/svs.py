@@ -574,9 +574,14 @@ class SVSRenderer:
         # at 30 m spacing — finer detail than the cockpit display can
         # resolve at typical SVS ranges, and a real CPU bottleneck on
         # the Python projection loop. None = use WaterDB's default.
+        # Rows with stored triangles are exempt (#100) — the cap only
+        # applies to legacy untessellated packs.
         self.water_db = WaterDB(
             config.get("water_db_path", "") or None,
             max_vertices=config.get("water_max_vertices"))
+        # One-shot flag for the triangle/vertex mismatch warning in
+        # _collect_water_sync (#100).
+        self._water_index_warned = False
         # Major-highway polylines (issue #35) — OSM motorway/trunk
         # from tools/build_highway_db.py. Optional like everything.
         from pyefis.instruments.ai.highway_db import HighwayDB
@@ -1827,9 +1832,22 @@ class SVSRenderer:
                 tri_idx[1::3] = np.arange(1, n_v - 1, dtype=np.int32)
                 tri_idx[2::3] = np.arange(2, n_v,     dtype=np.int32)
             else:
-                tri_idx = np.asarray(tri_idx, dtype=np.int32)
-            # Clip indices defensively; the build tool may emit one
-            # malformed entry on a tessellation edge case.
+                tri_idx = np.array(tri_idx, dtype=np.int32)
+                # An index past the vertex array means the row's
+                # triangles and vertices disagree (#100: a reader-side
+                # re-decimation, or a malformed build). Say so once,
+                # with enough to find the row, instead of letting the
+                # clip below silently render it as shattered water.
+                top = int(tri_idx.max()) if tri_idx.size else -1
+                if top >= n_v and not self._water_index_warned:
+                    self._water_index_warned = True
+                    log.warning(
+                        "SVS water: polygon id=%s has triangle index %d "
+                        "but only %d vertices; clipping (further rows "
+                        "not reported)",
+                        getattr(poly, "id", None), top, n_v)
+            # Clip indices defensively so a malformed row cannot index
+            # out of bounds.
             np.clip(tri_idx, 0, n_v - 1, out=tri_idx)
             verts_np = np.asarray(verts, dtype=np.float32)
             picked = verts_np[tri_idx]   # (n_idx, 2) — fancy indexing
