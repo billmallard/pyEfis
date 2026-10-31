@@ -547,9 +547,11 @@ class NoticeAccept(QWidget):
 class DataStatus(QWidget):
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  status_path=DEFAULT_STATUS_PATH, continue_screen="PFD",
-                 update_command="pyefis-data", font_percent=None):
+                 update_command="pyefis-data", about_screen="About",
+                 font_percent=None):
         super().__init__(parent)
         self.font_family = font_family
+        self.about_screen = about_screen
         # Font size: a multiplier on the region-derived text sizes set in
         # resizeEvent (pyEfis #231). Only text scales; rows, columns and the
         # button rects stay where they are, and every text draw is clipped to
@@ -579,16 +581,20 @@ class DataStatus(QWidget):
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
+        # The always-reachable notice screen (BACKLOG L4).
+        self.btn_about = QPushButton("About", self)
         # Cancel button for the install/progress (busy) screen, so a long
         # transfer never traps the user. Hidden except in busy mode.
         self.btn_cancel_dl = QPushButton("Cancel", self)
         self.btn_cancel_dl.clicked.connect(self._cancel_download)
         self.btn_cancel_dl.setVisible(False)
-        for b in (self.btn_continue, self.btn_update, self.btn_cancel_dl):
+        for b in (self.btn_continue, self.btn_update, self.btn_about,
+                  self.btn_cancel_dl):
             b.setStyleSheet(_BTN_STYLE)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_continue.clicked.connect(self._on_continue)
         self.btn_update.clicked.connect(self._on_update)
+        self.btn_about.clicked.connect(self._on_about)
 
         # Refresh periodically so a USB import (handled by the updater's udev
         # hook) or a background timer update shows up without interaction.
@@ -616,6 +622,14 @@ class DataStatus(QWidget):
             except Exception as e:
                 log.warning("Continue action failed: %s", e)
         log.info("Continue pressed (no HMI action available)")
+
+    def _on_about(self):
+        from pyefis import hmi
+        if getattr(hmi, "actions", None) is not None:
+            try:
+                hmi.actions.trigger("show screen", self.about_screen)
+            except Exception as e:
+                log.warning("About action failed: %s", e)
 
     # --- subprocess plumbing ---
     def _run(self, args, on_finish, on_line=None):
@@ -922,6 +936,7 @@ class DataStatus(QWidget):
         status_mode = self.mode == "status"
         self.btn_continue.setVisible(status_mode)
         self.btn_update.setVisible(status_mode)
+        self.btn_about.setVisible(status_mode)
         self.btn_cancel_dl.setVisible(self.mode == "busy")
         if self.mode == "busy":
             self.btn_cancel_dl.raise_()
@@ -943,10 +958,12 @@ class DataStatus(QWidget):
         by = h - bh - qRound(h * 0.05)
         self.btn_continue.setGeometry(qRound(w * 0.10), by, bw, bh)
         self.btn_update.setGeometry(qRound(w * 0.68), by, bw, bh)
+        self.btn_about.setGeometry((w - bw) // 2, by, bw, bh)
         f = QFont(self.font_family)
         f.setPixelSize(max(1, qRound(bh * 0.4 * scale)))
         self.btn_continue.setFont(f)
         self.btn_update.setFont(f)
+        self.btn_about.setFont(f)
         # Cancel sits centred below the progress bar in the busy screen.
         self.btn_cancel_dl.setGeometry((w - bw) // 2, qRound(h * 0.62), bw, bh)
         self.btn_cancel_dl.setFont(f)
