@@ -89,6 +89,11 @@ for r in con.execute(\"SELECT icao, name, lat, lon, elev_ft FROM airports WHERE 
 
 ## 2. CIFP — fallback airport data (also used by Virtual VFR)
 
+> **Deprecated for Virtual VFR (CIFP1).** With SVS enabled the legacy Virtual
+> VFR overlay no longer loads CIFP, so an SVS install needs none of this
+> section. It applies only to a `virtual_vfr` running without SVS, which is
+> itself deprecated and slated for removal.
+
 CIFP (Coded Instrument Flight Procedures) is the airline-grade IFR
 procedure database. SVS uses it as a fallback when NASR isn't built,
 but the Virtual VFR feature in pyEfis depends on it directly — so
