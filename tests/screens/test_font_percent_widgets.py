@@ -201,3 +201,30 @@ def test_listbox_font_percent_scales_text_and_rows(fix, qtbot):
     # Rows follow the font through resizeRowsToContents().
     assert half.table.rowHeight(0) < base.table.rowHeight(0)
 
+
+# -- data_status (#231) / data_annunciation (#232) ----------------------------
+
+def test_data_status_font_percent_scales_every_text_size(fix, qtbot, tmp_path):
+    opts = {"status_path": str(tmp_path / "none.json")}
+    base = _build(qtbot, "data_status", opts)
+    half = _build(qtbot, "data_status", {**opts, "font_percent": 0.5})
+    row_h = base.row_h
+    assert half.row_h == row_h            # geometry does not scale
+    assert base.font.pixelSize() == qRound(row_h * 0.62)
+    assert base.title_font.pixelSize() == qRound(row_h * 0.85)
+    assert half.font.pixelSize() == qRound(row_h * 0.62 * 0.5)
+    assert half.title_font.pixelSize() == qRound(row_h * 0.85 * 0.5)
+    assert (half.btn_continue.font().pixelSize()
+            < base.btn_continue.font().pixelSize())
+    assert half.btn_continue.geometry() == base.btn_continue.geometry()
+
+
+def test_data_annunciation_font_percent_scales_flag_text(fix, qtbot, tmp_path):
+    opts = {"status_path": str(tmp_path / "none.json")}
+    base = _build(qtbot, "data_annunciation", opts)
+    half = _build(qtbot, "data_annunciation", {**opts, "font_percent": 0.5})
+    h = base.height()
+    assert base.font.pixelSize() == max(8, qRound(h * 0.7))
+    assert half.font.pixelSize() == max(8, qRound(h * 0.7 * 0.5))
+    assert half.font.pixelSize() < base.font.pixelSize()
+

@@ -179,7 +179,8 @@ def build_data_status(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = (config or {}).get("options", {}) or {}
-    kwargs = {"parent": screen, "font_family": font_family}
+    kwargs = {"parent": screen, "font_family": font_family,
+              "font_percent": font_percent}
     if "status_path" in opts:
         kwargs["status_path"] = opts["status_path"]
     if "continue_screen" in opts:
@@ -193,7 +194,8 @@ def build_data_annunciation(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = (config or {}).get("options", {}) or {}
-    kwargs = {"parent": screen, "font_family": font_family}
+    kwargs = {"parent": screen, "font_family": font_family,
+              "font_percent": font_percent}
     if "status_path" in opts:
         kwargs["status_path"] = opts["status_path"]
     if "target_screen" in opts:
