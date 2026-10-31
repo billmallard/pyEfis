@@ -121,12 +121,12 @@ and the mapper consumes it (encoder keys are relative by convention).
 | `BARO` | exists (`ahrs.yaml`) | inHg; fine 0.01, coarse 0.1 |
 | `HEADBUG` | exists (`ahrs.yaml`) | degrees; wraps 0-359 (see `changeValueWrap`) |
 | `COURSE` | exists (`ahrs.yaml`) | degrees; wraps; proven via X-Plane RREF work |
-| `ALTSEL` | exists (`custom.yaml`) | selected altitude / altitude bug, ft; fine 100, coarse 1000. CAN-FIX 461 Selected Altitude matches it (DINT ft, -1000 to 60000). pyEfis also writes it from the tape box (#310) |
+| `ALTSEL` | exists (`gcu.yaml`, fix-gateway #90) | selected altitude / altitude bug, ft; fine 100, coarse 1000. CAN-FIX 461 Selected Altitude matches it (DINT ft, -1000 to 60000). pyEfis also writes it from the tape box (#310) |
 | COM/NAV freqs | later | `com_radio.yaml` already defines radio keys; phase 3 |
 
 ### Edit focus (the one genuinely new idea)
 
-- `GCUSEL` (**to add**, string): the currently focused edit target —
+- `GCUSEL` (exists, `gcu.yaml`, fix-gateway #90; string): the currently focused edit target —
   `"BARO" | "HDG" | "CRS" | "ALT" | "NONE"` (extensible). Written ONLY by
   the mapper. TTL/auto-revert to `NONE` after ~10 s idle (mapper-enforced),
   so a bumped knob hours later doesn't silently retune something.
@@ -202,8 +202,11 @@ Deliberately NO direct pyEfis coupling.
 
 ## 7. Phases + acceptance
 
-- **P0 — contract:** this doc; add `ALTSEL` + `GCUSEL` to fix-gateway
-  custom.yaml. Accept: keys visible in netfix.
+- **P0 — contract:** this doc; add `ALTSEL` + `GCUSEL` to fix-gateway.
+  Accept: keys visible in netfix. *(Done. They first went into
+  `custom.yaml`, which an update never replaces once a user has edited
+  it, so older installs had to add them by hand. fix-gateway #90 moved
+  them to the shipped `database/gcu.yaml`.)*
 - **P1 — Octavi bridge + mapper:** daemon + `gcu` plugin; drive
   BARO/HEADBUG/COURSE/ALTSEL from the Octavi against X-Plane + main PFD.
   Accept: all four set-points editable by feel; focus annunciated on the
