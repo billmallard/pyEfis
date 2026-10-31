@@ -354,6 +354,60 @@ def test_read_route_reflects_published_plan(fix):
     assert route.waypoints[0].type == "fix"
 
 
+def _wp(ident, lat, lon):
+    return model.Waypoint(id=ident, type="fix", lat=lat, lon=lon)
+
+
+ROUTE_327 = [_wp("KSBA", 34.426, -119.840), _wp("GVO", 34.531, -120.091),
+             _wp("RZS", 34.509, -119.771), _wp("KSMX", 34.899, -120.458)]
+
+
+def test_unnamed_plan_name_follows_each_append(fix):
+    """pyEfis #327: the editor appends one waypoint at a time and re-reads
+    the plan from the bus after each publish. The first publish wrote the
+    default "KSBA-KSBA" to FPLNAME; reading that back as an explicit name
+    froze it there for the whole route."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    plan = model.FlightPlan()
+    names = []
+    for wp in ROUTE_327:
+        plan.insert_after(plan.count - 1, wp)
+        bridge.publish(plan)
+        plan = bridge.read_plan()
+        names.append(fix.db.get_item("FPLNAME").value)
+        assert plan.name == ""
+    assert names == ["KSBA-KSBA", "KSBA-GVO", "KSBA-RZS", "KSBA-KSMX"]
+    assert bridge.read_route().name == "KSBA-KSMX"
+
+
+def test_pilot_name_survives_the_bus_and_later_edits(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    plan = model.FlightPlan(name="COAST RUN", waypoints=ROUTE_327[:2])
+    bridge.publish(plan)
+    plan = bridge.read_plan()
+    assert plan.name == "COAST RUN"
+    plan.insert_after(plan.count - 1, ROUTE_327[3])
+    bridge.publish(plan)
+    assert bridge.read_plan().name == "COAST RUN"
+    assert fix.db.get_item("FPLNAME").value == "COAST RUN"
+
+
+def test_route_to_plan_reads_default_name_as_unnamed():
+    """A restarted display (no in-process state) sees the same thing: the
+    rule is the bus name against the bus slots, nothing remembered."""
+    slots = [fixbridge.RouteSlot(id=w.id, lat=w.lat, lon=w.lon, type="fix", role="none")
+             for w in ROUTE_327[:2]]
+    auto = fixbridge.RouteBlock(name="KSBA-GVO", seq=1, waypoints=slots, segments=[])
+    stale = fixbridge.RouteBlock(name="KSBA-KSBA", seq=1, waypoints=slots, segments=[])
+    assert fixbridge.route_to_plan(auto).name == ""
+    assert fixbridge.route_to_plan(auto).default_name() == "KSBA-GVO"
+    # A name that is not this slot set's default (here the stale value an
+    # older display published) is kept: it cannot be told from a pilot name.
+    assert fixbridge.route_to_plan(stale).name == "KSBA-KSBA"
+
+
 def test_read_engine_reports_values_and_quality(fix):
     _define_all_fp1_keys(fix)
     bridge = fixbridge.FixBridge(fix)
