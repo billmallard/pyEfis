@@ -27,6 +27,7 @@ SVS is disabled by default. Enable in screen YAML:
 import math
 import os
 import sqlite3
+import re
 import struct
 import threading
 import logging
@@ -573,9 +574,14 @@ class SVSRenderer:
         # at 30 m spacing — finer detail than the cockpit display can
         # resolve at typical SVS ranges, and a real CPU bottleneck on
         # the Python projection loop. None = use WaterDB's default.
+        # Rows with stored triangles are exempt (#100) — the cap only
+        # applies to legacy untessellated packs.
         self.water_db = WaterDB(
             config.get("water_db_path", "") or None,
             max_vertices=config.get("water_max_vertices"))
+        # One-shot flag for the triangle/vertex mismatch warning in
+        # _collect_water_sync (#100).
+        self._water_index_warned = False
         # Major-highway polylines (issue #35) — OSM motorway/trunk
         # from tools/build_highway_db.py. Optional like everything.
         from pyefis.instruments.ai.highway_db import HighwayDB
@@ -742,6 +748,15 @@ class SVSRenderer:
         # drop is ~2,100 ft — without it distant ridges render too
         # high and the horizon never dips. Config-gated for A/B.
         self.earth_curvature = bool(config.get("earth_curvature", True))
+
+        # PAPI (CIFP1 / CAP-123): drawn only at runway ends whose NASR
+        # record carries a PAPI (P2*/P4*) and a published visual glide
+        # path angle -- never the legacy VirtualVfr's assumed 3 degrees
+        # on every runway. papi_range_nm is the FAA's daytime visual range.
+        self.papi_enabled = bool(config.get("papi", True))
+        self.papi_range_nm = float(config.get("papi_range_nm", 5.0))
+        self._papi_cand_key = None
+        self._papi_cand = []
 
         # Clipmap terrain (P8 Track 1a): nested world-snapped grid
         # levels. cells = grid resolution per level; levels doubles
@@ -1636,6 +1651,10 @@ class SVSRenderer:
                     "thr2_marking": r.thr2_marking,
                     "thr1_displaced_ft": r.thr1_displaced_ft,
                     "thr2_displaced_ft": r.thr2_displaced_ft,
+                    "thr1_vgsi_type": getattr(r, "thr1_vgsi_type", None),
+                    "thr2_vgsi_type": getattr(r, "thr2_vgsi_type", None),
+                    "thr1_visual_gpa": getattr(r, "thr1_visual_gpa", None),
+                    "thr2_visual_gpa": getattr(r, "thr2_visual_gpa", None),
                 } for r in ap.runways]
                 yield label, ap.ref_lat, ap.ref_lon, ap.elev_ft, runways
 
@@ -1813,9 +1832,22 @@ class SVSRenderer:
                 tri_idx[1::3] = np.arange(1, n_v - 1, dtype=np.int32)
                 tri_idx[2::3] = np.arange(2, n_v,     dtype=np.int32)
             else:
-                tri_idx = np.asarray(tri_idx, dtype=np.int32)
-            # Clip indices defensively; the build tool may emit one
-            # malformed entry on a tessellation edge case.
+                tri_idx = np.array(tri_idx, dtype=np.int32)
+                # An index past the vertex array means the row's
+                # triangles and vertices disagree (#100: a reader-side
+                # re-decimation, or a malformed build). Say so once,
+                # with enough to find the row, instead of letting the
+                # clip below silently render it as shattered water.
+                top = int(tri_idx.max()) if tri_idx.size else -1
+                if top >= n_v and not self._water_index_warned:
+                    self._water_index_warned = True
+                    log.warning(
+                        "SVS water: polygon id=%s has triangle index %d "
+                        "but only %d vertices; clipping (further rows "
+                        "not reported)",
+                        getattr(poly, "id", None), top, n_v)
+            # Clip indices defensively so a malformed row cannot index
+            # out of bounds.
             np.clip(tri_idx, 0, n_v - 1, out=tri_idx)
             verts_np = np.asarray(verts, dtype=np.float32)
             picked = verts_np[tri_idx]   # (n_idx, 2) — fancy indexing
@@ -2186,6 +2218,157 @@ class SVSRenderer:
                 result[drgba] = np.asarray(by_color_m[name],
                                            dtype=np.float32)
         return result
+
+    # ------------------------------------------------------------------
+    # PAPI (CIFP1 / CAP-123, docs/svs_papi_plan.md). Replaces the legacy
+    # VirtualVfr PAPI, which painted four lights beside EVERY runway on an
+    # assumed 3-degree path. Here a row is drawn only where NASR says a
+    # PAPI is installed (vgsi_code P2L/P2R/P4L/P4R), on the published
+    # visual glide path angle, on the published side. Unit settings follow
+    # FAA AC 150/5340-30: a 4-box row is set at GPA +30', +10', -10', -30'
+    # from the runway outward, a 2-box row at +15' / -15'; a unit shows
+    # white when the eye is above its setting. The red/white split moves
+    # with altitude, so the row is rebuilt per frame -- only the candidate
+    # runway-end list is cached, and it is a handful of quads.
+    # ------------------------------------------------------------------
+    _PAPI_ALONG_FT = 1000.0     # box abeam the aiming point
+    _PAPI_EDGE_FT = 50.0        # inboard unit to runway edge (AC: 50 ft)
+    _PAPI_SPACING_FT = 30.0     # unit-to-unit spacing (AC: 20-30 ft)
+    _PAPI_LIGHT_FT = 6.0        # drawn light size at close range
+    _PAPI_LIGHT_PX = 6.0        # ...floored so the lights stay visible
+    _PAPI_SPACING_PX = 10.0     # far away, like the legacy fixed-pixel row
+    _PAPI_EDGE_PX = 6.0
+    _PAPI_AZIMUTH_DEG = 10.0    # PAPI horizontal coverage, each side of CL
+    _PAPI_RE = re.compile(r"^P([24])([LR])$")
+
+    @staticmethod
+    def _papi_settings(gpa_deg, n_boxes):
+        """Unit angle settings, inboard (nearest the runway) first."""
+        if n_boxes == 2:
+            return [gpa_deg + 0.25, gpa_deg - 0.25]
+        return [gpa_deg + 0.5, gpa_deg + 1.0 / 6.0,
+                gpa_deg - 1.0 / 6.0, gpa_deg - 0.5]
+
+    @classmethod
+    def _papi_red_count(cls, angle_deg, gpa_deg, n_boxes=4):
+        """How many units show red at ``angle_deg`` above the box. On the
+        published path a 4-box row reads 2 red / 2 white, a 2-box row
+        1 / 1; low adds red from the outboard unit inward."""
+        return sum(1 for s in cls._papi_settings(gpa_deg, n_boxes)
+                   if angle_deg < s)
+
+    def _papi_candidates(self, ac_lat, ac_lon):
+        """Runway ends near enough to matter that carry a PAPI with a
+        published angle. Rebuilt only when the airports list changes or
+        the aircraft crosses a collect-key step."""
+        airports = self._get_airports_cached(ac_lat, ac_lon)
+        key = self._collect_key(ac_lat, ac_lon, self.range_nm)
+        if (self._papi_cand_key is not None
+                and self._papi_cand_key[0] == key
+                and self._papi_cand_key[1] is airports):
+            return self._papi_cand
+        FT = 364491.0
+        reach_ft = (self.papi_range_nm + 3.0) * 6076.12
+        cands = []
+        for _label, _rl, _rn, _re, runways in airports:
+            for rwy in runways:
+                for i, j in ((1, 2), (2, 1)):
+                    m = self._PAPI_RE.match(
+                        (rwy.get(f"thr{i}_vgsi_type") or "").strip())
+                    gpa = rwy.get(f"thr{i}_visual_gpa")
+                    if m is None or not gpa or gpa <= 0:
+                        continue
+                    t_lat, t_lon = rwy[f"thr{i}_lat"], rwy[f"thr{i}_lon"]
+                    o_lat, o_lon = rwy[f"thr{j}_lat"], rwy[f"thr{j}_lon"]
+                    cos_t = math.cos(math.radians(t_lat))
+                    un = (o_lat - t_lat) * FT
+                    ue = (o_lon - t_lon) * FT * cos_t
+                    length = math.hypot(un, ue)
+                    if length < 1.0:
+                        continue
+                    un, ue = un / length, ue / length
+                    along = (float(rwy.get(f"thr{i}_displaced_ft") or 0.0)
+                             + min(self._PAPI_ALONG_FT, 0.3 * length))
+                    ref_lat = t_lat + un * along / FT
+                    ref_lon = t_lon + ue * along / (FT * cos_t)
+                    if math.hypot((ref_lat - ac_lat) * FT,
+                                  (ref_lon - ac_lon) * FT * cos_t) > reach_ft:
+                        continue
+                    # Outboard unit vector: left of the landing direction
+                    # for an "L" box, right for "R".
+                    if m.group(2) == "L":
+                        sn, se = ue, -un
+                    else:
+                        sn, se = -ue, un
+                    cands.append({
+                        "lat": ref_lat, "lon": ref_lon, "cos": cos_t,
+                        "elev": float(rwy.get(f"thr{i}_elev_ft") or 0.0),
+                        "un": un, "ue": ue, "sn": sn, "se": se,
+                        "hw": float(rwy.get("width_ft") or 100.0) / 2.0,
+                        "gpa": float(gpa), "n": int(m.group(1)),
+                    })
+        self._papi_cand = cands
+        self._papi_cand_key = (key, airports)
+        return cands
+
+    def _collect_papi(self, ac_lat, ac_lon, ac_alt_ft, heading_deg, ppd):
+        """Per-frame PAPI geometry: ``{"red": Nx3, "white": Nx3}`` world
+        triangles (either may be None), or None when no row is in view.
+
+        A row is drawn when the aircraft is within ``papi_range_nm`` of
+        the box, on the approach side and inside the PAPI's +/-10 degree
+        azimuth coverage, the box is ahead of the nose, and terrain does
+        not mask it."""
+        if (not self.papi_enabled or not ppd
+                or getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready):
+            return None
+        FT = 364491.0
+        DEG_PER_RAD = 57.29577951308232
+        range_ft = self.papi_range_nm * 6076.12
+        max_lat = math.tan(math.radians(self._PAPI_AZIMUTH_DEG))
+        red, white = [], []
+        for c in self._papi_candidates(ac_lat, ac_lon):
+            # Aircraft relative to the box, local feet (north, east).
+            n = (ac_lat - c["lat"]) * FT
+            e = (ac_lon - c["lon"]) * FT * c["cos"]
+            dist = math.hypot(n, e)
+            if dist > range_ft or dist < 1.0:
+                continue
+            along = -(n * c["un"] + e * c["ue"])
+            if along <= 0.0 or abs(e * c["un"] - n * c["ue"]) > along * max_lat:
+                continue
+            brg = math.degrees(math.atan2(-e, -n))
+            if heading_deg is not None and \
+                    abs((brg - heading_deg + 180.0) % 360.0 - 180.0) > 90.0:
+                continue
+            if self._los_masked(ac_lat, ac_lon, ac_alt_ft, c["lat"], c["lon"],
+                                c["elev"] + 10.0,
+                                math.cos(math.radians(ac_lat))):
+                continue
+            angle = math.degrees(math.atan2(ac_alt_ft - c["elev"], dist))
+            px_ft = dist / (DEG_PER_RAD * ppd)
+            size = max(self._PAPI_LIGHT_FT, self._PAPI_LIGHT_PX * px_ft)
+            spacing = max(self._PAPI_SPACING_FT, self._PAPI_SPACING_PX * px_ft)
+            inboard = c["hw"] + max(self._PAPI_EDGE_FT,
+                                    self._PAPI_EDGE_PX * px_ft)
+            half = size / 2.0
+            for k, setting in enumerate(self._papi_settings(c["gpa"], c["n"])):
+                off = inboard + k * spacing
+                verts = []
+                for dx, dz in ((-half, 0.0), (half, 0.0), (half, size),
+                               (-half, size)):
+                    o = off + dx
+                    verts.append((c["lat"] + c["sn"] * o / FT,
+                                  c["lon"] + c["se"] * o / (FT * c["cos"]),
+                                  c["elev"] + dz))
+                q0, q1, q2, q3 = verts
+                (white if angle >= setting else red).extend(
+                    (q0, q1, q2, q0, q2, q3))
+        if not red and not white:
+            return None
+        return {"red": np.asarray(red, dtype=np.float32) if red else None,
+                "white": np.asarray(white, dtype=np.float32) if white else None}
 
     # ------------------------------------------------------------------
     # Phase 5: airport flags + identifier text on the GPU. The pole is
