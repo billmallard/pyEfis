@@ -575,6 +575,70 @@ def test_menu_store_writes_a_catalog_file(qtbot, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Toast expiry (pyEfis #323)
+# ---------------------------------------------------------------------------
+def test_store_toast_clears_after_timeout(fix, qtbot, tmp_path):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.toast_ms = 50
+    _install_catalog(w, fp_catalog.Catalog(tmp_path))
+    w._plan = fp_model.FlightPlan(name="KSBA-KSMX", waypoints=[
+        fp_model.Waypoint(id="KSBA", type="airport", lat=34.4, lon=-119.8),
+        fp_model.Waypoint(id="KSMX", type="airport", lat=34.9, lon=-120.5),
+    ])
+    w._menu_store()
+    assert w._message == "STORED"
+    qtbot.waitUntil(lambda: w._message == "", timeout=2000)
+    assert not w._toast_timer.isActive()
+
+
+def test_new_toast_restarts_the_timer(fix, qtbot):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.toast_ms = 300
+    w._message = "STORED"
+    qtbot.wait(200)
+    w._message = "ROUTE FULL"
+    # Past the first message's deadline, inside the second's.
+    qtbot.wait(200)
+    assert w._message == "ROUTE FULL"
+    qtbot.waitUntil(lambda: w._message == "", timeout=2000)
+
+
+def test_toast_default_timeout_is_finite():
+    assert 0 < flight_plan.TOAST_MS <= 10000
+
+
+def test_tap_clears_toast(fix, qtbot):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.resize(400, 400)
+    w._message = "STORED"
+    # A tap on empty space (no target there) still dismisses it.
+    w._tap_targets = []
+    w._tap_kinds = []
+    QTest.mouseClick(w, Qt.MouseButton.LeftButton, pos=w.rect().center())
+    assert w._message == ""
+    assert not w._toast_timer.isActive()
+
+
+def test_tap_whose_callback_raises_a_toast_keeps_it(fix, qtbot):
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.resize(400, 400)
+    w._message = "STORED"
+
+    def raise_toast():
+        w._message = "NO AIRWAYS AT KSBA"
+
+    w._tap_targets = [(0, 0, 400, 400, raise_toast)]
+    w._tap_kinds = [None]
+    QTest.mouseClick(w, Qt.MouseButton.LeftButton, pos=w.rect().center())
+    assert w._message == "NO AIRWAYS AT KSBA"
+    assert w._toast_timer.isActive()
+
+
+# ---------------------------------------------------------------------------
 # HMI verbs (lockstep coverage is tests/editor; this covers wiring + dispatch)
 # ---------------------------------------------------------------------------
 def test_all_hmi_verbs_registered():

@@ -92,6 +92,10 @@ ENC_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
 # long-press convention to inherit, so it is set here and documented in
 # docs/flight_plan_widget.md.
 ENC_LONG_PRESS_MS = 600
+# How long a FPL-page toast (STORED, NO AIRWAYS AT x, ROUTE FULL, an error)
+# stays up before it clears itself (pyEfis #323: with no expiry, STORED sat
+# over the LEG/DIRECT/SUSP badge for the rest of a bench session).
+TOAST_MS = 4000
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
 
@@ -177,6 +181,12 @@ class FlightPlan(QWidget):
         self._plan = fp_model.FlightPlan()
         self._plan_dirty = False
         self._engine = {}
+        # Every assignment to _message goes through the property below, which
+        # (re)starts this one-shot timer; a tap anywhere clears it early.
+        self.toast_ms = TOAST_MS
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._clear_toast)
         self._message = ""
         self._cdi_scale_choice = "AUTO"
 
@@ -265,6 +275,24 @@ class FlightPlan(QWidget):
             self._sync_engine_from_bridge()
             self._bridge.add_listener(self._on_bridge_change)
         self._connect_hmi()
+
+    # -- toast ----------------------------------------------------------------
+    @property
+    def _message(self):
+        return self._toast_text
+
+    @_message.setter
+    def _message(self, text):
+        self._toast_text = text
+        if text:
+            self._toast_timer.start(self.toast_ms)
+        else:
+            self._toast_timer.stop()
+
+    def _clear_toast(self):
+        if self._toast_text:
+            self._message = ""
+            self.update()
 
     # -- HMI action hub ---------------------------------------------------
     def _connect_hmi(self):
@@ -1899,6 +1927,9 @@ class FlightPlan(QWidget):
         self._tap_kinds.append(kind)
 
     def mousePressEvent(self, event):
+        # Any tap dismisses the toast; a callback that raises a new one below
+        # sets it again (and restarts the timer).
+        self._clear_toast()
         x, y = event.pos().x(), event.pos().y()
         for tx, ty, tw, th, callback in reversed(self._tap_targets):
             if tx <= x <= tx + tw and ty <= y <= ty + th:
