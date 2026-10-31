@@ -216,6 +216,14 @@ svs:
     perf_log: true                  # optional, default false
 ```
 
+`water_max_vertices` stride-decimates only legacy rows that carry no
+stored `triangles`. A tessellated row (every row a current
+`tools/build_water_db.py` emits) keeps its build-time geometry whatever
+the reader cap, because its triangle indices address the full stored
+vertex array (#100); the builder's `--max-vertices` is the bound for
+those rows. If a row's indices still run past its vertex count, the SVS
+logs one warning naming the row id and both counts.
+
 WaterDB construction is "missing file means disabled" — there is no
 fatal failure if the path is wrong, just no water overlay.
 
