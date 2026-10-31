@@ -179,6 +179,39 @@ airways off)
 Concentric half/full-range rings with distance labels — the
 provider-model proof (section 4): trivial by design, ships v1.
 
+### 5.6 Map style: nav-data-only (`map_style: nav_only`, G12, billmallard/pyEfis#135)
+
+`map_style` selects a presentation, not a layer. `standard` (the
+default) is the terrain map above, and renders byte-identical to the
+map before this option existed. `nav_only` is a nav-data map on a plain
+background, the substrate for the Navigation Display mode (#134):
+
+- **Terrain relief off**, whatever `layer_terrain` and `terrain_mode`
+  say. Those two keep their meaning under `standard`.
+- **Water stays, on its own switch.** `layer_water` (default on) draws
+  lakes and coastline as a flat fill. It uses the same sources as the
+  relief render (tile void and sea level, the pack's `.wmask`, the
+  water-pack polygons under `water_polygon_max_nm`) with land left
+  transparent, so the coastline matches the terrain map exactly. With
+  no terrain pack configured, the water-pack polygons alone draw. Under
+  `nav_only` the terrain layer IS this water renderer, so
+  `set_layer("terrain")` toggles water.
+- **Every other layer keeps its own `layer_<id>` switch.** Rivers and
+  roads are geographic reference, not relief, so the preset leaves them
+  to their keys.
+- **Palette.** The background is black, the panel's own darkest state:
+  sunlight reflection sets the floor either way, and black gives every
+  symbol the full luminance range. Each retained layer was recoloured
+  where it under- or over-contrasted against black. Symbols are at
+  least 3:1 against both the background and the water fill, labels at
+  least 4.5:1. Range rings and roads are recessive reference lines, at
+  least 3:1 against the background only. `road_color` and `river_color`
+  swap to the style's default only when left at the standard default;
+  an explicit colour still wins. Both tables live in
+  `instruments/map/layers/__init__.py`. Airspace (section 6) adds its
+  keys to both when it lands. The computed ratios are a bound; the
+  device check is the glass.
+
 ## 6. Future layers (design targets for the provider seam)
 
 Named now so the interfaces stay honest: `traffic` (ADS-B via
@@ -280,7 +313,8 @@ flight plan with Done/Cancel and nine-level Undo (3-17..3-19).
 - Factory registration + Props: `range_nm`, `orientation`,
   `ownship_position`, `layers` (per-layer default-on booleans:
   `layer_terrain`, `layer_airports`, `layer_navaids`,
-  `layer_airways`, `layer_flight_plan`, `layer_range_rings`),
+  `layer_airways`, `layer_flight_plan`, `layer_range_rings`,
+  `layer_water`), `map_style` (section 5.6),
   `terrain_mode`, symbol options, `db paths` (default to
   /data/makerplane-data locations).
 - Editor twin: static top-down preview — a canvas rendering a small

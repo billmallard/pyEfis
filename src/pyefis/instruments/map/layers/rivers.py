@@ -21,6 +21,7 @@ class RiversLayer(RoadsLayer):
     _DB_OPTION = "river_db_path"
     _COLOR_OPTION = "river_color"
     _DEFAULT_COLOR = "#4a6d8c"  # muted water blue
+    _PALETTE_DEFAULT_KEY = "river_default"
     _EXPAND_LINKS = False       # waterways have no _link ramps
 
     # LOD bands (max range NM -> waterway classes). Major rivers persist to

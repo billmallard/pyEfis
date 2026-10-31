@@ -26,7 +26,8 @@ from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
-from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
+from pyefis.instruments.map.layers import (MapLayer, palette, range_bucket,
+                                           register_layer)
 
 #: per-window vertex budget (worker-side; metro windows are dense)
 _MAX_VERTICES = 150000
@@ -52,6 +53,8 @@ class RoadsLayer(MapLayer):
     _DB_OPTION = "highway_db_path"
     _COLOR_OPTION = "road_color"
     _DEFAULT_COLOR = "#c0c0c0"
+    #: palette key for this layer's default colour under a ``map_style``
+    _PALETTE_DEFAULT_KEY = "road_default"
 
     # LOD bands: (max range NM, base classes drawn at/below it). Cumulative
     # and coarsest-last; above the last band the layer is hidden. Each base
@@ -87,6 +90,11 @@ class RoadsLayer(MapLayer):
         self._owner = owner
         self._color = str(getattr(owner, self._COLOR_OPTION, "")
                           or self._DEFAULT_COLOR)
+        # A map_style swaps the DEFAULT colour only; a colour the screen
+        # set explicitly still wins (G12: nav_only dims roads that would
+        # otherwise be the brightest lines on a black background).
+        if self._color.strip().lower() == self._DEFAULT_COLOR:
+            self._color = palette(owner)[self._PALETTE_DEFAULT_KEY]
         path = str(getattr(owner, self._DB_OPTION, "") or "")
         if path:
             try:

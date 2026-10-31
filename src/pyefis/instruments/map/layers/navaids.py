@@ -18,11 +18,12 @@ from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
 
 from pyefis.flightplan.waypoints import Waypoint
-from pyefis.instruments.map.layers import (MapLayer, hit_distance, range_bucket,
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           hit_distance, qcolor, range_bucket,
                                            register_layer)
 
-BLUE = QColor(70, 110, 200)
-DARKBLUE = QColor(40, 60, 130)
+BLUE = qcolor(STANDARD_PALETTE["navaid"])
+DARKBLUE = qcolor(STANDARD_PALETTE["fix"])
 
 
 class _DbLayer(MapLayer):
@@ -183,17 +184,18 @@ class NavaidsLayer(_DbLayer):
         f.setPixelSize(max(8, int(x.w * 0.022)))
         p.setFont(f)
         show_freq = x.range_nm <= 40
+        blue = qcolor(getattr(x, "palette", STANDARD_PALETTE)["navaid"])
         for nid, ntype, freq, lat, lon in rows:
             c = x.to_screen(lat, lon)
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
-            pen = QPen(BLUE)
+            pen = QPen(blue)
             pen.setWidthF(max(1.2, r * 0.18))
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
             t = (ntype or "").upper()
             if "NDB" in t:
-                p.setPen(QPen(BLUE, 1))
+                p.setPen(QPen(blue, 1))
                 for ring, npts in ((r * 0.55, 8), (r, 12)):
                     for i in range(npts):
                         ang = 2 * math.pi * i / npts
@@ -201,7 +203,7 @@ class NavaidsLayer(_DbLayer):
                             QPointF(c.x() + ring * math.cos(ang),
                                     c.y() + ring * math.sin(ang)),
                             r * 0.07, r * 0.07)
-                p.setBrush(QBrush(BLUE))
+                p.setBrush(QBrush(blue))
                 p.drawEllipse(c, r * 0.14, r * 0.14)
             else:
                 # VOR family: hexagon + centre dot.
@@ -210,7 +212,7 @@ class NavaidsLayer(_DbLayer):
                             c.y() + r * math.sin(math.radians(a2)))
                     for a2 in range(0, 360, 60)])
                 p.drawPolygon(hexa)
-                p.setBrush(QBrush(BLUE))
+                p.setBrush(QBrush(blue))
                 p.drawEllipse(c, r * 0.14, r * 0.14)
             label = nid + ((" " + freq) if (show_freq and freq) else "")
             p.setPen(QPen(QColor(220, 230, 255)))
@@ -251,11 +253,13 @@ class FixesLayer(_DbLayer):
         f.setPixelSize(max(7, int(x.w * 0.018)))
         p.setFont(f)
         p.setBrush(Qt.BrushStyle.NoBrush)
+        pal = getattr(x, "palette", STANDARD_PALETTE)
+        fix_pen = QPen(qcolor(pal["fix"]), pal["fix_width"])
         for fid, lat, lon in rows:
             c = x.to_screen(lat, lon)
             if not (0 < c.x() < x.w and 0 < c.y() < x.h):
                 continue
-            p.setPen(QPen(DARKBLUE, 1.2))
+            p.setPen(fix_pen)
             p.drawPolygon(QPolygonF([
                 QPointF(c.x(), c.y() - s),
                 QPointF(c.x() + s * 0.87, c.y() + s * 0.5),
@@ -286,7 +290,7 @@ class AirwaysLayer(_DbLayer):
         rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
             return
-        pen = QPen(QColor(90, 130, 210, 170))
+        pen = QPen(qcolor(getattr(x, "palette", STANDARD_PALETTE)["airway"]))
         pen.setWidthF(max(1.0, x.w * 0.003))
         f = QFont(x.font_family)
         f.setPixelSize(max(7, int(x.w * 0.018)))
