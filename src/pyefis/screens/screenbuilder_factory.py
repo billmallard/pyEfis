@@ -207,6 +207,7 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
         lists=config["options"]["lists"],
         replace=replace,
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 

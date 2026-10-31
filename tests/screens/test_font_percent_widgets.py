@@ -175,3 +175,29 @@ def test_button_font_percent_never_grows_past_the_mask_fit(fix, qtbot):
     assert half._button.font().pointSizeF() == pytest.approx(fitted * 0.5)
     assert big._button.font().pointSizeF() == pytest.approx(fitted)
 
+
+# -- listbox (#230) -----------------------------------------------------------
+
+_LISTBOX = {"lists": [{"name": "List 1", "file": "list1.yaml"}]}
+
+
+def _listbox(qtbot, **extra):
+    return _build(qtbot, "listbox", {**_LISTBOX, **extra},
+                  config_path="tests/data/listbox/")
+
+
+def _sheet_px(listbox):
+    sizes = set(re.findall(r"font-size: (\d+)px;", listbox.table.styleSheet()))
+    assert len(sizes) == 1, sizes   # body and header carry the same size
+    return int(sizes.pop())
+
+
+def test_listbox_font_percent_scales_text_and_rows(fix, qtbot):
+    base = _listbox(qtbot)
+    half = _listbox(qtbot, font_percent=50)
+    h = base.height()
+    assert _sheet_px(base) == qRound(h * 7 / 100)
+    assert _sheet_px(half) == qRound(h * 7 / 100 * 0.5)
+    # Rows follow the font through resizeRowsToContents().
+    assert half.table.rowHeight(0) < base.table.rowHeight(0)
+
