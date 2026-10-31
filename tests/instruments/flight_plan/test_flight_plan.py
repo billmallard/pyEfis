@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtTest import QTest
 
@@ -501,6 +501,101 @@ def test_activate_leg_issues_act_command(fix, qtbot):
     w._row_menu_activate_leg()
     assert fix.db.get_item("FPLCMD").value == "1 ACT 2"
 
+
+
+# ---------------------------------------------------------------------------
+# Suspended at the MAP (G49, pyEfis #330): alert + "Fly the missed"
+# ---------------------------------------------------------------------------
+def _approach_plan():
+    roles = ("none", "iaf", "faf", "map", "mahp")
+    return fp_model.FlightPlan(name="APR", waypoints=[
+        fp_model.Waypoint(id=f"AP{i}", type="fix", lat=34.0 + 0.1 * i, lon=-119.0,
+                          role=role)
+        for i, role in enumerate(roles)
+    ])
+
+
+def _suspended_widget(fix, qtbot, act_leg, tf):
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.resize(480, 320)
+    w._plan = _approach_plan()
+    w._commit()
+    fix.db.set_value("FPLSTATE", 3)
+    fix.db.set_value("FPLACTLEG", act_leg)
+    fix.db.set_value("FPLTF", tf)
+    w._sync_engine_from_bridge()
+    return w
+
+
+def _menu_labels(w, monkeypatch):
+    seen = []
+    monkeypatch.setattr(w, "_paint_menu_list",
+                        lambda p, w_, h, items, *a, **k: seen.extend(lb for lb, _cb in items))
+    w._menu_open = True
+    w.grab()
+    w._menu_open = False
+    return seen
+
+
+def _banner_target(w):
+    w.grab()
+    hits = [t for t in w._tap_targets if t[4] == w._menu_suspend_resume]
+    return hits[0] if hits else None
+
+
+def test_map_auto_suspend_reads_fly_the_missed(fix, qtbot, monkeypatch):
+    # Engine auto-suspend: TO slot 4 is the MAP and the aircraft is past it.
+    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2)
+    assert w._plan.waypoints[3].role == "map"   # the role survived the bus round trip
+    assert w._suspended_at_map() is True
+    assert "Fly the missed" in _menu_labels(w, monkeypatch)
+    assert "Resume" not in _menu_labels(w, monkeypatch)
+
+
+@pytest.mark.parametrize("act_leg,tf", [
+    (2, 2),   # pilot SUSP past an IAF: not the MAP
+    (3, 1),   # pilot SUSP on the leg to the FAF
+    (4, 1),   # pilot SUSP on final, short of the MAP: TO, not FROM
+])
+def test_suspend_elsewhere_keeps_resume(fix, qtbot, monkeypatch, act_leg, tf):
+    w = _suspended_widget(fix, qtbot, act_leg=act_leg, tf=tf)
+    assert w._suspended_at_map() is False
+    labels = _menu_labels(w, monkeypatch)
+    assert "Resume" in labels and "Fly the missed" not in labels
+    assert _banner_target(w) is None
+
+
+def test_not_suspended_reads_suspend_and_shows_no_banner(fix, qtbot, monkeypatch):
+    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2)
+    fix.db.set_value("FPLSTATE", 1)
+    w._sync_engine_from_bridge()
+    assert "Suspend" in _menu_labels(w, monkeypatch)
+    assert _banner_target(w) is None
+
+
+def test_map_suspend_banner_sends_resume(fix, qtbot):
+    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2)
+    target = _banner_target(w)
+    assert target is not None, "no continue action on the FPL page at the MAP"
+    x, y, bw, bh, _cb = target
+    footer_top = w.height() - int(w._chrome_h(w.height(), 1.3, 0.18))
+    assert y + bh <= footer_top, "the banner must not cover the soft keys"
+    rows = [t for t, k in zip(w._tap_targets, w._tap_kinds) if k == "row"]
+    assert rows and all(ry + rh <= y for _x, ry, _w, rh, _c in rows), \
+        "the list must lay out above the banner, not under it"
+    QTest.mouseClick(w, Qt.MouseButton.LeftButton,
+                     pos=QPoint(int(x + bw / 2), int(y + bh / 2)))
+    assert fix.db.get_item("FPLCMD").value == "1 RESUME"
+
+
+def test_map_suspend_banner_yields_to_an_open_overlay(fix, qtbot):
+    w = _suspended_widget(fix, qtbot, act_leg=4, tf=2)
+    w._menu_open = True
+    # The menu carries the action itself; the banner's tap must not sit
+    # under the dimmed backdrop as a second, hidden target.
+    assert _banner_target(w) is None
 
 def test_row_colors_active_past_future(fix, qtbot):
     _define_all_fp1_keys(fix)
