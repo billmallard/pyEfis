@@ -36,6 +36,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QEvent, QTimer, QRectF, QProcess, qRound
 from PyQt6.QtGui import QColor, QFont, QPainter
+from pyefis.instruments.helpers import font_scale
 from PyQt6.QtWidgets import (QWidget, QPushButton, QCheckBox, QScrollArea,
                              QVBoxLayout, QHBoxLayout, QLabel)
 
@@ -546,10 +547,16 @@ class NoticeAccept(QWidget):
 class DataStatus(QWidget):
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  status_path=DEFAULT_STATUS_PATH, continue_screen="PFD",
-                 update_command="pyefis-data", about_screen="About"):
+                 update_command="pyefis-data", about_screen="About",
+                 font_percent=None):
         super().__init__(parent)
         self.font_family = font_family
         self.about_screen = about_screen
+        # Font size: a multiplier on the region-derived text sizes set in
+        # resizeEvent (pyEfis #231). Only text scales; rows, columns and the
+        # button rects stay where they are, and every text draw is clipped to
+        # its rect, so a large value clips rather than overlapping.
+        self.font_percent = font_percent
         self.status_path = Path(os.path.expanduser(status_path))
         self.continue_screen = continue_screen
         self.update_command = update_command
@@ -941,11 +948,11 @@ class DataStatus(QWidget):
     def resizeEvent(self, event):
         w, h = self.width(), self.height()
         self.row_h = max(16, qRound(h * 0.055))
+        scale = font_scale(self.font_percent)
         self.font = QFont(self.font_family)
-        self.font.setPixelSize(qRound(self.row_h * 0.62))
+        self.font.setPixelSize(max(1, qRound(self.row_h * 0.62 * scale)))
         self.title_font = QFont(self.font_family)
-        self.title_font.setPixelSize(qRound(self.row_h * 0.85))
-        self.font.setPixelSize(qRound(self.row_h * 0.62))
+        self.title_font.setPixelSize(max(1, qRound(self.row_h * 0.85 * scale)))
 
         bw, bh = qRound(w * 0.22), qRound(h * 0.10)
         by = h - bh - qRound(h * 0.05)
@@ -953,7 +960,7 @@ class DataStatus(QWidget):
         self.btn_update.setGeometry(qRound(w * 0.68), by, bw, bh)
         self.btn_about.setGeometry((w - bw) // 2, by, bw, bh)
         f = QFont(self.font_family)
-        f.setPixelSize(qRound(bh * 0.4))
+        f.setPixelSize(max(1, qRound(bh * 0.4 * scale)))
         self.btn_continue.setFont(f)
         self.btn_update.setFont(f)
         self.btn_about.setFont(f)
@@ -1064,9 +1071,15 @@ class DataAnnunciation(QWidget):
     """
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
-                 status_path=DEFAULT_STATUS_PATH, target_screen="DataStatus"):
+                 status_path=DEFAULT_STATUS_PATH, target_screen="DataStatus",
+                 font_percent=None):
         super().__init__(parent)
         self.font_family = font_family
+        # Font size: a multiplier on the height-derived flag text (pyEfis
+        # #232). The 8 px legibility floor stays; "DATA" is drawn clipped to
+        # the flag's rect, so text at the floor in a tiny flag truncates
+        # rather than spilling over the PFD around it.
+        self.font_percent = font_percent
         self.status_path = os.path.expanduser(status_path)
         self.target_screen = target_screen
         self.status = None
@@ -1095,7 +1108,8 @@ class DataAnnunciation(QWidget):
 
     def resizeEvent(self, event):
         self.font = QFont(self.font_family)
-        self.font.setPixelSize(max(8, qRound(self.height() * 0.7)))
+        self.font.setPixelSize(
+            max(8, qRound(self.height() * 0.7 * font_scale(self.font_percent))))
 
     def paintEvent(self, event):
         sev = worst_severity(self.status)
