@@ -7,7 +7,8 @@ GPS flight-path marker.
 
 **Virtual VFR** (`virtual_vfr`) is a subclass of the attitude indicator that
 adds geographic symbology — airports, runways, extended centerlines, PAPI, and
-navaids — projected onto the horizon from FAA CIFP/NASR data.
+navaids — projected onto the horizon from FAA CIFP data. That legacy overlay
+is **deprecated** in favour of SVS; see [`virtual_vfr`](#virtual_vfr).
 
 Both widgets can additionally render a **Synthetic Vision (SVS)** terrain view
 behind the pitch ladder. SVS is enabled the same way on either widget — through
@@ -101,6 +102,15 @@ pitch-ladder numerals and tick widths.
 ---
 
 ## `virtual_vfr`
+
+> **Deprecated: the legacy CIFP overlay.** The 2D runway/airport/navaid
+> overlay and its assumed-3-degree PAPI described in this section are
+> deprecated and will be removed; Synthetic Vision replaces them. **When the
+> `svs:` block has `enabled: true`, the legacy overlay is not loaded at all** --
+> no `PointOfView`, no CIFP read, and no `dbpath`/`indexpath` needed -- and the
+> SVS draws airports, runways and the PAPI (at the published angle, only where
+> installed) from the NASR airports pack. The `virtual_vfr` instrument type
+> itself stays: it is the host for SVS.
 
 Virtual VFR is the attitude indicator **plus a geographic overlay**. It
 subclasses `ai.AI`, so it inherits the full horizon, pitch ladder, bank scale,
@@ -203,6 +213,23 @@ renderer where to find terrain and feature data:
 | `dof_db_path` | obstacle sqlite (FAA Digital Obstacle File — towers/antennas) |
 | `water_db_path` | water-polygon sqlite (oceans, lakes, rivers) |
 | `highway_db_path` | highway/road sqlite |
+| `papi` | draw the installed PAPI rows (default `true`) -- see below |
+| `papi_range_nm` | PAPI visual range from the box, NM (default `5`) |
+
+### PAPI (CIFP1)
+
+The SVS draws a PAPI only at runway ends whose NASR record carries one
+(`vgsi_code` `P2L`/`P2R`/`P4L`/`P4R`) **and** a published visual glide path
+angle -- never an assumed 3 degrees. The row sits on the published side, abeam
+the 1000 ft aiming point, 50 ft outboard of the runway edge. Unit settings follow
+FAA AC 150/5340-30: a 4-box row is set at the published angle +30', +10', -10',
+-30' from the runway outward (on path: two red inboard, two white outboard), a
+2-box row at +/-15'. It shows inside the PAPI's +/-10 degree azimuth coverage,
+within `papi_range_nm`, ahead of the nose, and not behind terrain. Far away the
+lights are floored to a few pixels so the row stays readable. VASI, tri-colour
+and pulsating systems are not drawn yet. Unlike the legacy overlay, the SVS
+PAPI does **not** write the `GSI` FIX key -- `GSI` belongs to a real glideslope
+receiver.
 
 (If NASR is unavailable, the renderer falls back to `cifp_path` /
 `cifp_index_path` for airport data. Many other renderer-tuning keys exist —

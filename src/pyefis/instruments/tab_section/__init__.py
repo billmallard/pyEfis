@@ -47,8 +47,10 @@ nothing tab_section-specific about how a tab's contents get built or resized.
 
 import logging
 
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QFontInfo
 from PyQt6.QtWidgets import QWidget, QTabBar, QStackedWidget
+
+from pyefis.instruments.helpers import font_scale
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +69,19 @@ _TAB_BAR_SHAPE = {
     "right": QTabBar.Shape.RoundedEast,
 }
 
+# Legibility floor for a scaled tab label. The bar is sized from its own
+# sizeHint(), so a label at the floor still fits its tab -- the floor only
+# stops a small Font size from shrinking the text past readable (pyEfis #223).
+_MIN_TAB_LABEL_PX = 8
+
 
 class TabSection(QWidget):
     """Container instrument: an ordered set of named tabs, each a nested
     ``Screen`` built from its own ``layout``/``instruments`` config, laid out
     against this widget's own box rather than the enclosing screen's."""
 
-    def __init__(self, screen, tabs=None, default_tab=0, font_family=None):
+    def __init__(self, screen, tabs=None, default_tab=0, font_family=None,
+                 font_percent=None):
         super().__init__(screen)
         # Deferred import: screenbuilder.py imports screenbuilder_factory,
         # which imports this module to bind build_tab_section -- importing
@@ -92,6 +100,8 @@ class TabSection(QWidget):
             font = QFont(self.tab_bar.font())
             font.setFamily(font_family)
             self.tab_bar.setFont(font)
+        # The inherited label size, before any Font size scaling.
+        self._base_font = QFont(self.tab_bar.font())
         self.stack = QStackedWidget(self)
 
         config_parent = screen.parent
@@ -112,6 +122,7 @@ class TabSection(QWidget):
             self._pages.append(page)
 
         self.default_tab = default_tab
+        self.font_percent = font_percent
         self._show_tab(default_tab if 0 <= default_tab < len(self._pages) else 0)
         self.tab_bar.currentChanged.connect(self._show_tab)
 
@@ -132,6 +143,38 @@ class TabSection(QWidget):
                 self._show_tab(i)
                 return True
         return False
+
+    @property
+    def font_percent(self):
+        return self._font_percent
+
+    @font_percent.setter
+    def font_percent(self, value):
+        """Font size scales the tab LABELS only, as a multiplier on the
+        inherited label size -- not a fraction of this widget's height, which
+        is the whole container and would give huge labels (pyEfis #223).
+        Unset keeps today's size. A property so the apply_options setattr
+        after construction relayouts too: the bar is sized from sizeHint()."""
+        self._font_percent = value
+        font = QFont(self._base_font)
+        scale = font_scale(value)
+        if scale != 1.0:
+            font.setPixelSize(
+                max(_MIN_TAB_LABEL_PX, round(self._base_label_px() * scale)))
+        self.tab_bar.setFont(font)
+        self._layout_pages()
+
+    def _base_label_px(self):
+        """The inherited label size in pixels: the resolved size if the font
+        system reports one, else the requested size (a point size converted
+        at this widget's DPI), else a nominal 12 px."""
+        font = self._base_font
+        for px in (QFontInfo(font).pixelSize(), font.pixelSize()):
+            if px > 0:
+                return px
+        if font.pointSizeF() > 0:
+            return font.pointSizeF() * self.logicalDpiY() / 72.0
+        return 12
 
     @property
     def fg_color(self):
