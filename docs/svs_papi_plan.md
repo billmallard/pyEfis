@@ -1,5 +1,15 @@
 # SVS VASI/PAPI approach guidance — adoption plan
 
+> **Status (CIFP1, 2026-10-31): PAPI shipped, data-driven.** Bill's CIFP1
+> ruling skipped Tier 1: the GL SVS draws a PAPI only where NASR records one
+> (`P2*`/`P4*`), at the published visual glide path angle and side -- Tier 2's
+> data (VG1, `vgsi_code`/`visual_gpa`) was already in the airports pack.
+> Code: `SVSRenderer._collect_papi` in `svs.py`, drawn in `svs_gl.py`'s
+> `_render_overlays`; tests in `tests/instruments/ai/test_svs_papi.py`. Not
+> done: VASI bars and the other VGSI types, and the `GSI` republish (left out on
+> purpose -- `GSI` belongs to a real glideslope receiver). The plan below is
+> kept as history.
+
 Plan for porting the legacy VirtualVfr VASI/PAPI visual glidepath guidance into
 the GL Synthetic Vision System (SVS). See also
 [svs_rendering.md](svs_rendering.md), [svs_planning.md](svs_planning.md), and

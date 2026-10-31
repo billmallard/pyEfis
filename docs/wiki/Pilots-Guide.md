@@ -10,6 +10,14 @@ build using the shipped screens; your installer may have customized it (see
 > fix-gateway feeds it; if a sensor is lost, pyEFIS flags it (see
 > [Indications & alerts](#indications--alerts)) but cannot invent data.
 
+**At startup** pyEFIS goes straight to your flight screen. A notice strip across
+the bottom reads *"pyEfis is experimental software for Experimental /
+Amateur-Built aircraft. It is not certified. It is provided as-is with no
+warranty, and any use of it is at your own risk."* It needs no tap: the
+instruments under it work normally and it clears itself after a few seconds.
+Nothing that needs a tap is shown at startup, so a restart in flight puts you
+back on the instruments at once.
+
 ---
 
 ## The screens at a glance
@@ -19,7 +27,7 @@ buttons. The shipped set:
 
 | Screen | What it's for |
 |--------|---------------|
-| **Data Status** | Navdata currency / updates (the boot screen) |
+| **Data Status** | Navdata currency / updates (tap the PFD data annunciation) |
 | **PFD** | Primary flight display: attitude/synthetic vision + flight tapes + a slim engine column |
 | **AI-only PFD** | Full-width attitude/synthetic vision, no engine strip |
 | **EMS** | Engine monitoring: flight bundle + full engine instruments |

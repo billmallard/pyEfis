@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "29883f8",
+ "run": "AER-4347 agent session: evidence_index.py --html, then a headless Chrome screenshot (see README)",
+ "device": "chrome-headless-shell 1234, agent sandbox (no GPU)",
+ "sha256": "f3aa7385318a6db575a787705ee3887083998e231307a77f0b0124a3d842ed12",
+ "created_utc": "2026-10-31T15:06:59Z"
+}

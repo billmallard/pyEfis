@@ -114,6 +114,7 @@ class VirtualVfr(AI):
         t.setFont (minfont)
         self.min_font_width = t.boundingRect().width()
         self.pov = None
+        self._vfr_signals_connected = False
 
     def resizeEvent(self, event):
         super(VirtualVfr, self).resizeEvent(event)
@@ -122,6 +123,18 @@ class VirtualVfr(AI):
         VirtualVfr.AIRPORT_FONT_SIZE=int(self.height() * 0.03)
         VirtualVfr.PAPI_YOFFSET = int(self.width() * 0.03)
         VirtualVfr.PAPI_LIGHT_SPACING = int(self.width() * 0.02)
+
+        if self._svs_owns_view():
+            # CIFP1: with SVS enabled the terrain view draws airports,
+            # runways and the PAPI from the NASR packs, so the legacy CIFP
+            # overlay is skipped entirely -- no PointOfView, no FAACIFP18
+            # read, and no dbpath/indexpath needed, so an SVS user needs no
+            # CIFP download. The FIX signals still connect: the bad/old/fail
+            # handlers drive the AI sky/ground state.
+            if self.pov is None and not self._vfr_signals_connected:
+                log.info("Virtual VFR: SVS enabled, legacy CIFP overlay skipped")
+            self._connect_vfr_signals()
+            return
 
         dbpath = os.path.expanduser(self.myparent.get_config_item('dbpath'))
         indexpath = os.path.expanduser(self.myparent.get_config_item('indexpath'))
@@ -167,8 +180,24 @@ class VirtualVfr(AI):
                     self.lng, self.lat, self.altitude, self.true_heading)
 
         self.setHeading(self.head_item.value)
+        self._connect_vfr_signals()
 
-        # Must happen here to prevent race
+        if not self.rendering_prohibited():
+            self.pov.render(self)
+
+    def _svs_owns_view(self):
+        """True when this widget's SVS is configured on (``enabled``), in
+        which case the legacy CIFP overlay is not loaded at all."""
+        s = self._live_svs()
+        return s is not None and bool(getattr(s, "enabled", False))
+
+    def _connect_vfr_signals(self):
+        # Must happen after the first resize to prevent a race. Once only:
+        # every resize used to add another connection, so each FIX update
+        # re-rendered the overlay once per resize the widget had seen.
+        if self._vfr_signals_connected:
+            return
+        self._vfr_signals_connected = True
         self.lng_item.valueChanged[float].connect(self.setLongitude)
         self.lng_item.badChanged[bool].connect(self.setLngBad)
         self.lng_item.oldChanged[bool].connect(self.setLngOld)
@@ -185,9 +214,6 @@ class VirtualVfr(AI):
         self.alt_item.badChanged[bool].connect(self.setAltBad)
         self.alt_item.oldChanged[bool].connect(self.setAltOld)
         self.alt_item.failChanged[bool].connect(self.setAltFail)
-
-        if not self.rendering_prohibited():
-            self.pov.render(self)
 
     def get_largest_font_size(self, width):
         max_size = self.height() * 0.08 #25
@@ -537,7 +563,8 @@ class VirtualVfr(AI):
     def setLatitude(self, lat):
         self.lat = lat
         self.missing_lat = False
-        #print ("New latitude %f"%self.lat)
+        if self.pov is None:
+            return
         self.pov.update_position (self.lat, self.lng)
         if not self.rendering_prohibited():
             self.pov.render(self)
@@ -546,7 +573,8 @@ class VirtualVfr(AI):
     def setLongitude(self, lng):
         self.lng = lng
         self.missing_lng = False
-        #print ("New longitude %f"%self.lng)
+        if self.pov is None:
+            return
         self.pov.update_position (self.lat, self.lng)
         if not self.rendering_prohibited():
             self.pov.render(self)
@@ -554,12 +582,16 @@ class VirtualVfr(AI):
 
     def setAltitude(self, alt):
         self.altitude = alt
+        if self.pov is None:
+            return
         self.pov.update_altitude (alt)
         self.pov.update_position (self.lat, self.lng)
         if not self.rendering_prohibited():
             self.pov.render(self)
             self.update()
     def setHeading(self, heading):
+        if self.pov is None:
+            return
         self.pov.update_heading (heading)
         if not self.rendering_prohibited():
             #log.debug("Rendering")
