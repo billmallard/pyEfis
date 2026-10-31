@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "eed5e72",
+ "run": "local: render_range_rings.py default on a detached origin/dev checkout (AER-4460, sandbox, DejaVu Sans)",
+ "device": "Linux x86_64 (offscreen)",
+ "sha256": "75ad3be9dfe74cf34464fe19c1376a681f9e9e739c76b945ba4f3acefb87709e",
+ "created_utc": "2026-10-31T23:28:10Z"
+}
