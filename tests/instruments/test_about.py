@@ -72,6 +72,16 @@ def test_pack_notices_reads_installed_packs_only():
     ]
 
 
+def test_pack_label_adds_the_id_when_the_name_repeats():
+    status = {"ok": True, "packs": [
+        {"id": "terrain-us-west", "name": "Terrain", "cycle": "2024edr1"},
+        {"id": "terrain-us-east", "name": "Terrain", "cycle": "2024edr1"},
+        {"id": "water-na", "cycle": "2026q2r6"},
+    ]}
+    assert [r[0] for r in about.pack_notices(status)] == [
+        "Terrain (terrain-us-west)", "Terrain (terrain-us-east)", "water-na"]
+
+
 @pytest.mark.parametrize("status", [None, {}, {"ok": False},
                                     {"ok": True, "packs": None},
                                     {"ok": True, "packs": ["junk", 3]}])

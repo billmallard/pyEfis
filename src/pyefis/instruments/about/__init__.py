@@ -67,8 +67,11 @@ def pack_notices(status):
             continue
         notice = p.get("notice")
         notice = notice.strip() if isinstance(notice, str) else ""
-        out.append((str(p.get("name") or p.get("id") or ""),
-                    str(p["cycle"]), notice or None))
+        # Friendly names repeat (every terrain region is "Terrain"), so add
+        # the pack id whenever it says something the name does not.
+        name, pid = str(p.get("name") or ""), str(p.get("id") or "")
+        label = f"{name} ({pid})" if name and pid and pid != name else (name or pid)
+        out.append((label, str(p["cycle"]), notice or None))
     return out
 
 
