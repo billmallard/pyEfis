@@ -103,7 +103,9 @@ class WaterPolygon:
 
 
 class WaterDB:
-    # Per-polygon vertex cap applied on load. OSM coastline polygons
+    # Per-polygon vertex cap applied on load to UNTESSELLATED rows only
+    # (rows with stored triangles keep their build-time geometry, #100).
+    # OSM coastline polygons
     # routinely carry thousands of vertices at ~30 m spacing — far
     # finer than any 5" / 7" cockpit display can resolve at 30 NM
     # range. The CPU projection loop is per-vertex Python work, so
@@ -309,17 +311,22 @@ class WaterDB:
             # this exact rule, so the row is self-describing.
             n_verts = len(r["vertices"]) // 16 if r["vertices"] else 0
             rings = _decode_rings(r["rings"], n_verts)
-            # Multi-ring rows are never re-decimated on load: stride
-            # decimation across concatenated rings would corrupt the
-            # ring topology AND the pre-tessellated triangle indices.
-            # The build-time per-ring cap is the bound for these rows.
+            triangles = _decode_triangles(r["triangles"], n_verts)
+            # Rows carrying stored triangles or rings are never
+            # re-decimated on load (#100): stride decimation would
+            # leave the pre-tessellated triangle indices addressing the
+            # undecimated array (and, for multi-ring rows, corrupt the
+            # ring offsets too). The builder's build-time cap
+            # (Douglas-Peucker, per ring) is the bound for these rows;
+            # ``cap`` only governs legacy untessellated rows.
+            exempt = rings is not None or triangles is not None
             poly = WaterPolygon(
                 id=pid,
                 kind=(r["kind"] or "").strip().lower(),
                 elev_ft=r["elev_ft"],
                 vertices=_decode_vertices(r["vertices"],
-                                          None if rings else cap),
-                triangles=_decode_triangles(r["triangles"], n_verts),
+                                          None if exempt else cap),
+                triangles=triangles,
                 rings=rings)
             nv = len(poly.vertices)
             cache[pid] = (poly, nv)

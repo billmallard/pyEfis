@@ -295,6 +295,45 @@ class TestSVSPerfLogForce:
 # AI widget integration
 # ---------------------------------------------------------------------------
 
+
+def _build_tessellated_single_ring_db(tmp_path, n_verts=40):
+    """#100 fixture: one single-ring ``lake`` row (no ``rings`` blob)
+    carrying stored fan triangles over ``n_verts`` vertices on a circle
+    around (24.5, -81.7) — the shape the builder emits for every
+    single-ring row, but denser than the reader caps under test."""
+    import math
+    import sqlite3
+    import struct
+    from pyefis.instruments.ai.water_db import encode_vertices
+    verts = [(24.5 + 0.2 * math.sin(2 * math.pi * k / n_verts),
+              -81.7 + 0.2 * math.cos(2 * math.pi * k / n_verts))
+             for k in range(n_verts)]
+    tris = []
+    for k in range(1, n_verts - 1):
+        tris += [0, k, k + 1]
+    path = tmp_path / "water.sqlite"
+    con = sqlite3.connect(str(path))
+    con.execute("""
+        CREATE TABLE water_polygons (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            min_lat   REAL NOT NULL, max_lat   REAL NOT NULL,
+            min_lon   REAL NOT NULL, max_lon   REAL NOT NULL,
+            kind      TEXT NOT NULL, elev_ft   REAL,
+            vertices  BLOB NOT NULL, triangles BLOB, rings BLOB)
+    """)
+    con.execute(
+        "INSERT INTO water_polygons "
+        "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+        " vertices, triangles, rings) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (24.3, 24.7, -81.9, -81.5, "lake", 0.0,
+         encode_vertices(verts), struct.pack(f"<{len(tris)}H", *tris),
+         None))
+    con.commit()
+    con.close()
+    return path, verts, tris
+
+
 class TestAISVSIntegration:
     def test_ai_svs_none_by_default(self, fix, qtbot):
         widget = AI()
@@ -670,6 +709,38 @@ class TestWaterDB:
         assert len(poly.vertices) == 8
         assert np.array_equal(poly.outer_vertices, outer)
 
+    def test_single_ring_tessellated_row_skips_redecimation(
+            self, tmp_path):
+        """#100: a single-ring row with stored triangles is never
+        stride-decimated on load, even when it has more vertices than
+        the reader's cap — the stored indices address the full array,
+        so decimating the vertices alone would leave them dangling."""
+        from pyefis.instruments.ai.water_db import WaterDB
+        path, verts, tris = _build_tessellated_single_ring_db(tmp_path)
+        db = WaterDB(path, max_vertices=16)
+        polys = list(db.polygons_in_range(24.5, -81.7, 60.0))
+        assert len(polys) == 1
+        poly = polys[0]
+        assert poly.rings is None
+        assert len(poly.vertices) == len(verts)
+        assert poly.triangles == tuple(tris)
+        assert max(poly.triangles) < len(poly.vertices)
+
+    def test_untessellated_row_still_decimated_to_cap(self, tmp_path):
+        """#100 keeps the load cap for legacy rows without stored
+        triangles — the only rows it can apply to safely."""
+        import math
+        from pyefis.instruments.ai.water_db import WaterDB
+        verts = [(24.5 + 0.2 * math.sin(2 * math.pi * k / 40),
+                  -81.7 + 0.2 * math.cos(2 * math.pi * k / 40))
+                 for k in range(40)]
+        path = self._build_db(tmp_path, [("lake", 0.0, verts)])
+        db = WaterDB(path, max_vertices=16)
+        polys = list(db.polygons_in_range(24.5, -81.7, 60.0))
+        assert len(polys) == 1
+        assert polys[0].triangles is None
+        assert len(polys[0].vertices) == 16
+
     def test_pre_rings_db_reads_with_rings_none(self, tmp_path):
         """A pre-#44 database (no rings column) stays readable; every
         polygon reports ``rings is None`` and single-ring behavior is
@@ -1022,6 +1093,57 @@ class TestSVSWaterRendering:
         hole_set = {(round(la, 3), round(lo, 3)) for la, lo in hole}
         assert emitted <= outer_set
         assert not (emitted & hole_set)
+
+
+    def test_collect_water_dense_single_ring_has_no_degenerate_triangles(
+            self, tmp_path):
+        """#100 regression: a reader cap below the pack's build cap
+        (16, the schema minimum for ``water_max_vertices``, against a
+        40-vertex tessellated row) must not collapse triangles to zero
+        area. Before the fix the vertices were stride-decimated to 16
+        while the stored indices still addressed 40, and the collector's
+        clip folded every out-of-range triangle onto vertex 15."""
+        path, verts, tris = _build_tessellated_single_ring_db(tmp_path)
+        root = _make_tile_dir(tmp_path, 24, -82, elevation=0)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "water_db_path": str(path), "water_max_vertices": 16,
+        })
+        out = r._collect_water_sync(24.5, -81.7, 5000.0, 30.0)
+        assert out is not None
+        t = out[:, :2].astype(np.float64).reshape(-1, 3, 2)
+        a, b, c = t[:, 0], t[:, 1], t[:, 2]
+        area2 = np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                       - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0]))
+        assert t.shape[0] == len(tris) // 3
+        assert int(np.count_nonzero(area2 < 1e-9)) == 0
+        assert r._water_index_warned is False
+
+    def test_collect_water_warns_once_on_index_past_vertices(self, caplog):
+        """#100: a row whose triangle indices run past its vertex array
+        is reported ONCE, naming the row id and both counts, instead of
+        being clipped silently into zero-area triangles."""
+        import logging
+        square = [(39.00, -107.00), (39.00, -106.99),
+                  (39.01, -106.99), (39.01, -107.00)]
+        bad = _StubWaterPolygon(square, [0, 1, 2, 0, 2, 7])
+        bad.id = 4242
+        r = SVSRenderer({})
+        r.water_db = _StubWaterDB([bad, bad])
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        r._los_masked_batch = (
+            lambda ac_lat, ac_lon, ac_alt, t_lats, t_lons, t_alts, lc:
+            np.zeros(len(t_lats), dtype=bool))
+        with caplog.at_level(logging.WARNING,
+                             logger="pyefis.instruments.ai.svs"):
+            r._collect_water_sync(39.0, -107.0, 12000.0, 10.0)
+            r._collect_water_sync(39.0, -107.0, 12000.0, 10.0)
+        hits = [rec.getMessage() for rec in caplog.records
+                if "triangle index" in rec.getMessage()]
+        assert len(hits) == 1
+        assert "id=4242" in hits[0]
+        assert "index 7" in hits[0] and "only 4 vertices" in hits[0]
 
 
 class TestSVSGLFallback:
