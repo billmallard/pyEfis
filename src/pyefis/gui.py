@@ -25,15 +25,16 @@ import logging
 import sys
 import yaml
 from pyefis import hmi
+from pyefis import startup_notice
 from pyefis.instruments import edit_focus
 import pyavtools.fix as fix
 import pyavtools.scheduler as scheduler
 
 screens = []
 
-# The nav-data management screen must boot for everyone, independent of the
-# configurable main.defaultScreen (a panel/config push can overwrite that). See
-# _ensure_data_status_boot().
+# The nav-data management screen is always loaded, independent of the screen
+# set in config (a panel/config push can drop it), but never booted: it is a
+# click-through. See _ensure_data_status_screen().
 DATA_STATUS_SCREEN = "DataStatus"
 
 # This class is just a structure to hold information about a single
@@ -242,15 +243,20 @@ def setDefaultScreen(s):
     return found
 
 
-def _ensure_data_status_boot(config, configured_default):
-    """Guarantee the nav-data management screen boots for everyone.
+def _ensure_data_status_screen(config, configured_default):
+    """Keep the nav-data management screen loaded, and boot the flight screen.
 
-    The data-status screen is normally selected via ``main.defaultScreen``, but
-    that is just a config value a panel/config push can overwrite -- which is how
-    boards silently stop showing it on boot. Make it built-in instead: ensure
-    the screen is loaded (inject the bundled definition if a config dropped it),
-    point its Continue button at the configured default flight screen, and return
-    the name of the screen to boot. Any failure falls back to
+    The data-status screen used to be forced as the boot screen. It is a
+    click-through, and pyEfis can restart in flight, so it no longer boots
+    (BACKLOG L3): the flight screen boots directly and the startup notice is a
+    banner drawn over it (``pyefis.startup_notice``).
+
+    The screen is still guaranteed present -- the bundled definition is injected
+    if a config push dropped it -- because the PFD data annunciation opens it,
+    and its Continue button is pointed at the configured default flight screen.
+    Returns the screen to boot. A configured default of DataStatus itself, or of
+    a screen that is not loaded, is replaced by its Continue target, or failing
+    that the first other screen, so no config boots to the click-through. Any failure falls back to
     ``configured_default`` so boot never breaks."""
     try:
         name = DATA_STATUS_SCREEN
@@ -266,20 +272,35 @@ def _ensure_data_status_boot(config, configured_default):
                 return configured_default
             config["screens"][name] = scr_config
             screens.append(Screen(name, scr_config["module"], scr_config))
-            log.info("data-status boot: screen absent from config; "
+            log.info("data-status: screen absent from config; "
                      "injected the bundled definition")
-        # Continue proceeds to the configured default flight screen, so the pilot
-        # lands on their normal screen rather than the bundled fallback.
-        if isinstance(configured_default, str) and configured_default != name:
+        names = [s.name for s in screens]
+        boot = configured_default
+        if isinstance(boot, int) and 0 <= boot < len(names):
+            boot = names[boot]
+        if boot == name or boot not in names:
+            # Configured to boot the click-through (or a screen that is not
+            # loaded, which would leave nothing on the glass): boot where its
+            # Continue goes instead.
+            target = None
             for inst in scr_config.get("instruments", []):
                 if inst.get("type") == "data_status":
-                    inst.setdefault("options", {})["continue_screen"] = \
-                        configured_default
-        log.info("data-status boot: forcing %s as the boot screen "
-                 "(continue -> %s)", name, configured_default)
-        return name
+                    target = inst.get("options", {}).get("continue_screen")
+            others = [n for n in names if n != name]
+            log.warning("data-status: defaultScreen %r is the click-through "
+                        "or not loaded", boot)
+            boot = target if target in others else (others[0] if others
+                                                    else name)
+        else:
+            # Continue proceeds to the configured default flight screen.
+            for inst in scr_config.get("instruments", []):
+                if inst.get("type") == "data_status":
+                    inst.setdefault("options", {})["continue_screen"] = boot
+        log.info("data-status: booting %s (data status reachable from the "
+                 "annunciation)", boot)
+        return boot
     except Exception as e:
-        log.error("data-status boot: could not enforce the built-in screen "
+        log.error("data-status: could not set up the built-in screen "
                   "(%s); using the configured default", e)
         return configured_default
 
@@ -305,10 +326,10 @@ def initialize(config, config_path, preferences):
     except KeyError:
         d = 0
 
-    # The nav-data management screen boots universally, regardless of the
-    # configured defaultScreen (which a panel/config push can overwrite). Ensure
-    # it is loaded, send its Continue to the configured default, and boot to it.
-    boot = _ensure_data_status_boot(config, d)
+    # The flight screen boots directly -- nothing blocking at boot, because
+    # pyEfis can restart in flight. The nav-data screen stays loaded (the
+    # annunciation opens it) with its Continue sent to the configured default.
+    boot = _ensure_data_status_screen(config, d)
     setDefaultScreen(boot)
 
     mainWindow = Main(config, config_path, preferences)
@@ -340,6 +361,11 @@ def initialize(config, config_path, preferences):
         mainWindow.width = int(config["main"]["screenWidth"])
         mainWindow.height = int(config["main"]["screenHeight"])
         mainWindow.show()
+
+    # Startup notice over the live flight screen: self-dismissing, transparent
+    # to touch, never a modal (BACKLOG L3). Built after every other child so it
+    # stacks on top.
+    mainWindow.startupNotice = startup_notice.show_banner(mainWindow)
 
 
     def button_timeout():

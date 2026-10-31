@@ -70,13 +70,16 @@ mapping (this is how the portrait variants are enabled — see
 (`main/default.yaml`):
 
 ```yaml
-defaultScreen: DataStatus
+defaultScreen: PFD
 ```
 
 If `defaultScreen` is omitted, the **first** screen in the loaded list is used
-(`gui.py → initialize`). The shipped config boots to **Data Status** so the
-pilot sees navigation-data currency at startup; its *Continue* button proceeds
-to the PFD. Set `defaultScreen: PFD` to skip the boot screen.
+(`gui.py → initialize`). pyEfis can restart in flight, so nothing that needs a
+tap ever boots: the flight screen draws immediately and the startup notice
+appears as a banner over it, ignores touches, and clears itself
+(`pyefis/startup_notice.py`). **Data Status** is always loaded but never booted
+-- the PFD's data annunciation opens it. A `defaultScreen` of `DataStatus` (or a
+screen that is not loaded) boots Data Status's *Continue* target instead.
 
 ### `nodeID`
 
@@ -94,7 +97,7 @@ button mechanics in
 
 | Screen | File | Purpose | Key contents |
 |--------|------|---------|--------------|
-| **Data Status** | `screens/datastatus.yaml` | Boot / navdata-currency screen | full-screen `data_status` widget; *Continue* + *Update* |
+| **Data Status** | `screens/datastatus.yaml` | Navdata-currency screen (loaded, never booted) | full-screen `data_status` widget; *Continue* + *Update* |
 | **PFD** | `screens/pfd.yaml` | Primary flight display | Virtual VFR AHRS bundle + engine arc column + side button bar; alternating radio / fuel panel |
 | **AI-only PFD** | `screens/pfd_ai_only.yaml` | Full-width attitude/SVS, no engine or radio | AHRS bundle stretched to full width + navdata flag |
 | **EMS** | `screens/ems.yaml` | Engine monitoring with attitude | AHRS bundle + arc columns + EGT/CHT strips + power bars + EGT-mode buttons |
