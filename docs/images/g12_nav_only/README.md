@@ -86,3 +86,31 @@ tools/render_map_style_evidence.py $D --lat 34.4262 --lon -119.8404 --track 250 
 
 The default `range_ladder` (2..160 NM) also clamps pinch zoom, so this change
 only appears on a screen whose ladder goes below about 1 NM.
+
+## nav_only road casing, AER-4607
+
+The follow-up to the section above. `road_casing` was added to both palettes:
+standard `#5a5a5a` (unchanged), nav_only `#3c3c3c`. The standard casing is
+0.47 of its `#c0c0c0` fill, and `#3c3c3c` is the same fraction of `#808080`.
+Rendered on the Beelink from `git archive` copies under
+`~/bench-scratch/aer-4607/`: `dev` (41cda11, with the tool copied in),
+`before` (#366 head 84d4f93), `after` (this branch), and `alt` (this branch
+with the nav_only casing hand-edited to `#282828`, for comparison only):
+
+```sh
+D="--data /data/makerplane-data --width 1280 --height 720 --fixes --airways"
+for R in 20 1 0.5; do
+  tools/render_map_style_evidence.py $D --lat 34.4262 --lon -119.8404 --track 250 --range $R --styles standard nav_only --out ksba_r$R
+done
+tools/render_map_style_evidence.py $D --lat 34.30 --lon -119.80 --track 0 --range 20 --styles standard nav_only --out acc_r20
+```
+
+- Standard is byte-identical to dev at 20, 1 and 0.5 NM over KSBA and at
+  the accepted 20 NM pose (`499dc8da...c628cc`, as above).
+- nav_only is byte-identical to the #366 head at 20 and 1 NM over KSBA and
+  at the accepted pose. It differs only at 0.5 NM, where RD2 draws the casing.
+- `casing_nav_only_0p5nm_ab.png`: nav_only at 0.5 NM over KSBA, track 250.
+  Top is the #366 head (`#5a5a5a` casing), bottom is this branch. 1:1.
+- `casing_nav_only_0p5nm_zoom3x.png`: the top right of the same frame
+  (x 1080-1280, y 0-240), 3x nearest-neighbour. Left to right: `#5a5a5a`
+  (before), `#3c3c3c` (this branch), `#282828` (the darker alternative).
