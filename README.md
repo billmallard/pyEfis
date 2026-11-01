@@ -22,7 +22,7 @@
 | src/pyefis/instruments/NumericalDisplay/\_\_init\_\_.py |      209 |        0 |       42 |        0 |    100% |           |
 | src/pyefis/instruments/\_\_init\_\_.py                  |        0 |        0 |        0 |        0 |    100% |           |
 | src/pyefis/instruments/ai/VirtualVfr.py                 |      768 |        0 |      238 |        0 |    100% |           |
-| src/pyefis/instruments/ai/\_\_init\_\_.py               |      854 |      159 |      206 |       22 |     79% |303-306, 328-331, 356, 367-403, 409-416, 423-433, 437-445, 472-476, 479-\>485, 663-666, 689-\>707, 699-\>703, 730, 733-734, 740-748, 751-754, 757-759, 772-781, 800-\>802, 850, 890, 896, 991-994, 998-1002, 1018-1060, 1066-1067, 1102, 1140-1145, 1160-1166, 1305 |
+| src/pyefis/instruments/ai/\_\_init\_\_.py               |      854 |      164 |      206 |       22 |     78% |303-306, 328-331, 356, 367-403, 409-416, 423-433, 437-445, 472-476, 479-\>485, 663-666, 689-\>707, 699-\>703, 730, 733-734, 740-748, 751-754, 757-759, 772-781, 797-801, 850, 890, 896, 991-994, 998-1002, 1018-1060, 1066-1067, 1102, 1140-1145, 1160-1166, 1305 |
 | src/pyefis/instruments/ai/airport\_db.py                |      277 |      120 |       98 |       11 |     51% |116-117, 122-124, 133, 150, 157, 160, 165, 179-\>183, 191, 196, 230-231, 247-264, 268, 278-371, 377-390, 402-423, 496, 498-500 |
 | src/pyefis/instruments/ai/camera.py                     |       26 |        0 |        0 |        0 |    100% |           |
 | src/pyefis/instruments/ai/highway\_db.py                |       49 |        6 |       12 |        2 |     87% |50-51, 59-61, 72 |
@@ -60,7 +60,7 @@
 | src/pyefis/instruments/vsi/\_\_init\_\_.py              |      407 |        1 |       74 |        1 |     99% |       455 |
 | src/pyefis/instruments/weston/\_\_init\_\_.py           |       61 |        3 |       14 |        0 |     96% |     11-13 |
 | src/pyefis/instruments/wind/\_\_init\_\_.py             |       97 |        0 |       12 |        0 |    100% |           |
-| src/pyefis/main.py                                      |      176 |       13 |       62 |        0 |     94% |251, 253-263, 271-272 |
+| src/pyefis/main.py                                      |      176 |       11 |       62 |        1 |     95% |251, 255-263, 271-272 |
 | src/pyefis/screens/\_\_init\_\_.py                      |        0 |        0 |        0 |        0 |    100% |           |
 | src/pyefis/screens/instrument\_spec.py                  |      104 |       21 |       38 |       16 |     71% |109, 113, 140, 144, 148, 154, 158, 161, 163, 167, 187, 191, 206, 249, 255, 260, 266-269, 273 |
 | src/pyefis/screens/screenbuilder.py                     |      204 |        0 |       72 |        0 |    100% |           |
@@ -73,7 +73,7 @@
 | src/pyefis/screens/screenbuilder\_overlay.py            |       46 |        0 |       10 |        0 |    100% |           |
 | src/pyefis/screens/screenbuilder\_preferences.py        |       36 |        0 |       30 |        0 |    100% |           |
 | src/pyefis/version.py                                   |        2 |        0 |        0 |        0 |    100% |           |
-| **TOTAL**                                               | **13671** | **2434** | **3806** |  **259** | **81%** |           |
+| **TOTAL**                                               | **13671** | **2437** | **3806** |  **260** | **81%** |           |
 
 
 ## Setup coverage badge
