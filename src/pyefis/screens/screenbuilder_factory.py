@@ -80,7 +80,8 @@ def build_altimeter_tape(
     for k in ("dbkey", "maxalt", "majorDiv", "minorDiv", "total_decimals",
               "font_mask", "round_to", "numeric_box", "font_scale",
               "show_trend", "trend_lookahead", "show_baro", "altsel_box",
-              "alt_bug_enabled", "alt_bug_color", "alt_bug_dbkey"):
+              "alt_bug_enabled", "alt_bug_color", "alt_bug_alert_color",
+              "alt_bug_dbkey"):
         if k in opts:
             kwargs[k] = opts[k]
     return altimeter.Altimeter_Tape(
@@ -702,6 +703,10 @@ _register(InstrumentSpec(
         Prop("alt_bug_color", "color", default="#00ffff",
              label="Altitude bug color", apply="special",
              help="colour of the selected-altitude box text and bug"),
+        Prop("alt_bug_alert_color", "color", default="#ffb000",
+             label="Altitude alert color", apply="special",
+             help="box text and bug colour while fix-gateway flags an "
+                  "altitude deviation (the key's annunciate flag)"),
         Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
              label="Selected-altitude key", apply="special",
              help="FIX key holding the selected altitude (default ALTSEL)"),
@@ -1132,7 +1137,38 @@ _register(InstrumentSpec(
              token="nav.ownship"),
         Prop("layer_range_rings", "boolean", default=True,
              label="Layer: range rings",
-             help="concentric half/full range rings with labels"),
+             help="concentric range rings around ownship with distance "
+                  "labels (half and full range unless range ring "
+                  "fractions says otherwise)"),
+        Prop("range_ring_fractions", "string", default="0.5,1",
+             label="Range ring fractions",
+             help="comma list of ring radii as fractions of the current "
+                  "range (1 = the top edge). 0.5,1 = half and full range "
+                  "(ND convention); 0.25,0.5,0.75,1 = four even rings. "
+                  "Values outside 0-2 are ignored"),
+        Prop("range_ring_labels", "boolean", default=True,
+             label="Range ring labels",
+             help="print each ring's distance on the ring. The current "
+                  "range stays in the top-left status chip either way"),
+        Prop("range_ring_label_angle", "integer", default=0, minimum=0,
+             maximum=359, step=1, label="Range ring label position (deg)",
+             help="where the labels sit on each ring, clockwise from "
+                  "straight up on the screen: 0 = top, 90 = right, "
+                  "180 = bottom, 270 = left. Move it off a data block"),
+        Prop("range_ring_color", "color", default="#ffffff",
+             label="Range ring colour",
+             help="ring and ring-label colour"),
+        Prop("range_ring_opacity", "integer", default=55, minimum=0,
+             maximum=100, step=1, label="Range ring opacity (%)",
+             help="ring and ring-label opacity"),
+        Prop("range_ring_width", "number", default=0, minimum=0,
+             maximum=10, step=0.5, label="Range ring width (px)",
+             help="ring line width; 0 = auto (0.2% of the map width, at "
+                  "least 1 px)"),
+        Prop("range_ring_label_size", "integer", default=0, minimum=0,
+             maximum=48, step=1, label="Range ring label size (px)",
+             help="ring label font pixel size; 0 = auto (2.5% of the map "
+                  "width, at least 8 px)"),
         Prop("layer_terrain", "boolean", default=True,
              label="Layer: terrain",
              help="hillshaded hypsometric terrain relief"),
