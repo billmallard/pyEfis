@@ -1,7 +1,11 @@
 # Moving Map — specification
 
-Status: SPEC (2026-07-05). Development has not started; work will
-happen on a dedicated branch off `display-changes`. Companion specs:
+Status: IMPLEMENTED, experimental (spec dated 2026-07-05). The
+`moving_map` instrument (`src/pyefis/instruments/map/`, screen type
+`moving_map`) is on `dev` with phases A-D of section 10 shipped:
+terrain, airports, navaids, roads, rivers and flight-plan layers;
+phase E (controls polish) is still open. The rest of this document is
+the original design spec and is kept for its rationale. Companion specs:
 `svs_rendering.md` (rendering lessons), pyAvMap `docs/MFD-Assessment`
 (prior art; see section 2), makerplane-data
 `docs/canfix_configurator.md` (provider-model precedent).
@@ -317,6 +321,14 @@ flight plan with Done/Cancel and nine-level Undo (3-17..3-19).
   `layer_water`), `map_style` (section 5.6),
   `terrain_mode`, symbol options, `db paths` (default to
   /data/makerplane-data locations).
+- Range rings (G13, #136): `range_ring_fractions` (comma list of range
+  fractions, default `0.5,1`), `range_ring_labels`,
+  `range_ring_label_angle` (screen clock degrees, 0 = top),
+  `range_ring_color` + `range_ring_opacity` (%), `range_ring_width` and
+  `range_ring_label_size` (px, 0 = auto). Colour and opacity style the
+  `standard` map only; under `map_style: nav_only` the palette's ring
+  greys apply. Defaults draw the original half/full rings; the current range is always in the status chip, never
+  only in a ring label.
 - Editor twin: static top-down preview — a canvas rendering a small
   baked terrain patch (the SVS preview-patch pattern; one scene is
   enough) with sample airport/navaid symbols honoring the layer

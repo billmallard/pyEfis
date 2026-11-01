@@ -611,6 +611,10 @@ Options:
   * alt_bug_enabled - default follows `altsel_box`. Draws the selected-altitude
     bug on the scale; pegs half-visible at the tape edge when off-scale.
   * alt_bug_color - default '#00ffff'
+  * alt_bug_alert_color - default '#ffb000' (amber). The box text, border and
+    bug turn this colour while the `ALTSEL` annunciate flag is set, and back when
+    it clears. fix-gateway sets the flag on an altitude deviation
+    (EFIS-ALTSEL-005/-006); the tape reads only the flag.
   * alt_bug_dbkey - default 'ALTSEL'
 
 ## altimeter_trend_tape

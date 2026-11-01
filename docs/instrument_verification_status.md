@@ -30,13 +30,13 @@ All seven areas below are **verified + deployed to the Pi**. "Code gaps" counts
 | **HSI** | [hsi_widget_spec.md](hsi_widget_spec.md) | 25 pass | none (3 warning flags done) | — |
 | **Attitude (AI)** | [ai_widget_spec.md](ai_widget_spec.md) | 22 pass / 1 xfail | none | **AI-LIM-001** pitch-limit → AOA |
 | **Airspeed tape** | [airspeed_widget_spec.md](airspeed_widget_spec.md) | 12 pass | none | — |
-| **Altimeter tape** | [altimeter_widget_spec.md](altimeter_widget_spec.md) | 14 pass (+ `test_altsel.py`) | **EFIS-ALTSEL-006** bug recolour on deviation | — (AL-BUG-001 shipped on `ALTSEL`, pyEfis #310) |
+| **Altimeter tape** | [altimeter_widget_spec.md](altimeter_widget_spec.md) | 14 pass (+ `test_altsel.py`) | none | — (AL-BUG-001 shipped on `ALTSEL`, pyEfis #310) |
 | **VSI** | [vsi_widget_spec.md](vsi_widget_spec.md) | 11 pass | none | — |
 | **Turn coordinator / slip-skid** | [tc_widget_spec.md](tc_widget_spec.md) | 9 pass | none | — |
 | **Heading / compass** | [heading_widget_spec.md](heading_widget_spec.md) | (in HSI suite) 29 pass | none | — |
 
-**Net: one implementable code gap is open, EFIS-ALTSEL-006** (below). The remaining data-blocked
-item waits on a fix-gateway key (further below).
+**Net: no implementable code gap is open.** EFIS-ALTSEL-006 is implemented (below). The remaining
+data-blocked item waits on a fix-gateway key (further below).
 
 ## What shipped (highlights)
 
@@ -54,7 +54,7 @@ item waits on a fix-gateway key (further below).
 slip-skid (AI, TC) now annunciates invalid data (red `XXX`/flag on fail, grey on old/bad)
 and excessive-slip the same way, off the same FIX keys.
 
-## Selected altitude: gateway half done, display half open
+## Selected altitude: gateway and display both done
 
 fix-gateway #90 (merged to its `dev` 2026-10-31) did the gateway side of the selected-altitude
 requirements in [requirements.md](requirements.md):
@@ -62,7 +62,7 @@ requirements in [requirements.md](requirements.md):
 | Requirement | Status | Where |
 |-------------|--------|-------|
 | EFIS-ALTSEL-005 deviation alert | met | fix-gateway annunciate plugin sets the `ALTSEL` annunciate flag past 200 ft, armed on capture |
-| EFIS-ALTSEL-006 bug recolours on the flag | **open, pyEfis** | `BugBinding.color()` does not read the flag yet |
+| EFIS-ALTSEL-006 bug recolours on the flag | met | pyEfis #362: `BugBinding` reads the `ALTSEL` annunciate flag; box and bug turn `alt_bug_alert_color` (amber `#ffb000` by default) and clear with the flag |
 | EFIS-ALTSEL-008 any client may set it | met for FIX clients | fix-gateway sends CAN-FIX 461 but does not read it |
 | EFIS-ALTSEL-009 threshold in config | met | `connections/annunciate.yaml` |
 | EFIS-ALTSEL-010 computed in the gateway | met | the flag rides on `ALTSEL` to every client and on CAN-FIX 461 |
@@ -73,7 +73,11 @@ fixgw starts without `--config-file`. An install started with it, including fix-
 systemd unit and the Pi 5 bench, skips the config update (fix-gateway #92).
 
 None of these had an `xfail(strict)` tracker, so nothing flipped. The 005/009/010 behaviour is
-covered by fix-gateway's own annunciate tests. EFIS-ALTSEL-006 has no pyEfis tracker yet.
+covered by fix-gateway's own annunciate tests. EFIS-ALTSEL-006 got an `xfail(strict)` tracker
+before its implementation (pyEfis #362, `tests/instruments/altimeter/test_altsel.py`), and it
+passed a live check against the Pi 5 gateway: the flag set past 200 ft after capture, and the bug
+turned amber and cleared. pyEfis computes no deviation; the flag is its only input. Bill chose
+the colour on 2026-11-01: amber on both the box and the bug.
 
 ## Data-blocked gaps (need a fix-gateway key)
 

@@ -285,6 +285,26 @@ def test_range_ring_colour_standard_and_nav_only(qapp):
     assert _ring_pixel(map_layers.NAV_ONLY_PALETTE) == (120, 120, 120)
 
 
+
+def test_range_ring_config_colour_is_standard_only(qapp):
+    """G13 range_ring_color styles the standard map; nav_only keeps its
+    palette greys (merge of #366 with #136)."""
+    class Owner:
+        range_ring_color = "#ff0000"
+        range_ring_opacity = 100
+    lay = map_layers.RangeRingsLayer()
+    lay.configure(Owner())
+    for pal, ring, label in (
+            (map_layers.STANDARD_PALETTE, (255, 0, 0, 255), (255, 0, 0, 255)),
+            (map_layers.NAV_ONLY_PALETTE, (120, 120, 120, 255),
+             (170, 170, 170, 255))):
+        x = moving_map.MapTransform(LAT0, LON0, 10.0, 0.0, 400, 400, 0.5,
+                                    palette=pal)
+        r, l = lay.colors(x)
+        assert r.getRgb() == ring
+        assert l.getRgb() == label
+
+
 def _navaid_pixel(pal):
     """Paint one VOR on black and return its centre-dot colour."""
     lay = NavaidsLayer()
