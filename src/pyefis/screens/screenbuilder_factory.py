@@ -381,7 +381,8 @@ def _ai_overlay_props():
              help="length of the horizon heading ticks (px)"),
         Prop("horizon_heading_color", "color", default="#ffffff",
              label="Heading mark colour",
-             help="colour of the horizon heading ticks and labels"),
+             help="colour of the horizon heading ticks and labels",
+             token="ink.primary"),
     ]
 
 
@@ -509,7 +510,8 @@ _register(InstrumentSpec(
                   "none hides the symbol (SVS-as-background) "
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
-             help="colour of the fixed aircraft reference symbol"),
+             help="colour of the fixed aircraft reference symbol",
+             token="nav.ownship"),
         Prop("symbol_scale", "number", default=1.0, minimum=0.3, maximum=3.0,
              step=0.05, label="Symbol scale",
              help="multiplies the reference symbol size -- wingspan and "
@@ -737,26 +739,31 @@ _register(InstrumentSpec(
         Prop("gsi_enabled", "boolean", default=True, label="Glideslope",
              help="show the vertical glideslope needle (GSI)"),
         Prop("fg_color", "color", default="#ffffff", label="Foreground",
-             help="compass card, ring and text colour"),
+             help="compass card, ring and text colour",
+             token="ink.primary"),
         Prop("bg_color", "color", default="#000000", label="Background",
-             help="compass-disc fill colour"),
+             help="compass-disc fill colour",
+             token="surface.base"),
         # Fills the compass disc (not the box); 0 = transparent over the SVS/PFD.
         _bg_opacity_prop(),
         Prop("needle_color", "color", default="#ffff00", label="Needle color",
-             help="colour of the CDI/GSI deviation needles"),
+             help="colour of the CDI/GSI deviation needles",
+             token="nav.ownship"),
         Prop("needle_width", "integer", default=3, minimum=1, maximum=10,
              step=1, label="Needle width",
              help="width of the CDI/GSI deviation needles (px)"),
         Prop("course_color", "color", default="#ff00ff",
              label="Course pointer color",
-             help="selected-course pointer (the magenta CRS triangle)"),
+             help="selected-course pointer (the magenta CRS triangle)",
+             token="nav.course"),
         Prop("source_auto_color", "boolean", default=True,
              label="Source auto-color",
              help="colour the course pointer and CDI by nav source -- magenta "
                   "for GPS, the VOR/LOC colour for a VOR/LOC source (from NAVSRC)"),
         Prop("vloc_color", "color", default="#00ff00", label="VOR/LOC color",
              help="course pointer / CDI colour for a VOR or localizer source "
-                  "when source auto-color is on"),
+                  "when source auto-color is on",
+             token="state.valid"),
         Prop("source_label_enabled", "boolean", default=True,
              label="Source label",
              help="show the nav-source annunciation (GPS / VLOC1 / VLOC2, or "
@@ -765,7 +772,8 @@ _register(InstrumentSpec(
              label="Heading bug",
              help="show the cyan heading bug at the selected heading (HEADBUG)"),
         Prop("heading_bug_color", "color", default="#00ffff",
-             label="Heading bug color", help="heading-bug colour"),
+             label="Heading bug color", help="heading-bug colour",
+             token="nav.reference"),
         Prop("touch_edit", "boolean", default=True,
              label="Touch to set HDG / CRS",
              help="touch the HDG or CRS readout, then turn the knob to set it: "
@@ -778,7 +786,8 @@ _register(InstrumentSpec(
              help="show the magenta GPS ground-track diamond (TRACK), "
                   "above the speed gate"),
         Prop("track_color", "color", default="#ff00ff",
-             label="Track diamond color", help="GPS ground-track diamond colour"),
+             label="Track diamond color", help="GPS ground-track diamond colour",
+             token="nav.course"),
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
              step=1, label="Track min speed (kt)",
              help="hide the track diamond below this groundspeed (kt)"),
@@ -826,7 +835,8 @@ _register(InstrumentSpec(
              label="Bearing pointer color",
              help="generic bearing-needle colour used when the source is "
                   "unknown; a needle with a known source is coloured by it "
-                  "(magenta GPS / green VOR)"),
+                  "(magenta GPS / green VOR)",
+             token="nav.reference"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
              "brg1": 30, "brg2": 250},
@@ -959,20 +969,24 @@ _register(InstrumentSpec(
              maximum=100, step=1, label="Prefix font size (%)",
              help="prefix height as a percent of the widget height"),
         Prop("prefix_color", "color", default="#ffffff", label="Prefix colour",
-             help="colour of the prefix label"),
+             help="colour of the prefix label",
+             token="ink.secondary"),
         Prop("value_color", "color", default="#ffffff", label="Value colour",
-             help="colour of the data value (good/normal state)"),
+             help="colour of the data value (good/normal state)",
+             token="ink.primary"),
         # Optional visual box at the widget bounds (border + background); the box
         # size is the widget rect itself. border_width 0 + bg_opacity 0 = no box.
         Prop("border_color", "color", default="#ffffff", label="Border colour",
-             help="colour of the box border"),
+             help="colour of the box border",
+             token="line.border"),
         Prop("border_width", "integer", default=0, minimum=0, maximum=20, step=1,
              label="Border width (px)",
              help="box border thickness in pixels; 0 = no border"),
         Prop("border_opacity", "integer", default=100, minimum=0, maximum=100,
              step=1, label="Border opacity (%)", help="box border opacity"),
         Prop("bg_color", "color", default="#000000", label="Background colour",
-             help="box background fill colour"),
+             help="box background fill colour",
+             token="surface.base"),
         Prop("bg_opacity", "integer", default=0, minimum=0, maximum=100, step=1,
              label="Background opacity (%)",
              help="box background opacity; 0 = transparent (no fill)"),
@@ -1043,7 +1057,8 @@ _register(InstrumentSpec(
              help="numbered graduation every N ft/min (labels print in "
                   "hundreds: 2400 ft/min prints as 24)"),
         Prop("bg_color", "color", default="#000000", label="Background",
-             help="tape face colour"),
+             help="tape face colour",
+             token="surface.base"),
         _bg_opacity_prop(),
     ],
 ))
@@ -1113,7 +1128,8 @@ _register(InstrumentSpec(
                   "(30 = classic look-ahead offset)"),
         Prop("symbol_color", "color", default="#ffff00",
              label="Ownship colour",
-             help="colour of the top-down ownship symbol"),
+             help="colour of the top-down ownship symbol",
+             token="nav.ownship"),
         Prop("layer_range_rings", "boolean", default=True,
              label="Layer: range rings",
              help="concentric half/full range rings with labels"),
@@ -1137,7 +1153,8 @@ _register(InstrumentSpec(
         Prop("road_color", "color", default="#c0c0c0",
              label="Road colour",
              help="road line colour (arterial classes draw thinner and "
-                  "slightly transparent)"),
+                  "slightly transparent)",
+             token="map.road"),
         Prop("layer_rivers", "boolean", default=True,
              label="Layer: rivers",
              help="rivers/waterways as lines from the rivers pack (#92), "
@@ -1150,7 +1167,8 @@ _register(InstrumentSpec(
         Prop("river_color", "color", default="#4a6d8c",
              label="River colour",
              help="waterway line colour (smaller waterways draw thinner "
-                  "and slightly transparent)"),
+                  "and slightly transparent)",
+             token="map.water"),
         Prop("layer_airports", "boolean", default=True,
              label="Layer: airports",
              help="FAA sectional airport symbols with ident labels "
@@ -1278,9 +1296,11 @@ _register(InstrumentSpec(
              help="backing touchscreen-button key (TSBTN...); the configurator "
                   "assigns it automatically"),
         Prop("bg_color", "color", default="#101418", apply="special",
-             label="Background colour", help="button fill colour"),
+             label="Background colour", help="button fill colour",
+             token="surface.raised"),
         Prop("fg_color", "color", default="#00ffff", apply="special",
-             label="Text colour", help="button label colour"),
+             label="Text colour", help="button label colour",
+             token="accent"),
         Prop("transparent", "boolean", default=False, apply="special",
              label="Transparent background",
              help="draw no fill so what is behind the button shows through"),
@@ -1332,20 +1352,25 @@ _register(InstrumentSpec(
              help="optional name so a Button's 'checklist ...' actions can "
                   "target this checklist; blank = every checklist on the screen"),
         Prop("text_color", "color", default="#ffffff", label="Item colour",
-             help="colour of an un-acknowledged item's challenge text"),
+             help="colour of an un-acknowledged item's challenge text",
+             token="ink.primary"),
         Prop("response_color", "color", default="#00ffff",
              label="Response colour",
-             help="colour of the challenge-response value (the right-hand text)"),
+             help="colour of the challenge-response value (the right-hand text)",
+             token="accent"),
         Prop("done_color", "color", default="#00ff00",
              label="Acknowledged colour",
-             help="colour of an item once it has been acknowledged"),
+             help="colour of an item once it has been acknowledged",
+             token="state.valid"),
         Prop("current_color", "color", default="#ffaa00",
              label="Current-row colour",
              help="highlight colour of the current row while the encoder is "
-                  "controlling the checklist"),
+                  "controlling the checklist",
+             token="state.caution"),
         Prop("section_color", "color", default="#aaaaaa",
              label="Section colour",
-             help="colour of section subheaders and the progress line"),
+             help="colour of section subheaders and the progress line",
+             token="ink.muted"),
     ],
 ))
 
@@ -1520,7 +1545,8 @@ _register(InstrumentSpec(
                   "none hides the symbol (SVS-as-background) "
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
-             help="colour of the fixed aircraft reference symbol"),
+             help="colour of the fixed aircraft reference symbol",
+             token="nav.ownship"),
         Prop("symbol_scale", "number", default=1.0, minimum=0.3, maximum=3.0,
              step=0.05, label="Symbol scale",
              help="multiplies the reference symbol size -- wingspan and "
@@ -1565,9 +1591,11 @@ _register(InstrumentSpec(
         # recomputes it from the box size on resize (fit_to_mask), so it was a
         # no-op option. Use the common font_percent to scale instead.
         Prop("fg_color", "color", default="#aaaaaa", label="Foreground",
-             help="heading-text colour"),
+             help="heading-text colour",
+             token="ink.muted"),
         Prop("bg_color", "color", default="#000000", label="Background",
-             help="background-box fill colour"),
+             help="background-box fill colour",
+             token="surface.base"),
         _bg_opacity_prop(),
     ],
 ))
