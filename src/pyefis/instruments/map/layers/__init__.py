@@ -64,6 +64,7 @@ STANDARD_PALETTE = {
     "airway": (90, 130, 210, 170),
     "route_past": (128, 128, 128, 255),
     "road_default": "#c0c0c0",
+    "road_casing": "#5a5a5a",
     "river_default": "#4a6d8c",
 }
 
@@ -88,6 +89,10 @@ NAV_ONLY_PALETTE = {
     "airway": (100, 140, 220, 255),
     "route_past": (144, 144, 144, 255),
     "road_default": "#808080",
+    # RD2's close-in casing, scaled with the fill: standard's #5a5a5a is
+    # 0.47 of its #c0c0c0 fill, so #3c3c3c is 0.47 of #808080. Left at
+    # #5a5a5a it outlines the dimmed fill brighter than the road it frames.
+    "road_casing": "#3c3c3c",
     "river_default": "#4088a8",
 }
 

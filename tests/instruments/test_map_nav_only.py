@@ -36,6 +36,7 @@ PRE_G12 = {
     "airway": (90, 130, 210, 170),
     "route_past": (128, 128, 128, 255),
     "road_default": "#c0c0c0",
+    "road_casing": "#5a5a5a",
     "river_default": "#4a6d8c",
 }
 
@@ -51,6 +52,7 @@ NAV_ONLY = {
     "airway": (100, 140, 220, 255),
     "route_past": (144, 144, 144, 255),
     "road_default": "#808080",
+    "road_casing": "#3c3c3c",
     "river_default": "#4088a8",
 }
 
@@ -347,6 +349,20 @@ def test_line_layer_default_colour_swaps_but_explicit_wins(cls, opt, std, nav):
         lay = cls()
         lay.configure(_Owner(map_style=style, **{opt: col}))
         assert lay._color == want, (style, col)
+
+
+def test_road_casing_default_swaps_but_explicit_wins():
+    """AER-4607: #369's close-in casing follows the fill. Before the fix
+    nav_only kept the standard #5a5a5a casing round its #808080 fill."""
+    for style, col, want in (("standard", None, "#5a5a5a"),
+                             ("nav_only", None, "#3c3c3c"),
+                             ("nav_only", "#5a5a5a", "#3c3c3c"),
+                             ("nav_only", "#ff0000", "#ff0000"),
+                             ("standard", "#ff0000", "#ff0000")):
+        kw = {} if col is None else {"road_casing_color": col}
+        lay = RoadsLayer()
+        lay.configure(_Owner(map_style=style, **kw))
+        assert lay._casing_color == want, (style, col)
 
 
 def test_schema_exports_map_style_and_layer_water():
