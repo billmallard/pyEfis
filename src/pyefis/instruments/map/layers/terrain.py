@@ -372,13 +372,14 @@ class TerrainLayer(MapLayer):
     def _draw_water_numpy(self, rgbx, lat0, lon0, mpp, n, lat_cos,
                           nominal_range_nm):
         """MP5 (brief section 4): numpy even-odd scanline fill, replacing
-        the Qt QPointF/QPolygonF/drawPath path. Every ring of every
-        polygon in range is collected first; ONE raster.fill_even_odd()
-        call over the whole set then handles island holes (#44) and
-        disjoint/nested lakes for free via the even-odd rule -- no
-        per-polygon special-casing. Mutates *rgbx* in place; the caller
-        builds the QImage from it afterwards, so this never constructs a
-        QPointF/QPolygonF and touches the raster only once.
+        the Qt QPointF/QPolygonF/drawPath path. Every polygon in range is
+        collected first, its rings kept grouped; ONE raster.fill_union()
+        call then applies even-odd within each polygon (island holes,
+        #44) and unions the polygons, so a pixel two polygons both cover
+        stays water (AER-4596: OSM ocean-cell seams, NE/OSM duplicate
+        lakes). Mutates *rgbx* in place; the caller builds the QImage
+        from it afterwards, so this never constructs a QPointF/QPolygonF
+        and touches the raster only once.
 
         *nominal_range_nm* is the widget's own ``range_nm`` (what the pilot
         selected), NOT the query window computed below -- see
@@ -396,7 +397,7 @@ class TerrainLayer(MapLayer):
         n_polys_after = 0
         n_verts = 0
         n_verts_after = 0
-        rings = []
+        polygons = []
         try:
             for poly in self._water.polygons_in_range(
                     lat0, lon0, window_range_nm, min_bbox_diag_deg=min_diag,
@@ -418,20 +419,28 @@ class TerrainLayer(MapLayer):
                 if xs.shape[0] == 0:
                     continue
                 n_polys_after += 1
+                rings = []
                 start = 0
                 for end in ring_ends.tolist():
                     if end - start >= 3:
                         rings.append(np.stack(
                             (xs[start:end], ys[start:end]), axis=1))
                     start = end
+                if rings:
+                    polygons.append(rings)
         except Exception:
             import logging
             logging.getLogger(__name__).exception(
                 "map water rasterize failed")
-            rings = []
-        if rings:
-            mask = raster.fill_even_odd(rings, n)
-            rgbx[mask] = (60, 110, 160, 255)
+            polygons = []
+        if polygons:
+            mask = raster.fill_union(polygons, n)
+            # One uint32 store per pixel through a view of the same bytes:
+            # ~40x cheaper than rgbx[mask] = (r, g, b, x) fancy indexing,
+            # which cost ~45 ms on a 1024^2 window once a lake that used to
+            # cancel to land (AER-4596) filled the whole image.
+            water_px = np.array((60, 110, 160, 255), np.uint8).view(np.uint32)
+            rgbx.view(np.uint32)[..., 0][mask] = water_px[0]
         perf = getattr(self._owner, "perf", None)
         if perf is not None:
             perf.water.record(n_polys, n_verts, n_polys_after,
