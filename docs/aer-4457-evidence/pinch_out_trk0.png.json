@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "eed5e72 (top row) / ac219b9 (bottom row)",
+ "run": "AER-4457 bench session, Beelink: docs/aer-4457-evidence/pinch_out_frames.py --track 0, 2x4 contact sheet, frames at 0.5 scale",
+ "device": "Beelink mini PC, Intel ADL-N (Qt offscreen)",
+ "sha256": "70a77ccd85431939d288813d7b15130473e42d25f24e40355d92d7729a6ca036",
+ "created_utc": "2026-10-31T23:31:02Z"
+}

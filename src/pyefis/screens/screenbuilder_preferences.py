@@ -16,6 +16,8 @@
 
 import re
 
+from pyefis.screens import color_tokens
+
 
 def normalize_font_percent(value):
     """Font height as a fraction of the widget height. Accept a whole-number
@@ -52,6 +54,14 @@ def apply_preferences(config, preferences):
                 pref = specific_pref["styles"].get(style, None)
                 if pref is not None:
                     config["options"] = config.get("options", dict()) | pref
+
+    # Colour tokens resolve LAST, on whatever value the cascade picked, so an
+    # override can itself be a token (style contract section 7).
+    from pyefis.screens import screenbuilder_factory
+    color_tokens.apply_theme_colors(
+        config, preferences,
+        color_tokens.prop_tokens(
+            screenbuilder_factory.REGISTRY.get(config.get("type"))))
 
     font_percent = None
     font_family = "DejaVu Sans Condensed"

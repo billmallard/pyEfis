@@ -5,9 +5,13 @@
 #  phases B-D.
 
 import math
+import threading
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QColor, QFont, QPen
+from PyQt6.QtGui import (QColor, QFont, QPainter, QPainterPath, QPen,
+                         QPolygonF, QTransform)
+
+from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 
 #: id -> layer class. Out-of-tree layers register here too.
 LAYER_REGISTRY = {}
@@ -110,6 +114,163 @@ def qcolor(rgba):
 def register_layer(cls):
     LAYER_REGISTRY[cls.id] = cls
     return cls
+
+
+# --- window-image history (MP13, pyEfis #203) -------------------------------
+# The image layers (terrain, roads, rivers) render a NORTH-UP window image on
+# a worker and paint() rotate-blits it. By MP1 design nothing renders mid-
+# gesture, so a pinch-out blits the last image scaled DOWN; it only spans
+# 1.25x the viewport half-diagonal, so past ~25% the dark fill shows until
+# the settle render lands. Each layer therefore keeps its last few published
+# images, and while the current one does not cover the viewport, the widest
+# compatible earlier image is painted behind it instead of the dark fill.
+
+#: images kept per layer (brief map_gesture_perf_plan.md MP13: "3 deep").
+#: Memory bound: an image is at most 1024 x 1024 x 4 bytes = 4 MiB, so a
+#: layer holds at most 12 MiB, the current image included.
+RENDER_HISTORY_DEPTH = 3
+
+
+def _entry_side_m(entry):
+    """Ground side length, metres, of a square window image entry
+    ``(QImage, key, (centre lat, centre lon, metres per px))``."""
+    return entry[0].width() * entry[2][2]
+
+
+def _entry_contains(entry, lat, lon):
+    """True if ``(lat, lon)`` lies inside *entry*'s north-up footprint."""
+    clat, clon, _mpp = entry[2]
+    half = _entry_side_m(entry) / 2.0
+    dn = (lat - clat) * M_PER_DEG_LAT
+    de = (lon - clon) * M_PER_DEG_LAT * math.cos(math.radians(clat))
+    return abs(dn) <= half and abs(de) <= half
+
+
+class RenderHistory:
+    """The last few published window images of one layer, newest last.
+
+    Entries are the layer's own ``(QImage, key, meta)`` tuples, shared by
+    reference (no copy). A key is ``(lat snap, lon snap, range bucket,
+    *rest)``; two entries are compatible -- may stand in for each other --
+    only when ``key[3:]`` matches (same widget size, terrain mode, caution
+    altitude band), since only position and range are allowed to differ.
+
+    Eviction on :meth:`add`, in order: an entry of the same range bucket
+    (replaced by the newer pose), incompatible entries, entries whose
+    footprint no longer contains the new image's centre (flown away from),
+    then the oldest entry that is not the widest. The widest is protected
+    because it is the one a pinch-out needs; a run of close-in renders must
+    not push it out."""
+
+    def __init__(self, depth=RENDER_HISTORY_DEPTH):
+        self.depth = max(1, int(depth))
+        self._entries = []
+        self._lock = threading.Lock()
+
+    def __len__(self):
+        with self._lock:
+            return len(self._entries)
+
+    def entries(self):
+        with self._lock:
+            return list(self._entries)
+
+    def clear(self):
+        with self._lock:
+            self._entries = []
+
+    def add(self, entry):
+        key = entry[1]
+        clat, clon = entry[2][0], entry[2][1]
+        with self._lock:
+            keep = [e for e in self._entries
+                    if e[1][2] != key[2] and e[1][3:] == key[3:]]
+            while len(keep) + 1 > self.depth:
+                stale = [e for e in keep
+                         if not _entry_contains(e, clat, clon)]
+                if stale:
+                    keep.remove(stale[0])       # oldest flown-away first
+                    continue
+                widest = max(keep, key=_entry_side_m)
+                rest = [e for e in keep if e is not widest]
+                keep.remove(rest[0] if rest else widest)
+            keep.append(entry)
+            self._entries = keep
+
+    def widest(self, key):
+        """The widest entry compatible with *key*, or None."""
+        with self._lock:
+            ok = [e for e in self._entries if e[1][3:] == key[3:]]
+        return max(ok, key=_entry_side_m) if ok else None
+
+
+def _window_transform(x, entry):
+    """Painter transform carrying *entry*'s image-centred pixel frame onto
+    the screen at *x*, and the image's half side in those pixels."""
+    clat, clon, mpp = entry[2]
+    c = x.to_screen(clat, clon)
+    t = QTransform()
+    t.translate(c.x(), c.y())
+    if x.rot:
+        # to_screen applies R(+rot) to world EN vectors; carrying a
+        # NORTH-UP image onto that screen needs the painter rotated by
+        # -rot (QPainter.rotate is clockwise, y-down) -- #90.
+        t.rotate(-math.degrees(x.rot))
+    s = mpp * x._px_per_m                    # screen px per image px
+    return t, entry[0].width() * s / 2.0
+
+
+def window_covers_viewport(x, entry):
+    """True if *entry*'s image, blitted at *x*, covers the whole viewport."""
+    t, half = _window_transform(x, entry)
+    inv, ok = t.inverted()
+    if not ok:
+        return False
+    for px, py in ((0.0, 0.0), (x.w, 0.0), (0.0, x.h), (x.w, x.h)):
+        q = inv.map(QPointF(px, py))
+        if abs(q.x()) > half or abs(q.y()) > half:
+            return False
+    return True
+
+
+def blit_window_image(p, x, entry, smooth=False):
+    """Rotate-blit a north-up window image *entry* registered to *x*."""
+    t, half = _window_transform(x, entry)
+    p.save()
+    p.setTransform(t, True)
+    if smooth:
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    p.drawImage(QRectF(-half, -half, 2.0 * half, 2.0 * half), entry[0])
+    p.restore()
+
+
+def paint_window_images(p, x, current, history, key, smooth=False):
+    """Paint a layer's current window image, backed by the widest earlier
+    image from *history* where the current one leaves the viewport bare.
+
+    With the current image on its exact *key*, or covering the viewport,
+    this is a plain blit. Otherwise (a pinch-out blitting a stale image
+    scaled down) the widest compatible history entry, if it is wider than
+    the current image, is drawn first, clipped OUT of the current image's
+    footprint -- a transparent overlay (roads) must not draw its features
+    twice where the two images overlap, and the opaque terrain image is
+    spared the overdraw."""
+    if current is None:
+        return
+    if current[1] != key and not window_covers_viewport(x, current):
+        back = history.widest(key)
+        if back is not None and _entry_side_m(back) > _entry_side_m(current):
+            t, half = _window_transform(x, current)
+            hole = QPainterPath()
+            hole.addPolygon(t.map(QPolygonF(QRectF(-half, -half,
+                                                   2.0 * half, 2.0 * half))))
+            area = QPainterPath()
+            area.addRect(QRectF(0.0, 0.0, x.w, x.h))
+            p.save()
+            p.setClipPath(area.subtracted(hole), Qt.ClipOperation.IntersectClip)
+            blit_window_image(p, x, back, smooth)
+            p.restore()
+    blit_window_image(p, x, current, smooth)
 
 
 class MapLayer:
