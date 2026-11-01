@@ -38,7 +38,7 @@ pointer). Already present:
 |-----------|-----|--------|-------|
 | `ALT` (value) | present altitude → pointer + read-out + tape scroll | ADC (baro) | primary |
 | `BARO` | altimeter (Kollsman) setting | pilot / ADC | inHg on the bus; shown and set in the tape's baro box (AL-BARO-001); sets the `ALT` datum |
-| `ALTSEL` | selected altitude: the box at the top of the tape + the reference bug (AL-BUG-001) | pilot (this tape, touch + knob), GCU, autopilot | fix-gateway `custom.yaml`; CAN-FIX 461 Selected Altitude (not yet mapped in fix-gateway's CAN-FIX map) |
+| `ALTSEL` | selected altitude: the box at the top of the tape + the reference bug (AL-BUG-001) | pilot (this tape, touch + knob), GCU, autopilot | fix-gateway `database/gcu.yaml` (fix-gateway #90; an older hand-added `custom.yaml` copy still loads). Sent on CAN-FIX 461 Selected Altitude (0x1CD). Its annunciate flag is the altitude deviation alert (EFIS-ALTSEL-005) |
 
 **Altitude markings are not V-speeds** — there are no per-airplane band values here; the
 markings are geometric (every 500/1,000 ft) and the trend is derived from the `ALT` time
@@ -113,8 +113,10 @@ Symbology is industry convention grounded in open references: **AC 23.1311-1C** 
 
 ## 7. Open items
 
-- **Altitude deviation alerting** (EFIS-ALTSEL-005/006, recoloring the bug on deviation)
-  is not implemented; it is computed in fix-gateway by design.
+- **Altitude deviation alerting.** The gateway half is done: fix-gateway #90 sets the
+  `ALTSEL` annunciate flag on deviation, armed on capture (EFIS-ALTSEL-005/-009/-010).
+  The display half, recolouring the bug while the flag is set (EFIS-ALTSEL-006), is not
+  implemented in this tape yet.
 - The `Altimeter_Tape` class is shared with the VS tape (`dbkey="VS"`); keep the trend
   opt-out-able so a VS instance (or a tape beside a VSI, §17.8.b) can disable it.
 - **Baro (Kollsman) setting** display is a separate widget/requirement, not part of this
