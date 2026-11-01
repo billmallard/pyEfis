@@ -73,7 +73,9 @@ for name, cls, kw in (
     host.show()
     app.processEvents()
     if name == "about_history_1024x600.png":
-        w.area.ensureWidgetVisible(w._ack_labels[-1])
+        app.processEvents()   # let the wrapped labels settle their heights
+        sb = w.area.verticalScrollBar()
+        sb.setValue(sb.maximum())
         app.processEvents()
     host.grab().save(os.path.join(out, name))
     print("wrote", name)
