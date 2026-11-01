@@ -1,0 +1,174 @@
+altimeter_trend_tape variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (0,0,0): sensitivity bg_color visible (158857 px)
+altimeter_trend_tape variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+altimeter_trend_tape variant 0 screen (150,190,235): sensitivity bg_color visible (158857 px)
+atitude_indicator variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (0,0,0): sensitivity symbol_color visible (874 px)
+atitude_indicator variant 0 screen (0,0,0): sensitivity horizon_heading_color visible (282 px)
+atitude_indicator variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+atitude_indicator variant 0 screen (150,190,235): sensitivity symbol_color visible (874 px)
+atitude_indicator variant 0 screen (150,190,235): sensitivity horizon_heading_color visible (282 px)
+button variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (0,0,0): sensitivity bg_color NOT VISIBLE
+button variant 0 screen (0,0,0): sensitivity fg_color NOT VISIBLE
+button variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [placeholder/placeholder]
+button variant 0 screen (150,190,235): sensitivity bg_color NOT VISIBLE
+button variant 0 screen (150,190,235): sensitivity fg_color NOT VISIBLE
+checklist variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+checklist variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+checklist variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+checklist variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+checklist variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+checklist variant 0 screen (0,0,0): sensitivity text_color visible (897 px)
+checklist variant 0 screen (0,0,0): sensitivity response_color visible (813 px)
+checklist variant 0 screen (0,0,0): sensitivity done_color NOT VISIBLE
+checklist variant 0 screen (0,0,0): sensitivity current_color NOT VISIBLE
+checklist variant 0 screen (0,0,0): sensitivity section_color visible (1019 px)
+checklist variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+checklist variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+checklist variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+checklist variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+checklist variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+checklist variant 0 screen (150,190,235): sensitivity text_color visible (897 px)
+checklist variant 0 screen (150,190,235): sensitivity response_color visible (813 px)
+checklist variant 0 screen (150,190,235): sensitivity done_color NOT VISIBLE
+checklist variant 0 screen (150,190,235): sensitivity current_color NOT VISIBLE
+checklist variant 0 screen (150,190,235): sensitivity section_color visible (1019 px)
+heading_display variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+heading_display variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+heading_display variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+heading_display variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+heading_display variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+heading_display variant 0 screen (0,0,0): sensitivity fg_color visible (15504 px)
+heading_display variant 0 screen (0,0,0): sensitivity bg_color visible (146157 px)
+heading_display variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+heading_display variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+heading_display variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+heading_display variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+heading_display variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+heading_display variant 0 screen (150,190,235): sensitivity fg_color visible (15504 px)
+heading_display variant 0 screen (150,190,235): sensitivity bg_color visible (146157 px)
+horizontal_situation_indicator variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity fg_color visible (7880 px)
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity bg_color visible (81388 px)
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity needle_color NOT VISIBLE
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity course_color visible (1846 px)
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity vloc_color visible (3624 px)
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity heading_bug_color visible (120 px)
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity track_color visible (98 px)
+horizontal_situation_indicator variant 0 screen (0,0,0): sensitivity bearing_color visible (877 px)
+horizontal_situation_indicator variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity fg_color visible (7880 px)
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity bg_color visible (81387 px)
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity needle_color NOT VISIBLE
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity course_color visible (1846 px)
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity vloc_color visible (3624 px)
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity heading_bug_color visible (120 px)
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity track_color visible (98 px)
+horizontal_situation_indicator variant 0 screen (150,190,235): sensitivity bearing_color visible (877 px)
+horizontal_situation_indicator variant 1 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity fg_color visible (7880 px)
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity bg_color visible (82497 px)
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity needle_color visible (99 px)
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity course_color visible (3525 px)
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity vloc_color NOT VISIBLE
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity heading_bug_color visible (120 px)
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity track_color visible (98 px)
+horizontal_situation_indicator variant 1 screen (0,0,0): sensitivity bearing_color NOT VISIBLE
+horizontal_situation_indicator variant 1 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity fg_color visible (7880 px)
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity bg_color visible (82496 px)
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity needle_color visible (99 px)
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity course_color visible (3525 px)
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity vloc_color NOT VISIBLE
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity heading_bug_color visible (120 px)
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity track_color visible (98 px)
+horizontal_situation_indicator variant 1 screen (150,190,235): sensitivity bearing_color NOT VISIBLE
+moving_map variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+moving_map variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+moving_map variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+moving_map variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+moving_map variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+moving_map variant 0 screen (0,0,0): sensitivity symbol_color visible (96 px)
+moving_map variant 0 screen (0,0,0): sensitivity road_color NOT VISIBLE
+moving_map variant 0 screen (0,0,0): sensitivity river_color NOT VISIBLE
+moving_map variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+moving_map variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+moving_map variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+moving_map variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+moving_map variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+moving_map variant 0 screen (150,190,235): sensitivity symbol_color visible (96 px)
+moving_map variant 0 screen (150,190,235): sensitivity road_color NOT VISIBLE
+moving_map variant 0 screen (150,190,235): sensitivity river_color NOT VISIBLE
+value_text variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [render/render]
+value_text variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [render/render]
+value_text variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [render/render]
+value_text variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [render/render]
+value_text variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [render/render]
+value_text variant 0 screen (0,0,0): sensitivity prefix_color visible (16665 px)
+value_text variant 0 screen (0,0,0): sensitivity value_color NOT VISIBLE
+value_text variant 0 screen (0,0,0): sensitivity border_color visible (4764 px)
+value_text variant 0 screen (0,0,0): sensitivity bg_color visible (140578 px)
+value_text variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [render/render]
+value_text variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [render/render]
+value_text variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [render/render]
+value_text variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [render/render]
+value_text variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [render/render]
+value_text variant 0 screen (150,190,235): sensitivity prefix_color visible (16665 px)
+value_text variant 0 screen (150,190,235): sensitivity value_color NOT VISIBLE
+value_text variant 0 screen (150,190,235): sensitivity border_color visible (4764 px)
+value_text variant 0 screen (150,190,235): sensitivity bg_color visible (140578 px)
+virtual_vfr variant 0 screen (0,0,0): base/stock vs head/stock IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (0,0,0): base/stock vs head/token IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (0,0,0): base/stock vs head/theme IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (0,0,0): base/literal vs head/literal IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (0,0,0): base/literal vs head/token IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (0,0,0): sensitivity symbol_color NOT VISIBLE
+virtual_vfr variant 0 screen (0,0,0): sensitivity horizon_heading_color NOT VISIBLE
+virtual_vfr variant 0 screen (150,190,235): base/stock vs head/stock IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (150,190,235): base/stock vs head/token IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (150,190,235): base/stock vs head/theme IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (150,190,235): base/literal vs head/literal IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (150,190,235): base/literal vs head/token IDENTICAL  [placeholder/placeholder]
+virtual_vfr variant 0 screen (150,190,235): sensitivity symbol_color NOT VISIBLE
+virtual_vfr variant 0 screen (150,190,235): sensitivity horizon_heading_color NOT VISIBLE
