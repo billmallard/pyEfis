@@ -54,6 +54,50 @@ So selecting the `segmented` style turns every arc/bar gauge into its segmented
 look in one move. The settings inside a style are ordinary widget options (see
 [Widget Reference](Widget-Reference)).
 
+### Colour tokens
+
+Any colour option accepts either a literal or a **token name**. Both of these
+are legal, and they mean the same thing until a theme changes `ink.primary`:
+
+```yaml
+fg_color: ink.primary
+fg_color: "#ffffff"
+```
+
+The tokens are:
+
+| Token | Used for |
+|---|---|
+| `surface.base`, `surface.raised` | panel ground; readout boxes, plates, buttons |
+| `ink.primary`, `ink.secondary`, `ink.muted` | data values; labels and prefixes; inactive text |
+| `line.border`, `line.major`, `line.minor`, `line.fine` | frames; tick weights |
+| `accent` | interactive, selected, focused |
+| `state.valid`, `state.caution`, `state.warning` | received or complete; attention; exceeded or failed |
+| `nav.course`, `nav.reference`, `nav.ownship` | active course and track; bugs and selected values; own-ship symbol |
+| `map.road`, `map.water`, `map.terrain` | map layers |
+
+`line.major`, `line.minor`, `line.fine`, `state.warning` and `map.terrain` have
+no built-in value yet, because no shipped widget colour reads them. An option
+that names one is ignored with a log warning, and the widget keeps its default.
+
+A style may set token values in a `colors` block under `styles`, next to the
+per-family blocks. A widget colour that nothing else sets then takes its value
+from the active styles:
+
+```yaml
+styles:
+  colors:
+    basic:
+      surface.base: "#000000"
+      ink.primary: "#f0f0f0"
+```
+
+Tokens resolve **last**, after the screen, `gauges` and `styles` settings have
+picked a value, so any of those settings can be a token itself. `nav.*` and
+`state.*` mean the same in every theme, so a `colors` block can't change them
+(you can still set the widget option itself). With no `colors` block, every
+widget keeps its own default.
+
 ---
 
 ## `gauges`
