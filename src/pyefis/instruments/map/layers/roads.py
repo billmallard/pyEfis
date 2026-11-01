@@ -10,6 +10,14 @@
 #  per-vertex-Python failure mode of SVS #74 -- so all vertex work
 #  happens once per window change, off the paint path.
 #
+#  MP11 (pyEfis #204): the worker itself does no per-vertex or per-line
+#  Python work either. Each pen tier is one bulk query (concatenated
+#  vertices + END offsets), one vectorised projection + bbox reject +
+#  pixel-grid decimation, and a few strokePaths of QPainterPaths built
+#  from numpy through Qt's QDataStream wire format -- the per-line loop it
+#  replaces built ~33k HighwayLine objects and QPolygonFs at 80 NM and
+#  held the GIL for seconds.
+#
 #  LOD (docs/map_layers_roadmap.md section 1): the class set drawn scales
 #  with range -- interstates alone when zoomed out, arterials added as you
 #  zoom in. The class filter is pushed into the DB query so the worker only
@@ -22,8 +30,8 @@ import threading
 import time
 
 import numpy as np
-from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
+from PyQt6.QtCore import QByteArray, QDataStream
+from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map.layers import (MapLayer, RenderHistory,
@@ -32,6 +40,111 @@ from pyefis.instruments.map.layers import (MapLayer, RenderHistory,
 
 #: per-window vertex budget (worker-side; metro windows are dense)
 _MAX_VERTICES = 150000
+#: polylines per stroked QPainterPath. Qt's stroke cost grows faster than
+#: the path: at 80 NM (18k motorway polylines) one path stroked in 1.19 s,
+#: chunks of 64 in 0.08 s, chunks of 16 in 0.07 s (sandbox, AER-4458).
+_LINES_PER_PATH = 64
+
+
+#: QPainterPath element type codes (QPainterPath::ElementType)
+_MOVE_TO = 0
+_LINE_TO = 1
+#: one serialized QPainterPath element: int32 type, double x, double y,
+#: big-endian (QDataStream's default byte order)
+_PATH_ELEMENT = np.dtype([("t", ">i4"), ("x", ">f8"), ("y", ">f8")])
+
+
+def decimate_polylines(xs, ys, ends, n):
+    """Cull and decimate concatenated polylines in image-pixel space.
+
+    *xs*/*ys* are projected image-pixel float coordinates of every
+    polyline concatenated; *ends* are cumulative END offsets (one per
+    polyline). Returns ``(xs, ys, starts)`` for what should be drawn,
+    with *starts* a bool mask marking each surviving polyline's first
+    vertex.
+
+    Same rules as the per-line loop this replaces, vectorised:
+
+    - polylines of fewer than 2 vertices draw nothing and are dropped;
+    - a polyline whose bbox lies wholly outside ``[0, n]`` on either
+      axis is dropped (the old ``xs.max() < 0 or xs.min() > n`` test);
+    - MP4's pixel-grid decimation (terrain ``_decimate_to_pixel_grid``):
+      a run of consecutive vertices rounding to the same pixel collapses
+      to its first member. A polyline's first and last vertex always
+      survive, so a line never shortens and every survivor keeps >= 2
+      vertices; kept vertices keep their exact float position.
+    """
+    ends = np.asarray(ends, dtype=np.int64)
+    m = int(ends[-1]) if ends.size else 0
+    empty = (xs[:0], ys[:0], np.zeros(0, dtype=bool))
+    if m == 0:
+        return empty
+    xs = xs[:m]
+    ys = ys[:m]
+    starts_ix = np.concatenate(([0], ends[:-1]))
+    lens = ends - starts_ix
+    line_ok = lens >= 2
+    if not line_ok.any():
+        return empty
+    # bbox reject; reduceat needs non-empty segments, so only reduce
+    # over the lines with vertices (the rest are already not ok)
+    nz = lens > 0
+    seg = starts_ix[nz]
+    vis = np.zeros(lens.shape[0], dtype=bool)
+    vis[nz] = ~((np.maximum.reduceat(xs, seg) < 0)
+                | (np.minimum.reduceat(xs, seg) > n)
+                | (np.maximum.reduceat(ys, seg) < 0)
+                | (np.minimum.reduceat(ys, seg) > n))
+    line_ok &= vis
+    line_id = np.repeat(np.arange(lens.shape[0]), lens)
+    keep = line_ok[line_id]
+
+    is_start = np.zeros(m, dtype=bool)
+    is_start[starts_ix[nz]] = True
+    is_end = np.zeros(m, dtype=bool)
+    is_end[ends[nz] - 1] = True
+    px = np.round(xs).astype(np.int64)
+    py = np.round(ys).astype(np.int64)
+    changed = np.ones(m, dtype=bool)
+    changed[1:] = (px[1:] != px[:-1]) | (py[1:] != py[:-1])
+    keep &= changed | is_start | is_end
+    return xs[keep], ys[keep], is_start[keep]
+
+
+def polyline_paths(xs, ys, starts, per_path=_LINES_PER_PATH):
+    """QPainterPaths holding the polylines as subpaths (MoveTo at each
+    ``starts`` vertex, LineTo otherwise), *per_path* polylines to a path,
+    each built from the arrays in a single QDataStream read: no QPointF
+    per vertex and no Python call per polyline."""
+    first = np.flatnonzero(starts)
+    cuts = list(first[per_path::per_path]) + [xs.shape[0]]
+    paths = []
+    a = 0
+    for b in cuts:
+        if b > a:
+            paths.append(_path_from_arrays(xs[a:b], ys[a:b], starts[a:b]))
+        a = b
+    return paths
+
+
+def _path_from_arrays(xs, ys, starts):
+    count = xs.shape[0]
+    rec = np.empty(count, dtype=_PATH_ELEMENT)
+    rec["t"] = np.where(starts, _MOVE_TO, _LINE_TO)
+    rec["x"] = xs
+    rec["y"] = ys
+    last_move = int(np.flatnonzero(starts)[-1])
+    # element count, elements, cStart (last subpath start), fill rule
+    buf = QByteArray(np.array([count], ">i4").tobytes() + rec.tobytes()
+                     + np.array([last_move, 0], ">i4").tobytes())
+    path = QPainterPath()
+    stream = QDataStream(buf)       # reads buf: keep it referenced
+    stream >> path
+    if stream.status() != QDataStream.Status.Ok \
+            or path.elementCount() != count:
+        raise ValueError("polyline path decode failed (%s, %d of %d)"
+                         % (stream.status(), path.elementCount(), count))
+    return path
 
 
 def _with_links(bases):
@@ -221,6 +334,22 @@ class RoadsLayer(MapLayer):
             pens[tier] = pen
         return pens
 
+    def _fetch(self, lat0, lon0, query_nm, classes):
+        """``(vertices, ends)`` for *classes* in range. Readers without
+        the bulk query (test fakes) are concatenated from the per-line
+        generator."""
+        bulk = getattr(self._db, "polyline_arrays_in_range", None)
+        if bulk is not None:
+            return bulk(lat0, lon0, query_nm, classes=classes)
+        lines = [np.asarray(line.vertices, dtype=np.float32).reshape(-1, 2)
+                 for line in self._db.polylines_in_range(
+                     lat0, lon0, query_nm, classes=classes)]
+        if not lines:
+            return (np.empty((0, 2), dtype=np.float32),
+                    np.empty(0, dtype=np.int64))
+        return (np.concatenate(lines),
+                np.cumsum([len(a) for a in lines], dtype=np.int64))
+
     def _render(self, job):
         key, lat0, lon0, range_nm, w, h, cy = job
         # Same window geometry as the terrain layer, so the overlay
@@ -234,32 +363,39 @@ class RoadsLayer(MapLayer):
         px_per_deg_lat = M_PER_DEG_LAT / mpp
         px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
 
-        img = QImage(n, n, QImage.Format.Format_ARGB32_Premultiplied)
-        img.fill(0)
-        p = QPainter(img)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pens = self._pens()
-
-        classes = self._classes_for_range(range_nm)   # LOD-filtered fetch
+        # One fetch + one stroke per pen tier, boldest tier fetched first
+        # so the vertex budget sheds the faintest classes, and stroked
+        # last so it sits on top.
+        by_tier = {}
+        for fclass in self._classes_for_range(range_nm):   # LOD filter
+            by_tier.setdefault(self._tier_for(fclass), []).append(fclass)
         query_nm = half_diag_m / 1852.0
         budget = _MAX_VERTICES
+        paths = []
+        for tier in sorted(by_tier):
+            if budget <= 0:
+                break
+            v, ends = self._fetch(lat0, lon0, query_nm, by_tier[tier])
+            if ends.size == 0:
+                continue
+            # a polyline is drawn while budget remains before it
+            starts = np.concatenate(([0], ends[:-1]))
+            ends = ends[starts < budget]
+            budget -= int(ends[-1])
+            xs = (v[:, 1] - lon0) * px_per_deg_lon + half
+            ys = (lat0 - v[:, 0]) * px_per_deg_lat + half
+            xs, ys, first = decimate_polylines(xs, ys, ends, n)
+            paths.append((tier, polyline_paths(xs, ys, first)))
+
+        img = QImage(n, n, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        pens = self._pens()
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         try:
-            for line in self._db.polylines_in_range(lat0, lon0, query_nm,
-                                                    classes=classes):
-                v = line.vertices
-                if budget <= 0:
-                    break
-                budget -= len(v)
-                xs = (v[:, 1] - lon0) * px_per_deg_lon + half
-                ys = (lat0 - v[:, 0]) * px_per_deg_lat + half
-                # off-window polylines: bbox reject before QPointF cost
-                if (xs.max() < 0 or xs.min() > n
-                        or ys.max() < 0 or ys.min() > n):
-                    continue
-                p.setPen(pens[self._tier_for(line.fclass)])
-                p.drawPolyline(QPolygonF(
-                    [QPointF(float(a), float(b))
-                     for a, b in zip(xs, ys)]))
+            for tier, tier_paths in reversed(paths):
+                for path in tier_paths:
+                    p.strokePath(path, pens[tier])
         finally:
             p.end()
         return img, (lat0, lon0, mpp)
