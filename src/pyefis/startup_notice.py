@@ -121,6 +121,28 @@ def _valid_record(rec):
         == rec["notice_sha256"]
 
 
+def read_records(ack_path=None):
+    """Every valid accept record in the log, in file (oldest-first) order, for
+    display (the About screen, L4). ``None`` if the log is missing or
+    unreadable; invalid lines are skipped as ``evaluate`` skips them. Never
+    raises."""
+    path = Path(os.path.expanduser(str(ack_path))) if ack_path else \
+        ack_log_path()
+    try:
+        text = path.read_text("utf-8")
+    except Exception:
+        return None
+    out = []
+    for line in text.splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if _valid_record(rec):
+            out.append(rec)
+    return out
+
+
 def _matches(rec, software_version):
     return (rec["notice_sha256"] == NOTICE_SHA256
             and rec["software"].get("pyefis") == software_version)

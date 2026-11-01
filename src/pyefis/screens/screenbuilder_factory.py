@@ -203,6 +203,8 @@ def build_about(
         kwargs["status_path"] = opts["status_path"]
     if "back_screen" in opts:
         kwargs["back_screen"] = opts["back_screen"]
+    if "ack_path" in opts:
+        kwargs["ack_path"] = opts["ack_path"]
     return about.AboutSystem(**kwargs)
 
 
