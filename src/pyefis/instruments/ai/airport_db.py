@@ -67,6 +67,7 @@ class RunwayRecord:
     length_ft  : float
     bearing_deg: float           # true bearing thr1 → thr2
     width_ft   : float = DEFAULT_RWY_WIDTH_FT
+    surface    : str = ""        # NASR surface code ("ASPH", "TURF-GRVL", ...)
     # Optional Tier C fields — populated by NASR backend; empty/zero from CIFP.
     thr1_designator : str = ""   # e.g. "07" or "25L"
     thr2_designator : str = ""
@@ -203,6 +204,7 @@ class NASRAirportDB:
                 length_ft=r["length_ft"] or 0.0,
                 bearing_deg=a["true_alignment_deg"] or 0.0,
                 width_ft=r["width_ft"] or DEFAULT_RWY_WIDTH_FT,
+                surface=(r["surface"] or "").strip(),
                 thr1_designator=a["end_id"] or "",
                 thr2_designator=b["end_id"] or "",
                 thr1_marking=(a["marking_type"] or "").strip(),
