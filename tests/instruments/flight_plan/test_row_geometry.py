@@ -191,7 +191,7 @@ def test_row_label_does_not_collide_with_the_type_icon(fix, qtbot):
     # exists to close.
     # Plus the RS3 column-header strip above the first row.
     top = w._chrome_h(993, 2.0, 0.26)
-    hh, rh = w._list_metrics(top, 993 - w._chrome_h(993, 1.3, 0.18), cap, 4)
+    hh, rh = w._list_metrics(top, 993 - w._chrome_h(993, 1.3, 0.18), cap)
     y = int(top + hh + rh / 2)
     runs = _runs_on_line(img, y, 0, int(w.width() * 0.35))
     assert len(runs) >= 2, f"expected an icon and a label on the row line, got {runs}"
@@ -207,10 +207,10 @@ def test_row_label_does_not_collide_with_the_type_icon(fix, qtbot):
 # menus are pinned in test_segment_rows.py.
 # --------------------------------------------------------------------------
 
-def _first_list_row(w, n_rows):
+def _first_list_row(w):
     top = w._chrome_h(w.height(), 2.0, 0.26)
     bottom = w.height() - w._chrome_h(w.height(), 1.3, 0.18)
-    hh, rh = w._list_metrics(top, bottom, w._row_h_cap(), n_rows)
+    hh, rh = w._list_metrics(top, bottom, w._row_h_cap())
     return top + hh, rh
 
 
@@ -233,7 +233,7 @@ def test_airway_segment_row_label_does_not_collide_with_its_icon(fix, qtbot):
     img = w.grab().toImage()
     # Display rows: GVO, the V27 segment row, KSMX. The segment row's first
     # line (ident, entry -> exit) sits in its top 58%.
-    y0, rh = _first_list_row(w, 3)
+    y0, rh = _first_list_row(w)
     y = int(y0 + rh + rh * 0.4)
     runs = _runs_on_line(img, y, 0, int(w.width() * 0.35))
     assert len(runs) >= 2, f"expected an icon and a label on the segment row, got {runs}"

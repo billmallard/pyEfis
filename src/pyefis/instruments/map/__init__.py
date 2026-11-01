@@ -170,6 +170,15 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.ownship_position = 50             # percent up from bottom
         self.symbol_color = "yellow"
         self.layer_range_rings = True
+        # Range-ring options (G13, #136); defaults = the original half/full
+        # white rings. Read once by RangeRingsLayer.configure().
+        self.range_ring_fractions = "0.5,1"    # comma list of range fractions
+        self.range_ring_labels = True
+        self.range_ring_label_angle = 0        # screen clock deg, 0 = top
+        self.range_ring_color = "#ffffff"
+        self.range_ring_opacity = 55           # percent
+        self.range_ring_width = 0              # px, 0 = auto (scales with width)
+        self.range_ring_label_size = 0         # px, 0 = auto (scales with width)
         self.layer_terrain = True
         self.tile_path = ""                    # GLO-30/SRTM HGT tree
         self.terrain_mode = "relief"           # or "caution"
