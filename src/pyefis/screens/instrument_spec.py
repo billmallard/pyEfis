@@ -61,6 +61,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pyefis.screens import color_tokens
+
 # Editor-facing field kinds; each maps to an input in the configurator's
 # properties panel. ``fixkey`` is a free-text FIX-database key (rendered as a
 # string input today, a key-picker once the FIX editor exists).
@@ -134,6 +136,7 @@ class Prop:
     help: str = ""
     apply: str = APPLY_ATTR
     bindable: object = None   # a Binding when this setting is live-bindable
+    token: str = ""           # colour props: the semantic token it reads
 
     def __post_init__(self):
         if self.kind not in PROP_KINDS:
@@ -163,6 +166,13 @@ class Prop:
                 raise ValueError(
                     f"Prop {self.name!r}: bindable semantics 'enum' needs kind "
                     f"'enum'")
+        if self.token:
+            if self.kind != "color":
+                raise ValueError(
+                    f"Prop {self.name!r}: token= is only for kind 'color'")
+            if self.token not in color_tokens.TOKENS:
+                raise ValueError(
+                    f"Prop {self.name!r}: unknown colour token {self.token!r}")
         if not self.label:
             self.label = self.name.replace("_", " ").capitalize()
 
