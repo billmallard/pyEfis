@@ -18,7 +18,7 @@ display or the checkout:
 
 ```sh
 A="--lat 34.30 --lon -119.80 --track 0 --range 20 --width 1280 --height 720 --fixes --airways"
-# dev @ eed5e72, with tools/render_map_style_evidence.py copied in
+# dev @ 01559b1 (after the merge of dev into this branch), with tools/render_map_style_evidence.py copied in
 cd ~/bench-scratch/aer-4462/dev && QT_QPA_PLATFORM=offscreen ~/pyefis-venv/bin/python \
     tools/render_map_style_evidence.py $A --styles standard --out out
 # this branch
@@ -28,7 +28,9 @@ cmp ../dev/out/map_standard.png out/map_standard.png && echo BYTE-IDENTICAL
 ```
 
 Result: `BYTE-IDENTICAL`. Both standard renders hash
-`d0fc35c1daf2522d13f7d0aa83a3fb05e907d3758053feb4c721f7ebde3015af`. The tool
+`499dc8da5c89b764d816b7643dc33cfcbacab35d44c22bcf8aea41c33ac628cc`
+(an earlier pass against dev @ eed5e72, before the merge, also matched:
+`d0fc35c1...e3015af`). The tool
 waits until every enabled layer reports `is_settled` before it grabs. The
 Beelink has no rivers pack, so the rivers layer draws nothing in these renders.
 
