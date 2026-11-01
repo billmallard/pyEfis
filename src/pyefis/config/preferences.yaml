@@ -71,6 +71,20 @@ styles:
     ghost:
       font_ghost_mask: "~~~~~~"
 
+  # Colour tokens per style (style contract, CAP-121). Any colour option may
+  # name a token instead of a literal -- fg_color: ink.primary and
+  # fg_color: "#ffffff" are both legal. A style below sets token values; a
+  # widget colour nothing else sets then takes its token's value from the
+  # active styles. With no block here every widget keeps its own default, and
+  # each token's built-in value already equals the defaults of the props that
+  # read it. nav.* and state.* are fixed in every theme: a block that sets one
+  # is ignored. The vocabulary lives in pyefis/screens/color_tokens.py.
+  # colors:
+  #   basic:
+  #     surface.base: "#000000"
+  #     ink.primary: "#ffffff"
+  #     accent: "#00ffff"
+
 
 # Here you can enable or disble individual controls or gauges
 # 
