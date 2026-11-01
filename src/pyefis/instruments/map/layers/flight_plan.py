@@ -233,12 +233,30 @@ def build_dto_symbol(route, engine, dto):
     return (ACTIVE, dto.lat, dto.lon, dto.type, dto.id or "", True)
 
 
-def build_extension(route, engine):
+def _true_course(engine, magvar):
+    """``FPLCRS`` converted back to a true course, or None when the engine
+    is not publishing one. ``FPLCRS`` is magnetic (the engine writes the
+    true DTK + ``MAGVAR``, positive west), so this subtracts ``magvar``;
+    None (the gateway publishes no ``MAGVAR``) is 0, the variation the
+    engine itself then applied. 0.0 is a real course (due north), so a
+    0.0 is rejected only where the engine writes it as a placeholder:
+    the failed outputs (``fail``/``bad`` set) and a vector leg
+    (``FPLPHASE`` = VECTORS, where the engine publishes no course)."""
+    item = engine.get("FPLCRS")
+    if item is None or item.value is None or item.fail or item.bad:
+        return None
+    if _engine_val(engine, "FPLPHASE", "") == "VECTORS":
+        return None
+    return (float(item.value) - (magvar or 0.0)) % 360.0
+
+
+def build_extension(route, engine, magvar=None):
     """The dashed extended-final-approach-course segment past the MAP,
     drawn only while suspended there (``FPLSTATE`` = SUSP, ``FPLAPR`` =
     LNAV). Returns ``((lat1, lon1), (lat2, lon2))`` or ``None``. The
-    extension course is ``FPLCRS`` (the engine's current desired track) if
-    published, else the bearing of the leg into the MAP."""
+    extension course is ``FPLCRS`` (the engine's current desired track,
+    magnetic -- converted to true with ``magvar``) if published, else the
+    true bearing of the leg into the MAP."""
     state = int(_engine_val(engine, "FPLSTATE", 0) or 0)
     apr = int(_engine_val(engine, "FPLAPR", 0) or 0)
     if state != _STATE_SUSP or apr != _APR_LNAV:
@@ -248,13 +266,13 @@ def build_extension(route, engine):
     if idx is None:
         return None
     map_wp = slots[idx]
-    crs = _engine_val(engine, "FPLCRS", None)
-    if not crs and idx > 0:
+    crs = _true_course(engine, magvar)
+    if crs is None and idx > 0:
         crs = fp_geo.initial_bearing(slots[idx - 1].lat, slots[idx - 1].lon,
                                       map_wp.lat, map_wp.lon)
-    if not crs:
+    if crs is None:
         return None
-    end = fp_geo.destination_point(map_wp.lat, map_wp.lon, float(crs), _EXTENSION_NM)
+    end = fp_geo.destination_point(map_wp.lat, map_wp.lon, crs, _EXTENSION_NM)
     return ((map_wp.lat, map_wp.lon), end)
 
 
@@ -341,7 +359,7 @@ class FlightPlanLayer(MapLayer):
             p.setPen(pen)
             p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
 
-        ext = build_extension(route, engine)
+        ext = build_extension(route, engine, self._bridge.magvar_or_none())
         if ext is not None:
             (la1, lo1), (la2, lo2) = ext
             epen = QPen(ACTIVE)
