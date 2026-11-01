@@ -19,19 +19,27 @@
 #  leg near the edge of the widest shipped range (160 NM), the chord-vs-
 #  geodesic pixel deviation is ~0.1 px at a 40 NM leg, ~0.4 px at 80 NM, and
 #  only crosses 1 px past ~110 NM -- comfortably above a typical enroute leg.
+#
+#  RS4 (route segments brief section 7, pyEfis #307): the segment table on
+#  the bus (FPLS*) labels each airway with its ident along its first leg,
+#  and FPLACTSEG widens the rest of the active segment. Both read the
+#  engine's own keys; the layer never works out a segment for itself. The
+#  fixes and legs drawn are the same as before RS4.
 
 import math
 import time
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
+from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPen, QPolygonF
 
 from pyavtools import fix as pyavtools_fix
 
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan.waypoints import WAYPOINT_TYPES, Waypoint
-from pyefis.instruments.map.layers import MapLayer, hit_distance, register_layer
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           hit_distance, qcolor,
+                                           register_layer)
 
 PAST = QColor("#808080")
 ACTIVE = QColor("#ff00ff")
@@ -39,6 +47,9 @@ FUTURE = QColor("#ffffff")
 
 _LEG_WIDTH = 2.0
 _ACTIVE_WIDTH = 3.0
+#: the legs still ahead in the active segment (FPLACTSEG). Width only, in
+#: the leg's own colour: magenta stays reserved for the leg being flown.
+_SEGMENT_WIDTH = 3.0
 
 #: declutter (spec 3.6): labels off above this range, symbols stay.
 _IDENT_RANGE = 80.0
@@ -120,6 +131,73 @@ def build_direct_to(route, engine, dto):
     fr_lat = _engine_val(engine, "FPLFRLAT", 0.0) or 0.0
     fr_lon = _engine_val(engine, "FPLFRLON", 0.0) or 0.0
     return (ACTIVE, (fr_lat, fr_lon), (dto.lat, dto.lon))
+
+
+def _segment_span(route, k):
+    """``(first, last)`` 1-based slots of segment *k* (1-based, as on the
+    bus), or ``None`` when that row does not describe the slots: out of
+    range, or a slot in its span whose ``FPLfSGI`` is not *k*. The engine
+    rejects such a commit (RS1), so this only guards a torn read."""
+    if not 1 <= k <= len(route.segments):
+        return None
+    row = route.segments[k - 1]
+    slots = route.waypoints
+    if not 1 <= row.first <= row.last <= len(slots):
+        return None
+    if any(slots[i - 1].sgi != k for i in range(row.first, row.last + 1)):
+        return None
+    return row.first, row.last
+
+
+def build_airway_labels(route, engine):
+    """``[(color, ident, (lat1, lon1), (lat2, lon2)), ...]``: one label per
+    airway segment, placed on its first leg along the airway (entry fix to
+    the next fix). The leg flown INTO the entry fix belongs to the airway
+    segment on the bus (``FPLACTSEG``), but it is a direct leg, not the
+    airway, so it does not carry the ident. ``color`` is that leg's
+    past/active/future colour, so the label greys out with it."""
+    slots = route.waypoints
+    off_route = _off_route_direct(engine)
+    act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
+    out = []
+    for k, row in enumerate(route.segments, start=1):
+        if row.kind != "airway" or not row.ident:
+            continue
+        span = _segment_span(route, k)
+        if span is None or span[1] <= span[0]:
+            continue
+        a, b = slots[span[0] - 1], slots[span[0]]
+        to_idx = span[0] + 1
+        if off_route or (act_leg and to_idx < act_leg):
+            color = PAST
+        elif act_leg and to_idx == act_leg:
+            color = ACTIVE
+        else:
+            color = FUTURE
+        out.append((color, row.ident, (a.lat, a.lon), (b.lat, b.lon)))
+    return out
+
+
+def build_segment_emphasis(route, engine):
+    """``[((lat1, lon1), (lat2, lon2)), ...]``: the legs still ahead in the
+    active segment, drawn wider. The segment is ``FPLACTSEG`` (0, or the
+    key absent, means none) and a leg belongs to the segment of its TO slot,
+    the engine's own rule. The active leg is already magenta and wide, and
+    past legs stay as they are, so only future legs are listed."""
+    k = int(_engine_val(engine, "FPLACTSEG", 0) or 0)
+    if k <= 0 or _off_route_direct(engine):
+        return []
+    span = _segment_span(route, k)
+    if span is None:
+        return []
+    act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
+    slots = route.waypoints
+    out = []
+    # leg i (slots[i] -> slots[i+1]) has TO-slot number i + 2.
+    for to_idx in range(max(span[0], act_leg + 1, 2), span[1] + 1):
+        a, b = slots[to_idx - 2], slots[to_idx - 1]
+        out.append(((a.lat, a.lon), (b.lat, b.lon)))
+    return out
 
 
 def build_symbols(route, engine):
@@ -234,12 +312,25 @@ class FlightPlanLayer(MapLayer):
             return
         dto = self._bridge.read_direct_to()
 
+        # build_legs/build_symbols speak in the PAST/ACTIVE/FUTURE status
+        # constants; the map_style palette only re-tints PAST (G12).
+        past = qcolor(getattr(x, "palette", STANDARD_PALETTE)["route_past"])
+
+        def tint(color):
+            return past if color == PAST else color
+
         pen = QPen()
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         for color, (la1, lo1), (la2, lo2) in build_legs(route, engine):
-            pen.setColor(color)
+            pen.setColor(tint(color))
             pen.setWidthF(_ACTIVE_WIDTH if color == ACTIVE else _LEG_WIDTH)
             p.setPen(pen)
+            p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+
+        pen.setColor(FUTURE)
+        pen.setWidthF(_SEGMENT_WIDTH)
+        p.setPen(pen)
+        for (la1, lo1), (la2, lo2) in build_segment_emphasis(route, engine):
             p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
 
         direct = build_direct_to(route, engine, dto)
@@ -272,6 +363,7 @@ class FlightPlanLayer(MapLayer):
         p.setFont(f)
         r = max(5.0, min(12.0, x.w * 0.016))
         for color, lat, lon, wtype, label, ringed in symbols:
+            color = tint(color)
             c = x.to_screen(lat, lon)
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
@@ -286,6 +378,45 @@ class FlightPlanLayer(MapLayer):
                 p.setPen(QPen(color))
                 p.drawText(QRectF(c.x() - 60, c.y() + r + 1, 120, f.pixelSize() + 4),
                            Qt.AlignmentFlag.AlignHCenter, label)
+
+        if show_labels:
+            self._paint_airway_labels(p, x, build_airway_labels(route, engine))
+
+    @staticmethod
+    def _paint_airway_labels(p, x, labels):
+        """Each airway ident along its first leg: centred on the leg,
+        rotated to it and kept upright, set just above the line. Skipped
+        when the leg is too short on screen to hold the text, or its
+        midpoint is off screen."""
+        if not labels:
+            return
+        f = QFont(x.font_family)
+        f.setPixelSize(max(8, int(x.w * 0.02)))
+        f.setBold(True)
+        p.setFont(f)
+        fm = QFontMetricsF(f)
+        for color, ident, (la1, lo1), (la2, lo2) in labels:
+            a, b = x.to_screen(la1, lo1), x.to_screen(la2, lo2)
+            dx, dy = b.x() - a.x(), b.y() - a.y()
+            text_w = fm.horizontalAdvance(ident)
+            if math.hypot(dx, dy) < text_w + 2 * fm.height():
+                continue
+            mx, my = (a.x() + b.x()) / 2, (a.y() + b.y()) / 2
+            if not (0 <= mx <= x.w and 0 <= my <= x.h):
+                continue
+            ang = math.degrees(math.atan2(dy, dx))
+            if ang > 90:
+                ang -= 180
+            elif ang <= -90:
+                ang += 180
+            p.save()
+            p.translate(mx, my)
+            p.rotate(ang)
+            p.setPen(QPen(color))
+            h = fm.height()
+            p.drawText(QRectF(-text_w / 2 - 2, -h - _LEG_WIDTH, text_w + 4, h),
+                       Qt.AlignmentFlag.AlignCenter, ident)
+            p.restore()
 
     def hit(self, x, px, py, tol_px):
         """FP10: the plan's waypoint symbols within *tol_px* -- the only way

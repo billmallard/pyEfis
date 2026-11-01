@@ -21,9 +21,10 @@ from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map import raster
-from pyefis.instruments.map.layers import (MapLayer, RenderHistory,
-                                          paint_window_images,
-                                          range_bucket, register_layer)
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           RenderHistory, map_style, palette,
+                                           paint_window_images, range_bucket,
+                                           register_layer)
 
 # Hypsometric stops: (elevation ft, r, g, b) -- sectional-inspired.
 _STOPS = [
@@ -168,10 +169,16 @@ class TerrainLayer(MapLayer):
         self._lock = threading.Lock()
         self._alt_ft = 0.0
         self._water = None          # WaterDB (set in configure)
+        # G12 (#135): map_style nav_only renders WATER ONLY -- no relief,
+        # land left transparent so the widget's plain background shows.
+        self._flat = False
+        self._water_rgba = STANDARD_PALETTE["water"]
 
     def configure(self, owner):
         tile_path = str(getattr(owner, "tile_path", "") or "")
         self._mode = str(getattr(owner, "terrain_mode", "relief"))
+        self._flat = map_style(owner) == "nav_only"
+        self._water_rgba = palette(owner)["water"]
         if tile_path:
             from pathlib import Path
             from pyefis.instruments.ai.svs import TileCache
@@ -201,14 +208,22 @@ class TerrainLayer(MapLayer):
         # tint). Keying on it in relief mode forced a full re-render
         # every 500 ft of climb/descent for an identical image (#89).
         alt_band = (round(self._alt_ft / 500.0)
-                    if self._mode == "caution" else 0)
+                    if self._mode == "caution" and not self._flat else 0)
         return (round(x.lat0 * M_PER_DEG_LAT / snap),
                 round(x.lon0 * M_PER_DEG_LAT / snap),
                 range_bucket(x.range_nm), round(x.w), round(x.h),
-                self._mode, alt_band)
+                "flat" if self._flat else self._mode, alt_band)
+
+    def _has_source(self):
+        """Something to draw: tiles, or (nav_only) a water pack alone --
+        nav_only needs no terrain pack to show coastline."""
+        if self._cache is not None:
+            return True
+        return (self._flat and self._water is not None
+                and bool(getattr(self._water, "ready", False)))
 
     def is_settled(self, x):
-        if self._cache is None:
+        if not self._has_source():
             return True
         key = self._key(x)
         with self._lock:
@@ -216,7 +231,7 @@ class TerrainLayer(MapLayer):
         return img is not None and img[1] == key
 
     def paint(self, p, x):
-        if self._cache is None:
+        if not self._has_source():
             return
         self._alt_ft = float(getattr(self._owner, "_alt_ft", 0.0) or 0.0)
         key = self._key(x)
@@ -225,7 +240,10 @@ class TerrainLayer(MapLayer):
             have = img is not None and img[1] == key
         if not have and not getattr(x, "defer_render", False):
             self._request(key, x)
-        paint_window_images(p, x, img, self._history, key)
+        # A hard black/blue nav_only coastline shows the window image's
+        # pixel steps (up to ~2 screen px each) that relief texture hides;
+        # the relief blit stays nearest-neighbour (G12).
+        paint_window_images(p, x, img, self._history, key, smooth=self._flat)
 
     # --- async build --------------------------------------------------------
     def _request(self, key, x):
@@ -297,26 +315,39 @@ class TerrainLayer(MapLayer):
                 if self._job == job:
                     self._job = None   # let the next paint re-request
 
-    def _render(self, job):
+    def _window(self, job):
+        """Window image geometry for *job*: ``(n, mpp, lat_cos, lats,
+        lons)`` -- shared by the relief and the flat (nav_only) render so
+        the two register identically."""
         key, lat0, lon0, range_nm, w, h, cy = job
         # Cover the rotated viewport: half-diagonal in metres, oversize.
         px_per_m = max(1.0, cy) / max(1.0, range_nm * 1852.0)
         half_diag_m = 0.5 * math.hypot(w, h) / px_per_m * 1.25
-        res = max(1.0, px_per_m / self._RES)   # px per metre of image
         n = int(min(1024, max(64, 2 * half_diag_m * px_per_m * self._RES)))
         mpp = 2 * half_diag_m / n              # metres per image pixel
-        # Pick the mip whose pitch best matches mpp (native ~30-93 m). The
-        # ceiling is the deepest pyramid level a terrain pack ships
-        # (docs/terrain_mip_pyramid.md); high-range views select coarse levels.
         lat_cos = math.cos(math.radians(lat0))
         idx = np.arange(n, dtype=np.float64) - (n - 1) / 2.0
         lats = lat0 + (-idx * mpp) / M_PER_DEG_LAT      # row 0 = north
         lons = lon0 + (idx * mpp) / (M_PER_DEG_LAT * lat_cos)
+        return n, mpp, lat_cos, lats, lons
+
+    def _sample_window(self, lat0, lon0, mpp, lats, lons):
+        # Pick the mip whose pitch best matches mpp (native ~30-93 m). The
+        # ceiling is the deepest pyramid level a terrain pack ships
+        # (docs/terrain_mip_pyramid.md); high-range views select coarse levels.
         tile = self._cache.get(int(math.floor(lat0)), int(math.floor(lon0)))
         native = M_PER_DEG_LAT / ((tile.shape[0] - 1) if tile is not None
                                   else 1200)
         mip = max(0, min(6, int(round(math.log2(max(1.0, mpp / native))))))
-        elev_m, water, mask_hit = self._sample(lats, lons, mip)
+        return self._sample(lats, lons, mip)
+
+    def _render(self, job):
+        if self._flat:
+            return self._render_flat(job)
+        key, lat0, lon0, range_nm, w, h, cy = job
+        n, mpp, lat_cos, lats, lons = self._window(job)
+        elev_m, water, mask_hit = self._sample_window(lat0, lon0, mpp,
+                                                      lats, lons)
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
         if self._mode == "caution":
@@ -339,6 +370,37 @@ class TerrainLayer(MapLayer):
         rgbx[..., 1] = g
         rgbx[..., 2] = b
         rgbx[..., 3] = 255
+        qimg = self._water_overlay(rgbx, QImage.Format.Format_RGBX8888,
+                                   lat0, lon0, mpp, n, lat_cos, range_nm,
+                                   mask_hit)
+        return qimg, (lat0, lon0, mpp)
+
+    def _render_flat(self, job):
+        """G12 (#135) nav_only: the same window, the same water sources
+        (tile void/sea level, the pack's .wmask, the water-pack polygons
+        under the same range gate) as the relief render, but land is left
+        fully transparent and water is the palette's flat fill -- no
+        hypsometric colour, no hillshade, no caution tint. With no tile
+        pack the polygons alone draw (the reader-fallback path)."""
+        key, lat0, lon0, range_nm, w, h, cy = job
+        n, mpp, lat_cos, lats, lons = self._window(job)
+        if self._cache is not None:
+            _elev, water, mask_hit = self._sample_window(lat0, lon0, mpp,
+                                                         lats, lons)
+        else:
+            water = np.zeros((n, n), dtype=bool)
+            mask_hit = False
+        rgba = np.zeros((n, n, 4), np.uint8)
+        rgba[water] = self._water_rgba
+        qimg = self._water_overlay(rgba, QImage.Format.Format_RGBA8888,
+                                   lat0, lon0, mpp, n, lat_cos, range_nm,
+                                   mask_hit)
+        return qimg, (lat0, lon0, mpp)
+
+    def _water_overlay(self, rgbx, fmt, lat0, lon0, mpp, n, lat_cos,
+                       range_nm, mask_hit):
+        """Rasterize the water-pack polygons into *rgbx* (or the QImage
+        built from it, ``water_raster: qt``) and return the QImage."""
         have_water = self._water is not None and self._water.ready
         # MP10c (brief section 4, Track 2): once the pack ships a water
         # mask at the chosen mip, it is already baked into `water` above
@@ -363,11 +425,10 @@ class TerrainLayer(MapLayer):
                           or "numpy")
         if draw_polygons and raster_mode != "qt":
             self._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, range_nm)
-        qimg = QImage(rgbx.data, n, n, 4 * n,
-                      QImage.Format.Format_RGBX8888).copy()
+        qimg = QImage(rgbx.data, n, n, 4 * n, fmt).copy()
         if draw_polygons and raster_mode == "qt":
             self._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, range_nm)
-        return qimg, (lat0, lon0, mpp)
+        return qimg
 
     def _draw_water_numpy(self, rgbx, lat0, lon0, mpp, n, lat_cos,
                           nominal_range_nm):
@@ -439,7 +500,7 @@ class TerrainLayer(MapLayer):
             # ~40x cheaper than rgbx[mask] = (r, g, b, x) fancy indexing,
             # which cost ~45 ms on a 1024^2 window once a lake that used to
             # cancel to land (AER-4596) filled the whole image.
-            water_px = np.array((60, 110, 160, 255), np.uint8).view(np.uint32)
+            water_px = np.array(self._water_rgba, np.uint8).view(np.uint32)
             rgbx.view(np.uint32)[..., 0][mask] = water_px[0]
         perf = getattr(self._owner, "perf", None)
         if perf is not None:
@@ -478,7 +539,7 @@ class TerrainLayer(MapLayer):
         p = QPainter(qimg)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(QColor(60, 110, 160)))
+        p.setBrush(QBrush(QColor(*self._water_rgba)))
         # MP6 counters: polygons/vertices before vs after MP4's per-pixel
         # decimation, and the QPointF count actually constructed (0 once
         # MP5 replaces this with the numpy scanline fill) -- brief
