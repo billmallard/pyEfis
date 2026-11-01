@@ -1138,6 +1138,10 @@ _register(InstrumentSpec(
              label="Road colour",
              help="road line colour (arterial classes draw thinner and "
                   "slightly transparent)"),
+        Prop("road_casing_color", "color", default="#5a5a5a",
+             label="Road casing colour",
+             help="outline drawn under a road once zoomed in far enough "
+                  "that it draws at its true width (a few NM and in)"),
         Prop("layer_rivers", "boolean", default=True,
              label="Layer: rivers",
              help="rivers/waterways as lines from the rivers pack (#92), "

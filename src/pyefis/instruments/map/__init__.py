@@ -191,6 +191,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.layer_roads = True
         self.highway_db_path = ""              # highways.sqlite (SVS pack)
         self.road_color = "#c0c0c0"
+        self.road_casing_color = "#5a5a5a"     # RD2 close-in road outline
         self.layer_rivers = True
         self.river_db_path = ""                # rivers.sqlite (highways schema, #92)
         self.river_color = "#4a6d8c"
