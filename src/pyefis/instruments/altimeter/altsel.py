@@ -12,7 +12,8 @@
 
 """Selected-altitude (ALTSEL) box at the top of the altimeter tape (pyEfis #310).
 
-The box shows the selected altitude in cyan. It is touch-selectable: a touch
+The box shows the selected altitude in cyan, amber while fix-gateway flags an
+altitude deviation (the ``ALTSEL`` annunciate flag, EFIS-ALTSEL-006). It is touch-selectable: a touch
 gives the TAPE edit focus through the screen's ``EncoderController`` (pyEfis
 #308), and the tape's ``enc_*`` methods step the value through
 :class:`AltSelEditor`. The editing rules live in the editor, apart from Qt
@@ -133,6 +134,7 @@ class AltSelBox(QWidget):
         self.highlighted = False
         self.focused = False
         self.color = QColor(bugs.BUG_COLOR)
+        self.alert_color = QColor(bugs.BUG_ALERT_COLOR)
         self._font_pt = None
         binding.changed.connect(self.update)
 
@@ -161,14 +163,14 @@ class AltSelBox(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self.value_rect()
-        border = self.binding.color(self.color)
+        border = self.binding.color(self.color, self.alert_color)
         helpers.draw_readout_panel(
             p, r, helpers.READOUT_RADIUS_RATIO * r.height(), border,
             pen_width=max(1.0, r.height() * 0.05), fill_alpha=BOX_FILL_ALPHA)
         if self.highlighted and not self.focused:
             fg = QColor(HIGHLIGHT_COLOR)
         else:
-            fg = self.binding.color(self.color)
+            fg = self.binding.color(self.color, self.alert_color)
         p.setPen(fg)
         p.setFont(self._font(r))
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.text())

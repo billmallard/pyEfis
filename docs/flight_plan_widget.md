@@ -141,6 +141,21 @@ render read-only — it never raises.
   Result and error messages (STORED, NO AIRWAYS AT x, ROUTE FULL, ...) show
   as a toast that clears itself after `TOAST_MS` (4 s; each new message
   restarts it) or on the next tap anywhere on the page (pyEfis #323).
+- **Scrolling the list** (PA15, AER-2087) — rows keep their physical height
+  (`row_height_mm`) however long the route; a route taller than the pane
+  scrolls under a finger instead of shrinking every row. A press on the list
+  is not a tap until the finger lifts: if it moves 3 mm (`DRAG_THRESHOLD_MM`,
+  sideways included) it becomes a drag and the row it started on is NOT
+  selected. Lifting while still moving flings the list (speed from the last
+  0.1 s, exponential decay, capped), clamped at both ends; a press during a
+  fling only stops it. A mouse wheel scrolls one row per notch. A thin bar
+  down the right edge shows where the visible rows sit, only when the list
+  overflows. When the active leg changes the list scrolls to show it with its
+  FROM row above, unless the pilot scrolled in the last 20 s
+  (`SCROLL_HOLD_S`), in which case it waits for the hold to run out. Soft
+  keys, menus and every other tap target still fire on press. Rows scrolled
+  out of view keep their place in the encoder ring, and turning the knob onto
+  one scrolls it into view.
 - **Load Airway** (PA6, AER-1605, brief section 3.5) — offers every airway
   through the tapped fix (`AirwayGraph.airways_through_fix`, PA2), then an
   exit fix from that airway's ordered points, each annotated with its
@@ -266,7 +281,8 @@ FPL page is the waypoint rows then the soft keys; on an open menu or confirm
 box it is only that box (never the dimmed page behind it); and a control
 added for touch later is reachable by knob with no extra code. The ring wraps.
 Scrollable menus keep their ▲/▼ rows as ring entries — push one to page the
-list.
+list. The FPL list's rows are all in the ring, scrolled out of view or not; the
+list scrolls to keep the focused row on screen (PA15).
 
 | Where | Turn | Push | Long push (>= 600 ms) |
 |-------|------|------|------------------------|

@@ -260,28 +260,113 @@ def hit_distance(xform, lat, lon, x, y, tol_px):
     return d if d <= tol_px else None
 
 
+def parse_ring_fractions(text, default=(0.5, 1.0)):
+    """``range_ring_fractions`` (comma list, the ``range_ladder`` idiom) ->
+    sorted unique fractions of range_nm in (0, 2]. A ring past 2x range is
+    off every screen, so it is dropped rather than drawn. Unparseable or
+    empty input falls back to *default* (half + full, the ND convention)
+    instead of losing the rings."""
+    out = set()
+    for part in str(text if text is not None else "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            v = float(part)
+        except ValueError:
+            return tuple(default)
+        if 0.0 < v <= 2.0:
+            out.add(v)
+    return tuple(sorted(out)) or tuple(default)
+
+
 @register_layer
 class RangeRingsLayer(MapLayer):
-    """Concentric rings at half and full range around ownship, with
-    distance labels -- trivial by design: it proves the provider
-    seam end to end (registry, config, toggle, paint contract)."""
+    """Concentric rings around ownship at configured fractions of range
+    (default half and full range), with distance labels. Options (G13,
+    billmallard/pyEfis#136) are read off the map widget in configure();
+    a layer that was never configured paints exactly the original
+    half/full rings.
+
+    The current range itself is NOT carried by the ring labels: the status
+    chip top-left (MovingMap.paintEvent) always prints it, so turning the
+    labels off never hides the range."""
 
     id = "range_rings"
     label = "Range rings"
     z = 20
     default_on = True
 
+    #: label rect offset from its anchor point on the ring, and its width.
+    _LABEL_DX = 4.0
+    _LABEL_W = 80.0
+
+    def __init__(self):
+        super().__init__()
+        self.fractions = (0.5, 1.0)
+        self.labels = True
+        self.label_angle = 0.0       # screen clock angle, 0 = top, 90 = right
+        self.color = "#ffffff"
+        self.opacity = 55            # percent; 55% of 255 rounds to alpha 140
+        self.width_px = 0.0          # 0 = auto, scales with the map width
+        self.label_size = 0          # 0 = auto, scales with the map width
+
+    def configure(self, owner):
+        self.fractions = parse_ring_fractions(
+            getattr(owner, "range_ring_fractions", "0.5,1"))
+        self.labels = bool(getattr(owner, "range_ring_labels", True))
+        self.label_angle = self._num(owner, "range_ring_label_angle", 0.0) % 360.0
+        self.color = str(getattr(owner, "range_ring_color", "") or "#ffffff")
+        self.opacity = max(0.0, min(100.0, self._num(owner, "range_ring_opacity", 55)))
+        self.width_px = max(0.0, self._num(owner, "range_ring_width", 0.0))
+        self.label_size = max(0, int(self._num(owner, "range_ring_label_size", 0)))
+
+    @staticmethod
+    def _num(owner, name, default):
+        try:
+            return float(getattr(owner, name, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def ring_radii_px(self, x):
+        """Ring radii in screen px for transform *x*, innermost first."""
+        return [x.nm_to_px(x.range_nm * f) for f in self.fractions]
+
+    def pen_color(self):
+        c = QColor(self.color)
+        if not c.isValid():
+            c = QColor(255, 255, 255)
+        c.setAlpha(int(round(self.opacity * 2.55)))
+        return c
+
+    def pen_width(self, x):
+        return self.width_px if self.width_px > 0 else max(1.0, x.w * 0.002)
+
+    def label_pixel_size(self, x):
+        return self.label_size if self.label_size > 0 else max(8, int(x.w * 0.025))
+
+    def label_anchor(self, x, r_px):
+        """Point on the ring at ``label_angle`` (screen clock, clockwise from
+        straight up). The label rect's top-left sits ``_LABEL_DX`` right of
+        it -- at angle 0 that is the original top-of-ring position."""
+        a = math.radians(self.label_angle)
+        return QPointF(x.cx + r_px * math.sin(a), x.cy - r_px * math.cos(a))
+
+    def label_rect(self, x, r_px):
+        ax = self.label_anchor(x, r_px)
+        return QRectF(ax.x() + self._LABEL_DX, ax.y(), self._LABEL_W,
+                      self.label_pixel_size(x) + 6)
+
     def paint(self, p, x):
-        pen = QPen(QColor(255, 255, 255, 140))
-        pen.setWidthF(max(1.0, x.w * 0.002))
+        pen = QPen(self.pen_color())
+        pen.setWidthF(self.pen_width(x))
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
         f = QFont(x.font_family)
-        f.setPixelSize(max(8, int(x.w * 0.025)))
+        f.setPixelSize(self.label_pixel_size(x))
         p.setFont(f)
-        for frac in (0.5, 1.0):
-            r_px = x.nm_to_px(x.range_nm * frac)
+        for frac, r_px in zip(self.fractions, self.ring_radii_px(x)):
             p.drawEllipse(QPointF(x.cx, x.cy), r_px, r_px)
-            lbl = format_range_nm(x.range_nm * frac)
-            p.drawText(QRectF(x.cx + 4, x.cy - r_px, 80, f.pixelSize() + 6),
-                       Qt.AlignmentFlag.AlignLeft, lbl)
+            if self.labels:
+                p.drawText(self.label_rect(x, r_px), Qt.AlignmentFlag.AlignLeft,
+                           format_range_nm(x.range_nm * frac))

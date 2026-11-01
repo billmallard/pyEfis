@@ -1,9 +1,10 @@
 # Running pyEfis from source (laptop / developer)
 
 This is for developers who want to run pyEfis from a git checkout on a normal
-desktop or laptop (Linux, internet-connected). If you just want to *use* pyEfis
-on a Raspberry Pi, use the snap install in [INSTALLING.md](../INSTALLING.md)
-instead.
+desktop or laptop (Linux, internet-connected). The same steps apply on a
+Raspberry Pi; the snaps in [INSTALLING.md](../INSTALLING.md) are behind this
+fork (no Synthetic Vision or navigation-data currency), so running from source
+is the current path there too.
 
 ## Prerequisites
 

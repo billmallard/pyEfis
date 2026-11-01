@@ -61,8 +61,10 @@ specs with requirement IDs: [ai](ai_widget_spec.md) ·
 | [map_wide_range_perf_plan.md](map_wide_range_perf_plan.md) | PLAN 2026-07-10 — largely executed by the mosaic/mip work; reconcile before acting |
 | [gcu_design.md](gcu_design.md) | DRAFT — open GCU control head (parked) |
 | [instrument_bugs_design.md](instrument_bugs_design.md) | DRAFT — selected-value bug markers (companion to GCU) |
+| [fix_dynamic_list_spec.md](fix_dynamic_list_spec.md) | SPEC 2026-10-31 -- dynamic lists over FIX (closes #52): indexed key blocks, block vs slot commit; route restated, ADS-B traffic (`TFCk*`, GDL90 0x14) defined. Writer and #53 layer not yet built |
 | [fixgw_canaerospace_in_spec.md](fixgw_canaerospace_in_spec.md) | Spec, future work (untracked; out of landing scope) |
 | [fixgw_dronecan_in_spec.md](fixgw_dronecan_in_spec.md) | Spec, future work (untracked; out of landing scope) |
+| [fixgw_onspeed_in_spec.md](fixgw_onspeed_in_spec.md) | Spec, ready to implement (AER-4329) -- OnSpeed serial-in -> `AOA`/`AOA.Warn`; unblocks AI-LIM-001 |
 | [SVS_QUICKSTART.md](SVS_QUICKSTART.md) | WIP quickstart (untracked) |
 | [moving_map_spec.md](moving_map_spec.md) | Spec — NOTE: its "development not started" header is stale; Phases A–D shipped and are flying |
 

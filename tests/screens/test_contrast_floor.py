@@ -158,7 +158,10 @@ PAIRS = {
     "altimeter_trend_tape": [("#ffffff", "bg_color", TEXT_FLOOR)],
     # Selected-altitude readout text over the tape's black ground
     # (altimeter/altsel.py; Altimeter_Tape bg defaults to black).
-    "altimeter_tape": [("alt_bug_color", "#000000", TEXT_FLOOR)],
+    "altimeter_tape": [
+        ("alt_bug_color", "#000000", TEXT_FLOOR),
+        ("alt_bug_alert_color", "#000000", TEXT_FLOOR),
+    ],
     "horizontal_situation_indicator": [
         ("fg_color", "bg_color", TEXT_FLOOR),
         ("needle_color", "bg_color", GRAPHIC_FLOOR),
@@ -204,6 +207,7 @@ NOT_A_SURFACE_PAIR = {
     ("moving_map", "road_color"): "road over map imagery",
     ("moving_map", "road_casing_color"): "road casing over map imagery",
     ("moving_map", "river_color"): "river over map imagery",
+    ("moving_map", "range_ring_color"): "rings and ring labels over map imagery",
     # None by default: inherits the Screen palette (covered below).
     ("tab_section", "fg_color"): "inherits the Screen palette",
     ("tab_section", "bg_color"): "inherits the Screen palette",
