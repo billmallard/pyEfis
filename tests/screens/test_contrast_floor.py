@@ -205,6 +205,7 @@ NOT_A_SURFACE_PAIR = {
     ("virtual_vfr", "svs_road_casing_color"): "road casing over terrain",
     ("moving_map", "symbol_color"): "own-ship symbol over the map",
     ("moving_map", "road_color"): "road over map imagery",
+    ("moving_map", "road_casing_color"): "road casing over map imagery",
     ("moving_map", "river_color"): "river over map imagery",
     ("moving_map", "range_ring_color"): "rings and ring labels over map imagery",
     # None by default: inherits the Screen palette (covered below).

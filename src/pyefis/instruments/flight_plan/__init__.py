@@ -44,10 +44,17 @@ knob cannot reach. On an ident field the turn scrolls the character at the
 cursor and a push advances it; a long push (``enc_long_press_ms``) is Back.
 With a dual-concentric knob (screen ``encoder_outer``) the outer ring moves
 the cursor instead and a push on the field is always Enter.
+
+List scrolling (PA15, AER-2087): FPL rows keep their physical height and the
+list scrolls under a finger instead of shrinking. A press on the list is not
+a tap until the finger lifts: moving past ``drag_threshold_mm`` turns it into
+a drag (kinetic on release, clamped at both ends) and cancels the row tap it
+started on. Every other tap target still fires on press.
 """
 
 import logging
 import math
+import time
 
 from pyefis import display_metrics
 import os
@@ -99,6 +106,23 @@ ENC_LONG_PRESS_MS = 600
 TOAST_MS = 4000
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
+
+# FPL list scrolling (PA15). Movement before a list press stops being a tap,
+# in millimetres on the glass: a fingertip rolls 1-2 mm while it presses, so
+# 3 mm keeps a sloppy tap a tap and still starts a drag almost at once.
+DRAG_THRESHOLD_MM = 3.0
+# How long a pilot scroll holds the list where it was left before the
+# sequencer may scroll it to the active leg again.
+SCROLL_HOLD_S = 20.0
+# Fling: finger speed over the last _FLING_SAMPLE_S before lift-off, decaying
+# exponentially with time constant _FLING_TAU_S. Speeds are mm/s so a fling
+# travels the same distance on the glass whatever the panel's pixel density.
+_FLING_SAMPLE_S = 0.1
+_FLING_TAU_S = 0.35
+_FLING_MIN_MM_S = 50.0
+_FLING_STOP_MM_S = 10.0
+_FLING_MAX_MM_S = 1500.0
+_FLING_TICK_MS = 16
 
 _ROW_MENU_ITEMS = (
     ("Insert Before", "_row_menu_insert_before"),
@@ -265,6 +289,25 @@ class FlightPlan(QWidget):
         # stale offset surviving into a different (shorter) item list opened
         # under the same key.
         self._menu_scroll = {}
+
+        # FPL list scrolling (PA15, AER-2087). _list_scroll is how far the
+        # list content is scrolled, in px. _list_view describes the list as
+        # the last paint laid it out (None when no list is under the finger:
+        # another page, or an overlay on top); _press is the gesture in
+        # progress; _followed_active is the active leg the list last scrolled
+        # to, so the sequencer only moves it on a change.
+        self.drag_threshold_mm = DRAG_THRESHOLD_MM
+        self.scroll_hold_s = SCROLL_HOLD_S
+        self._list_scroll = 0.0
+        self._list_view = None
+        self._press = None
+        self._last_pilot_scroll = None
+        self._followed_active = None
+        self._fling_v = 0.0
+        self._fling_last = None
+        self._fling_timer = QTimer(self)
+        self._fling_timer.setInterval(_FLING_TICK_MS)
+        self._fling_timer.timeout.connect(self._fling_tick)
 
         self._wpt_timer = QTimer(self)
         self._wpt_timer.setInterval(1000)
@@ -1703,6 +1746,7 @@ class FlightPlan(QWidget):
             slots = self._enc_slots(ring)
             cur = slots.index(self._enc_focus) if self._enc_focus in slots else 0
             self._enc_focus = slots[(cur + int(data)) % len(slots)]
+            self._enc_reveal_focus(ring)
         self._enc_settle()
         return True
 
@@ -1963,17 +2007,197 @@ class FlightPlan(QWidget):
         self._tap_targets.append((x, y, w, h, callback))
         self._tap_kinds.append(kind)
 
+    def _hit(self, x, y):
+        """The callback of the topmost tap target under (x, y), or None.
+
+        A list row is only hit inside the list viewport: a row scrolled
+        partly under the column header keeps its full rect (the encoder ring
+        needs it), but the part outside the viewport is not tappable."""
+        view = self._list_view
+        for n in range(len(self._tap_targets) - 1, -1, -1):
+            tx, ty, tw, th, callback = self._tap_targets[n]
+            if not (tx <= x <= tx + tw and ty <= y <= ty + th):
+                continue
+            if (view is not None and view["taps"][0] <= n < view["taps"][1]
+                    and not self._in_list_view(y)):
+                continue
+            return callback
+        return None
+
     def mousePressEvent(self, event):
         # Any tap dismisses the toast; a callback that raises a new one below
         # sets it again (and restarts the timer).
         self._clear_toast()
-        x, y = event.pos().x(), event.pos().y()
-        for tx, ty, tw, th, callback in reversed(self._tap_targets):
-            if tx <= x <= tx + tw and ty <= y <= ty + th:
-                callback()
-                event.accept()
-                return
+        x, y = event.position().x(), event.position().y()
+        flinging = self._fling_timer.isActive()
+        self._stop_fling()
+        if self._in_list_view(y):
+            # Not a tap yet: it fires on release if the finger stayed put.
+            # A press that stops a fling only stops it.
+            self._press = {"x": x, "y": y, "scroll": self._list_scroll, "drag": False,
+                           "target": None if flinging else self._hit(x, y),
+                           "samples": [(self._now(), y)]}
+            event.accept()
+            return
+        callback = self._hit(x, y)
+        if callback is not None:
+            callback()
+            event.accept()
+            return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        press = self._press
+        if press is None:
+            super().mouseMoveEvent(event)
+            return
+        x, y = event.position().x(), event.position().y()
+        thr = self._drag_threshold_px()
+        if not press["drag"] and math.hypot(x - press["x"], y - press["y"]) >= thr:
+            # A drag now: release will not tap the row it started on. Anchor
+            # at the threshold, not at this event, so the list neither jumps
+            # by the threshold nor loses travel Qt merged into this one move
+            # (xcb coalesces queued motion under load; the Beelink lost whole
+            # drags that way).
+            dy = y - press["y"]
+            press.update(drag=True, y=press["y"] + max(-thr, min(dy, thr)))
+        if press["drag"]:
+            self._scroll_list_to(press["scroll"] - (y - press["y"]))
+            self._last_pilot_scroll = self._now()
+        now = self._now()
+        press["samples"] = [s for s in press["samples"] if now - s[0] <= _FLING_SAMPLE_S]
+        press["samples"].append((now, y))
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        press, self._press = self._press, None
+        if press is None:
+            super().mouseReleaseEvent(event)
+            return
+        if press["drag"]:
+            now = self._now()
+            samples = [s for s in press["samples"] if now - s[0] <= _FLING_SAMPLE_S]
+            samples.append((now, event.position().y()))
+            dt = samples[-1][0] - samples[0][0]
+            if dt > 0:
+                # The list moves opposite to the finger's travel.
+                self._start_fling(-(samples[-1][1] - samples[0][1]) / dt)
+        elif press["target"] is not None:
+            press["target"]()
+        event.accept()
+
+    def wheelEvent(self, event):
+        if self._list_view is None:
+            super().wheelEvent(event)
+            return
+        self._stop_fling()
+        steps = event.angleDelta().y() / 120.0
+        if self._scroll_list_to(self._list_scroll - steps * self._list_view["row_h"]):
+            self._last_pilot_scroll = self._now()
+        event.accept()
+
+    # -- FPL list scrolling (PA15, AER-2087) ------------------------------------
+    @staticmethod
+    def _now():
+        return time.monotonic()
+
+    def _drag_threshold_px(self):
+        try:
+            mm = float(self.drag_threshold_mm)
+        except (TypeError, ValueError):
+            mm = DRAG_THRESHOLD_MM
+        if not math.isfinite(mm) or mm <= 0:
+            mm = DRAG_THRESHOLD_MM
+        return max(6.0, mm * self._px_per_mm())
+
+    def _in_list_view(self, y):
+        view = self._list_view
+        return view is not None and view["top"] <= y < view["bottom"]
+
+    def _scroll_list_to(self, offset):
+        """Scroll the list to *offset* px, clamped to its ends. Returns True
+        if it moved."""
+        view = self._list_view
+        if view is None:
+            return False
+        new = max(0.0, min(float(offset), view["max"]))
+        if new == self._list_scroll:
+            return False
+        self._list_scroll = new
+        self.update()
+        return True
+
+    def _start_fling(self, velocity):
+        """*velocity* is list travel in px/s, positive scrolling down."""
+        ppm = self._px_per_mm()
+        if abs(velocity) < _FLING_MIN_MM_S * ppm:
+            return
+        limit = _FLING_MAX_MM_S * ppm
+        self._fling_v = max(-limit, min(velocity, limit))
+        self._fling_last = self._now()
+        self._fling_timer.start()
+
+    def _stop_fling(self):
+        self._fling_timer.stop()
+        self._fling_v = 0.0
+
+    def _fling_tick(self):
+        now = self._now()
+        dt, self._fling_last = now - (self._fling_last or now), now
+        self._fling_step(dt)
+
+    def _fling_step(self, dt):
+        dt = max(0.0, min(dt, 0.1))
+        moved = self._scroll_list_to(self._list_scroll + self._fling_v * dt)
+        self._fling_v *= math.exp(-dt / _FLING_TAU_S)
+        if moved:
+            self._last_pilot_scroll = self._now()
+        # An end stop or a spent fling ends it.
+        if not moved or abs(self._fling_v) < _FLING_STOP_MM_S * self._px_per_mm():
+            self._stop_fling()
+
+    def _pilot_scrolled_recently(self):
+        if self._press is not None or self._fling_timer.isActive():
+            return True
+        last = self._last_pilot_scroll
+        return last is not None and self._now() - last < float(self.scroll_hold_s)
+
+    def _follow_active_row(self, display, active_idx, row_h, view_h, max_scroll):
+        """When the active leg changes, bring it into view with the FROM row
+        above it -- unless the pilot has scrolled recently, in which case it
+        is left for a later paint once the hold runs out."""
+        if active_idx == self._followed_active or self._pilot_scrolled_recently():
+            return
+        self._followed_active = active_idx
+        pos = next((n for n, row in enumerate(display)
+                    if (row[0] == "wpt" and row[1] == active_idx)
+                    or (row[0] == "fix" and row[2] == "to")), None)
+        if pos is None:
+            return
+        row_top = pos * row_h
+        context_top = row_top - row_h if pos > 0 and view_h >= 2 * row_h else row_top
+        if context_top < self._list_scroll or row_top + row_h > self._list_scroll + view_h:
+            self._list_scroll = max(0.0, min(context_top, max_scroll))
+
+    def _enc_reveal_focus(self, ring):
+        """Scroll a list row the knob just focused into the viewport, so the
+        encoder reaches every row a finger can."""
+        view = self._list_view
+        focus = self._enc_focus
+        if view is None or focus is None or self._enc_layer_start != 0:
+            return
+        n = focus - (1 if ring and ring[0][0] == "field" else 0)
+        if not (view["taps"][0] <= n < view["taps"][1]):
+            return
+        rect = ring[focus][1]
+        if rect.top() < view["top"]:
+            delta = rect.top() - view["top"]
+        elif rect.bottom() > view["bottom"]:
+            delta = rect.bottom() - view["bottom"]
+        else:
+            return
+        if self._scroll_list_to(self._list_scroll + delta):
+            self._last_pilot_scroll = self._now()
 
     # -- painting -------------------------------------------------------------
     def _font_scale(self):
@@ -2032,8 +2256,8 @@ class FlightPlan(QWidget):
         so no text setting could correct it.
 
         The floor keeps a row usable if the physical information is wrong or
-        missing; the list still shrinks rows below this when a long plan needs
-        the space, because the caller takes a min() against the available area.
+        missing. A long plan no longer shrinks rows below this; the list
+        scrolls instead (PA15, see _list_metrics).
         """
         try:
             mm = float(self.row_height_mm)
@@ -2082,6 +2306,7 @@ class FlightPlan(QWidget):
         self._sync_keyboard_focus()
         self._tap_targets = []
         self._tap_kinds = []
+        self._list_view = None
         self._enc_layer_start = 0
         self._enc_field = None
         p = QPainter(self if device is None else device)
@@ -2132,6 +2357,9 @@ class FlightPlan(QWidget):
                         or self._menu_open or self._seg_fixes is not None
                         or self._wpt_info is not None or self._seg_fix_menu is not None
                         or self._airway_picker is not None)
+        if overlay_open:
+            # The list under an overlay neither scrolls nor takes a press.
+            self._list_view = None
         if banner_h:
             # Under an overlay it is drawn (and dimmed) but not tappable.
             self._paint_map_susp_banner(p, w, h - footer_h, banner_h, not overlay_open)
@@ -2299,12 +2527,13 @@ class FlightPlan(QWidget):
         p.setPen(QPen(QColor("#333333")))
         p.drawLine(QPointF(0, top + hh - 1), QPointF(w, top + hh - 1))
 
-    def _list_metrics(self, top, bottom, max_row_h, n_rows):
-        """``(header_h, row_h)``. The header strip is half a physical row;
-        rows size off the count of DISPLAY rows, not of fixes, so a folded
-        airway never steals the height every other row gets."""
+    def _list_metrics(self, top, bottom, max_row_h):
+        """``(header_h, row_h)``. The header strip is half a physical row.
+        Rows keep the physical height however many there are (PA15): a long
+        route scrolls instead of shrinking every row below a fingertip. Only
+        a pane too short for one whole row gets a shorter one."""
         hh = max(14.0, max_row_h * 0.5)
-        row_h = max(14, min((bottom - top - hh) / max(n_rows, 1), max_row_h))
+        row_h = max(14, min(bottom - top - hh, max_row_h))
         return hh, row_h
 
     def _paint_list(self, p, w, top, bottom, max_row_h, interactive):
@@ -2321,17 +2550,28 @@ class FlightPlan(QWidget):
         active_idx = self._active_index()
         cols = self._columns()
         display = self._display_rows(active_idx)
-        hh, row_h = self._list_metrics(top, bottom, max_row_h, len(display))
+        hh, row_h = self._list_metrics(top, bottom, max_row_h)
         self._paint_column_headers(p, w, top, hh, row_h, cols)
+
+        view_top = top + hh
+        view_h = max(0.0, bottom - view_top)
+        content_h = len(display) * row_h
+        max_scroll = max(0.0, content_h - view_h)
+        self._follow_active_row(display, active_idx, row_h, view_h, max_scroll)
+        self._list_scroll = max(0.0, min(self._list_scroll, max_scroll))
 
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(row_h * 0.5), 9))
-        y = top + hh
+        # Every row is painted and registers its tap target, offscreen ones
+        # too, so the encoder ring can walk to them; the clip keeps them off
+        # the header and footer, and _hit keeps them from being tapped there.
+        taps_start = len(self._tap_targets)
+        p.save()
+        p.setClipRect(QRectF(0, view_top, w, view_h))
+        y = view_top - self._list_scroll
         nest_top = None
+        rh = row_h
         for row in display:
-            rh = min(row_h, bottom - y)
-            if rh <= 0:
-                break
             p.setFont(f)
             kind = row[0]
             if kind == "wpt":
@@ -2348,6 +2588,28 @@ class FlightPlan(QWidget):
                 self._paint_fold_row(p, w, y, rh, row[1], row[2], interactive)
                 self._paint_nest_guide(p, rh, nest_top, y)
             y += rh
+        p.restore()
+        self._list_view = {"top": view_top, "bottom": view_top + view_h, "max": max_scroll,
+                           "row_h": row_h, "taps": (taps_start, len(self._tap_targets))}
+        if max_scroll > 0:
+            self._paint_scroll_cue(p, w, view_top, view_h, content_h, row_h)
+
+    def _paint_scroll_cue(self, p, w, view_top, view_h, content_h, row_h):
+        """A thin bar down the right edge, only when the list overflows: the
+        thumb's size is the share of the route on screen, its place where
+        that share sits. Right of the columns (which end at 0.97 w)."""
+        bar_w = max(4.0, 1.2 * self._px_per_mm())
+        x = w - bar_w - 1
+        thumb_h = max(row_h * 0.5, view_h * view_h / content_h)
+        max_scroll = content_h - view_h
+        thumb_y = view_top + (view_h - thumb_h) * (self._list_scroll / max_scroll)
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor("#303030")))
+        p.drawRoundedRect(QRectF(x, view_top, bar_w, view_h), bar_w / 2, bar_w / 2)
+        p.setBrush(QBrush(QColor("#9a9a9a")))
+        p.drawRoundedRect(QRectF(x, thumb_y, bar_w, thumb_h), bar_w / 2, bar_w / 2)
+        p.restore()
 
     def _row_icon_geometry(self, rh):
         # Centre must clear its own radius: the original

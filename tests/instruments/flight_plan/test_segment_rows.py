@@ -226,7 +226,7 @@ def test_nested_rows_are_indented_by_one_icon_column(page, fix):
 
 
 def test_header_strip_names_the_columns(page):
-    hh, rh = page._list_metrics(0, 800, page._row_h_cap(), 4)
+    hh, rh = page._list_metrics(0, 800, page._row_h_cap())
     assert hh == pytest.approx(page._row_h_cap() * 0.5)
 
 

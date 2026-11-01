@@ -612,7 +612,9 @@ def test_map_suspend_banner_sends_resume(fix, qtbot):
     footer_top = w.height() - int(w._chrome_h(w.height(), 1.3, 0.18))
     assert y + bh <= footer_top, "the banner must not cover the soft keys"
     rows = [t for t, k in zip(w._tap_targets, w._tap_kinds) if k == "row"]
-    assert rows and all(ry + rh <= y for _x, ry, _w, rh, _c in rows), \
+    # Rows scrolled out of the list keep their rects (PA15: the encoder walks
+    # them) but are clipped to, and only tappable inside, the list viewport.
+    assert rows and w._list_view["bottom"] <= y, \
         "the list must lay out above the banner, not under it"
     QTest.mouseClick(w, Qt.MouseButton.LeftButton,
                      pos=QPoint(int(x + bw / 2), int(y + bh / 2)))
