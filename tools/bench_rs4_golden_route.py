@@ -12,6 +12,10 @@ republishes the route from a fix-gateway flightplan_state.json instead.
 The local FIX db only fills with the gateway's values while a Qt event loop
 runs, so every read and write here pumps one first. Without it the bridge
 reads blank keys and publishes them flagged bad/fail, with FPLSEQ 1.
+pyavtools sends each key with the local item's own flags, and an item
+starts bad and fail until the gateway reports it, so the route keys are
+cleared to good before publishing (that also repairs a bus left flagged by
+an earlier bad write).
 
     <venv>/bin/python tools/bench_rs4_golden_route.py --procedures \\
         /data/makerplane-data/procedures/current/procedures.sqlite --save OLD.json [--act ID]
@@ -89,6 +93,7 @@ def plan_from_state(path):
 
 
 def finish(code=0):
+    sys.stdout.flush()
     fix.stop()
     os._exit(code)
 
@@ -122,11 +127,15 @@ def main(argv=None):
     # The local copy must match the gateway before anything is read or
     # written (see the module docstring).
     if not wait_for(app, lambda: int(bridge._get("FPLSEQ").value)
-                    == int(gw_read(["FPLSEQ"])["FPLSEQ"]) and not bridge._get("FPLSEQ").fail):
+                    == int(gw_read(["FPLSEQ"])["FPLSEQ"])):
         print("the local FIX db never matched the gateway's FPLSEQ; nothing written")
         finish(1)
 
     def publish(plan):
+        for key, _, _ in fixbridge.route_key_specs():
+            item = fix.db.get_item(key)
+            item.bad = False
+            item.fail = False
         seq0 = int(gw_read(["FPLSEQ"])["FPLSEQ"])
         bridge.publish(plan)
         if not wait_for(app, lambda: int(gw_read(["FPLSEQ"])["FPLSEQ"]) > seq0):
