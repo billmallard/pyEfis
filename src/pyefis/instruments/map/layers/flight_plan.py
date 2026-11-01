@@ -58,7 +58,9 @@ from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import leg_paths as fp_legs
 from pyefis.flightplan.waypoints import WAYPOINT_TYPES, Waypoint
-from pyefis.instruments.map.layers import MapLayer, hit_distance, register_layer
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           hit_distance, qcolor,
+                                           register_layer)
 
 PAST = QColor("#808080")
 ACTIVE = QColor("#ff00ff")
@@ -430,6 +432,16 @@ def lonlat_transform(x):
                       o.y() - x.lon0 * ey - x.lat0 * ny)
 
 
+def _tinter(x):
+    """build_legs/build_symbols speak in the PAST/ACTIVE/FUTURE status
+    constants; the map_style palette only re-tints PAST (G12)."""
+    past = qcolor(getattr(x, "palette", STANDARD_PALETTE)["route_past"])
+
+    def tint(color):
+        return past if color == PAST else color
+    return tint
+
+
 def _polyline(points):
     return QPolygonF([QPointF(lon, lat) for lat, lon in points])
 
@@ -546,6 +558,7 @@ class FlightPlanLayer(MapLayer):
         route = snap.route
         dto = self._bridge.read_direct_to()
 
+        tint = _tinter(x)
         pen = QPen()
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setCosmetic(True)
@@ -555,7 +568,7 @@ class FlightPlanLayer(MapLayer):
             draws = self._unloaded_draws(engine)
         lonlat = lonlat_transform(x)
         for color, width, style, (kind, ref) in draws:
-            pen.setColor(color)
+            pen.setColor(tint(color))
             pen.setWidthF(width)
             pen.setStyle(_STYLE_PEN[style])
             p.setPen(pen)
@@ -620,11 +633,13 @@ class FlightPlanLayer(MapLayer):
         return [(ACTIVE, _ACTIVE_WIDTH, "solid", ("line", (a, b)))]
 
     def _paint_symbols(self, p, x, symbols, show_labels):
+        tint = _tinter(x)
         f = QFont(x.font_family)
         f.setPixelSize(max(8, int(x.w * 0.02)))
         p.setFont(f)
         r = max(5.0, min(12.0, x.w * 0.016))
         for color, lat, lon, wtype, label, ringed in symbols:
+            color = tint(color)
             c = x.to_screen(lat, lon)
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
@@ -652,7 +667,9 @@ class FlightPlanLayer(MapLayer):
         fm = QFontMetricsF(f)
         r = max(5.0, min(12.0, x.w * 0.016))
         line_h = f.pixelSize() + 4
+        tint = _tinter(x)
         for color, lat, lon, lines in labels:
+            color = tint(color)
             c = x.to_screen(lat, lon)
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
