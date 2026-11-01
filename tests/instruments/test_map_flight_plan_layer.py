@@ -149,6 +149,83 @@ def test_build_extension_none_without_map_role():
     assert fp_layer.build_extension(route, engine) is None
 
 
+def _ksba_route():
+    # A KSBA-like final: FAF to the east, MAP at the field (G56, pyEfis#345).
+    wps = [fixbridge.RouteSlot(id="FAF", lat=34.4200, lon=-119.7000, type="fix",
+                               role="faf"),
+           fixbridge.RouteSlot(id="MAP", lat=34.4262, lon=-119.8404, type="fix",
+                               role="map")]
+    return fixbridge.RouteBlock(name="TEST", seq=1, waypoints=wps)
+
+
+def test_build_extension_converts_magnetic_fplcrs_to_true():
+    """FPLCRS is magnetic (true DTK + MAGVAR, positive west); the extension
+    must be projected on the true course. With MAGVAR = -11.6 (KSBA, 11.6E),
+    magnetic 263.6 is true 275.2."""
+    route = _ksba_route()
+    m = route.waypoints[1]
+    engine = _engine(FPLSTATE=3, FPLAPR=2, FPLCRS=263.6)
+    _, end = fp_layer.build_extension(route, engine, -11.6)
+    exp = fp_layer.fp_geo.destination_point(m.lat, m.lon, 275.2, fp_layer._EXTENSION_NM)
+    assert end == pytest.approx(exp, abs=1e-9)
+    # ...and not where the magnetic number, read as true, would put it.
+    wrong = fp_layer.fp_geo.destination_point(m.lat, m.lon, 263.6, fp_layer._EXTENSION_NM)
+    assert end != pytest.approx(wrong, abs=1e-3)
+
+
+def test_build_extension_fplcrs_branch_agrees_with_fallback_bearing():
+    """The two branches must land on the same line: an engine FPLCRS equal
+    to the true leg course + MAGVAR projects where the no-FPLCRS fallback
+    (the true bearing into the MAP) does."""
+    route = _ksba_route()
+    f, m = route.waypoints
+    true_leg = fp_layer.fp_geo.initial_bearing(f.lat, f.lon, m.lat, m.lon)
+    fallback = fp_layer.build_extension(
+        route, _engine(FPLSTATE=3, FPLAPR=2, FPLCRS=0.0,
+                       FPLPHASE="VECTORS"), -11.6)
+    published = fp_layer.build_extension(
+        route, _engine(FPLSTATE=3, FPLAPR=2, FPLCRS=(true_leg - 11.6) % 360.0), -11.6)
+    assert published[1] == pytest.approx(fallback[1], abs=1e-9)
+
+
+def test_build_extension_no_magvar_uses_fplcrs_unconverted():
+    # No MAGVAR on the bus: the engine converted with 0, so FPLCRS is true.
+    route = _ksba_route()
+    m = route.waypoints[1]
+    _, end = fp_layer.build_extension(route, _engine(FPLSTATE=3, FPLAPR=2, FPLCRS=275.2))
+    exp = fp_layer.fp_geo.destination_point(m.lat, m.lon, 275.2, fp_layer._EXTENSION_NM)
+    assert end == pytest.approx(exp, abs=1e-9)
+
+
+def test_build_extension_zero_course_is_a_real_course():
+    """A published course of 0.0 is due north (magnetic), not "missing"."""
+    route = _ksba_route()
+    m = route.waypoints[1]
+    _, end = fp_layer.build_extension(route, _engine(FPLSTATE=3, FPLAPR=2, FPLCRS=0.0), -11.6)
+    exp = fp_layer.fp_geo.destination_point(m.lat, m.lon, 11.6, fp_layer._EXTENSION_NM)
+    assert end == pytest.approx(exp, abs=1e-9)
+
+
+@pytest.mark.parametrize("placeholder", [
+    {"fail": True}, {"bad": True}, {"phase": "VECTORS"}])
+def test_build_extension_engine_placeholder_falls_back_to_leg_bearing(placeholder):
+    """The engine writes FPLCRS = 0.0 with no course behind it on its
+    failed outputs (fail/bad set) and on a vector leg (FPLPHASE VECTORS).
+    Those fall back to the true leg bearing, not a line toward north."""
+    route = _ksba_route()
+    f, m = route.waypoints
+    engine = _engine(FPLSTATE=3, FPLAPR=2, FPLCRS=0.0,
+                     FPLPHASE=placeholder.get("phase", "LNAV"))
+    engine["FPLCRS"] = fixbridge.ItemValue(value=0.0, old=False,
+                                           bad=placeholder.get("bad", False),
+                                           fail=placeholder.get("fail", False))
+    _, end = fp_layer.build_extension(route, engine, -11.6)
+    exp = fp_layer.fp_geo.destination_point(
+        m.lat, m.lon, fp_layer.fp_geo.initial_bearing(f.lat, f.lon, m.lat, m.lon),
+        fp_layer._EXTENSION_NM)
+    assert end == pytest.approx(exp, abs=1e-9)
+
+
 def test_declutter_range_constants():
     assert fp_layer._IDENT_RANGE == 80.0
     assert fp_layer._SYMBOL_RANGE == 160.0

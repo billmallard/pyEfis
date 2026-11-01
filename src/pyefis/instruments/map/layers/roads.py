@@ -181,6 +181,8 @@ class RoadsLayer(MapLayer):
     #: casing colour option, or None for no casing (rivers)
     _CASING_OPTION = "road_casing_color"
     _DEFAULT_CASING_COLOR = "#5a5a5a"
+    #: palette key for the default casing colour under a ``map_style``
+    _PALETTE_CASING_KEY = "road_casing"
     #: class -> true width in metres for the pen floor, or None to keep
     #: the tier pens at every range (rivers). Shared with the SVS ribbons.
     _WIDTH_M = DEFAULT_WIDTH_M
@@ -232,6 +234,10 @@ class RoadsLayer(MapLayer):
         if self._CASING_OPTION:
             self._casing_color = str(getattr(owner, self._CASING_OPTION, "")
                                      or self._DEFAULT_CASING_COLOR)
+            # the casing follows the fill: default swapped, explicit wins
+            if (self._casing_color.strip().lower()
+                    == self._DEFAULT_CASING_COLOR):
+                self._casing_color = palette(owner)[self._PALETTE_CASING_KEY]
         path = str(getattr(owner, self._DB_OPTION, "") or "")
         if path:
             try:
