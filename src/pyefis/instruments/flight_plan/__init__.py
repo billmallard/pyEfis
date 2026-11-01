@@ -176,7 +176,8 @@ class FlightPlan(QWidget):
         # not an InstrumentSpec Prop). For this widget it is a multiplier on
         # the built-in text sizing (1.0 = 100%, 0.8 = 80%), NOT the usual
         # "fraction of widget height": the widget draws many text elements,
-        # each already sized from its own region. None = 100%. See
+        # each already sized from its own region. None = 100%. Expects the
+        # fraction screenbuilder_preferences.normalize_font_percent produces. See
         # _font_scale(); apply_options also setattr's it after construction.
         self.font_percent = font_percent
 
@@ -2203,11 +2204,12 @@ class FlightPlan(QWidget):
     def _font_scale(self):
         """Multiplier applied to every font size: user x fit.
 
-        user -- ``font_percent`` normalised like
-        ``screenbuilder_preferences.normalize_font_percent`` (a value > 1 is a
-        whole-number percent, so 80 and 0.8 both mean 80%); unset, zero,
-        negative or non-numeric means 1.0. Inlined rather than imported to keep
-        pyefis.screens out of this module's imports (import cycle).
+        user -- ``font_percent`` as a fraction (0.8 = 80%, 1.5 = 150%); unset,
+        zero, negative or non-numeric means 1.0. It arrives already normalised:
+        both screen paths (apply_preferences into the builder, apply_options'
+        setattr) run ``screenbuilder_preferences.normalize_font_percent``, so a
+        YAML 150 is 1.5 here. Do not re-apply the "> 1 is a percent" rule -- a
+        second pass turned 150 into 0.015 (G55, pyEfis #355).
         fit -- ``min(1, (w/h) / _FONT_FIT_ASPECT)``: shrinks text in a pane
         taller than it is wide so it stays inside its width-fraction rects;
         exactly 1.0 for square/landscape panes. Only fonts scale -- geometry
@@ -2218,8 +2220,6 @@ class FlightPlan(QWidget):
             user = 1.0
         if not math.isfinite(user) or user <= 0:
             user = 1.0
-        elif user > 1.0:
-            user /= 100.0
         w, h = self.width(), self.height()
         fit = 1.0 if h <= 0 else min(1.0, (w / h) / _FONT_FIT_ASPECT)
         return user * fit
