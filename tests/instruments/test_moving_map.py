@@ -190,6 +190,88 @@ def test_terrain_water_island_hole_stays_land(qapp):
                 and outside.blue() > outside.green())
 
 
+class _FakeOverlapWaterDB:
+    """Stub WaterDB (AER-4596): the two real-data overlaps a shared
+    even-odd accumulator cancels. ``seam_a``/``seam_b`` are OSM-style
+    split ocean cells meeting at ``lat0`` and each running ~0.002 deg
+    past it; a multi-ring lake (island hole at its centre) is overlapped
+    on its east side by a second single-ring polygon that stops short of
+    the island, the Natural Earth vs OSM duplicate-lake pattern."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0):
+        def poly(rings, kind):
+            p = type("P", (), {})()
+            p.vertices = [v for r in rings for v in r]
+            ends, k = [], 0
+            for r in rings:
+                k += len(r)
+                ends.append(k)
+            p.rings = ends
+            p.kind = kind
+            return p
+
+        def box(la0, la1, lo0, lo1):
+            return [(la0, lo0), (la0, lo1), (la1, lo1), (la1, lo0)]
+
+        o = 0.002                       # seam overlap, deg (~220 m)
+        w0, w1 = lon0 - 0.06, lon0 - 0.01
+        self._polys = [
+            poly([box(lat0 - 0.05, lat0 + o, w0, w1)], "ocean"),
+            poly([box(lat0 - o, lat0 + 0.05, w0, w1)], "ocean"),
+        ]
+        e0, e1 = lon0 + 0.01, lon0 + 0.07
+        outer = box(lat0 - 0.03, lat0 + 0.03, e0, e1)
+        hole = box(lat0 - 0.01, lat0 + 0.01, lon0 + 0.03, lon0 + 0.05)
+        twin = box(lat0 - 0.03, lat0 + 0.03, lon0 + 0.055, e1 + 0.02)
+        self._polys += [poly([outer, hole], "water"),
+                        poly([twin], "lake")]
+
+    def polygons_in_range(self, lat, lon, range_nm,
+                          min_bbox_diag_deg=None, drop_ocean=False):
+        yield from self._polys
+
+
+def test_terrain_water_overlapping_polygons_union(qapp):
+    """AER-4596: two polygons covering the same pixel paint water there.
+    One shared even-odd accumulator cancelled a doubly-covered pixel to
+    land -- a dry line along every whole-degree ocean seam and an erased
+    lake wherever NE and OSM both carry it. Even-odd still applies WITHIN
+    a polygon, so the lake's island hole stays land."""
+    lat0, lon0 = 34.5, -120.5
+    lay = TerrainLayer()
+    lay._cache = _LandCache()
+    lay._water = _FakeOverlapWaterDB(lat0, lon0)
+
+    class Owner:
+        _alt_ft = 3000.0
+    lay._owner = Owner
+
+    x = moving_map.MapTransform(lat0, lon0, 10.0, 0.0, 400, 400, 0.5)
+    key = lay._key(x)
+    img, meta = lay._render((key, x.lat0, x.lon0, x.range_nm,
+                             x.w, x.h, x.cy))
+    clat, clon, mpp = meta
+    n = img.width()
+
+    def is_water(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = (lo - clon) * M * np.cos(np.radians(clat)) / mpp + half
+        cy = (clat - la) * M / mpp + half
+        c = img.pixelColor(int(round(cx)), int(round(cy)))
+        return c.blue() > c.red() and c.blue() > c.green()
+
+    assert is_water(lat0, lon0 - 0.035)          # on the ocean seam
+    assert is_water(lat0 + 0.02, lon0 - 0.035)   # one cell only
+    assert is_water(lat0 + 0.02, lon0 + 0.065)   # lake + twin overlap
+    assert is_water(lat0 + 0.02, lon0 + 0.04)    # lake only
+    assert not is_water(lat0, lon0 + 0.04)       # island hole
+    assert not is_water(lat0, lon0)              # land between them
+
+
+
 class _FakeDenseCoastWaterDB:
     """Stub WaterDB: one multi-ring lake (outer ring + island hole,
     #44) where every edge is oversampled to *pts_per_edge* vertices --
