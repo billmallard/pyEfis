@@ -1,9 +1,11 @@
 #  SPDX-License-Identifier: GPL-2.0-or-later
 #  Moving map flight_plan layer (spec 3.6, FP6, billmallard/pyEfis#184).
 #
-#  Pure paint() -- no worker, no database (like RangeRingsLayer): the route
-#  block, active-leg state and direct-to point already live on the FIX bus
-#  (FP4 fixbridge.FixBridge), so there is nothing to collect.
+#  No worker, no database (like RangeRingsLayer): the route block,
+#  active-leg state and direct-to point already live on the FIX bus (FP4
+#  fixbridge.FixBridge). What collect() does is turn the route into leg
+#  geometry, once per route commit (see PA8 below), so paint() never
+#  tessellates.
 #
 #  FixBridge's listener callbacks are plain Python callables invoked
 #  directly by whatever thread emits the underlying FIX ``valueWrite``
@@ -25,17 +27,36 @@
 #  and FPLACTSEG widens the rest of the active segment. Both read the
 #  engine's own keys; the layer never works out a segment for itself. The
 #  fixes and legs drawn are the same as before RS4.
+#
+#  PA8 (procedures brief section 3.6, pyEfis #239): procedure legs draw as
+#  the path the engine flies -- arcs, a DF's coded turn, holds, procedure
+#  turns, course legs -- from flightplan.leg_paths. The missed approach
+#  segment (segment kind "missed") is dashed and vector legs are a dotted
+#  "to be vectored" stub. Altitude constraints of procedure legs label the
+#  fix in chart notation (a bar under the number for at-or-above, over it
+#  for at-or-below). The geometry is built in collect() as lon/lat
+#  polylines and painted through one affine transform taken from
+#  MapTransform, so a frame costs no per-vertex Python.
+#
+#  Guardrail 1 on the map: a route the engine rejected draws nothing.
+#  After a rejected commit the slots on the bus still hold the refused
+#  route (the engine keeps flying the one it had), and only the engine
+#  knows which route it loaded: FPLLDSEQ is the FPLSEQ of that route. When
+#  the two differ, no leg, fix or label of the slots is drawn -- only the
+#  active leg, from the engine's own FROM/TO outputs. A gateway without
+#  FPLLDSEQ keeps the behaviour from before the key.
 
 import math
 import time
 
-from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPen, QPolygonF
+from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPen, QPolygonF, QTransform
 
 from pyavtools import fix as pyavtools_fix
 
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
+from pyefis.flightplan import leg_paths as fp_legs
 from pyefis.flightplan.waypoints import WAYPOINT_TYPES, Waypoint
 from pyefis.instruments.map.layers import MapLayer, hit_distance, register_layer
 
@@ -67,6 +88,19 @@ _ROLE_SUFFIX = {"iaf": "IAF", "faf": "FAF", "map": "MAP", "mahp": "MAHP"}
 #: after the first bench screenshot (CLAUDE.md convention); this is a
 #: reasonable default that stays visible without dominating the plan.
 _EXTENSION_NM = 5.0
+
+#: segment kinds whose legs come from a coded procedure: their altitude
+#: constraints label the fix. An airway leg's FPLfALT is its MEA, which is
+#: not a constraint at the fix, so airways are left out.
+_PROCEDURE_KINDS = frozenset({"departure", "arrival", "approach", "missed"})
+
+#: the active leg follows its drawn path only while the engine's FROM point
+#: is where that path starts; otherwise (a direct-to into the leg's fix)
+#: the engine flies FROM -> TO, and that is what is drawn.
+_FROM_TOL_NM = 0.1
+
+_STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
+              "vector": Qt.PenStyle.DotLine}
 
 
 def _engine_val(engine, key, default=None):
@@ -182,6 +216,15 @@ def build_segment_emphasis(route, engine):
     key absent, means none) and a leg belongs to the segment of its TO slot,
     the engine's own rule. The active leg is already magenta and wide, and
     past legs stay as they are, so only future legs are listed."""
+    slots = route.waypoints
+    # leg i (slots[i] -> slots[i+1]) has TO-slot number i + 2.
+    return [((slots[to_idx - 2].lat, slots[to_idx - 2].lon),
+             (slots[to_idx - 1].lat, slots[to_idx - 1].lon))
+            for to_idx in _emphasis_slots(route, engine)]
+
+
+def _emphasis_slots(route, engine):
+    """TO-slot numbers of the legs :func:`build_segment_emphasis` lists."""
     k = int(_engine_val(engine, "FPLACTSEG", 0) or 0)
     if k <= 0 or _off_route_direct(engine):
         return []
@@ -189,13 +232,7 @@ def build_segment_emphasis(route, engine):
     if span is None:
         return []
     act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
-    slots = route.waypoints
-    out = []
-    # leg i (slots[i] -> slots[i+1]) has TO-slot number i + 2.
-    for to_idx in range(max(span[0], act_leg + 1, 2), span[1] + 1):
-        a, b = slots[to_idx - 2], slots[to_idx - 1]
-        out.append(((a.lat, a.lon), (b.lat, b.lon)))
-    return out
+    return list(range(max(span[0], act_leg + 1, 2), span[1] + 1))
 
 
 def build_symbols(route, engine):
@@ -207,6 +244,8 @@ def build_symbols(route, engine):
     out = []
     for i, wp in enumerate(slots):
         slot_idx = i + 1
+        if wp.pt in fp_legs.NO_FIX_PTS:
+            continue    # a CA's point is on its course line, not a fix
         if off_route:
             color, ringed = PAST, False
         elif act_leg and slot_idx == act_leg:
@@ -256,6 +295,160 @@ def build_extension(route, engine):
     return ((map_wp.lat, map_wp.lon), end)
 
 
+def route_loaded(route, engine):
+    """False when the slots on the bus are not the route the engine has
+    loaded: ``FPLLDSEQ`` (the ``FPLSEQ`` of the loaded route) differs from
+    the route's ``FPLSEQ``, which after a rejected commit it does. True when
+    the gateway does not publish ``FPLLDSEQ`` (the pre-key behaviour)."""
+    item = engine.get("FPLLDSEQ")
+    if item is None:
+        return True
+    try:
+        return int(item.value) == int(route.seq)
+    except (TypeError, ValueError):
+        return False
+
+
+def segment_kinds(route):
+    """The segment kind of each slot (``FPLfSGI`` into the table), in slot
+    order; ``"waypoint"`` where the table does not describe the slot."""
+    out = []
+    for k_slot, wp in enumerate(route.waypoints, start=1):
+        kind = "waypoint"
+        if 1 <= wp.sgi <= len(route.segments):
+            row = route.segments[wp.sgi - 1]
+            if row.first <= k_slot <= row.last:
+                kind = row.kind
+        out.append(kind)
+    return out
+
+
+def _leg_color(to_idx, act_leg, off_route):
+    if off_route or (act_leg and to_idx < act_leg):
+        return PAST
+    if act_leg and to_idx == act_leg:
+        return ACTIVE
+    return FUTURE
+
+
+def build_leg_draws(route, engine, paths, kinds=None):
+    """What :meth:`FlightPlanLayer.paint` strokes for the route's legs, in
+    order: ``[(color, width, style, ref), ...]``. ``style`` is ``solid``,
+    ``missed`` (a leg into a slot of the missed approach segment) or
+    ``vector``. ``ref`` is ``("path", k)`` or ``("pattern", k)`` -- leg *k*'s
+    path or its hold/procedure-turn pattern from *paths*
+    (:func:`flightplan.leg_paths.build_leg_paths`) -- or ``("line", (a, b))``
+    for a straight line between two ``(lat, lon)`` points.
+
+    Colours follow :func:`build_legs`. The active leg is drawn on its path
+    while the engine's FROM point (``FPLFRLAT``/``LON``) is where the path
+    starts; after a direct-to into its fix it is the straight FROM -> TO
+    line the engine flies. Legs still ahead in the active segment are wider
+    (:func:`build_segment_emphasis`)."""
+    off_route = _off_route_direct(engine)
+    act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
+    fr = (_engine_val(engine, "FPLFRLAT", 0.0) or 0.0, _engine_val(engine, "FPLFRLON", 0.0) or 0.0)
+    to = (_engine_val(engine, "WPLAT", 0.0) or 0.0, _engine_val(engine, "WPLON", 0.0) or 0.0)
+    kinds = kinds if kinds is not None else segment_kinds(route)
+    wide = set(_emphasis_slots(route, engine))
+    out = []
+    if act_leg == 1 and not off_route:
+        out.append((ACTIVE, _ACTIVE_WIDTH, "solid", ("line", (fr, to))))
+    for k, leg in enumerate(paths):
+        to_idx = leg.to_slot
+        color = _leg_color(to_idx, act_leg, off_route)
+        missed = 0 < to_idx <= len(kinds) and kinds[to_idx - 1] == "missed"
+        style = "vector" if leg.vector else "missed" if missed else "solid"
+        if color == ACTIVE:
+            width = _ACTIVE_WIDTH
+        elif to_idx in wide:
+            width = _SEGMENT_WIDTH
+        else:
+            width = _LEG_WIDTH
+        on_path = (leg.vector or len(leg.points) > 2) and \
+            fp_geo.distance_nm(fr[0], fr[1], *leg.points[0]) <= _FROM_TOL_NM
+        if color == ACTIVE and not on_path:
+            out.append((color, width, style, ("line", (fr, to))))
+        else:
+            out.append((color, width, style, ("path", k)))
+        if leg.pattern:
+            out.append((color, width, style, ("pattern", k)))
+    return out
+
+
+def parse_alt_constraint(alt):
+    """``FPLfALT`` (guide notation: ``"+3500"``, ``"-3500"``, ``"@3500"``,
+    ``"B2900,4000"``) as chart lines, top to bottom: ``[(text, bar_over,
+    bar_under), ...]``. At-or-above has a bar under the number, at-or-below
+    a bar over it, "at" both; a window stacks its ceiling over its floor.
+    ``[]`` for an empty or unreadable field."""
+    alt = (alt or "").strip()
+    try:
+        if alt[:1] == "B":
+            lo, hi = sorted(int(float(v)) for v in alt[1:].split(","))
+            return [(str(hi), True, False), (str(lo), False, True)]
+        if alt[:1] in "+-@":
+            n = str(int(float(alt[1:])))
+            return [(n, alt[0] in "-@", alt[0] in "+@")]
+        if alt:
+            return [(str(int(float(alt))), False, False)]
+    except ValueError:
+        pass
+    return []
+
+
+def build_constraint_labels(route, engine, kinds=None):
+    """``[(color, lat, lon, lines), ...]``: the altitude constraint of each
+    procedure leg's fix (:data:`_PROCEDURE_KINDS`), *lines* from
+    :func:`parse_alt_constraint`, coloured like the fix's symbol."""
+    kinds = kinds if kinds is not None else segment_kinds(route)
+    colors = {(lat, lon): color for color, lat, lon, _t, _l, _r in build_symbols(route, engine)}
+    out = []
+    for i, wp in enumerate(route.waypoints):
+        if wp.pt in fp_legs.NO_FIX_PTS or kinds[i] not in _PROCEDURE_KINDS:
+            continue
+        lines = parse_alt_constraint(wp.alt)
+        if lines:
+            out.append((colors.get((wp.lat, wp.lon), FUTURE), wp.lat, wp.lon, lines))
+    return out
+
+
+def lonlat_transform(x):
+    """The painter transform taking ``(lon, lat)`` in degrees to screen
+    pixels, exact for *x*: MapTransform's projection is affine in lon/lat
+    (an equirectangular plane about ownship, then rotation and scale), so
+    three projected points fix it. MapTransform stays the one owner of the
+    projection; this only lets a polyline built once be painted through it
+    with no per-vertex work."""
+    o = x.to_screen(x.lat0, x.lon0)
+    e = x.to_screen(x.lat0, x.lon0 + 1.0)
+    n = x.to_screen(x.lat0 + 1.0, x.lon0)
+    ex, ey = e.x() - o.x(), e.y() - o.y()
+    nx, ny = n.x() - o.x(), n.y() - o.y()
+    return QTransform(ex, ey, nx, ny,
+                      o.x() - x.lon0 * ex - x.lat0 * nx,
+                      o.y() - x.lon0 * ey - x.lat0 * ny)
+
+
+def _polyline(points):
+    return QPolygonF([QPointF(lon, lat) for lat, lon in points])
+
+
+class _Snapshot:
+    """What collect() leaves for paint(): the route as read at the commit,
+    whether the engine loaded it, and its leg geometry as lon/lat
+    polylines. Replaced whole, never mutated."""
+
+    def __init__(self, key, route, loaded, paths, kinds):
+        self.key = key
+        self.route = route
+        self.loaded = loaded
+        self.paths = paths
+        self.kinds = kinds
+        self.polys = [_polyline(leg.points) for leg in paths]
+        self.patterns = [_polyline(leg.pattern) if leg.pattern else None for leg in paths]
+
+
 class _BridgeRelay(QObject):
     """Marshals a FixBridge listener callback onto the GUI thread (see the
     module docstring): ``owner`` is the MovingMap widget, so this relay
@@ -264,12 +457,21 @@ class _BridgeRelay(QObject):
 
     changed = pyqtSignal()
 
-    def __init__(self, owner):
+    def __init__(self, owner, on_change=None):
         super().__init__(owner)
+        self._on_change = on_change
+        self.changed.connect(self._deliver)
         self.changed.connect(owner.update)
 
     def on_bridge_change(self):
         self.changed.emit()
+
+    @pyqtSlot()
+    def _deliver(self):
+        # On the GUI thread (this relay's affinity): the layer re-collects
+        # here, between frames, never inside paint().
+        if self._on_change is not None:
+            self._on_change()
 
 
 @register_layer
@@ -284,13 +486,46 @@ class FlightPlanLayer(MapLayer):
         self._owner = None
         self._bridge = None
         self._relay = None
+        self._snapshot = None
 
     def configure(self, owner):
         self._owner = owner
         self._bridge = fp_fixbridge.FixBridge(pyavtools_fix)
         if self._bridge.available:
-            self._relay = _BridgeRelay(owner)
+            self._relay = _BridgeRelay(owner, self._collect_now)
             self._bridge.add_listener(self._relay.on_bridge_change)
+            self.collect(None)
+
+    def _collect_now(self):
+        self.collect(None)
+
+    def _route_key(self):
+        get = self._bridge._get
+        try:
+            ld = get("FPLLDSEQ").value
+        except KeyError:
+            ld = None
+        magvar = self._bridge.magvar_or_none()
+        return (int(get("FPLSEQ").value), int(get("FPLCOUNT").value),
+                int(get("FPLSEGCNT").value), ld,
+                None if magvar is None else round(magvar, 1))
+
+    def collect(self, xform):
+        """Rebuild the leg geometry when the route, the loaded-route seq or
+        the variation changed; otherwise keep the snapshot. Runs on every
+        bus notification, so the no-change path is a handful of reads."""
+        if self._bridge is None or not self._bridge.available:
+            return
+        key = self._route_key()
+        if self._snapshot is not None and self._snapshot.key == key:
+            return
+        route = self._bridge.read_route()
+        engine = self._bridge.read_engine()
+        if route is None or engine is None:
+            return
+        loaded = route_loaded(route, engine)
+        paths = fp_legs.build_leg_paths(route.waypoints, key[4] or 0.0) if loaded else []
+        self._snapshot = _Snapshot(key, route, loaded, paths, segment_kinds(route))
 
     def paint(self, p, x):
         t0 = time.perf_counter()
@@ -304,25 +539,36 @@ class FlightPlanLayer(MapLayer):
     def _paint(self, p, x):
         if self._bridge is None or not self._bridge.available:
             return
-        route = self._bridge.read_route()
+        snap = self._snapshot
         engine = self._bridge.read_engine()
-        if route is None or engine is None:
+        if snap is None or engine is None:
             return
+        route = snap.route
         dto = self._bridge.read_direct_to()
 
         pen = QPen()
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        for color, (la1, lo1), (la2, lo2) in build_legs(route, engine):
+        pen.setCosmetic(True)
+        if snap.loaded:
+            draws = build_leg_draws(route, engine, snap.paths, snap.kinds)
+        else:
+            draws = self._unloaded_draws(engine)
+        lonlat = lonlat_transform(x)
+        for color, width, style, (kind, ref) in draws:
             pen.setColor(color)
-            pen.setWidthF(_ACTIVE_WIDTH if color == ACTIVE else _LEG_WIDTH)
+            pen.setWidthF(width)
+            pen.setStyle(_STYLE_PEN[style])
             p.setPen(pen)
-            p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
-
-        pen.setColor(FUTURE)
-        pen.setWidthF(_SEGMENT_WIDTH)
-        p.setPen(pen)
-        for (la1, lo1), (la2, lo2) in build_segment_emphasis(route, engine):
-            p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+            if kind == "line":
+                (la1, lo1), (la2, lo2) = ref
+                p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+                continue
+            poly = snap.polys[ref] if kind == "path" else snap.patterns[ref]
+            p.save()
+            p.setWorldTransform(lonlat, True)
+            p.drawPolyline(poly)
+            p.restore()
+        pen.setStyle(Qt.PenStyle.SolidLine)
 
         direct = build_direct_to(route, engine, dto)
         if direct is not None:
@@ -331,6 +577,12 @@ class FlightPlanLayer(MapLayer):
             pen.setWidthF(_ACTIVE_WIDTH)
             p.setPen(pen)
             p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+
+        if not snap.loaded:
+            if dto is not None and _off_route_direct(engine) and x.range_nm <= _SYMBOL_RANGE:
+                self._paint_symbols(p, x, [build_dto_symbol(route, engine, dto)],
+                                    x.range_nm <= _IDENT_RANGE)
+            return
 
         ext = build_extension(route, engine)
         if ext is not None:
@@ -349,6 +601,25 @@ class FlightPlanLayer(MapLayer):
         if dsym is not None:
             symbols.append(dsym)
 
+        self._paint_symbols(p, x, symbols, show_labels)
+        if show_labels:
+            self._paint_constraints(p, x, build_constraint_labels(route, engine, snap.kinds))
+            self._paint_airway_labels(p, x, build_airway_labels(route, engine))
+
+    @staticmethod
+    def _unloaded_draws(engine):
+        """A route the engine rejected draws nothing of its own (module
+        docstring): only the leg the engine is flying, FROM -> TO from its
+        outputs, when one is active and on-route."""
+        act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
+        fr = engine.get("FPLFRLAT")
+        if act_leg <= 0 or _off_route_direct(engine) or fr is None or fr.fail:
+            return []
+        a = (fr.value or 0.0, _engine_val(engine, "FPLFRLON", 0.0) or 0.0)
+        b = (_engine_val(engine, "WPLAT", 0.0) or 0.0, _engine_val(engine, "WPLON", 0.0) or 0.0)
+        return [(ACTIVE, _ACTIVE_WIDTH, "solid", ("line", (a, b)))]
+
+    def _paint_symbols(self, p, x, symbols, show_labels):
         f = QFont(x.font_family)
         f.setPixelSize(max(8, int(x.w * 0.02)))
         p.setFont(f)
@@ -369,8 +640,36 @@ class FlightPlanLayer(MapLayer):
                 p.drawText(QRectF(c.x() - 60, c.y() + r + 1, 120, f.pixelSize() + 4),
                            Qt.AlignmentFlag.AlignHCenter, label)
 
-        if show_labels:
-            self._paint_airway_labels(p, x, build_airway_labels(route, engine))
+    @staticmethod
+    def _paint_constraints(p, x, labels):
+        """Each procedure fix's altitude constraint under its ident label,
+        in chart notation (:func:`parse_alt_constraint`)."""
+        if not labels:
+            return
+        f = QFont(x.font_family)
+        f.setPixelSize(max(8, int(x.w * 0.02)))
+        p.setFont(f)
+        fm = QFontMetricsF(f)
+        r = max(5.0, min(12.0, x.w * 0.016))
+        line_h = f.pixelSize() + 4
+        for color, lat, lon, lines in labels:
+            c = x.to_screen(lat, lon)
+            if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
+                continue
+            pen = QPen(color)
+            pen.setWidthF(1.0)
+            p.setPen(pen)
+            y = c.y() + r + 1 + line_h     # below the ident label
+            for text, over, under in lines:
+                p.drawText(QRectF(c.x() - 60, y, 120, line_h), Qt.AlignmentFlag.AlignHCenter, text)
+                half = fm.horizontalAdvance(text) / 2.0
+                top = y + (line_h - fm.height()) / 2.0
+                if over:
+                    p.drawLine(QPointF(c.x() - half, top), QPointF(c.x() + half, top))
+                if under:
+                    bot = top + fm.height()
+                    p.drawLine(QPointF(c.x() - half, bot), QPointF(c.x() + half, bot))
+                y += line_h
 
     @staticmethod
     def _paint_airway_labels(p, x, labels):
@@ -414,11 +713,13 @@ class FlightPlanLayer(MapLayer):
         if self._bridge is None or not self._bridge.available \
                 or x.range_nm > _SYMBOL_RANGE:
             return []
-        route = self._bridge.read_route()
-        if route is None:
+        snap = self._snapshot
+        if snap is None or not snap.loaded:
             return []
         out = []
-        for s in route.waypoints:
+        for s in snap.route.waypoints:
+            if s.pt in fp_legs.NO_FIX_PTS:
+                continue
             d = hit_distance(x, s.lat, s.lon, px, py, tol_px)
             if d is not None and s.id:
                 wtype = s.type if s.type in WAYPOINT_TYPES else "fix"
