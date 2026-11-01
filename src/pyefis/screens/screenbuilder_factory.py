@@ -1135,6 +1135,17 @@ _register(InstrumentSpec(
              label="Ownship colour",
              help="colour of the top-down ownship symbol",
              token="nav.ownship"),
+        Prop("map_style", "enum", default="standard",
+             enum=["standard", "nav_only"], label="Map style",
+             help="standard = terrain map; nav_only = terrain relief off "
+                  "(whatever layer_terrain says) and the nav layers "
+                  "repainted for a plain black background. Water follows "
+                  "layer_water, every other layer keeps its own switch"),
+        Prop("layer_water", "boolean", default=True,
+             label="Layer: water (nav_only)",
+             help="under map_style nav_only: lakes and coastline as a flat "
+                  "dark-blue fill, no relief. Under standard, water is part "
+                  "of the terrain image and this switch is not used"),
         Prop("layer_range_rings", "boolean", default=True,
              label="Layer: range rings",
              help="concentric range rings around ownship with distance "
@@ -1191,6 +1202,10 @@ _register(InstrumentSpec(
              help="road line colour (arterial classes draw thinner and "
                   "slightly transparent)",
              token="map.road"),
+        Prop("road_casing_color", "color", default="#5a5a5a",
+             label="Road casing colour",
+             help="outline drawn under a road once zoomed in far enough "
+                  "that it draws at its true width (a few NM and in)"),
         Prop("layer_rivers", "boolean", default=True,
              label="Layer: rivers",
              help="rivers/waterways as lines from the rivers pack (#92), "

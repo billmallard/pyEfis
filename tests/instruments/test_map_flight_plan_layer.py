@@ -452,3 +452,222 @@ def test_nothing_but_legs_above_symbol_range(fix, qtbot):
     # must stay background.
     off_leg = img.pixelColor(int(c.x()) + 20, int(c.y()) - 20)
     assert off_leg == QColor(0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# RS4 (pyEfis #307): airway ident labels and active-segment emphasis, read
+# from the segment table. The golden route "KSBA RZS GVO V27 AVOLS KSMX" as
+# the fix-gateway contract doc lays it out: V27 is segment 3, slots 3..7.
+# ---------------------------------------------------------------------------
+_GOLDEN_IDS = ["KSBA", "RZS", "GVO", "FIX1", "FIX2", "FIX3", "AVOLS", "KSMX"]
+_GOLDEN_SGI = [1, 2, 3, 3, 3, 3, 3, 4]
+
+
+def _golden_route(lat=34.0):
+    # Along one parallel, so every leg is horizontal on a north-up map.
+    slots = [fixbridge.RouteSlot(id=ident, lat=lat, lon=-120.0 + 0.1 * i, type="fix",
+                                  role="none", sgi=sgi)
+             for i, (ident, sgi) in enumerate(zip(_GOLDEN_IDS, _GOLDEN_SGI))]
+    segments = [
+        fixbridge.RouteSegment("waypoint", "", "KSBA", "KSBA", 1, 1),
+        fixbridge.RouteSegment("waypoint", "", "RZS", "RZS", 2, 2),
+        fixbridge.RouteSegment("airway", "V27", "GVO", "AVOLS", 3, 7),
+        fixbridge.RouteSegment("waypoint", "", "KSMX", "KSMX", 8, 8),
+    ]
+    return fixbridge.RouteBlock(name="GOLDEN", seq=1, waypoints=slots, segments=segments)
+
+
+def test_airway_label_sits_on_the_first_leg_along_the_airway():
+    route = _golden_route()
+    labels = fp_layer.build_airway_labels(route, _engine())
+    # One label, V27, on GVO -> FIX1: not on RZS -> GVO, the direct leg
+    # into the entry fix, even though the bus counts it in segment 3.
+    assert labels == [(fp_layer.FUTURE, "V27", (34.0, -119.8), (34.0, -119.7))]
+
+
+def test_airway_label_takes_the_colour_of_its_leg():
+    route = _golden_route()
+    # FPLACTLEG is the TO slot: 4 = flying GVO -> FIX1, the labelled leg.
+    assert fp_layer.build_airway_labels(
+        route, _engine(FPLSTATE=1, FPLACTLEG=4))[0][0] == fp_layer.ACTIVE
+    assert fp_layer.build_airway_labels(
+        route, _engine(FPLSTATE=1, FPLACTLEG=6))[0][0] == fp_layer.PAST
+    assert fp_layer.build_airway_labels(
+        route, _engine(FPLSTATE=2, FPLACTLEG=0))[0][0] == fp_layer.PAST
+
+
+def test_no_airway_label_without_an_airway_or_a_valid_table():
+    # A plan of plain waypoints (no table, or all direct rows) labels nothing.
+    assert fp_layer.build_airway_labels(_route(4), _engine()) == []
+    # A torn read whose row disagrees with the slots' FPLfSGI labels nothing
+    # rather than guessing where the airway is.
+    route = _golden_route()
+    route.waypoints[4].sgi = 4
+    assert fp_layer.build_airway_labels(route, _engine()) == []
+    route = _golden_route()
+    route.segments[2].last = 9   # past the end of the slots
+    assert fp_layer.build_airway_labels(route, _engine()) == []
+
+
+def test_segment_emphasis_is_the_rest_of_the_active_segment():
+    route = _golden_route()
+    # Flying GVO -> FIX1 (TO slot 4) inside V27 (segment 3): the legs still
+    # ahead in V27 are FIX1->FIX2, FIX2->FIX3, FIX3->AVOLS. AVOLS -> KSMX is
+    # segment 4 and is not emphasized.
+    legs = fp_layer.build_segment_emphasis(route, _engine(FPLSTATE=1, FPLACTLEG=4,
+                                                            FPLACTSEG=3))
+    lons = [round(b[1], 1) for _, b in legs]
+    assert lons == [-119.6, -119.5, -119.4]
+    # Flying RZS -> GVO: the engine already reports V27 (the entry leg is
+    # in the airway segment), so the whole airway ahead is emphasized.
+    legs = fp_layer.build_segment_emphasis(route, _engine(FPLSTATE=1, FPLACTLEG=3,
+                                                            FPLACTSEG=3))
+    assert len(legs) == 4
+    # On the last leg of the airway nothing is left ahead in it.
+    assert fp_layer.build_segment_emphasis(
+        route, _engine(FPLSTATE=1, FPLACTLEG=7, FPLACTSEG=3)) == []
+
+
+def test_segment_emphasis_follows_fplactseg_not_the_active_leg():
+    """The segment comes off the bus. With FPLACTSEG 0 (no plan active, an
+    off-route direct-to, or a gateway that predates RS1 and never writes it)
+    nothing is emphasized, even with the active leg inside the airway."""
+    route = _golden_route()
+    assert fp_layer.build_segment_emphasis(
+        route, _engine(FPLSTATE=1, FPLACTLEG=4, FPLACTSEG=0)) == []
+    assert fp_layer.build_segment_emphasis(
+        route, _engine(FPLSTATE=1, FPLACTLEG=4)) == []
+    assert fp_layer.build_segment_emphasis(
+        route, _engine(FPLSTATE=2, FPLACTLEG=0, FPLACTSEG=3)) == []
+    # An index past the table, or a row that disagrees with the slots.
+    assert fp_layer.build_segment_emphasis(
+        route, _engine(FPLSTATE=1, FPLACTLEG=4, FPLACTSEG=9)) == []
+
+
+def _publish_golden(fix, lat=34.0, airway=True, step=0.1):
+    """The golden route on the bus; *airway* False publishes the same fixes
+    as plain waypoints, the before-RS4 picture to diff against."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    wps = [fp_model.Waypoint(id=ident, type="fix", lat=lat, lon=-120.0 + step * i)
+           for i, ident in enumerate(_GOLDEN_IDS)]
+    if not airway:
+        bridge.publish(fp_model.FlightPlan(waypoints=wps))
+        return bridge
+    plan = fp_model.FlightPlan(segments=[
+        fp_model.waypoint_segment(wps[0]), fp_model.waypoint_segment(wps[1]),
+        fp_model.Segment(kind="airway", ident="V27", legs=wps[2:7]),
+        fp_model.waypoint_segment(wps[7])])
+    bridge.publish(plan)
+    # The bus carries the table the brief describes.
+    route = bridge.read_route()
+    assert [(s.kind, s.ident, s.first, s.last) for s in route.segments] == [
+        ("waypoint", "", 1, 1), ("waypoint", "", 2, 2), ("airway", "V27", 3, 7),
+        ("waypoint", "", 8, 8)]
+    return bridge
+
+
+def _render(layer, range_nm=20.0, lat=34.0, lon=-119.75, size=400):
+    x = moving_map.MapTransform(lat, lon, range_nm, 0.0, size, size, 0.5)
+    img = QImage(size, size, QImage.Format.Format_RGB32)
+    img.fill(0)
+    p = QPainter(img)
+    layer.paint(p, x)
+    p.end()
+    return img, x
+
+
+def _ink(img, x0, x1, y0, y1):
+    return sum(1 for px in range(x0, x1) for py in range(y0, y1)
+               if img.pixelColor(px, py) != QColor(0, 0, 0))
+
+
+def test_airway_label_paints_above_its_first_leg(fix, qtbot):
+    _publish_golden(fix)
+    layer = fp_layer.FlightPlanLayer()
+    layer.configure(_owner(qtbot))
+    img, x = _render(layer)
+
+    def band(lon):
+        c = x.to_screen(34.0, lon)
+        cx, cy = int(c.x()), int(c.y())
+        # A band just above the line, clear of the line and the symbols.
+        return _ink(img, cx - 8, cx + 8, cy - 16, cy - 3)
+
+    # Ink above the middle of GVO -> FIX1, none above the middle of the
+    # direct legs either side (RZS -> GVO, FIX1 -> FIX2).
+    assert band(-119.75) > 10
+    assert band(-119.85) == 0
+    assert band(-119.65) == 0
+
+
+def _render_both(fix, qtbot, step=0.1, **kw):
+    """(with the airway, as plain waypoints) at the same view."""
+    _publish_golden(fix, step=step)
+    layer = fp_layer.FlightPlanLayer()
+    layer.configure(_owner(qtbot))
+    with_awy, _ = _render(layer, **kw)
+    _publish_golden(fix, airway=False, step=step)
+    plain, _ = _render(layer, **kw)
+    return with_awy, plain
+
+
+def test_airway_label_is_the_only_difference_inside_ident_range(fix, qtbot):
+    """The same fixes, legs and symbols as before RS4: the label is all the
+    airway adds."""
+    with_awy, plain = _render_both(fix, qtbot)
+    changed = [(px, py) for px in range(with_awy.width()) for py in range(with_awy.height())
+               if with_awy.pixelColor(px, py) != plain.pixelColor(px, py)]
+    assert changed
+    # Every changed pixel is in the label's box above GVO -> FIX1.
+    x = moving_map.MapTransform(34.0, -119.75, 20.0, 0.0, 400, 400, 0.5)
+    gvo, fix1 = x.to_screen(34.0, -119.8), x.to_screen(34.0, -119.7)
+    assert all(gvo.x() < px < fix1.x() and gvo.y() - 30 < py < gvo.y() for px, py in changed)
+
+
+def test_airway_label_off_above_ident_range(fix, qtbot):
+    # 1 degree legs (about 50 NM), long enough on screen to hold the label
+    # at either range, so only the range decides.
+    view = {"step": 1.0, "lon": -117.5}
+    with_awy, plain = _render_both(fix, qtbot, range_nm=80.0, **view)
+    assert with_awy != plain
+    with_awy, plain = _render_both(fix, qtbot, range_nm=100.0, **view)
+    assert with_awy == plain
+
+
+def test_airway_label_skipped_when_the_leg_is_too_short_to_hold_it(fix, qtbot):
+    # At 80 NM on a 200 px map the 5 NM leg is about 6 px long.
+    with_awy, plain = _render_both(fix, qtbot, range_nm=80.0, size=200)
+    assert with_awy == plain
+
+
+def _line_thickness(img, x, lon):
+    c = x.to_screen(34.0, lon)
+    cx, cy = int(round(c.x())), int(round(c.y()))
+    return sum(1 for dy in range(-6, 7) if img.pixelColor(cx, cy + dy) != QColor(0, 0, 0))
+
+
+def test_active_segment_legs_paint_wider(fix, qtbot):
+    _publish_golden(fix)
+    fix.db.set_value("FPLSTATE", 1)
+    fix.db.set_value("FPLACTLEG", 4)
+    fix.db.set_value("FPLFRLAT", 34.0)
+    fix.db.set_value("FPLFRLON", -119.8)
+    fix.db.set_value("WPLAT", 34.0)
+    fix.db.set_value("WPLON", -119.7)
+    layer = fp_layer.FlightPlanLayer()
+    layer.configure(_owner(qtbot))
+
+    fix.db.set_value("FPLACTSEG", 0)
+    img_off, x = _render(layer, lon=-119.55)
+    fix.db.set_value("FPLACTSEG", 3)
+    img_on, _ = _render(layer, lon=-119.55)
+
+    inside = -119.55    # FIX2 -> FIX3: ahead, in V27
+    outside = -119.35   # AVOLS -> KSMX: ahead, segment 4
+    assert _line_thickness(img_on, x, inside) > _line_thickness(img_off, x, inside)
+    assert _line_thickness(img_on, x, outside) == _line_thickness(img_off, x, outside)
+    # Width only: the emphasized leg keeps its own (white) colour.
+    c = x.to_screen(34.0, inside)
+    px = img_on.pixelColor(int(round(c.x())), int(round(c.y())))
+    assert px.red() > 200 and px.green() > 200 and px.blue() > 200
