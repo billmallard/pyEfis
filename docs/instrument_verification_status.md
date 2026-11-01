@@ -76,8 +76,8 @@ None of these had an `xfail(strict)` tracker, so nothing flipped. The 005/009/01
 covered by fix-gateway's own annunciate tests. EFIS-ALTSEL-006 got an `xfail(strict)` tracker
 before its implementation (pyEfis #362, `tests/instruments/altimeter/test_altsel.py`), and it
 passed a live check against the Pi 5 gateway: the flag set past 200 ft after capture, and the bug
-turned amber and cleared. pyEfis computes no deviation; the flag is its only input. The default
-alert colour is pending Bill's call on the glass.
+turned amber and cleared. pyEfis computes no deviation; the flag is its only input. Bill chose
+the colour on 2026-11-01: amber on both the box and the bug.
 
 ## Data-blocked gaps (need a fix-gateway key)
 
