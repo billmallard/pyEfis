@@ -20,10 +20,11 @@ from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
 
 from pyefis.flightplan.waypoints import Waypoint
-from pyefis.instruments.map.layers import (MapLayer, hit_distance, range_bucket,
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           hit_distance, qcolor, range_bucket,
                                            register_layer)
 
-MAGENTA = QColor(197, 36, 125)
+MAGENTA = qcolor(STANDARD_PALETTE["airport"])
 
 #: ranges (NM): idents shown at/below the first, symbols at/below the second
 _IDENT_RANGE = 40.0
@@ -102,23 +103,24 @@ class AirportsLayer(MapLayer):
         f = QFont(x.font_family)
         f.setPixelSize(max(8, int(x.w * 0.022)))
         p.setFont(f)
+        colour = qcolor(getattr(x, "palette", STANDARD_PALETTE)["airport"])
         for a in snap[1]:
             c = x.to_screen(a["lat"], a["lon"])
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
-            pen = QPen(MAGENTA)
+            pen = QPen(colour)
             pen.setWidthF(max(1.2, r * 0.16))
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
             if a["hard"] and a["longest"] > 8069:
-                self._runway_strips(p, x, a, r * 1.6)
+                self._runway_strips(p, x, a, r * 1.6, colour)
             elif a["hard"]:
                 p.drawEllipse(c, r, r)
                 p.save()
                 clip = QPainterPath()
                 clip.addEllipse(c, r, r)
                 p.setClipPath(clip)
-                self._runway_strips(p, x, a, r)
+                self._runway_strips(p, x, a, r, colour)
                 p.restore()
             else:
                 p.drawEllipse(c, r, r)
@@ -149,7 +151,7 @@ class AirportsLayer(MapLayer):
                                         lat=a["lat"], lon=a["lon"])))
         return out
 
-    def _runway_strips(self, p, x, a, half_len_px):
+    def _runway_strips(self, p, x, a, half_len_px, edge=MAGENTA):
         """Runway strips at TRUE orientation: white fill, magenta edge,
         centred on the airport, length capped to the symbol scale."""
         c = x.to_screen(a["lat"], a["lon"])
@@ -166,7 +168,7 @@ class AirportsLayer(MapLayer):
             p.save()
             p.translate(c)
             p.rotate(math.degrees(math.atan2(uy, ux)))
-            p.setPen(QPen(MAGENTA, 1))
+            p.setPen(QPen(edge, 1))
             p.setBrush(QBrush(QColor(255, 255, 255)))
             p.drawRect(QRectF(-L, -wpx / 2.0, 2 * L, wpx))
             p.restore()
