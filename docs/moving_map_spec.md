@@ -1,7 +1,11 @@
 # Moving Map — specification
 
-Status: SPEC (2026-07-05). Development has not started; work will
-happen on a dedicated branch off `display-changes`. Companion specs:
+Status: IMPLEMENTED, experimental (spec dated 2026-07-05). The
+`moving_map` instrument (`src/pyefis/instruments/map/`, screen type
+`moving_map`) is on `dev` with phases A-D of section 10 shipped:
+terrain, airports, navaids, roads, rivers and flight-plan layers;
+phase E (controls polish) is still open. The rest of this document is
+the original design spec and is kept for its rationale. Companion specs:
 `svs_rendering.md` (rendering lessons), pyAvMap `docs/MFD-Assessment`
 (prior art; see section 2), makerplane-data
 `docs/canfix_configurator.md` (provider-model precedent).
