@@ -58,3 +58,31 @@ exact steps and the SHAs are in the PR body.
 - `glass_keys.log`: the FIX values read back at each grab.
 - Afterwards: `managed.yaml` was copied back from the backup (`cmp` clean) and pyEfis restarted. The script republished the bench's own plan (PA15, 25 slots) and re-ACTed leg 2. Then `--restore`.
 - The PFD's white left area is the GL SVS panel, which is blank in a SIGUSR1 grab on this box. That is expected.
+
+## After merging dev with #369 (RD2 road casing), AER-4590
+
+The merge of dev 8024da26 into this branch (088f2a27) was A-B'd against the
+accepted head 515e0b62 with `tools/render_map_style_evidence.py` on the
+Beelink. Each tree was a `git archive` copy under `~/bench-scratch/aer-4590/`,
+and dev got a copy of the tool:
+
+```sh
+D="--data /data/makerplane-data --width 1280 --height 720 --fixes --airways"
+# accepted pose (above), and close in over KSBA
+tools/render_map_style_evidence.py $D --lat 34.30 --lon -119.80 --track 0 --range 20 --styles standard nav_only --out out_r20
+tools/render_map_style_evidence.py $D --lat 34.4262 --lon -119.8404 --track 250 --range R --styles standard nav_only --out ksba_rR   # R = 2, 1, 0.5, 0.25
+```
+
+- At 20 NM (the accepted pose), and at 2 NM and 1 NM over KSBA, both styles are
+  byte-identical between 515e0b62 and the merge. The standard renders also
+  match dev.
+- Below 1 NM (0.5 and 0.25 NM over KSBA), standard on the merge is
+  byte-identical to dev, so it is #369's picture. nav_only differs from
+  515e0b62. #369 draws roads at true width with a `#5a5a5a` casing, and the
+  merge swaps only the fill colour to the nav_only palette, so the casing stays
+  `#5a5a5a` in every style.
+- `merge369_nav_only_0p5nm_ab.png`: nav_only at 0.5 NM over KSBA. Top is
+  515e0b62, bottom is the merge. 1:1.
+
+The default `range_ladder` (2..160 NM) also clamps pinch zoom, so this change
+only appears on a screen whose ladder goes below about 1 NM.
