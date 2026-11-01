@@ -671,7 +671,8 @@ def _roads_paint(range_nm, rot_deg):
     buf = out.constBits()
     buf.setsize(out.sizeInBytes())
     px = np.frombuffer(buf, np.uint8).reshape(h, out.bytesPerLine() // 4, 4)
-    return px[:, :400, 3]      # alpha channel: road pixels > 0
+    # copy: px views out's buffer, which is freed when out goes
+    return px[:, :400, 3].copy()   # alpha channel: road pixels > 0
 
 
 def test_roads_track_up_east_paints_north_road_left(qapp):
