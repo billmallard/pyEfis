@@ -260,14 +260,36 @@ def test_yaml_font_percent_reaches_the_widget_through_the_screen_path(fix, qtbot
     assert w._font_scale() == pytest.approx(0.8)
 
 
+@pytest.mark.parametrize("value", [150, "150"], ids=["int", "str"])
+def test_font_percent_over_100_is_normalised_once_end_to_end(fix, qtbot, value):
+    # G55 / pyEfis #355: a hand-written font_percent: 150 used to be
+    # normalised by the screen path (150 -> 1.5) and again by _font_scale
+    # (1.5 -> 0.015). Both screen paths -- the builder argument from
+    # apply_preferences and apply_options' setattr -- must land 1.5.
+    from pyefis.screens import screenbuilder_options, screenbuilder_preferences
+    config = {"type": "flight_plan", "options": {"font_percent": value}}
+    font_percent, font_family = screenbuilder_preferences.apply_preferences(config, {})
+    built = factory.create_instrument(None, config, font_percent=font_percent,
+                                      font_family=font_family)
+    qtbot.addWidget(built)
+    built.resize(1000, 600)
+    assert built._font_scale() == pytest.approx(1.5)   # builder path alone
+
+    screen = SimpleNamespace(instruments={0: built}, encoder_list=[])
+    screenbuilder_options.apply_options(screen, 0, config)
+    assert built.font_percent == pytest.approx(1.5)
+    assert built._font_scale() == pytest.approx(1.5)   # after the setattr path
+
+
 @pytest.mark.parametrize("value,expected", [
-    (None, 1.0), (0.8, 0.8), (80, 0.8), ("80", 0.8), (100, 1.0), (150, 1.5),
+    (None, 1.0), (0.8, 0.8), ("0.8", 0.8), (1.5, 1.5),
     (1.0, 1.0), (0, 1.0), (-5, 1.0), ("bogus", 1.0), (float("nan"), 1.0),
 ])
-def test_font_percent_normalizes_percent_and_fraction(fix, qtbot, value, expected):
-    # Same rule as screenbuilder_preferences.normalize_font_percent (> 1 is a
-    # percent), plus unset/zero/negative/garbage = 100%. A landscape pane has
-    # fit 1.0, so the scale is the user factor alone.
+def test_font_percent_is_a_fraction_with_guards(fix, qtbot, value, expected):
+    # The widget takes the already-normalised fraction (the screen paths run
+    # normalize_font_percent; see the end-to-end test above), plus
+    # unset/zero/negative/garbage = 100%. A landscape pane has fit 1.0, so the
+    # scale is the user factor alone.
     w = flight_plan.FlightPlan(None, font_percent=value)
     qtbot.addWidget(w)
     w.resize(1000, 600)
