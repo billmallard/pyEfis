@@ -93,11 +93,19 @@ Prop(
     required: bool = False,
     help:     str = "",
     apply:    str = "attr",  # how it reaches the widget (see §6)
+    bindable: Binding | None = None,
+    token:    str = "",      # kind="color" only: the semantic colour token
 )
 ```
 
 `name` is **both** the YAML option key and the widget attribute, so a property
 maps 1:1 to widget state. `kind` selects the editor input control.
+
+`token` names the theme token a colour prop reads (vocabulary in
+`pyefis/screens/color_tokens.py`, style contract section 6). The prop's
+`default` stays the literal and must equal the token's built-in value, which
+`tests/screens/test_color_tokens.py` enforces. A colour option may hold a token
+name instead of a literal; see the Preferences & Styling wiki page.
 
 ### `FixValue` — one category-2 value (documentation + future FIX editor)
 

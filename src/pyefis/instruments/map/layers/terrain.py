@@ -15,13 +15,15 @@ import threading
 import time
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPolygonF)
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map import raster
-from pyefis.instruments.map.layers import MapLayer, range_bucket, register_layer
+from pyefis.instruments.map.layers import (MapLayer, RenderHistory,
+                                          paint_window_images,
+                                          range_bucket, register_layer)
 
 # Hypsometric stops: (elevation ft, r, g, b) -- sectional-inspired.
 _STOPS = [
@@ -159,7 +161,8 @@ class TerrainLayer(MapLayer):
         super(TerrainLayer, self).__init__()
         self._cache = None          # TileCache
         self._mode = "relief"
-        self._img = None            # (QImage, key)
+        self._img = None            # (QImage, key, meta)
+        self._history = RenderHistory()   # MP13: recent images, pinch-out
         self._job = None            # latest requested key
         self._worker = None
         self._lock = threading.Lock()
@@ -222,27 +225,7 @@ class TerrainLayer(MapLayer):
             have = img is not None and img[1] == key
         if not have and not getattr(x, "defer_render", False):
             self._request(key, x)
-        if img is None:
-            return
-        qimg, _, meta = img[0], img[1], img[2]
-        # meta: (centre lat, lon, metres/px of the image)
-        clat, clon, mpp = meta
-        c = x.to_screen(clat, clon)
-        scale = (1.0 / mpp) / x._px_per_m   # image px per screen px inverse
-        p.save()
-        p.translate(c)
-        if x.rot:
-            # to_screen applies R(+rot) to world EN vectors; carrying a
-            # NORTH-UP image onto that screen therefore needs the
-            # painter rotated by -rot (QPainter.rotate is clockwise,
-            # y-down). +rot painted the terrain 2*track degrees off --
-            # a coastline reads as mirrored on east/west tracks (#90).
-            p.rotate(-math.degrees(x.rot))
-        s = mpp * x._px_per_m               # screen px per image px
-        w = qimg.width() * s
-        h = qimg.height() * s
-        p.drawImage(QRectF(-w / 2.0, -h / 2.0, w, h), qimg)
-        p.restore()
+        paint_window_images(p, x, img, self._history, key)
 
     # --- async build --------------------------------------------------------
     def _request(self, key, x):
@@ -300,6 +283,7 @@ class TerrainLayer(MapLayer):
             with self._lock:
                 superseded = self._job != job
                 self._img = (img, job[0], meta)
+            self._history.add(self._img)
             if ls is not None:
                 ls.record_render_ms(ms)
                 ls.jobs_published += 1
