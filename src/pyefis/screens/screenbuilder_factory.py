@@ -80,7 +80,8 @@ def build_altimeter_tape(
     for k in ("dbkey", "maxalt", "majorDiv", "minorDiv", "total_decimals",
               "font_mask", "round_to", "numeric_box", "font_scale",
               "show_trend", "trend_lookahead", "show_baro", "altsel_box",
-              "alt_bug_enabled", "alt_bug_color", "alt_bug_dbkey"):
+              "alt_bug_enabled", "alt_bug_color", "alt_bug_alert_color",
+              "alt_bug_dbkey"):
         if k in opts:
             kwargs[k] = opts[k]
     return altimeter.Altimeter_Tape(
@@ -702,6 +703,10 @@ _register(InstrumentSpec(
         Prop("alt_bug_color", "color", default="#00ffff",
              label="Altitude bug color", apply="special",
              help="colour of the selected-altitude box text and bug"),
+        Prop("alt_bug_alert_color", "color", default="#ffb000",
+             label="Altitude alert color", apply="special",
+             help="box text and bug colour while fix-gateway flags an "
+                  "altitude deviation (the key's annunciate flag)"),
         Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
              label="Selected-altitude key", apply="special",
              help="FIX key holding the selected altitude (default ALTSEL)"),

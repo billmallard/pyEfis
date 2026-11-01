@@ -9,6 +9,7 @@ fix-gateway, not on the local item (a local-only set never reaches the bus).
 
 import pytest
 from PyQt6.QtCore import QPoint, QPointF, QTimer, Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QWidget
 
 from pyefis.instruments import altimeter, edit_focus
@@ -271,10 +272,12 @@ def test_build_altimeter_tape_forwards_altsel_options(monkeypatch):
                         lambda screen, **kw: seen.update(kw) or object())
     sf.build_altimeter_tape(None, {"options": {
         "altsel_box": False, "alt_bug_enabled": True,
-        "alt_bug_color": "#ff00ff", "alt_bug_dbkey": "ALTSEL2"}})
+        "alt_bug_color": "#ff00ff", "alt_bug_alert_color": "#ff0000",
+        "alt_bug_dbkey": "ALTSEL2"}})
     assert seen["altsel_box"] is False
     assert seen["alt_bug_enabled"] is True
     assert seen["alt_bug_color"] == "#ff00ff"
+    assert seen["alt_bug_alert_color"] == "#ff0000"
     assert seen["alt_bug_dbkey"] == "ALTSEL2"
 
 
@@ -417,3 +420,84 @@ def test_knob_walk_lands_on_altsel_first(alt_db, qtbot):
     vs_like.enc_highlight(True)
     vs_like.enc_select()
     assert vs_like._edit_box == ("baro" if vs_like.baro_shown() else None)
+
+
+# --- deviation alert (EFIS-ALTSEL-006) ---------------------------------------
+#
+# fix-gateway computes the deviation and sets the ALTSEL annunciate flag
+# (EFIS-ALTSEL-005/-010, fix-gateway #90). pyEfis reads the flag and nothing
+# else: no ALT - ALTSEL arithmetic here (engine state goes on the bus).
+
+def _bug_pixel(tape):
+    """The colour painted in the solid part of the bug, above its notch."""
+    y, _off = tape.alt_bug_y()
+    w = tape.width()
+    bug_w = max(5.0, w * 0.12)
+    bug_h = max(10.0, w * 0.26)
+    img = tape.grab().toImage()
+    return img.pixelColor(int(w - bug_w / 2), int(y - bug_h * 0.4))
+
+
+def _rgb(c):
+    return (c.red(), c.green(), c.blue())
+
+
+def test_annunciate_recolours_bug_and_box_and_clears(alt_db, qtbot):
+    """EFIS-ALTSEL-006: while ALTSEL.annunciate is set the bug and the box
+    leave cyan; when the gateway clears the flag they return to cyan."""
+    _fix, alt, sel = alt_db
+    t = _tape(qtbot)
+    cyan = _rgb(bugs.BUG_COLOR)
+    assert _rgb(_bug_pixel(t)) == cyan
+    alt.value = 4130.0                        # unchanged: the flag is the input
+    sel.annunciate = True
+    alert = _rgb(t._altsel.color(QColor(t.alt_bug_color)))
+    assert alert not in (cyan, _rgb(bugs.BUG_DEGRADED_COLOR))
+    assert _rgb(_bug_pixel(t)) == alert
+    box = t.altsel_display
+    assert _rgb(box.binding.color(box.color)) == alert
+    sel.annunciate = False
+    assert _rgb(_bug_pixel(t)) == cyan
+    assert _rgb(box.binding.color(box.color)) == cyan
+
+
+def test_annunciate_default_is_amber_and_configurable(alt_db, qtbot):
+    _fix, _alt, sel = alt_db
+    t = _tape(qtbot)
+    sel.annunciate = True
+    assert _rgb(_bug_pixel(t)) == _rgb(bugs.BUG_ALERT_COLOR) == (255, 176, 0)
+    red = _tape(qtbot, alt_bug_alert_color="#ff0000")
+    assert _rgb(_bug_pixel(red)) == (255, 0, 0)
+    assert _rgb(red.altsel_display.alert_color) == (255, 0, 0)
+
+
+def test_annunciate_outranks_degraded_but_not_fail(alt_db, qtbot):
+    """As on the gauges and value_text: the alert beats old/bad grey; a failed
+    key draws no bug and dashes, flag or not."""
+    _fix, _alt, sel = alt_db
+    t = _tape(qtbot)
+    sel.old = True
+    sel.annunciate = True
+    assert t._altsel.alerting is True
+    assert _rgb(_bug_pixel(t)) == _rgb(bugs.BUG_ALERT_COLOR)
+    sel.fail = True
+    assert t._altsel.alerting is False
+    assert t.alt_bug_y() is None
+    assert t.altsel_display.text() == altsel.DASHES
+
+
+def test_annunciate_change_repaints(alt_db, qtbot):
+    """The flag alone (no value change) must reach the glass."""
+    _fix, _alt, sel = alt_db
+    t = _tape(qtbot)
+    seen = []
+    t._altsel.changed.connect(lambda: seen.append(1))
+    sel.annunciate = True
+    sel.annunciate = False
+    assert len(seen) == 2
+
+
+def test_missing_key_never_alerts(fix, qtbot):
+    b = bugs.BugBinding("NO_SUCH_KEY")
+    assert b.alerting is False
+    assert _rgb(b.color()) == _rgb(bugs.BUG_COLOR)
