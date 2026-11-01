@@ -24,6 +24,14 @@
 #  fetches what it will draw. The rivers layer (#92) shares this machinery
 #  and the highways sqlite schema -- it is just a subclass with its own
 #  class bands + colour (map/layers/rivers.py).
+#
+#  RD2 (pyEfis #162): close in, a road is drawn at its true width,
+#  ``max(tier_px, width_m / mpp)``, from the SVS ribbon's class width table
+#  (road_ribbon.DEFAULT_WIDTH_M -- one table, so map and SVS agree on
+#  scale), with a darker casing 2 px wider stroked under it. Casing and
+#  true scale only engage for a class whose true width beats its tier pen,
+#  so a zoomed-out map (every class on its tier floor) is today's picture
+#  exactly. Rivers keep the tier pens and no casing.
 
 import math
 import threading
@@ -34,6 +42,7 @@ from PyQt6.QtCore import QByteArray, QDataStream
 from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
+from pyefis.instruments.ai.road_ribbon import DEFAULT_WIDTH_M, width_for_class
 from pyefis.instruments.map.layers import (MapLayer, RenderHistory,
                                           paint_window_images,
                                           range_bucket, register_layer)
@@ -167,6 +176,14 @@ class RoadsLayer(MapLayer):
     _DB_OPTION = "highway_db_path"
     _COLOR_OPTION = "road_color"
     _DEFAULT_COLOR = "#c0c0c0"
+    #: casing colour option, or None for no casing (rivers)
+    _CASING_OPTION = "road_casing_color"
+    _DEFAULT_CASING_COLOR = "#5a5a5a"
+    #: class -> true width in metres for the pen floor, or None to keep
+    #: the tier pens at every range (rivers). Shared with the SVS ribbons.
+    _WIDTH_M = DEFAULT_WIDTH_M
+    #: casing = fill width + this many image px (1 px each side)
+    _CASING_PX = 2.0
 
     # LOD bands: (max range NM, base classes drawn at/below it). Cumulative
     # and coarsest-last; above the last band the layer is hidden. Each base
@@ -193,7 +210,9 @@ class RoadsLayer(MapLayer):
         super(RoadsLayer, self).__init__()
         self._db = None
         self._color = self._DEFAULT_COLOR
-        self._img = None            # (QImage, key, meta)
+        self._casing_color = (self._DEFAULT_CASING_COLOR
+                              if self._CASING_OPTION else "")
+        self._img = None           # (QImage, key, meta)
         self._history = RenderHistory()   # MP13: recent images, pinch-out
         self._job = None
         self._worker = None
@@ -203,7 +222,10 @@ class RoadsLayer(MapLayer):
         self._owner = owner
         self._color = str(getattr(owner, self._COLOR_OPTION, "")
                           or self._DEFAULT_COLOR)
-        path = str(getattr(owner, self._DB_OPTION, "") or "")
+        if self._CASING_OPTION:
+            self._casing_color = str(getattr(owner, self._CASING_OPTION, "")
+                                     or self._DEFAULT_CASING_COLOR)
+        path =str(getattr(owner, self._DB_OPTION, "") or "")
         if path:
             try:
                 from pyefis.instruments.ai.highway_db import HighwayDB
@@ -334,6 +356,39 @@ class RoadsLayer(MapLayer):
             pens[tier] = pen
         return pens
 
+    def _pen_groups(self, classes, mpp):
+        """``[(tier, width_px, ribbon, classes)]`` for one render at *mpp*
+        image metres per pixel: classes sharing a tier and a pen width are
+        fetched and stroked together. ``width_px`` is the RD2 pen floor
+        ``max(tier_px, width_m / mpp)``; ``ribbon`` is True when the true
+        width wins, which is what turns the casing on. Ordered boldest
+        tier first, widest first within a tier (the fetch/budget order)."""
+        groups = {}
+        for fclass in classes:
+            tier = self._tier_for(fclass)
+            tier_px = self._TIER_PEN[tier][0]
+            width = tier_px
+            if self._WIDTH_M is not None:
+                width = max(tier_px, width_for_class(fclass, self._WIDTH_M)
+                            / max(mpp, 1e-9))
+            groups.setdefault((tier, width), []).append(fclass)
+        return [(tier, width, width > self._TIER_PEN[tier][0], cls)
+                for (tier, width), cls in sorted(
+                    groups.items(), key=lambda kv: (kv[0][0], -kv[0][1]))]
+
+    def _ribbon_pen(self, tier, width, color):
+        """Pen for a true-scale fill or casing stroke, at the tier's alpha
+        so faint arterials stay faint. Qt's default square cap / bevel
+        join, like the tier pens: round ones cost 2.5x the render at 1 NM
+        over DFW on the bench (69 vs 28 ms) for no visible gain at 3-6 px."""
+        col = QColor(color)
+        if not col.isValid():
+            col = QColor(self._DEFAULT_COLOR)
+        col.setAlpha(self._TIER_PEN[tier][1])
+        pen = QPen(col)
+        pen.setWidthF(width)
+        return pen
+
     def _fetch(self, lat0, lon0, query_nm, classes):
         """``(vertices, ends)`` for *classes* in range. Readers without
         the bulk query (test fakes) are concatenated from the per-line
@@ -363,19 +418,18 @@ class RoadsLayer(MapLayer):
         px_per_deg_lat = M_PER_DEG_LAT / mpp
         px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
 
-        # One fetch + one stroke per pen tier, boldest tier fetched first
-        # so the vertex budget sheds the faintest classes, and stroked
-        # last so it sits on top.
-        by_tier = {}
-        for fclass in self._classes_for_range(range_nm):   # LOD filter
-            by_tier.setdefault(self._tier_for(fclass), []).append(fclass)
+        # One fetch + one stroke per pen group (one per tier once zoomed
+        # out), boldest tier fetched first so the vertex budget sheds the
+        # faintest classes, and stroked last so it sits on top.
+        groups = self._pen_groups(self._classes_for_range(range_nm),  # LOD
+                                  mpp)
         query_nm = half_diag_m / 1852.0
         budget = _MAX_VERTICES
         paths = []
-        for tier in sorted(by_tier):
+        for tier, width, ribbon, classes in groups:
             if budget <= 0:
                 break
-            v, ends = self._fetch(lat0, lon0, query_nm, by_tier[tier])
+            v, ends = self._fetch(lat0, lon0, query_nm, classes)
             if ends.size == 0:
                 continue
             # a polyline is drawn while budget remains before it
@@ -385,7 +439,7 @@ class RoadsLayer(MapLayer):
             xs = (v[:, 1] - lon0) * px_per_deg_lon + half
             ys = (lat0 - v[:, 0]) * px_per_deg_lat + half
             xs, ys, first = decimate_polylines(xs, ys, ends, n)
-            paths.append((tier, polyline_paths(xs, ys, first)))
+            paths.append((tier, width, ribbon, polyline_paths(xs, ys, first)))
 
         img = QImage(n, n, QImage.Format.Format_ARGB32_Premultiplied)
         img.fill(0)
@@ -393,9 +447,31 @@ class RoadsLayer(MapLayer):
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         try:
-            for tier, tier_paths in reversed(paths):
-                for path in tier_paths:
-                    p.strokePath(path, pens[tier])
+            # RD2 casing: every casing first, then every fill, so a casing
+            # never cuts across a road drawn before it. The cased fills
+            # REPLACE what is under them (Source) rather than composite:
+            # the arterial fills are translucent by design, and the casing
+            # must not tint their interior.
+            if self._casing_color:
+                for tier, width, ribbon, group_paths in reversed(paths):
+                    if not ribbon:
+                        continue
+                    pen = self._ribbon_pen(tier, width + self._CASING_PX,
+                                           self._casing_color)
+                    for path in group_paths:
+                        p.strokePath(path, pen)
+            for tier, width, ribbon, group_paths in reversed(paths):
+                if ribbon:
+                    pen = self._ribbon_pen(tier, width, self._color)
+                    if self._casing_color:
+                        p.setCompositionMode(
+                            QPainter.CompositionMode.CompositionMode_Source)
+                else:
+                    pen = pens[tier]
+                for path in group_paths:
+                    p.strokePath(path, pen)
+                p.setCompositionMode(
+                    QPainter.CompositionMode.CompositionMode_SourceOver)
         finally:
             p.end()
         return img, (lat0, lon0, mpp)
