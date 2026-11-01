@@ -95,8 +95,11 @@ def click(xy):
 
 
 def grab(outdir, label):
-    pid = subprocess.run(["pgrep", "-f", "pyefis-venv/bin/pyefis"], capture_output=True,
-                         text=True).stdout.split()[0]
+    # Anchored: the bench user is "pyefis", so a loose pattern also matches
+    # fixgw and this script's own shell; the unit's MainPID is a wrapper.
+    pid = subprocess.run(["pgrep", "-f", "^/home/pyefis/pyefis-venv/bin/python "
+                          "/home/pyefis/pyefis-venv/bin/pyefis"],
+                         capture_output=True, text=True).stdout.split()[0]
     before = os.path.getmtime(SHOT) if os.path.exists(SHOT) else 0
     subprocess.run(["kill", "-USR1", pid], check=True)
     for _ in range(50):

@@ -48,3 +48,13 @@ and once after adding `map_style: nav_only` to the Map tab's `moving_map`
 options in `~/makerplane/pyefis/config/screens/managed.yaml` and restarting
 pyEfis. `managed.yaml` was backed up first and restored afterwards. The
 exact steps and the SHAs are in the PR body.
+
+### Glass capture, 2026-11-01
+
+- Staged with `bench-deploy.sh --ref aer-4462/map-nav-only-preset --owner AVIONICS --issue AER-4462`: pyEfis @ 3368282, fix-gateway dev @ 666c3d7, makerplane-data dev @ 3aec02a.
+- `glass_standard.png`: the live screen as served (`screens/managed.yaml`, Map tab, no `map_style`). This is the second of two grabs taken 3 s apart. The first was still settling (it differed across the map and the HSI), so the settled one is used.
+- `glass_nav_only.png`: after one change on the device. `map_style: nav_only` was added as the first option of the Map tab's `moving_map` block in `~/makerplane/pyefis/config/screens/managed.yaml` (line 132), then pyEfis was restarted. Both grabs were byte-identical.
+- `map_panel_*.png`: the right-hand map panel cropped from each frame (x 1248-1920).
+- `glass_keys.log`: the FIX values read back at each grab.
+- Afterwards: `managed.yaml` was copied back from the backup (`cmp` clean) and pyEfis restarted. The script republished the bench's own plan (PA15, 25 slots) and re-ACTed leg 2. Then `--restore`.
+- The PFD's white left area is the GL SVS panel, which is blank in a SIGUSR1 grab on this box. That is expected.
