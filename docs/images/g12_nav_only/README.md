@@ -107,6 +107,8 @@ tools/render_map_style_evidence.py $D --lat 34.30 --lon -119.80 --track 0 --rang
 
 - Standard is byte-identical to dev at 20, 1 and 0.5 NM over KSBA and at
   the accepted 20 NM pose (`499dc8da...c628cc`, as above).
+- #366 then merged as dev 1e1bb22, whose tree is identical to the #366 head
+  84d4f93 (tree `61ecc2cb`), so `before` is today's dev for both styles.
 - nav_only is byte-identical to the #366 head at 20 and 1 NM over KSBA and
   at the accepted pose. It differs only at 0.5 NM, where RD2 draws the casing.
 - `casing_nav_only_0p5nm_ab.png`: nav_only at 0.5 NM over KSBA, track 250.
