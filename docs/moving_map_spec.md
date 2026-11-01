@@ -173,7 +173,16 @@ airways off)
   (`FPLSTATE`=SUSP, `FPLAPR`=LNAV), a dashed magenta line extends the
   final course past the MAP so the pilot still sees where it leads —
   the exact length is a look call, not a navigation guarantee.
-- Declutter: labels off above 80 NM (symbols stay), nothing draws
+- Route segments (RS4, pyEfis #307): each airway segment in the `FPLS*`
+  table is labelled with its ident, bold, along its first leg on the
+  airway (entry fix to the next fix, not the direct leg into the entry
+  fix), rotated to the leg and kept upright, in that leg's status colour.
+  It is skipped when the leg is too short on screen to hold it. The legs
+  still ahead in the active segment (`FPLACTSEG`, by the engine's rule
+  that a leg belongs to its TO slot's segment) draw 3 px in their own
+  colour. `FPLACTSEG` 0 or absent, or a table row that disagrees with the
+  slots' `FPLfSGI`, changes nothing. The fixes and legs are unchanged.
+- Declutter: labels (waypoint and airway) off above 80 NM (symbols stay), nothing draws
   above 160 NM except the legs.
 - Prop `layer_flight_plan` (default on); the `LiveBind` runtime toggle
   rides #96 when it lands (layer toggles are GUI-thread-only today).
