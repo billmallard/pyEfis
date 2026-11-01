@@ -1,7 +1,7 @@
 |Coverage Badge| |Website snapcraft.io| |candidate| |beta| |edge|
 
-.. |Coverage Badge| image:: https://raw.githubusercontent.com/makerplane/pyEfis/python-coverage-comment-action-data/badge.svg
-   :target: https://htmlpreview.github.io/?https://github.com/makerplane/pyEfis/blob/python-coverage-comment-action-data/htmlcov/index.html
+.. |Coverage Badge| image:: https://raw.githubusercontent.com/billmallard/pyEfis/python-coverage-comment-action-data/badge.svg
+   :target: https://htmlpreview.github.io/?https://github.com/billmallard/pyEfis/blob/python-coverage-comment-action-data/htmlcov/index.html
 
 .. |Website snapcraft.io| image:: https://snapcraft.io/pyefis/badge.svg
    :target: https://snapcraft.io/pyefis
@@ -122,6 +122,8 @@ running until it is removed:
    the two files above. Screens include it with
    ``include: [screens/virtualvfr_db.yaml]``.
 
+See docs/svs_data_refresh.md for the full CIFP refresh procedure.
+
 Synthetic Vision (SVS)
 -----------------------------
 
@@ -141,7 +143,7 @@ obstacles, and airports/runways drawn in 3D over the live attitude.
 * **Major roads** — OSM motorway / trunk overlays.
 
 Terrain and the chart databases are supplied by the companion
-`makerplane-data <https://github.com/makerplane/makerplane-data>`_
+`makerplane-data <https://github.com/billmallard/makerplane-data>`_
 navigation-data system — an over-the-air / USB updater that keeps signed
 terrain, airport, obstacle, water, and road packs current — or by
 user-supplied local files. A boot-time **Data Status** screen and a subtle
@@ -187,7 +189,9 @@ Suggested (full SVS unit)
   render SVS correctly but slowly.)
 * **Storage — an M.2 HAT + NVMe SSD is strongly preferred.** The
   navigation-data packs are large: terrain regions run tens of GB and a full
-  North-America terrain set is ~90 GB. Either use a large, high-quality
+  North-America terrain set is about 120 GB on disk (about 91 GB of GLO-30
+  tiles plus about 31 GB of mip pyramid; about 60 GB as a compressed
+  download). Either use a large, high-quality
   (A2-rated) microSD card, or — better — add an **M.2 HAT with an NVMe SSD**
   for the data store and keep the OS on the microSD. The reference unit boots
   from a 64 GB microSD and stores data on a ~500 GB NVMe SSD mounted at

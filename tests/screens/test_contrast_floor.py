@@ -158,7 +158,10 @@ PAIRS = {
     "altimeter_trend_tape": [("#ffffff", "bg_color", TEXT_FLOOR)],
     # Selected-altitude readout text over the tape's black ground
     # (altimeter/altsel.py; Altimeter_Tape bg defaults to black).
-    "altimeter_tape": [("alt_bug_color", "#000000", TEXT_FLOOR)],
+    "altimeter_tape": [
+        ("alt_bug_color", "#000000", TEXT_FLOOR),
+        ("alt_bug_alert_color", "#000000", TEXT_FLOOR),
+    ],
     "horizontal_situation_indicator": [
         ("fg_color", "bg_color", TEXT_FLOOR),
         ("needle_color", "bg_color", GRAPHIC_FLOOR),
