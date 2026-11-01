@@ -97,8 +97,11 @@ class MapTransform:
     of projection math -- layers never do their own (spec section 3)."""
 
     def __init__(self, lat, lon, range_nm, rot_deg, w, h, anchor_frac,
-                 font_family="DejaVu Sans Condensed"):
+                 font_family="DejaVu Sans Condensed", palette=None):
         self.lat0, self.lon0 = lat, lon
+        # G12: the map_style palette every layer paints with.
+        self.palette = (palette if palette is not None
+                        else map_layers.STANDARD_PALETTE)
         self.range_nm = range_nm
         self.rot = math.radians(rot_deg)
         self.w, self.h = w, h
@@ -169,6 +172,11 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.pinch_pan_threshold_px = 20.0
         self.ownship_position = 50             # percent up from bottom
         self.symbol_color = "yellow"
+        # G12 (#135): "standard" (terrain map) or "nav_only" -- terrain
+        # relief off whatever layer_terrain says, nav layers repainted for
+        # a plain black background, water drawn flat under layer_water.
+        self.map_style = "standard"
+        self.layer_water = True                # nav_only only (see above)
         self.layer_range_rings = True
         # Range-ring options (G13, #136); defaults = the original half/full
         # white rings. Read once by RangeRingsLayer.configure().
@@ -495,11 +503,20 @@ class MovingMap(LiveBindingMixin, QWidget):
         for lid, cls in sorted(map_layers.LAYER_REGISTRY.items(),
                                key=lambda kv: kv[1].z):
             layer = cls()
-            layer.enabled = bool(getattr(self, "layer_" + lid,
-                                         cls.default_on))
+            layer.enabled = self.layer_enabled(lid, cls.default_on)
             layer.configure(self)
             self._layers.append(layer)
         self._layers_built = True
+
+    def layer_enabled(self, layer_id, default_on=True):
+        """Whether layer *layer_id* starts enabled: its ``layer_<id>``
+        option, except under ``map_style: nav_only``, where the terrain
+        layer draws water only and so follows ``layer_water`` instead of
+        ``layer_terrain`` (G12). Every other layer keeps its own key."""
+        if (layer_id == "terrain"
+                and map_layers.map_style(self) == "nav_only"):
+            return bool(self.layer_water)
+        return bool(getattr(self, "layer_" + layer_id, default_on))
 
     def set_layer(self, layer_id, on=None):
         """HMI hook: toggle (or set) a layer at runtime."""
@@ -1055,7 +1072,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         vlon = self._lon + self._pan_e / (M_PER_DEG_LAT * coslat)
         x = MapTransform(vlat, vlon, float(self.range_nm),
                          rot, self.width(), self.height(), anchor,
-                         self.font_family)
+                         self.font_family, map_layers.palette(self))
         x.defer_render = self.defer_render
         return x
 
@@ -1071,8 +1088,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._ui_targets = []
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), QColor(16, 24, 32))
         x = self._transform()
+        p.fillRect(self.rect(), map_layers.qcolor(x.palette["background"]))
         for layer in self._layers:
             if layer.enabled:
                 p.save()

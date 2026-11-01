@@ -44,8 +44,8 @@ from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.ai.road_ribbon import DEFAULT_WIDTH_M, width_for_class
 from pyefis.instruments.map.layers import (MapLayer, RenderHistory,
-                                          paint_window_images,
-                                          range_bucket, register_layer)
+                                           paint_window_images, palette,
+                                           range_bucket, register_layer)
 
 #: per-window vertex budget (worker-side; metro windows are dense)
 _MAX_VERTICES = 150000
@@ -176,9 +176,13 @@ class RoadsLayer(MapLayer):
     _DB_OPTION = "highway_db_path"
     _COLOR_OPTION = "road_color"
     _DEFAULT_COLOR = "#c0c0c0"
+    #: palette key for this layer's default colour under a ``map_style``
+    _PALETTE_DEFAULT_KEY = "road_default"
     #: casing colour option, or None for no casing (rivers)
     _CASING_OPTION = "road_casing_color"
     _DEFAULT_CASING_COLOR = "#5a5a5a"
+    #: palette key for the default casing colour under a ``map_style``
+    _PALETTE_CASING_KEY = "road_casing"
     #: class -> true width in metres for the pen floor, or None to keep
     #: the tier pens at every range (rivers). Shared with the SVS ribbons.
     _WIDTH_M = DEFAULT_WIDTH_M
@@ -222,10 +226,19 @@ class RoadsLayer(MapLayer):
         self._owner = owner
         self._color = str(getattr(owner, self._COLOR_OPTION, "")
                           or self._DEFAULT_COLOR)
+        # A map_style swaps the DEFAULT colour only; a colour the screen
+        # set explicitly still wins (G12: nav_only dims roads that would
+        # otherwise be the brightest lines on a black background).
+        if self._color.strip().lower() == self._DEFAULT_COLOR:
+            self._color = palette(owner)[self._PALETTE_DEFAULT_KEY]
         if self._CASING_OPTION:
             self._casing_color = str(getattr(owner, self._CASING_OPTION, "")
                                      or self._DEFAULT_CASING_COLOR)
-        path =str(getattr(owner, self._DB_OPTION, "") or "")
+            # the casing follows the fill: default swapped, explicit wins
+            if (self._casing_color.strip().lower()
+                    == self._DEFAULT_CASING_COLOR):
+                self._casing_color = palette(owner)[self._PALETTE_CASING_KEY]
+        path = str(getattr(owner, self._DB_OPTION, "") or "")
         if path:
             try:
                 from pyefis.instruments.ai.highway_db import HighwayDB

@@ -42,6 +42,80 @@ def format_range_nm(nm):
     return str(int(round(nm)))
 
 
+#: ``map_style`` values (G12, #135). ``standard`` is the terrain map as it
+#: has always drawn; ``nav_only`` turns terrain relief off and repaints the
+#: nav layers for a plain background (docs/moving_map_spec.md section 5.6).
+MAP_STYLES = ("standard", "nav_only")
+
+#: Per-style palette, read by every layer through :func:`palette`. Colours
+#: are (r, g, b, a). STANDARD reproduces the pre-G12 constants exactly --
+#: a screen with no ``map_style`` must render byte-identical to before.
+#: A layer added later (airspace, CAP-204) adds its keys to BOTH tables;
+#: tests/instruments/test_map_nav_only.py fails if the tables' keys differ.
+STANDARD_PALETTE = {
+    "background": (16, 24, 32, 255),
+    "water": (60, 110, 160, 255),
+    "range_ring": (255, 255, 255, 140),
+    "range_ring_label": (255, 255, 255, 140),
+    "airport": (197, 36, 125, 255),
+    "navaid": (70, 110, 200, 255),
+    "fix": (40, 60, 130, 255),
+    "fix_width": 1.2,
+    "airway": (90, 130, 210, 170),
+    "route_past": (128, 128, 128, 255),
+    "road_default": "#c0c0c0",
+    "road_casing": "#5a5a5a",
+    "river_default": "#4a6d8c",
+}
+
+#: Tuned against a black background (the panel's own darkest state, so
+#: sunlight reflection sets the floor either way, and every symbol gets the
+#: full luminance range). Symbols >= 3:1 against both the background and
+#: the water fill, labels >= 4.5:1; range rings and roads are reference
+#: lines kept recessive (>= 3:1 against the background only). Water is a
+#: dark fill so symbols stay readable on top of it. Labels, runway fill,
+#: the active/future flight-plan legs and ownship already pass and are
+#: unchanged; the past leg is lifted to clear 3:1 over the water fill. Computed
+#: ratios are a bound, not the device check (PR body, G12).
+NAV_ONLY_PALETTE = {
+    "background": (0, 0, 0, 255),
+    "water": (24, 56, 104, 255),
+    "range_ring": (120, 120, 120, 255),
+    "range_ring_label": (170, 170, 170, 255),
+    "airport": (255, 100, 190, 255),
+    "navaid": (130, 175, 255, 255),
+    "fix": (120, 160, 230, 255),
+    "fix_width": 1.5,
+    "airway": (100, 140, 220, 255),
+    "route_past": (144, 144, 144, 255),
+    "road_default": "#808080",
+    # RD2's close-in casing, scaled with the fill: standard's #5a5a5a is
+    # 0.47 of its #c0c0c0 fill, so #3c3c3c is 0.47 of #808080. Left at
+    # #5a5a5a it outlines the dimmed fill brighter than the road it frames.
+    "road_casing": "#3c3c3c",
+    "river_default": "#4088a8",
+}
+
+_PALETTES = {"standard": STANDARD_PALETTE, "nav_only": NAV_ONLY_PALETTE}
+
+
+def map_style(owner):
+    """The owner's ``map_style``, normalised; anything unknown (or no
+    owner) is ``standard``, so a typo never blanks the terrain."""
+    style = str(getattr(owner, "map_style", "standard") or "standard")
+    style = style.strip().lower()
+    return style if style in _PALETTES else "standard"
+
+
+def palette(owner):
+    """The palette table for *owner*'s ``map_style``."""
+    return _PALETTES[map_style(owner)]
+
+
+def qcolor(rgba):
+    return QColor(*rgba)
+
+
 def register_layer(cls):
     LAYER_REGISTRY[cls.id] = cls
     return cls
@@ -339,6 +413,16 @@ class RangeRingsLayer(MapLayer):
         c.setAlpha(int(round(self.opacity * 2.55)))
         return c
 
+    def colors(self, x):
+        """(ring, label) colours. The configured ``range_ring_color`` /
+        ``range_ring_opacity`` style the standard map; any other style's
+        palette owns its ring colours (nav_only keeps its tuned greys)."""
+        pal = getattr(x, "palette", STANDARD_PALETTE)
+        if pal is STANDARD_PALETTE:
+            c = self.pen_color()
+            return c, QColor(c)
+        return qcolor(pal["range_ring"]), qcolor(pal["range_ring_label"])
+
     def pen_width(self, x):
         return self.width_px if self.width_px > 0 else max(1.0, x.w * 0.002)
 
@@ -358,15 +442,19 @@ class RangeRingsLayer(MapLayer):
                       self.label_pixel_size(x) + 6)
 
     def paint(self, p, x):
-        pen = QPen(self.pen_color())
+        ring_c, label_c = self.colors(x)
+        pen = QPen(ring_c)
         pen.setWidthF(self.pen_width(x))
-        p.setPen(pen)
+        label_pen = QPen(pen)
+        label_pen.setColor(label_c)
         p.setBrush(Qt.BrushStyle.NoBrush)
         f = QFont(x.font_family)
         f.setPixelSize(self.label_pixel_size(x))
         p.setFont(f)
         for frac, r_px in zip(self.fractions, self.ring_radii_px(x)):
+            p.setPen(pen)
             p.drawEllipse(QPointF(x.cx, x.cy), r_px, r_px)
             if self.labels:
+                p.setPen(label_pen)
                 p.drawText(self.label_rect(x, r_px), Qt.AlignmentFlag.AlignLeft,
                            format_range_nm(x.range_nm * frac))
