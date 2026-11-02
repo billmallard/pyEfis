@@ -723,6 +723,165 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
     return n
 
 
+# Natural Earth lakes that the OSM water layer already draws (AER-4604).
+# Since the map unions overlapping polygons (AER-4594/AER-4596), an NE
+# lake on top of its OSM twin paints wherever EITHER outline says water,
+# so the coarse NE edge shows past the OSM shoreline (Mille Lacs SE
+# shore, the Great Salt Lake's west side). Each water body should come
+# from one source, and OSM is the finer one.
+#
+# The test is how much of the NE lake lies under OSM water, and it
+# undercounts exactly where NE is coarsest: a 19-vertex NE Lake Powell
+# takes in so much canyon that OSM's full 93k-vertex lake covers only a
+# third of it, and narrow lakes (Chelan, Havasu) score lower still. A
+# low score alone cannot tell those from a lake OSM does not draw (a
+# river reservoir OSM tags as riverbank, which the build filters out,
+# scores near zero). So a lake with partial cover is dropped only when
+# the covering OSM rows also span the same bbox as the NE lake: the
+# same water body, outlined twice.
+NE_DUP_MIN_COVER = 0.5          # drop on cover alone at this fraction
+NE_DUP_MIN_PARTIAL_COVER = 0.15  # floor when the bboxes agree
+NE_DUP_MIN_BBOX_IOU = 0.5       # bbox overlap that counts as "agree"
+_NE_DUP_GRID = 24               # sample grid per axis over the lake bbox
+
+
+def _row_edges(vblob, rblob, outer_only=False):
+    """Edge endpoint arrays (a, b), each (E, 2) lat/lon, for a stored
+    row: every ring closes on itself, outer and hole rings alike, so
+    one even-odd count over all edges treats islands as dry.
+    ``outer_only`` keeps just the outer ring (islands count as inside)."""
+    verts = np.frombuffer(vblob, dtype="<f8").reshape(-1, 2)
+    n = len(verts)
+    ends = ([n] if rblob is None else
+            np.frombuffer(rblob, dtype=_index_dtype(n)).tolist())
+    if outer_only:
+        verts, ends, n = verts[:ends[0]], ends[:1], ends[0]
+    nxt = np.arange(1, n + 1)
+    start = 0
+    for end in ends:
+        if end > start:
+            nxt[end - 1] = start
+        start = end
+    return verts, verts[nxt]
+
+
+def _points_in_edges(pts, a, b, chunk=4_000_000):
+    """Even-odd point-in-polygon of ``pts`` (M, 2) against edges (a, b),
+    vectorised over points and edges; chunked over edges so a
+    300k-vertex OSM lake does not build one giant M x E array."""
+    odd = np.zeros(len(pts), dtype=np.int64)
+    if not len(pts):
+        return odd.astype(bool)
+    lat = pts[:, :1]
+    lon = pts[:, 1:]
+    step = max(1, chunk // len(pts))
+    for s in range(0, len(a), step):
+        a0, b0 = a[s:s + step], b[s:s + step]
+        straddle = (a0[:, 0] > lat) != (b0[:, 0] > lat)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x = (a0[:, 1] + (lat - a0[:, 0]) / (b0[:, 0] - a0[:, 0])
+                 * (b0[:, 1] - a0[:, 1]))
+        odd += np.count_nonzero(straddle & (x > lon), axis=1)
+    return (odd & 1).astype(bool)
+
+
+def _bbox_iou(a, b):
+    """Intersection over union of two (min_lat, max_lat, min_lon,
+    max_lon) boxes, in degree-squared (fine for a same-place ratio)."""
+    ilat = min(a[1], b[1]) - max(a[0], b[0])
+    ilon = min(a[3], b[3]) - max(a[2], b[2])
+    if ilat <= 0 or ilon <= 0:
+        return 0.0
+    inter = ilat * ilon
+    area = lambda r: (r[1] - r[0]) * (r[3] - r[2])
+    return inter / (area(a) + area(b) - inter)
+
+
+def ne_lake_osm_match(con, lake_id, grid=_NE_DUP_GRID):
+    """How well OSM ``water`` rows duplicate NE lake row ``lake_id``:
+    ``(cover, bbox_iou)``. ``cover`` is the fraction of the lake under
+    OSM water, by point sampling: a ``grid`` x ``grid`` lattice over the
+    lake's bbox, kept where it falls inside the lake, each point tested
+    against the outer ring of the OSM rows whose bbox contains it (an
+    OSM island hole is still part of the lake NE fills). ``bbox_iou``
+    compares the lake's bbox with the union bbox of the OSM rows that
+    cover it. Returns None when no sample lands inside the lake."""
+    row = con.execute(
+        "SELECT min_lat, max_lat, min_lon, max_lon, vertices, rings "
+        "FROM water_polygons WHERE id = ?", (lake_id,)).fetchone()
+    min_lat, max_lat, min_lon, max_lon = row[:4]
+    la = np.linspace(min_lat, max_lat, grid + 2)[1:-1]
+    lo = np.linspace(min_lon, max_lon, grid + 2)[1:-1]
+    gla, glo = np.meshgrid(la, lo, indexing="ij")
+    pts = np.column_stack([gla.ravel(), glo.ravel()])
+    pts = pts[_points_in_edges(pts, *_row_edges(row[4], row[5]))]
+    if not len(pts):
+        return None
+    covered = np.zeros(len(pts), dtype=bool)
+    span = None                 # union bbox of the covering OSM rows
+    # R-tree alone, then the kind per row: joined to water_polygons in
+    # one query, sqlite plans the idx_kind scan first and walks every
+    # 'water' row (over a million in a continental pack).
+    cands = con.execute(
+        "SELECT id, min_lat, max_lat, min_lon, max_lon FROM water_rtree "
+        "WHERE max_lat >= ? AND min_lat <= ? AND max_lon >= ? "
+        "AND min_lon <= ?", (min_lat, max_lat, min_lon, max_lon)).fetchall()
+    for wid, wla0, wla1, wlo0, wlo1 in cands:
+        todo = ~covered & ((pts[:, 0] >= wla0) & (pts[:, 0] <= wla1)
+                           & (pts[:, 1] >= wlo0) & (pts[:, 1] <= wlo1))
+        if not todo.any():
+            continue
+        kind, vblob, rblob = con.execute(
+            "SELECT kind, vertices, rings FROM water_polygons WHERE id = ?",
+            (wid,)).fetchone()
+        if kind != "water":
+            continue
+        idx = np.flatnonzero(todo)
+        hit = _points_in_edges(
+            pts[idx], *_row_edges(vblob, rblob, outer_only=True))
+        if hit.any():
+            covered[idx] = hit
+            span = ((wla0, wla1, wlo0, wlo1) if span is None else
+                    (min(span[0], wla0), max(span[1], wla1),
+                     min(span[2], wlo0), max(span[3], wlo1)))
+            if covered.all():
+                break
+    iou = (_bbox_iou((min_lat, max_lat, min_lon, max_lon), span)
+           if span is not None else 0.0)
+    return float(covered.mean()), iou
+
+
+def is_ne_duplicate(cover, bbox_iou):
+    """True when an NE lake with this OSM match is already drawn by OSM."""
+    return (cover >= NE_DUP_MIN_COVER
+            or (cover >= NE_DUP_MIN_PARTIAL_COVER
+                and bbox_iou >= NE_DUP_MIN_BBOX_IOU))
+
+
+def drop_covered_ne_lakes(con):
+    """Delete every NE ``lake`` row that OSM ``water`` already draws
+    (``is_ne_duplicate``), so the lake comes from the OSM outline alone.
+
+    Dropping, not clipping: where OSM draws the lake, the part of the
+    NE outline outside OSM is NE's coarser shoreline, not water OSM is
+    missing, and painting it is the defect. A lake OSM does not draw is
+    kept whole -- NE is its only outline. Run after every layer is
+    imported. Returns the dropped (id, cover, bbox_iou) tuples."""
+    lakes = [r[0] for r in con.execute(
+        "SELECT id FROM water_polygons WHERE kind = 'lake'")]
+    dropped = []
+    for lake_id in lakes:
+        match = ne_lake_osm_match(con, lake_id)
+        if match is not None and is_ne_duplicate(*match):
+            dropped.append((lake_id, *match))
+    for lake_id, _, _ in dropped:
+        con.execute("DELETE FROM water_polygons WHERE id = ?", (lake_id,))
+        con.execute("DELETE FROM water_rtree WHERE id = ?", (lake_id,))
+    print(f"  NE lakes: dropped {len(dropped)} of {len(lakes)} already "
+          f"drawn by OSM water")
+    return dropped
+
+
 # Default OSM waterway classes kept by --waterway. Matches issue #39
 # (waterway=river/stream/canal) and the moving map's rivers preset
 # (tools/build_highway_db.py PRESETS["rivers"]); drain/ditch are noise
@@ -884,6 +1043,11 @@ def main():
                         "polygons are complex enough to use the cap; open ocean "
                         "simplifies to a few verts regardless, so matching the "
                         "inland cap is nearly free (~+10pct).")
+    p.add_argument("--keep-ne-duplicates", action="store_true",
+                   help="keep every --lake (Natural Earth) polygon, even one "
+                        "the OSM water layer already draws. By default such "
+                        "a lake is dropped so its coarser outline does not "
+                        "paint past the OSM shoreline (AER-4604)")
     args = p.parse_args()
     max_verts = args.max_vertices if args.max_vertices > 0 else None
     ov = args.ocean_max_vertices if args.ocean_max_vertices is not None else args.max_vertices
@@ -912,6 +1076,8 @@ def main():
                                   min_area_km2=min_area, keep_fclass=keep_fclass)
     for path in args.text:
         total += import_text(con, path, max_verts)
+    if not args.keep_ne_duplicates:
+        total -= len(drop_covered_ne_lakes(con))
     waterway_classes = (args.waterway_classes if args.waterway_classes
                         else WATERWAY_CLASSES)
     lines = 0
