@@ -160,12 +160,19 @@ For the fixed-width part (body bytes 0-73), with DataMark matched separately:
 
 Why the leading-zero clause is load-bearing: without it, a spin-recovery cue
 that overflowed to `+10` would leave `+1` in the grammar and push its `0` into
-DataMark, and the line would parse with the wrong cue. The cue's domain is
--1/0/+1 (and it is hardcoded 0 in this firmware), so that overflow is
-unreachable today; the clause makes the rule hold without leaning on that. A
-randomized check of a one-digit overflow in every field before DataMark,
-5,000 sentences per case, found no other acceptance; the §7.1 test makes it
-permanent. The
+DataMark, and the line would parse with the wrong cue. The clause catches only
+overflows whose spilled digit is `0`, though: a cue of `+12` leaves `+1` and
+pushes `2` into DataMark, which then has no leading zero, so the line parses as
+cue +1 with a wider DataMark. No grammar can tell those apart, because no
+signed field after the cue is left to resynchronise on. It is harmless: the
+cue's domain is -1/0/+1 and this firmware hardcodes it to 0, so the overflow is
+unreachable. Even if it happened, only the cue and DataMark would be wrong,
+and neither is published (§4.2); AOA and the setpoints sit at fixed offsets
+before the cue. For every field before the spin cue, a one-digit overflow
+cannot match the 74-byte grammar, because a digit lands where a later field's
+`+`/`-` must be. fix-gateway's §7.1 tests check this with the first overflowing value
+and 2,000 random overflowing values per field, and pin the spin-cue case as a
+known limitation (fix-gateway #121). The
 implementation may use the regex for validation and slicing for extraction,
 or a table of `(offset, width, signed)` tuples; either way, the table in §3.2
 is normative.
