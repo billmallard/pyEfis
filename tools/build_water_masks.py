@@ -148,10 +148,12 @@ def _fill_even_odd_rect(rings, rows: int, cols: int) -> np.ndarray:
     return (np.cumsum(acc, axis=1)[:, :cols] & 1).astype(bool)
 
 
-def _mask_at_nodes(rings, rows: int, cols: int) -> np.ndarray:
-    """Even-odd fill, POINT-sampled at exact grid nodes (row r, col c) --
-    matching the pixel-is-point registration ``elevation_at``/``_sample``
-    use for the elevation mip pyramid, rather than pixel-AREA membership.
+def _mask_at_nodes(polygons, rows: int, cols: int) -> np.ndarray:
+    """Water coverage of *polygons*, POINT-sampled at exact grid nodes
+    (row r, col c) -- matching the pixel-is-point registration
+    ``elevation_at``/``_sample`` use for the elevation mip pyramid, rather
+    than pixel-AREA membership. *polygons* is a list of polygons, each a
+    list of ``(k, 2)`` (x, y) rings; see :func:`_mask_at_nodes_cell`.
 
     Shifting every ring vertex by +0.5 in both axes turns the
     node-membership test at the integer point ``(c, r)`` into exactly the
@@ -159,8 +161,7 @@ def _mask_at_nodes(rings, rows: int, cols: int) -> np.ndarray:
     ``(c + 0.5, r + 0.5)`` -- so the identical scanline algorithm answers
     a different question with no other change.
     """
-    shifted = [np.asarray(ring, dtype=np.float64) + 0.5 for ring in rings]
-    return _fill_even_odd_rect(shifted, rows, cols)
+    return _mask_at_nodes_cell(polygons, 0, rows, 0, cols)
 
 
 def _fill_even_odd_band(rings, row_lo: int, row_hi: int, cols: int) -> np.ndarray:
@@ -222,12 +223,10 @@ def _fill_even_odd_band(rings, row_lo: int, row_hi: int, cols: int) -> np.ndarra
     return (np.cumsum(acc, axis=1)[:, :cols] & 1).astype(bool)
 
 
-def _mask_at_nodes_band(rings, row_lo: int, row_hi: int,
+def _mask_at_nodes_band(polygons, row_lo: int, row_hi: int,
                          cols: int) -> np.ndarray:
-    """Band-restricted counterpart to :func:`_mask_at_nodes` -- same
-    +0.5 point-registration shift, then :func:`_fill_even_odd_band`."""
-    shifted = [np.asarray(ring, dtype=np.float64) + 0.5 for ring in rings]
-    return _fill_even_odd_band(shifted, row_lo, row_hi, cols)
+    """Band-restricted counterpart to :func:`_mask_at_nodes`."""
+    return _mask_at_nodes_cell(polygons, row_lo, row_hi, 0, cols)
 
 
 def _fill_even_odd_cell(rings, row_lo: int, row_hi: int,
@@ -299,12 +298,43 @@ def _fill_even_odd_cell(rings, row_lo: int, row_hi: int,
     return (np.cumsum(acc, axis=1)[:, :band_cols] & 1).astype(bool)
 
 
-def _mask_at_nodes_cell(rings, row_lo: int, row_hi: int,
+def _mask_at_nodes_cell(polygons, row_lo: int, row_hi: int,
                          col_lo: int, col_hi: int) -> np.ndarray:
-    """Cell-restricted counterpart to :func:`_mask_at_nodes` -- same
-    +0.5 point-registration shift, then :func:`_fill_even_odd_cell`."""
-    shifted = [np.asarray(ring, dtype=np.float64) + 0.5 for ring in rings]
-    return _fill_even_odd_cell(shifted, row_lo, row_hi, col_lo, col_hi)
+    """Cell-restricted counterpart to :func:`_mask_at_nodes`: the +0.5
+    point-registration shift, then :func:`_fill_even_odd_cell`.
+
+    Even-odd parity applies WITHIN each polygon (so a polygon's hole
+    rings cut holes, the #44 pattern) and the polygons are then UNIONED
+    (AER-4594). One shared accumulator across polygons is wrong for real
+    data: OSM's split ocean cells overlap their neighbours by ~0.0005 deg
+    past every whole degree, so a node inside that sliver is covered twice
+    and its parity cancels to "not water" -- and every native tile's
+    border posts sit exactly on such a seam. Overlapping inland polygons
+    (a lake and its riverbank) cancelled the same way.
+
+    Each polygon is filled only over its own bbox clipped to the cell:
+    :func:`_fill_even_odd_cell` is exact on any sub-window (see its
+    docstring), and nodes outside a polygon's bbox are outside it, so the
+    cost is bounded by each polygon's footprint, not polygons x cell."""
+    out = np.zeros((row_hi - row_lo, col_hi - col_lo), dtype=bool)
+    for rings in polygons:
+        shifted = [np.asarray(ring, dtype=np.float64) + 0.5 for ring in rings]
+        shifted = [r for r in shifted if r.shape[0] >= 3]
+        if not shifted:
+            continue
+        pts = np.concatenate(shifted)
+        # In shifted space node (c, r) is tested at (c + 0.5, r + 0.5), so
+        # a polygon can only cover rows [ceil(ymin - 0.5), ceil(ymax - 0.5))
+        # and the same for columns -- the scanline's own row/col rounding.
+        r0 = max(row_lo, int(np.ceil(pts[:, 1].min() - 0.5)))
+        r1 = min(row_hi, int(np.ceil(pts[:, 1].max() - 0.5)))
+        c0 = max(col_lo, int(np.ceil(pts[:, 0].min() - 0.5)))
+        c1 = min(col_hi, int(np.ceil(pts[:, 0].max() - 0.5)))
+        if r0 >= r1 or c0 >= c1:
+            continue
+        out[r0 - row_lo:r1 - row_lo, c0 - col_lo:c1 - col_lo] |= (
+            _fill_even_odd_cell(shifted, r0, r1, c0, c1))
+    return out
 
 
 def pack_mask(mask: np.ndarray) -> bytes:
@@ -419,13 +449,19 @@ def _rings_as_xy(vertices: np.ndarray, rings, lat0_n: float, lon0_w: float,
         start = end
 
 
-def _collect_rings(lat_lo, lat_hi, lon_lo, lon_hi, lat0_n, lon0_w, samples_per_deg):
-    rings = []
+def _collect_polygons(lat_lo, lat_hi, lon_lo, lon_hi, lat0_n, lon0_w,
+                      samples_per_deg):
+    """One list of (x, y) rings per polygon -- kept grouped, because
+    even-odd applies within a polygon and polygons are unioned
+    (AER-4594; see :func:`_mask_at_nodes_cell`)."""
+    polygons = []
     for vertices, poly_rings in polygons_in_bbox(
             _CON, _HAS_RTREE, _HAS_RINGS, lat_lo, lat_hi, lon_lo, lon_hi):
-        rings.extend(_rings_as_xy(vertices, poly_rings, lat0_n, lon0_w,
-                                   samples_per_deg))
-    return rings
+        rings = list(_rings_as_xy(vertices, poly_rings, lat0_n, lon0_w,
+                                  samples_per_deg))
+        if rings:
+            polygons.append(rings)
+    return polygons
 
 
 # ---------------------------------------------------------------------------
@@ -468,9 +504,9 @@ def build_tile_mask(path: Path, force: bool) -> tuple[str, bool, str | None]:
     samples_per_deg = n - 1
     lat0_n = tile_lat + 1
     lon0_w = tile_lon
-    rings = _collect_rings(tile_lat, tile_lat + 1, tile_lon, tile_lon + 1,
-                            lat0_n, lon0_w, samples_per_deg)
-    mask = _mask_at_nodes(rings, n, n)
+    polygons = _collect_polygons(tile_lat, tile_lat + 1, tile_lon, tile_lon + 1,
+                                 lat0_n, lon0_w, samples_per_deg)
+    mask = _mask_at_nodes(polygons, n, n)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(pack_mask(mask))
     return stem, True, None
@@ -531,11 +567,11 @@ def build_mosaic_mask(json_path: Path, force: bool,
                 col_hi = min(col_lo + band_cols, cols)
                 cell_lon_lo = lon_w + col_lo / spd
                 cell_lon_hi = lon_w + col_hi / spd
-                rings = _collect_rings(band_lat_lo, band_lat_hi,
-                                        cell_lon_lo, cell_lon_hi,
-                                        lat_n, lon_w, spd)
+                polygons = _collect_polygons(band_lat_lo, band_lat_hi,
+                                             cell_lon_lo, cell_lon_hi,
+                                             lat_n, lon_w, spd)
                 band_mask[:, col_lo:col_hi] = _mask_at_nodes_cell(
-                    rings, row_lo, row_hi, col_lo, col_hi)
+                    polygons, row_lo, row_hi, col_lo, col_hi)
             fh.write(pack_mask(band_mask))
     tmp_out.replace(out)
     return label, True, None
