@@ -144,6 +144,23 @@ def test_declutter_filters_pass_through(monkeypatch, tmp_path):
     _run_main(monkeypatch, tmp_path, "texas", capture=cmds2)
     assert "--min-area-km2" not in cmds2[0]
     assert "--keep-fclass" not in cmds2[0]
+    assert "--large-ring-cap" not in cmds2[0]
+
+
+def test_large_ring_cap_passes_through(monkeypatch, tmp_path):
+    # AER-4669: the size-scaled cap reaches the builder cmd verbatim.
+    (tmp_path / "cache").mkdir()
+    _seed_cache(tmp_path / "cache", ["texas"])
+    cmds = []
+    _run_main(monkeypatch, tmp_path, "texas",
+              extra_args=("--large-ring-cap", "1024",
+                          "--large-ring-area-km2", "10"),
+              capture=cmds)
+    cmd = cmds[0]
+    i = cmd.index("--large-ring-cap")
+    assert cmd[i + 1] == "1024"
+    j = cmd.index("--large-ring-area-km2")
+    assert cmd[j + 1] == "10.0"
 
 
 # ---------------------------------------------------------------------------
