@@ -17,14 +17,22 @@
 """About / System instrument (BACKLOG L4).
 
 A permanent, always-reachable screen carrying the pyEfis notice, the running
-software version, and the ``notice`` field (L1) of each installed data pack.
-It is the screen a builder points a passenger at.
+software version, the ``notice`` field (L1) of each installed data pack, and
+the history of notice acknowledgments written by the installer/updater (L2).
+It is the screen a builder points a passenger at, and the one that makes an
+acknowledgment legible after the fact.
 
 Everything here is read from local files -- no network. The pack list comes
 from the same ``status.json`` the ``pyefis-data`` updater writes for the Data
 Status screen; a pack row with no ``notice`` (every pack published before the
 field existed) says so rather than borrowing the software notice. A missing
 or malformed status file yields an "unavailable" line and never raises.
+
+The acknowledgment history is read from the append-only log defined by
+makerplane-data ``docs/install_acknowledgment.md`` through the same reader the
+startup banner uses (``startup_notice.read_records``), newest first. pyEfis
+never writes it. A ``via: bench`` record is labelled as a bench auto-accept,
+not a person's, and a record for a different notice wording says so.
 """
 
 import logging
@@ -36,6 +44,7 @@ from PyQt6.QtWidgets import (QWidget, QPushButton, QScrollArea, QVBoxLayout,
                              QHBoxLayout, QLabel)
 
 import pyefis
+from pyefis import startup_notice
 from pyefis.instruments.data_status import DEFAULT_STATUS_PATH, load_status
 
 log = logging.getLogger(__name__)
@@ -47,6 +56,14 @@ NOTICE = ("pyEfis is experimental software for Experimental / Amateur-Built "
           "warranty, and any use of it is at your own risk.")
 
 NO_PACK_NOTICE = "No notice in this pack's manifest entry."
+
+NO_ACK_RECORD = "No acknowledgment on record on this device."
+
+_VIA = {
+    "tty": "Typed \"accept\" at a terminal",
+    "caller": "Accepted on screen in the installer or pack picker",
+    "bench": "Auto-accepted on a bench unit; not a person's accept",
+}
 
 _BTN_STYLE = (
     "QPushButton { color: #EEEEEE; background-color: #202830;"
@@ -75,29 +92,77 @@ def pack_notices(status):
     return out
 
 
+def _str_map(d):
+    """``"a 1, b 2"`` from a str->str mapping, skipping anything else."""
+    if not isinstance(d, dict):
+        return ""
+    return ", ".join(f"{k} {v}" for k, v in sorted(d.items())
+                     if isinstance(k, str) and isinstance(v, str))
+
+
+def ack_history(records):
+    """``[(heading, detail), ...]`` for each acceptance record, newest first.
+    ``records`` is ``startup_notice.read_records()`` output (valid schema-1
+    accepts only); optional fields of the wrong type are left out rather than
+    raising."""
+    out = []
+    for rec in reversed(records or []):
+        ts = rec["timestamp"].replace("T", " ").replace("Z", " UTC")
+        who = "@".join(v for v in (rec.get("user"), rec.get("host"))
+                       if isinstance(v, str) and v)
+        heading = f"{ts}  accepted by {who}" if who else f"{ts}  accepted"
+        via = rec.get("via")
+        how = _VIA.get(via, f"Accepted via {via}" if isinstance(via, str)
+                       else "Accepted")
+        trigger = rec.get("trigger")
+        parts = [f"{how} (trigger: {trigger})." if isinstance(trigger, str)
+                 and trigger else f"{how}."]
+        if rec["notice_sha256"] != startup_notice.NOTICE_SHA256:
+            parts.append("This was a different wording of the notice.")
+        sw = _str_map(rec["software"])
+        if sw:
+            parts.append(f"Software: {sw}.")
+        packs = rec.get("packs")
+        if isinstance(packs, dict):
+            pk = _str_map(packs)
+            parts.append(f"Packs at the time: {pk}." if pk
+                         else "No packs were installed yet.")
+        out.append((heading, " ".join(parts)))
+    return out
+
+
 class AboutSystem(QWidget):
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
-                 status_path=DEFAULT_STATUS_PATH, back_screen="DataStatus"):
+                 status_path=DEFAULT_STATUS_PATH, back_screen="DataStatus",
+                 ack_path=None):
         super().__init__(parent)
         self.font_family = font_family
         self.status_path = os.path.expanduser(status_path)
         self.back_screen = back_screen
+        # None = resolve the writer's path (MAKERPLANE_ACK_LOG / XDG state).
+        self.ack_path = ack_path
         self.setStyleSheet("background-color: #0B1015;")
 
         self.title = QLabel("About pyEfis")
         self.version = QLabel(f"Version {pyefis.__version__}")
         self.notice = QLabel(NOTICE)
         self.packs_title = QLabel("Installed data packs")
+        self.ack_title = QLabel("Notice acknowledgments")
         self.notice.setWordWrap(True)
         self.title.setStyleSheet("color:#EBEBEB;")
         self.version.setStyleSheet("color:#969696;")
         self.notice.setStyleSheet("color:#EBEBEB;")
         self.packs_title.setStyleSheet("color:#EBEBEB;")
+        self.ack_title.setStyleSheet("color:#EBEBEB;")
 
         self._packs_box = QWidget()
         self._packs_col = QVBoxLayout(self._packs_box)
         self._packs_col.setContentsMargins(0, 0, 0, 0)
         self._pack_labels = []
+        self._ack_box = QWidget()
+        self._ack_col = QVBoxLayout(self._ack_box)
+        self._ack_col.setContentsMargins(0, 0, 0, 0)
+        self._ack_labels = []
 
         content = QWidget()
         col = QVBoxLayout(content)
@@ -109,6 +174,9 @@ class AboutSystem(QWidget):
         col.addSpacing(16)
         col.addWidget(self.packs_title)
         col.addWidget(self._packs_box)
+        col.addSpacing(16)
+        col.addWidget(self.ack_title)
+        col.addWidget(self._ack_box)
         col.addStretch(1)
 
         self.area = QScrollArea()
@@ -148,14 +216,33 @@ class AboutSystem(QWidget):
             for label, cycle, notice in rows:
                 texts.append((f"{label}  {cycle}", True))
                 texts.append((notice or NO_PACK_NOTICE, False))
+        self._fill(self._packs_col, self._pack_labels, texts)
+
+        for lbl in self._ack_labels:
+            lbl.setParent(None)
+            lbl.deleteLater()
+        self._ack_labels = []
+        records = startup_notice.read_records(self.ack_path)  # never raises
+        history = ack_history(records)
+        if not history:
+            texts = [(NO_ACK_RECORD, False)]
+        else:
+            texts = []
+            for heading, detail in history:
+                texts.append((heading, True))
+                texts.append((detail, False))
+        self._fill(self._ack_col, self._ack_labels, texts)
+        self._apply_fonts()
+
+    @staticmethod
+    def _fill(column, labels, texts):
         for text, heading in texts:
             lbl = QLabel(text)
             lbl.setWordWrap(True)
             lbl.setStyleSheet("color:#EBEBEB;" if heading else "color:#AFBBC4;")
             lbl.setProperty("heading", heading)
-            self._packs_col.addWidget(lbl)
-            self._pack_labels.append(lbl)
-        self._apply_fonts()
+            column.addWidget(lbl)
+            labels.append(lbl)
 
     def showEvent(self, event):
         self.reload()
@@ -181,7 +268,8 @@ class AboutSystem(QWidget):
         self.version.setFont(self._f(row * 0.55))
         self.notice.setFont(self._f(row * 0.70))
         self.packs_title.setFont(self._f(row * 0.70))
-        for lbl in self._pack_labels:
+        self.ack_title.setFont(self._f(row * 0.70))
+        for lbl in self._pack_labels + self._ack_labels:
             lbl.setFont(self._f(row * (0.60 if lbl.property("heading") else 0.55)))
         self.btn_back.setFont(self._f(row * 0.70))
         self.btn_back.setMinimumSize(qRound(self.width() * 0.22),
