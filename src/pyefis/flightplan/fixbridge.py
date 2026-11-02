@@ -77,7 +77,10 @@ ENGINE_OUTPUT_KEYS = (
 # keeps the bridge available, and read_engine() just leaves the key out, so
 # the reader falls back to its pre-key behaviour (the HSI's absent CDIV/GSV
 # precedent). FPLSUSPMAP (G49): 1 = suspended at the MAP auto-suspend.
-OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP",)
+# FPLLDSEQ (PA8): the FPLSEQ of the route the engine has loaded; it differs
+# from FPLSEQ after a rejected commit, when the slots on the bus hold a
+# route the engine refused.
+OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP", "FPLLDSEQ")
 
 _STATIC_KEYS = (
     "FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSEGCNT", "FPLDBCYC",
