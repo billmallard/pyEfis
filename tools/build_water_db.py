@@ -705,8 +705,10 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
     holes_kept = 0
     orphan_holes = 0
     hole_stats = {}
+    # Stream both branches: sf.shapes() materialises the whole file
+    # (9 GB peak on the 1.2 GB OSM ocean shapefile, AER-4689).
     records = sf.iterShapeRecords() if use_fclass else (
-        (shape, None) for shape in sf.shapes())
+        (shape, None) for shape in sf.iterShapes())
     for item in records:
         shape = item.shape if use_fclass else item[0]
         if use_fclass and item.record[fclass_idx] not in keep_fclass:
