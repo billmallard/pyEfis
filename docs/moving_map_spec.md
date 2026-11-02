@@ -125,6 +125,22 @@ class MapLayer:                    # pyefis/instruments/map/layers/base.py
     tick(s) inside, drawn from the real runway geometry we already
     carry; >8069 ft: runway outline symbol (no circle); unpaved:
     plain circle; seaplane/heli: reserved symbols later.
+  - **True-size runways (RWY1, AER-4631):** per airport, once the
+    longest surveyed runway (threshold to threshold) is longer on
+    screen than that airport's symbol is wide (the ring, or the bare
+    >8069 ft strips), the symbol is replaced by every runway at true
+    size and position: one polygon per runway from the `runway_ends`
+    threshold pair, offset by half the published width (2 px minimum).
+    Hard surfaces (ASPH/CONC/PEM, the paved-only rule) fill white;
+    turf/gravel/dirt draw hollow; water draws a dashed outline. Edges
+    keep the airport colour. Runway numbers sit just short of each
+    threshold, upright to a pilot landing on that end, once the runway
+    is five font heights long; a number that would overprint the ident
+    or another number (close parallels) is skipped. Displaced
+    thresholds draw as a bar across the runway when it is wide enough.
+    The ident moves to just below the runways. An airport with no
+    surveyed runway end keeps its symbol. Runways only: taxiways and
+    ramps are CAP-207.
   - services (fuel) tick marks around the circle: data-gated, later.
   - Labels: ident, declutter by zoom (full name off; ident-only
     under 40 NM; nothing above 80 NM except selected).
