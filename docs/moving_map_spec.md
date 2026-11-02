@@ -182,6 +182,32 @@ airways off)
   that a leg belongs to its TO slot's segment) draw 3 px in their own
   colour. `FPLACTSEG` 0 or absent, or a table row that disagrees with the
   slots' `FPLfSGI`, changes nothing. The fixes and legs are unchanged.
+- Procedure legs (PA8, pyEfis #239): each leg draws as the path the
+  engine flies, from `FPLfPT` and its leg fields
+  (`pyefis.flightplan.leg_paths`): `RF`/`AF` as a real arc around
+  `FPLfCTRLAT`/`CTRLON`; a `DF` with a coded turn (`FPLfTURN`) as a turn
+  in that direction from the previous leg's course, then direct (never
+  the short way when the data says otherwise, so the map and the needle
+  agree); `CF`/`CA` along the coded course; holds as the racetrack at the
+  fix (coded inbound course, turn direction and leg length); `PI` as the
+  45/180 shape out to the engine's outbound point. Turn and racetrack
+  radii are a standard-rate turn at 120 kt, a chart-like constant rather
+  than live groundspeed. The missed approach segment (segment kind
+  `missed`) is dashed and vector legs (`VA`/`VM`/`VI`/`FM`) are a dotted
+  3 NM "to be vectored" stub; a `CA`/vector point gets no waypoint symbol.
+  Altitude constraints of procedure legs (`FPLfALT`, not an airway's MEA)
+  label the fix under its ident in chart notation: a bar under the number
+  for at-or-above, over it for at-or-below, both for "at", a window as
+  ceiling over floor. The geometry is built in `collect()` (on the GUI
+  thread, between frames, only when `FPLSEQ`, `FPLLDSEQ` or `MAGVAR`
+  changes) as lon/lat polylines and painted through one affine transform
+  taken from `MapTransform`, so a frame does no per-vertex work.
+- A rejected route draws nothing (procedures brief guardrail 1). After a
+  rejected commit the slots still hold the refused route; fix-gateway's
+  `FPLLDSEQ` is the `FPLSEQ` of the route the engine actually loaded. When
+  the two differ, no leg, fix or label of the slots is drawn -- only the
+  active leg, from the engine's `FPLFRLAT`/`LON` -> `WPLAT`/`LON`. A
+  gateway without `FPLLDSEQ` draws the slots as before.
 - Declutter: labels (waypoint and airway) off above 80 NM (symbols stay), nothing draws
   above 160 NM except the legs.
 - Prop `layer_flight_plan` (default on); the `LiveBind` runtime toggle
