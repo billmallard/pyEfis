@@ -514,8 +514,23 @@ def _distinct_ring_len(ring):
     return count
 
 
+def size_scaled_cap(base, area0_km2, max_cap):
+    """Per-ring cap that grows with the ring's own area (AER-4669): ``base``
+    below ``area0_km2``, then ``base * sqrt(area / area0_km2)`` -- vertices
+    in proportion to perimeter for a fixed shape -- up to ``max_cap``.
+    Returns a function of the SOURCE ring, for ``insert_polygon(cap_fn=)``."""
+    import math
+
+    def cap_fn(ring):
+        a = ring_area_km2(ring)
+        if a <= area0_km2:
+            return base
+        return int(min(max_cap, round(base * math.sqrt(a / area0_km2))))
+    return cap_fn
+
+
 def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
-                   holes=None, stats=None):
+                   holes=None, stats=None, cap_fn=None):
     """Insert one water polygon: ``vertices`` is the OUTER ring,
     ``holes`` an optional list of interior (island) rings subtracted
     from the fill. Returns False if the outer ring is degenerate.
@@ -531,11 +546,24 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
     lands in a hole are stripped as a last resort — biased toward
     land, since painting an island as water is the dangerous direction
     for an EFIS. ``stats`` (a dict, optional) accumulates 'escalated'
-    / 'stripped' / 'unresolved' row counts for the caller's summary."""
+    / 'stripped' / 'unresolved' row counts for the caller's summary.
+
+    ``cap_fn`` (optional, ``size_scaled_cap``) raises the cap ring by ring
+    from the source ring's own area; escalation still doubles the base
+    cap, and each ring keeps the larger of the two."""
     if len(vertices) < 3:
         return False
     src_holes = [h for h in (holes or []) if _distinct_ring_len(h) >= 3]
     cap = max_vertices
+    if cap_fn is not None and cap is not None:
+        out_floor = cap_fn(vertices)
+        hole_floors = [cap_fn(h) for h in src_holes]
+    else:
+        out_floor = 0
+        hole_floors = [0] * len(src_holes)
+
+    def ring_cap(floor):
+        return None if cap is None else max(cap, floor)
     escalated = stripped = unresolved = False
     while True:
         # Decimate at build time so the BLOBs stored on disk are small.
@@ -545,8 +573,9 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
         # than disk I/O. Multi-ring: the cap applies PER RING (outer and
         # each hole) — the reader skips its own decimation for multi-ring
         # rows, so the build-time cap is the only bound.
-        out_ring = _decimate(vertices, cap)
-        dec_holes = [h for h in (_decimate(h, cap) for h in src_holes)
+        out_ring = _decimate(vertices, ring_cap(out_floor))
+        dec_holes = [h for h in (_decimate(h, ring_cap(f))
+                                 for h, f in zip(src_holes, hole_floors))
                      if _distinct_ring_len(h) >= 3]
         all_verts = list(out_ring)
         ring_ends = [len(out_ring)]
@@ -644,7 +673,7 @@ def ring_area_km2(vertices):
 
 
 def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
-                     min_area_km2=0.0, keep_fclass=None):
+                     min_area_km2=0.0, keep_fclass=None, cap_fn=None):
     """Import every polygon from a shapefile into the water_polygons
     table. Multi-ring shapes are grouped by winding + containment
     (``group_rings``): one row per OUTER ring, with its interior (hole)
@@ -700,7 +729,7 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
                 dropped += 1
                 continue
             if insert_polygon(con, kind, elev_ft, outer, max_vertices,
-                              holes=holes, stats=hole_stats):
+                              holes=holes, stats=hole_stats, cap_fn=cap_fn):
                 n += 1
                 holes_kept += len(holes)
     notes = []
@@ -884,8 +913,21 @@ def main():
                         "polygons are complex enough to use the cap; open ocean "
                         "simplifies to a few verts regardless, so matching the "
                         "inland cap is nearly free (~+10pct).")
+    p.add_argument("--large-ring-cap", type=int, default=0,
+                   help="size-scaled inland cap (AER-4669): a ring larger "
+                        "than --large-ring-area-km2 gets --max-vertices * "
+                        "sqrt(area / that area) vertices, up to this value. "
+                        "Applies to --lake/--river/--osm-water rings "
+                        "(outer and holes), never the ocean. Default 0 "
+                        "disables (every ring capped at --max-vertices).")
+    p.add_argument("--large-ring-area-km2", type=float, default=10.0,
+                   help="ring area (km^2) above which --large-ring-cap "
+                        "scales the cap. Default 10")
     args = p.parse_args()
     max_verts = args.max_vertices if args.max_vertices > 0 else None
+    cap_fn = (size_scaled_cap(max_verts, args.large_ring_area_km2,
+                              args.large_ring_cap)
+              if max_verts and args.large_ring_cap > max_verts else None)
     ov = args.ocean_max_vertices if args.ocean_max_vertices is not None else args.max_vertices
     ocean_verts = ov if ov > 0 else None
     min_area = args.min_area_km2
@@ -903,13 +945,16 @@ def main():
         total += import_shapefile(con, path, "ocean", ocean_verts)
     for path in args.lake:
         total += import_shapefile(con, path, "lake", max_verts,
-                                  min_area_km2=min_area, keep_fclass=keep_fclass)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass,
+                                  cap_fn=cap_fn)
     for path in args.river:
         total += import_shapefile(con, path, "river", max_verts,
-                                  min_area_km2=min_area, keep_fclass=keep_fclass)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass,
+                                  cap_fn=cap_fn)
     for path in args.osm_water:
         total += import_shapefile(con, path, "water", max_verts,
-                                  min_area_km2=min_area, keep_fclass=keep_fclass)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass,
+                                  cap_fn=cap_fn)
     for path in args.text:
         total += import_text(con, path, max_verts)
     waterway_classes = (args.waterway_classes if args.waterway_classes
@@ -923,6 +968,9 @@ def main():
     con.close()
     filt = f", min-area={min_area} km^2" if min_area > 0 else ""
     ocn = f", ocean cap={ocean_verts}" if ocean_verts != max_verts else ""
+    if cap_fn is not None:
+        ocn += (f", large-ring cap={args.large_ring_cap} above "
+                f"{args.large_ring_area_km2} km^2")
     wline = f", {lines} waterway lines" if args.waterway else ""
     print(f"-> {out} ({total} polygons{wline}, "
           f"vertex cap={max_verts}{ocn}{filt})")

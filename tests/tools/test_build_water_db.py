@@ -549,3 +549,83 @@ class TestDenseCellUint32:
                                     poly.vertices, poly.triangles)
         assert not mask[0]
         assert mask[1]
+
+
+# --- AER-4669: size-scaled cap for large inland rings -----------------
+
+def _circle(lat0, lon0, r_deg, n):
+    import math
+    return [(lat0 + r_deg * math.sin(2 * math.pi * k / n),
+             lon0 + r_deg * math.cos(2 * math.pi * k / n))
+            for k in range(n)]
+
+
+def _outer_len(con):
+    import numpy as np
+    v, r = con.execute(
+        "SELECT vertices, rings FROM water_polygons").fetchone()
+    n = len(v) // 16
+    return int(np.frombuffer(r, "<u2")[0]) if r else n
+
+
+class TestSizeScaledCap:
+    def test_cap_is_base_below_area0_then_sqrt_then_clamped(self):
+        cap = bw.size_scaled_cap(32, 10.0, 1024)
+        small = _circle(46.0, -93.0, 0.01, 400)        # ~2 km^2
+        mid = _circle(46.0, -93.0, 0.12, 400)          # ~350 km^2
+        huge = _circle(46.0, -93.0, 3.0, 400)          # ~2e5 km^2
+        assert cap(small) == 32
+        a = bw.ring_area_km2(mid)
+        assert cap(mid) == round(32 * (a / 10.0) ** 0.5)
+        assert 32 < cap(mid) < 1024
+        assert cap(huge) == 1024
+
+    def test_large_ring_keeps_more_vertices_small_ring_does_not(
+            self, tmp_path):
+        cap = bw.size_scaled_cap(32, 10.0, 1024)
+        # A wobbly lake: the wobble survives DP at 40 m, so the source
+        # is far above any cap. DP escalates its tolerance in 1.6x steps,
+        # so the stored ring lands anywhere at or under its cap.
+        import math
+        big = [(46.0 + (0.12 + 0.004 * math.sin(40 * t)) * math.sin(t),
+                -93.0 + (0.12 + 0.004 * math.sin(40 * t)) * math.cos(t))
+               for t in (2 * math.pi * k / 4000 for k in range(4000))]
+        small = _circle(46.0, -93.0, 0.01, 400)
+        for ring, want in ((big, cap(big)), (small, 32)):
+            for fn, (lo, hi) in ((None, (3, 32)),
+                                 (cap, (33 if want > 32 else 3, want))):
+                con = sqlite3.connect(str(tmp_path / "w.sqlite"))
+                con.executescript(bw.SCHEMA)
+                con.execute("DELETE FROM water_polygons")
+                assert bw.insert_polygon(con, "water", None, ring, 32,
+                                         cap_fn=fn)
+                assert lo <= _outer_len(con) <= hi
+                con.close()
+                (tmp_path / "w.sqlite").unlink()
+        assert cap(big) > 100
+
+    def test_cli_default_leaves_output_unchanged(self, tmp_path):
+        # --large-ring-cap 0 (the default) must not touch the cap: the
+        # same text input builds byte-identical rows with and without it.
+        import math
+        import subprocess
+        import sys
+        src = tmp_path / "in.txt"
+        pts = [(46.0 + (0.12 + 0.004 * math.sin(40 * t)) * math.sin(t),
+                -93.0 + (0.12 + 0.004 * math.sin(40 * t)) * math.cos(t))
+               for t in (2 * math.pi * k / 2000 for k in range(2000))]
+        src.write_text("P water\n" + "\n".join(f"{a} {b}" for a, b in pts)
+                       + "\n")
+        outs = []
+        for extra in ([], ["--large-ring-cap", "0"]):
+            out = tmp_path / f"o{len(outs)}.sqlite"
+            subprocess.run([sys.executable,
+                            str(_ROOT / "tools" / "build_water_db.py"),
+                            str(out), "--text", str(src), *extra],
+                           check=True, capture_output=True)
+            con = sqlite3.connect(str(out))
+            outs.append(con.execute(
+                "SELECT vertices, triangles FROM water_polygons").fetchall())
+            con.close()
+        assert outs[0] == outs[1]
+        assert len(outs[0][0][0]) // 16 <= 32
