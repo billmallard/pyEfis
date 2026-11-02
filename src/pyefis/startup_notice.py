@@ -144,8 +144,11 @@ def read_records(ack_path=None):
 
 
 def _matches(rec, software_version):
+    # "via": "bench" is written only by bench_auto_accept: nobody read the
+    # notice, so it is not a pilot's accept (install_acknowledgment.md).
     return (rec["notice_sha256"] == NOTICE_SHA256
-            and rec["software"].get("pyefis") == software_version)
+            and rec["software"].get("pyefis") == software_version
+            and rec.get("via") != "bench")
 
 
 def evaluate(ack_path=None, software_version=None):
