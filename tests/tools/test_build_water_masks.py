@@ -222,7 +222,7 @@ def test_mask_at_nodes_is_point_sampled_not_pixel_area():
     fill_even_odd on the same coordinates would answer a different question
     (areas between nodes) with a different boundary entirely."""
     ring = [np.array([[2.0, 2.0], [6.0, 2.0], [6.0, 6.0], [2.0, 6.0]])]
-    mask = bm._mask_at_nodes(ring, 9, 9)
+    mask = bm._mask_at_nodes([ring], 9, 9)
     ys, xs = np.mgrid[0:9, 0:9]
     interior = (xs > 2) & (xs < 6) & (ys > 2) & (ys < 6)
     exterior = (xs < 2) | (xs > 6) | (ys < 2) | (ys > 6)
@@ -561,6 +561,122 @@ def test_build_mosaic_mask_default_chunk_rows_is_chunked_path(tmp_path, water_co
         axis=1)[:, :cols].astype(bool)
     assert mask[20, 20]
     assert not mask[0, 0]
+
+
+# ---------------------------------------------------------------------------
+# 4b. Overlapping polygons union, never cancel (AER-4594). OSM's split ocean
+#     cells overlap their neighbours by ~0.0005 deg past every whole degree;
+#     a shared even-odd accumulator across polygons cancelled that sliver, so
+#     every tile's border posts over open sea came out "not water".
+# ---------------------------------------------------------------------------
+
+_OSM_SPLIT_OVERLAP = 0.0005   # deg; measured on live water-na (N27W097)
+
+
+def _split_ocean_cells(lat_lo, lat_hi, lon_lo, lon_hi):
+    """One ocean polygon per 1-degree cell, each grown by the OSM split
+    overlap -- the shape water.sqlite actually holds over open sea."""
+    e = _OSM_SPLIT_OVERLAP
+    cells = []
+    for lat in range(lat_lo, lat_hi):
+        for lon in range(lon_lo, lon_hi):
+            cells.append({"kind": "ocean", "vertices": [
+                (lat - e, lon - e), (lat - e, lon + 1 + e),
+                (lat + 1 + e, lon + 1 + e), (lat + 1 + e, lon - e)]})
+    return cells
+
+
+def _read_mask(path, rows, cols):
+    row_bytes = -(-cols // 8)
+    return np.unpackbits(
+        np.frombuffer(path.read_bytes(), dtype=np.uint8).reshape(rows, row_bytes),
+        axis=1)[:, :cols].astype(bool)
+
+
+@pytest.mark.parametrize("n", [113, 1801])   # real L5 and L1 GLO-30 sides
+def test_tile_inside_split_ocean_every_border_post_is_water(tmp_path, water_con, n):
+    """DoD: a tile wholly inside open ocean has every post -- border posts
+    included -- masked water. N27W097 at L5 had 3/0/6/0 of 113 N/S/W/E
+    border posts set before the fix."""
+    db = tmp_path / "water.sqlite"
+    _make_water_db(db, _split_ocean_cells(26, 29, -98, -95))
+    water_con(db)
+    p = tmp_path / "tiles" / ".mip" / "5" / "N27" / "N27W097.hgt"
+    _write_hgt(p, n)
+    bm.build_tile_mask(p, force=False)
+    mask = _read_mask(p.with_suffix(".wmask"), n, n)
+    assert mask[0].all() and mask[-1].all()
+    assert mask[:, 0].all() and mask[:, -1].all()
+    assert mask.all()
+
+
+def test_mosaic_seams_inside_split_ocean_are_water(tmp_path, water_con):
+    """Same defect in a whole-extent mosaic: the posts on each interior
+    whole-degree seam, and the outer border, must all be water."""
+    db = tmp_path / "water.sqlite"
+    _make_water_db(db, _split_ocean_cells(25, 30, -99, -94))
+    water_con(db)
+    spd = 112
+    meta = {"level": 5, "rows": 3 * spd + 1, "cols": 3 * spd + 1, "spd": spd,
+            "lat_n": 29, "lon_w": -98}
+    root = tmp_path / "tiles" / ".mip" / "mosaic"
+    root.mkdir(parents=True)
+    jp = root / "L5.json"
+    jp.write_text(json.dumps(meta))
+    _write_hgt(root / "L5.hgt", 1)
+    bm.build_mosaic_mask(jp, force=False, chunk_rows=100, chunk_cols=150)
+    mask = _read_mask(root / "L5.wmask", meta["rows"], meta["cols"])
+    assert mask[spd].all() and mask[:, spd].all()     # interior seams
+    assert mask.all()
+
+
+def test_overlapping_lakes_union_not_cancel():
+    """Two overlapping polygons: nodes in the overlap are water. A shared
+    accumulator turned the overlap into a dry hole."""
+    a = [np.array([[1.0, 1.0], [6.0, 1.0], [6.0, 6.0], [1.0, 6.0]])]
+    b = [np.array([[4.0, 4.0], [9.0, 4.0], [9.0, 9.0], [4.0, 9.0]])]
+    mask = bm._mask_at_nodes([a, b], 11, 11)
+    assert mask[5, 5]                                   # overlap
+    assert mask[2, 2] and mask[8, 8]                    # each alone
+    assert not mask[2, 8] and not mask[8, 2]
+
+
+def test_island_hole_still_cut_with_overlapping_neighbour():
+    """Per-polygon even-odd keeps holes: an island ring in one polygon
+    stays dry even where a second, overlapping polygon also covers the
+    outer ring's area but not the island."""
+    outer = np.array([[1.0, 1.0], [9.0, 1.0], [9.0, 9.0], [1.0, 9.0]])
+    hole = np.array([[4.0, 4.0], [6.0, 4.0], [6.0, 6.0], [4.0, 6.0]])
+    other = [np.array([[0.0, 0.0], [3.0, 0.0], [3.0, 3.0], [0.0, 3.0]])]
+    mask = bm._mask_at_nodes([[outer, hole], other], 11, 11)
+    assert not mask[5, 5]
+    assert mask[2, 2] and mask[7, 7]
+
+
+def test_per_polygon_bbox_window_matches_full_grid_fill():
+    """Filling each polygon only over its own bbox is an optimisation: it
+    must equal the OR of each polygon's whole-grid fill, for windows that
+    cut through the polygons on both axes."""
+    rng = np.random.default_rng(4594)
+    polygons = []
+    for _ in range(12):
+        cx, cy = rng.uniform(-3, 33, 2)
+        k = int(rng.integers(3, 9))
+        ang = np.sort(rng.uniform(0, 2 * np.pi, k))
+        rad = rng.uniform(1, 9, k)
+        polygons.append([np.stack((cx + rad * np.cos(ang),
+                                   cy + rad * np.sin(ang)), axis=1)])
+    rows, cols = 30, 37
+    full = np.zeros((rows, cols), dtype=bool)
+    for rings in polygons:
+        shifted = [r + 0.5 for r in rings]
+        full |= bm._fill_even_odd_rect(shifted, rows, cols)
+    assert full.any() and not full.all()
+    for row_lo, row_hi in [(0, rows), (0, 7), (7, 19), (19, rows)]:
+        for col_lo, col_hi in [(0, cols), (0, 11), (11, 26), (26, cols)]:
+            cell = bm._mask_at_nodes_cell(polygons, row_lo, row_hi,
+                                          col_lo, col_hi)
+            assert (cell == full[row_lo:row_hi, col_lo:col_hi]).all()
 
 
 # ---------------------------------------------------------------------------
