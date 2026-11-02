@@ -160,6 +160,7 @@ def test_unexpected_failure_never_raises(tmp_path, monkeypatch):
     _record(software={"pyefis-data": "0.4.0", "pyefis": "2.1.0"}),  # older pyEfis
     _record(software={"pyefis-data": "0.4.0"}),      # plain `pyefis-data update`
     _record(**_other_notice()),                      # a different notice wording
+    _record(via="bench"),            # bench_auto_accept: nobody read the notice
 ])
 def test_records_not_for_this_notice_and_version_do_not_count(
         tmp_path, caplog, record):
