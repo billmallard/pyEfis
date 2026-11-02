@@ -15,8 +15,16 @@ off. Partial downloads go to a .part file and are renamed on success.
 
 Usage:
     python tools/fetch_glo30.py --dest D:/EarthData/glo30 \
-        --min-lat 14 --max-lat 72 --min-lon -170 --max-lon -52
+        --min-lat 7 --max-lat 72 --min-lon -177 --max-lon -52
     python tools/fetch_glo30.py --dest ... --dry-run     # count + size only
+
+Bounds are inclusive tile SW corners. The defaults cover every
+makerplane-data terrain region (Adak and the western Aleutians to W177,
+Central America to N07) plus the N72 row and W52 column an earlier,
+narrower window fetched. For a pack build, the authority is
+`makerplane-data/scripts/make_glo30_tiles.py --fetch-window`, which
+derives the bounds from regions.yaml; pass its output here if it ever
+falls outside these defaults.
 
 The bucket's tileList.txt enumerates land tiles only — ocean cells have
 no tile, which matches the renderer's missing-tile-is-water convention.
@@ -79,9 +87,9 @@ def fetch_one(name, dest):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--dest", required=True)
-    ap.add_argument("--min-lat", type=int, default=14)
+    ap.add_argument("--min-lat", type=int, default=7)
     ap.add_argument("--max-lat", type=int, default=72)
-    ap.add_argument("--min-lon", type=int, default=-170)
+    ap.add_argument("--min-lon", type=int, default=-177)
     ap.add_argument("--max-lon", type=int, default=-52)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--dry-run", action="store_true")
