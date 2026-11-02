@@ -2,10 +2,12 @@
 
 Guards: the notice is Bill's approved text verbatim; each installed pack's
 ``notice`` (L1) is shown, and a pack without one says so instead of borrowing
-the software notice; a missing/malformed status file never raises; the
-screen is built in (injected when a config drops it); and the Data Status
+the software notice; the L2 acknowledgment history is rendered newest first,
+with bench auto-accepts and other notice wordings labelled; a missing/malformed
+status file or acknowledgment log never raises; the screen is built in (injected when a config drops it); and the Data Status
 screen's About button routes to it."""
 
+import hashlib
 import json
 import logging
 import os
@@ -22,6 +24,12 @@ from pyefis.instruments import about, data_status
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def _no_host_ack_log(tmp_path, monkeypatch):
+    # Never read the developer's / CI host's real acknowledgment log.
+    monkeypatch.setenv("MAKERPLANE_ACK_LOG", str(tmp_path / "no-acks.jsonl"))
 
 
 # BACKLOG L4 "Notice text (Bill approved it 2026-10-30 ... use it verbatim)".
@@ -188,3 +196,105 @@ def test_about_screen_failure_never_breaks_boot(monkeypatch):
     monkeypatch.setattr(gui, "Screen", boom)
     monkeypatch.setattr(gui, "screens", [])
     assert gui._ensure_about_screen({"screens": {}}) is False
+
+
+# --- L2 acknowledgment history -------------------------------------------
+
+def _ack(**kw):
+    """A schema-1 accept as makerplane-data docs/install_acknowledgment.md
+    defines it."""
+    text = kw.pop("notice_text", APPROVED)
+    rec = {"schema": 1, "event": "accept", "timestamp": "2026-10-31T14:05:09Z",
+           "notice_id": "pyefis-software-2026-10-30",
+           "notice_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+           "notice_text": text,
+           "software": {"pyefis-data": "0.4.0", "pyefis": "2.2.1"},
+           "packs": {"obstacles-conus": "260611", "airports-conus": "2606"},
+           "user": "pi", "host": "pyefis", "via": "tty", "trigger": "update"}
+    rec.update(kw)
+    return rec
+
+
+def _write_acks(tmp_path, recs, tail=""):
+    p = tmp_path / "acknowledgments.jsonl"
+    p.write_text("".join(json.dumps(r) + "\n" for r in recs) + tail)
+    return str(p)
+
+
+def test_ack_history_renders_one_record_in_full():
+    assert about.ack_history([_ack()]) == [(
+        "2026-10-31 14:05:09 UTC  accepted by pi@pyefis",
+        "Typed \"accept\" at a terminal (trigger: update). "
+        "Software: pyefis 2.2.1, pyefis-data 0.4.0. "
+        "Packs at the time: airports-conus 2606, obstacles-conus 260611.")]
+
+
+def test_ack_history_is_newest_first_and_labels_bench_and_old_wording():
+    recs = [_ack(timestamp="2026-10-01T00:00:00Z", notice_text="older words"),
+            _ack(timestamp="2026-10-02T00:00:00Z", via="bench", packs={}),
+            _ack(timestamp="2026-10-03T00:00:00Z", via="caller",
+                 trigger="pyefis-install", software={"pyefis-data": "0.4.0"})]
+    hist = about.ack_history(recs)
+    assert [h[0][:10] for h in hist] == ["2026-10-03", "2026-10-02",
+                                        "2026-10-01"]
+    assert hist[0][1].startswith("Accepted on screen in the installer or "
+                                 "pack picker (trigger: pyefis-install).")
+    assert "pyefis 2" not in hist[0][1]
+    assert "not a person's accept" in hist[1][1]
+    assert "No packs were installed yet." in hist[1][1]
+    assert "different wording" in hist[2][1]
+    assert not any("different wording" in d for _, d in hist[:2])
+
+
+def test_ack_history_tolerates_odd_optional_fields():
+    rec = _ack(user=None, host=7, via=None, trigger="", packs="junk",
+               software={"pyefis-data": "0.4.0", "x": 3})
+    assert about.ack_history([rec]) == [(
+        "2026-10-31 14:05:09 UTC  accepted",
+        "Accepted. Software: pyefis-data 0.4.0.")]
+
+
+def test_screen_shows_ack_history_and_skips_bad_lines(app, tmp_path):
+    bad = dict(_ack(), notice_sha256="0" * 64)        # sha does not cover text
+    path = _write_acks(tmp_path, [_ack(), {"schema": 2, "event": "accept"},
+                                  bad], tail='{"schema": 1, "ev')  # torn line
+    w = about.AboutSystem(status_path=_write(tmp_path, STATUS), ack_path=path)
+    w.resize(800, 480)
+    texts = _texts(w)
+    assert "Notice acknowledgments" in texts
+    assert texts.count("2026-10-31 14:05:09 UTC  accepted by pi@pyefis") == 1
+    assert about.NO_ACK_RECORD not in texts
+    # The notice is still shown once; history never repeats its text.
+    assert texts.count(APPROVED) == 1
+
+
+@pytest.mark.parametrize("content", [None, "", "garbage\n", b"\xff\xfe"])
+def test_missing_or_unreadable_ack_log_never_raises(app, tmp_path, content):
+    p = tmp_path / "acknowledgments.jsonl"
+    if isinstance(content, bytes):
+        p.write_bytes(content)
+    elif content is not None:
+        p.write_text(content)
+    w = about.AboutSystem(status_path=_write(tmp_path, STATUS), ack_path=str(p))
+    w.resize(800, 480)
+    texts = _texts(w)
+    assert about.NO_ACK_RECORD in texts
+    assert APPROVED in texts
+
+
+def test_ack_history_defaults_to_the_writers_path(app, tmp_path, monkeypatch):
+    path = _write_acks(tmp_path, [_ack()])
+    monkeypatch.setenv("MAKERPLANE_ACK_LOG", path)
+    w = about.AboutSystem(status_path=_write(tmp_path, STATUS))
+    assert "2026-10-31 14:05:09 UTC  accepted by pi@pyefis" in _texts(w)
+
+
+def test_reload_picks_up_a_new_acceptance(app, tmp_path):
+    p = tmp_path / "acknowledgments.jsonl"
+    w = about.AboutSystem(status_path=_write(tmp_path, STATUS), ack_path=str(p))
+    assert about.NO_ACK_RECORD in _texts(w)
+    _write_acks(tmp_path, [_ack()])
+    w.reload()
+    texts = _texts(w)
+    assert about.NO_ACK_RECORD not in texts
+    assert "2026-10-31 14:05:09 UTC  accepted by pi@pyefis" in texts
