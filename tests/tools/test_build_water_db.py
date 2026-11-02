@@ -265,6 +265,37 @@ class TestShapefileImport:
         assert not _covered_by_triangles(*ISLAND_PT, verts, tris)
         assert _covered_by_triangles(*WATER_PT, verts, tris)
 
+    def test_unfiltered_import_streams_shapes(self, tmp_path, monkeypatch):
+        # AER-4689: the no-fclass branch (ocean, NE lakes) used
+        # Reader.shapes(), which materialises the whole file -- 9 GB
+        # peak on the 1.2 GB ocean shapefile. It must stream, in record
+        # order, so the output rows are unchanged.
+        shapefile = pytest.importorskip(
+            "shapefile", reason="pyshp is a build-time-only dependency")
+        shp = tmp_path / "ocean"
+        w = shapefile.Writer(str(shp), shapeType=shapefile.POLYGON)
+        w.field("id", "N")
+        squares = [(24.0 + 0.5 * k, -82.0) for k in range(5)]
+        for k, (lat, lon) in enumerate(squares):
+            # Clockwise in (lon, lat): a lone outer ring.
+            w.poly([[(lon, lat), (lon, lat + 0.2), (lon + 0.2, lat + 0.2),
+                     (lon + 0.2, lat), (lon, lat)]])
+            w.record(k)
+        w.close()
+
+        def _no_bulk_read(self, *a, **kw):
+            raise AssertionError("Reader.shapes() loads the whole file")
+        monkeypatch.setattr(shapefile.Reader, "shapes", _no_bulk_read)
+
+        path, con = _open_db(tmp_path)
+        n = bw.import_shapefile(con, str(shp) + ".shp", "ocean", 32)
+        con.commit()
+        con.close()
+        assert n == len(squares)
+        rows = _fetch_rows(path)
+        south = [round(min(v[0] for v in _decode(r)[0]), 6) for r in rows]
+        assert south == [lat for lat, _ in squares]
+
     def test_waterdb_reads_multi_ring_row_intact(self, tmp_path):
         from pyefis.instruments.ai.water_db import WaterDB
         path, con = _open_db(tmp_path)
