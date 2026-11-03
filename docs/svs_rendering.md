@@ -295,7 +295,8 @@ Tile resolution is per-file: 1201x1201 (SRTM3, 3 arc-sec, 60N-56S) and
 **Copernicus GLO-30** is the preferred source — true global coverage
 (fixes the SRTM >60N hole over northern Canada) at 30 m:
 
-    python tools/fetch_glo30.py  --dest <raw-dir>            # ~92 GB for NA
+    python tools/fetch_glo30.py  --dest <raw-dir> \
+        --min-lat 14 --max-lat 72 --min-lon -170 --max-lon -52   # ~88 GB for NA
     python tools/convert_glo30.py --src <raw-dir> --dest <tile-root>
 
 The GL heightmap patch decimates to fit `heightmap_max_px` (default
