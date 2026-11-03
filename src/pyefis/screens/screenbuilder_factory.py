@@ -1092,6 +1092,16 @@ _register(InstrumentSpec(
         Prop("range_ladder", "string", default="2,5,10,20,40,80,160",
              label="Range ladder",
              help="comma list of ranges the range buttons step through"),
+        Prop("zoom_rail", "boolean", default=False,
+             label="Zoom rail",
+             help="one-finger range control under the status chip: a "
+                  "vertical rail with one detent per range ladder rung, "
+                  "zoom in at the top. Tap +/- to step one rung, tap the "
+                  "rail to jump to a rung, or drag the thumb. Its touch "
+                  "zone is 20 mm wide and claims every touch inside it"),
+        Prop("zoom_rail_side", "enum", default="left",
+             enum=["left", "right"], label="Zoom rail side",
+             help="map edge the zoom rail sits on"),
         Prop("orientation", "enum", default="track_up",
              enum=["track_up", "north_up"], label="Orientation",
              help="track-up rotates the world; north-up rotates ownship",

@@ -8,11 +8,13 @@ import math
 import time
 
 from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
+from PyQt6.QtGui import (QBrush, QColor, QFont, QPainter, QPainterPath,
+                         QPen, QPolygonF)
 from PyQt6.QtWidgets import QPinchGesture, QWidget
 
 import pyavtools.fix as fix
 
+from pyefis import display_metrics
 from pyefis import hmi
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
@@ -44,6 +46,15 @@ MAPWPT_ID = "MAPWPT"
 _CHOOSER_MAX = 6
 #: how long a banner result ("DIRECT TO RZS", a rejection) stays on screen.
 _TOAST_MS = 3000
+#: zoom rail (billmallard/pyEfis#205): width of its touch column and height
+#: of each +/- cap. CAP-1107: ~3% touch error at 20 mm under vibration
+#: against 47% at 5 mm. The drawn line and thumb stay slim inside it.
+ZOOM_RAIL_TOUCH_MM = 20.0
+#: the rail's detent track, as a fraction of the map height (#205: 35-40%).
+_ZOOM_RAIL_TRACK_FRAC = 0.38
+#: nothing of the rail reaches below this fraction of the map height, so it
+#: never runs into the pointer banner at the bottom.
+_ZOOM_RAIL_BOTTOM_FRAC = 0.75
 
 
 def _wrap180(deg):
@@ -224,6 +235,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         # runtime. Empty = the setting stays a static config option.
         self.range_key = ""
         self.orientation_key = ""
+        # One-finger zoom rail (#205): a vertical detent control under the
+        # status chip. Off by default so existing screens are unchanged.
+        self.zoom_rail = False
+        self.zoom_rail_side = "left"           # or "right"
         self._layers = []
         self._layers_built = False
 
@@ -237,6 +252,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._rot_offset = 0.0
         self._drag_last = None          # desktop drag anchor (QPointF)
         self._drag_total = 0.0          # cumulative drag px (tap vs drag)
+        # Which part of the zoom rail owns the current press: None, "plus",
+        # "minus" or "track" (#205). Set when a press lands inside the
+        # rail, cleared on release; while set, no pan, tap or recenter runs.
+        self._rail_active = None
         self._revert_timer = QTimer(self)
         self._revert_timer.setSingleShot(True)
         self._revert_timer.timeout.connect(self.recenter)
@@ -600,6 +619,145 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._frame_dirty = True
         self._perf_mark_gesture_event()
         return self.range_nm
+
+    # --- one-finger zoom rail (#205) ---------------------------------------
+    def _px_per_mm(self):
+        """Pixels per millimetre on this panel. The configured diagonal lives
+        on the main window, somewhere up the parent chain; a map built without
+        one (tests, the offscreen renderer) falls back to Qt's DPI and then to
+        the nominal 96 (pyefis.display_metrics)."""
+        main = self.parentWidget()
+        while main is not None and not hasattr(main, "screenDiagonalInches"):
+            main = main.parentWidget()
+        try:
+            qscreen = self.screen()
+        except Exception:
+            qscreen = None
+        return display_metrics.pixels_per_mm(
+            getattr(main, "screenWidth", None),
+            getattr(main, "screenHeight", None),
+            getattr(main, "screenDiagonalInches", None),
+            qscreen)
+
+    def _rail_ladder(self):
+        """The rail's rungs, smallest range first (= the top detent)."""
+        return sorted(set(self._ladder()))
+
+    def zoom_rail_geometry(self):
+        """Where the zoom rail sits this frame, or None when ``zoom_rail`` is
+        off or the map is too small to hold it. Computed from the widget
+        size, not recorded during paint, so a press is claimed the same way
+        whether or not a frame has been drawn since the last resize.
+
+        Keys: ``claim`` (every touch inside it belongs to the rail),
+        ``plus``/``minus`` (the cap rects, plus = zoom in, at the top),
+        ``x`` (the drawn line), ``y0``/``y1`` (the first and last detent),
+        ``ladder`` (the rungs, top to bottom) and ``touch`` (column width)."""
+        if not self.zoom_rail:
+            return None
+        w, h = float(self.width()), float(self.height())
+        if w <= 0 or h <= 0:
+            return None
+        chip_h = max(9, int(w * 0.03)) + 6       # the status chip's height
+        top = 4.0 + 2.0 * chip_h                 # one chip-height below it
+        avail = h * _ZOOM_RAIL_BOTTOM_FRAC - top
+        if avail <= 0:
+            return None
+        touch = ZOOM_RAIL_TOUCH_MM * self._px_per_mm()
+        touch = max(24.0, min(touch, w * 0.25))
+        total = min(avail, 2.0 * touch + _ZOOM_RAIL_TRACK_FRAC * h)
+        # The caps are the turbulence path (a tap beats a drag in bumps), so
+        # they keep the full touch size; the track takes what is left and
+        # only squeezes them once it would drop under a third of the rail.
+        cap = min(touch, total / 3.0)
+        x0 = w - touch if self.zoom_rail_side == "right" else 0.0
+        claim = QRectF(x0, top, touch, total)
+        plus = QRectF(x0, top, touch, cap)
+        minus = QRectF(x0, top + total - cap, touch, cap)
+        return {"claim": claim, "plus": plus, "minus": minus,
+                "x": x0 + touch / 2.0, "y0": plus.bottom(),
+                "y1": minus.top(), "ladder": self._rail_ladder(),
+                "touch": touch}
+
+    @staticmethod
+    def _rail_step(g):
+        n = len(g["ladder"])
+        return (g["y1"] - g["y0"]) / (n - 1) if n > 1 else 0.0
+
+    def _rail_rung_y(self, g, i):
+        if len(g["ladder"]) == 1:
+            return (g["y0"] + g["y1"]) / 2.0
+        return g["y0"] + i * self._rail_step(g)
+
+    def _rail_rung_at(self, g, y):
+        """Index of the detent nearest screen height *y*."""
+        n = len(g["ladder"])
+        step = self._rail_step(g)
+        if n == 1 or step <= 0:
+            return 0
+        return max(0, min(n - 1, int(round((y - g["y0"]) / step))))
+
+    def _rail_thumb_y(self, g):
+        """Thumb height for the range on screen. A rung sits on its detent;
+        a range between rungs (a free pinch or wheel) sits between them,
+        interpolated in log space, so the thumb never lies about the range."""
+        lad = g["ladder"]
+        r = float(self.range_nm)
+        if r <= lad[0] or len(lad) == 1:
+            return self._rail_rung_y(g, 0)
+        if r >= lad[-1]:
+            return self._rail_rung_y(g, len(lad) - 1)
+        for i in range(len(lad) - 1):
+            if lad[i] <= r <= lad[i + 1]:
+                frac = math.log(r / lad[i]) / math.log(lad[i + 1] / lad[i])
+                return self._rail_rung_y(g, i) + frac * self._rail_step(g)
+        return self._rail_rung_y(g, 0)
+
+    def _rail_set_rung(self, g, i):
+        """Jump to rung *i* through the one range-write path (#202), which
+        also publishes the rung index to a bound range_key."""
+        target = g["ladder"][i]
+        if float(self.range_nm) != target:
+            self.range_nm = target
+            self._frame_dirty = True
+            self._perf_mark_gesture_event()
+            self.update()
+
+    def _rail_press(self, pos):
+        """Claim a press inside the rail before the map's pan/tap logic sees
+        it. Caps step one rung through range_up/range_down -- the same calls
+        a button makes, so they stop at the ends the same way; a press on the
+        track jumps to the nearest rung and a drag from there snaps rung to
+        rung. Returns True when the rail took the press."""
+        g = self.zoom_rail_geometry()
+        if g is None or pos is None or not g["claim"].contains(pos):
+            return False
+        self._drag_last = None
+        if g["plus"].contains(pos):
+            self._rail_active = "plus"
+            self.range_down()                     # up = zoom in
+        elif g["minus"].contains(pos):
+            self._rail_active = "minus"
+            self.range_up()
+        else:
+            self._rail_active = "track"
+            self._rail_set_rung(g, self._rail_rung_at(g, pos.y()))
+        # Preview the new range the way a pinch does: the scaled image while
+        # the finger is down, one render once it settles (MP1).
+        self._set_gesture_active(True)
+        return True
+
+    def _rail_move(self, pos):
+        if self._rail_active == "track":
+            g = self.zoom_rail_geometry()
+            if g is not None:
+                self._rail_set_rung(g, self._rail_rung_at(g, pos.y()))
+
+    def _rail_release(self):
+        self._rail_active = None
+        self._set_gesture_active(False)
+        self._settle_timer.start(_SETTLE_MS)
+        self.update()
 
     # --- decoupled pan / rotate (#99 / #111) ------------------------------
     @property
@@ -996,6 +1154,10 @@ class MovingMap(LiveBindingMixin, QWidget):
             # active pinch must not also start a competing drag (#202,
             # unverified on real touch hardware).
             return
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._rail_press(e.position())):
+            e.accept()
+            return
         if (getattr(self, "touch_gestures", True)
                 and e.button() == Qt.MouseButton.LeftButton):
             self._drag_last = e.position()
@@ -1006,6 +1168,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
+        if self._rail_active is not None:
+            self._rail_move(e.position())
+            e.accept()
+            return
         if self._drag_last is None or not getattr(self, "touch_gestures", True):
             super().mouseMoveEvent(e)
             return
@@ -1023,6 +1189,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         e.accept()
 
     def mouseReleaseEvent(self, e):
+        if self._rail_active is not None:
+            self._rail_release()
+            e.accept()
+            return
         if self._drag_last is not None:
             tap = self._drag_total < _TAP_PX
             self._drag_last = None
@@ -1039,7 +1209,15 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def mouseDoubleClickEvent(self, e):
         """Double-tap = recenter (FP10 moved it off the single tap). The
-        first tap of the pair has already placed a pointer; drop it."""
+        first tap of the pair has already placed a pointer; drop it.
+
+        Qt delivers the second press of a double tap HERE, not to
+        mousePressEvent, so a quick double tap on a rail cap must be claimed
+        here too: it steps a second rung instead of recentring (#205)."""
+        pos_fn = getattr(e, "position", None)
+        if pos_fn is not None and self._rail_press(pos_fn()):
+            e.accept()
+            return
         if getattr(self, "touch_gestures", True):
             self.clear_pointer()
             self.recenter()
@@ -1130,6 +1308,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         p.drawText(QRectF(6, 4, self.width() - 12, f.pixelSize() + 6),
                    Qt.AlignmentFlag.AlignLeft, chip)
 
+        self._paint_zoom_rail(p)
+
         # Revert indicator (decision A): while the view is manually offset a
         # small top-RIGHT chip (distinct from the top-left range chip) signals
         # the pending auto-revert -- "CTR" plus the remaining seconds while a
@@ -1172,6 +1352,85 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._paint_perf_overlay(p)
         if self._map_perf_log:
             self.perf.maybe_report()
+
+    #: rail ink: an opaque light grey at rest (the status chip's white at
+    #: its alpha, over a dark map), full white while a finger is on it.
+    #: Opaque on purpose -- the dark halo is drawn first, and a translucent
+    #: stroke over it would take on the halo's tint.
+    _RAIL_REST = QColor(205, 205, 205)
+    _RAIL_ACTIVE = QColor(255, 255, 255)
+    _RAIL_HALO = QColor(0, 0, 0, 170)
+
+    def _paint_zoom_rail(self, p):
+        """The zoom rail (#205): a slim line with a tick per rung, + and -
+        glyphs in the caps, a filled thumb at the range on screen and, while
+        touched, the range in a larger font beside the thumb."""
+        g = self.zoom_rail_geometry()
+        if g is None:
+            return
+        w = float(self.width())
+        x = g["x"]
+        touch = g["touch"]
+        lw = max(2.0, w * 0.004)
+        tick = max(4.0, touch * 0.12)
+        glyph = max(5.0, touch * 0.15)
+        r = max(6.0, touch * 0.14)
+        ink = self._RAIL_ACTIVE if self._rail_active else self._RAIL_REST
+
+        path = QPainterPath()
+        path.moveTo(x, g["y0"])
+        path.lineTo(x, g["y1"])
+        for i in range(len(g["ladder"])):
+            y = self._rail_rung_y(g, i)
+            path.moveTo(x - tick, y)
+            path.lineTo(x + tick, y)
+        for rect, vertical in ((g["plus"], True), (g["minus"], False)):
+            c = rect.center()
+            path.moveTo(c.x() - glyph, c.y())
+            path.lineTo(c.x() + glyph, c.y())
+            if vertical:
+                path.moveTo(c.x(), c.y() - glyph)
+                path.lineTo(c.x(), c.y() + glyph)
+
+        p.save()
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        halo = QPen(self._RAIL_HALO, lw + 3.0)
+        halo.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(halo)
+        p.drawPath(path)
+        pen = QPen(ink, lw)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.drawPath(path)
+
+        # Thumb: an opaque disc over the line. The halo is a ring OUTSIDE the
+        # disc's edge, never an underlay, so the disc reads its own colour.
+        ty = self._rail_thumb_y(g)
+        p.setPen(QPen(self._RAIL_HALO, 2.0))
+        p.drawEllipse(QPointF(x, ty), r + 1.0, r + 1.0)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(ink))
+        p.drawEllipse(QPointF(x, ty), r, r)
+
+        if self._rail_active:
+            f = QFont(self.font_family)
+            f.setPixelSize(max(12, int(w * 0.045)))
+            f.setBold(True)
+            p.setFont(f)
+            label = "%s NM" % map_layers.format_range_nm(self.range_nm)
+            pad = 5.0
+            bw = p.fontMetrics().horizontalAdvance(label) + 2 * pad
+            bh = f.pixelSize() + 2 * pad
+            if self.zoom_rail_side == "right":
+                bx = g["claim"].left() - bw - 4.0
+            else:
+                bx = g["claim"].right() + 4.0
+            box = QRectF(bx, ty - bh / 2.0, bw, bh)
+            p.setBrush(QBrush(QColor(20, 20, 24, 225)))
+            p.drawRoundedRect(box, 4.0, 4.0)
+            p.setPen(QPen(self._RAIL_ACTIVE))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
+        p.restore()
 
     # --- FP10 pointer / banner / chooser painting ---------------------------
     _TYPE_LABEL = {"airport": "APT", "vor": "VOR", "ndb": "NDB", "fix": "FIX",
