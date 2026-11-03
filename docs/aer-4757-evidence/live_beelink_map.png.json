@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "b37b74a",
+ "run": "AER-4757 bench session, Beelink live panel: bench-deploy --ref aer-4757/g22-zoom-rail, zoom_rail: true added to the active managed.yaml, x11grab of the glass cropped to the Map tab (x 1240-1920)",
+ "device": "AZW MINI S (xcb), live panel",
+ "sha256": "78e0deab5e77965bc5b62b3faa66773eb5eea2fa78866b1a6640db8065eb5ba0",
+ "created_utc": "2026-11-03T15:49:52Z"
+}

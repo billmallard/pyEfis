@@ -20,6 +20,7 @@ real size.
 | `rail_right.png` | `zoom_rail_side: right` |
 | `rail_bench_ladder.png` | the bench screen's own ladder `2,10,50,200,500,2000`: six detents |
 | `no_rail.png` | `zoom_rail: false` (the default): no rail |
+| `live_beelink_map.png` | the live Beelink panel (x11grab of the glass, Map tab cropped) with the branch staged and `zoom_rail: true` in the active config: the real panel DPI and the bench ladder's six detents |
 
 Each image has a `.json` sidecar (docs/evidence.md) naming the commit that
 drew it. The render ran from a `git archive` copy with no `.git`, so the
