@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "94fec70",
+ "run": "AER-4757 bench session, Beelink: QT_QPA_PLATFORM=offscreen ~/pyefis-venv/bin/python docs/aer-4757-evidence/render_zoom_rail.py out (git archive of 94fec70 in ~/bench-scratch/aer-4757)",
+ "device": "AZW MINI S (offscreen)",
+ "sha256": "d0c715bb26525bfa210e5e2e50dfc441844d67594060793b958d606982261798",
+ "created_utc": "2026-11-03T15:46:38Z"
+}
