@@ -363,6 +363,52 @@ option that gates drag and pinch).
 **Out of FP10, follow-on:** drag-a-leg editing — the guide's temporary
 flight plan with Done/Cancel and nine-level Undo (3-17..3-19).
 
+### 7.2 Touch: one-finger zoom rail (G22, billmallard/pyEfis#205)
+
+`zoom_rail: true` draws a vertical range control at the map's left edge
+(`zoom_rail_side: right` mirrors it), starting one status-chip height under
+the status chip. Pinch stays; the rail is the one-finger path, steadier in
+flight than a two-finger gesture. Off by default, so existing screens do
+not change.
+
+| Input | Result |
+|-------|--------|
+| Tap the **+** cap (top) | One rung in (smaller range), stopping at the smallest |
+| Tap the **-** cap (bottom) | One rung out, stopping at the largest |
+| Tap the track | Jump to the nearest rung |
+| Drag on the track | Snaps rung to rung as the finger moves |
+| Double-tap a cap | Two steps (never a recenter) |
+
+- **One detent per `range_ladder` rung**, evenly spaced, smallest range at
+  the top (up = zoom in). The caps call `range_up` / `range_down` and the
+  track sets `range_nm`, so every rail change goes through the single
+  range-write path (#202) and lands the rung index on a bound `range_key`.
+  The caps step from the range on screen, so after a free pinch to 13.7 NM,
+  + goes to 10 and - to 20, the same as a range button.
+- **The thumb follows the range from anywhere.** It sits on a rung's detent,
+  and between two detents (log-interpolated) for a free pinch or wheel
+  range. A `MAPRANGE` write from a button or knob moves it on the next frame.
+- **Touch zone.** A column `ZOOM_RAIL_TOUCH_MM` (20 mm) wide at the bezel,
+  with 20 mm caps, sized from the panel's physical DPI
+  (`pyefis.display_metrics`: the configured `screenDiagonalInches`, then
+  Qt, then 96 DPI), and clamped to 24 px .. 25% of the map width. The detent
+  track is 38% of the map height. Nothing reaches below 75% of the height,
+  clear of the pointer banner. On a short pane the track shrinks first; the
+  caps keep their full size until the track would be under a third of the
+  rail. Every touch that starts inside the zone belongs to the rail: no pan,
+  no map pointer, no recenter.
+- **Look.** A slim line with a tick per rung, + and - glyphs, and a filled
+  disc thumb, all in opaque light grey with a dark halo, full white while
+  touched. While a finger is down the range ("20 NM") shows beside the thumb
+  in a larger font, and the map previews the new range the way a pinch
+  does (scaled image, one render on settle).
+- **Open for Bill on the bench:** ticks only vs range labels on the rail,
+  the zoom direction, always visible vs fade after N seconds, and default
+  on or off for existing screens.
+- **Out of scope:** knob parity (CAPABILITIES design rule 1). `range_up` /
+  `range_down` exist but no HMI action or `enc_*` hook reaches them yet;
+  CAP-1102 owns that.
+
 ## 8. Configurator integration (standard pipeline)
 
 - Factory registration + Props: `range_nm`, `orientation`,
@@ -380,6 +426,10 @@ flight plan with Done/Cancel and nine-level Undo (3-17..3-19).
   `standard` map only; under `map_style: nav_only` the palette's ring
   greys apply. Defaults draw the original half/full rings; the current range is always in the status chip, never
   only in a ring label.
+- Zoom rail (G22, #205): `zoom_rail` (boolean, default off) and
+  `zoom_rail_side` (`left` / `right`). The twin draws it (makerplane-data#80,
+  G23) at the same position and proportions, thumb on the configured
+  `range_nm` rung.
 - Editor twin: static top-down preview — a canvas rendering a small
   baked terrain patch (the SVS preview-patch pattern; one scene is
   enough) with sample airport/navaid symbols honoring the layer
