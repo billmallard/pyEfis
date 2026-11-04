@@ -15,16 +15,25 @@ off. Partial downloads go to a .part file and are renamed on success.
 
 Usage:
     python tools/fetch_glo30.py --dest D:/EarthData/glo30 \
-        --min-lat 7 --max-lat 72 --min-lon -177 --max-lon -52
+        --tiles-file glo30_tiles.txt                    # exactly these tiles
+    python tools/fetch_glo30.py --dest D:/EarthData/glo30 \
+        --min-lat 14 --max-lat 72 --min-lon -170 --max-lon -52
     python tools/fetch_glo30.py --dest ... --dry-run     # count + size only
 
-Bounds are inclusive tile SW corners. The defaults cover every
-makerplane-data terrain region (Adak and the western Aleutians to W177,
-Central America to N07) plus the N72 row and W52 column an earlier,
-narrower window fetched. For a pack build, the authority is
-`makerplane-data/scripts/make_glo30_tiles.py --fetch-window`, which
-derives the bounds from regions.yaml; pass its output here if it ever
-falls outside these defaults.
+Pick the tiles one of two ways; there is no default.
+
+--tiles-file / --tiles name the tiles exactly (N34W119 form). A file has
+one tile per line, with the name as the first whitespace field; blank
+lines and # comments are skipped, and "-" reads stdin. That accepts
+makerplane-data's packtools/data/glo30_tiles.txt (every tile in a
+terrain region) and the output of its `make_glo30_tiles.py --check-tree`
+(the region tiles a tree lacks) as they are. Use this path for a pack
+build: a bounding box around the regions also covers land outside all
+of them (AER-4710: 185 tiles in the box when the tree lacked 89).
+
+--min-lat/--max-lat/--min-lon/--max-lon select a box; all four are
+required, and the bounds are inclusive tile SW corners. The example
+above is the window the NAS North America tree was fetched with.
 
 The bucket's tileList.txt enumerates land tiles only — ocean cells have
 no tile, which matches the renderer's missing-tile-is-water convention.
@@ -49,6 +58,65 @@ def tile_latlon(name):
     lat = int(m.group(2)) * (1 if m.group(1) == "N" else -1)
     lon = int(m.group(4)) * (1 if m.group(3) == "E" else -1)
     return lat, lon
+
+
+BBOX = ("min_lat", "max_lat", "min_lon", "max_lon")
+SHORT_RE = re.compile(r"([NS])(\d+)([EW])(\d+)")
+
+
+def short_latlon(tile):
+    """N34W119 -> (34, -119); None if it is not a tile name."""
+    m = SHORT_RE.fullmatch(tile.strip().upper())
+    if not m:
+        return None
+    lat = int(m.group(2)) * (1 if m.group(1) == "N" else -1)
+    lon = int(m.group(4)) * (1 if m.group(3) == "E" else -1)
+    return lat, lon
+
+
+def read_tile_names(lines):
+    """First whitespace field of each line; blanks and # comments skipped."""
+    out = []
+    for ln in lines:
+        ln = ln.strip()
+        if ln and not ln.startswith("#"):
+            out.append(ln.split()[0])
+    return out
+
+
+def select_listed(inventory, tiles):
+    """Inventory names for the listed tiles, and the listed tiles that
+    have none (ocean, or a name that is not a tile)."""
+    by_ll = {}
+    for name in inventory:
+        ll = tile_latlon(name)
+        if ll is not None:
+            by_ll[ll] = name
+    wanted, absent, seen = [], [], set()
+    for t in tiles:
+        key = short_latlon(t) or t
+        if key in seen:
+            continue
+        seen.add(key)
+        name = by_ll.get(key)
+        if name is None:
+            absent.append(t)
+        else:
+            wanted.append(name)
+    return wanted, absent
+
+
+def select_bbox(inventory, min_lat, max_lat, min_lon, max_lon):
+    """Inventory names whose SW corner is in the inclusive box."""
+    wanted = []
+    for name in inventory:
+        ll = tile_latlon(name)
+        if ll is None:
+            continue
+        lat, lon = ll
+        if min_lat <= lat <= max_lat and min_lon <= lon <= max_lon:
+            wanted.append(name)
+    return wanted
 
 
 def load_tile_list(dest):
@@ -87,29 +155,44 @@ def fetch_one(name, dest):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--dest", required=True)
-    ap.add_argument("--min-lat", type=int, default=7)
-    ap.add_argument("--max-lat", type=int, default=72)
-    ap.add_argument("--min-lon", type=int, default=-177)
-    ap.add_argument("--max-lon", type=int, default=-52)
+    ap.add_argument("--tiles", nargs="+", metavar="TILE",
+                    help="specific tiles e.g. N60W136")
+    ap.add_argument("--tiles-file", metavar="PATH",
+                    help="file of tiles, one per line ('-' for stdin)")
+    for b in BBOX:
+        ap.add_argument(f"--{b.replace('_', '-')}", dest=b, type=int)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    box = [getattr(args, b) for b in BBOX]
+    by_list = args.tiles is not None or args.tiles_file is not None
+    if by_list and any(v is not None for v in box):
+        ap.error("pick tiles by list or by bounding box, not both")
+    if not by_list and any(v is None for v in box):
+        ap.error("give --tiles-file/--tiles, or all of --min-lat "
+                 "--max-lat --min-lon --max-lon (there is no default)")
 
     os.makedirs(args.dest, exist_ok=True)
-    wanted = []
-    for name in load_tile_list(args.dest):
-        ll = tile_latlon(name)
-        if ll is None:
-            continue
-        lat, lon = ll
-        if (args.min_lat <= lat <= args.max_lat
-                and args.min_lon <= lon <= args.max_lon):
-            wanted.append(name)
+    inventory = load_tile_list(args.dest)
+    if by_list:
+        listed = list(args.tiles or [])
+        if args.tiles_file == "-":
+            listed += read_tile_names(sys.stdin)
+        elif args.tiles_file:
+            with open(args.tiles_file) as f:
+                listed += read_tile_names(f)
+        wanted, absent = select_listed(inventory, listed)
+        for t in absent:
+            print(f"  no GLO-30 tile for {t} (ocean, or a bad name)")
+        what = (f"{len(wanted)} of {len(wanted) + len(absent)} "
+                f"listed tiles exist")
+    else:
+        wanted = select_bbox(inventory, *box)
+        what = (f"{len(wanted)} tiles in bbox "
+                f"[{box[0]}..{box[1]}] x [{box[2]}..{box[3]}]")
     have = sum(1 for n in wanted
                if os.path.exists(os.path.join(args.dest, n + ".tif")))
-    print(f"{len(wanted)} tiles in bbox "
-          f"[{args.min_lat}..{args.max_lat}] x "
-          f"[{args.min_lon}..{args.max_lon}]; {have} already present")
+    print(f"{what}; {have} already present")
     if args.dry_run:
         return
 
