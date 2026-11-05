@@ -2,6 +2,10 @@
 
 Orientation for Claude sessions working on the **SVS (Synthetic Vision System)** in pyEfis.
 
+> **The wiki is generated.** The GitHub wiki is generated from `docs/wiki/` (images from
+> `docs/images/`) by `.github/workflows/wiki-sync.yml` on every merge to `dev`. Edit the
+> pages here, not in the wiki; direct wiki edits are overwritten. See `docs/wiki-publishing.md`.
+
 ## What this is
 
 pyEfis is the **Python EFIS** for the MakerPlane open-source aircraft. It's a PyQt6 cockpit display that consumes flight data from a `fix-gateway` companion process over TCP. The SVS — the terrain-renderer that lives in the AI (attitude indicator) widget — is the active feature focus on this branch.

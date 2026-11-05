@@ -1,0 +1,92 @@
+name: wiki-sync
+
+# Publish the manual in docs/wiki/ to this repo's GitHub wiki on every merge to dev.
+#
+# docs/wiki/ is the source of truth: the wiki is overwritten from it with
+# rsync --delete, so pages renamed or removed here are renamed or removed there,
+# and any edit made directly in the wiki is lost on the next run. Edit the pages
+# in docs/wiki/ and land them by PR (see docs/wiki-publishing.md).
+#
+# The pages are staged with the same rewrites tools/sync_wiki.sh applies, so the
+# repo copy keeps working in the repo file view:
+#   ../images/NAME  ->  images/NAME   (images live at docs/images/ in the repo)
+#   ](Page.md)      ->  ](Page)       (wiki links take no extension)
+# and every docs/images/ file a page references is published under images/.
+# Only referenced images go: docs/images/ also holds ~40 MB of evidence renders
+# that are not part of the manual.
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "docs/wiki/**"
+      - "docs/images/**"
+      - ".github/workflows/wiki-sync.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # This fork's work is landed upstream (makerplane/*) later. The guard keeps
+    # a copy of this file from ever publishing upstream's wiki.
+    if: github.repository == 'billmallard/pyEfis'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Publish docs/wiki to the wiki
+        env:
+          # The built-in token may not be allowed to push to the wiki. If the
+          # push fails with 403, add a WIKI_TOKEN secret (a fine-grained token
+          # with Contents read/write on this repo) and re-run; it wins when set.
+          TOKEN: ${{ secrets.WIKI_TOKEN || github.token }}
+          SRC: docs/wiki
+          IMG: docs/images
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA::7}"
+          stage="$RUNNER_TEMP/stage"
+          # Cloned outside the checkout so it can never land inside the source tree.
+          wiki="$RUNNER_TEMP/wiki"
+
+          # 1. Stage the pages with the wiki rewrites (as tools/sync_wiki.sh does).
+          rsync -a --exclude .git "$SRC/" "$stage/"
+          for f in "$stage"/*.md; do
+            sed -i -e 's#\.\./images/#images/#g' \
+                   -e 's#\](\([A-Za-z0-9_-]*\)\.md\([)#]\)#](\1\2#g' "$f"
+          done
+
+          # 2. Stage every image the pages reference, keeping any subdirectory.
+          { grep -ohE '\.\./images/[^)" ]+' "$SRC"/*.md || true; } \
+            | sed 's#^\.\./images/##' | sort -u > "$RUNNER_TEMP/images.txt"
+          while IFS= read -r img; do
+            if [ -f "$IMG/$img" ]; then
+              install -D -m 0644 "$IMG/$img" "$stage/images/$img"
+            else
+              echo "::warning file=$SRC::a page references ../images/$img, which is not in $IMG"
+            fi
+          done < "$RUNNER_TEMP/images.txt"
+          echo "Staged $(ls "$stage"/*.md | wc -l) pages and $(find "$stage/images" -type f 2>/dev/null | wc -l) images."
+
+          # 3. Mirror the stage onto the wiki.
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" "$wiki"
+          rsync -a --delete --exclude .git "$stage/" "$wiki/"
+          cd "$wiki"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already matches $SRC @ $short; nothing to publish."
+            exit 0
+          fi
+          git diff --cached --stat
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898699+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Sync from $SRC @ $short"
+          git push origin HEAD:master
