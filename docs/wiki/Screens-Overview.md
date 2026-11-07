@@ -12,7 +12,7 @@ You can fly the shipped set as-is, or customize it: change which screens load,
 re-skin the gauges, and toggle features through
 [Preferences & Styling](Preferences-and-Styling), or build entirely new screens
 with the [Screen Builder](Screen-Builder). To operate these screens in the
-cockpit, see the [Pilot's Guide](Pilots-Guide).
+cockpit, see the [The Panel at a Glance](The-Panel-at-a-Glance).
 
 > Screenshots of the assembled screens will be added in a later documentation
 > pass. This page describes each screen's contents from its config.

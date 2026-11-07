@@ -498,4 +498,4 @@ one-line chip, small enough for a PFD corner or the ND's status row:
 - [Screen Builder](Screen-Builder) — placement (`row`/`column`/`span`/`move`).
 - [Engine & Data Gauges](Widgets-Engine-Gauges) — the generic gauges and the
   color-state model.
-- [Pilot's Guide](Pilots-Guide) — what these instruments mean in the air.
+- [The Panel at a Glance](The-Panel-at-a-Glance) — what these instruments mean in the air.

@@ -36,16 +36,17 @@ as-is with no warranty, and any use of it is at your own risk."* It needs no
 tap. Touches pass through it to the instruments, and it clears by itself: after
 8 seconds once the notice has been accepted on this install, after 20 seconds
 if not. Nothing at start-up waits for a tap, so a restart in flight puts you
-back on the instruments at once.
+back on the instruments at once. How the notice is accepted is on
+[Data Status, Updates and Notices](Data-Status-Updates-and-Notices#the-software-notice-at-start-up).
 
 ## The tab column
 
 A **tab section** puts several pages in one area of the screen. Touch a tab
 to show its page. On the bench panel:
 
-- **Map:** the moving map.
-- **Flight Plan:** the flight plan, where you build and edit the route.
-- **Engine:** the engine instruments; on the bench, four CHT and four EGT bars.
+- **Map:** the [moving map](Moving-Map).
+- **Flight Plan:** the [flight plan](Flight-Plan), where you build and edit the route.
+- **Engine:** the [engine instruments](Engine-Monitoring); on the bench, four CHT and four EGT bars.
 - **Radio:** empty on the bench panel.
 
 Things to know:
@@ -150,7 +151,7 @@ Every value carries fix-gateway's quality flags, and each instrument shows them.
 | A red **XXX** in a readout | That value has failed. |
 | A grey selected altitude, altimeter setting or bug | That value is old or bad. |
 | An amber **SVS UNAVAIL** | Synthetic vision is on but has no usable position, so the ground is drawn plain brown. |
-| A red value on a gauge | That item is annunciating. See [Engine & Data Gauges](Widgets-Engine-Gauges). |
+| A red value on a gauge | That item is annunciating. See [Engine Monitoring](Engine-Monitoring). |
 
 These come from the data, not from the display: check the sensor or its
 fix-gateway plugin.

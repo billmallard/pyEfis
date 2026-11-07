@@ -13,7 +13,7 @@ For [Attitude and Synthetic Vision](../../wiki/Attitude-and-Synthetic-Vision.md)
 Every picture is cropped from a full-screen grab of the simulator bench (the
 Beelink, X11, 1920 x 1080) during sim-bench session `a9055711e732` on
 2026-11-07, 10:44-11:05 UTC. The bench was flying the KSMX RNAV (GPS) RWY 30
-with its missed approach and the WINCH hold, on pyEFIS `dev` at `4c4f4dc` (the same code as `980497e`) with
+with its missed approach and the WINCH hold, on pyEFIS `dev` (the bench checkout read `5abf28d`; `src/` is identical from `980497e` to `c8d7ede`) with
 its configurator panel (`screens/managed.yaml`). The grabs were taken by
 [`../hsi/bench_flight/docs_flight.py`](../hsi/bench_flight/docs_flight.py), run
 with that session id and the sim-bench service URL. Its event log is
