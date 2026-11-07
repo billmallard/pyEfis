@@ -6,7 +6,7 @@ document what is *specific* to each widget and link back here for the shared
 parts.
 
 > **Audience:** builders and engineers. If you just want to fly, start with the
-> [Pilot's Guide](Pilots-Guide). If you want to lay out a screen, read
+> [The Panel at a Glance](The-Panel-at-a-Glance). If you want to lay out a screen, read
 > [Screen Builder](Screen-Builder) next.
 
 ---

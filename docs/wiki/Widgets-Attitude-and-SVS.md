@@ -297,4 +297,4 @@ Design rationale and the original NASR-import plan live in `docs/svs_planning.md
 ---
 
 See also: [Concepts](Concepts) · [Widget Reference](Widget-Reference) ·
-[Flight Instruments](Widgets-Flight-Instruments) · [Pilot's Guide](Pilots-Guide)
+[Flight Instruments](Widgets-Flight-Instruments) · [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision)

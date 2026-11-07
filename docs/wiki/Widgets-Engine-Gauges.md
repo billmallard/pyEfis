@@ -109,7 +109,7 @@ machinery.
 ### EGT modes (engine leaning)
 
 When `egt_mode_switching` is on, a `vertical_bar_gauge` responds to mode actions
-(driven by the EGT buttons — see [Pilot's Guide](Pilots-Guide)):
+(driven by the EGT buttons — see [Engine Monitoring](Engine-Monitoring#leaning-egt-modes)):
 
 | Mode | Behavior |
 |------|----------|
