@@ -1,300 +1,231 @@
-# Attitude Indicator & Synthetic Vision
+# Attitude & SVS
 
-The **attitude indicator** (`atitude_indicator`) is the artificial horizon: a
-moving sky/ground background behind a fixed aircraft symbol, with a pitch
-ladder, bank-angle scale, slip/skid ball, standard-rate-turn markers, and a
-GPS flight-path marker.
+The attitude display, with or without synthetic vision. What it shows and how
+to read it is on [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision);
+this page is the full option list and the data the terrain needs. Each table
+is generated from pyEFIS's instrument registry; see
+[Widget Reference](Widget-Reference#how-to-read-these-pages).
 
-**Virtual VFR** (`virtual_vfr`) is a subclass of the attitude indicator that
-adds geographic symbology — airports, runways, extended centerlines, PAPI, and
-navaids — projected onto the horizon from FAA CIFP data. That legacy overlay
-is **deprecated** in favour of SVS; see [`virtual_vfr`](#virtual_vfr).
+| `type:` | What it is |
+|---|---|
+| `virtual_vfr` | The attitude display with synthetic-vision terrain, as a configurator panel uses it. |
+| `atitude_indicator` | The attitude display alone. |
 
-Both widgets can additionally render a **Synthetic Vision (SVS)** terrain view
-behind the pitch ladder. SVS is enabled the same way on either widget — through
-a nested `svs:` block — and is covered in the last section.
-
-These widgets are part of the [Flight Instruments](Widgets-Flight-Instruments)
-family. Unlike the generic gauges, they have **fixed default FIX keys** and a
-**small, specific set of options** (they do not use the gauge
-[color-state model](Concepts#2-the-color-state-model-gauges)). **Read
-[Concepts](Concepts) first** for how `options:` reach a widget and what the
-data-quality states mean.
-
-| `type:` | Class | Default FIX keys | Adds over base |
-|---------|-------|------------------|----------------|
-| `atitude_indicator` | `ai.AI` | `PITCH`, `ROLL`, `ALAT`, `TAS` | artificial horizon + FPM |
-| `virtual_vfr` | `ai.VirtualVfr.VirtualVfr` | `PITCH`, `LAT`, `LONG`, `HEAD`, `ALT`, `ROLL`, `ALAT`, `TAS` | airport / runway / navaid overlay |
-
-> **Spelling gotcha:** the YAML `type:` is **`atitude_indicator`** — the
-> historical misspelling (one "t") is the real key the screen builder matches.
-> `attitude_indicator` will not work.
-
----
-
-## `atitude_indicator`
-
-A standard PFD-style artificial horizon. The blue/brown background pitches and
-rolls behind a fixed aircraft reference symbol. It draws a pitch ladder, a
-bank-angle scale with standard-rate-turn diamonds, an inclinometer (slip/skid)
-ball driven by lateral acceleration, and a GPS flight-path marker.
-
-![Attitude indicator](../images/atitude_indicator.png)
-
-**`type:`** `atitude_indicator` &nbsp;→&nbsp; class `ai.AI`
-
-### FIX keys
-
-The attitude indicator wires these keys at construction (defaults from
-`INSTRUMENT_DEFAULTS`); they are **not** settable from YAML:
-
-| Key | Drives |
-|-----|--------|
-| `PITCH` | pitch angle (clamped ±90°) |
-| `ROLL` | bank angle (clamped ±180°) |
-| `ALAT` | lateral acceleration → slip/skid ball (clamped ±0.3) |
-| `TAS` | true airspeed → standard-rate-turn bank markers |
-
-It additionally **listens** for the flight-path-marker and SVS-position keys if
-they exist in the FIX database — `VS`, `GS`, `TRACK`, `HEAD`, `VPATH` (FPM) and
-`LAT`, `LONG`, `ALT`, `MAGVAR` (SVS). Each is wired through a
-missing-key guard: if the key is not defined, the widget logs a warning and the
-related feature stays disabled rather than crashing. The flight-path marker
-requires `VS`, `GS`, `TRACK`, and `HEAD` to be present and healthy; `VPATH` is
-used in preference to `atan2(VS, GS)` when published.
-
-> Quality flags on `PITCH`/`ROLL`/`ALAT`/`TAS` change the background: **old** or
-> **bad** turns the sky/ground grey; **fail** swaps in a failure scene showing a
-> red `XXX`. (Virtual VFR extends this — see below.)
-
-### Options
-
-These are the options the screen-builder factory (`build_atitude_indicator`)
-reads from the `options:` block, plus the host-widget attributes it applies.
-Defaults in **bold**.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `show_fpm` | **`true`** | draw the GPS flight-path marker (the "velocity vector" circle). Passed to the constructor. |
-| `aircraft_symbol` | **`classic`** | fixed reference symbol style. `classic` = split wing bars + centre dot; `garmin` / `gi275` / `gi-275` / `g1000` = GI-275-style tapered wing wedges + centre boresight. |
-| `symbol_color` | **`yellow`** | colour of the aircraft reference symbol (any Qt colour name; invalid names fall back to yellow). |
-| `svs` | none | nested block enabling Synthetic Vision — see [Enabling Synthetic Vision](#enabling-synthetic-vision-svs). |
-| `horizon_heading_marks` | **`false`** | draw a compass heading scale on the white horizon line: short vertical ticks with numeric labels that ride the horizon and scroll as the aircraft turns (driven by magnetic `HEAD`; aligns with the SVS terrain). |
-| `horizon_heading_interval` | **`10`** | degrees of heading between ticks. |
-| `horizon_heading_label_interval` | **`20`** | degrees of heading between labels (cardinal letters at N/E/S/W, else the heading in tens, e.g. 060 → "6"). |
-| `horizon_heading_tick_length` | **`5`** | tick length, pixels. |
-| `horizon_heading_color` | **`#ffffff`** | colour of the heading ticks and labels. |
-
-`font_percent` and `font_family` come from
-[preferences](Preferences-and-Styling), not `options:` (see
-[Concepts §8](Concepts#8-how-options-reach-a-widget)). `font_percent` sizes the
-pitch-ladder numerals and tick widths.
-
-> The pitch-ladder geometry (`pitchDegreesShown`, `minorDiv`/`majorDiv`/
-> `numberedDiv`, `bankAngleMaximum`, `pitchOpacity`, `drawBankMarkers`, …) and the
-> horizon heading marks above are exposed as editor options in the
-> [configurator](https://pyefis.aerocommons.org) (each with a hover tooltip); the
-> shipped screens otherwise leave the geometry at code defaults.
-> `pitchDegreesShown` is fixed at 30° top-to-bottom, which sets the horizontal
-> field of view that SVS terrain — and the heading scale — share. These options
-> apply to both `atitude_indicator` and `virtual_vfr` (they share the AI base).
+The type name `atitude_indicator` is spelt with one `t`, and must be written
+that way.
 
 ---
 
 ## `virtual_vfr`
 
-> **Deprecated: the legacy CIFP overlay.** The 2D runway/airport/navaid
-> overlay and its assumed-3-degree PAPI described in this section are
-> deprecated and will be removed; Synthetic Vision replaces them. **When the
-> `svs:` block has `enabled: true`, the legacy overlay is not loaded at all** --
-> no `PointOfView`, no CIFP read, and no `dbpath`/`indexpath` needed -- and the
-> SVS draws airports, runways and the PAPI (at the published angle, only where
-> installed) from the NASR airports pack. The `virtual_vfr` instrument type
-> itself stays: it is the host for SVS.
+<!-- generated:virtual_vfr -->
 
-Virtual VFR is the attitude indicator **plus a geographic overlay**. It
-subclasses `ai.AI`, so it inherits the full horizon, pitch ladder, bank scale,
-slip ball, FPM, and SVS support — then projects nearby airports and runways onto
-the scene from FAA data.
+**Virtual VFR / Synthetic Vision** · palette category `attitude`
 
-![Virtual VFR](../images/virtual_vfr.png)
+How it reads and flies: [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision).
 
-**`type:`** `virtual_vfr` &nbsp;→&nbsp; class `ai.VirtualVfr.VirtualVfr`
+FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `ALAT`, `TAS`.
 
-### What it adds over the attitude indicator
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `aircraft_symbol` | Aircraft symbol | `classic` | `classic`, `garmin`, `brackets`, `none` | classic split-wing bars + dot; garmin G3X-style two-tone bat wing + horizon barbs; brackets GRT-style L-brackets; none hides the symbol (SVS-as-background) (g1000/gi275 remain accepted in YAML for back-compat) |
+| `symbol_color` | Symbol colour | `#ffff00` | colour | colour of the fixed aircraft reference symbol |
+| `symbol_scale` | Symbol scale | `1` | 0.3 to 3, step 0.05 | multiplies the reference symbol size -- wingspan and proportions together (1 = standard) |
+| `horizon_position` | Horizon position (% up) | `50` | 40 to 80, step 1 | 50 = centred (default); ~67 = two-thirds up the screen |
+| `preview_scene` | Preview scene (editor) | `mountains` | `mountains`, `approach`, `final` | which stylised backdrop the editor twin shows (preview only; the device renders real terrain) |
+| `show_fpm` | Flight-path marker | on | on / off | GPS flight-path marker (needs VS/GS/TRACK/HEAD) |
+| `pitchDegreesShown` | Pitch field of view (deg) | `50` |  | total vertical pitch span shown |
+| `minorDiv` | Minor division (deg) | `1` |  | pitch interval between the smallest ladder ticks |
+| `majorDiv` | Major division (deg) | `5` |  | pitch interval between the longer ladder ticks |
+| `numberedDiv` | Numbered division (deg) | `10` |  | pitch interval at which ladder lines get a number |
+| `visiblePitchAngle` | Pitch label range (deg) | `25` |  | ladder marks fade out beyond this from current pitch |
+| `pitchOpacity` | Pitch ladder opacity | `0.6` | 0 to 1 | pitch-ladder opacity (0 = invisible, 1 = solid) |
+| `bankOpacity` | Bank display opacity | `1` | 0 to 1 | bank scale, roll pointer, standard-rate diamonds and slip/skid ball together (0 = hidden, 1 = solid) |
+| `horizonOpacity` | Horizon line opacity | `1` | 0 to 1 | the white zero-pitch reference line (0 = hidden, 1 = solid) |
+| `tick_autoscale` | Auto-scale tick widths to font | on | on / off | off = use the explicit tick-width / bank-size pixels below |
+| `minorDivWidth` | Minor tick width (px) | `10` |  | length of the minor pitch ticks (auto-scale off) |
+| `majorDivWidth` | Major tick width (px) | `40` |  | length of the major pitch ticks (auto-scale off) |
+| `numberedDivWidth` | Numbered tick width (px) | `50` |  | length of the numbered pitch ticks (auto-scale off) |
+| `drawBankMarkers` | Standard-rate bank markers | on | on / off | show the bank-angle tick arc across the top |
+| `bankAngleMaximum` | Max indicated bank (deg) | `25` |  | largest bank angle marked on the bank arc |
+| `bankMarkSize` | Bank tick size (px) | `10` |  | length of the bank-arc ticks (auto-scale off) |
+| `bank_position` | Bank scale position (%) | `50` | 0 to 100 | vertical position of the bank-arc centre, percent up from the bottom (50 = centred, the classic look); the whole cluster incl. pointer and slip ball moves with it |
+| `bank_radius` | Bank scale radius (% height) | `33.333` | 10 to 60, step 0.1 | radius of the bank arc as a percent of widget height (33.3 = the classic height/3); an explicit bankAngleRadius px in YAML overrides it |
+| `pitch_ladder_avoid_bank` | Ladder stops below bank arc | off | on / off | G1000-style declutter: the ladder climbs into the bank arch but stops below the slip/skid ball |
+| `horizon_heading_marks` | Horizon heading marks | off | on / off | tick marks + labels for compass heading along the horizon |
+| `horizon_heading_interval` | Heading tick interval (deg) | `10` | 1 to 45, step 1 | degrees of heading between the horizon ticks |
+| `horizon_heading_label_interval` | Heading label interval (deg) | `20` | 5 to 90, step 5 | degrees of heading between the numeric labels |
+| `horizon_heading_tick_length` | Heading tick length (px) | `5` | 1 to 30, step 1 | length of the horizon heading ticks (px) |
+| `horizon_heading_color` | Heading mark colour | `#ffffff` | colour | colour of the horizon heading ticks and labels |
+| `svs_enabled` | Synthetic vision enabled | off | on / off | master on/off (rendered on the device; not shown in the editor preview). Off falls back to the legacy CIFP Virtual VFR overlay, which is DEPRECATED (to be removed) and needs a separate FAA CIFP download; on needs no CIFP data |
+| `svs_tile_path` | Terrain tile path | empty |  | SRTM3 HGT tile directory on the device |
+| `svs_range_nm` | Range (NM) | `50` |  | (rendered on the device; not shown in the editor preview) |
+| `svs_auto_range` | Auto range by altitude | on | on / off | (rendered on the device; not shown in the editor preview) |
+| `svs_min_range_nm` | Min auto range (NM) | `8` |  | (rendered on the device; not shown in the editor preview) |
+| `svs_palette` | Terrain palette | `clearance` | `clearance`, `subdued`, `high_contrast` | clearance-band colour scheme (rendered on the device; not shown in the editor preview) |
+| `svs_clearance_green_ft` | Safe clearance (ft) | `1000` |  | green at/above this height over terrain |
+| `svs_clearance_yellow_ft` | Caution clearance (ft) | `500` |  | amber above this; red below |
+| `svs_terrain_fill` | Fill terrain | on | on / off | off = wireframe (rendered on the device; not shown in the editor preview) |
+| `svs_terrain_grid` | Terrain grid | `0.35` | 0 to 1 | (rendered on the device; not shown in the editor preview) |
+| `svs_terrain_texture` | Terrain texture | `0.35` | 0 to 1 | (rendered on the device; not shown in the editor preview) |
+| `svs_safe_gradient` | Safe-band gradient | on | on / off | (rendered on the device; not shown in the editor preview) |
+| `svs_earth_curvature` | Earth curvature | on | on / off | (rendered on the device; not shown in the editor preview) |
+| `svs_haze` | Distance haze | on | on / off | (rendered on the device; not shown in the editor preview) |
+| `svs_haze_distance_nm` | Haze distance (NM) | `40` |  | (rendered on the device; not shown in the editor preview) |
+| `svs_dof_db_path` | Obstacle DB path | empty |  | FAA DOF database on the device (optional) |
+| `svs_water_db_path` | Water DB path | empty |  | water-polygon database on the device (optional) |
+| `svs_highway_db_path` | Highway DB path | empty |  | highway database on the device (optional) |
+| `svs_road_color` | Road colour | `#535353` | colour | ribbon fill colour (rendered on the device; not shown in the editor preview) |
+| `svs_road_casing_color` | Road casing colour | `#4a4a4a` | colour | darker outline drawn under the fill (rendered on the device; not shown in the editor preview) |
+| `svs_road_casing_m` | Road casing width (m) | `2.5` | 0 to 20 | casing half-width add-on over the class width (rendered on the device; not shown in the editor preview) |
+| `svs_road_min_px` | Road minimum width (px) | `1.5` | 0.5 to 10, step 0.1 | screen-space floor so distant ribbons never drop below this many pixels wide (rendered on the device; not shown in the editor preview) |
+| `svs_road_subdivide_m` | Road subdivide length (m) | `150` | 20 to 1000 | segments longer than this, within subdivide range, are split so the ribbon follows rolling terrain (rendered on the device; not shown in the editor preview) |
+| `svs_road_subdivide_nm` | Road subdivide range (NM) | `4` | 0 to 20 | subdivision only applies this close to the aircraft (rendered on the device; not shown in the editor preview) |
+| `svs_road_lift_ft` | Road lift (ft) | `2` | 0 to 50 | height above sampled terrain the ribbon is drawn at (rendered on the device; not shown in the editor preview) |
+| `svs_road_max_vertices` | Road vertex cap | `400000` | 10000 to 1000000 | hard cap on extruded vertices per array (casing/fill each); over the cap, far-tier ramps are dropped first, then far-tier trunks (rendered on the device; not shown in the editor preview) |
+| `svs_papi` | PAPI lights | on | on / off | draw the installed PAPI at its published glide path angle and side, from the NASR airports pack (only where one is installed) (rendered on the device; not shown in the editor preview) |
+| `svs_perf_log` | Perf: log summary | off | on / off | print an SVS per-frame profiler summary every 2s (collector/draw timings) to the log -- mirrors map_perf_log. Dev/bench diagnostic; off by default (rendered on the device; not shown in the editor preview) |
 
-- **Runways** drawn as filled polygons in their true geographic position, with
-  the runway-number label, a dashed **centerline**, and a dashed **extended
-  centerline** down to the bottom of the view when the threshold is in front of
-  you.
-- **PAPI lights** at each runway, coloured red/white from the computed approach
-  angle. When the glideslope indicator is enabled it can drive the `GSI` FIX key
-  from the deviation off a 3° path.
-- **Airport identifiers** as text labels (collision-avoided against each other).
-- **Navaids** (VORTAC icon + label).
+<!-- /generated -->
 
-These are computed by an internal `PointOfView` projector that reads airport and
-runway records from the **FAA CIFP** database, caching the 1°×1° blocks around
-the aircraft and refreshing as position changes.
+Synthetic vision draws only with **Synthetic vision enabled** on. With it off,
+the instrument falls back to the legacy CIFP overlay, which is deprecated and
+needs a separate FAA CIFP download.
 
-### FIX keys
+### How the terrain options reach the renderer
 
-In addition to the base AI keys (`PITCH`, `ROLL`, `ALAT`, `TAS`), Virtual VFR
-reads the position/heading keys needed to place the overlay:
+The configurator writes the terrain options flat, each with an `svs_` prefix.
+pyEFIS strips the prefix and lays them over any nested `svs:` block, so a flat
+option wins over the same key in `svs:`. Some renderer keys are not in the
+configurator's list and can only be set in the `svs:` block:
 
-| Key | Drives |
-|-----|--------|
-| `LAT` / `LONG` | aircraft position (projection origin) |
-| `ALT` | aircraft altitude (approach-angle / PAPI math) |
-| `COURSE` | view heading used to orient the projection |
-| `GSI` | **written** with the computed glideslope deviation when GSI is active |
+| `svs:` key | Default | What it does |
+|---|---|---|
+| `nasr_db_path` | empty | The airports pack: runways, PAPI and airport flags. |
+| `airport_provider_dir` | empty | A directory of extra airport packs, found automatically. |
+| `cifp_path`, `cifp_index_path` | empty | Airport data from CIFP, used only when the airports pack is not available. |
+| `paved_only` | `true` | Draw only paved runways. |
+| `airport_proximity_nm` | `5` | Within this distance of an airport, low terrain is drawn green; 0 turns this off. |
+| `airport_gate_agl_ft` | `400` | How far above field elevation that rule reaches. |
+| `obstacle_min_agl_ft` | `200` | Shortest obstacle drawn. |
+| `detail_distance_nm` | `3` | Runways closer than this get their markings. |
+| `papi_range_nm` | `5` | How far away a PAPI is drawn. |
+| `road_widths_m` | see below | Road width per road class, in metres per carriageway. |
+| `water_max_vertices` | the pack's default | Vertex cap per water polygon. |
+| `heightmap_max_px` | `4096` | Largest terrain texture. |
+| `msaa_samples` | `2` | Anti-aliasing samples. |
+| `frame_rate` | `30` | Terrain frame rate, 5 to 60. |
 
-> Note: although `INSTRUMENT_DEFAULTS` lists `HEAD` for `virtual_vfr`, the widget
-> actually binds the **`COURSE`** key as its heading source in the constructor.
-> The heading is treated as the true heading for the geographic projection.
+`road_widths_m` defaults: motorway 16, trunk 13, primary 11, secondary 8, motorway
+and trunk links 7, primary and secondary links 6; any other class 7. Override
+any subset, for example `road_widths_m: {motorway: 18}`. A dual carriageway is
+two ways, each drawn at its own width.
 
-If `LAT`/`LONG`/`COURSE`/`ALT` are flagged **old**, **bad**, or **fail**, the
-overlay is **blanked** (all runway/airport/navaid objects removed) and only the
-plain attitude horizon shows — Virtual VFR overrides `setOld`, `setVfrBad`, and
-`setVfrFail` to drop the geographic objects when the data cannot be trusted, so
-it never paints a stale runway picture.
+Any data path that is missing or unreadable drops that layer; the rest still
+draws.
 
-### Options
+### PAPI
 
-Virtual VFR is built by `build_virtual_vfr`, which reads the **same** options
-the attitude indicator does:
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `aircraft_symbol` | **`classic`** | reference symbol style (as above) |
-| `symbol_color` | **`yellow`** | reference symbol colour |
-| `svs` | none | nested Synthetic Vision block (see below) |
-
-Note `build_virtual_vfr` does **not** read `show_fpm` — Virtual VFR uses the
-inherited FPM default (on). The CIFP data location is **not** taken from the
-widget's `options:`; it comes from the screen/config-level items the widget
-reads from its parent (`dbpath`, `indexpath`, `refresh_period`, and an optional
-`metadata` file that picks the most recent of a current/next CIFP cycle).
-
-> **Uncertainty:** Virtual VFR's CIFP `dbpath`/`indexpath`/`metadata` are pulled
-> from `self.myparent.get_config_item(...)`, i.e. from the screen/profile config
-> rather than the widget `options:` block. The exact config level where those are
-> set is outside the widget source read for this page — confirm against your
-> profile/`config.yaml` before relying on the paths.
-
----
-
-## Enabling Synthetic Vision (SVS)
-
-Both `atitude_indicator` and `virtual_vfr` can render a **GPU terrain view**
-behind the pitch ladder, replacing the flat brown "ground" with shaded synthetic
-terrain (and overlaying water, obstacles, runways, and runway markings). SVS is
-enabled through a **nested `svs:` block inside `options:`** — the screen-builder
-factory passes that block straight to the widget's `set_svs_config()`, which
-constructs the `SVSRenderer`.
-
-SVS sits at scene z-order `0.5`: it covers the static blue/brown background but
-stays **behind** the pitch ladder and symbology (z = 1). When it is actively
-drawing terrain, the below-horizon fill is painted sky-blue so the synthetic
-terrain *is* the ground. SVS is **GL-required**: if a GL context or draw fails it
-disables itself for the process and the widget annunciates **SVS UNAVAIL** in
-amber rather than silently showing a degraded picture.
-
-### The nested `svs:` block
-
-The essential keys are `enabled: true` plus the **data paths** that tell the
-renderer where to find terrain and feature data:
-
-| `svs:` key | Meaning |
-|------------|---------|
-| `enabled` | master switch — must be `true` for any terrain to draw (default `false`) |
-| `tile_path` | directory of terrain elevation tiles (HGT heightmaps) |
-| `nasr_db_path` | airport/runway sqlite (FAA NASR — the preferred source) |
-| `dof_db_path` | obstacle sqlite (FAA Digital Obstacle File — towers/antennas) |
-| `water_db_path` | water-polygon sqlite (oceans, lakes, rivers) |
-| `highway_db_path` | highway/road sqlite |
-| `papi` | draw the installed PAPI rows (default `true`) -- see below |
-| `papi_range_nm` | PAPI visual range from the box, NM (default `5`) |
-
-### PAPI (CIFP1)
-
-The SVS draws a PAPI only at runway ends whose NASR record carries one
-(`vgsi_code` `P2L`/`P2R`/`P4L`/`P4R`) **and** a published visual glide path
-angle -- never an assumed 3 degrees. The row sits on the published side, abeam
-the 1000 ft aiming point, 50 ft outboard of the runway edge. Unit settings follow
-FAA AC 150/5340-30: a 4-box row is set at the published angle +30', +10', -10',
--30' from the runway outward (on path: two red inboard, two white outboard), a
-2-box row at +/-15'. It shows inside the PAPI's +/-10 degree azimuth coverage,
-within `papi_range_nm`, ahead of the nose, and not behind terrain. Far away the
-lights are floored to a few pixels so the row stays readable. VASI, tri-colour
-and pulsating systems are not drawn yet. Unlike the legacy overlay, the SVS
-PAPI does **not** write the `GSI` FIX key -- `GSI` belongs to a real glideslope
-receiver.
-
-(If NASR is unavailable, the renderer falls back to `cifp_path` /
-`cifp_index_path` for airport data. Many other renderer-tuning keys exist —
-`range_nm`, `auto_range`, `haze`, `n_range`/`n_az`/`fov_deg`, `msaa_samples`,
-`frame_rate`, `z_value`, … — but those are the **SVS renderer's** options and are
-documented separately, not here.)
-
-### Road ribbons (RD1, issue #161)
-
-The highways layer draws as an extruded true-scale ribbon — a darker casing
-under a lighter fill, both `GL_TRIANGLES` — instead of a 1 px `GL_LINES`
-hairline. Every default below reproduces the pre-RD1 class/tier/20 NM
-behaviour; only the drawn shape changes. Screen-builder Prop names carry an
-`svs_` prefix (`svs_road_color`, …) and are stripped to the keys below before
-reaching the renderer, same as `water_db_path`/`highway_db_path` above.
-
-| `svs:` key | Default | Meaning |
-|------------|---------|---------|
-| `road_color` | `#535353` | ribbon fill colour (a shade lighter than the casing grey — Bill's call on AER-637: solid `#4a4a4a` fill read flat on the bench, so the fill is now a subtle step up from the casing) |
-| `road_casing_color` | `#4a4a4a` | darker casing colour drawn under the fill |
-| `road_casing_m` | `2.5` | casing half-width add-on over the class width, metres |
-| `road_min_px` | `1.5` | screen-space width floor — distant ribbons never drop below this many pixels |
-| `road_subdivide_m` | `150` | segments longer than this, within subdivide range, are split so the ribbon follows rolling terrain |
-| `road_subdivide_nm` | `4` | subdivision only applies this close to the aircraft |
-| `road_lift_ft` | `2` | height above sampled terrain the ribbon is drawn at |
-| `road_max_vertices` | `400000` | hard cap on extruded vertices per array (casing/fill each); over the cap, far-tier ramps are dropped first, then far-tier trunks |
-| `road_widths_m` | see below | per-OSM-class width table, metres per carriageway (config-only — no simple editor widget for a dict) |
-
-`road_widths_m` defaults: `motorway: 16, trunk: 13, primary: 11, secondary: 8,
-motorway_link: 7, trunk_link: 7, primary_link: 6, secondary_link: 6`; any other
-class draws at `7`. Override any subset via YAML, e.g.
-`road_widths_m: {motorway: 18}` — unlisted classes keep their default. Widths
-are per OSM way (== per carriageway; OSM maps a dual carriageway as two
-separate one-way ways), not per whole freeway.
+A PAPI is drawn only where the airports pack lists one (`P2L`, `P2R`, `P4L` or
+`P4R`) with a published glide path angle; pyEFIS never assumes 3 degrees. The
+row sits on its published side, abeam the 1,000 ft aiming point, 50 ft outside
+the runway edge. The boxes are set as FAA AC 150/5340-30 describes: a 4-box row
+at the published angle +30', +10', -10' and -30' from the runway outward, a
+2-box row at +/-15'. It shows within the PAPI's +/-10 degree azimuth coverage,
+within `papi_range_nm`, ahead of the nose and not behind terrain. VASI and
+other systems are not drawn. The PAPI does not write `GSI`.
 
 ### Example
+
+The bench panel's attitude display, trimmed:
 
 ```yaml
 - type: virtual_vfr
   row: 0
   column: 0
-  span: {rows: 100, columns: 100}
+  span: {rows: 110, columns: 130}
   options:
-    aircraft_symbol: gi275
-    symbol_color: yellow
+    aircraft_symbol: garmin
+    horizon_position: 68
+    svs_enabled: true
+    svs_clearance_green_ft: 2500
+    svs_clearance_yellow_ft: 1500
+    svs_tile_path: /data/makerplane-data/terrain/tiles
+    svs_water_db_path: /data/makerplane-data/water/current/water.sqlite
+    svs_highway_db_path: /data/makerplane-data/highways/current/highways.sqlite
+    svs_dof_db_path: /data/makerplane-data/obstacles/current/obstacles.sqlite
     svs:
-      enabled: true
-      tile_path: /data/makerplane-data/terrain/tiles
-      nasr_db_path: /data/makerplane-data/nasr/airports.sqlite
-      dof_db_path: /data/makerplane-data/dof/obstacles.sqlite
-      water_db_path: /data/makerplane-data/water/current/water.sqlite
-      highway_db_path: /data/makerplane-data/highways/highways.sqlite
+      nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
+      airport_provider_dir: /data/makerplane-data/airports
 ```
 
-Any data file that is missing or unreadable is handled gracefully — that feature
-layer simply does not draw; it never breaks the renderer.
+Two terrain options in the configurator's list have no effect on the device
+today: **Terrain palette**
+([#394](https://github.com/billmallard/pyEfis/issues/394)) and **Fill terrain**
+([#395](https://github.com/billmallard/pyEfis/issues/395)).
 
-### Full SVS reference
+### FIX keys
 
-The terrain renderer (tiers, polar-fan LOD, auto-range, haze, runway markings,
-obstacles, water, and all the tuning keys) is documented in detail in
-[docs/svs_rendering.md](https://github.com/billmallard/pyEfis/blob/gpu-required/docs/svs_rendering.md).
-Design rationale and the original NASR-import plan live in `docs/svs_planning.md`.
+| Key | Used for |
+|---|---|
+| `PITCH`, `ROLL` | Attitude (pitch held to +/-90, roll to +/-180). |
+| `ALAT` | The slip indicator (held to +/-0.3 g). |
+| `TAS` | The standard-rate marks. |
+| `LAT`, `LONG`, `ALT` | Where the terrain is drawn from. Old, bad, failed or missing: no terrain, and `SVS UNAVAIL`. |
+| `HEAD`, `MAGVAR` | Which way the terrain faces, and the horizon heading marks. |
+| `VS`, `GS`, `TRACK`, `VPATH` | The flight path marker. |
+| `COURSE` | The legacy CIFP overlay's heading. |
+
+Any of `PITCH`, `ROLL`, `ALAT` or `TAS` old or bad turns the sky grey; any
+failed shows a dark grey display with a red `XXX`.
 
 ---
 
-See also: [Concepts](Concepts) · [Widget Reference](Widget-Reference) ·
-[Flight Instruments](Widgets-Flight-Instruments) · [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision)
+## `atitude_indicator`
+
+The same attitude symbology on a square face, without terrain.
+
+![Attitude indicator](../images/atitude_indicator.png)
+
+<!-- generated:atitude_indicator -->
+
+**Attitude Indicator** · palette category `attitude`
+
+How it reads and flies: [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision).
+
+FIX keys it reads by default: `PITCH`, `ROLL`, `ALAT`, `TAS`.
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `aircraft_symbol` | Aircraft symbol | `classic` | `classic`, `garmin`, `brackets`, `none` | classic split-wing bars + dot; garmin G3X-style two-tone bat wing + horizon barbs; brackets GRT-style L-brackets; none hides the symbol (SVS-as-background) (g1000/gi275 remain accepted in YAML for back-compat) |
+| `symbol_color` | Symbol colour | `#ffff00` | colour | colour of the fixed aircraft reference symbol |
+| `symbol_scale` | Symbol scale | `1` | 0.3 to 3, step 0.05 | multiplies the reference symbol size -- wingspan and proportions together (1 = standard) |
+| `show_fpm` | Flight-path marker | on | on / off | GPS flight-path marker (needs VS/GS/TRACK/HEAD) |
+| `pitchDegreesShown` | Pitch field of view (deg) | `50` |  | total vertical pitch span shown |
+| `minorDiv` | Minor division (deg) | `1` |  | pitch interval between the smallest ladder ticks |
+| `majorDiv` | Major division (deg) | `5` |  | pitch interval between the longer ladder ticks |
+| `numberedDiv` | Numbered division (deg) | `10` |  | pitch interval at which ladder lines get a number |
+| `visiblePitchAngle` | Pitch label range (deg) | `25` |  | ladder marks fade out beyond this from current pitch |
+| `pitchOpacity` | Pitch ladder opacity | `0.6` | 0 to 1 | pitch-ladder opacity (0 = invisible, 1 = solid) |
+| `bankOpacity` | Bank display opacity | `1` | 0 to 1 | bank scale, roll pointer, standard-rate diamonds and slip/skid ball together (0 = hidden, 1 = solid) |
+| `horizonOpacity` | Horizon line opacity | `1` | 0 to 1 | the white zero-pitch reference line (0 = hidden, 1 = solid) |
+| `tick_autoscale` | Auto-scale tick widths to font | on | on / off | off = use the explicit tick-width / bank-size pixels below |
+| `minorDivWidth` | Minor tick width (px) | `10` |  | length of the minor pitch ticks (auto-scale off) |
+| `majorDivWidth` | Major tick width (px) | `40` |  | length of the major pitch ticks (auto-scale off) |
+| `numberedDivWidth` | Numbered tick width (px) | `50` |  | length of the numbered pitch ticks (auto-scale off) |
+| `drawBankMarkers` | Standard-rate bank markers | on | on / off | show the bank-angle tick arc across the top |
+| `bankAngleMaximum` | Max indicated bank (deg) | `25` |  | largest bank angle marked on the bank arc |
+| `bankMarkSize` | Bank tick size (px) | `10` |  | length of the bank-arc ticks (auto-scale off) |
+| `bank_position` | Bank scale position (%) | `50` | 0 to 100 | vertical position of the bank-arc centre, percent up from the bottom (50 = centred, the classic look); the whole cluster incl. pointer and slip ball moves with it |
+| `bank_radius` | Bank scale radius (% height) | `33.333` | 10 to 60, step 0.1 | radius of the bank arc as a percent of widget height (33.3 = the classic height/3); an explicit bankAngleRadius px in YAML overrides it |
+| `pitch_ladder_avoid_bank` | Ladder stops below bank arc | off | on / off | G1000-style declutter: the ladder climbs into the bank arch but stops below the slip/skid ball |
+| `horizon_heading_marks` | Horizon heading marks | off | on / off | tick marks + labels for compass heading along the horizon |
+| `horizon_heading_interval` | Heading tick interval (deg) | `10` | 1 to 45, step 1 | degrees of heading between the horizon ticks |
+| `horizon_heading_label_interval` | Heading label interval (deg) | `20` | 5 to 90, step 5 | degrees of heading between the numeric labels |
+| `horizon_heading_tick_length` | Heading tick length (px) | `5` | 1 to 30, step 1 | length of the horizon heading ticks (px) |
+| `horizon_heading_color` | Heading mark colour | `#ffffff` | colour | colour of the horizon heading ticks and labels |
+
+<!-- /generated -->
+
+It draws terrain only if a nested `svs:` block with `enabled: true` is in its
+options; the flat `svs_` options are read by `virtual_vfr` only.

@@ -25,13 +25,14 @@
 - [Headless Linux Appliance](Headless-Linux-Appliance)
 - [Running from Source](Running-from-Source)
 
-**Widget Reference**
+**Instrument Reference**
 - [Index](Widget-Reference)
 - [Flight Instruments](Widgets-Flight-Instruments)
 - [Attitude & SVS](Widgets-Attitude-and-SVS)
+- [Navigation](Widgets-Navigation)
 - [Engine & Data Gauges](Widgets-Engine-Gauges)
 - [Text & Interactive](Widgets-Text-and-Interactive)
-- [System & Status](Widgets-System)
+- [System & Containers](Widgets-System)
 - [FIX Database Keys](FIX-Database-Keys)
 
 **Screens**
