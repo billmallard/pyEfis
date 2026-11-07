@@ -1,146 +1,160 @@
 # FIX Database Keys
 
-pyEFIS draws **FIX keys** — named values in the in-memory FIX database fed by
-fix-gateway. This page is a glossary of the keys the shipped widgets consume.
-See [Concepts §1](Concepts#1-the-fix-database-the-data-bus) for how keys,
-quality flags, and aux values work.
-
-> **Canonical source:** the master registry of keys, their types, and their
-> CAN-FIX parameter IDs lives in **fix-gateway / CAN-FIX**, not in pyEFIS.
-> pyEFIS only *reads* keys. Keys, ranges, and units below reflect how the
-> shipped pyEFIS configs and the test mock database define them; your
-> fix-gateway may add more.
+pyEFIS draws **FIX keys**, the named values fix-gateway publishes, and writes
+some back when the pilot sets something. This page lists the keys the shipped
+instruments and configuration read and write. The master list of keys, their
+types and their CAN-FIX parameters belongs to fix-gateway and CAN-FIX, not to
+pyEFIS; your fix-gateway may define more. How keys, quality flags and aux
+values work is on
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-data).
 
 ## Air data
 
+| Key | Units | Meaning | Read by | Written by |
+|---|---|---|---|---|
+| `IAS` | kt | Indicated airspeed; carries the V-speed aux values | airspeed tape and dial, `airspeed_box` | |
+| `TAS` | kt | True airspeed | the airspeed tape's TAS box, `airspeed_box`, the attitude display (standard-rate marks) | |
+| `GS` | kt | Groundspeed | `airspeed_box`, the HSI (track diamond), the flight path marker | |
+| `ALT` | ft | Indicated altitude | altitude tape and dial, synthetic vision, the moving map | |
+| `VS` | ft/min | Vertical speed | VSI instruments, the flight path marker | |
+| `BARO` | inHg | Altimeter setting, always in inHg on the bus | altitude tape | the altitude tape's box, the baro buttons |
+| `ALTSEL` | ft | Selected altitude | altitude tape | the altitude tape's box |
+| `OAT` | °C | Outside air temperature | text readouts on the stock screens; switched by **Units** | |
+| `PALT`, `DALT` | ft | Pressure and density altitude | text readouts on the stock screens | |
+
+**`IAS` aux values:** `Vs`, `Vs0`, `Vno`, `Vne` and `Vfe`. They draw the
+airspeed bands; see
+[Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed#airspeed-tape).
+
+## Attitude
+
 | Key | Units | Meaning | Read by |
-|-----|-------|---------|---------|
-| `IAS` | knots | Indicated airspeed (carries V-speed aux values) | airspeed widgets |
-| `TAS` | knots | True airspeed | `airspeed_box`, `airspeed_tape` (TAS box), AI |
-| `GS` | knots | Ground speed | `airspeed_box` |
-| `ALT` | ft | Indicated/baro altitude | altimeter widgets |
-| `VS` | ft/min | Vertical speed | `vsi_*`, `altimeter_trend_tape` |
-| `BARO` | inHg | Altimeter setting (Kollsman) | altimeter, baro buttons |
-| `OAT` / `CAT` | °C | Outside / calibrated air temp | EMS gauges |
-
-**`IAS` aux values** (V-speeds, drive the airspeed-tape color bands):
-`Vs`, `Vs0`, `Vno`, `Vne`, `Vfe`, `Va`, `Vx`, `Vy`, `Vmc`, `V1`, `V2`.
-
-## Attitude & inertial
-
-| Key | Units | Meaning | Read by |
-|-----|-------|---------|---------|
-| `PITCH` | deg | Pitch angle | AI, `virtual_vfr` |
-| `ROLL` | deg | Roll/bank angle | AI, `virtual_vfr` |
-| `ALAT` | g | Lateral acceleration (slip/skid ball) | AI, `turn_coordinator` |
+|---|---|---|---|
+| `PITCH` | deg | Pitch | attitude displays |
+| `ROLL` | deg | Bank | attitude displays |
+| `ALAT` | g | Lateral acceleration (slip) | attitude displays, `turn_coordinator` |
 | `ROT` | deg/s | Rate of turn | `turn_coordinator` |
+| `VPATH` | deg | Flight path angle, used before `VS`/`GS` when published | flight path marker |
 
-## Navigation & position
+## Heading, position and navigation
 
-| Key | Units | Meaning | Read by |
-|-----|-------|---------|---------|
-| `HEAD` | deg | Magnetic heading | `heading_display`, `heading_tape`, HSI |
-| `HEADBUG` | deg | Selected heading bug | HSI heading bug, `value_text` |
-| `TRACK` | deg | GPS ground track | AI flight-path marker |
-| `COURSE` | deg | Selected course (of the selected nav source) | HSI, `virtual_vfr` heading source |
-| `CDI` | −1..1 | Course deviation (of the selected nav source) | HSI |
-| `GSI` | −1..1 | Glideslope deviation (of the selected nav source) | HSI |
-| `NAVSRC` | — | Selected nav source: `0`=NAV1, `1`=NAV2, `2`=GPS | HSI source tab or a source-select button (writes it); HSI reads `COURSE`/`CDI`/`GSI` |
-| `LAT` / `LONG` | deg | Position | `virtual_vfr` / SVS |
-| `HWIND` | knots | Headwind component (− = tailwind) | `wind_display` |
-| `XWIND` | knots | Crosswind component (+ = from right) | `wind_display` |
+| Key | Units | Meaning | Read by | Written by |
+|---|---|---|---|---|
+| `HEAD` | deg | Magnetic heading | HSI, heading instruments, synthetic vision | |
+| `MAGVAR` | deg | Magnetic variation | synthetic vision, the moving map, the flight plan page | |
+| `TRACK` | deg | GPS ground track, true | flight path marker | |
+| `TRACKM` | deg | GPS ground track, magnetic | HSI (track diamond), the moving map | |
+| `LAT`, `LONG` | deg | Position | synthetic vision, the moving map, the flight plan page, listbox Nearest sort | |
+| `HEADBUG` | deg | Selected heading | HSI | the HSI's HDG edit, the heading-bug buttons |
+| `NAVSRC` | | Selected nav source: `0` NAV1, `1` NAV2, `2` GPS | HSI | the HSI's source tab |
+| `COURSE` | deg | Course of the selected source | HSI; the legacy CIFP overlay's heading | |
+| `CDI` | -1 to 1 | Lateral deviation of the selected source | HSI | |
+| `CDIV` | | Lateral deviation valid | HSI | |
+| `TOFROM` | | TO/FROM of the selected source | HSI | |
+| `GSI` | -1 to 1 | Vertical deviation of the selected source | HSI, `virtual_vfr` | |
+| `GSV` | | Vertical deviation valid | HSI | |
+| `NAVTYPE` | | VOR or LOC, for the source tab; nothing in fix-gateway publishes it today | HSI | |
+| `NAV1CRS`, `NAV2CRS` | deg | Course set on each NAV radio | | the HSI's CRS edit |
+| `BRG1`, `BRG2` | deg | Bearing pointers 1 and 2 | HSI | |
+| `BRG1SRC`, `BRG2SRC` | | What each bearing pointer points at | HSI | the HSI's bearing labels |
+| `VOR1BRG`, `VOR2BRG` | deg | Bearing to each VOR | HSI (CRS push) | |
+| `HWIND`, `XWIND` | kt | Headwind (negative is tailwind), crosswind (positive is from the right) | `wind_display` | |
 
-> **Nav-source selection.** `COURSE` / `CDI` / `GSI` are *canonical* keys that
-> always carry whichever source the pilot has selected with `NAVSRC`. The
-> per-source values (GPS vs NAV1 vs NAV2 course/deviation) live in **fix-gateway**
-> (keys like `GPSCRS`, `NAV1CDI`, …); its `compute` plugin's `select` function
-> routes the chosen one into `COURSE`/`CDI`/`GSI`. pyEFIS only reads the canonical
-> keys — bind the HSI to those, and a `value_text` to `NAVSRC` (or a button that
-> cycles it) for the source annunciation. A button using
-> [`change value wrap`](Widgets-Text-and-Interactive#actions) on `NAVSRC` cycles
-> the source.
+**Nav-source selection.** `COURSE`, `CDI`, `TOFROM` and `GSI` always carry the
+source `NAVSRC` selects. The per-source keys (`NAV1CRS`, `NAV1CDI`, `GPSCRS`
+and so on) live in fix-gateway, whose `compute` plugin routes the selected one
+into the canonical keys. See [The HSI](The-HSI#nav-sources) and
+[The HSI: feeding it](The-HSI#feeding-it). The shipped `cdi-source` button
+assumes a different numbering
+([#412](https://github.com/billmallard/pyEfis/issues/412)); use the HSI's source
+tab.
 
 ## Flight plan
 
-The flight-plan **engine lives in fix-gateway** (`flightplan` plugin, FP2);
-pyEFIS's `src/pyefis/flightplan/fixbridge.py` (FP4) publishes the route to
-these keys and reads the engine's guidance back. See
-`makerplane/briefs/flight_plan_plan.md` section 3.2 Appendix A and
-billmallard/pyEfis#181 for the full contract; the authoritative key table
-is fix-gateway's `doc/flightplan_keys.md`. This table covers what the bridge
-touches.
+The flight-plan engine is fix-gateway's `flightplan` plugin; see
+[Flight Plan Engine](https://github.com/billmallard/fix-gateway/wiki/Flight-Plan-Engine).
+The flight plan page writes the route and commands to these keys and reads the
+engine's guidance back. fix-gateway's key table is the authority; this table is
+what pyEFIS touches.
 
 | Key | Units | Meaning | Written by |
-|-----|-------|---------|------------|
-| `FPLfID` / `FPLfLAT` / `FPLfLON` (`f`=1..100) | str/deg/deg | Route slot ident + position | editor |
-| `FPLfTYPE` / `FPLfFLAGS` | int | Slot type (0 unk..6 map) / flags (`0x01` fly-over, `0x02` IAF, `0x04` FAF, `0x08` MAP, `0x10` MAHP, `0x20` coded procedure) | editor |
-| `FPLfPT` / `FPLfCRS` / `FPLfDST` | —/deg mag/nm | Leg path terminator (`TF` default) / course / distance or radius | editor |
-| `FPLfALT` / `FPLfSPD` | —/kt | Packed altitude constraint (`"+7000"`; an airway leg's MEA) / speed constraint | editor |
-| `FPLfCTRLAT` / `FPLfCTRLON` / `FPLfTURN` | deg/deg/— | Arc centre / turn direction (`RF`/`AF`/holds) | editor |
-| `FPLfSGI` | — | Segment-table row this slot belongs to (1..`FPLSEGCNT`) | editor |
-| `FPLSfKIND` / `FPLSfID` | — | Segment kind (0 waypoint, 1 airway, 2 departure, 3 arrival, 4 approach, 5 missed) / ident (`V27`) | editor |
-| `FPLSfENT` / `FPLSfEXT` / `FPLSfFIRST` / `FPLSfLAST` | — | Segment entry/exit idents and first/last slot | editor |
-| `FPLSEGCNT` | — | Segment rows in use | editor |
-| `FPLCOUNT` | — | Slots in use (0..100) | editor |
-| `FPLNAME` | — | Route name | editor |
-| `FPLDBCYC` | — | AIRAC cycle the airways/procedures came from | editor |
-| `FPLSEQ` | — | Commit counter — consumers act only on this changing, written last | editor |
-| `DTOID` / `DTOLAT` / `DTOLON` / `DTOTYPE` | — | Direct-to staging | editor |
-| `FPLCMD` | — | `"<seq> VERB [arg]"` (`ACT`/`DTO`/`DTOX`/`SUSP`/`RESUME`/`SCALE`) | editor |
-| `FPLCMDACK` / `FPLMSG` | — | Ack (negative = rejected) / last message | engine |
-| `FPLSTATE` / `FPLACTLEG` | — | 0 NONE/1 LEG/2 DIRECT/3 SUSP / slot of the TO waypoint | engine |
-| `FPLPHASE` / `FPLAPR` / `FPLINTEG` | — | Flight-phase annunciation / approach state / integrity gate | engine |
-| `CDISCALE` | nm | Full-scale CDI deflection (2.0 ENR, 1.0 TERM, ramps to 0.3 LNAV) | engine |
-| `FPLCRS` / `FPLXTK` / `FPLCDI` / `FPLTF` | deg/nm/−1..1/— | Desired track / cross-track / deviation / TO-FROM | engine |
-| `WPDIS` / `WPETE` | nm / s | Distance / time to the TO waypoint | engine |
-| `WPFROM` / `WPNEXT` | — | FROM / NEXT idents | engine |
-| `FPLREMDIS` / `FPLREMETE` | nm / s | Remaining distance / time to the end of the plan | engine |
-| `FPLACTSEG` / `FPLSEGREM` | — / nm | Segment of the TO slot / distance left in it | engine |
-| `GPSSRC` | — | 0 = internal plan, 1 = external navigator | pilot |
+|---|---|---|---|
+| `FPLfID` / `FPLfLAT` / `FPLfLON` (`f` = 1 to 100) | text / deg / deg | Route slot ident and position | pyEFIS |
+| `FPLfTYPE` / `FPLfFLAGS` | | Slot type (0 unknown to 6 map point) / flags (`0x01` fly-over, `0x02` IAF, `0x04` FAF, `0x08` MAP, `0x10` MAHP, `0x20` coded procedure) | pyEFIS |
+| `FPLfPT` / `FPLfCRS` / `FPLfDST` | / deg mag / nm | Leg path terminator (`TF` by default) / course / distance or radius | pyEFIS |
+| `FPLfALT` / `FPLfSPD` | / kt | Altitude constraint (`"+7000"`; an airway leg's MEA) / speed constraint | pyEFIS |
+| `FPLfCTRLAT` / `FPLfCTRLON` / `FPLfTURN` | deg / deg / | Arc centre / turn direction (RF, AF and holds) | pyEFIS |
+| `FPLfSGI` | | The segment row this slot belongs to | pyEFIS |
+| `FPLSfKIND` / `FPLSfID` | | Segment kind (0 waypoint, 1 airway, 2 departure, 3 arrival, 4 approach, 5 missed) / ident (`V27`) | pyEFIS |
+| `FPLSfENT` / `FPLSfEXT` / `FPLSfFIRST` / `FPLSfLAST` | | Segment entry and exit idents, first and last slot | pyEFIS |
+| `FPLSEGCNT`, `FPLCOUNT` | | Segment rows / slots in use | pyEFIS |
+| `FPLNAME`, `FPLDBCYC` | | Route name / data cycle the airways came from | pyEFIS |
+| `FPLSEQ` | | Commit counter, written last; the engine acts when it changes | pyEFIS |
+| `DTOID` / `DTOLAT` / `DTOLON` / `DTOTYPE` | | Direct-To target | pyEFIS |
+| `FPLCMD` | | `"<seq> VERB [arg]"`: `ACT`, `DTO`, `DTOX`, `SUSP`, `RESUME`, `SCALE` | pyEFIS |
+| `FPLCMDACK` / `FPLMSG` | | Acknowledgement (negative is a rejection) / last message | engine |
+| `FPLSTATE` / `FPLACTLEG` | | 0 none, 1 leg, 2 direct, 3 suspended / slot of the TO waypoint | engine |
+| `FPLPHASE` / `FPLAPR` / `FPLINTEG` | | Phase / approach state / integrity | engine |
+| `FPLSUSPMAP` | | Suspended at the missed approach point | engine |
+| `CDISCALE` | nm | Full-scale deflection | engine |
+| `FPLCRS` / `FPLXTK` / `FPLCDI` / `FPLTF` | deg / nm / -1 to 1 / | Desired track / cross-track / deviation / TO-FROM | engine |
+| `FPLFRLAT` / `FPLFRLON` | deg | Where a Direct-To started | engine |
+| `WPNAME` / `WPLAT` / `WPLON` | | The TO waypoint | engine |
+| `WPFROM` / `WPNEXT` | | FROM and NEXT idents | engine |
+| `WPDIS` / `WPETE` | nm / s | Distance and time to the TO waypoint | engine |
+| `FPLREMDIS` / `FPLREMETE` | nm / s | Distance and time to the end of the plan | engine |
+| `FPLACTSEG` / `FPLSEGREM` | / nm | Segment of the TO slot / distance left in it | engine |
+| `FPLALERT` | | Engine alert | engine |
+| `GPSSRC` | | 0 pyEFIS's plan, 1 an external navigator | fix-gateway configuration |
 
-`WPLAT`/`WPLON`/`WPNAME` (existing keys, see Navigation & position above) are
-written by the engine while a plan is active. `GPSSRC` selects `{FPLCRS,
-EXTCRS} -> GPSCRS` etc. into the canonical `GPSCRS`/`GPSCDI`/`GPSTF`, which
-`NAVSRC` then carries on into `COURSE`/`CDI`/`TOFROM` as usual — the HSI is
-unmodified by this epic.
+The `nav_status` line reads `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`,
+`WPNEXT`, `WPDIS` and `WPETE`.
 
-The `nav_status` chip reads `FPLSTATE`, `FPLPHASE`, `WPFROM`/`WPNAME`/`WPNEXT`
-and `WPDIS`/`WPETE` (see [Navigation](Widgets-Navigation#nav_status)).
+## Engine
 
-## Engine / EMS (representative)
-
-These are bound to gauges through [Preferences](Preferences-and-Styling)
-(`gauges:` slots like `ARC1`, `BAR15`) and the EMS includes. Exact names/IDs
-come from fix-gateway/CAN-FIX; the shipped example configs use:
+Gauges take any key through `dbkey`; the stock screens bind these through
+gauge slots (`ARC1`, `BAR15`; see
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#gauge-slots-gauges)):
 
 | Key | Meaning |
-|-----|---------|
+|---|---|
 | `TACH1` | Engine RPM |
+| `MAP1` | Manifold pressure |
 | `OILP1` / `OILT1` | Oil pressure / temperature |
-| `EGT11`–`EGT14` | Exhaust gas temp per cylinder; `EGTMAX1` = hottest |
-| `CHT11`–`CHT14` | Cylinder head temp per cylinder; `CHTMAX1` = hottest |
+| `H2OT1` | Coolant temperature |
+| `EGT11` to `EGT14` | Exhaust gas temperature per cylinder; `EGTMAX1` is the hottest |
+| `CHT11` to `CHT14` | Cylinder head temperature per cylinder; `CHTMAX1` is the hottest |
 | `FUELP1` / `FUELF1` | Fuel pressure / flow |
-| `FUELQT` / `FUELQ1`–`FUELQ3` | Fuel quantity (total / tanks) |
+| `FUELQT`, `FUELQ1` to `FUELQ3` | Fuel quantity, total and per tank |
 | `VOLT` / `CURRNT` | Bus voltage / current |
-| `HTOT1` | (engine health/aux, per config) |
+| `THR1` | Throttle |
 
-Each engine key supplies its green/yellow/red bands via its **aux values**
-(`Min`/`Max`/`lowWarn`/`lowAlarm`/`highWarn`/`highAlarm`) — see
-[Concepts §2](Concepts#2-the-color-state-model-gauges).
+Each key's range and limits are its aux values (`Min`, `Max`, `lowWarn`,
+`lowAlarm`, `highWarn`, `highAlarm`); see
+[Engine Monitoring](Engine-Monitoring#reading-a-gauge). The EGT buttons write
+`EGTBTN1` to `EGTBTN4`.
 
-## System / UI
+## Buttons, controls and system
 
-| Key | Type | Meaning |
-|-----|------|---------|
-| `TSBTN<node><n>` | bool | Touchscreen button (node-scoped, e.g. `TSBTN112`) |
-| `BTN<n>` / `ENC<n>` | bool / int | Physical button / rotary encoder inputs |
-| `HIDEBUTTON` | bool | Hide/show on-screen buttons (menu timeout) |
-| `MAVREQADJ`, `MAVADJ`, `MAVSTATE`, `MAVMODE` | mixed | MAVLink/autopilot request & state keys (trim/AP) |
+| Key | Meaning | Written by |
+|---|---|---|
+| `TSBTN{id}<n>` | Touchscreen buttons, one set per display (`TSBTN112` on display 1) | buttons |
+| `ENC3`, `ENC4`, `BTN3` | The knob's turn, outer ring and push, as the stock `hmi/encoder_input.yaml` names them | the knob hardware |
+| `ENC1` | The menu's encoder | the knob hardware |
+| `HIDEBUTTON` | Hides the stock screens' buttons | pyEFIS (button timeout), the **Show Menu** button |
+| `DIM` | Display brightness step | the dimmer buttons |
+| `TRIMP`, `TRIMR`, `TRIMY` | Trim position | the trim buttons |
+| `MAPRANGE`, `MAPORIENT`, `MAPTERRAIN` | Map range, orientation and terrain layer, when a panel binds them | map buttons |
+| `MAVSTATE`, `MAVMODE`, `MAVMSG`, `MAVADJ`, `MAVWPVALID` | Autopilot state, mode, message, adjustment, waypoint valid | |
+| `MAVREQADJ`, `MAVREQTRIM`, `MAVREQGUIDED`, `MAVREQCRUISE` | Autopilot requests | autopilot buttons |
+| `COM*{radio_id}` | Radio frequencies and status for the MGL radio screens (`COMACTFREQ1`) | radio controls |
+| `PYEFIS_VERSION` | pyEFIS's version | pyEFIS |
+| `GATEWAY_VERSION`, `ACID`, `TIMEZ`, `TIMEL` | Gateway version, aircraft ID, UTC and local time, shown on the stock screens | |
 
-## A note on quality flags
+## Quality flags
 
-Every key carries `old` / `bad` / `fail` / `annunciate` flags independent of its
-value (see [Concepts §3](Concepts#3-data-quality--states)). Buttons can read any
-of these in conditions as `KEY.old`, `KEY.bad`, `KEY.fail`, `KEY.annunciate`,
-and aux values as `KEY.aux.<name>` — see
-[Widgets-Text-and-Interactive](Widgets-Text-and-Interactive).
+Every key carries `old`, `bad`, `fail` and `annunciate` flags beside its value.
+Instruments show them as each page describes. Button conditions can test them
+as `KEY.old`, `KEY.bad`, `KEY.fail` and `KEY.annunciate`, and read aux values
+as `KEY.aux.<name>`; see
+[Text & Interactive](Widgets-Text-and-Interactive#conditions).

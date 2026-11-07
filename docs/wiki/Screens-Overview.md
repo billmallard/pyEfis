@@ -10,8 +10,8 @@ one comes up first, and how the pilot moves between them.
 
 You can fly the shipped set as-is, or customize it: change which screens load,
 re-skin the gauges, and toggle features through
-[Preferences & Styling](Preferences-and-Styling), or build entirely new screens
-with the [Screen Builder](Screen-Builder). To operate these screens in the
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#preferences), or build entirely new screens
+with the [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator). To operate these screens in the
 cockpit, see the [The Panel at a Glance](The-Panel-at-a-Glance).
 
 > Screenshots of the assembled screens will be added in a later documentation
@@ -22,7 +22,7 @@ cockpit, see the [The Panel at a Glance](The-Panel-at-a-Glance).
 ## Choosing which screens load & the default
 
 Screens are pulled into the running config through the include system described
-in [Preferences & Styling](Preferences-and-Styling). The top-level
+in [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#preferences). The top-level
 `config/default.yaml` does not name screens directly; it pulls a named slot:
 
 ```yaml
@@ -87,7 +87,7 @@ screen that is not loaded) boots Data Status's *Continue* target instead.
 Its main use is in **touchscreen buttons**: a button config's `dbkey` containing
 `{id}` has `{id}` replaced by the `nodeID` (e.g. `TSBTN{id}12` →
 `TSBTN112`), so one button config file can serve several physical displays on
-the same bus without colliding. See [Screen Builder](Screen-Builder) and the
+the same bus without colliding. See [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator) and the
 button mechanics in
 [Text & Interactive Widgets](Widgets-Text-and-Interactive#button).
 
@@ -108,7 +108,7 @@ button mechanics in
 > **Migrating from Six-Pack:** the traditional steam-gauge screen
 > (`screens/sixpack.yaml` and its portrait / left-buttons variants) has been
 > removed — it was a legacy layout, and the same round-gauge arrangement is a
-> few minutes' work in the [Screen Builder](Screen-Builder#worked-example-classic-six-instrument-panel),
+> few minutes' work in the [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#example-a-classic-six-pack-screen),
 > sized to taste with `span` / `move` / `font_percent`. A custom config that
 > still maps `SCREEN_SIXPACK` to the deleted file will get a clear error on
 > load, not a silent failure.
@@ -265,8 +265,8 @@ Buttons can also be hidden behind a `HIDEBUTTON` flag and revealed on hover
 (`hover_show`), and the *Units* button doubles as a "Show Menu" toggle when the
 bar is hidden. The same screen changes are also reachable from the keyboard via
 keybindings and from a single rotary **encoder** (each button carries an
-`encoder_order`); see [Concepts §6](Concepts#6-encoder-interaction) and
-[Screen Builder](Screen-Builder#encoder-control).
+`encoder_order`); see [Concepts §6](Customizing-Beyond-the-Configurator#the-knob) and
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-knob).
 
 There is a second button set, `screen_changing_PFD-EMS-MAP-RADIO-AP-Units.yaml`
 (both orientations), offering a PFD/EMS/Map/Radio/Autopilot/Units bar as an
@@ -302,13 +302,13 @@ These are alternate layouts of the *same* screen name (e.g.
 - To change **which** screens load, the **default** screen, or which file fills
   a `SCREEN_*` slot (portrait / left-button variants), edit the `includes:` and
   `screens/default_list.yaml` as above — all overridable from
-  `preferences.yaml.custom`. See [Preferences & Styling](Preferences-and-Styling).
+  `preferences.yaml.custom`. See [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#preferences).
 - To toggle features on the shipped screens (HSI, VSI tape, trim controls,
   cylinder count, the button bar itself via `BUTTONS`, …), use the `enabled:`
   flags — each `disabled:` line on a screen instrument names one. See
-  [Concepts §7](Concepts#7-preferences--styling) and
-  [Preferences & Styling](Preferences-and-Styling).
+  [Concepts §7](Customizing-Beyond-the-Configurator#preferences) and
+  [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#preferences).
 - To build a **new** screen from scratch — the grid, includes, ganged
   instruments, `display_state` cycling, encoder wiring — see
-  [Screen Builder](Screen-Builder). For the widgets you place on it, see the
+  [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator). For the widgets you place on it, see the
   [Widget Reference](Widget-Reference).
