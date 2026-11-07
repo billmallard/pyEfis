@@ -29,3 +29,4 @@
 
 **Pilots**
 - [Pilot's Guide](Pilots-Guide)
+- [The HSI](The-HSI)

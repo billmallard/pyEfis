@@ -45,7 +45,7 @@ quality flags, and aux values work.
 | `COURSE` | deg | Selected course (of the selected nav source) | HSI, `virtual_vfr` heading source |
 | `CDI` | −1..1 | Course deviation (of the selected nav source) | HSI |
 | `GSI` | −1..1 | Glideslope deviation (of the selected nav source) | HSI |
-| `NAVSRC` | — | Selected nav source: `0`=GPS, `1`=NAV1, `2`=NAV2 | source-select button (writes it); HSI reads `COURSE`/`CDI`/`GSI` |
+| `NAVSRC` | — | Selected nav source: `0`=NAV1, `1`=NAV2, `2`=GPS | HSI source tab or a source-select button (writes it); HSI reads `COURSE`/`CDI`/`GSI` |
 | `LAT` / `LONG` | deg | Position | `virtual_vfr` / SVS |
 | `HWIND` | knots | Headwind component (− = tailwind) | `wind_display` |
 | `XWIND` | knots | Crosswind component (+ = from right) | `wind_display` |
