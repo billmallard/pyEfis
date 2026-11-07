@@ -61,7 +61,7 @@ class VerticalBar(AbstractGauge):
             if self._normalizeMode: return
             self._normalizeMode = True
             self._oldpencolor = self.pen_good_color
-            self.penGoodColor = self.normalizePenColor
+            self.pen_good_color = self.normalizePenColor
             self.normalizeReference = self.value
         else:
             self._normalizeMode = False
