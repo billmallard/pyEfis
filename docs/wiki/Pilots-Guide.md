@@ -59,7 +59,7 @@ The PFD combines the classic "T" with synthetic vision:
 - **VSI** — vertical speed, as a tape/pointer beside the altimeter.
 - **Heading** — a heading tape or card across the top/bottom.
 - **HSI** — course pointer with **CDI** (course deviation) and, on an approach,
-  the **glideslope** diamond.
+  the **glideslope** diamond. See [The HSI](The-HSI).
 - **Slip/skid** — the inclinometer "ball" (also the standalone turn coordinator
   on the Six-Pack).
 - **Wind** — a compact headwind/crosswind readout (if enabled): `HW`/`TW` for
