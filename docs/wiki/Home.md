@@ -6,6 +6,10 @@ supplied by FIX-Gateway.
 
 > pyEFIS is experimental software. It is not certified. It is provided as-is
 > with no warranty, and any use of it is at your own risk.
+>
+> Do not use pyEFIS as the sole source of attitude information in instrument
+> meteorological conditions. Fly with an independent standby: one that shares
+> no sensor, computer, software, power source or display with pyEFIS.
 
 ## The system in three parts
 
