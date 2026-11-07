@@ -48,7 +48,8 @@ The HSI crops are 420 x 410 px at (420, 640) of the panel.
 **The diamond right of the rose** in these captures is the glidepath pointer.
 On this bench `GSV` for GPS comes from X-Plane's own GPS glidepath flag
 whatever `GPSSRC` is, so it shows beside the internal plan's lateral guidance.
-That is a defect, not intended behaviour, and is filed on fix-gateway.
+That is a defect, not intended behaviour:
+[fix-gateway#137](https://github.com/billmallard/fix-gateway/issues/137).
 
 To capture again: queue the profile (`POST /sessions` with
 `{"profile": "fp8-ksmx-rnav30-missed"}`), copy `bench_flight/docs_flight.py`,

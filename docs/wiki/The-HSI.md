@@ -5,11 +5,18 @@ how far you are off it, for whichever nav source you have selected: the GPS
 flight plan or a NAV radio. On the bench panel it sits bottom centre, under the
 synthetic vision. The instrument type is `horizontal_situation_indicator`.
 
-![The HSI on a GPS leg, 0.4 nm right of course: GPS source tab, HDG / MAG / CRS readouts, course pointer with the deviation bar left of centre and the TO triangle, magenta track diamond and cyan heading bug at the top, bearing pointer 1 (GPS) and 2 (VOR1)](../images/hsi/gps_leg_right_of_course.png)
+![The HSI on a GPS leg, HANNU to WINCH, 0.86 nm right of course at 1.0 nm full scale: GPS source tab, HDG / MAG / CRS readouts, course pointer at 296 with the deviation bar left of centre and the TO triangle, magenta track diamond and cyan heading bug on the rim, bearing pointers 1 (GPS) and 2 (VOR1)](../images/hsi/bench_gps_leg_off_course.png)
 
-The pictures on this page are the HSI as the bench panel configures it,
-rendered from pyEFIS against a running fix-gateway and its flight-plan engine.
-The [README](../images/hsi/README.md) beside them says how they were made.
+![The bench panel on the KSMX RNAV 30, 1.9 nm before the final approach fix: synthetic vision with the airspeed and altitude tapes, the HSI bottom centre, the moving map on the right](../images/hsi/bench_panel_approach.png)
+
+The `bench_` pictures on this page come from the simulator bench, flying the
+KSMX RNAV (GPS) RWY 30 with its missed approach and hold on pyEFIS's own flight
+plan. The rest are the bench panel's HSI rendered from pyEFIS against a running
+fix-gateway, for scenes that flight did not fly. The
+[README](../images/hsi/README.md) beside them says how each was made. In the
+bench pictures, the diamond right of the rose is a glidepath from the
+simulator's own GPS, which should not show while pyEFIS's flight plan is the
+source ([fix-gateway#137](https://github.com/billmallard/fix-gateway/issues/137)).
 
 ## Reading it
 
@@ -123,15 +130,19 @@ follows the racetrack: the outbound course on the outbound leg, then round the
 turn to the inbound course. Entries are flown as AIM 5-3-8 describes:
 teardrop, parallel or direct, chosen by your track arriving at the fix.
 
-| Outbound | Turning inbound | Inbound |
-|---|---|---|
-| ![Hold at HENER, right turns, inbound 073: outbound on 253](../images/hsi/gps_hold_outbound.png) | ![Turning back inbound: the course pointer swinging through 316](../images/hsi/gps_hold_turn_inbound.png) | ![Inbound on 073 to HENER](../images/hsi/gps_hold_inbound.png) |
+| Past the fix | Entry turn | Outbound | Turning inbound |
+|---|---|---|---|
+| ![Hold at WINCH: 1.9 nm past the fix, still on 300, the course pointer already on the outbound 122](../images/hsi/bench_hold_1_crossing.png) | ![The entry turn: heading 069, course 122](../images/hsi/bench_hold_2_entry_turn.png) | ![Outbound: heading 147 on the outbound course 122](../images/hsi/bench_hold_3_outbound.png) | ![Turning back inbound: the course pointer follows the turn, 080 at heading 087](../images/hsi/bench_hold_4_turn_inbound.png) |
 
 **Suspend.** **SUSP** on the flight-plan page stops sequencing. The HSI keeps
 guiding to the current waypoint, and the triangle turns to FROM once you pass
 it. **RESUME** picks up the plan again. A suspend in a fly-by turn takes the
 course back to the leg you were on. At the missed approach point the engine
 suspends on its own, and RESUME flies the missed approach.
+
+| Suspended at the missed approach point | After RESUME |
+|---|---|
+| ![Past RW30 on the KSMX RNAV 30: the engine has suspended, the triangle reads FROM and bearing pointer 1 points back at RW30](../images/hsi/bench_susp_at_map.png) | ![RESUME: the missed approach, course 319 to HANNU, TO](../images/hsi/bench_resume_missed.png) |
 
 For every leg type, sequencing rule and Direct-To behaviour, see
 [Flight Plan Engine](https://github.com/billmallard/fix-gateway/wiki/Flight-Plan-Engine).
