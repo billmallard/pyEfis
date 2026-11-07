@@ -939,12 +939,11 @@ class HSI(QGraphicsView):
 
             ext = self.r - self.fontSize * 2.0
             bar = self.cdippw
-            self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad) \
-                and not self._no_lateral_signal()
+            self._showCDI = self._cdi_shown()
             self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
                 and not (self._GsiOld or self._GsiBad or self._GsiFail)
 
-            if self.cdi_enabled:
+            if self.cdi_enabled and self._course_valid():
                 # Lateral deviation scale dots (white) along the lateral axis.
                 c.setPen(QPen(QColor(self.fg_color)))
                 c.setBrush(QBrush(QColor(self.fg_color)))
@@ -1534,6 +1533,21 @@ class HSI(QGraphicsView):
             if self.isVisible():
                 self.update()
 
+    def _course_valid(self):
+        # A bad or failed COURSE has no direction to draw: the course pointer,
+        # the deviation scale rotated to it and the CRS readout all go, rather
+        # than showing the failed value (000) as a selected course (G66).
+        return not (self._CourseBad or self._CourseFail)
+
+    def _cdi_shown(self):
+        # The deviation bar draws only on a usable lateral signal against a
+        # usable course. Fail is tested as well as old/bad: the NAV flag shows
+        # on fail, and the bar is gone whenever NAV shows, so a fail-only CDI
+        # can no longer leave a centred "on course" bar under the flag (G66).
+        return self.cdi_enabled and self._course_valid() \
+            and not (self._CdiOld or self._CdiBad or self._CdiFail) \
+            and not self._no_lateral_signal()
+
     def _no_lateral_signal(self):
         # CDIV published and 0: the selected radio receives no lateral guidance.
         return self._cdiv is not None and self._cdiv < 0.5
@@ -1799,8 +1813,7 @@ class HSI(QGraphicsView):
             if self._bearing_visible(_n):
                 self._draw_arc_bearing_needle(c, _n, cx, own_y)
 
-        self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad) \
-            and not self._no_lateral_signal()
+        self._showCDI = self._cdi_shown()
         self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
             and not (self._GsiOld or self._GsiBad or self._GsiFail)
         if self.cdi_enabled or self.gsi_enabled:
@@ -1879,7 +1892,8 @@ class HSI(QGraphicsView):
         Course-bound by decision, not by default -- see pyEfis#133; a
         screen-fixed lateral scale is the Navigation Display idiom and belongs
         on the moving-map ND mode (pyEfis#134), not here."""
-        if self.cdi_enabled and self._arc_in_sector(self._courseSelect):
+        if self.cdi_enabled and self._course_valid() \
+                and self._arc_in_sector(self._courseSelect):
             bx, by = self._arc_band_point(self._courseSelect)
             dx = bx - ox; dy = by - oy
             dl = math.hypot(dx, dy) or 1.0
@@ -2079,6 +2093,8 @@ class HSI(QGraphicsView):
         select runs, and the knob has to answer at once."""
         if self._edit_field == "crs" and self._edit_item is not None:
             return self._edit_item.value
+        if not self._course_valid():
+            return None                   # dashed: "---°"
         return self._courseSelect
 
     def _min_touch_px(self):
@@ -2240,11 +2256,15 @@ class HSI(QGraphicsView):
 
     def setCourseBad(self,bad):
         self._CourseBad = bad
+        if self.isVisible():
+            self.update()
 
     def setCourseFail(self,fail):
         if fail != self._CourseFail:
             self._CourseFail = fail
             self.changeFail()
+            if self.isVisible():
+                self.update()
 
     def getCdi(self):
         return self._courseDeviation
@@ -2272,6 +2292,8 @@ class HSI(QGraphicsView):
             if fail != self._CdiFail:
                 self._CdiFail = fail
                 self.changeFail()
+                if self.isVisible():
+                    self.update()
 
 
     cdi = property(getCdi, setCdi)

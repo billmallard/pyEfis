@@ -344,7 +344,7 @@ convention, and no element is left showing its last-good value after loss:
 | Signal | valid | old (stale) | bad (invalid) | fail | absent |
 |--------|-------|-------------|---------------|------|--------|
 | `HEAD` | normal | grey card | grey + HDG flag (ANN-001) | HDG flag, freeze/blank card | HDG flag |
-| `COURSE` | normal | grey pointer | grey pointer | remove pointer | pointer removed |
+| `COURSE` | normal | grey pointer | remove pointer + CDI scale/bar; CRS readout `---°` | remove pointer + CDI scale/bar; CRS readout `---°` | pointer removed |
 | `CDI` | normal | hide bar | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
 | `CDIV` | CDI on its own quality | — | — | — | CDI on its own quality; `CDIV` = 0 → hide bar + NAV flag (ANN-002) |
 | `GSI`/`GSV` | normal | hide diamond | hide diamond | hide/flag (ANN-003) | no scale |
@@ -354,9 +354,12 @@ convention, and no element is left showing its last-good value after loss:
 | `BRG1`/`BRG2` | normal | hide needle | hide needle | hide needle | no needle |
 
 The widget now renders all three flags (ANN-001..003), and `_showGSI` hides on `fail`
-too. Open items: gating `_showCDI` on `fail` (currently old/bad only — the NAV flag
-covers annunciation, but a pure-fail CDI is not yet removed) and confirming
-`HEAD`/`COURSE`/`HEADBUG` each fully honor the convention.
+too. `_showCDI` hides on `fail` as well as old/bad (G66, pyEfis#392): the bar is gone
+whenever the NAV flag shows, on the rose and the arc. A bad or failed `COURSE` has no
+direction to draw, so it removes the pointer and the deviation scale rotated to it, and
+the CRS readout shows dashes rather than the failed value (000). A CRS edit in progress
+still shows the value being edited. Open items: the grey `old` treatments (`COURSE`,
+`HEADBUG`) and confirming `HEAD`/`HEADBUG` each fully honor the convention.
 
 ### 7.3 Colour (HSI-COLOR)
 

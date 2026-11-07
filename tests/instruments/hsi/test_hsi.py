@@ -164,7 +164,7 @@ def test_hsi_cdi_gsi_old_tracks_oldchanged_not_failchanged(fix, qtbot):
     widget.cdidb.badChanged.emit(False)
     widget.gsidb.oldChanged.emit(False)
     widget.gsidb.badChanged.emit(False)
-    widget._GsiFail = False
+    widget._CdiFail = widget._GsiFail = False
 
     assert widget._CdiOld is False and widget._CdiBad is False
     assert widget._GsiOld is False and widget._GsiBad is False
@@ -186,7 +186,7 @@ def test_hsi_gsi_hidden_when_no_glideslope(fix, qtbot):
     widget.resize(200, 200)
     widget.show()
     qtbot.waitExposed(widget)
-    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
+    widget._CdiOld = widget._CdiBad = widget._CdiFail = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
 
     widget.setGsv(1)
     widget.paintEvent(QPaintEvent(widget.rect()))
@@ -473,7 +473,7 @@ def test_hsi_cat_all_valid_shows_both_needles(fix, qtbot):
     """HSI-TC-001 | HSI-FAIL-001 (happy path) | Every deviation signal valid and a
     glideslope present -> both the CDI and GS needles are shown."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
-    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = w._GsiFail = False
+    w._CdiOld = w._CdiBad = w._CdiFail = w._GsiOld = w._GsiBad = w._GsiFail = False
     w.setGsv(1)
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showCDI is True
@@ -507,7 +507,7 @@ def test_hsi_cat_gs_absent_when_gsv_zero(fix, qtbot):
     absent, lateral CDI unaffected. The 'no GS present' branch, distinct from GS-lost
     (HSI-TC-103)."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
-    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = w._GsiFail = False
+    w._CdiOld = w._CdiBad = w._CdiFail = w._GsiOld = w._GsiBad = w._GsiFail = False
     w.setGsv(0)
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showGSI is False
@@ -518,7 +518,7 @@ def test_hsi_cat_cdi_full_scale_boundary(fix, qtbot):
     """HSI-TC-060 | HSI-DEV-001 (edge) | The normalized CDI at +/-1.0 full-scale (and 0)
     paints without error and stays shown; the source owns full-scale (spec sec 4.2)."""
     w = _mk_hsi(qtbot, cdi_enabled=True)
-    w._CdiOld = w._CdiBad = False
+    w._CdiOld = w._CdiBad = w._CdiFail = False
     for dev in (1.0, -1.0, 0.0):
         w.setCdi(dev)
         w.paintEvent(QPaintEvent(w.rect()))
@@ -597,6 +597,120 @@ def test_hsi_cat_nav_flag_on_no_lateral_signal(fix, qtbot):
     w.setTofrom(1)                                    # no TO/FROM without a signal
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showCDI is False
+
+
+def _count_colour(img, colour, xs, ys, tol=60):
+    """Pixels in the box xs x ys within `tol` (summed RGB distance) of colour."""
+    n = 0
+    for y in ys:
+        for x in xs:
+            p = img.pixelColor(x, y)
+            if (abs(p.red() - colour.red()) + abs(p.green() - colour.green())
+                    + abs(p.blue() - colour.blue())) < tol:
+                n += 1
+    return n
+
+
+def _mk_course_hsi(qtbot, orientation="heading_up"):
+    """A CDI-enabled HSI on heading 000, course 000, centred CDI, every signal
+    valid: the course pointer runs straight up through the centre and the
+    deviation bar sits on it."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.orientation = orientation
+    w._heading = 0.0
+    w._courseSelect = 0.0
+    w._courseDeviation = 0.0
+    w._CdiOld = w._CdiBad = w._CdiFail = False
+    w._CourseOld = w._CourseBad = w._CourseFail = False
+    return w
+
+
+def _rose_bar_pixels(w):
+    # The bar's own span along the pointer axis: the pointer head and tail stop
+    # at +/-bar, so only the deviation bar is drawn in this box.
+    img = w.viewport().grab().toImage()
+    xs = range(int(w.cx) - 3, int(w.cx) + 4)
+    ys = range(int(w.cy - w.cdippw * 0.8), int(w.cy + w.cdippw * 0.8))
+    return _count_colour(img, QColor(w._course_pointer_color()), xs, ys)
+
+
+def _rose_pointer_head_pixels(w):
+    img = w.viewport().grab().toImage()
+    ext = w.r - w.fontSize * 2.0
+    xs = range(int(w.cx) - 3, int(w.cx) + 4)
+    ys = range(int(w.cy - ext), int(w.cy - w.cdippw * 1.2))
+    return _count_colour(img, QColor(w._course_pointer_color()), xs, ys)
+
+
+def test_hsi_g66_fail_only_cdi_removes_bar_under_nav_flag(fix, qtbot):
+    """G66 (pyEfis#392) | HSI-ANN-002 + HSI-FAIL-001 (CDI fail) | A fail-only CDI
+    (bad false, fail true -- the flight-plan engine failing GPS guidance on
+    stale LAT/LONG) raises the NAV flag, and the bar is gone whenever NAV shows:
+    no centred "on course" bar at the failed value of 0 under the flag. TO/FROM
+    goes with it. The course pointer itself stays: COURSE is still valid."""
+    w = _mk_course_hsi(qtbot)
+    w.setTofrom(1)
+    assert _rose_bar_pixels(w) > 0                    # control: valid -> bar drawn
+    assert w._showCDI is True and w._showNavFlag is False
+
+    w.setCdiFail(True)                                # bad stays False
+    assert w._CdiBad is False
+    assert _rose_bar_pixels(w) == 0
+    assert w._showCDI is False and w._showNavFlag is True
+    assert _rose_pointer_head_pixels(w) > 0           # course pointer unaffected
+
+
+def test_hsi_g66_arc_fail_only_cdi_removes_bar(fix, qtbot):
+    """G66 | the arc paint path applies the same rule: on a fail-only CDI the
+    arc draws the course pointer shaft but no deviation bar."""
+    w = _mk_course_hsi(qtbot, orientation="arc")
+    ox, oy = w._arc_params()[0], w._arc_params()[2]
+
+    def lines_drawn():
+        w.paintEvent(QPaintEvent(w.rect()))           # sets _showCDI, NAV flag
+        painter = mock.Mock()
+        w._draw_arc_course(painter, ox, oy)
+        return len(painter.drawLine.call_args_list)
+
+    assert lines_drawn() == 2                         # pointer shaft + bar
+    w.setCdiFail(True)
+    assert lines_drawn() == 1                         # shaft only
+    assert w._showCDI is False and w._showNavFlag is True
+
+
+@pytest.mark.parametrize("flag", ["bad", "fail"])
+def test_hsi_g66_invalid_course_hides_pointer_bar_and_dashes_crs(fix, qtbot, flag):
+    """G66 | HSI-FAIL-001 (COURSE bad/fail) | A bad or failed COURSE has no
+    direction: the course pointer and the bar rotated to it are not drawn at the
+    failed value (000), and the CRS readout shows dashes instead of "000"."""
+    w = _mk_course_hsi(qtbot)
+    panels = []
+    w._draw_readout_panel = lambda c, *a: panels.append(a[-1])
+    assert _rose_pointer_head_pixels(w) > 0 and _rose_bar_pixels(w) > 0
+    assert panels[-1][2][:2] == ("CRS", "000°")
+
+    getattr(w, "setCourseBad" if flag == "bad" else "setCourseFail")(True)
+    assert _rose_pointer_head_pixels(w) == 0
+    assert _rose_bar_pixels(w) == 0
+    assert w._showCDI is False
+    assert panels[-1][2][:2] == ("CRS", "---°")
+
+    w.orientation = "arc"
+    ox, oy = w._arc_params()[0], w._arc_params()[2]
+    w.paintEvent(QPaintEvent(w.rect()))
+    painter = mock.Mock()
+    w._draw_arc_course(painter, ox, oy)
+    assert painter.drawLine.call_count == 0 and painter.drawPolygon.call_count == 0
+
+
+def test_hsi_g66_cdi_and_course_quality_setters_repaint(fix, qtbot):
+    """G66 | a quality change alone (value unchanged) must repaint: the NAV flag
+    and the bar removal otherwise wait for the next unrelated update."""
+    w = _mk_course_hsi(qtbot)
+    for setter in ("setCdiFail", "setCourseBad", "setCourseFail"):
+        w.update = mock.Mock()
+        getattr(w, setter)(True)
+        assert w.update.called, setter
 
 
 def test_hsi_cdiv_read_from_the_fix_key(fix, qtbot):
@@ -957,7 +1071,7 @@ def test_arc_paint_never_raises_full_panel(fix, qtbot):
     widget.show()
     qtbot.waitExposed(widget)
     widget._HeadFail = widget._HeadBad = False
-    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
+    widget._CdiOld = widget._CdiBad = widget._CdiFail = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
     widget.setGsv(1)
