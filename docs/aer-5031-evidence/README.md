@@ -22,6 +22,12 @@ connected with its sockets open but stopped answering, grabbed frames, sent
 | `after_resumed_4s.png` | branch `d76233e` | 4 s after SIGCONT: every instrument is back with live values. |
 | `contact_sheet.png` | - | The two before frames on top and two after frames below, PFD column only, scaled 0.5x. |
 
+fix-gateway was on `dev` for the before run. For the after run it was on
+`aer-5029/navtype` (`b121eb1`), staged by a concurrent session two minutes earlier.
+That branch adds NAVTYPE keys and does not touch netfix. The watchdog is pyEfis-only
+and the stop was a `SIGSTOP` of the whole process, so the gateway's branch does not
+bear on what these frames show.
+
 `before_info.txt` and `after_info.txt` are the capture logs. In the after log, the
 watchdog trips at 19:31:58, 2.0 s after the 19:31:56 SIGSTOP, and recovers at the
 19:32:11 SIGCONT.
