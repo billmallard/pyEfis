@@ -33,7 +33,7 @@ parts connect.
 | Understand how the configurator, the navdata service and the device connect | [How the System Fits Together](How-the-System-Fits-Together) |
 | Install the software and bring a device up | [Setting Up a Device](Setting-Up-a-Device) |
 | Lay out your panel and enter your aircraft's numbers | [Designing Your Panel](Designing-Your-Panel) |
-| Operate the display in the cockpit | [Pilot's Guide](Pilots-Guide) |
+| Operate the display in the cockpit | [The Panel at a Glance](The-Panel-at-a-Glance), then a page per instrument: [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision), [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed), [The HSI](The-HSI) |
 | Edit screens and preferences by hand | [Screen Builder](Screen-Builder), [Preferences & Styling](Preferences-and-Styling) |
 | Look up an instrument and its options | [Widget Reference](Widget-Reference) |
 | Look up the data keys pyEFIS reads and writes | [FIX Database Keys](FIX-Database-Keys) |

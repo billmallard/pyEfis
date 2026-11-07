@@ -54,10 +54,10 @@ That is a defect, not intended behaviour:
 To capture again: queue the profile (`POST /sessions` with
 `{"profile": "fp8-ksmx-rnav30-missed"}`), copy `bench_flight/docs_flight.py`,
 `fp8_proc_route.py` and `nfx.py` into one directory on the bench, set its
-`DEADLINE`, and start it with the session id:
+`DEADLINE`, and start it with the session id and the sim-bench service URL:
 
 ```bash
-setsid nohup ~/pyefis-venv/bin/python docs_flight.py <session-id> > follow.out 2>&1 < /dev/null &
+setsid nohup ~/pyefis-venv/bin/python docs_flight.py <session-id> http://<bench-host>:<port> > follow.out 2>&1 < /dev/null &
 ```
 
 ## Renders
