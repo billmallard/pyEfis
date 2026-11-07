@@ -39,6 +39,7 @@ parts connect.
 | Look up an instrument and its options | [Widget Reference](Widget-Reference) |
 | Look up the data keys pyEFIS reads and writes | [FIX Database Keys](FIX-Database-Keys) |
 | Run pyEFIS from a source checkout on a desktop | [Running from Source](Running-from-Source) |
+| See the original stock screens, which still ship | [Legacy](Legacy) |
 
 ## The other manuals
 
