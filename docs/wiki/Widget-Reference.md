@@ -1,82 +1,106 @@
-# Widget Reference
+# Instrument Reference
 
-Every widget you can place on a pyEFIS screen, by its YAML `type:` string. This
-is the master index; click through to the family page for full option tables.
-**Read [Concepts](Concepts) first** — it defines the shared model (FIX keys,
-color states, fonts/masks, layout, encoder) that the family pages build on.
+Every instrument you can place on a pyEFIS screen, by its `type:`, with every
+option it takes. To learn what an instrument shows and how to fly it, start
+with its page under **Flying it**; come here for the full option list.
 
-The authoritative registry is `INSTRUMENT_FACTORIES` in
-`src/pyefis/screens/screenbuilder_factory.py`. There are 27 widget types; the
-four gauges also have `ganged_` variants.
+## How to read these pages
 
-## Primary flight instruments — [Widgets-Flight-Instruments](Widgets-Flight-Instruments)
+The option tables on the reference pages are generated from pyEFIS's instrument
+registry (`src/pyefis/screens/screenbuilder_factory.py`), the same records the
+configurator builds its palette and **Properties** panel from. So each table
+lists exactly what the configurator offers, under the name the YAML uses:
 
-| `type:` | Class | Default FIX key(s) | Description |
-|---------|-------|--------------------|-------------|
-| `airspeed_dial` | `airspeed.Airspeed` | `IAS` | Round analog airspeed dial |
-| `airspeed_box` | `airspeed.Airspeed_Box` | `IAS` / `GS` / `TAS` | Digital airspeed box, switchable IAS/GS/TAS |
-| `airspeed_tape` | `airspeed.Airspeed_Tape` | `IAS` (+`TAS`) | Vertical airspeed tape w/ V-speed bands, TAS box, trend |
-| `airspeed_trend_tape` | `vsi.AS_Trend_Tape` | `IAS` | Airspeed trend bar |
-| `altimeter_dial` | `altimeter.Altimeter` | `ALT` | Round analog altimeter |
-| `altimeter_tape` | `altimeter.Altimeter_Tape` | `ALT` | Vertical altitude tape (honors `dbkey:`) |
-| `altimeter_trend_tape` | `vsi.Alt_Trend_Tape` | `VS`¹ | Vertical-speed trend bar + VSI number |
-| `vsi_dial` | `vsi.VSI_Dial` | `VS` | Round analog VSI |
-| `vsi_pfd` | `vsi.VSI_PFD` | `VS` | PFD-style vertical-speed indicator |
-| `heading_display` | `hsi.HeadingDisplay` | `HEAD` | Digital heading readout |
-| `heading_tape` | `hsi.DG_Tape` | `HEAD` | Horizontal heading tape |
-| `horizontal_situation_indicator` | `hsi.HSI` | `COURSE`,`CDI`,`GSI`,`HEAD` | HSI with CDI/glideslope |
-| `turn_coordinator` | `tc.TurnCoordinator` | `ROT`,`ALAT` | Turn & slip |
-| `wind_display` | `wind.WindDisplay` | `HWIND`,`XWIND` | Headwind/crosswind components |
+| Column | Means |
+|---|---|
+| Option | The key in the instrument's `options:`. |
+| Configurator label | What the Properties panel calls it. |
+| Default | The value used when it is not set. `unset` means no value; `empty` means an empty string. |
+| Values | The choices, or the allowed range. |
+| What it does | The help text the configurator shows. |
 
-## Attitude & Synthetic Vision — [Widgets-Attitude-and-SVS](Widgets-Attitude-and-SVS)
+Some instruments also read values from the FIX item itself, such as V-speeds
+or gauge limits. Those are listed under each table: they are the aircraft's
+numbers, set in fix-gateway through the
+[aircraft parameters](Designing-Your-Panel#aircraft-parameters), not panel
+options.
 
-| `type:` | Class | Default FIX key(s) | Description |
-|---------|-------|--------------------|-------------|
-| `atitude_indicator` | `ai.AI` | `PITCH`,`ROLL`,`ALAT`,`TAS` | Attitude indicator (+ optional FPM, SVS). Note the one-`t` spelling. |
-| `virtual_vfr` | `ai.VirtualVfr.VirtualVfr` | `PITCH`,`ROLL`,`ALAT`,`LAT`,`LONG`,`ALT`,`COURSE`¹ | AI + airport/runway overlay + Synthetic Vision terrain |
+The tables are regenerated with `docs/images/reference/gen_reference.py`; the
+README beside it has the command.
 
-## Navigation
+## What every instrument takes
 
-| `type:` | Class | Default FIX key(s) | Description |
-|---------|-------|--------------------|-------------|
-| `moving_map` | `map.MovingMap` | `LAT`,`LONG`,`TRACKM` | Top-down moving map: terrain/roads/rivers/airports/navaids/flight-plan layers, each toggled by a `layer_*` Prop. See [moving_map_spec.md](https://github.com/billmallard/pyEfis/blob/dev/docs/moving_map_spec.md) for the full layer list; `layer_flight_plan` (FP6) draws the active route, leg colors and direct-to from the flight-plan FIX bus — no `dbkey` of its own, graceful with no plan published |
+**Placement**, at the instrument level beside `type:`:
 
-## Engine & data gauges — [Widgets-Engine-Gauges](Widgets-Engine-Gauges)
+| Field | Means |
+|---|---|
+| `row`, `column` | The grid cell of the top-left corner, from 0. Fractions are allowed. |
+| `span` | `{rows, columns}`: how many cells it covers. |
+| `move` | `{shrink: percent, justify: [top, bottom, left, right]}`: fine placement inside the cell. |
+| `disabled` | A preference name from the `enabled:` section, or `true`, to leave it out. |
 
-| `type:` | Class | Default FIX key(s) | Description |
-|---------|-------|--------------------|-------------|
-| `arc_gauge` | `gauges.ArcGauge` | *(set `dbkey`)* | 180° analog arc + value |
-| `vertical_bar_gauge` | `gauges.VerticalBar` | *(set `dbkey`)* | Vertical bar (EGT/CHT strips, peak/normalize) |
-| `horizontal_bar_gauge` | `gauges.HorizontalBar` | *(set `dbkey`)* | Horizontal bar |
-| `numeric_display` | `gauges.NumericDisplay` | *(set `dbkey`)* | Color-aware numeric readout |
+**Options** every instrument accepts:
 
-Each also exists as `ganged_<type>` for grouped strips.
+| Option | Default | Means |
+|---|---|---|
+| `font_family` | `DejaVu Sans Condensed` | One of `DejaVu Sans Condensed`, `DejaVu Sans`, `DejaVu Sans Mono`, `B612`, `Inter`, `Roboto`, `Open Sans`. |
+| `font_percent` | unset | Font size as a fraction of the instrument's height (a whole number is read as a percent). Some instruments size their text from a font mask instead. |
+| `encoder_order` | unset | Its place in the knob's order, on instruments the knob can select. |
 
-## Text & interactive — [Widgets-Text-and-Interactive](Widgets-Text-and-Interactive)
+**Options outside the tables.** An option the registry does not declare is
+still set on the instrument, and pyEFIS logs a warning that it "is applied but
+may have no effect". Where such an option does work, the reference page says
+so. A few are handled for every instrument: `temperature: true`,
+`pressure: true` and `altitude: true` (unit switching, on the types their
+pages name), and `egt_mode_switching` on vertical bars.
 
-| `type:` | Class | Default FIX key(s) | Description |
-|---------|-------|--------------------|-------------|
-| `static_text` | `misc.StaticText` | — | Fixed label |
-| `value_text` | `misc.ValueDisplay` | *(set `dbkey`)* | Plain value readout (no gauge colors) |
-| `button` | `button.Button` | *(button config)* | Interactive button: state, conditions, actions |
-| `listbox` | `listbox.ListBox` | *(per list)* | Selectable list (radio freqs, waypoints) |
-| `flight_plan` | `flight_plan.FlightPlan` | `FPLCOUNT`,`FPLNAME`,`FPLSEQ`,`FPLSTATE`,`FPLACTLEG`,`FPLAPR`,`FPLINTEG` | App-like flight-plan editor: FPL/Entry pages, on-screen keypad, FastFind (touch; FP5a) |
-| `nav_status` | `nav_status.NavStatus` | `FPLSTATE`,`FPLPHASE`,`WPFROM`,`WPNAME`,`WPNEXT`,`WPDIS`,`WPETE` | Flight-plan from-to-next chip: state badge, idents, distance/ETE, phase; tap opens the FPL page (FP7). See [Widgets-Flight-Instruments](Widgets-Flight-Instruments#nav_status) |
+**Ganged instruments.** A `ganged_` prefix on a type (`ganged_vertical_bar_gauge`)
+repeats it across groups; the stock screens build their cylinder rows this way.
+See [Engine & Data Gauges](Widgets-Engine-Gauges#ganged-gauges).
 
-## System & status — [Widgets-System](Widgets-System)
+## All instruments
 
-| `type:` | Class | Default FIX key(s) | Description |
-|---------|-------|--------------------|-------------|
-| `data_status` | `data_status.DataStatus` | — | Full-screen navdata currency / updater |
-| `data_annunciation` | `data_status.DataAnnunciation` | — | Small "DATA" flag, hidden when healthy |
-| `weston` | `weston.Weston` | — | Embeds an Android app (Weston/waydroid) |
+<!-- generated:index -->
 
----
+| Type | Name | Category | FIX keys read by default | Reference |
+|---|---|---|---|---|
+| `about` | About / System (hidden) | system | -- | [System & Containers](Widgets-System#about) |
+| `airspeed_box` | Airspeed Box (hidden) | airspeed | `IAS`, `GS`, `TAS` | [Flight Instruments](Widgets-Flight-Instruments#airspeed_box) |
+| `airspeed_dial` | Airspeed Dial | airspeed | `IAS` | [Flight Instruments](Widgets-Flight-Instruments#airspeed_dial) |
+| `airspeed_tape` | Airspeed Tape | airspeed | `IAS` | [Flight Instruments](Widgets-Flight-Instruments#airspeed_tape) |
+| `airspeed_trend_tape` | Airspeed Trend Tape | airspeed | `IAS` | [Flight Instruments](Widgets-Flight-Instruments#airspeed_trend_tape) |
+| `altimeter_dial` | Altimeter Dial | altitude | `ALT` | [Flight Instruments](Widgets-Flight-Instruments#altimeter_dial) |
+| `altimeter_tape` | Altimeter Tape | altitude | `ALT` | [Flight Instruments](Widgets-Flight-Instruments#altimeter_tape) |
+| `altimeter_trend_tape` | Altimeter Trend Tape | altitude | `VS` | [Flight Instruments](Widgets-Flight-Instruments#altimeter_trend_tape) |
+| `arc_gauge` | Arc Gauge | gauge | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#arc_gauge) |
+| `atitude_indicator` | Attitude Indicator | attitude | `PITCH`, `ROLL`, `ALAT`, `TAS` | [Attitude & SVS](Widgets-Attitude-and-SVS#atitude_indicator) |
+| `button` | Button | control | -- | [Text & Interactive](Widgets-Text-and-Interactive#button) |
+| `checklist` | Checklist | list | -- | [Text & Interactive](Widgets-Text-and-Interactive#checklist) |
+| `data_annunciation` | Data Annunciation | system | -- | [System & Containers](Widgets-System#data_annunciation) |
+| `data_status` | Data Status (hidden) | system | -- | [System & Containers](Widgets-System#data_status) |
+| `flight_plan` | Flight Plan | navigation | `FPLCOUNT`, `FPLNAME`, `FPLSEQ`, `FPLSTATE`, `FPLACTLEG`, `FPLAPR`, `FPLINTEG` | [Navigation](Widgets-Navigation#flight_plan) |
+| `heading_display` | Heading Display (hidden) | navigation | `HEAD` | [Flight Instruments](Widgets-Flight-Instruments#heading_display) |
+| `heading_tape` | Heading Tape | navigation | `HEAD` | [Flight Instruments](Widgets-Flight-Instruments#heading_tape) |
+| `horizontal_bar_gauge` | Horizontal Bar Gauge | gauge | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#horizontal_bar_gauge) |
+| `horizontal_situation_indicator` | Horizontal Situation Indicator (HSI) | navigation | `COURSE`, `CDI`, `GSI`, `HEAD`, `BRG1`, `BRG2`, `BRG1SRC`, `BRG2SRC` | [Flight Instruments](Widgets-Flight-Instruments#horizontal_situation_indicator) |
+| `listbox` | Listbox | list | -- | [Text & Interactive](Widgets-Text-and-Interactive#listbox) |
+| `moving_map` | Moving Map | navigation | `LAT`, `LONG`, `TRACKM` | [Navigation](Widgets-Navigation#moving_map) |
+| `nav_status` | Nav Status | navigation | `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`, `WPNEXT`, `WPDIS`, `WPETE` | [Navigation](Widgets-Navigation#nav_status) |
+| `numeric_display` | Numeric Display | text | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#numeric_display) |
+| `static_text` | Static Text | text | -- | [Text & Interactive](Widgets-Text-and-Interactive#static_text) |
+| `tab_section` | Tab Section | container | -- | [System & Containers](Widgets-System#tab_section) |
+| `turn_coordinator` | Turn Coordinator | attitude | `ROT`, `ALAT` | [Flight Instruments](Widgets-Flight-Instruments#turn_coordinator) |
+| `value_text` | Value Text | text | -- | [Text & Interactive](Widgets-Text-and-Interactive#value_text) |
+| `vertical_bar_gauge` | Vertical Bar Gauge | gauge | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#vertical_bar_gauge) |
+| `virtual_vfr` | Virtual VFR / Synthetic Vision | attitude | `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `ALAT`, `TAS` | [Attitude & SVS](Widgets-Attitude-and-SVS#virtual_vfr) |
+| `vsi_dial` | VSI Dial | vertical_speed | `VS` | [Flight Instruments](Widgets-Flight-Instruments#vsi_dial) |
+| `vsi_pfd` | VSI (PFD) | vertical_speed | `VS` | [Flight Instruments](Widgets-Flight-Instruments#vsi_pfd) |
+| `weston` | Weston | system | -- | [System & Containers](Widgets-System#weston) |
+| `wind_display` | Wind Display | wind | `HWIND`, `XWIND` | [Flight Instruments](Widgets-Flight-Instruments#wind_display) |
 
-¹ **Default-key discrepancies** (verified in source): `altimeter_trend_tape`'s
-entry in `INSTRUMENT_DEFAULTS` lists `ALT`, but `Alt_Trend_Tape` subscribes to
-**`VS`** and renders a vertical-speed trend. `virtual_vfr` lists `HEAD`, but the
-widget binds its heading source to **`COURSE`** (`head_item = get_item("COURSE")`).
-These are documented on the respective family pages.
+<!-- /generated -->
 
-See [FIX Database Keys](FIX-Database-Keys) for what each key means.
+**Hidden** types are not in the configurator's palette but still load, so
+panels that use them keep working.
+
+The FIX keys themselves are described on [FIX Database Keys](FIX-Database-Keys).

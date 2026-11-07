@@ -1,501 +1,378 @@
 # Flight Instruments
 
-These are the **primary-flight-display (PFD)** instruments — airspeed, altitude,
-vertical speed, heading, the HSI, the turn coordinator, and the wind readout.
-Unlike the [engine & data gauges](Widgets-Engine-Gauges), each flight instrument
-has a **default FIX key wired in** and reads its scale/limit information either
-from the key's aux values (the airspeed V-speeds) or from hard-coded ranges.
+Airspeed, altitude, vertical speed, heading, the HSI, the turn coordinator and
+wind. The tapes and the HSI each have a page on how they read and fly, linked
+under their headings; this page is the full option list, with the older dials
+too. Each table is generated from pyEFIS's instrument registry; see
+[Widget Reference](Widget-Reference#how-to-read-these-pages).
 
-**Read [Concepts](Concepts) first** — this page only documents what is specific
-to each instrument. The shared [FIX/data-bus model](Concepts#1-the-fix-database-the-data-bus),
-[data-quality states](Concepts#3-data-quality--states),
-[fonts/masks](Concepts#4-fonts-masks--ghosting), and
-[layout/grid model](Concepts#5-layout-grid-span-move-ganging) all apply here.
+| `type:` | What it is |
+|---|---|
+| `airspeed_tape` | Scrolling airspeed tape with V-speed bands and a trend arrow. |
+| `airspeed_dial` | Round airspeed dial. |
+| `airspeed_box` | Airspeed readout switching TAS / GS / IAS (hidden). |
+| `airspeed_trend_tape` | Standalone airspeed-trend bar. |
+| `altimeter_tape` | Scrolling altitude tape with selected altitude and altimeter setting. |
+| `altimeter_dial` | Round altimeter. |
+| `altimeter_trend_tape` | Vertical-speed scale for beside the altitude tape. |
+| `vsi_dial` | Round vertical-speed dial. |
+| `vsi_pfd` | Compact vertical-speed strip. |
+| `horizontal_situation_indicator` | The HSI. |
+| `heading_tape` | Scrolling heading tape. |
+| `heading_display` | Boxed digital heading (hidden). |
+| `turn_coordinator` | Rate-of-turn and slip. |
+| `wind_display` | Head/tail and cross wind components. |
 
-> **None of the flight instruments are encoder-selectable.** Encoder interaction
-> (`encoder_order`, value editing) is implemented only by the gauges, `button`,
-> and `listbox`. Do not set `encoder_order` on these widgets.
-
-`font_family` and `font_percent` come from [preferences](Preferences-and-Styling)
-and are passed to the constructor, not via `options:` (see
-[Concepts §8](Concepts#8-how-options-reach-a-widget)). They are noted in the
-tables but not belabored.
-
----
-
-## Summary
-
-| `type:` | Class | Default FIX key(s) | Description |
-|---------|-------|--------------------|-------------|
-| `airspeed_dial` | `airspeed.Airspeed` | `IAS` | Round analog airspeed dial with colored V-speed arcs |
-| `airspeed_box` | `airspeed.Airspeed_Box` | `IAS` / `GS` / `TAS` | Compact numeric readout, mode-switchable IAS/GS/TAS |
-| `airspeed_tape` | `airspeed.Airspeed_Tape` | `IAS` (+ `TAS`) | Vertical scrolling airspeed tape with V-speed bands, TAS box, trend arrow |
-| `airspeed_trend_tape` | `vsi.AS_Trend_Tape` | `IAS` | Standalone airspeed-trend bar |
-| `altimeter_dial` | `altimeter.Altimeter` | `ALT` | Three-hand round analog altimeter |
-| `altimeter_tape` | `altimeter.Altimeter_Tape` | `ALT` | Vertical scrolling altitude tape with numeric box |
-| `altimeter_trend_tape` | `vsi.Alt_Trend_Tape` | `ALT` (reads `VS`) | Vertical-speed trend bar with a numeric VSI readout |
-| `vsi_dial` | `vsi.VSI_Dial` | `VS` | Round analog vertical-speed indicator |
-| `vsi_pfd` | `vsi.VSI_PFD` | `VS` | Compact PFD vertical-speed scale with a moving dot |
-| `heading_display` | `hsi.HeadingDisplay` | `HEAD` | Boxed three-digit digital heading (e.g. `030°`) |
-| `heading_tape` | `hsi.DG_Tape` | `HEAD` | Horizontal scrolling heading/compass tape |
-| `horizontal_situation_indicator` | `hsi.HSI` | `COURSE`, `CDI`, `GSI`, `HEAD`, `HEADBUG`, `TRACKM`, `GS` | Rotating compass card with course pointer, heading bug, track diamond, CDI, glideslope and bearing pointers. See [The HSI](The-HSI) |
-| `turn_coordinator` | `tc.TurnCoordinator` | `ROT`, `ALAT` | Rate-of-turn aircraft + inclinometer (slip/skid) ball |
-| `wind_display` | `wind.WindDisplay` | `HWIND`, `XWIND` | Two-row headwind/tailwind + crosswind readout |
-| `nav_status` | `nav_status.NavStatus` | `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`, `WPNEXT`, `WPDIS`, `WPETE` | One-line flight-plan from-to-next chip with state badge, distance, ETE and phase |
-
-> The `altimeter_trend_tape`'s "default key" is `ALT` per the screen-builder
-> defaults table, but the widget itself subscribes to **`VS`** — it draws a
-> vertical-speed trend bar and a VSI number, not an altitude trend. See its
-> section below.
+The altitude tape's altimeter-setting and selected-altitude boxes can be
+selected with the knob; give the tape an `encoder_order`. The other flight
+instruments are not on the knob.
 
 ---
-
-# Airspeed
-
-## `airspeed_dial`
-
-A round analog airspeed dial. The colored arcs (green/yellow/white bands and the
-red Vne mark) are drawn from the **`IAS` key's aux V-speed values**
-(`Vs`, `Vs0`, `Vno`, `Vne`, `Vfe`) — set them in fix-gateway, not the YAML (see
-[FIX aux values](Concepts#aux-values)). The needle covers 0–140 kt with the
-standard non-linear airspeed scale (compressed below 30 kt).
-
-![Airspeed dial](../images/airspeed_dial.png)
-
-```yaml
-- type: airspeed_dial
-  row: 0
-  column: 0
-  span: {rows: 50, columns: 50}
-```
-
-- **FIX keys:** reads `IAS`; reads aux values `Vs`, `Vs0`, `Vno`, `Vne`, `Vfe`
-  from `IAS` (V-speed defaults are `Vne=200`, all others `0` when the aux value
-  is absent).
-- On **fail** the dial shows `XXX`; on **old/bad** the needle dims to gray.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `bg_color` | `black` | dial background fill |
-| `font_family`, `font_percent` | from preferences (`font_percent` default `0.07`) | scale-number font |
-
-The `IAS` key is fixed; this widget has **no `dbkey:` option**.
-
-## `airspeed_box`
-
-A compact numeric readout that shows one of three speeds and cycles between them.
-Unlike a plain text widget it changes content on data-quality flags: `XXX` on
-fail, blank on old/bad. The displayed speed is switched by the HMI action
-`setAirspeedMode` (a button bound to it), not by the encoder.
-
-![Airspeed box, showing TAS mode](../images/airspeed_box.png)
-
-- **FIX keys:** reads `TAS`, `GS`, `IAS` (cycles in that order — `modes =
-  ["TAS", "GS", "IAS"]`). The label drawn (`TAS`/`GS`/`IAS`) reflects the
-  current mode.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `small_font_percent` | **0.4** | font size as a fraction of widget height (used for both the mode label and the value) |
-| `color` | `white` | text color |
-| `alignment` | left / vertically-centered | alignment of the mode label |
-| `valueAlignment` | right / vertically-centered | alignment of the value |
-| `font_family` | from preferences | |
 
 ## `airspeed_tape`
 
-A vertical scrolling airspeed tape: a fixed read pointer with the scale moving
-behind it, the V-speed color bands (green/white/yellow bars and the red Vne
-line), an embedded numeric readout box, an optional solid-white **TAS box** at
-the bottom, and an optional **trend arrow** projecting where speed will be in a
-few seconds. The bands come from the `IAS` aux V-speeds, and the tape's top of
-scale is `Vne × 1.25`.
+<!-- generated:airspeed_tape -->
 
-![Airspeed tape](../images/airspeed_tape.png)
+**Airspeed Tape** · palette category `airspeed`
 
-- **FIX keys:** reads `IAS` (primary scroll + trend), `TAS` (the TAS box).
-  Reads aux V-speeds (`Vs`, `Vs0`, `Vno`, `Vne`, `Vfe`) from `IAS`.
-- The trend arrow is cyan, projects `trend_lookahead` seconds ahead from the
-  rate measured over a `trend_window`-second history, and is suppressed below a
-  `trend_min_change`-kt noise floor.
+How it reads and flies: [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed).
 
-The screen-builder factory constructs this widget with **`font_percent` only**;
-the options below are the settable instance attributes.
+FIX keys it reads by default: `IAS`.
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `show_tas` | **true** | draw the solid-white TAS box at the bottom of the tape |
-| `show_trend` | **true** | draw the cyan trend arrow |
-| `trend_lookahead` | **6.0** | seconds ahead the trend arrow projects |
-| `trend_window` | **3.0** | seconds of IAS history averaged to compute the trend rate |
-| `trend_min_change` | **0.5** | trend noise floor in kt; smaller trends are not drawn |
-| `font_mask` | **`"000"`** | scale-number sizing template (see [Concepts §4](Concepts#4-fonts-masks--ghosting)) |
-| `majorDiv` | **10** | kt between labeled (long) tick lines |
-| `minorDiv` | **5** | kt between minor (short) tick lines |
-| `backgroundOpacity` | **0.3** | opacity of the dark tape background |
-| `foregroundOpacity` | **0.6** | opacity of the bands, ticks and numbers |
-| `fontsize` | **15** | base font size when `font_percent` is unset |
-| `font_family`, `font_percent` | from preferences | |
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `edge_fade` | Fade tape edges | off | on / off | alpha-fade the top and bottom of the scrolling scale into the background (SVS shows through) |
+| `show_tas` | Show TAS box | on | on / off | show the true-airspeed readout box (from TAS) |
+| `show_trend` | Show trend arrow | on | on / off | show the acceleration trend vector along the tape |
+| `trend_lookahead` | Trend look-ahead (s) | `6` |  | seconds ahead the trend vector projects current accel |
 
-> This is `Airspeed_Tape`. The `dbkey` is fixed to `IAS`; it has no `dbkey:`
-> option (unlike the altimeter tape).
+Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
+
+| Value | From | Meaning |
+|---|---|---|
+| `Vs` | aux | Stall, clean (Vs) (kt) |
+| `Vs0` | aux | Stall, landing (Vs0) (kt) |
+| `Vno` | aux | Max cruise (Vno) (kt) |
+| `Vne` | aux | Never-exceed (Vne) (kt) |
+| `Vfe` | aux | Flaps-extended (Vfe) (kt) |
+
+<!-- /generated -->
+
+The green band starts at Vs0, not Vs
+([#396](https://github.com/billmallard/pyEfis/issues/396)).
+
+## `airspeed_dial`
+
+A round airspeed dial, 0 to 140 kt, with its arcs drawn from the same V-speeds
+as the tape. `XXX` on failure; a grey needle when old or bad.
+
+![Airspeed dial](../images/airspeed_dial.png)
+
+<!-- generated:airspeed_dial -->
+
+**Airspeed Dial** · palette category `airspeed`
+
+FIX keys it reads by default: `IAS`.
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
+
+Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
+
+| Value | From | Meaning |
+|---|---|---|
+| `Vs` | aux | Stall, clean (Vs) (kt) |
+| `Vs0` | aux | Stall, landing (Vs0) (kt) |
+| `Vno` | aux | Max cruise (Vno) (kt) |
+| `Vne` | aux | Never-exceed (Vne) (kt) |
+| `Vfe` | aux | Flaps-extended (Vfe) (kt) |
+
+<!-- /generated -->
+
+## `airspeed_box`
+
+A readout that shows TAS, GS or IAS. The **Set airspeed mode** action steps
+through them (empty argument) or picks one (`0` TAS, `1` GS, `2` IAS). `XXX` on
+failure, blank when old or bad. Replaced in the palette by `value_text`.
+
+<!-- generated:airspeed_box -->
+
+**Airspeed Box** · palette category `airspeed` · hidden from the palette, still loads in existing panels
+
+FIX keys it reads by default: `IAS`, `GS`, `TAS`.
+
+No options in the configurator beyond the ones every instrument takes.
+
+<!-- /generated -->
 
 ## `airspeed_trend_tape`
 
-A standalone airspeed-trend bar — a thick white zero line with a bar growing up
-(accelerating) or down (decelerating) proportional to a short moving average of
-recent airspeed change. This is the `AS_Trend_Tape` class from the `vsi` module.
-Its default key is `IAS`.
+A bar meant to grow up or down with the airspeed trend. It reads no FIX key
+today, so the bar does not move
+([#403](https://github.com/billmallard/pyEfis/issues/403)). Use the trend arrow
+on `airspeed_tape`.
 
-*(No image yet — added in a later screenshot pass.)*
+<!-- generated:airspeed_trend_tape -->
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `freq` | **10** | number of recent samples averaged for the trend bar |
-| `font_family` | from preferences | |
+**Airspeed Trend Tape** · palette category `airspeed`
 
-> Most installs use the trend arrow built into `airspeed_tape` (`show_trend`)
-> rather than this separate widget.
+FIX keys it reads by default: `IAS`.
+
+No options in the configurator beyond the ones every instrument takes.
+
+<!-- /generated -->
 
 ---
-
-# Altimeter
-
-## `altimeter_dial`
-
-A classic three-hand round analog altimeter (10,000 ft / 1,000 ft / 100 ft
-hands). It supports the shared **unit-switching** mechanism — setting
-`altitude: true` in `options:` enables ft/m toggling driven by the HMI
-`setInstUnits` action (see [Concepts §8](Concepts#8-how-options-reach-a-widget)).
-
-![Altimeter dial](../images/altimeter_dial.png)
-
-```yaml
-- type: altimeter_dial
-  row: 0
-  column: 0
-  span: {rows: 50, columns: 50}
-```
-
-- **FIX keys:** reads `ALT`. On **fail** shows `XXX`; on **old/bad** hands dim
-  to gray.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `bg_color` | `black` | dial background fill |
-| `altitude` | false | special-cased: enables ft/m unit switching (see Concepts §8) |
-| `font_family` | from preferences | |
 
 ## `altimeter_tape`
 
-A vertical scrolling altitude tape with a fixed read pointer, tick numbers, and
-an embedded scrolling-drum numeric box. This is the one tape whose constructor
-the factory forwards a full set of options to (via `build_altimeter_tape`), and
-the **same class family is reused for the VS tape**, so the tape options are
-configurable per instance.
+<!-- generated:altimeter_tape -->
 
-![Altimeter tape](../images/altimeter_tape.png)
+**Altimeter Tape** · palette category `altitude`
 
-- **FIX keys:** reads `ALT` by default; the key is settable via `dbkey:`.
+How it reads and flies: [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed).
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `dbkey` | `ALT` | FIX key the tape scrolls (this tape *does* honor `dbkey:`) |
-| `maxalt` | **50000** | half-range of the tape in units; the scene spans `±maxalt` |
-| `majorDiv` | **200** | units between labeled (long) tick lines |
-| `minorDiv` | **100** | units between minor tick lines |
-| `total_decimals` | **5** | total digits in the numeric drum box |
-| `font_mask` | **`"00000"`** | scale-number sizing template |
-| `round_to` | **0** | round the numeric box to this step (0 = off); e.g. `100` snaps a jittery source to 100-unit steps while the tape stays smooth |
-| `numeric_box` | **true** | when false, omit the numeric readout box and show only the scrolling tape + read pointer |
-| `font_scale` | **1.0** | multiplier on the tick-label font size |
-| `show_baro` | **true** for `ALT`, false otherwise | draw the touch-selectable altimeter setting (`BARO`) box at the bottom of the tape; see below |
-| `font_family`, `font_percent` | from preferences | |
-| `altitude` | false | special-cased: enables ft/m unit switching |
+FIX keys it reads by default: `ALT`.
 
-**Baro setting box (`show_baro`).** The box shows `BARO` as `29.92 IN` or `1013 HPA`,
-following the `Pressure` unit group (the `units: Pressure` preference sets the start,
-and the Units action switches it; the tape's own ft/m switching is separate). Touch the
-box to select it for the knob: the inner knob steps 0.01 inHg or 1 hPa, the outer ring
-0.10 inHg or 10 hPa, and push sets standard (29.92 inHg). A second push restores the exact
-`BARO` value the first push replaced; any other change to `BARO` in between (a knob step,
-or a write from another display or the gateway) drops the saved value, so the next push
-sets standard again. With `BARO` already at standard and nothing saved, push does nothing.
-`BARO` stays inHg on the bus.
-In hPa every step lands on a whole hPa. The setting is limited to 27.50-31.50 inHg, or
-less if the FIX item's own min/max is narrower. Give the tape an `encoder_order` to reach
-the box on the knob walk as well. Left at its default, the box turns itself off when the
-screen already shows `BARO` in another visible widget (an older screen with a separate
-`numeric_display`), so no screen shows two baro readouts.
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `edge_fade` | Fade tape edges | off | on / off | alpha-fade the top and bottom of the scrolling scale into the background (SVS shows through) |
+| `dbkey` | FIX key | `ALT` | FIX key | FIX key driving the tape (default ALT) |
+| `maxalt` | Max altitude | `50000` |  | top of the tape's altitude range (ft) |
+| `majorDiv` | Major division | `200` |  | altitude between labelled tape ticks (ft) |
+| `minorDiv` | Minor division | `100` |  | altitude between the small tape ticks (ft) |
+| `total_decimals` | Total digits | `5` |  | number of digits in the altitude readout |
+| `font_mask` | Font mask | `00000` |  | widest string the readout reserves space for (sizing) |
+| `round_to` | Round readout to | `0` |  | round the readout to this increment (0 = none) |
+| `numeric_box` | Show numeric box | on | on / off | show the boxed numeric altitude over the tape |
+| `font_scale` | Scale-number font scale | `1` |  | multiplier on the tape scale-number font size |
+| `show_baro` | Baro setting box | on | on / off | touch-selectable altimeter setting box at the bottom of the tape (on for an ALT tape unless the screen has its own BARO readout; off for a VS tape) |
+| `altsel_box` | Selected-altitude box | on | on / off | touch-settable ALTSEL box at the top of the tape (on for an ALT tape, off for a VS tape) |
+| `alt_bug_enabled` | Altitude bug | on | on / off | draw the selected-altitude bug on the scale (follows the box unless set) |
+| `alt_bug_color` | Altitude bug color | `#00ffff` | colour | colour of the selected-altitude box text and bug |
+| `alt_bug_alert_color` | Altitude alert color | `#ffb000` | colour | box text and bug colour while fix-gateway flags an altitude deviation (the key's annunciate flag) |
+| `alt_bug_dbkey` | Selected-altitude key | `ALTSEL` | FIX key | FIX key holding the selected altitude (default ALTSEL) |
 
-> Because this class is also used for the VS tape, `round_to` and `numeric_box`
-> exist primarily to tame a jittery VS source — see the prose in the source.
-> When reused as a VS tape it is still constructed through `build_altimeter_tape`
-> with a different `dbkey`/`majorDiv`/`minorDiv`.
+<!-- /generated -->
+
+With `altitude: true` the **Units** button switches it between ft and m. The
+same type draws a vertical-speed tape when its `dbkey` is `VS`; the trend
+arrow, altimeter setting and selected-altitude box are then off unless set.
+
+## `altimeter_dial`
+
+A round three-pointer altimeter.
+
+![Altimeter dial](../images/altimeter_dial.png)
+
+<!-- generated:altimeter_dial -->
+
+**Altimeter Dial** · palette category `altitude`
+
+FIX keys it reads by default: `ALT`.
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
+
+<!-- /generated -->
 
 ## `altimeter_trend_tape`
 
-Despite the name and its `ALT` default-key entry, this widget (`Alt_Trend_Tape`)
-subscribes to **`VS`** and draws a **vertical-speed** trend: a centered scale in
-hundreds of fpm with a white bar growing up (climb) or down (descent), plus a
-`VSI` label and a live numeric VSI value above it.
+<!-- generated:altimeter_trend_tape -->
 
-![Altimeter trend tape](../images/altimeter_trend_tape.png)
+**Altimeter Trend Tape** · palette category `altitude`
 
-- **FIX keys:** reads `VS`. On **fail** the numeric shows `XXX` (red) and the bar
-  is removed; on **old/bad** the number blanks and goes amber.
-- Honors the screen's `update_period` config item to throttle redraws.
+How it reads and flies: [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed).
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `maxvs` | **2500** | full-scale fpm at the top/bottom of the trend scale |
-| `fontsize` | **10** | label / number font size |
-| `font_family` | from preferences | |
+FIX keys it reads by default: `VS`.
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `maxvs` | Range (ft/min) | `2500` | 500 to 10000, step 100 | full scale, plus and minus; pick to suit the airplane's climb/descent performance (AC 23.1311-1C 8.11) |
+| `minorDiv` | Tick interval (ft/min) | `100` | 25 to 1000, step 25 | minor tick mark every N ft/min |
+| `numberedDiv` | Numbered interval (ft/min) | `200` | 50 to 2000, step 50 | numbered graduation every N ft/min (labels print in hundreds: 2400 ft/min prints as 24) |
+| `bg_color` | Background | `#000000` | colour | tape face colour |
+| `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
+
+<!-- /generated -->
 
 ---
-
-# Vertical Speed
 
 ## `vsi_dial`
 
-A round analog vertical-speed indicator. The scale is symmetric about 0, marked
-in thousands of fpm.
+A round vertical-speed dial. The needle sweeps 170 degrees each way for 2,000
+ft/min. `XXX` on failure; a grey needle when old or bad.
 
 ![VSI dial](../images/vsi_dial.png)
 
-- **FIX keys:** reads `VS`. On **fail** shows `XXX`; on **old/bad** needle dims.
+<!-- generated:vsi_dial -->
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `maxRange` | **2000** | fpm at full needle deflection (the scale runs `0`–`maxRange` each way) |
-| `maxAngle` | **170.0** | degrees of needle sweep from 0 to `maxRange` |
-| `fontSize` | **20** | scale-number font size (scaled by widget width) |
-| `font_family` | from preferences | |
+**VSI Dial** · palette category `vertical_speed`
+
+FIX keys it reads by default: `VS`.
+
+No options in the configurator beyond the ones every instrument takes.
+
+Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
+
+| Value | From | Meaning |
+|---|---|---|
+| `Min` | min | Range minimum (ft/min) |
+| `Max` | max | Range maximum (ft/min) |
+
+<!-- /generated -->
 
 ## `vsi_pfd`
 
-A compact PFD-style vertical-speed scale: a transparent strip with non-linear
-tick spacing (so small rates near 0 are emphasized) and a magenta dot that rides
-up/down to show the current rate. Designed to sit beside the altimeter tape.
+A narrow strip with a dot that rides up and down with the rate, on a scale that
+spreads out the low rates. The dot is grey when old or bad; a red X replaces it
+on failure.
 
 ![VSI PFD](../images/vsi_pfd.png)
 
-- **FIX keys:** reads `VS`.
+<!-- generated:vsi_pfd -->
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `marks` | `[(500,"500"),(1000,"1000"),(1500,"1500"),(2000,"2000")]` | list of `(fpm, label)` scale marks (mirrored above and below 0) |
-| `scaleRoot` | **0.8** | exponent for the non-linear scale (< 1 spreads out the low-rate end) |
-| `font_mask` | **`"1000"`** | scale-number sizing template |
-| `font_family`, `font_percent` | from preferences (`font_percent` default `0.15`) | |
+**VSI (PFD)** · palette category `vertical_speed`
 
----
+FIX keys it reads by default: `VS`.
 
-# Heading
+No options in the configurator beyond the ones every instrument takes.
 
-## `heading_display`
-
-A boxed digital heading: three zero-padded digits with a trailing degree sign
-(`3 → "003°"`, `360/0 → "000°"`). The screen builder gives it a default
-`font_size: 17`.
-
-![Heading display](../images/heading_display.png)
-
-- **FIX keys:** reads `HEAD`. On **fail** shows `XXX` (red); on **old/bad** the
-  value blanks and the box goes amber.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `fg_color` | `gray` | text / outline color when healthy |
-| `bg_color` | `black` | box fill |
-| `font_mask` | **`"999°"`** | sizing template (includes the degree sign so the text isn't cramped) |
-| `font_percent` | **0.80** | font height as a fraction of the box |
-| `font_size` | **17** (screen-builder default) | base font size |
-| `font_family` | from preferences | |
-
-## `heading_tape`
-
-A horizontal scrolling compass tape (directional-gyro style): degrees scroll
-behind a fixed center mark, with cardinal letters (`N`/`E`/`S`/`W`) drawn in
-cyan and numeric headings in white.
-
-![Heading tape](../images/heading_tape.png)
-
-- **FIX keys:** reads `HEAD`. (The tape has no separate old/bad/fail rendering —
-  see the source `TODO`.)
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `fontsize` | **20** | tick-number font size |
-| `dpp` | **10** | pixels per degree (tape scroll scale) |
-| `font_family` | from preferences | |
+<!-- /generated -->
 
 ---
-
-# Horizontal Situation Indicator
 
 ## `horizontal_situation_indicator`
 
-The HSI has its own page: [The HSI](The-HSI). It covers reading it, nav
-sources, CDI scaling, flying a flight plan, setting heading and course, the
-flags, and every option.
+<!-- generated:horizontal_situation_indicator -->
 
-![The HSI on a GPS leg](../images/hsi/gps_leg_right_of_course.png)
+**Horizontal Situation Indicator (HSI)** · palette category `navigation`
 
-- **FIX keys read:** `HEAD`, `COURSE`, `CDI`, `GSI`, `TOFROM`, `NAVSRC`,
-  `GSV`, `CDIV`, `HEADBUG`, `TRACKM`, `GS`, `BRG1`, `BRG2`, `BRG1SRC`,
-  `BRG2SRC`, and `VOR1BRG` / `VOR2BRG` for push-to-centre.
-- **FIX keys written:** `NAVSRC` (tap the source tab), `BRG1SRC` / `BRG2SRC`
-  (tap a bearing label), and with touch edit `HEADBUG`, `NAV1CRS`, `NAV2CRS`.
+How it reads and flies: [The HSI](The-HSI).
+
+FIX keys it reads by default: `COURSE`, `CDI`, `GSI`, `HEAD`, `BRG1`, `BRG2`, `BRG1SRC`, `BRG2SRC`.
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `cdi_enabled` | CDI | on | on / off | show the lateral course-deviation needle (CDI) |
+| `gsi_enabled` | Glideslope | on | on / off | show the vertical glideslope needle (GSI) |
+| `fg_color` | Foreground | `#ffffff` | colour | compass card, ring and text colour |
+| `bg_color` | Background | `#000000` | colour | compass-disc fill colour |
+| `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
+| `needle_color` | Needle color | `#ffff00` | colour | colour of the CDI/GSI deviation needles |
+| `needle_width` | Needle width | `3` | 1 to 10, step 1 | width of the CDI/GSI deviation needles (px) |
+| `course_color` | Course pointer color | `#ff00ff` | colour | selected-course pointer (the magenta CRS triangle) |
+| `source_auto_color` | Source auto-color | on | on / off | colour the course pointer and CDI by nav source -- magenta for GPS, the VOR/LOC colour for a VOR/LOC source (from NAVSRC) |
+| `vloc_color` | VOR/LOC color | `#00ff00` | colour | course pointer / CDI colour for a VOR or localizer source when source auto-color is on |
+| `source_label_enabled` | Source label | on | on / off | show the nav-source annunciation (GPS / VLOC1 / VLOC2, or VOR/LOC when NAVTYPE is available) on the rose face |
+| `heading_bug_enabled` | Heading bug | off | on / off | show the cyan heading bug at the selected heading (HEADBUG) |
+| `heading_bug_color` | Heading bug color | `#00ffff` | colour | heading-bug colour |
+| `touch_edit` | Touch to set HDG / CRS | on | on / off | touch the HDG or CRS readout, then turn the knob to set it: HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the selected VLOC source (not editable on GPS). Inner ring 1 deg, outer ring 10 deg; push syncs HDG to the heading or centres the CDI on CRS |
+| `track_indicator_enabled` | Track diamond | on | on / off | show the magenta GPS ground-track diamond (TRACK), above the speed gate |
+| `track_color` | Track diamond color | `#ff00ff` | colour | GPS ground-track diamond colour |
+| `track_min_speed` | Track min speed (kt) | `5` | 0 to 50, step 1 | hide the track diamond below this groundspeed (kt) |
+| `center_symbol` | Center symbol | `aircraft` | `aircraft`, `none` | fixed ownship symbol at the rose centre; 'aircraft' is a silhouette (deliberately not a triangle -- a triangle reads as the TO/FROM / course indicator) |
+| `readout_layout` | Readout layout | `top_panel` | `top_panel`, `corners`, `split`, `none` | placement of the integral actual-heading (HEAD), selected-heading (HEADBUG) and course (COURSE) readouts. top_panel = one sectioned panel across the top (outside the rose); corners = selected-heading + course boxes in the top corners; split = heading box above the rose, course/bug in the bottom corners |
+| `numeral_scale` | Numeral size | `1.5` | 0.5 to 3, step 0.1 | compass-rose numeral/letter size as a multiple of the base tick font (larger = bigger rose numbers) |
+| `depth_rings` | Depth rings | off | on / off | faint concentric rings inside the rose (a light structural cue; real depth comes from the translucent face over the map, so these are off by default) |
+| `shadow_enabled` | Drop shadow | off | on / off | soft drop shadow on the static elements -- the rose disc and the readout panel -- for a raised, layered look; off by default |
+| `orientation` | Orientation | `heading_up` | `heading_up`, `north_up`, `track_up`, `arc` | compass presentation. heading_up/north_up/track_up show the full 360 rotating rose (today's look); arc shows an expanded forward ~120 sector (finer resolution on the tracked heading, decluttered of the rear rose) |
+| `bearing1_enabled` | Bearing pointer 1 | off | on / off | show the single-bar RMI bearing needle (BRG1), pointing to the pointer-1 source (VOR1/VOR2/GPS via BRG1SRC) |
+| `bearing2_enabled` | Bearing pointer 2 | off | on / off | show the double-bar RMI bearing needle (BRG2), pointing to the pointer-2 source (VOR1/VOR2/GPS via BRG2SRC) |
+| `bearing_color` | Bearing pointer color | `#00ffff` | colour | generic bearing-needle colour used when the source is unknown; a needle with a known source is coloured by it (magenta GPS / green VOR) |
+
+<!-- /generated -->
+
+The HSI needs fix-gateway's `compute` plugin to route the selected nav source
+into the keys it draws; see [The HSI](The-HSI#feeding-it).
+
+## `heading_tape`
+
+A scrolling compass tape, cardinal letters in cyan and numbers in white. A red
+boxed `XXX` on failure; greyed with an amber `HDG` box when old or bad.
+
+![Heading tape](../images/heading_tape.png)
+
+<!-- generated:heading_tape -->
+
+**Heading Tape** · palette category `navigation`
+
+FIX keys it reads by default: `HEAD`.
+
+No options in the configurator beyond the ones every instrument takes.
+
+<!-- /generated -->
+
+## `heading_display`
+
+A boxed heading, three digits and a degree sign (`003°`). Blank when old or bad,
+`XXX` on failure. Replaced in the palette by `value_text` with a `HDG` prefix.
+
+![Heading display](../images/heading_display.png)
+
+<!-- generated:heading_display -->
+
+**Heading Display** · palette category `navigation` · hidden from the palette, still loads in existing panels
+
+FIX keys it reads by default: `HEAD`.
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `fg_color` | Foreground | `#aaaaaa` | colour | heading-text colour |
+| `bg_color` | Background | `#000000` | colour | background-box fill colour |
+| `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
+
+<!-- /generated -->
 
 ---
-
-# Turn Coordinator
 
 ## `turn_coordinator`
 
-A rate-of-turn indicator: a small aircraft symbol that banks to show the rate of
-turn (`ROT`), over an inclinometer with a slip/skid **ball** driven by lateral
-acceleration (`ALAT`). Can render as a full round dial or as a bare slip/skid
-strip.
+A small aircraft banks with the rate of turn (`ROT`, held to +/-5) over a
+slip/skid ball driven by `ALAT`. The ball turns amber near the end of its
+travel. Each element shows `XXX` if its key fails and greys if it is old or bad.
 
 ![Turn coordinator](../images/turn_coordinator.png)
 
-- **FIX keys:** reads `ROT` (turn rate, clamped to ±5) and `ALAT` (lateral
-  acceleration → ball position). On **fail** of either, that element shows
-  `XXX`; on **old/bad** it dims to gray.
-- The ball deflection scaling and optional smoothing are configured both by
-  constructor args and by the **screen's** config items `alat_multiplier` and
-  `alat_filter_depth` (read in `resizeEvent` and, if present and > 0, override
-  the defaults).
+<!-- generated:turn_coordinator -->
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `dial` | **true** | draw the full round dial; `false` draws just the turn/ball over a transparent background |
-| `ss_only` | **false** | slip/skid only — draw just the ball box, omit the turn aircraft and rate ticks |
-| `filter_depth` | **0** | depth of a moving-average filter on `ALAT` (0 = no filter) |
-| `alat_multiplier` | derived (`1 / 0.217`) | ball-deflection gain per unit of lateral acceleration (also settable via the screen `alat_multiplier` config item) |
-| `font_family` | from preferences | |
+**Turn Coordinator** · palette category `attitude`
 
-> `dial`, `ss_only`, and `filter_depth` are constructor arguments. The factory
-> creates the widget with defaults (`dial=True`), so to change them you rely on
-> the `setattr` option mechanism — and note `filter_depth` is more reliably set
-> through the screen-level `alat_filter_depth` config item, which `resizeEvent`
-> re-reads.
+FIX keys it reads by default: `ROT`, `ALAT`.
+
+No options in the configurator beyond the ones every instrument takes.
+
+<!-- /generated -->
+
+The ball's gain and smoothing are screen settings, not instrument options:
+`alat_multiplier` and `alat_filter_depth` at the screen level.
 
 ---
-
-# Wind
 
 ## `wind_display`
 
-A compact two-row readout of the headwind/tailwind and crosswind components,
-intended for placement near the airspeed tape. Direction is encoded by swapping a
-two-character label (no arrows); magnitude is always an unsigned integer in
-knots. It is opt-in via the `WIND_DISPLAY` preference (default `false`); when off,
-the screen builder skips it entirely and missing `HWIND`/`XWIND` cause no errors.
-
 ![Wind display: 12 kt headwind, 8 kt crosswind from the left](../images/wind_display.png)
 
-- **FIX keys:** reads `HWIND` (headwind, > 0 = headwind, < 0 = tailwind) and
-  `XWIND` (crosswind, > 0 = from right, < 0 = from left). If either key is
-  undefined the widget constructs cleanly and displays dashes.
+<!-- generated:wind_display -->
 
-| Row | Label (≥ 0) | Label (< 0) | Value |
-|-----|-------------|-------------|-------|
-| Top | `HW` (headwind) | `TW` (tailwind) | magnitude in knots |
-| Bottom | `RX` (cross from right) | `LX` (cross from left) | magnitude in knots |
+**Wind Display** · palette category `wind`
 
-A ±0.5 kt deadband around zero suppresses label flicker from sensor noise; values
-inside the deadband display with the positive-axis label (`HW 0` / `RX 0`).
+How it reads and flies: [The Panel at a Glance](The-Panel-at-a-Glance#wind).
 
-State is shown by color and content:
+FIX keys it reads by default: `HWIND`, `XWIND`.
 
-- **Healthy** — white label and value (e.g. `HW 12`).
-- **Bad** — amber label and an amber `X` in place of the value.
-- **Failed** (flag set, or `HWIND`/`XWIND` not defined) — dim gray label with
-  `---`; the label reverts to the positive-axis default (`HW`, `RX`) since the
-  sign can't be trusted.
+No options in the configurator beyond the ones every instrument takes.
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `font_family` | from preferences | label and value share one small font, sized at 0.40 × row height |
+<!-- /generated -->
 
-```yaml
-- type: wind_display
-  disabled: WIND_DISPLAY
-  row: 6
-  column: 15
-  span: {rows: 14, columns: 22}
-```
+| Row | Positive | Negative |
+|---|---|---|
+| Top, from `HWIND` | `HW`, headwind | `TW`, tailwind |
+| Bottom, from `XWIND` | `RX`, from the right | `LX`, from the left |
 
----
-
-# Navigation status
-
-## `nav_status`
-
-The flight plan's from-to-next field (GNX 375 Pilot's Guide 3-41/3-42) as a
-one-line chip, small enough for a PFD corner or the ND's status row:
-
-```
-[LEG] KSBA > GVO > RZS   12.4 NM  0:06  TERM
-```
-
-![nav_status states, 3x nearest-neighbour: no plan, LEG/TERM, DIRECT/ENR, SUSP at the MAP, LOI with ETE bad, position fail](../images/nav_status/contact_sheet_3x.png)
-
-- **FIX keys:** reads the fix-gateway `flightplan` engine's outputs only, and
-  writes nothing. `WPFROM` > **`WPNAME`** (the TO waypoint, in the active
-  colour, magenta by default) > `WPNEXT`; the `FPLSTATE` badge (`LEG`,
-  `DIRECT` magenta, `SUSP` yellow; no badge while no plan is active);
-  `WPDIS` (nm, one decimal under 100 nm), `WPETE` (H:MM, the FPL page's
-  format) and `FPLPHASE` (green; `LOI` yellow).
-- **No active leg** (`FPLSTATE` 0): all three idents are `____`, nothing else
-  is drawn. A single missing ident (no NEXT on the last leg, no FROM on a
-  direct-to) is `____` too. Underscores are never in the active colour.
-- **Quality:** a **fail** on `WPDIS`/`WPETE` (the engine has lost position)
-  draws a red `XXX` in that field; **bad** greys the field, and `WPETE` bad
-  (ground speed under 30 kt) is drawn as `--:--`; **old** on `FPLSTATE`
-  (the engine stopped publishing) greys the whole chip. While `FPLPHASE` is
-  `VECTORS` the distance and time are blank: the engine publishes no distance
-  on a vector leg.
-- **Missing keys:** a key the gateway does not define reads as absent; the
-  chip constructs and draws underscores rather than failing the screen.
-- **Size:** the text is fitted to a worst-case template (`DIRECT`, three
-  five-letter idents and every enabled field), so it does not change size as
-  the content changes in flight; a longer ident shrinks it further.
-- **Tap:** fires the `flightplan page fpl` action (with `hmi_group` appended
-  when set). With `tap_screen` set it first shows that screen, so a chip on
-  the PFD opens the plan on the flight-plan screen.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `show_distance` | **true** | draw `WPDIS` |
-| `show_ete` | **true** | draw `WPETE` |
-| `show_phase` | **true** | draw `FPLPHASE` |
-| `hmi_group` | `""` | `hmi_group` of the `flight_plan` instrument a tap targets; blank = all |
-| `tap_screen` | `""` | screen to show before the FPL page on a tap; blank = stay |
-| `active_color` | `#ff00ff` | TO waypoint ident colour |
-| `text_color` | `#ffffff` | FROM/NEXT idents, separators and data |
-| `font_family` / `font_percent` | from preferences | `font_percent` scales the nominal size (60% of the height) |
-
-```yaml
-- type: nav_status
-  row: 100
-  column: 0
-  span: {rows: 10, columns: 100}
-  options:
-    tap_screen: FLIGHTPLAN
-```
-
----
-
-## See also
-
-- [Concepts](Concepts) — the shared FIX/data-quality/font/layout model.
-- [FIX Database Keys](FIX-Database-Keys) — full key list and which widget reads
-  which key by default.
-- [Screen Builder](Screen-Builder) — placement (`row`/`column`/`span`/`move`).
-- [Engine & Data Gauges](Widgets-Engine-Gauges) — the generic gauges and the
-  color-state model.
-- [The Panel at a Glance](The-Panel-at-a-Glance) — what these instruments mean in the air.
+Values are whole knots without a sign. The label changes only past +/-0.5 kt, so
+noise around zero does not flicker it. An orange `X` means bad; a grey `---`
+means failed or not published. To make it optional, give the entry
+`disabled: WIND_DISPLAY` and set that preference.

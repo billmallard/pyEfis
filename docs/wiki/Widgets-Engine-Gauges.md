@@ -1,183 +1,213 @@
 # Engine & Data Gauges
 
-The four **generic gauges** are the workhorses of the EMS (Engine Monitoring
-System) and any data display. They all share the `AbstractGauge` base, so they
-share the [color-state model](Concepts#2-the-color-state-model-gauges), the
-[data-quality states](Concepts#3-data-quality--states),
-[fonts/masks/ghosting](Concepts#4-fonts-masks--ghosting), and the
-[encoder model](Concepts#6-encoder-interaction). **Read [Concepts](Concepts)
-first** — this page only documents what is specific to each gauge.
+The four general-purpose gauges that show any FIX value against its range and
+limits. How they read, the EGT leaning modes and the cylinder groups are on
+[Engine Monitoring](Engine-Monitoring); this page is the full option list. Each
+table is generated from pyEFIS's instrument registry; see
+[Widget Reference](Widget-Reference#how-to-read-these-pages).
 
-| `type:` | Class | Shape | Default `show_units` |
-|---------|-------|-------|----------------------|
-| `arc_gauge` | `gauges.ArcGauge` | 180° analog arc + digital value | `false` |
-| `horizontal_bar_gauge` | `gauges.HorizontalBar` | horizontal bar + value | `true` |
-| `vertical_bar_gauge` | `gauges.VerticalBar` | vertical bar + value (EGT/CHT strips) | `true` |
-| `numeric_display` | `gauges.NumericDisplay` | number only (color-aware) | `false` |
+| `type:` | Shape | Units shown by default |
+|---|---|---|
+| `arc_gauge` | An arc with a pointer and a readout. | no |
+| `horizontal_bar_gauge` | A horizontal bar and a readout. | yes |
+| `vertical_bar_gauge` | A vertical bar and a readout; the cylinder bars. | yes |
+| `numeric_display` | A readout only, coloured by the limits. | no |
 
 All four:
-- Have **no default FIX key** — you must set `dbkey:` (see [§Common options](#common-options-all-four)).
-- Read their green/yellow/red bands and warn/alarm thresholds from the **key's
-  aux values** (`Min`/`Max`/`lowWarn`/`lowAlarm`/`highWarn`/`highAlarm`), *not*
-  from YAML. See [FIX aux values](Concepts#aux-values).
-- Are **encoder-selectable and editable**.
-- Can be **ganged** (`ganged_arc_gauge`, `ganged_vertical_bar_gauge`, …) into
-  groups — this is how the cylinder strips are built. See
-  [Screen Builder → Ganged](Screen-Builder#ganged-instruments).
 
----
-
-## Common options (all four)
-
-These come from the shared base and behave identically everywhere. Defaults in
-**bold**.
-
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `dbkey` | *(required)* | FIX key the gauge displays |
-| `name` | none | label drawn on the gauge |
-| `decimal_places` | **1** | digits after the decimal in the value text |
-| `show_units` | per-gauge | draw the units string from the key |
-| `highlight_key` | none | if the displayed value equals this key's value, draw the highlight (e.g. mark the hottest cylinder via `EGTMAX1`) |
-| `temperature` | false | mark the value as a temperature so unit switching (°C/°F) applies |
-| `clipping` | false | clamp encoder edits to the key min/max |
-| `font_family`, `font_mask`, `font_ghost_mask`, `units_font_mask`, `name_font_mask`, … | see [Concepts §4](Concepts#4-fonts-masks--ghosting) | text sizing / ghosting |
-| `bg_*_color`, `safe_*_color`, `warn_*_color`, `alarm_*_color`, `text_*_color`, `pen_*_color`, `highlight_*_color` (each in `_good_` and `_bad_` form) | see [Concepts §2](Concepts#2-the-color-state-model-gauges) | full color palette |
-| encoder: `encoder_order`, `encoder_multiplier`, `encoder_set_real_time`, `encoder_num_mask`, `encoder_set_key`, … | see [Concepts §6](Concepts#6-encoder-interaction) | encoder selection & editing |
-
-> Note: `min_size` exists in the constructors but the screen builder always
-> creates these gauges with `min_size=False` so they scale to their `span`. You
-> do not set it from YAML.
+- have no FIX key of their own: set `dbkey`;
+- take their range from the FIX item's minimum and maximum, and their bands
+  from its `lowAlarm`, `lowWarn`, `highWarn` and `highAlarm`, set in fix-gateway
+  through the [aircraft parameters](Designing-Your-Panel#aircraft-parameters);
+- can be selected with the knob to set their value (below).
 
 ---
 
 ## `arc_gauge`
 
-A 180° analog arc (sweeping 45°→135°) with green/yellow/red bands drawn from the
-key's aux thresholds, a pointer, and a digital value. Good for round-dial
-quantities like RPM, oil pressure, manifold pressure.
-
 ![Arc gauge](../images/arc_gauge.png)
 ![Arc gauge, segmented](../images/arc_gauge_segmented.png)
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `name_location` | **`top`** | where the name sits relative to the value: `top` or `right` |
-| `show_units` | **`false`** | |
-| `segments` | **0** | if > 0, overlay N discrete segments (LCD-bar-graph look) instead of a smooth arc |
-| `segment_gap_percent` | **0.01** | width of the black gaps between segments |
-| `segment_alpha` | **180** | darkness (0–255) of the "unfilled" segment overlay |
+<!-- generated:arc_gauge -->
 
-```yaml
-- type: arc_gauge
-  row: 0
-  column: 0
-  span: {rows: 50, columns: 50}
-  options:
-    name: RPM
-    dbkey: TACH1
-    decimal_places: 0
-    show_units: false
-```
+**Arc Gauge** · palette category `gauge`
+
+How it reads and flies: [Engine Monitoring](Engine-Monitoring).
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `dbkey` | FIX key | empty | FIX key | FIX-database key whose value this gauge displays |
+| `name` | Name | empty |  | label drawn on the gauge (e.g. OIL P, CHT) |
+| `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
+| `show_units` | Show units | off | on / off | append the FIX key's engineering units to the readout |
+| `segments` | Segments | `0` |  | 0 = solid band; >0 draws a segmented (LED-style) band |
+| `name_location` | Name location | `top` | `top`, `right` | where the name label sits relative to the gauge |
+
+Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
+
+| Value | From | Meaning |
+|---|---|---|
+| `Min` | min | Range minimum |
+| `Max` | max | Range maximum |
+| `lowAlarm` | aux | Low alarm (red) |
+| `lowWarn` | aux | Low warning (yellow) |
+| `highWarn` | aux | High warning (yellow) |
+| `highAlarm` | aux | High alarm (red) |
+
+<!-- /generated -->
 
 ---
 
 ## `vertical_bar_gauge`
 
-A vertical bar with green/yellow/red bands, an indicator line, and name/value/
-units. This is the **EGT/CHT strip** gauge and carries the engine-leaning
-machinery.
-
 ![Vertical bar gauge](../images/vertical_bar_gauge.png)
 ![Vertical bar gauge, segmented](../images/vertical_bar_gauge_segmented.png)
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `show_name` / `show_value` / `show_units` | **true** / **true** / **true** | toggle each label |
-| `bar_width_percent` | **0.3** | bar width as fraction of widget width |
-| `line_width_percent` | **0.5** | indicator-line width as fraction of widget width |
-| `small_font_percent` | **0.08** | name/units font size |
-| `big_font_percent` | **0.10** | value font size |
-| `text_gap` | **3** | px between bar and text |
-| `segments` | **0** | discrete-segment overlay |
-| `segment_gap_percent` | **0.012** | |
-| `segment_alpha` | **180** | |
-| `highlight_key` | none | draw the highlight ball when value == this key (mark the hottest cylinder) |
-| `egt_mode_switching` | false | enable the EGT mode buttons (normalize/peak/lean) — set via `common_options` on the gang group |
-| `normalize_range` | **0** | full-scale span (°) used when in normalize mode; must be > 0 for normalize/lean to show a deflection |
+<!-- generated:vertical_bar_gauge -->
 
-### EGT modes (engine leaning)
+**Vertical Bar Gauge** · palette category `gauge`
 
-When `egt_mode_switching` is on, a `vertical_bar_gauge` responds to mode actions
-(driven by the EGT buttons — see [Engine Monitoring](Engine-Monitoring#leaning-egt-modes)):
+How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 
-| Mode | Behavior |
-|------|----------|
-| **normal** | absolute value vs. the key's range (default) |
-| **peak** | tracks the peak value; once the value falls ≥10° below peak, shows the **delta below peak** in magenta — the classic "X° rich/lean of peak" |
-| **normalize** | re-centers the bar on the value captured when normalize was engaged, scaled by `normalize_range`, so all cylinders line up for comparison |
-| **reset peak** | clears the stored peak |
-| **lean** | shortcut: reset peak + normalize + peak together |
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `dbkey` | FIX key | empty | FIX key | FIX-database key whose value this gauge displays |
+| `name` | Name | empty |  | label drawn on the gauge (e.g. OIL P, CHT) |
+| `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
+| `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
+| `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
 
-> This is the one gauge where the *mode* (not just the value) changes what you
-> see. Document it carefully when you write screens for fuel-injected engines.
+Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
+
+| Value | From | Meaning |
+|---|---|---|
+| `Min` | min | Range minimum |
+| `Max` | max | Range maximum |
+| `lowAlarm` | aux | Low alarm (red) |
+| `lowWarn` | aux | Low warning (yellow) |
+| `highWarn` | aux | High warning (yellow) |
+| `highAlarm` | aux | High alarm (red) |
+
+<!-- /generated -->
+
+Only the vertical bar has the EGT modes and the hottest-cylinder ball. Set them
+in YAML:
+
+| Option | Default | What it does |
+|---|---|---|
+| `egt_mode_switching` | off | Respond to the **Set EGT mode** actions. |
+| `normalize_range` | unset | The span the bar covers in Normalize. |
+| `highlight_key` | unset | A FIX key such as `EGTMAX1`; a ball is drawn while this bar's value equals it. |
+
+See [Engine Monitoring](Engine-Monitoring#leaning-egt-modes).
 
 ---
 
 ## `horizontal_bar_gauge`
 
-Same data model as the vertical bar, laid out horizontally. Common for trim
-position, fuel, and quantities where a wide short gauge fits the panel better.
-
 ![Horizontal bar gauge](../images/horizontal_bar_gauge.png)
 ![Horizontal bar gauge, segmented](../images/horizontal_bar_gauge_segmented.png)
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `show_name` / `show_value` / `show_units` | **true** / **true** / **true** | toggle each label |
-| `bar_divisor` | **4.5** | controls bar thickness (larger = thinner bar relative to height) |
-| `segments` | **0** | discrete-segment overlay |
-| `segment_gap_percent` | **0.01** | |
-| `segment_alpha` | **180** | |
+<!-- generated:horizontal_bar_gauge -->
 
-It has **no** `highlight_key`/peak/normalize machinery — those are
-vertical-bar-only.
+**Horizontal Bar Gauge** · palette category `gauge`
+
+How it reads and flies: [Engine Monitoring](Engine-Monitoring).
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `dbkey` | FIX key | empty | FIX key | FIX-database key whose value this gauge displays |
+| `name` | Name | empty |  | label drawn on the gauge (e.g. OIL P, CHT) |
+| `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
+| `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
+| `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
+
+Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
+
+| Value | From | Meaning |
+|---|---|---|
+| `Min` | min | Range minimum |
+| `Max` | max | Range maximum |
+| `lowAlarm` | aux | Low alarm (red) |
+| `lowWarn` | aux | Low warning (yellow) |
+| `highWarn` | aux | High warning (yellow) |
+| `highAlarm` | aux | High alarm (red) |
+
+<!-- /generated -->
+
+A limit of exactly 0 is not drawn on a horizontal bar.
 
 ---
 
 ## `numeric_display`
 
-A pure numeric readout that — unlike `value_text` or `static_text` — applies the
-full gauge color model: it goes yellow/red on warn/alarm thresholds, dims when
-old/bad, and shows `XXX` (masked) on fail. Use it wherever a number must signal
-its own health.
-
 ![Numeric display](../images/numeric_display.png)
-![Numeric display, segmented + ghosting](../images/numeric_display_segmented_ghosting.png)
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `show_units` | **false** | draw units to the right of the value |
-| `small_font_percent` | **0.4** | units font size relative to the value font |
-| `decimal_places` | **1** | (shared) |
-| `font_mask` / `font_ghost_mask` / `units_font_mask` | see Concepts | sizing + LCD ghosting |
+<!-- generated:numeric_display -->
 
-> Do **not** confuse `numeric_display` (this gauge) with the internal
-> `NumericalDisplay` scrolling-drum widget used inside the airspeed/altimeter
-> tapes — the latter is not a screen-builder `type:` you place directly.
+**Numeric Display** · palette category `text`
+
+How it reads and flies: [Engine Monitoring](Engine-Monitoring).
+
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `dbkey` | FIX key | empty | FIX key | FIX-database key whose value is displayed |
+| `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
+| `font_mask` | Font mask | `000` |  | widest string the readout reserves space for (sizing) |
+| `show_units` | Show units | off | on / off | append the FIX key's engineering units to the readout |
+
+Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
+
+| Value | From | Meaning |
+|---|---|---|
+| `Min` | min | Range minimum |
+| `Max` | max | Range maximum |
+| `lowAlarm` | aux | Low alarm (red) |
+| `lowWarn` | aux | Low warning (yellow) |
+| `highWarn` | aux | High warning (yellow) |
+| `highAlarm` | aux | High alarm (red) |
+
+<!-- /generated -->
+
+It colours the value by the limits like the others, without a band. When it is
+selected for editing it shows the cyan ring and knob icon from
+[The Panel at a Glance](The-Panel-at-a-Glance#touch-a-value-then-turn-the-knob);
+the bar and arc gauges turn orange instead.
 
 ---
 
-## Ganging gauges (EMS strips)
+## Options every gauge takes in YAML
 
-Prefix any of the four types with `ganged_` to repeat it across **groups**.
-Each group is visually separated; `common_options` apply to all members of a
-group, and a per-instrument `options:` overrides them. This is exactly how the
-4-cylinder EGT/CHT strips and the power column are built.
+These are read by all four but are not in the configurator's list. Except
+for the unit switches, pyEFIS applies them and logs that they are undeclared.
+
+| Option | Default | What it does |
+|---|---|---|
+| `temperature: true`, `pressure: true` | off | Let the **Units** button switch this gauge between °C and °F, or inHg and hPa. |
+| `altitude: true` | off | The same for ft and m, on `numeric_display` only. |
+| `clipping` | off | Hold the value, and any edit, inside the item's range. |
+| `encoder_set_key` | the `dbkey` | The FIX key the knob edits. |
+| `encoder_multiplier` | 1 | Inner-knob step. |
+| `encoder_coarse_multiplier` | 10 | Outer ring step, as a multiple of the inner. |
+| `encoder_set_real_time` | off | Write each step at once, rather than on the push. |
+| `touch_edit` | off | Select it by touch as well as with the knob. |
+| `encoder_order` | unset | Its place in the knob's order. |
+
+Selected and turned, a gauge changes its value; a push keeps it; leaving it
+until the knob times out puts the old value back.
+
+---
+
+## Ganged gauges
+
+Prefix a gauge type with `ganged_` to repeat it across groups: this is how the
+stock screens build their cylinder rows. `gang_type` is required.
+`common_options` apply to every member of a group, and a member's own `options:`
+override them.
 
 ```yaml
 - type: ganged_vertical_bar_gauge
-  gang_type: horizontal      # default is vertical
+  gang_type: horizontal       # required: horizontal or vertical
   row: 8
   column: 1
   span: {rows: 5, columns: 27}
@@ -193,7 +223,6 @@ group, and a per-instrument `options:` overrides them. This is exactly how the
         - {options: {name: "4", dbkey: EGT14, show_units: false}}
 ```
 
-See [Screen Builder → Ganged Instruments](Screen-Builder#ganged-instruments)
-for the full grouping/`gap`/`encoder_order` rules, and
-[Preferences & Styling](Preferences-and-Styling) for binding gauge slots
-(`ARC1`, `BAR15`, …) and applying styles in one place.
+In the configurator, use the palette's cylinder groups instead. The rules for
+groups, gaps and `disabled` are on
+[Screen Builder](Screen-Builder#ganged-instruments).

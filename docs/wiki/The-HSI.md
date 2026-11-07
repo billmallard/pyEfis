@@ -147,7 +147,7 @@ suspends on its own, and RESUME flies the missed approach.
 For every leg type, sequencing rule and Direct-To behaviour, see
 [Flight Plan Engine](https://github.com/billmallard/fix-gateway/wiki/Flight-Plan-Engine).
 Building and editing a plan is under
-[`flight_plan`](Widgets-Text-and-Interactive#flight_plan).
+[`flight_plan`](Widgets-Navigation#flight_plan).
 
 ## Setting heading and course
 

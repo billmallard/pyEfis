@@ -177,7 +177,7 @@ ganged **EGT** and **CHT** `vertical_bar_gauge` columns
 (`4_EGT.yaml` / `4_CHT.yaml`), a six-wide fuel bar strip, and a ganged power /
 engine / temps bar group. A small vertical group of **EGT-mode buttons**
 (Normalize / Lean / Peak / Reset-Peak — see
-[Engine Gauges → EGT modes](Widgets-Engine-Gauges#egt-modes-engine-leaning))
+[Engine Monitoring](Engine-Monitoring#leaning-egt-modes))
 drives the leaning behavior. Use EMS when you want engine detail without giving
 up the attitude view.
 

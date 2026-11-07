@@ -1,49 +1,45 @@
-# Text & Interactive Widgets
+# Text & Interactive
 
-This page covers the simple **text/value displays** and the two **interactive**
-widgets. They do not share the `AbstractGauge` color-state machinery of the
-[engine gauges](Widgets-Engine-Gauges); read [Concepts](Concepts) first for the
-shared vocabulary (the FIX database, `dbkey`, fonts/masks/ghosting, the encoder
-model). This page documents only what is specific to each widget.
+Text readouts, buttons, lists and checklists. Each option table below is
+generated from pyEFIS's instrument registry, the same records the
+configurator's Properties panel shows; see
+[Widget Reference](Widget-Reference#how-to-read-these-pages). The flight plan
+page is on [Navigation](Widgets-Navigation#flight_plan).
 
-| `type:` | Class | What it is | Interactive? |
-|---------|-------|------------|--------------|
-| `static_text` | `misc.StaticText` | a fixed label — no FIX key | no |
-| `value_text` | `misc.ValueDisplay` | a plain readout of one FIX key (dim on old/bad/fail, red on annunciate) | no |
-| `button` | `button.Button` | a stateful pushbutton driven by a per-button config file: shows data, changes color/text on conditions, and fires actions | yes (encoder-selectable) |
-| `listbox` | `listbox.ListBox` | a scrollable table of user-defined lists that writes FIX keys when an item is selected | yes (encoder-selectable) |
-| `flight_plan` | `flight_plan.FlightPlan` | an app-like flight-plan editor: FPL list + Entry page with FastFind and an on-screen keypad | yes (touch only; FP5a) |
+| `type:` | What it is | Interactive |
+|---|---|---|
+| `static_text` | A fixed label. | no |
+| `value_text` | A plain readout of one FIX key. | no |
+| `button` | A pushbutton that shows data, changes with conditions and fires actions. | touch and knob |
+| `listbox` | A table of your own lists; selecting a row writes FIX keys. | touch and knob |
+| `checklist` | A scrolling challenge-and-response checklist. | knob and buttons |
 
-> The two text widgets are deliberately "dumb" — if you want a number that goes
-> yellow/red on its own thresholds, use [`numeric_display`](Widgets-Engine-Gauges#numeric_display)
-> instead.
+For a number that turns yellow or red at its own limits, use
+[`numeric_display`](Widgets-Engine-Gauges#numeric_display) instead of
+`value_text`.
 
 ---
 
 ## `static_text`
 
-A fixed label drawn once and never updated from the database. Used for panel
-titles, units that never change, or any caption.
+A label drawn once and never updated: a title, a unit, a caption.
 
 ![Static text](../images/static_text.png)
 
-**YAML `type:`** `static_text`
+<!-- generated:static_text -->
 
-**FIX keys:** none.
+**Static Text** · palette category `text`
 
-The factory passes `text` and `font_family` to the constructor; every other
-option is applied as an instance attribute (see [Concepts §8](Concepts#8-how-options-reach-a-widget)).
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `text` | Text | `Text` |  | the fixed text to display |
+| `alignment` | Alignment | `AlignLeft` | `AlignLeft`, `AlignCenter`, `AlignRight` | horizontal text alignment within the widget |
+| `font_mask` | Font mask | empty |  | widest string the text reserves space for (sizing) |
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `text` | `""` *(required, passed to constructor)* | the string to display |
-| `alignment` | **`AlignLeft`** | Qt alignment-flag name, e.g. `AlignLeft`, `AlignCenter`, `AlignRight` |
-| `font_family` | **`DejaVu Sans Condensed`** | resolved from preferences / passed to constructor |
-| `font_percent` | **1.0** | font height as a fraction of the widget height (ignored when `font_mask` is set) |
-| `font_mask` | none | sizing template; when set, the font is sized to fit this string instead of using `font_percent` (see [Concepts §4](Concepts#4-fonts-masks--ghosting)) |
-| `font_ghost_mask` | none | dim "unlit segment" string drawn behind the text |
-| `font_ghost_alpha` | **50** | opacity (0–255) of the ghost layer |
-| `color` | white | text color (a `QColor`) |
+<!-- /generated -->
+
+Two more attributes work from YAML: `font_ghost_mask`, a dim "unlit segment"
+string drawn behind the text, and `font_ghost_alpha` (default 50, of 255).
 
 ```yaml
 - type: static_text
@@ -51,7 +47,7 @@ option is applied as an instance attribute (see [Concepts §8](Concepts#8-how-op
   column: 0
   span: {rows: 10, columns: 40}
   options:
-    text: "OIL"
+    text: OIL
     alignment: AlignCenter
 ```
 
@@ -59,97 +55,89 @@ option is applied as an instance attribute (see [Concepts §8](Concepts#8-how-op
 
 ## `value_text`
 
-A plain readout of a single FIX key. It reflects the key's quality flags — it
-dims to gray when the value is **old / bad / fail**, turns the text **red** when
-the key is **annunciating**, and prints `xxx` when the key is **failed** — but,
-unlike the gauges, it does **not** apply warn/alarm threshold colors.
+A readout of one FIX key. It follows the key's quality flags: grey when the
+value is old, bad or failed, red while it annunciates, and `xxx` when it has
+failed. It applies no warning or alarm colours of its own.
 
 ![Value text](../images/value_text.png)
 
-**YAML `type:`** `value_text`
+<!-- generated:value_text -->
 
-**FIX keys:** no default — set `dbkey:`.
+**Value Text** · palette category `text`
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `dbkey` | *(required)* | FIX key whose value is displayed (special-cased to `setDbkey()`, see [Concepts §8](Concepts#8-how-options-reach-a-widget)) |
-| `name` | none | optional label attribute |
-| `alignment` | **`AlignLeft`** | Qt alignment-flag name |
-| `font_family` | **`Open Sans`** | resolved from preferences / passed to constructor |
-| `font_percent` | **0.9** | font height as a fraction of the widget height (ignored when `font_mask` is set) |
-| `font_mask` | none | sizing template (see [Concepts §4](Concepts#4-fonts-masks--ghosting)) |
-| `font_ghost_mask` | none | dim "unlit segment" backing string |
-| `font_ghost_alpha` | **50** | opacity (0–255) of the ghost layer |
-| `number_format` | none | digit mask for the value: blank = as-is; `000` = `089` (rounded, zero-padded); `000.0` = `089.0` (with decimals) |
-| `prefix_text` | none | static label drawn inline **before** the value (e.g. `HDG`, `CRS`); empty = no prefix |
-| `prefix_font_family` | **`Open Sans`** | font family for the prefix label |
-| `prefix_font_percent` | **50** | prefix height as a percent of the widget height |
-| `prefix_color` | **`#ffffff`** | colour of the prefix label |
-| `value_color` | **`#ffffff`** | colour of the data value (good/normal state; bad/old still grey, annunciate still red) |
-| `border_color` | **`#ffffff`** | box border colour |
-| `border_width` | **0** | box border thickness in px (0 = no border) |
-| `border_opacity` | **100** | box border opacity (%) |
-| `bg_color` | **`#000000`** | box background fill colour |
-| `bg_opacity` | **0** | box background opacity (%); 0 = transparent (no fill) |
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `dbkey` | FIX key | empty | FIX key | FIX-database key whose value is displayed |
+| `font_mask` | Font mask | empty |  | widest string the text reserves space for (sizing) |
+| `number_format` | Number format | empty |  | Digit mask: blank = as-is; 000 = 089 (rounded, zero-padded); 000.0 = 089.0 (with decimals) |
+| `prefix_text` | Prefix text | empty |  | static label drawn before the value (e.g. HDG, CRS) |
+| `prefix_font_family` | Prefix font | `Open Sans` | `DejaVu Sans Condensed`, `DejaVu Sans`, `DejaVu Sans Mono`, `B612`, `Inter`, `Roboto`, `Open Sans` | font family for the prefix label |
+| `prefix_font_percent` | Prefix font size (%) | `50` | 1 to 100, step 1 | prefix height as a percent of the widget height |
+| `prefix_color` | Prefix colour | `#ffffff` | colour | colour of the prefix label |
+| `value_color` | Value colour | `#ffffff` | colour | colour of the data value (good/normal state) |
+| `border_color` | Border colour | `#ffffff` | colour | colour of the box border |
+| `border_width` | Border width (px) | `0` | 0 to 20, step 1 | box border thickness in pixels; 0 = no border |
+| `border_opacity` | Border opacity (%) | `100` | 0 to 100, step 1 | box border opacity |
+| `bg_color` | Background colour | `#000000` | colour | box background fill colour |
+| `bg_opacity` | Background opacity (%) | `0` | 0 to 100, step 1 | box background opacity; 0 = transparent (no fill) |
 
-The optional **box** (border + background) is drawn at the widget bounds — the
-same rectangle you drag/resize on screen — under the text. With `border_width`
-and `bg_opacity` both at 0 (the defaults) there is no box, so existing displays
-are unchanged.
+<!-- /generated -->
 
-The prefix is drawn in its own font/size/colour, baseline-aligned with the value
-and positioned by `alignment` — so `prefix_text: HDG` over `dbkey: HEAD` gives a
-Garmin-style **`HDG 114`** with the label and value styled independently.
-
-Color attributes exist on the instance and can be overridden, but they are named
-in this widget's own form (not the gauge `_good_`/`_bad_` form): `textGoodColor`,
-`textBadColor`, `textAnnunciateColor`, `bgGoodColor`, `bgBadColor`,
-`highlightGoodColor`, `highlightBadColor`, `outlineColor`.
+With **Prefix text** set, the label is drawn in its own font, size and colour
+before the value, so `prefix_text: HDG` with `dbkey: HEAD` reads `HDG 114`.
+The optional box (border and background) is drawn at the instrument's bounds;
+with both its width and opacity at 0 there is none.
 
 ```yaml
 - type: value_text
-  row: 0
-  column: 0
-  span: {rows: 10, columns: 40}
   options:
-    dbkey: OILP1
-    font_mask: "000"
+    dbkey: HEAD
+    prefix_text: HDG
+    number_format: "000"
 ```
-
-> Use `number_format` for rounding / zero-padding the value. It applies no
-> threshold coloring (the value just follows its quality flags); for warn/alarm
-> bands use [`numeric_display`](Widgets-Engine-Gauges#numeric_display).
 
 ---
 
 ## `button`
 
-A `button` is a stateful, interactive pushbutton. It is **not** the menu — it is
-an instrument that can display data, change its color/text in response to FIX
-data, and fire actions within pyEFIS. The classic use is a column of buttons
-along each edge of the screen (reachable by the pilot and co-pilot), each one
-showing the status of something and switching screens or toggling a setting. For
-example, on the PFD an `EMS` button turns red when an engine item annunciates,
-and pressing it jumps to the EMS screen; on the EMS screen the same button reads
-`PFD` and takes you back.
+A button is an instrument, not the menu. It can show data, change its colour
+and label as data changes, and fire actions: switch screens, set FIX values,
+change units, step a checklist. On the stock screens, the **EMS** button turns
+red when an engine item annunciates and takes you to the EMS screen.
 
 ![EMS button, normal](../images/ems-gray.png)
 ![EMS button, alert](../images/ems-red.png)
 
-Because the background can be made transparent, buttons are often laid invisibly
-**on top of** a gauge — e.g. trim-up / trim-down buttons over a
-`horizontal_bar_gauge` showing trim position:
+With a transparent background a button can sit invisibly over another
+instrument, for example trim up and down over a trim bar.
 
-![Trim pitch buttons over a bar gauge](../images/trim-pitch.png)
+![Trim buttons over a bar gauge](../images/trim-pitch.png)
 
-**YAML `type:`** `button`
+<!-- generated:button -->
 
-### Adding a button
+**Button** · palette category `control`
 
-A button is the one widget whose behavior lives in a **separate config file**.
-The screen-builder entry is short; the `options: config:` key points at the
-button's YAML file (relative to the config path). **`config:` is required** —
-omitting it raises `button must specify options: config:`.
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `text` | Text | empty |  | button label (use \n for two lines) |
+| `type` | Type | `simple` | `simple`, `toggle`, `repeat` | simple = click; toggle = on/off state; repeat = auto-repeat while held |
+| `dbkey` | FIX key | empty | FIX key | backing touchscreen-button key (TSBTN...); the configurator assigns it automatically |
+| `bg_color` | Background colour | `#101418` | colour | button fill colour |
+| `fg_color` | Text colour | `#00ffff` | colour | button label colour |
+| `transparent` | Transparent background | off | on / off | draw no fill so what is behind the button shows through |
+| `hover_show` | Show only on hover | off | on / off | hide the button until the pointer is over it |
+| `config` | Config file (legacy) | empty |  | path to an external button YAML; blank = use the fields above |
+
+<!-- /generated -->
+
+### Defining a button
+
+There are two ways, and both take the same fields.
+
+- **Inline**, as the configurator writes it: the fields are the instrument's
+  own options. It needs at least a `dbkey`; the configurator assigns one.
+- **In a separate file**, as the stock screens do: `config:` names a YAML file
+  relative to the configuration directory.
 
 ```yaml
 - type: button
@@ -157,76 +145,40 @@ omitting it raises `button must specify options: config:`.
   column: 75
   span: {rows: 15, columns: 10}
   options:
-    config: config/buttons/trim-up-invisible.yaml
+    config: buttons/trim-up-invisible.yaml
 ```
 
-| Option (on the screen entry) | Default | Meaning |
-|--------|---------|---------|
-| `config` | *(required)* | path to the button-config YAML file |
-| `font_family` | **`DejaVu Sans Condensed`** | passed to the constructor |
-| `font_mask` | none | sizing template for the button label |
-| `encoder_order` | none | position in the encoder selection order (see [Encoder support](#encoder-support)) |
+Without either, pyEFIS stops with `button needs options: either 'config:' (an
+external YAML) or inline fields including 'dbkey:'`.
 
-### The button-config file
+### Button fields
 
-Every button-config file must define at least `type:`, `text:` and `dbkey:`.
+| Field | Default | Meaning |
+|---|---|---|
+| `type` | `simple` | `simple`, `toggle` or `repeat`. Anything else is an error. |
+| `text` | required | The starting label, usually replaced by a `set text:` action. Use `\n` for two lines. |
+| `dbkey` | required | A boolean FIX key tied to the button's state; a physical button can drive it too. `{id}` in the key is replaced with the display's `nodeID`, so one file serves several displays (`TSBTN{id}12` becomes `TSBTN112`). |
+| `condition_keys` | none | More FIX keys the conditions watch and can use. |
+| `conditions` | none | The `when` / `actions` rules, below. |
+| `bg_color`, `fg_color` | see the table above | Starting colours. |
+| `transparent` | off | No fill. |
+| `hover_show` | off | Clear `HIDEBUTTON` when the pointer is over the button. |
+| `repeat_delay`, `repeat_interval` | 300 ms each | Repeat timing, `repeat` buttons only. |
 
-```yaml
-type: simple
-text: ""
-dbkey: BTN6
-```
+| `type` | Behaviour |
+|---|---|
+| `simple` | Fires its actions when pressed, or when `dbkey` goes from false to true. |
+| `toggle` | On and off; fires on both. The button and `dbkey` stay in step. |
+| `repeat` | Like `simple`, but repeats while held. |
 
-| Config key | Default | Meaning |
-|------------|---------|---------|
-| `type` | *(required)* | `simple`, `toggle`, or `repeat` (see below) |
-| `text` | *(required)* | initial label; usually overwritten by a `set text:` action |
-| `dbkey` | *(required)* | a **boolean** FIX key tied to the button's pressed state; can also be driven by a physical button input. `{id}` in the key is replaced with the screen's `nodeID` so the same config serves multiple displays (e.g. `TSBTN{id}12` → `TSBTN112`) |
-| `condition_keys` | `[]` | extra FIX keys this button watches in its conditions (see below) |
-| `conditions` | `[]` | the list of `when` / `actions` rules (see below) |
-| `bg_color` | `lightgray` | initial background color |
-| `fg_color` | `black` | initial foreground (text) color |
-| `transparent` | `false` | draw only a border, transparent fill (for overlays) |
-| `hover_show` | `false` | on mouse-enter, set FIX key `HIDEBUTTON` false (un-hide a hidden button bar) |
-| `repeat_interval` | `300` | (ms) auto-repeat interval — `repeat` type only |
-| `repeat_delay` | `300` | (ms) delay before auto-repeat starts — `repeat` type only |
+### Conditions
 
-### Button types
-
-`dbkey` must be a boolean and doubles as a physical-button input.
-
-| `type:` | Behavior |
-|---------|----------|
-| **simple** | momentary pushbutton: fires its actions on press, then returns to the unpressed state. Does not repeat when held. Trigger it by touch/mouse, or by setting `dbkey` to `True`. |
-| **toggle** | on/off latch: fires actions on both press and release. Set `dbkey` `True` for on, `False` for off; the button and the key stay in sync. |
-| **repeat** | like `simple`, but **repeats** its actions while held down (rates set by `repeat_delay` / `repeat_interval`). |
-
-### Condition keys
-
-`condition_keys` lists the FIX keys (beyond `dbkey`) whose changes should
-re-evaluate the button's conditions, and which you may reference as variables.
-Conditions are re-evaluated whenever `dbkey` or any `condition_keys` value (or
-its quality flags / aux values) changes.
+`conditions:` is an ordered list of rules. Each has a `when:` and `actions:`.
+The first rule that matches runs its actions and stops the list, unless it has
+`continue: true`.
 
 ```yaml
-type: simple
-text: ""
-dbkey: BTN6
-condition_keys:
-  - CHT11
-  - CHT12
-  - EGT11
-  - EGT12
-```
-
-### Conditions, `when`, `actions`, `continue`
-
-`conditions:` is an ordered list of rules. Each rule has a `when:` expression;
-when it evaluates true, the rule's `actions:` run. **By default, once a rule
-matches, evaluation stops** — add `continue: true` to let the following rules be
-evaluated as well.
-
-```yaml
+condition_keys: [CHT11, CHT12]
 conditions:
   - when: "SCREEN eq 'EMS'"
     actions:
@@ -238,111 +190,99 @@ conditions:
       - set bg color: red
 ```
 
-- `when:` is a **string** expression evaluated by the
-  [`pycond`](https://github.com/axiros/pycond) library — `eq`, `ne`, `gt`,
-  `lt`, `and`, `or` and `[ ]` grouping cover almost everything you need.
-- `when:` may also be a **boolean** (`true` / `false`): the actions then run when
-  the button's checked state matches that boolean (handy for toggle buttons).
+- A **string** `when:` is a [pycond](https://github.com/axiros/pycond)
+  expression: `eq`, `ne`, `gt`, `lt`, `and`, `or`, and `[ ]` for grouping.
+- A **boolean** `when:` on a toggle button matches the button's state. On
+  other buttons, `true` and `false` both always run.
 
-### Variables available in conditions and `set text:`
+Conditions are evaluated when the button is shown, when it is pressed, when
+`dbkey` changes (unless it is bad, or the button is hidden), and when any
+`condition_keys` value, quality flag or aux value changes.
 
-Inside a `when:` expression — and inside `set text:` via `{NAME}` substitution —
-you can reference:
+**What a condition can use:**
 
-- **`dbkey` and every `condition_keys` key** by name (its current value).
-- For any of those keys, the quality flags and aux values:
-  `KEY.old`, `KEY.bad`, `KEY.fail`, `KEY.annunciate`, and `KEY.aux.<name>`
-  (e.g. `KEY.aux.min`, `KEY.aux.max`).
-- Four built-ins:
+- `dbkey` and each `condition_keys` key, by name, for its value.
+- For `condition_keys` only: `KEY.old`, `KEY.bad`, `KEY.fail`,
+  `KEY.annunciate` and `KEY.aux.<name>`.
+- `DBKEY`, the button's own state; `CLICKED`, true when a press started the
+  evaluation; `SCREEN`, the screen's name; and `PREVIOUS_CONDITION`, the result
+  of the last string `when:` in this pass (false at the start).
 
-| Variable | Meaning |
-|----------|---------|
-| `DBKEY` | the boolean value of this button's `dbkey` (the pressed/released state — most useful on toggle buttons) |
-| `CLICKED` | `true` when the evaluation was triggered by a user press; `false` when triggered by a data change. Use it to distinguish user actions from data-driven ones |
-| `SCREEN` | the name of the screen the button is on |
-| `PREVIOUS_CONDITION` | the boolean result of the previous rule — lets you build an if/else across two rules |
+The same names work as `{NAME}` in `set text:`. The starting `text:` is filled
+in before the conditions first run, so the built-ins do not resolve there.
 
 ### Actions
 
-Each entry under `actions:` is a single-key map, `action: argument`. Two
-families exist: **HMI actions** (system behavior) and **style actions**
-(appearance, handled by the button itself). The available HMI actions are:
+Each entry under `actions:` is `action: argument`. Names are not
+case-sensitive.
 
-| Action | Argument | Effect |
-|--------|----------|--------|
-| `set airspeed mode` | mode | switch the airspeed box between IAS / GS / TAS |
-| `set egt mode` | mode | drive the EGT bar gauges (normalize / peak / lean / reset) — see [Engine Gauges → EGT modes](Widgets-Engine-Gauges#egt-modes-engine-leaning) |
-| `show screen` | screen name | switch to a named screen |
-| `show next screen` | `true` | switch to the next screen |
-| `show previous screen` | `true` | switch to the previous screen |
-| `set value` | `KEY,value` | write `value` to FIX key `KEY` |
-| `change value` | `KEY,delta` | add `delta` to FIX key `KEY` (e.g. `KEY,0.1`) |
-| `change value wrap` | `KEY,delta` | add `delta` to FIX key `KEY`, **wrapping** within the key's `min`/`max` range instead of clamping — for circular or cyclic values. A heading bug stepping below 0 wraps to just under 360 (`HEADBUG,-1`); a selector cycles `0 → 1 → 2 → 0` (`NAVSRC,1`) |
-| `sync value` | `DEST,SOURCE` | copy FIX key `SOURCE`'s current value into `DEST` — e.g. a push-to-sync that snaps the heading bug to the current heading (`HEADBUG,HEAD`) |
-| `toggle bit` | `true` | toggle a boolean FIX value |
-| `activate menu item` | index | activate a menu item by number |
-| `activate menu` | menu name | open a named menu |
-| `menu encoder` | value | drive the menu with an encoder step |
-| `set menu focus` | — | move focus into the menu |
-| `set instrument units` | `GROUPS:Toggle` or `GROUPS:<unit>` | toggle a unit group, or select a named unit (`Pressure:hPa`) |
-| `exit` | `true` | exit pyEFIS |
-| `evaluate` | expression | evaluate an expression (advanced/escape hatch) |
+| Action | Argument | What it does |
+|---|---|---|
+| `show screen` | screen name | Go to that screen. |
+| `show next screen` / `show previous screen` | any | Step through the screens, wrapping. |
+| `set value` | `KEY,value` | Write a FIX value. |
+| `change value` | `KEY,delta` | Add to a FIX value, held within its range. |
+| `change value wrap` | `KEY,delta` | Add to a FIX value, wrapping through its range: `HEADBUG,-1` goes from 0 to 359. |
+| `sync value` | `DEST,SOURCE` | Copy one FIX value to another: `HEADBUG,HEAD`. |
+| `toggle bit` | `KEY` | Invert a boolean FIX value. |
+| `set instrument units` | `NAMES:command` | `NAMES` is a comma list of FIX keys, unit groups (`Temperature`, `Pressure`, `Altitude`) or `*`; `command` is `toggle` or a unit name (`Pressure:hPa`). |
+| `set egt mode` | `normalize`, `peak`, `lean`, `reset peak` or `normal` | Drive the EGT bars set up for it. See [Engine Monitoring](Engine-Monitoring#leaning-egt-modes). |
+| `set airspeed mode` | empty, or `0`, `1`, `2` | Step the `airspeed_box` through TAS, GS, IAS, or pick one (0 TAS, 1 GS, 2 IAS). |
+| `checklist next item` / `checklist previous item` / `checklist toggle item` / `checklist next unacked` / `checklist next list` / `checklist previous list` / `checklist reset` | a checklist's `hmi_group`, or empty for all | Drive a checklist. |
+| `flightplan page` | `fpl`, `dto` or `catalog`, then optionally the `hmi_group` | Open a page of the flight plan. |
+| `flightplan direct to` | an ident, or empty | Start a Direct-To; empty opens the Direct To page. |
+| `activate menu` | menu name | Open a menu. |
+| `activate menu item` | number, from 1 | Press a menu item. |
+| `set menu focus` | a menu target | Move the menu's focus there. |
+| `exit` | any | Quit pyEFIS. |
+| `evaluate` | Python expression | Runs it with Python's `eval`. |
 
-Style actions (applied to this button's own appearance):
+`menu encoder` is accepted but does nothing.
 
-| Action | Argument | Effect |
-|--------|----------|--------|
-| `set bg color` | `#hex` or a Qt color name | set the background color |
-| `set fg color` | `#hex` or a Qt color name | set the text color |
-| `set text` | string (with optional `{VAR}`) | set the label; `{NAME}` is substituted from the variables above, e.g. `set text: {CHT11}` |
-| `button` | `disable` / `enable` / `checked` / `unchecked` | enable/disable the button, or force its checked state |
+Style actions change the button itself:
 
-> **Anything not recognized as an HMI action falls through to the style
-> handler.** That is how `set bg color` / `set text` / `button` work, and it is
-> why a typo in an action name silently becomes a style no-op rather than an
-> error.
+| Action | Argument | What it does |
+|---|---|---|
+| `set bg color` / `set fg color` | a colour name or `#rrggbb` | Change a colour. |
+| `set text` | text, with `{NAME}` | Change the label. |
+| `button` | `disable`, `enable`, `checked`, `unchecked` | Change its state. |
 
-**Avoiding loops.** Do not write an action on a button that changes that same
-button's own `dbkey` — use `button: checked` / `button: unchecked` instead.
-Avoid action chains where button A triggers button B which acts back on A.
-Reordering rules and using `continue` sparingly is how you keep behavior
-predictable. Note that **disabling a button does not stop it from evaluating
-conditions and firing actions** — it only blocks user clicks; use the `CLICKED`
-variable to gate user-initiated behavior.
+**Anything that is not an HMI action, or an HMI action that fails, falls
+through to the style actions.** A misspelt action name, a screen that does not
+exist or a bad argument therefore does nothing, silently.
 
-> A complete, accurate `nodeID` / `{id}` discussion lives in
-> [Screen Builder](Screen-Builder); buttons are the main consumer of that
-> mechanism.
+**Avoiding loops.** Do not have a button's actions change its own `dbkey`; use
+`button: checked` or `unchecked`. Avoid chains where button A triggers B and B
+acts on A. Disabling a button only blocks presses; its conditions and actions
+still run, so use `CLICKED` to tell a press from a data change.
 
 ---
 
 ## `listbox`
 
-A scrollable table that presents one or more **user-defined lists** — radio
-frequencies, waypoints, anything — and, when the pilot selects a row, **writes
-one or more FIX keys**. It also offers built-in rows to switch lists and to sort
-(including by distance from the aircraft).
+A table of your own lists: radio frequencies, waypoints, anything. When the
+pilot selects a row, it writes FIX keys. It adds rows to switch lists and to
+sort, including by distance from the aircraft.
 
 ![Listbox](../images/listbox.png)
 
-**YAML `type:`** `listbox`
+<!-- generated:listbox -->
 
-**FIX keys:** reads `LAT` / `LONG` (for the nearest-location sort); writes
-whatever keys each list item's `set:` block names.
+**Listbox** · palette category `list`
 
-### Defining the lists (screen entry)
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `lists` | Lists | unset |  | selectable lists -- list of {name, file} entries |
 
-The screen entry supplies `lists:` (and, for encoder use, `encoder_order:`).
-Each entry has a `name` (the title shown at the top and in the list-picker) and a
-`file` (the list-definition YAML, relative to the config path). The factory also
-accepts the screen-builder `replace:` map, so `{radio_id}`-style placeholders in
-the list files are substituted just like in includes.
+<!-- /generated -->
+
+The configurator has no list editor; write the list files by hand. Each entry
+in `lists:` has a `name`, shown as the title, and a `file`, relative to the
+configuration directory. The screen builder's `replace:` map works in the list
+files, so `{radio_id}` style placeholders are filled in as in includes.
 
 ```yaml
 - type: listbox
-  row: 0
-  column: 101
-  span: {rows: 40, columns: 54}
   options:
     encoder_order: 28
     lists:
@@ -352,65 +292,21 @@ the list files are substituted just like in includes.
         file: lists/radio/ohio.yaml
 ```
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `lists` | *(required)* | list of `{name, file}` entries — the lists this box can show |
-| `font_family` | **`DejaVu Sans Condensed`** | passed to the constructor |
-| `encoder_order` | none | position in the encoder selection order |
+With more than one list, a **Load List** row lets the pilot switch. Every list
+should have the same columns: the column layout is taken from the first list.
 
-When more than one list is defined, the box automatically adds a **Load List**
-row so the pilot can switch between them.
-
-### The list-definition file
-
-A list file has two top-level sections: `display` (columns and behavior) and
-`list` (the rows).
+### The list file
 
 ```yaml
 display:
-  location: true        # offer a "Sort by: Nearest" row (needs valid LAT/LONG)
+  location: true          # offer "Sort by: Nearest" (needs a valid position)
   columns:
     - name: Name
-      sort: true        # offer a "Sort by: Name" row
+      sort: true          # offer "Sort by: Name"
     - name: Identifier
       sort: true
     - name: Frequency
-      sort: false       # false is the default
 list:
-  - Name: Knox County
-    Identifier: K4I3
-    Frequency: 122.800 Mhz
-    set:
-      COMACTFREQSET{radio_id}: 122800
-      COMACTNAMESET{radio_id}: "{Name}"
-```
-
-- **`display.columns`** — each column has a single-word `name` (used both as the
-  column header and as the key for each row's value) and an optional `sort:`
-  flag. The column names you define here are the keys you must supply on every
-  row. (`size:` and `show_headers:` appear in older examples but are not
-  required.)
-- **`display.location: true`** — adds a *Sort by: Nearest* row that sorts the
-  list by great-circle distance from the aircraft's current `LAT`/`LONG`. This
-  row only appears when the position is valid (not old/bad/fail).
-- **`list`** — one map per row. Each must carry a value for every column `name`.
-
-### Sorting
-
-The listbox builds its sort options from the columns: every column with
-`sort: true` produces a **Sort by: `<column>`** row at the top of the table, and
-`display.location: true` adds **Sort by: Nearest**. Selecting a sort row
-re-sorts the list in place (the listbox keeps encoder control — see below).
-Text columns sort alphabetically; *Nearest* sorts by geodesic distance, placing
-rows without `lat`/`long` last.
-
-### Set-on-select
-
-When a data row is selected, every key in its **`set:`** block is written to the
-FIX database (and output). Values may embed `{Column}` placeholders, which are
-replaced with that row's displayed cell text:
-
-```yaml
   - Name: John Glenn Int. Tower
     Identifier: KCMH
     Frequency: 132.700 Mhz
@@ -421,75 +317,84 @@ replaced with that row's displayed cell text:
       COMACTNAMESET{radio_id}: "{Name}"
 ```
 
-- **`lat` / `long`** on a row supply the position for the *Nearest* sort, and can
-  also be fed into `set:` (e.g. to send a waypoint to an autopilot).
-- You may add **arbitrary keys** to a row that are not columns (so they are not
-  displayed) and reference them in `set:`. For example a row with `type: Airport`
-  and `set: { WPNAME: "{type} {Name}" }` writes `WPNAME` = `Airport <Name>`.
+- **`display.columns`:** each column's `name` is both its header and the key
+  every row must supply. `sort: true` adds a **Sort by** row for it.
+- **`display.location: true`:** adds **Sort by: Nearest**, by distance from
+  `LAT`/`LONG`, shown only while the position is valid. Rows without
+  `lat`/`long` (or with 0) go last.
+- **`list`:** one map per row.
+- **`set:`:** written to the FIX database when the row is selected. `{Column}`
+  is replaced with that row's text in a column. Other keys, such as `lat`, are
+  not substituted unless they are columns.
+
+Sorting by a column compares the raw values, so numbers sort as numbers. A
+touch selects a row with a double-tap.
 
 ---
 
-## `flight_plan`
+## `checklist`
 
-An app-like flight-plan editor (`category: navigation`), modelled on the
-`checklist` instrument: an FPL page (route list, header, row menu, footer
-menu) and an Entry page (FastFind ident field, on-screen keypad, Recent/
-Nearest/FPL/User tabs). Unlike the other widgets on this page it does not
-read/write one plain `dbkey` — it publishes a whole route through
-`flightplan.fixbridge.FixBridge` (see [flight_plan_widget.md](../flight_plan_widget.md)
-for the full page/option/HMI-verb reference; this entry is the index-page
-summary).
+A scrolling challenge-and-response checklist. It reads no FIX keys, and what
+has been acknowledged is kept only until pyEFIS restarts. A missing or
+malformed checklist shows `No checklist`.
 
-**YAML `type:`** `flight_plan`
+<!-- generated:checklist -->
 
-**FIX keys:** the FP1 route block (`FPLCOUNT`, `FPLNAME`, `FPLSEQ`,
-`FPLfID`/`FPLfLAT`/`FPLfLON`/`FPLfTYPE`/`FPLfROLE`, `DTO*`, `FPLCMD`/
-`FPLCMDACK`/`FPLMSG`) and engine outputs (`FPLSTATE`, `FPLACTLEG`, `FPLAPR`,
-`FPLINTEG`, `WPETE`, `FPLREMDIS`/`FPLREMETE`, ...) — see
-[FIX-Database-Keys#flight-plan](FIX-Database-Keys#flight-plan). Missing keys
-never raise: the instrument annunciates and the pages render read-only.
+**Checklist** · palette category `list`
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `flightplan_dir` | `""` | directory for stored routes/user waypoints/recent list |
-| `nasr_db_path` / `navaid_db_path` | `""` | airport/navaid sqlite packs for FastFind (same names as `moving_map`'s) |
-| `columns` | `"DTK,DIS,CUM"` | FPL page data columns (DTK, DIS, CUM, ETE, ETA) |
-| `keypad` | `true` | show the on-screen keypad on the Entry page |
-| `keyboard` | `false` | physical-keyboard input on the Entry page (not yet implemented, FP5b) |
-| `default_page` | `"fpl"` | page shown when the instrument first paints |
-| `hmi_group` | `""` | targets this instance from the `flightplan page`/`flightplan direct to` HMI verbs |
-| `active_color` / `future_color` / `past_color` | `#ff00ff` / `#ffffff` / `#808080` | FPL page row colours by leg status |
-| `font_percent` | unset (100%) | the common option; here it scales the built-in text sizes (`0.8` or `80` = 80%), not a fraction of widget height. A pane taller than it is wide also shrinks its text automatically so labels don't overlap |
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `checklists` | Checklists | unset |  | inline checklist set: a list of checklist objects, each {id, title, category, sections\|items} (challenge/response items) |
+| `hmi_group` | HMI group | empty |  | optional name so a Button's 'checklist ...' actions can target this checklist; blank = every checklist on the screen |
+| `text_color` | Item colour | `#ffffff` | colour | colour of an un-acknowledged item's challenge text |
+| `response_color` | Response colour | `#00ffff` | colour | colour of the challenge-response value (the right-hand text) |
+| `done_color` | Acknowledged colour | `#00ff00` | colour | colour of an item once it has been acknowledged |
+| `current_color` | Current-row colour | `#ffaa00` | colour | highlight colour of the current row while the encoder is controlling the checklist |
+| `section_color` | Section colour | `#aaaaaa` | colour | colour of section subheaders and the progress line |
+
+<!-- /generated -->
+
+The checklists are written inline under `checklists:`, as a list or as
+`{checklists: [...]}`:
 
 ```yaml
-- type: flight_plan
-  row: 0
-  column: 100
-  span: {rows: 110, columns: 100}
+- type: checklist
   options:
-    columns: "DTK,DIS,CUM"
-    nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
-    navaid_db_path: /data/makerplane-data/navaids/current/navaids.sqlite
-    flightplan_dir: /home/pyefis/makerplane/pyefis/flightplans
+    hmi_group: main
+    checklists:
+      - id: before-takeoff
+        title: Before Takeoff
+        category: normal          # normal, abnormal or emergency
+        sections:
+          - title: Engine
+            items:
+              - {text: Mixture, response: RICH}
+              - {note: Check mags at 1800 RPM}
 ```
+
+- `category` colours the header: green for normal, amber for abnormal, red for
+  emergency.
+- A checklist has `sections` (each with a `title` and `items`) or plain
+  `items`.
+- An item with `text` (and an optional `response`) can be acknowledged; a
+  `note` cannot.
+
+With the knob, turning moves the cursor and a push acknowledges the item and
+moves to the next one not yet done. Buttons drive it with the `checklist ...`
+actions above.
 
 ---
 
-## Encoder support
+## The knob
 
-Both `button` and `listbox` are **encoder-selectable**, so a panel with one
-rotary encoder + button can drive them without a touchscreen (see
-[Concepts §6](Concepts#6-encoder-interaction)).
+`button`, `listbox` and `checklist` can be reached with the knob; give each an
+`encoder_order` to set the order the orange highlight visits them. The stock
+configurations number them in blocks by include (for example `100011`).
 
-- Set **`encoder_order`** on each selectable widget to control the order the
-  orange selection highlight visits them. The shipped configs reserve ranges per
-  include (e.g. 11–20 for side buttons, 21–30 for radio components).
-- A **button** simply fires when selected and pressed; a disabled button is
-  skipped (it cannot be selected).
-- A **listbox** is unusual: pressing the button hands encoder *control* to the
-  box, after which rotating moves the selected row and pressing performs that
-  row's action. The listbox **keeps** control while you use its sort / load-list
-  rows and only releases it when you select a data item.
+- A **button** fires when highlighted and pushed. A disabled button is skipped.
+- A **listbox** takes the knob when pushed: turning moves the row, pushing
+  selects it. It keeps the knob while you use its sort and list rows, and lets
+  go when you select a data row.
+- A **checklist** keeps the knob until the knob's timeout.
 
-Full setup — including the per-screen `encoder` / `encoder_button` keys — is in
-[Screen Builder](Screen-Builder#encoder-control).
+How the knob is wired is on [Screen Builder](Screen-Builder#encoder-control).

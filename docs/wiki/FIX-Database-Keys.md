@@ -105,7 +105,7 @@ EXTCRS} -> GPSCRS` etc. into the canonical `GPSCRS`/`GPSCDI`/`GPSTF`, which
 unmodified by this epic.
 
 The `nav_status` chip reads `FPLSTATE`, `FPLPHASE`, `WPFROM`/`WPNAME`/`WPNEXT`
-and `WPDIS`/`WPETE` (see [Widgets-Flight-Instruments](Widgets-Flight-Instruments#nav_status)).
+and `WPDIS`/`WPETE` (see [Navigation](Widgets-Navigation#nav_status)).
 
 ## Engine / EMS (representative)
 
