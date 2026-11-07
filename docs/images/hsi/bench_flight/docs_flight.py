@@ -13,7 +13,9 @@ It never changes config and never restarts fixgw or pyEfis. At the end it puts
 the route block back to what it found (empty: FPLCOUNT 0) and NAVSRC/GPSSRC to
 their found values. Markers: ARMED, DONE, NOT_FLOWN; every step in events.log.
 
-    setsid nohup ~/pyefis-venv/bin/python docs_flight.py <SID> > follow.out 2>&1 < /dev/null &
+    setsid nohup ~/pyefis-venv/bin/python docs_flight.py <SID> <BENCH_URL> > follow.out 2>&1 < /dev/null &
+
+BENCH_URL is the sim-bench service's base URL, http://<host>:<port>.
 """
 import calendar
 import json
@@ -28,8 +30,10 @@ D = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, D)
 from nfx import NFX  # noqa: E402
 
+if len(sys.argv) != 3:
+    sys.exit("usage: docs_flight.py <SID> <BENCH_URL>")
 SID = sys.argv[1]
-HEALTH = "http://10.110.10.167:8770/health"
+HEALTH = sys.argv[2].rstrip("/") + "/health"
 LOCK = "/tmp/pyefis-bench.lock"
 DEADLINE = calendar.timegm(time.strptime("2026-11-07 12:00", "%Y-%m-%d %H:%M"))  # 06:00 CST
 PAMJI = (34.780069, -120.368208)

@@ -6,6 +6,13 @@
 - [Setting Up a Device](Setting-Up-a-Device)
 - [Designing Your Panel](Designing-Your-Panel)
 
+**Flying it**
+- [The Panel at a Glance](The-Panel-at-a-Glance)
+- [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision)
+- [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed)
+- [The HSI](The-HSI)
+- [Pilot's Guide](Pilots-Guide)
+
 **Customizing**
 - [Concepts](Concepts)
 - [Screen Builder](Screen-Builder)
@@ -26,7 +33,3 @@
 
 **Screens**
 - [Screens Overview](Screens-Overview)
-
-**Pilots**
-- [Pilot's Guide](Pilots-Guide)
-- [The HSI](The-HSI)

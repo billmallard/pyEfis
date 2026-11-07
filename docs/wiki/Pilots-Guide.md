@@ -1,242 +1,16 @@
 # Pilot's Guide
 
-This guide is for **operating** a pyEFIS display in the cockpit — what the
-screens show, what the colors mean, and how to work the controls. It assumes a
-build using the shipped screens; your installer may have customized it (see
-[Screens Overview](Screens-Overview)).
+Operating the panel now has its own pages:
 
-> **Advisory use.** pyEFIS is an experimental/advisory display. Use it alongside
-> your aircraft's required instruments, not in place of them. It shows what
-> fix-gateway feeds it; if a sensor is lost, pyEFIS flags it (see
-> [Indications & alerts](#indications--alerts)) but cannot invent data.
+- [The Panel at a Glance](The-Panel-at-a-Glance): what is where, the tab
+  column, moving between screens, touch and the knob, flagged data.
+- [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision)
+- [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed):
+  including the selected altitude and the altimeter setting.
+- [The HSI](The-HSI)
 
-**At startup** pyEFIS goes straight to your flight screen. A notice strip across
-the bottom reads *"pyEfis is experimental software for Experimental /
-Amateur-Built aircraft. It is not certified. It is provided as-is with no
-warranty, and any use of it is at your own risk."* It needs no tap: the
-instruments under it work normally and it clears itself after a few seconds.
-Nothing that needs a tap is shown at startup, so a restart in flight puts you
-back on the instruments at once.
-
----
-
-## The screens at a glance
-
-pyEFIS presents several full-screen layouts you move between with on-screen
-buttons. The shipped set:
-
-| Screen | What it's for |
-|--------|---------------|
-| **Data Status** | Navdata currency / updates (tap the PFD data annunciation) |
-| **PFD** | Primary flight display: attitude/synthetic vision + flight tapes + a slim engine column |
-| **AI-only PFD** | Full-width attitude/synthetic vision, no engine strip |
-| **EMS** | Engine monitoring: flight bundle + full engine instruments |
-| **EMS2** | Engine-only monitoring (no attitude) |
-| **Six-Pack** | The traditional round-gauge six instruments |
-| **Radio** | Com radio control |
-| **Android** | An embedded Android app panel (if enabled) |
-
-Full contents of each are in [Screens Overview](Screens-Overview).
-
----
-
-## Reading the PFD
-
-The PFD combines the classic "T" with synthetic vision:
-
-- **Attitude / Synthetic Vision** fills the center — pitch ladder and bank
-  pointer over either a two-tone sky/ground or, when enabled and supported,
-  **terrain, water, runways, and obstacles** drawn from the aircraft's position
-  (see [Attitude & SVS](Widgets-Attitude-and-SVS)). A **flight-path marker** (if
-  fed) shows where the aircraft is actually going.
-- **Airspeed tape** (left) — your indicated airspeed, with colored bands for the
-  V-speeds (white flap arc, green normal, yellow caution, red Vne) taken from
-  the aircraft's configured speeds. A TAS readout and a short **trend arrow**
-  (projected speed a few seconds ahead) may appear.
-- **Altimeter tape** (right) — indicated altitude, with the **barometric
-  setting** in a box at the bottom of the tape (see
-  [Setting the altimeter](#setting-the-altimeter-baro)).
-- **VSI** — vertical speed, as a tape/pointer beside the altimeter.
-- **Heading** — a heading tape or card across the top/bottom.
-- **HSI** — course pointer with **CDI** (course deviation) and, on an approach,
-  the **glideslope** diamond. See [The HSI](The-HSI).
-- **Slip/skid** — the inclinometer "ball" (also the standalone turn coordinator
-  on the Six-Pack).
-- **Wind** — a compact headwind/crosswind readout (if enabled): `HW`/`TW` for
-  head/tailwind, `RX`/`LX` for crosswind from the right/left.
-
----
-
-## Indications & alerts
-
-pyEFIS uses a consistent visual language across every gauge and readout.
-
-**Operating-range bands** (engine gauges, airspeed): **green** = normal,
-**yellow** = caution, **red** = exceedance. These thresholds come from each
-value's limits, set in fix-gateway — not from the display.
-
-**Data quality** — every value can independently signal its health:
-
-| You see… | It means | What to do |
-|----------|----------|------------|
-| Normal bright value | Live, trusted | — |
-| **Dimmed / grayed** value | The value is **stale (old)** or flagged **bad** | Treat as suspect; cross-check |
-| **`X` / `XXX`** in place of digits, or value drops to zero | The source has **failed** | Don't trust it; use backup instruments |
-| **Red** number/text | **Annunciation** — attention requested for that item | Investigate the item |
-| Wind shows an amber **`X`** or dim **`---`** | Wind components are bad / not available | Disregard wind |
-
-**Screen-change buttons annunciate too:** while you're on the PFD, the **EMS**
-button turns **red** if an engine parameter (EGT/CHT, etc.) goes into alert —
-your cue to jump to the engine screen.
-
-**The DATA flag:** a small **DATA** annunciator appears only when your navdata
-(terrain/airport/obstacle packs) is out of date or missing. Tap it to open the
-[Data Status](#data-currency--updates) screen. When everything is current, the
-flag is hidden.
-
----
-
-## Moving between screens
-
-Each screen carries a **bar of buttons** (along a side or edge) that jump to the
-other screens — PFD, EMS, EMS2, Six-Pack, Radio, (Android), and Units. The
-button for the screen you're on flips to take you back to the PFD, so it's
-always one press home.
-
-These can be **touchscreen** buttons, **physical** buttons wired to the same FIX
-keys, or driven by a **rotary encoder**:
-
-- **Encoder (if equipped):** rotate to move an **orange** highlight to a button
-  or instrument; press to activate it (or to start editing a selected value);
-  press again to confirm; stop touching it and it times out back to normal.
-
-### Touch a value, then turn the knob
-
-Some settable values can also be selected by **touching them**. A touched value
-gets a **cyan ring** with a small **circular-arrow icon** on its corner: that
-means the knob now changes it.
-
-- **Inner knob:** small steps. **Outer ring:** big steps.
-- **Push the knob** to accept the value. The ring goes away.
-- **Leave it alone for about 10 seconds** and the ring goes away by itself, so a
-  knob bumped later cannot quietly change anything.
-- **Touching anywhere else**, or changing screens, also clears it. Only one
-  value is ever selected, so touching a different value moves the ring there.
-
-**With a mouse instead of a knob** (a bench unit or a desktop run), point at
-the selected value and use the wheel the same way:
-
-| Mouse, pointer on the selected value | Same as |
-|---|---|
-| Scroll wheel, one click up / down | Inner knob, one small step up / down |
-| Shift + scroll wheel, or tilting the wheel sideways | Outer ring, one big step |
-| Middle-click (press the wheel) | Pushing the knob |
-
-The wheel only edits the value under the pointer, and only once it is selected
-(click it first). Anywhere else the wheel works as it always has, so the map
-still zooms.
-
-While nothing is selected, the same icon appears **dimmed** on every value you
-can touch-select, so you can see which ones the knob can be pointed at. (A panel
-can turn this off with `editIconAtRest: false`.)
-
-#### Heading bug and course on the HSI
-
-Unless the panel turns it off, the HSI's **HDG** and **CRS** readouts work this way:
-
-- **HDG** sets the **heading bug**. The inner knob moves it 1 degree, the outer
-  ring 10 degrees, and it wraps through 360. **Push** syncs the bug to your
-  current heading. If the heading itself is flagged, push just clears the ring.
-- **CRS** sets the **course on the selected nav radio**: NAV1 when the source
-  tab reads VLOC1 (or VOR1/LOC1), NAV2 for VLOC2. Same 1 and 10 degree steps.
-  **Push** centres the needle on the VOR with a TO indication. On a localizer, or
-  with no usable bearing to the station, push just clears the ring.
-- **On GPS, CRS cannot be selected.** The course comes from the flight plan, so
-  there is no ring and no icon on CRS.
-- The bug and the course move **as you turn**. Letting the ring time out keeps
-  the value you turned to. Nothing snaps back.
-- **Changing the nav source** while CRS is selected clears the ring, because the
-  knob would otherwise be on a different radio than the one you picked.
-- **Touching the source tab** still cycles GPS / VLOC1 / VLOC2, as before.
-
-### Hiding the buttons
-
-The **Units / Show Menu** button doubles as a menu toggle. When the buttons are
-hidden (for an uncluttered view), this button reads **"Show Menu"**; press it to
-bring the bar back. (Under the hood it toggles the `HIDEBUTTON` key.)
-
----
-
-## Common in-flight adjustments
-
-### Setting the altimeter (baro)
-
-The altimeter setting is the box at the **bottom of the altimeter tape**. It
-reads **29.92 IN** or **1013 HPA**, depending on the aircraft's units.
-
-1. **Touch the box.** It gets the cyan ring and the circular-arrow icon (see
-   [Touch a value, then turn the knob](#touch-a-value-then-turn-the-knob)).
-   On a panel with no touchscreen, turn the knob until the box is outlined in
-   orange and push.
-2. **Turn the inner knob** for small steps (0.01 inHg or 1 hPa) and the
-   **outer ring** for big steps (0.10 inHg or 10 hPa). The altimeter follows as
-   you turn; there is nothing to confirm.
-3. **Push the knob** to set standard pressure (29.92 inHg / 1013 hPa). Push
-   does **not** "accept" here, because every turn is already set.
-   **Push again** to put back the setting you had before: if you pushed
-   standard by accident, one more push undoes it. The box remembers only
-   the setting that push replaced, and forgets it as soon as the setting
-   changes any other way (you turn the knob, or another display or the
-   gateway changes it). After that a push sets standard again. Pushing
-   when the box already reads standard and there is nothing to put back
-   does nothing.
-4. Leave it alone for about 10 seconds, or touch anywhere else, and the ring
-   goes away.
-
-The setting stays between 27.50 and 31.50 inHg (932-1066 hPa). The **Units**
-button switches the box between inHg and hPa along with the other pressure
-readouts.
-
-Older screens may instead show a separate **Baro:** readout beside the tape,
-with invisible **+ / −** touch regions that step it by 0.01 inHg and repeat if
-held. A screen shows one or the other, never both.
-
-### Display brightness (dimmer)
-
-**+ / −** dimmer buttons step the display brightness (`DIM`) and repeat when
-held — for day/night and changing light.
-
-### Setting the selected altitude
-
-The **cyan box at the top of the altimeter tape** is the selected (target)
-altitude, `ALTSEL`, the altitude the autopilot is told to capture. A **cyan
-bug** marks the same altitude on the tape. When the target is above or below
-the part of the tape you can see, the bug parks **half-visible at that edge**,
-so it still points the way to go.
-
-- **Touch the box** to select it (cyan ring and knob icon, as described in
-  [Touch a value, then turn the knob](#touch-a-value-then-turn-the-knob)).
-- **Inner knob:** 100 ft per click. **Outer ring:** 1000 ft per click.
-- **Push the knob** to set the target to your **current altitude**, rounded to
-  the nearest 100 ft (for example, 4,130 ft sets 4,100). The selection then ends.
-- Each click is sent out right away. There is no separate "accept" step.
-- **Dashes (`-----`)** mean no selected altitude has been set yet. There is no
-  bug while dashes show. Touch the box and turn the knob to set one. The first
-  click starts from your current altitude.
-
-The selected altitude is only a target. pyEfis does not fly to it, and it does
-not alert on a deviation yet.
-
-### Units
-
-The **Units** button toggles units for temperature (**°C ⇄ °F**), pressure
-(**inHg ⇄ hPa**), and altitude (**ft ⇄ m**) on the instruments configured for
-switching (e.g. OAT, oil temperature). One press flips all of them together.
-
-### Airspeed source
-
-The airspeed **box** can switch what speed it shows — **IAS / GS / TAS** —
-so you can read groundspeed or true airspeed without leaving the PFD.
+This page keeps the stock screens' engine, trim and data-currency controls
+until their own pages land.
 
 ---
 
@@ -272,7 +46,7 @@ default and only appear when configured for your aircraft's trim axes.
 
 ## Data currency & updates
 
-The **Data Status** screen (shown at boot) lists your installed navigation-data
+The **Data Status** screen lists your installed navigation-data
 packs — terrain, airports, obstacles, water — and their currency, color-coded.
 From here:
 
@@ -280,17 +54,6 @@ From here:
 - **Update** runs the data updater (downloads/installs newer packs, with a
   progress bar) — typically done on the ground with connectivity.
 
-In flight, the small **DATA** flag (above) is your reminder if anything is out
-of date.
-
----
-
-## If something looks wrong
-
-- **A value is gray/dim or shows `X`** — that source is stale or failed; it is
-  *not* a display fault. Check the sensor/feed (fix-gateway).
-- **Terrain/airports look off or missing** — the synthetic-vision picture
-  depends on current data packs (see Data Status) and only draws a forward arc;
-  features behind or beside you aren't shown. SVS is advisory terrain awareness,
-  **not** a terrain-clearance instrument.
-- **Buttons disappeared** — press the **Show Menu** button to bring them back.
+On screens that carry it, a small **DATA** flag is your reminder: amber when a
+pack has expired, white when one is expiring soon or missing, and hidden when
+everything is current. Touch it to open the Data Status screen.

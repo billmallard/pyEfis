@@ -154,18 +154,21 @@ Building and editing a plan is under
 Touch **HDG** or **CRS**, then turn the knob. The inner knob steps 1 degree and
 the outer ring 10 degrees.
 
-- **HDG** sets the heading bug. Push syncs it to your current heading.
+- **HDG** sets the heading bug, wrapping through 360. Push syncs it to your
+  current heading. With heading flagged, push just ends the edit.
 - **CRS** sets the course on the selected NAV radio (`NAV1CRS` or `NAV2CRS`).
   Push sets it to the bearing to the station, which centres the bar with a TO
-  indication. On GPS, CRS cannot be selected.
+  indication. On a localizer, or with no usable bearing, push just ends the
+  edit. On GPS, CRS cannot be selected.
 - Every step takes effect as you turn. Leaving the knob alone ends the edit and
   keeps the value.
+- Changing the nav source ends a CRS edit, so the knob is never left on a radio
+  you did not pick. Touching the source tab still cycles the source.
 
 ![CRS selected on VLOC1: the focus ring on the CRS cell](../images/hsi/vor1_crs_selected.png)
 
 The knob, the ring and the timeout work the same on every value you can set:
-see [Touch a value, then turn the knob](Pilots-Guide#touch-a-value-then-turn-the-knob)
-and [Heading bug and course on the HSI](Pilots-Guide#heading-bug-and-course-on-the-hsi).
+see [Touch a value, then turn the knob](The-Panel-at-a-Glance#touch-a-value-then-turn-the-knob).
 On the X-Plane bench, X-Plane also drives `HEADBUG`, `NAV1CRS` and `NAV2CRS`,
 so it can overwrite a value you set here.
 
@@ -291,7 +294,7 @@ bearing (`GPSBRG`). The full key list is on [FIX Database Keys](FIX-Database-Key
 
 ## See also
 
-- [Pilot's Guide](Pilots-Guide): flying the panel, the knob, the flight plan.
+- [The Panel at a Glance](The-Panel-at-a-Glance): the panel, the tabs and the knob.
 - [Flight Instruments](Widgets-Flight-Instruments): the other heading
   instruments, `heading_display` and `heading_tape`.
 - [Flight Plan Engine](https://github.com/billmallard/fix-gateway/wiki/Flight-Plan-Engine)
