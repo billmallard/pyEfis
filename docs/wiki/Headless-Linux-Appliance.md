@@ -58,7 +58,7 @@ pip install -e ~/src/pyEfis[qt,svs]
 ```
 On first run each app auto-seeds its config under `$HOME`
 (`~/makerplane/fixgw/config`, `~/makerplane/pyefis/config`) — see
-[Running from Source](Running-from-Source#first-run-behavior-and-file-locations).
+[Running from Source](Customizing-Beyond-the-Configurator#the-files-on-the-device).
 `fixgw` binds `0.0.0.0:3490`; verify with `ss -ltn | grep :3490`.
 
 **Install is not finished until the software notice is accepted** — install the
@@ -310,4 +310,4 @@ config reset does not erase it. Its schema is in makerplane-data
 - [ ] `pyefis-accept-notice --check` → exit 0 (notice accepted for this pyEFIS version)
 - [ ] instruments come alive once a FIX source is pointed at `fixgw:3490` — until
       then they read stale / `XXX`, which is expected (see
-      [Concepts](Concepts#1-the-fix-database-the-data-bus))
+      [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-data))
