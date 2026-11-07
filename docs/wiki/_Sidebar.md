@@ -33,5 +33,5 @@
 - [System & Containers](Widgets-System)
 - [FIX Database Keys](FIX-Database-Keys)
 
-**Screens**
-- [Screens Overview](Screens-Overview)
+**Legacy**
+- [The stock screens](Legacy)
