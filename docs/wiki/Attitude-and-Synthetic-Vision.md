@@ -8,12 +8,6 @@ terrain is `atitude_indicator`.
 
 ![The bench in a left turn in the WINCH hold, over the sea at about 4,000 ft: pitch ladder and bank scale tilted, the garmin aircraft symbol, standard-rate marks on the bank arc, the coastline and terrain beyond, and the 33 heading mark on the horizon](../images/attitude/bench_turn_over_water.png)
 
-**Every bench picture on this page has a grey sky.** The simulator bench does
-not send lateral acceleration (`ALAT`) to fix-gateway, so that input stays
-flagged old, and pyEFIS greys the sky while any attitude input is old or bad
-(see [When data is missing](#when-data-is-missing)). With all inputs good, the
-sky is a blue gradient.
-
 ## Reading it
 
 | Element | What it shows |
@@ -48,7 +42,7 @@ against groundspeed). Sideways, it shows drift: track against heading.
 
 The terrain ahead is coloured by how far it is below you.
 
-![The bench on the RNAV 30 approach to KSMX at about 2,100 ft: most of the terrain ahead is red, because the bench panel sets its warning band to 1,500 ft of clearance. Airport flags for SMX, L52 and SBP stand on the horizon](../images/attitude/bench_terrain_clearance.png)
+![The bench on the RNAV 30 approach to KSMX at about 2,200 ft: most of the terrain ahead is red, because the bench panel sets its warning band to 1,500 ft of clearance. Airport flags for L52 and SMX stand on the horizon](../images/attitude/bench_terrain_clearance.png)
 
 | Colour | Terrain is |
 |---|---|
@@ -67,7 +61,7 @@ elevation is drawn green, so a normal approach does not paint the whole pattern
 red. Terrain higher than that keeps its amber and red, and magenta always
 shows.
 
-![The bench near the missed approach point at KSMX, about 1,000 ft: within 5 nm of the field the low terrain is green, the runway is drawn to true size, and a road runs across the foreground](../images/attitude/bench_final_runway.png)
+![The bench near the missed approach point at KSMX, descending through about 1,150 ft: within 5 nm of the field the low terrain is green, the runway is drawn to true size, and a road runs across the foreground](../images/attitude/bench_final_runway.png)
 
 **What else is drawn**, each from its own navdata pack:
 

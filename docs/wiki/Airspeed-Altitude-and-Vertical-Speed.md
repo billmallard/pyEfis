@@ -5,7 +5,7 @@ and an altitude tape on the right, with a vertical speed scale beside the
 altitude tape. Their instrument types are `airspeed_tape`, `altimeter_tape`
 and `altimeter_trend_tape`.
 
-![The bench's airspeed tape (left) and altitude tape with VSI (right), climbing out at about 95 kt and 600 ft/min, 2x nearest-neighbour. The selected altitude is 3000 at the top of the altitude tape, with its cyan bug at 3000 on the scale; the altimeter setting is 29.92 at the bottom](../images/tapes/bench_airspeed_tape.png) ![The bench's altitude tape and VSI in the same climb, 2x nearest-neighbour](../images/tapes/bench_altitude_climb.png)
+![The bench's airspeed tape (left) and altitude tape with VSI (right), climbing out at about 95 kt and 640 ft/min, 2x nearest-neighbour. The selected altitude is 3000 at the top of the altitude tape, with its cyan bug at 3000 on the scale; the altimeter setting is 29.92 at the bottom](../images/tapes/bench_airspeed_tape.png) ![The bench's altitude tape and VSI in the same climb, 2x nearest-neighbour](../images/tapes/bench_altitude_climb.png)
 
 Both tapes scroll behind a fixed readout box. The pictures are from the
 simulator bench; its panel sets **Fade tape edges** on, so the scales fade into
@@ -120,7 +120,7 @@ already shows `BARO`, the tape leaves its box off.
 
 The scale beside the altitude tape shows vertical speed, `VS`, in ft/min. A
 white bar grows from zero to the present rate. The number under the `VSI` label
-at the top is the rate itself: `602` in the climb picture above. Scale labels
+at the top is the rate itself: `638` in the climb picture above. Scale labels
 are in hundreds, so `20` is 2,000 ft/min.
 
 **Range** sets full scale up and down: 2,500 ft/min by default, 2,000 on the
