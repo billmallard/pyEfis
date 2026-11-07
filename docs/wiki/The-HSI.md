@@ -247,7 +247,7 @@ last column where it differs.
 | Drop shadow (`shadow_enabled`) | off | on | A soft shadow under the rose and the readout panel. |
 
 The colour options can also follow the panel's colour tokens; see
-[Preferences & Styling](Preferences-and-Styling).
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#preferences).
 
 ### In YAML
 
@@ -269,7 +269,7 @@ The configurator writes these same options into the screen file. By hand:
 
 The HSI keeps its aspect ratio, so give it a roughly square cell. A cell that
 is too small for its `font_percent` can crowd the source tab: see
-[Screen Builder](Screen-Builder).
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator).
 
 ### Feeding it
 

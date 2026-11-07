@@ -40,7 +40,7 @@ default at `127.0.0.1:3490` (`FixServer` and `FixPort` in
 writes back the few that the pilot sets from the panel, such as the
 altimeter setting (`BARO`) and the heading bug (`HEADBUG`). Every key carries
 quality flags, and the instruments show them: a failed key reads `X` or `XXX`
-in place of digits. See [Concepts](Concepts#3-data-quality--states).
+in place of digits. See [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-data).
 
 A fresh FIX-Gateway install has its `demo` plugin enabled
 (`DEMO: true` in its `config/preferences.yaml`), so the instruments come alive

@@ -6,7 +6,7 @@ it. This page covers what you do there and what reaches the device. How the
 configurator works inside is in the makerplane-data wiki:
 [The Configurator](https://github.com/billmallard/makerplane-data/wiki/The-Configurator).
 
-To edit screens by hand instead, see [Screen Builder](Screen-Builder). The
+To edit screens by hand instead, see [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator). The
 configurator writes the same screen YAML.
 
 ## Aircraft and devices
@@ -52,7 +52,7 @@ Positions are on the screen's grid. A new screen is 110 rows by 200 columns,
 which suits a 16:9 display. Each instrument has a `row`, a `column` and a
 `span` in grid cells, and can be nudged inside its cell with `move`. The
 editor shows the same fields the YAML uses; their meaning is on
-[Screen Builder](Screen-Builder#layout-the-grid).
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-grid).
 
 Every instrument accepts a font family (DejaVu Sans Condensed by default,
 DejaVu Sans, DejaVu Sans Mono, B612, Inter, Roboto, Open Sans) and a font
