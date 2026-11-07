@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "8017016a (top row) + eaf68599 (bottom row)",
+ "run": "composited from before/ and after/",
+ "device": "sandbox Linux container (Qt offscreen, DejaVu Sans substituted)",
+ "sha256": "c2abefb6742391b6ae730ca6c73d2363bbc3fb8f45b6b5ecaf3bd651ed67b24f",
+ "created_utc": "2026-11-07T19:16:43Z"
+}

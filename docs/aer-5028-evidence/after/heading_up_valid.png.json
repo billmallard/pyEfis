@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "eaf68599",
+ "run": "local: docs/aer-5028-evidence/render_g66.py",
+ "device": "sandbox Linux container (Qt offscreen, DejaVu Sans substituted)",
+ "sha256": "7c1a7c8966a4dfa42dd5f761c134f4424304f986cc4bb7b17a38477cff7d9d51",
+ "created_utc": "2026-11-07T19:16:43Z"
+}
