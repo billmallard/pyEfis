@@ -9,7 +9,7 @@ knob. The instruments each have their own page, linked below.
 > instruments, not in place of them. It shows what fix-gateway feeds it. When
 > a source is lost it flags the value, but it cannot invent data.
 
-![The bench panel climbing out on the missed approach at about 95 kt and 600 ft/min: synthetic vision with the airspeed tape, altitude tape and VSI, the wind readout, the HSI bottom centre, and the tab column on the right showing the moving map](../images/panel/bench_panel_climb.png)
+![The bench panel climbing out on the missed approach at about 95 kt and 640 ft/min: synthetic vision with the airspeed tape, altitude tape and VSI, the wind readout, the HSI bottom centre, and the tab column on the right showing the moving map](../images/panel/bench_panel_climb.png)
 
 ## What is where
 
