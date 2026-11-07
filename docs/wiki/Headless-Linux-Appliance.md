@@ -209,11 +209,13 @@ Notes:
   boot is clean (`NRestarts=0`).
 
 ### Which screen it boots to
-The boot screen is the **first entry in `screens/default_list.yaml`**, *not* the
-`defaultScreen:` key in `main/default.yaml` (setting `defaultScreen` alone did
-not change it). Reorder `default_list.yaml` (put `SCREEN_PFD` first) to boot
-straight to the PFD instead of the nav-data screen. See
-[Preferences & Styling](Preferences-and-Styling).
+pyEFIS boots to the screen named by `defaultScreen:` in `main/default.yaml`
+(`PFD` as shipped). It never boots to the Data Status screen: if
+`defaultScreen` names it, or names a screen that is not loaded, pyEFIS boots
+to the Data Status screen's Continue target (or the first other screen)
+instead. A panel pulled from the configurator
+takes the `defaultScreen` name, so the device boots to it. See
+[Setting Up a Device](Setting-Up-a-Device#7-boot-to-the-efis).
 
 ---
 
@@ -231,8 +233,10 @@ python3 -m venv ~/pyefis-data-venv                     # its own venv
 ln -sf ~/pyefis-data-venv/bin/pyefis-data ~/.local/bin/pyefis-data
 ```
 
-- pyEFIS checks for the updater **at startup** — restart pyEFIS after installing
-  it, or the screen keeps saying "unavailable".
+- The Data Status screen runs the updater from its `update_command` option,
+  `~/.local/bin/pyefis-data` as shipped, which is why the symlink above goes
+  there. A bare `pyefis-data` would fail under a systemd service, whose `PATH`
+  excludes `~/.local/bin`.
 - Environment selection lives in `~/.makerplane/pyefis/data.yaml`
   (`configurator_url:` for device pairing / panel pull; `base_url:` for the
   nav-data packs, defaulting to production).
