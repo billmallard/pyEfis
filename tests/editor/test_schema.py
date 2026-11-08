@@ -78,7 +78,7 @@ def test_default_options_are_typed():
     s = eschema.build_schema()
     opt = s["instruments"]["heading_display"]["default_options"]
     assert opt == {
-        "fg_color": {"type": "color", "default": "#aaaaaa"},
+        "fg_color": {"type": "color", "default": "#ffffff"},
         "bg_color": {"type": "color", "default": "#000000"},
         "bg_opacity": {"type": "integer", "default": 100},
     }
