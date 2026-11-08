@@ -19,8 +19,8 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
 
 from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
-                                           hit_distance, qcolor, range_bucket,
-                                           register_layer)
+                                           hit_distance, mark_drawn, qcolor,
+                                           range_bucket, register_layer)
 
 BLUE = qcolor(STANDARD_PALETTE["navaid"])
 DARKBLUE = qcolor(STANDARD_PALETTE["fix"])
@@ -219,6 +219,7 @@ class NavaidsLayer(_DbLayer):
             p.drawText(QRectF(c.x() - 70, c.y() + r + 1, 140,
                               f.pixelSize() + 4),
                        Qt.AlignmentFlag.AlignHCenter, label)
+            mark_drawn(x, nid, c, c.y() + r + 1 + f.pixelSize() + 4, True)
 
 
 @register_layer
@@ -268,6 +269,7 @@ class FixesLayer(_DbLayer):
             p.drawText(QRectF(c.x() - 50, c.y() + s + 1, 100,
                               f.pixelSize() + 4),
                        Qt.AlignmentFlag.AlignHCenter, fid)
+            mark_drawn(x, fid, c, c.y() + s + 1 + f.pixelSize() + 4, True)
 
 
 @register_layer
