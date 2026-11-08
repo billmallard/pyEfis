@@ -509,6 +509,11 @@ class HSI(QGraphicsView):
         # fail/opacity contract the tests assert -- but hidden during the rose
         # bake so only the upright paintEvent numerals show (Bill 2026-08-02).
         self._rose_labels = []
+        # The previous scene, and every label item in it, was freed when
+        # self.scene was replaced above. Keeping those items let changeFail()
+        # touch freed objects: a second resize, then any fail-flag change,
+        # segfaulted the process (G66).
+        self.labels = []
 
         for count in range(0, 360, 5):
             angle = (count) * math.pi / 180.0
@@ -1060,9 +1065,11 @@ class HSI(QGraphicsView):
         # Warning flags (AC 25-11B: warnings red). A flag positively annunciates
         # an invalid signal, distinct from merely hiding an element -- see
         # hsi_widget_spec.md sec 7.1. Heading (compass) flag: HEAD invalid.
+        # HDG sits inside the card, upper right (the conventional HSI place). At
+        # the top centre the readout panels, drawn later, painted over it.
         self._showHdgFlag = self._hdg_flag_shown()
         if self._showHdgFlag:
-            self._draw_flag(c, "HDG", self.cx, self.fontSize * 1.1)
+            self._draw_flag(c, "HDG", self.cx + self.r * 0.42, self.cy - self.r * 0.5)
         # NAV (lateral) flag: every reason the CDI bar is removed (see
         # _nav_flag_shown); the flag positively annunciates the loss.
         self._showNavFlag = self._nav_flag_shown()

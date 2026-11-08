@@ -329,7 +329,7 @@ failed, and is removed only when a valid signal drives the needle.*
 
 | ID | Flag | Trigger | Required response | Cite | Status |
 |----|------|---------|-------------------|------|--------|
-| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag; compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
+| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag inside the card, upper right (clear of the readout panels); compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
 | **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) stale/bad/fail/absent, no lateral signal received (`CDIV` = 0), or `COURSE` bad/fail | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
 | **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (`GSV` ≥ 0.5, or `GSV` absent) but the GS signal is stale/invalid/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **DONE** — red GS flag; diamond suppressed |
 

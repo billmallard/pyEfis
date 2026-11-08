@@ -763,6 +763,44 @@ def test_hsi_g66_failed_heading_raises_hdg_flag(fix, qtbot, orientation, flag):
     assert w._showHdgFlag is True
 
 
+def test_hsi_g66_fail_change_after_a_second_resize_does_not_crash(fix, qtbot):
+    """G66 | Every resize builds a new scene and frees the old one, but the
+    label items stayed in self.labels; the next fail-flag change called
+    setOpacity on freed items and segfaulted the whole process. Only the
+    current scene's labels remain."""
+    w = _mk_course_hsi(qtbot)
+    first = len(w.labels)
+    w.resize(320, 300)
+    qtbot.wait(10)
+    assert len(w.labels) == first
+    w.setHeadFail(not w._HeadFail)                    # used to segfault here
+    w.setCdiFail(not w._CdiFail)
+    assert all(l.scene() is w.scene for l in w.labels)
+
+
+@pytest.mark.parametrize("layout", ["top_panel", "corners", "split"])
+def test_hsi_g66_rose_hdg_flag_clear_of_the_readouts(fix, qtbot, layout):
+    """G66 rework | HSI-ANN-001 | The rose HDG flag was drawn at the top centre,
+    where the readout panels (painted after the flags) covered it. It now sits
+    inside the card, clear of every readout box in every layout."""
+    w = _mk_course_hsi(qtbot)
+    w.readout_layout = layout
+    w.resize(301, 300)                                # real resize: re-lay the rose
+    qtbot.wait(10)
+    w.setHeadFail(True)
+    spots = []
+    real = w._draw_flag
+    w._draw_flag = lambda c, text, x, y: (spots.append((text, x, y)),
+                                          real(c, text, x, y))
+    w.paintEvent(QPaintEvent(w.rect()))
+    (x, y), = [(x, y) for t, x, y in spots if t == "HDG"]
+    assert math.hypot(x - w.cx, y - w.cy) < w.r * 0.8        # inside the card
+    for field, rects in w._edit_rects.items():
+        box = QRectF(rects[0])
+        assert not box.adjusted(-w.fontSize, -w.fontSize,
+                                w.fontSize, w.fontSize).contains(QPointF(x, y)), field
+
+
 @pytest.mark.parametrize("orientation", ["heading_up", "arc"])
 def test_hsi_g66_no_symbol_removed_without_its_flag(fix, qtbot, orientation):
     """G66 rework invariant | Over every combination of CDI, COURSE, CDIV, GSI
