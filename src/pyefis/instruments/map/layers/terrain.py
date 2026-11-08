@@ -211,7 +211,7 @@ class TerrainLayer(MapLayer):
                     if self._mode == "caution" and not self._flat else 0)
         return (round(x.lat0 * M_PER_DEG_LAT / snap),
                 round(x.lon0 * M_PER_DEG_LAT / snap),
-                range_bucket(x.range_nm), round(x.w), round(x.h),
+                range_bucket(x.range_nm), round(x.w), round(x.cover_h), round(x.range_px),
                 "flat" if self._flat else self._mode, alt_band)
 
     def _has_source(self):
@@ -247,7 +247,7 @@ class TerrainLayer(MapLayer):
 
     # --- async build --------------------------------------------------------
     def _request(self, key, x):
-        job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.range_px)
+        job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.cover_h, x.range_px)
         with self._lock:
             # Same window already queued/in flight: do NOT refresh the
             # job. The tuple carries the raw (unsnapped) pose, so each
@@ -319,10 +319,10 @@ class TerrainLayer(MapLayer):
         """Window image geometry for *job*: ``(n, mpp, lat_cos, lats,
         lons)`` -- shared by the relief and the flat (nav_only) render so
         the two register identically."""
-        key, lat0, lon0, range_nm, w, h, range_px = job
+        key, lat0, lon0, range_nm, w, cover_h, range_px = job
         # Cover the rotated viewport: half-diagonal in metres, oversize.
         px_per_m = max(1.0, range_px) / max(1.0, range_nm * 1852.0)
-        half_diag_m = 0.5 * math.hypot(w, h) / px_per_m * 1.25
+        half_diag_m = 0.5 * math.hypot(w, cover_h) / px_per_m * 1.25
         n = int(min(1024, max(64, 2 * half_diag_m * px_per_m * self._RES)))
         mpp = 2 * half_diag_m / n              # metres per image pixel
         lat_cos = math.cos(math.radians(lat0))
@@ -344,7 +344,7 @@ class TerrainLayer(MapLayer):
     def _render(self, job):
         if self._flat:
             return self._render_flat(job)
-        key, lat0, lon0, range_nm, w, h, range_px = job
+        key, lat0, lon0, range_nm, w, cover_h, range_px = job
         n, mpp, lat_cos, lats, lons = self._window(job)
         elev_m, water, mask_hit = self._sample_window(lat0, lon0, mpp,
                                                       lats, lons)
@@ -382,7 +382,7 @@ class TerrainLayer(MapLayer):
         fully transparent and water is the palette's flat fill -- no
         hypsometric colour, no hillshade, no caution tint. With no tile
         pack the polygons alone draw (the reader-fallback path)."""
-        key, lat0, lon0, range_nm, w, h, range_px = job
+        key, lat0, lon0, range_nm, w, cover_h, range_px = job
         n, mpp, lat_cos, lats, lons = self._window(job)
         if self._cache is not None:
             _elev, water, mask_hit = self._sample_window(lat0, lon0, mpp,

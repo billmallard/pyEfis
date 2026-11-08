@@ -124,6 +124,12 @@ class MapTransform:
         # range_nm spans range_px screen px from the ownship anchor: the
         # top edge by default, the compass arc in ND EXPANDED (G11a).
         self.range_px = self.cy if range_px is None else float(range_px)
+        # Height a window image centred on the view centre must cover as if
+        # that centre were mid-panel: twice the farther of the top and
+        # bottom edges. Equal to h at the default 50% anchor; taller for a
+        # low anchor (ND EXPANDED), whose far top corners a window sized
+        # from hypot(w, h) would leave bare.
+        self.cover_h = 2.0 * max(self.cy, h - self.cy)
         self._px_per_m = max(1.0, self.range_px) / max(1.0, range_nm * NM_M)
         self._coslat = math.cos(math.radians(lat))
         # MP1: True while a gesture is live or its settle timer is running

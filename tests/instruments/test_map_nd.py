@@ -178,6 +178,36 @@ def test_tall_panel_keeps_the_sector_and_clears_the_scale(w, h):
     assert g["apex"] >= 4.0 + g["box_h"] + g["fs"] * 0.5 - 1e-6
 
 
+def _window_entry(x, cover_h):
+    from pyefis.instruments.map.layers.terrain import TerrainLayer
+    n, mpp, _c, _la, _lo = TerrainLayer()._window(
+        (None, x.lat0, x.lon0, x.range_nm, x.w, cover_h, x.range_px))
+    return (QImage(n, n, QImage.Format.Format_ARGB32), None,
+            (x.lat0, x.lon0, mpp))
+
+
+@pytest.mark.parametrize("track", [0.0, 45.0, 72.0, 135.0])
+def test_terrain_window_covers_the_panel_with_ownship_low(fix, qtbot, track):
+    """With ownship at 82% down, the far top corners are farther from the
+    window centre than half the panel diagonal: the terrain/roads window is
+    sized from cover_h so it still reaches them. Sized from h (as before),
+    it leaves a corner bare on the bench's portrait panel."""
+    from pyefis.instruments.map.layers import window_covers_viewport
+    m = _map(qtbot, nd_mode="expanded")
+    m.resize(650, 1000)
+    m._track = track
+    x = m._transform()
+    assert x.cover_h == pytest.approx(2 * 0.82 * 1000)
+    assert window_covers_viewport(x, _window_entry(x, x.cover_h))
+    if track == 45.0:
+        assert not window_covers_viewport(x, _window_entry(x, x.h))
+
+
+def test_cover_h_is_h_at_the_default_anchor(fix, qtbot):
+    x = _map(qtbot)._transform()
+    assert x.cover_h == pytest.approx(H)
+
+
 # --- vertical deviation scale ---------------------------------------------
 
 def _absent(_key):
