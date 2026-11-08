@@ -114,6 +114,25 @@ When `FixBridge.available` is False (the gateway does not define the FP1
 keys), the instrument annunciates `FPL: GATEWAY KEYS MISSING` and the pages
 render read-only — it never raises.
 
+**A route the engine refused is never listed as the plan** (G61, pyEfis #380).
+The engine can refuse a commit (an unsupported leg, incomplete Tier-2 data, a
+bad segment table). When it does, the refused route stays in the slots, the
+engine keeps flying the route it had, `FPLLDSEQ` keeps that route's `FPLSEQ`,
+and the reason goes to `FPLMSG`. The page takes the slots as the plan only
+when `FPLLDSEQ` equals `FPLSEQ`. While a commit is still unanswered, the page
+stays as it is, so the pilot's own edit does not flicker on every keystroke. An
+`FPLMSG` write, or `commit_answer_ms` (2 s) with no answer at all, marks the
+commit refused. The page then shows the last plan it saw loaded (an empty list
+if it has seen none this session) and a red strip above the soft keys:
+`EDIT REFUSED: <FPLMSG>`, or `NO ENGINE ANSWER` if nothing came back.
+**Edit draft** puts the refused route back on the page as a draft
+(`DRAFT - NOT LOADED: <reason>`, no active-leg colour). Its edits commit as
+usual, a refusal of one keeps the pilot in the draft, and **Flown plan** goes
+back to the flown plan. The first commit the engine loads clears the strip and
+the draft. A gateway without `FPLLDSEQ` keeps the behaviour from before the key.
+An `FPLMSG` that answers a command (a refused DTO) can land while a commit is
+pending, and it then flags that commit until `FPLLDSEQ` arrives.
+
 ### Pages
 
 - **FPL** (default) — header: route name, `FPLREMDIS`/`FPLREMETE`, a state

@@ -1081,7 +1081,8 @@ _register(InstrumentSpec(
     properties=[
         Prop("range_nm", "number", default=10.0, minimum=1, maximum=500,
              label="Range (NM)",
-             help="distance from the ownship anchor to the top edge",
+             help="distance from the ownship anchor to the top edge (to "
+                  "the compass arc in ND mode)",
              bindable=Binding("index_ladder", key_option="range_key",
                               ladder_option="range_ladder")),
         Prop("range_key", "fixkey", default="",
@@ -1110,6 +1111,19 @@ _register(InstrumentSpec(
              label="Orientation control key",
              help="optional FIX key that switches orientation at runtime "
                   "(0=track_up, 1=north_up). Empty = fixed"),
+        Prop("nd_mode", "enum", default="off", enum=["off", "expanded"],
+             label="ND mode",
+             help="off = the plain moving map; expanded = Navigation "
+                  "Display EXPANDED MAP: track-up compass arc at the "
+                  "selected range, ownship low (82% down), corner data "
+                  "blocks and a vertical deviation scale from GSI/GSV at "
+                  "the right edge. Overrides orientation and ownship "
+                  "position while on",
+             bindable=Binding("enum", key_option="nd_mode_key")),
+        Prop("nd_mode_key", "fixkey", default="",
+             label="ND mode control key",
+             help="optional FIX key that switches the ND mode at runtime "
+                  "(0=off, 1=expanded). Empty = fixed"),
         Prop("touch_gestures", "boolean", default=True,
              label="Touch gestures",
              help="two-finger pinch=zoom, drag=pan, twist=rotate; mouse wheel "
@@ -1648,14 +1662,16 @@ _register(InstrumentSpec(
     # schema so panels that already place it still load and render.
     hidden=True,
     properties=[
-        # Default fg is light grey (#aaaaaa) -- the widget default was the
-        # darker Qt "gray" (#808080); aligned for readability + a matching
-        # editor default. font_size is intentionally NOT exposed: the widget
+        # Default fg is ink.primary (#ffffff), the colour of every other primary
+        # readout and of the value_text that replaces this widget (style
+        # contract S2). It was light grey (#aaaaaa) on ink.muted, a role for
+        # inactive text, while the shipped SVS include already overrode it to
+        # white. font_size is intentionally NOT exposed: the widget
         # recomputes it from the box size on resize (fit_to_mask), so it was a
         # no-op option. Use the common font_percent to scale instead.
-        Prop("fg_color", "color", default="#aaaaaa", label="Foreground",
+        Prop("fg_color", "color", default="#ffffff", label="Foreground",
              help="heading-text colour",
-             token="ink.muted"),
+             token="ink.primary"),
         Prop("bg_color", "color", default="#000000", label="Background",
              help="background-box fill colour",
              token="surface.base"),
