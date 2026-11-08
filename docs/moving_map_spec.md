@@ -185,7 +185,13 @@ airways off)
   stippled-disc/triangle) colored by route status rather than navdata
   source; the current TO waypoint (or the DTO point, off-route) is
   ringed magenta. Ident labels take the role (`FAF`/`MAP`/`IAF`/`MAHP`)
-  as a suffix when set. While suspended at the MAP with LNAV armed
+  as a suffix when set. One symbol and one label per place (G59,
+  pyEfis #375, Bill 2026-11-07): where the airport, navaid or fix layer
+  already drew the waypoint this frame (same ident, within 60 m), that
+  layer keeps its symbol and label and the route adds only the TO ring
+  and the role suffix, on its own line under the ident. User and lat/lon
+  points, and any waypoint no database layer is showing (layer off,
+  outside its range gate, decluttered), draw in full. While suspended at the MAP with LNAV armed
   (`FPLSTATE`=SUSP, `FPLAPR`=LNAV), a dashed magenta line extends the
   final course past the MAP so the pilot still sees where it leads —
   the exact length is a look call, not a navigation guarantee.

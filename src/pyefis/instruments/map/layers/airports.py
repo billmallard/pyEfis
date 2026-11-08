@@ -28,8 +28,8 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
 
 from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
-                                           hit_distance, qcolor, range_bucket,
-                                           register_layer)
+                                           hit_distance, mark_drawn, qcolor,
+                                           range_bucket, register_layer)
 
 MAGENTA = qcolor(STANDARD_PALETTE["airport"])
 
@@ -148,12 +148,16 @@ class AirportsLayer(MapLayer):
                                       len(a["icao"]) * fpx * 0.3))
                     self._draw_true_size(p, x, rwys, colour, f.pixelSize(),
                                          taken)
-                    if show_ident and a["icao"]:
+                    labelled = show_ident and bool(a["icao"])
+                    if labelled:
                         p.setPen(QPen(QColor(255, 255, 255, 230)))
                         p.drawText(
                             QRectF(c.x() - 60, box.bottom() + 1, 120,
                                    f.pixelSize() + 4),
                             Qt.AlignmentFlag.AlignHCenter, a["icao"])
+                    mark_drawn(x, a["icao"], c, box.bottom() + 1
+                               + (f.pixelSize() + 4 if labelled else 0),
+                               labelled)
                 continue
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
@@ -173,12 +177,15 @@ class AirportsLayer(MapLayer):
                 p.restore()
             else:
                 p.drawEllipse(c, r, r)
-            if show_ident and a["icao"]:
+            labelled = show_ident and bool(a["icao"])
+            if labelled:
                 p.setPen(QPen(QColor(255, 255, 255, 230)))
                 p.drawText(
                     QRectF(c.x() - 60, c.y() + r + 1, 120,
                            f.pixelSize() + 4),
                     Qt.AlignmentFlag.AlignHCenter, a["icao"])
+            mark_drawn(x, a["icao"], c, c.y() + r + 1
+                       + (f.pixelSize() + 4 if labelled else 0), labelled)
 
     def hit(self, x, px, py, tol_px):
         """FP10: airports whose symbol centre is within *tol_px* -- the

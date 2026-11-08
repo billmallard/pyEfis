@@ -127,6 +127,10 @@ class MapTransform:
         # and keep blitting the last image scaled -- the settle debounce
         # that stops a pinch from churning the worker on every event.
         self.defer_render = False
+        # G59: ident -> [(screen pos, free y below, labelled)] for each place
+        # a database layer drew this frame (layers.mark_drawn/find_drawn).
+        # One transform per paint, so it starts empty every frame.
+        self.drawn_points = {}
 
     def nm_to_px(self, nm):
         return nm * NM_M * self._px_per_m
