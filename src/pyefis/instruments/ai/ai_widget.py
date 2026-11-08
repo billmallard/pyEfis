@@ -148,6 +148,14 @@ class AI(QGraphicsView):
         # (65 deg, past the excessive-bank caution, is the unusual-attitude
         # regime -- not a normal steep turn.) Configurable.
         self.unusualBankDeg = 65
+        # Target-bank bug (AER-5149, ATT1 scope item 2): a selected bank
+        # magnitude drawn on both sides of the bank scale with a tolerance
+        # band, so holding a steep turn reads as "pointer inside the band".
+        # 0 = off. The ACS steep turns are flown to +/-5 deg (Private 45,
+        # Commercial 50). Cyan: the selected-value colour the HDG bug uses.
+        self.bankBug = 0.0
+        self.bankBugTolerance = 5.0
+        self.bank_bug_color = "#00ffff"
         self._decluttered = False
         # Pitch-limit indicator (AC 25-11B App A A.2.4, AI-LIM-001): the
         # pitch at which the stall-warning AOA would be reached at the
@@ -1564,11 +1572,16 @@ class AI(QGraphicsView):
                                     QPointF(-m*0.8, -(r+m*0.8)),
                                     QPointF(-0, -r - m*1.6),
                                     QPointF(m*0.8, -(r+m*0.8))])
+                p.save()
                 p.setBrush(Qt.GlobalColor.transparent)
                 p.rotate(a)
                 p.drawPolygon(diamond)
                 p.rotate(-2 * a)
                 p.drawPolygon(diamond)
+                p.restore()
+            # Target-bank bug (non-essential -- de-cluttered too).
+            if self.bankBug > 0 and not self._decluttered:
+                self._draw_bank_bug(p, r, m)
             if bank_op < 1.0:
                 p.setOpacity(1.0)
 
@@ -1592,6 +1605,50 @@ class AI(QGraphicsView):
         # last so they sit on top of the de-cluttered display.
         if self._show_recovery_chevrons:
             self._draw_recovery_chevrons(p, w, h)
+
+    def _draw_bank_bug(self, p, r, m):
+        """Target-bank bug + tolerance band on both sides of the bank scale.
+        Called in the scale's own (rolled) frame, centred on the arc centre,
+        so the band rotates with the scale and the fixed roll pointer reads
+        against it."""
+        t = max(0.0, min(float(self.bankBug), 90.0))
+        tol = max(0.0, float(self.bankBugTolerance))
+        col = QColor(self.bank_bug_color)
+        p.save()
+        # Band: a translucent arc over the short-tick ring (r-m .. r). The
+        # fixed roll pointer's tip touches the ring, so on target it sits
+        # inside the band: "pointer inside the band" is the whole read.
+        band = QColor(col)
+        band.setAlpha(140)
+        bp = QPen(band)
+        bp.setWidthF(m)
+        bp.setCapStyle(Qt.PenCapStyle.FlatCap)
+        p.setPen(bp)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        rb = r - m * 0.5
+        rect = QRectF(-rb, -rb, 2 * rb, 2 * rb)
+        lo, hi = max(0.0, t - tol), t + tol
+        for sign in (1, -1):
+            # Qt arc angles: 0 = 3 o'clock, counter-clockwise; the scale's
+            # 0 deg mark is straight up (90), +bank marks sit clockwise.
+            start = 90.0 - hi if sign > 0 else 90.0 + lo
+            p.drawArc(rect, qRound(start * 16), qRound((hi - lo) * 16))
+        # Bug: a solid arrow outside the ring at +/-t, pointing in at the
+        # target mark, clear of the long ticks and the standard-rate
+        # diamonds (r .. r+1.6m).
+        p.setPen(QPen(QColor(Qt.GlobalColor.black), max(1.0, m * 0.08)))
+        p.setBrush(col)
+        bug = QPolygonF([QPointF(-m * 0.7, -(r + m * 2.4)),
+                         QPointF(m * 0.7, -(r + m * 2.4)),
+                         QPointF(m * 0.7, -(r + m * 1.7)),
+                         QPointF(0, -(r + m * 1.0)),
+                         QPointF(-m * 0.7, -(r + m * 1.7))])
+        for sign in (1, -1):
+            p.save()
+            p.rotate(sign * t)
+            p.drawPolygon(bug)
+            p.restore()
+        p.restore()
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
