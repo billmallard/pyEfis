@@ -389,8 +389,11 @@ def test_frame_clock_repaints_on_nd_data_only_while_on(fix, qtbot):
 
 
 def test_paint_off_draws_no_nd(fix, qtbot, monkeypatch):
+    # Count calls, never keep the args: holding paintEvent's QPainter past
+    # render() lets it be destroyed after its device, at monkeypatch undo --
+    # a segfault in teardown (CI run 42459264291).
     calls = []
-    monkeypatch.setattr(nd, "paint", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(nd, "paint", lambda *a, **k: calls.append(None))
     m = _map(qtbot, layer_terrain=False, layer_roads=False,
              layer_rivers=False)
     img = QImage(W, H, QImage.Format.Format_ARGB32)
