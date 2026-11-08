@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "fce470c1",
+ "run": "local: docs/aer-5089-evidence/render_refused_commit.py on dev before the fix, AER-5089",
+ "device": "sandbox offscreen QPainter (no GPU)",
+ "sha256": "66ffd1c206af2a2e7900159a1710f475ae5f2e7b69b838ff069ba07c08410aca",
+ "created_utc": "2026-11-08T07:20:15Z"
+}
