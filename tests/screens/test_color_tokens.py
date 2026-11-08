@@ -39,7 +39,7 @@ CONTRACT_MAP = {
     ("value_text", "border_color"): "line.border",
     ("value_text", "bg_color"): "surface.base",
     ("altimeter_trend_tape", "bg_color"): "surface.base",
-    ("heading_display", "fg_color"): "ink.muted",
+    ("heading_display", "fg_color"): "ink.primary",
     ("heading_display", "bg_color"): "surface.base",
     ("button", "fg_color"): "accent",
     ("button", "bg_color"): "surface.raised",
