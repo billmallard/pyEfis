@@ -51,6 +51,7 @@ if "pyAvMap" not in ''.join(sys.path):
 import pyavtools.fix as fix
 
 import pyefis.hooks as hooks
+import pyefis.fix_watchdog as fix_watchdog
 import pyefis.hmi as hmi
 import pyefis.gui as gui
 
@@ -224,6 +225,14 @@ def main():
     fix.initialize(config)
     pyefis_ver = fix.db.get_item('PYEFIS_VERSION')
 
+    # CERT1: a gateway that hangs with the socket open must not leave the
+    # last values on the glass as good.  Never let it stop the display.
+    try:
+        link_watchdog = fix_watchdog.start(fix.db, config.get("main") or {})
+    except Exception:
+        log.critical("FIX link watchdog failed to start", exc_info=True)
+        link_watchdog = None
+
     hmi.initialize(config)
 
     if 'FMS' in config:
@@ -315,6 +324,8 @@ def main():
     result = app.exec()
 
     # Clean up and get out
+    if link_watchdog is not None:
+        link_watchdog.stop()
     fix.stop()
     if 'FMS' in config:
         fms.stop()
