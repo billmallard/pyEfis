@@ -159,10 +159,10 @@ The full list, including the tick sizes and opacities, is on
 | PAPI lights (`svs_papi`) | on | | |
 | Road colour, casing and width options (`svs_road_*`) | | | The road ribbons' look. |
 
-Two options in the list do nothing on the device today: **Terrain palette**
-(`svs_palette`, [#394](https://github.com/billmallard/pyEfis/issues/394)) and
-**Fill terrain** (`svs_terrain_fill`,
-[#395](https://github.com/billmallard/pyEfis/issues/395)).
+One option in the list does nothing on the device today: **Terrain palette**
+(`svs_palette`, [#394](https://github.com/billmallard/pyEfis/issues/394)).
+Terrain is always drawn filled; there is no wireframe mode
+([#395](https://github.com/billmallard/pyEfis/issues/395)).
 
 The configurator does not offer the airport proximity rule. It is set in
 the screen file's `svs:` block: `airport_proximity_nm` (5, and 0 turns it off)
