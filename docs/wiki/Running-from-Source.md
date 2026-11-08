@@ -1,120 +1,108 @@
 # Running from Source
 
-This page is for developers who want to run pyEFIS from a git checkout on a
-normal desktop or laptop (Linux, internet-connected). The same steps apply on a
-Raspberry Pi; the snaps in
-[INSTALLING.md](https://github.com/makerplane/pyEfis/blob/master/INSTALLING.md)
-are behind this fork (no Synthetic Vision or navigation-data currency), so
-running from source is the current path there too.
+This page is for working on pyEFIS itself: a development checkout on a desktop
+or laptop, with the test tools. To set up a device to fly, follow
+[Setting Up a Device](Setting-Up-a-Device) instead.
 
 ## Prerequisites
 
-- Python **3.8+** (`requires-python = ">=3.8, <4"`).
-- `git`, `make`, and a working **display** — pyEFIS is a Qt GUI and cannot
-  render headless.
-- On Linux you may also need the usual Qt runtime system libraries (for example
-  `libegl1`) if the PyQt6 wheel does not pull everything in.
+- Python 3.9 or later. CI runs 3.12. (`pyproject.toml` still says 3.8, but the
+  code needs 3.9.)
+- `git` (one dependency installs from a git URL) and `make`.
+- A display: pyEFIS is a Qt application and needs one, even for a quick look.
+  The tests run offscreen.
+- fix-gateway for live data; see [Setting Up a Device](Setting-Up-a-Device#3-first-start).
 
-## 1. Clone
+## Check out and build the environment
 
 ```bash
-git clone https://github.com/makerplane/pyEfis.git   # or your fork
+git clone -b dev https://github.com/billmallard/pyEfis.git
 cd pyEfis
-git checkout <branch>                                 # the branch you want to run
+make init
+source venv/bin/activate
 ```
 
-## 2. Virtual environment
+- `make venv` creates `venv/` with the development tools: flake8, black,
+  pytest, pytest-qt, pytest-env and pytest-cov.
+- `make init` does that, then installs pyEFIS editable with PyQt6 6.8.0 (the
+  `qt` extra).
+- On a Raspberry Pi running Bookworm, both use the system's PyQt6 instead
+  (`sudo apt install python3-pyqt6 x11-utils` first), and the venv sees the
+  system packages.
 
-Recommended (skip only if you deliberately want the global interpreter):
+Neither installs synthetic vision's dependencies. Add them with:
 
 ```bash
-make venv
-source venv/bin/activate     # re-run this in every new shell
+pip install -e '.[qt,svs]'
 ```
 
-## 3. Install dependencies (the step that trips people up)
+| Extra | Installs | For |
+|---|---|---|
+| `qt` | PyQt6 6.8.0 | Running pyEFIS. |
+| `svs` | numpy, PyOpenGL | Synthetic vision. Without it the attitude display shows `SVS UNAVAIL`. |
+| `build` | build | `make wheel`. |
 
-`make init` installs the **development tooling only** (pytest, flake8, black,
-…). It does **not** install the runtime GUI/3D dependencies, which live in
-optional extras in `pyproject.toml`. You must install those explicitly:
+## Run it
 
 ```bash
-make init                    # dev tooling (optional if you're not testing)
-pip install -e '.[qt,svs]'   # the app's actual runtime dependencies
+python pyEfis.py          # or the installed entry point: pyefis
 ```
 
-What the extras are, and why they are split:
+| Flag | What it does |
+|---|---|
+| `--debug` | Debug logging. |
+| `-v`, `--verbose` | More logging. |
+| `--config-file <path>` | Use this configuration file. Nothing is copied; `preferences.yaml` must sit beside it. |
+| `-m`, `--mode` | `normal` (default) or `test`. |
+| `--log-config <path>` | A logging configuration file. |
 
-| Extra | Pulls in | Needed for |
-|-------|----------|------------|
-| `qt`  | `PyQt6` | **Required.** pyEFIS will not start without it (`import PyQt6` fails). |
-| `svs` | `numpy`, `PyOpenGL` | **Optional.** Only needed to render Synthetic Vision (terrain). Without it, pyEFIS runs normally and the attitude view annunciates `SVS UNAVAIL`. |
+Without `--config-file`, every start copies the shipped configuration to
+`~/makerplane/pyefis/config/` and loads `default.yaml` from there. Files you
+have not edited are replaced; edited ones are kept, with the new version beside
+them as `.dist`. See
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-files-on-the-device).
 
-If you only want the standard PFD/MFD and do not care about terrain,
-`pip install -e '.[qt]'` is enough. Use `'.[qt,svs]'` to enable SVS.
+Started by systemd, pyEFIS exits unless `AUTO_START` is on under `enabled:` in
+the preferences. It is on in the shipped `preferences.yaml.custom`.
 
-> If you `make init` and then `python pyEfis.py` and it dies immediately on
-> `ModuleNotFoundError: No module named 'PyQt6'`, you skipped this step —
-> install the `qt` extra.
+The other entry point is `pyefis-accept-notice`; see
+[Setting Up a Device](Setting-Up-a-Device#2-accept-the-software-notice).
 
-## 4. fix-gateway (the data source)
+## Synthetic vision data on a desktop
 
-pyEFIS is only the **display** — it reads flight data over TCP from
-[fix-gateway](https://github.com/makerplane/FIX-Gateway), which must run
-separately. Install and start it per its own README (its `xplane` plugin is an
-easy laptop data source for testing). pyEFIS will start without it but shows no
-live data. See [Concepts](Concepts#1-the-fix-database-the-data-bus) for how the
-FIX database ties the two together.
+The stock screens' synthetic-vision include
+(`config/includes/ahrs/svs.yaml`) ships with synthetic vision off, and its paths
+point at `/data/makerplane-data/...`, where `pyefis-data` installs packs on a
+device. To try it on a desktop:
 
-## 5. Run
+1. Install the `svs` extra.
+2. Install packs somewhere you can write, with `pyefis-data`
+   ([Setting Up a Device](Setting-Up-a-Device#6-install-navigation-data)).
+3. In `~/makerplane/pyefis/config/includes/ahrs/svs.yaml`, set `enabled: true`
+   and point `tile_path` and the database paths at your packs.
+
+A configurator panel sets these on the instrument instead; see
+[Attitude & SVS](Widgets-Attitude-and-SVS#how-the-terrain-options-reach-the-renderer).
+
+## Tests and checks
 
 ```bash
-python pyEfis.py
+make test        # flake8 (errors only, then a full report), then pytest
+pytest tests/    # just the tests
 ```
 
-Useful flags: `--debug` (verbose logging), `--config-file <path>` (use a
-specific config instead of the default).
+pytest runs with coverage, so pytest-cov must be installed (`make venv` does).
+`make wheel` builds a wheel.
 
-## First-run behavior and file locations
-
-On first launch pyEFIS **auto-creates** `~/makerplane/pyefis/config/` and copies
-in default config files (it never overwrites files you have already customized).
-You do not need to create that directory yourself. Key locations:
-
-- pyEFIS config: `~/makerplane/pyefis/config`
-- default config file loaded: `~/makerplane/pyefis/config/default.yaml`
-- flight-data-recorder logs: `~/makerplane/pyefis/fdr`
-
-To customize the shipped screens, see [Preferences & Styling](Preferences-and-Styling);
-to lay out your own, see the [Screen Builder](Screen-Builder).
-
-## Synthetic Vision (SVS) data paths
-
-The SVS include (`src/pyefis/config/includes/ahrs/svs.yaml`) ships with SVS
-enabled and its data paths pointing at the makerplane-data updater's **standard
-Pi data root**, `/data/makerplane-data/…` (terrain tiles, and the
-airports / obstacles / water / highways sqlite databases). On a Pi that path is
-populated automatically; on a laptop it does not exist, and `/data` is not
-writable without root.
-
-You do **not** need that data to run pyEFIS. Your options:
-
-1. **Ignore it** — without the `svs` extra or a GPU, SVS annunciates
-   `SVS UNAVAIL` and the rest of the EFIS runs normally.
-2. **Point the paths at your own data root** — edit the `svs:` block in your
-   `~/makerplane/pyefis/config` copy of `svs.yaml` and change `tile_path`,
-   `nasr_db_path`, etc. to a directory you control (for example under
-   `~/makerplane/pyefis/data/…`).
-3. **Turn SVS off** — set `enabled: false` in that `svs:` block.
-
-See [Attitude & Synthetic Vision](Widgets-Attitude-and-SVS) for what SVS renders
-and the full option list.
+The instrument reference tables are generated from the code; after changing an
+instrument's options, refresh them with
+`docs/images/reference/gen_reference.py --update docs/wiki` (see its README).
 
 ## Troubleshooting
 
-| Symptom | Cause / fix |
-|---------|-------------|
-| `ModuleNotFoundError: No module named 'PyQt6'` | The `qt` extra is not installed. `pip install -e '.[qt]'`. |
-| Runs, but the attitude view says `SVS UNAVAIL` | Expected without a usable GPU or the `svs` extra. Not an error. |
-| SVS/terrain errors about `/data/makerplane-data/...` | That data root does not exist on a laptop — see the SVS section above (point the paths elsewhere or set `enabled: false`). |
-| No instruments show live values | fix-gateway is not running, or pyEFIS is not pointed at it. Start fix-gateway (step 4). |
+| Symptom | Fix |
+|---|---|
+| `ModuleNotFoundError: No module named 'PyQt6'` | Install the `qt` extra, or on a Pi `python3-pyqt6`. |
+| The attitude display shows `SVS UNAVAIL` | Expected without the `svs` extra, a usable GPU, or position data. |
+| No live values | fix-gateway is not running, or `FixServer`/`FixPort` in `main/default.yaml` do not point at it. |
+| Display errors from a terminal | Set `DISPLAY=:0`. |
