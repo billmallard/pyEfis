@@ -159,7 +159,8 @@ COLOR_WATER     = QColor( 20,  80, 150)   # ocean blue  — SRTM void / open wat
 # the five clearance bands (safe, caution, warning, conflict, water).
 # "clearance" is the stock scheme (the module COLOR_* constants); the others
 # tune saturation / contrast. set_svs_config copies the chosen set onto the
-# instance (self.c_*); _clearance_color falls back to the module constants when
+# instance (self.c_*); palette_rgb01 hands them to the GL terrain shader as
+# its COLOR_* uniforms (issue #394), falling back to the module constants when
 # no palette was selected, so behaviour is identical unless a palette is named.
 _PALETTES = {
     "clearance": (COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
@@ -860,6 +861,17 @@ class SVSRenderer:
         return (round(ac_lat / step) * step,
                 round(ac_lon / step) * step,
                 range_nm) + extra
+
+    def palette_rgb01(self):
+        """The selected palette's five band colours (safe, caution,
+        warning, conflict, water) as 0..1 RGB tuples -- the terrain
+        shader's COLOR_* uniforms (issue #394)."""
+        bands = (getattr(self, "c_safe", COLOR_SAFE),
+                 getattr(self, "c_caution", COLOR_CAUTION),
+                 getattr(self, "c_warning", COLOR_WARNING),
+                 getattr(self, "c_conflict", COLOR_CONFLICT),
+                 getattr(self, "c_water", COLOR_WATER))
+        return tuple((c.redF(), c.greenF(), c.blueF()) for c in bands)
 
     def _clearance_color(self, clearance_ft: float) -> QColor:
         # Use the selected palette's band colours; fall back to the module
