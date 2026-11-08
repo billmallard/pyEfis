@@ -814,7 +814,7 @@ Analog heading display
 Options:
   * font_family - default 'DejaVu Sans Condensed'
   * bg_color - default black
-  * fg_color - default gray
+  * fg_color - default white
 
 ## heading_tape
 Horizontal Heading Tape
