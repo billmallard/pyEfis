@@ -430,8 +430,7 @@ def test_fpm_solution_independent_of_optional_vpath(fix, qtbot):
 # Passing tests verify shipped behaviour. The xfail(strict) tests are the
 # executable gap tracker for the unimplemented recovery/envelope alerts: they
 # fail today and flip the run red when the alert is implemented, forcing removal
-# of the marker. AI-LIM-001 stays xfail until fix-gateway publishes AOA / stall
-# margin. Spec sec 5 carries the case<->requirement map.
+# of the marker. Spec sec 5 carries the case<->requirement map.
 # =============================================================================
 
 
@@ -579,15 +578,107 @@ def test_ai_cat_excessive_sideslip_annunciation(fix, qtbot):
     assert widget._excessive_slip is True
 
 
-@pytest.mark.xfail(strict=True, reason="AI-LIM-001 data-blocked: no AOA / stall-margin key yet")
+def _define_aoa(fix, aoa=4.0, warn=13.5, old=False, bad=False, fail=False):
+    """AOA as fix-gateway's ahrs.yaml defines it (aux Warn = the stall-warning
+    AOA, published by the onspeed plugin). The fixture does not define it."""
+    fix.db.define_item("AOA", "Angle of attack", "float", -180.0, 180.0, "deg",
+                       300, "Min,Max,0g,Warn,Stall")
+    item = fix.db.get_item("AOA")
+    item.value = aoa
+    item.set_aux_value("Warn", warn)
+    item.old = old
+    item.bad = bad
+    item.fail = fail
+    return item
+
+
 def test_ai_cat_pitch_limit_indication(fix, qtbot):
     """AI-TC-105 | AI-LIM-001 | Approaching stall AOA the AI must show a pitch-limit
-    indication. AC 25-11B App A A.2.4 (p.70). Data-blocked: fix-gateway publishes no AOA /
-    stall-margin key yet (OnSpeed/AOA path). Contract: w._show_pitch_limit."""
+    indication. AC 25-11B App A A.2.4 (p.70). Margin = AOA.Warn - AOA (fix-gateway
+    onspeed plugin); the marker shows once the margin is inside
+    pitchLimitShowMarginDeg. Contract: w._show_pitch_limit."""
+    _reset_ai_items(fix)
+    aoa = _define_aoa(fix, aoa=3.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+
+    widget.paintEvent(event)                 # cruise: 10.5 deg of margin -> no cue
+    assert widget._pitch_limit_margin == pytest.approx(10.5)
+    assert widget._show_pitch_limit is False
+
+    aoa.value = 9.0                          # approach: 4.5 deg of margin -> cue
+    widget.paintEvent(event)
+    assert widget._pitch_limit_margin == pytest.approx(4.5)
+    assert widget._show_pitch_limit is True
+
+    aoa.value = 14.0                         # past the warning AOA -> still shown
+    widget.paintEvent(event)
+    assert widget._pitch_limit_margin == pytest.approx(-0.5)
+    assert widget._show_pitch_limit is True
+
+    aoa.set_aux_value("Warn", 11.5)          # flaps out: lower warning AOA moves it
+    aoa.value = 9.0
+    widget.paintEvent(event)
+    assert widget._pitch_limit_margin == pytest.approx(2.5)
+
+
+@pytest.mark.parametrize("flag", ["old", "bad", "fail"])
+def test_ai_pitch_limit_hidden_on_degraded_aoa(fix, qtbot, flag):
+    """AI-LIM-001: no marker from an AOA that is old, bad or failed -- a stall
+    margin from a stale or untrusted AOA is misleading. The onspeed plugin
+    publishes AOA bad below its mute airspeed, so this is also the taxi case.
+    The marker returns when the flag clears."""
+    _reset_ai_items(fix)
+    aoa = _define_aoa(fix, aoa=10.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is True
+
+    setattr(aoa, flag, True)
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is False
+    assert widget._pitch_limit_margin is None
+
+    setattr(aoa, flag, False)
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is True
+
+
+def test_ai_pitch_limit_hidden_without_warn_setpoint(fix, qtbot):
+    """AI-LIM-001: AOA.Warn None (the plugin clears it when the box's setpoints
+    are out of order) means there is no warning AOA to measure to -- no marker,
+    even with a good AOA."""
+    _reset_ai_items(fix)
+    aoa = _define_aoa(fix, aoa=10.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    aoa.set_aux_value("Warn", "None")        # as the client applies a cleared aux
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is False
+    assert widget._pitch_limit_margin is None
+
+
+def test_ai_pitch_limit_disabled_without_aoa_key(fix, qtbot):
+    """Graceful FIX-key init: no AOA key in the database leaves the indicator
+    off rather than raising."""
     _reset_ai_items(fix)
     widget = ai.AI()
     event = _show_ai(qtbot, widget)
     widget.paintEvent(event)
+    assert widget._show_pitch_limit is False
+
+
+def test_ai_pitch_limit_survives_declutter(fix, qtbot):
+    """Stall margin is recovery information: at an unusual attitude the
+    de-clutter keeps the pitch-limit marker (AI-DCL-001 scope)."""
+    _reset_ai_items(fix)
+    _define_aoa(fix, aoa=12.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.pitchAngle = 45
+    widget.paintEvent(event)
+    assert widget._decluttered is True
     assert widget._show_pitch_limit is True
 
 

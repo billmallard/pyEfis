@@ -143,6 +143,22 @@ class AI(QGraphicsView):
         # regime -- not a normal steep turn.) Configurable.
         self.unusualBankDeg = 65
         self._decluttered = False
+        # Pitch-limit indicator (AC 25-11B App A A.2.4, AI-LIM-001): the
+        # pitch at which the stall-warning AOA would be reached at the
+        # current flight path. The margin is AOA.Warn - AOA degrees, so the
+        # marker sits that far above the aircraft symbol. Shown only once
+        # the margin is inside pitchLimitShowMarginDeg (no cue in cruise);
+        # red at or past the warning AOA. Configurable.
+        self.pitchLimitShowMarginDeg = 8.0
+        self._show_pitch_limit = False
+        self._pitch_limit_margin = None
+
+        # Pitch-limit inputs: AOA and its Warn aux (the flap-dependent
+        # stall-warning AOA, fix-gateway onspeed plugin). Assume invalid
+        # until the FIX item says otherwise.
+        self._aoa = 0.0
+        self._aoa_warn = None
+        self._aoa_flags = {"old": True, "bad": True, "fail": True}
         # Fixed aircraft reference symbol (the "wings" the horizon moves
         # behind). style: "classic" (split wing bars + center dot),
         # "garmin"/"gi275" (GI-275-style stepped wing bars + center
@@ -380,6 +396,26 @@ class AI(QGraphicsView):
             log.warning(
                 "AI: FIX key 'MAGVAR' not defined — SVS heading "
                 "will be treated as true heading (no mag-var correction)")
+
+        # Pitch-limit indicator inputs (AI-LIM-001). A missing AOA key, or
+        # an AOA without a Warn aux, leaves the indicator disabled.
+        try:
+            _item = fix.db.get_item("AOA")
+            _item.valueChanged[float].connect(self._aoaValueChanged)
+            _item.auxChanged.connect(self._aoaAuxChanged)
+            for flag in ("old", "bad", "fail"):
+                getattr(_item, f"{flag}Changed")[bool].connect(
+                    lambda s, f=flag: self._aoaFlagChanged(f, s))
+                self._aoa_flags[flag] = getattr(_item, flag)
+            self._aoa = _item.value
+            self._aoaAuxChanged(_item.aux)
+            if "Warn" not in _item.aux:
+                log.warning(
+                    "AI: FIX key 'AOA' has no Warn aux — pitch-limit "
+                    "indicator disabled")
+        except KeyError:
+            log.warning(
+                "AI: FIX key 'AOA' not defined — pitch-limit indicator disabled")
 
         # We store all the pitch tick marks and text in a list so that
         # we can adjust the opacity of the items.
@@ -869,6 +905,34 @@ class AI(QGraphicsView):
         """True when LAT and LONG are both current, not bad and not failed."""
         return not any(any(f.values()) for f in self._svs_pos_flags.values())
 
+    def _aoaValueChanged(self, value):
+        if value != self._aoa:
+            self._aoa = value
+            self._frame_dirty = True
+
+    def _aoaAuxChanged(self, aux):
+        warn = aux.get("Warn")
+        if warn != self._aoa_warn:
+            self._aoa_warn = warn
+            self._frame_dirty = True
+
+    def _aoaFlagChanged(self, flag, state):
+        """AOA old/bad/fail. Repaint at once, like the position flags: a
+        stall-margin cue drawn from a stale AOA is misleading."""
+        self._aoa_flags[flag] = state
+        self._frame_dirty = True
+        if self.isVisible():
+            self.update()
+
+    def _pitch_limit_margin_deg(self):
+        """Degrees of AOA left before the stall-warning AOA (AOA.Warn - AOA),
+        or None when there is no honest margin: AOA old, bad or failed (the
+        onspeed plugin publishes AOA bad below its mute airspeed), or no
+        warning setpoint (AOA.Warn None)."""
+        if any(self._aoa_flags.values()) or self._aoa_warn is None:
+            return None
+        return self._aoa_warn - self._aoa
+
     def set_frame_rate(self, fps):
         """(Re)start the display frame clock at *fps* (clamped 5-60)."""
         fps = max(5.0, min(60.0, float(fps)))
@@ -1079,6 +1143,49 @@ class AI(QGraphicsView):
                 QPointF(0.0, yc + d * depth),
                 QPointF(half, yc),
             ]))
+        p.restore()
+
+    def _draw_pitch_limit(self, p, w, h, margin):
+        """AC 25-11B App A A.2.4: the pitch-limit indicator. Two bars either
+        side of the aircraft symbol, each with three ticks rising outboard,
+        `margin` degrees (AOA.Warn - AOA) above the symbol at the pitch-ladder
+        scale. AOA is measured in the aircraft's plane of symmetry, which is
+        the screen vertical, so the marker is drawn upright rather than in the
+        rolled ladder frame; wings level it lands at PITCH + margin on the
+        ladder. Amber while there is margin left, red at or past the warning
+        AOA (the marker then sits on or below the symbol). Clamped to the
+        glass so a large margin pins at the edge instead of vanishing."""
+        ppd = getattr(self, "pixelsPerDeg", self.height() / self.pitchDegreesShown)
+        cy = h / 2.0 - self._horizon_offset_px()
+        y = cy - margin * ppd
+        pad = h * 0.04
+        y = max(pad, min(h - pad, y))
+
+        inner = w * 0.07                   # gap half-width (clears the symbol centre)
+        outer = w * 0.19                   # bar outer end
+        tick = h * 0.035                   # tick height
+        col = QColor(255, 40, 40) if margin <= 0 else QColor(255, 176, 0)
+        pen = QPen(col)
+        pen.setWidth(max(3, qRound(self.fontSize * 0.12)))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        halo = QPen(QColor(Qt.GlobalColor.black))
+        halo.setWidth(pen.width() + 2)
+        halo.setCapStyle(Qt.PenCapStyle.RoundCap)
+
+        lines = []
+        for s in (-1.0, 1.0):
+            lines.append(QLineF(s * inner, y, s * outer, y))
+            for i in range(3):
+                x = s * (inner + (outer - inner) * (i + 0.5) / 3.0)
+                lines.append(QLineF(x, y, x + s * tick * 0.6, y - tick))
+
+        p.save()
+        p.resetTransform()
+        p.translate(w / 2.0, 0.0)
+        p.setBrush(Qt.GlobalColor.transparent)
+        for pn in (halo, pen):             # dark halo first: legible over sky and terrain
+            p.setPen(pn)
+            p.drawLines(lines)
         p.restore()
 
     # the pitchItems list contains a tuple that represents all of the tick marks
@@ -1456,6 +1563,15 @@ class AI(QGraphicsView):
         if not self._decluttered:
             self._drawFPM(p, w, h)
             self._draw_horizon_heading(p, w, h)
+
+        # Pitch-limit indicator (AC 25-11B App A A.2.4, AI-LIM-001). Stall
+        # margin is recovery information, so it survives the de-clutter.
+        margin = self._pitch_limit_margin_deg()
+        self._pitch_limit_margin = margin
+        self._show_pitch_limit = (margin is not None
+                                  and margin <= self.pitchLimitShowMarginDeg)
+        if self._show_pitch_limit:
+            self._draw_pitch_limit(p, w, h, margin)
 
         # Unusual-attitude recovery chevrons (AC 25-11B App A A.2.2). Past the
         # pitch thresholds, guide the recovery toward the nearest horizon. Drawn
