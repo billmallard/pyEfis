@@ -59,7 +59,7 @@ from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import leg_paths as fp_legs
 from pyefis.flightplan.waypoints import WAYPOINT_TYPES, Waypoint
 from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
-                                           hit_distance, qcolor,
+                                           find_drawn, hit_distance, qcolor,
                                            register_layer)
 
 PAST = QColor("#808080")
@@ -262,6 +262,15 @@ def build_symbols(route, engine):
             label = f"{label} {suffix}"
         out.append((color, wp.lat, wp.lon, wp.type, label, ringed))
     return out
+
+
+def _split_role(label):
+    """``"JAIOH FAF"`` -> ``("JAIOH", "FAF")``; a label without a role
+    suffix (:data:`_ROLE_SUFFIX`) -> ``(label, "")``."""
+    ident, _, tail = (label or "").rpartition(" ")
+    if ident and tail in _ROLE_SUFFIX.values():
+        return ident, tail
+    return label or "", ""
 
 
 def build_dto_symbol(route, engine, dto):
@@ -632,9 +641,10 @@ class FlightPlanLayer(MapLayer):
         if dsym is not None:
             symbols.append(dsym)
 
-        self._paint_symbols(p, x, symbols, show_labels)
+        below = self._paint_symbols(p, x, symbols, show_labels)
         if show_labels:
-            self._paint_constraints(p, x, build_constraint_labels(route, engine, snap.kinds))
+            self._paint_constraints(p, x, build_constraint_labels(route, engine, snap.kinds),
+                                    below)
             self._paint_airway_labels(p, x, build_airway_labels(route, engine))
 
     @staticmethod
@@ -651,17 +661,37 @@ class FlightPlanLayer(MapLayer):
         return [(ACTIVE, _ACTIVE_WIDTH, "solid", ("line", (a, b)))]
 
     def _paint_symbols(self, p, x, symbols, show_labels):
+        """Each route point's glyph, label and TO ring. G59 (pyEfis #375,
+        Bill's option A): a place a database layer already drew this frame
+        (airport, navaid, fix -- ``find_drawn``) keeps that layer's symbol
+        and ident label; only the ring and a role suffix (IAF/FAF/MAP/MAHP)
+        are added, the suffix stacked under the ident. User and lat/lon
+        points, and any point no database layer is showing (layer off,
+        outside its range gate, decluttered), draw in full here.
+
+        Returns ``{(lat, lon): y}``, the first free screen y under each
+        point's text, for the constraint lines."""
         tint = _tinter(x)
         f = QFont(x.font_family)
         f.setPixelSize(max(8, int(x.w * 0.02)))
         p.setFont(f)
         r = max(5.0, min(12.0, x.w * 0.016))
+        line_h = f.pixelSize() + 4
+        below = {}
         for color, lat, lon, wtype, label, ringed in symbols:
             color = tint(color)
             c = x.to_screen(lat, lon)
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
-            self._draw_symbol(p, c, r, wtype, color)
+            ident, suffix = _split_role(label)
+            drawn = find_drawn(x, ident, c)
+            if drawn is None:
+                self._draw_symbol(p, c, r, wtype, color)
+                y = c.y() + r + 1
+            else:
+                y = drawn[1]
+                if drawn[2]:
+                    label = suffix
             if ringed:
                 ring_pen = QPen(ACTIVE)
                 ring_pen.setWidthF(max(1.2, r * 0.18))
@@ -670,13 +700,18 @@ class FlightPlanLayer(MapLayer):
                 p.drawEllipse(c, r * 1.5, r * 1.5)
             if show_labels and label:
                 p.setPen(QPen(color))
-                p.drawText(QRectF(c.x() - 60, c.y() + r + 1, 120, f.pixelSize() + 4),
+                p.drawText(QRectF(c.x() - 60, y, 120, line_h),
                            Qt.AlignmentFlag.AlignHCenter, label)
+                y += line_h
+            below[(lat, lon)] = y
+        return below
 
     @staticmethod
-    def _paint_constraints(p, x, labels):
+    def _paint_constraints(p, x, labels, below=None):
         """Each procedure fix's altitude constraint under its ident label,
-        in chart notation (:func:`parse_alt_constraint`)."""
+        in chart notation (:func:`parse_alt_constraint`). *below* is
+        :meth:`_paint_symbols`' first free y per point; a point missing
+        from it stacks under this layer's own label position."""
         if not labels:
             return
         f = QFont(x.font_family)
@@ -694,7 +729,7 @@ class FlightPlanLayer(MapLayer):
             pen = QPen(color)
             pen.setWidthF(1.0)
             p.setPen(pen)
-            y = c.y() + r + 1 + line_h     # below the ident label
+            y = (below or {}).get((lat, lon), c.y() + r + 1 + line_h)   # below the ident label
             for text, over, under in lines:
                 p.drawText(QRectF(c.x() - 60, y, 120, line_h), Qt.AlignmentFlag.AlignHCenter, text)
                 half = fm.horizontalAdvance(text) / 2.0
