@@ -320,7 +320,7 @@ FIX keys it reads by default: `HEAD`.
 
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|
-| `fg_color` | Foreground | `#aaaaaa` | colour | heading-text colour |
+| `fg_color` | Foreground | `#ffffff` | colour | heading-text colour |
 | `bg_color` | Background | `#000000` | colour | background-box fill colour |
 | `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
 
