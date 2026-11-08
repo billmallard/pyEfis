@@ -344,9 +344,10 @@ def test_vsi_cat_pfd_invalid_annunciation(fix, qtbot):
     widget.value = 500
 
     item.fail = True
-    with track_calls(QPen, "__init__") as tracker:
-        widget.paintEvent(event)
-    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))   # red fail flag
+    widget.repaint()
+    img = widget.grab().toImage()
+    c = img.pixelColor(img.width() // 2, img.height() // 2)
+    assert (c.red(), c.green(), c.blue()) == (255, 0, 0)      # red fail X (CERT1a)
 
     item.fail = False
     item.old = True

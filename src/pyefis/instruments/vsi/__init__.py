@@ -265,23 +265,20 @@ class VSI_PFD(QWidget):
         # Draw the Black Background
         p.fillRect(0, 0, w, h, QColor(0,0,0,40))
 
-        # Insert Background
-        p.drawPixmap(0, 0, self.background)
-
         # VS-invalid annunciation (AC 25-11B Table 4-6: loss / misleading
         # vertical speed = Major). On fail remove the moving dot and show a red
         # X so a frozen dot cannot be read as a valid vertical speed; on old/bad
         # grey the dot instead of magenta. Same fail/old/bad convention the VSI
-        # dial and tape already follow.
+        # dial and tape already follow. CERT1a: the X spans the whole tape and
+        # the scale is blanked, like the airspeed and altitude tapes.
         if self.item.fail:
-            pen = QPen(QColor(Qt.GlobalColor.red))
-            pen.setWidth(max(2, int(w * 0.08)))
-            p.setPen(pen)
-            m = w * 0.30
-            cx, cy = w / 2.0, h / 2.0
-            p.drawLine(QPointF(cx - m, cy - m), QPointF(cx + m, cy + m))
-            p.drawLine(QPointF(cx - m, cy + m), QPointF(cx + m, cy - m))
+            if not helpers.FAILED_TAPE_BLANK_SCALE:
+                p.drawPixmap(0, 0, self.background)
+            helpers.draw_failed_tape_x(p, QRectF(0, 0, w, h))
             return
+
+        # Insert Background
+        p.drawPixmap(0, 0, self.background)
 
         dot_color = (QColor(Qt.GlobalColor.gray)
                      if (self.item.old or self.item.bad)
@@ -579,4 +576,35 @@ class Alt_Trend_Tape(QGraphicsView):
         if self._fail != b:
             self._fail = b
             self.redraw()
+            self.viewport().update()
     fail = property(getFail, setFail)
+
+    def paintEvent(self, event):
+        if not self._fail:
+            super(Alt_Trend_Tape, self).paintEvent(event)
+            return
+        # CERT1a: a failed VS keeps only its header (the "VSI" label and the
+        # red XXX readout); the scale below it is blanked under a red X.
+        w = self.viewport().width()
+        h = self.viewport().height()
+        top = min(float(getattr(self, "top_margin", 0.0)), float(h))
+        p = QPainter(self.viewport())
+        # self.scene shadows QGraphicsView.scene() once resizeEvent has run;
+        # top_margin is set in the same place, so it says the scene is built.
+        if hasattr(self, "top_margin"):
+            o = self.mapFromScene(QPointF(0, 0))
+            sw = self.scene.width()
+            self.scene.render(p, QRectF(o.x(), o.y(), sw, top),
+                              QRectF(0, 0, sw, top))
+            if helpers.FAILED_TAPE_BLANK_SCALE:
+                face = QColor(str(self.bg_color))
+                if not face.isValid():
+                    face = QColor(Qt.GlobalColor.black)
+                face.setAlphaF(max(0.0, min(1.0, float(self.bg_opacity) / 100.0)))
+                p.fillRect(QRectF(0, top, w, h - top), face)
+            else:
+                self.scene.render(p, QRectF(o.x(), o.y() + top, sw, h - top),
+                                  QRectF(0, top, sw, h - top))
+        helpers.draw_failed_tape_x(
+            p, QRectF(0, top, w - self.RIGHT_MARGIN, h - top))
+        p.end()

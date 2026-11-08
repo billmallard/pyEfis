@@ -485,9 +485,10 @@ class Altimeter_Tape(QGraphicsView):
         self.centerOn(
             self.scene.width() / 2, self.y_offset(self._altimeter + self.maxalt)
         )
-        if self.baro_shown():
+        if self.baro_shown() or self.item.fail:
             # centerOn() may blit-scroll the viewport, which would drag the
-            # fixed baro box along with the scale; repaint it in place.
+            # fixed baro box (or the failed-tape X) along with the scale;
+            # repaint it in place.
             self.viewport().update()
         if self.numerical_display is not None:
             if self.round_to:
@@ -513,23 +514,34 @@ class Altimeter_Tape(QGraphicsView):
         # edge_fade (percent of height, 0 = off): melt the scrolling
         # scale in/out at the top and bottom instead of hard-clipping.
         _fade = bool(getattr(self, "edge_fade", False))
-        if _fade > 0:
-            helpers.render_view_edge_faded(self, 15.0)
-        else:
-            super(Altimeter_Tape, self).paintEvent(event)
+        failed = self.item.fail
         w = self.width()
         h = self.height()
-        p = QPainter(self.viewport())
+        if failed and helpers.FAILED_TAPE_BLANK_SCALE:
+            # CERT1a: no scale, altitude bug or trend under a failed altitude
+            # -- only the tape's own face, so nothing on it reads as a height.
+            p = QPainter(self.viewport())
+            face = QColor(32, 32, 32)
+            face.setAlphaF(self.backgroundOpacity)
+            p.fillRect(self.viewport().rect(), face)
+        else:
+            if _fade > 0:
+                helpers.render_view_edge_faded(self, 15.0)
+            else:
+                super(Altimeter_Tape, self).paintEvent(event)
+            p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        self._paint_alt_bug(p)
+        if failed:
+            helpers.draw_failed_tape_x(p, QRectF(self.viewport().rect()))
+        else:
+            self._paint_alt_bug(p)
 
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
 
         # Altitude-trend vector (AC 23.1311-1C sec 17.8.b) -- a cyan look-ahead
         # from the read pointer: up when climbing, down when descending. Only
         # shown once it clears a noise floor so a level-flight jitter stays quiet.
-        if self.show_trend:
+        if self.show_trend and not failed:
             noise_floor_px = self.trend_min_change * self.pph
             if abs(self._trend_px) >= noise_floor_px:
                 trend_color = QColor(0, 220, 255)
@@ -893,6 +905,7 @@ class Altimeter_Tape(QGraphicsView):
     def setAltFail(self, b):
         if self.numerical_display is not None:
             self.numerical_display.fail = b
+        self.viewport().update()
 
     # --- selected altitude: box, bug and knob editing (pyEfis #310) ---------
 
