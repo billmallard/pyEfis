@@ -17,9 +17,7 @@
 - [Data Status, Updates and Notices](Data-Status-Updates-and-Notices)
 
 **Customizing**
-- [Concepts](Concepts)
-- [Screen Builder](Screen-Builder)
-- [Preferences & Styling](Preferences-and-Styling)
+- [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator)
 
 **Install & Run**
 - [Headless Linux Appliance](Headless-Linux-Appliance)
@@ -35,5 +33,5 @@
 - [System & Containers](Widgets-System)
 - [FIX Database Keys](FIX-Database-Keys)
 
-**Screens**
-- [Screens Overview](Screens-Overview)
+**Legacy**
+- [The stock screens](Legacy)

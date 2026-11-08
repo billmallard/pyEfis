@@ -6,6 +6,11 @@ position and the device's terrain data. The instrument type is `virtual_vfr`
 with synthetic vision (SVS) turned on. The same attitude symbology without
 terrain is `atitude_indicator`.
 
+> pyEFIS is not certified. Do not use it as the sole source of attitude
+> information in instrument meteorological conditions. Fly with an independent
+> standby: one that shares no sensor, computer, software, power source or
+> display with pyEFIS.
+
 ![The bench in a left turn in the WINCH hold, over the sea at about 4,000 ft: pitch ladder and bank scale tilted, the garmin aircraft symbol, standard-rate marks on the bank arc, the coastline and terrain beyond, and the 33 heading mark on the horizon](../images/attitude/bench_turn_over_water.png)
 
 ## Reading it

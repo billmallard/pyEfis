@@ -225,4 +225,4 @@ override them.
 
 In the configurator, use the palette's cylinder groups instead. The rules for
 groups, gaps and `disabled` are on
-[Screen Builder](Screen-Builder#ganged-instruments).
+[Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#ganged-instruments).

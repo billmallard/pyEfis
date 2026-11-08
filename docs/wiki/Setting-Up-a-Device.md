@@ -83,7 +83,7 @@ in `~/makerplane/pyefis/config/main/default.yaml`). A fresh FIX-Gateway runs its
 covers each source.
 
 Until you pull a panel, pyEFIS shows its stock screens. They are described on
-[Screens Overview](Screens-Overview).
+[Legacy](Legacy).
 
 ## 4. Pair with the configurator
 
