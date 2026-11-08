@@ -264,6 +264,9 @@ def test_vdev_paints_the_pointer_where_the_model_says(fix, qtbot):
     m = _map(qtbot, nd_mode="expanded", layer_terrain=False,
              layer_roads=False, layer_rivers=False, layer_range_rings=False,
              layer_airports=False, layer_navaids=False)
+    # Build the layers up front: a first paint otherwise schedules the
+    # live-binding init on a timer that can outlive the widget.
+    m._build_layers()
     img = QImage(W, H, QImage.Format.Format_ARGB32)
     img.fill(0)
     m.render(img)
@@ -374,7 +377,10 @@ def test_frame_clock_repaints_on_nd_data_only_while_on(fix, qtbot):
     _define(fix, "GSI", 0.1)
     _define(fix, "GSV", 1.0)
     m = _map(qtbot, nd_mode="expanded")
-    m.show()
+    # _frame_tick no-ops while hidden; fake visibility and stub update()
+    # rather than show() it, so no real paint runs (test_map_frame_clock).
+    m.isVisible = lambda: True
+    m.update = lambda: None
     m._frame_tick()
     pose = m._frame_last_pose
     fix.db.set_value("GSI", 0.6)
@@ -396,6 +402,7 @@ def test_paint_off_draws_no_nd(fix, qtbot, monkeypatch):
     monkeypatch.setattr(nd, "paint", lambda *a, **k: calls.append(None))
     m = _map(qtbot, layer_terrain=False, layer_roads=False,
              layer_rivers=False)
+    m._build_layers()
     img = QImage(W, H, QImage.Format.Format_ARGB32)
     m.render(img)
     assert calls == []
