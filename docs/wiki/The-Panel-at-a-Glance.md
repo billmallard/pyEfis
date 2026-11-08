@@ -169,5 +169,5 @@ Neither is on the bench panel; both come with the stock screens.
 ## See also
 
 - [Designing Your Panel](Designing-Your-Panel): building the panel.
-- [Screens Overview](Screens-Overview): the stock screens.
+- [Legacy](Legacy): the stock screens.
 - [Widget Reference](Widget-Reference): every instrument's options.

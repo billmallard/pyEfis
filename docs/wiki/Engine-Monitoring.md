@@ -125,7 +125,7 @@ One bench CHT bar, and a leaning-ready EGT bar:
 ```
 
 The stock screens build their cylinder rows from the shipped
-`includes/bars/vertical/` files; see [Screen Builder](Screen-Builder).
+`includes/bars/vertical/` files; see [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator).
 
 ### Feeding them
 
