@@ -41,8 +41,8 @@ def _widget(qtbot, svs, width=400, height=600):
     if svs:
         # Configured and enabled, but not drawing: the scale choice must
         # not depend on whether the last frame happened to paint terrain.
-        # consume_async_dirty: the frame clock (_frame_tick) calls it on
-        # every tick, and the timer can fire during waitExposed (AER-5123).
+        # consume_async_dirty: the 30 Hz frame tick calls it whenever it
+        # lands inside the test; without it the run fails on timing.
         widget._svs_renderer = SimpleNamespace(
             enabled=True, ready=False, gl_failed=False, drew_terrain=False,
             consume_async_dirty=lambda: False)

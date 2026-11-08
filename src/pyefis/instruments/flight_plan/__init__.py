@@ -2400,6 +2400,18 @@ class FlightPlan(QWidget):
             mm = 14.0
         return max(24.0, mm * self._px_per_mm())
 
+    def _fitted_row_h(self, avail_h, count, minimum):
+        """Row height for a list that does not scroll: the physical row
+        (``_row_h_cap``), shrunk only when *count* rows would not otherwise
+        fit in *avail_h*, and floored at *minimum*.
+
+        The Direct-To FPL and NRST tabs, the waypoint picker and the Catalog
+        list used ``avail_h / count`` uncapped, so a one-row list drew a row
+        the height of the whole pane, and a font sized off it that clipped at
+        the pane edge (pyEfis #400). A short list now draws its rows the same
+        height as a long one."""
+        return max(minimum, min(avail_h / max(count, 1), self._row_h_cap()))
+
     def _chrome_h(self, h, units, max_fraction):
         """Height of a chrome band -- a header, footer or tab strip -- in px.
 
@@ -3408,7 +3420,7 @@ class FlightPlan(QWidget):
             p.setPen(QPen(QColor("#808080")))
             p.drawText(QRectF(0, top, w, h), Qt.AlignmentFlag.AlignCenter, "NO WAYPOINTS")
             return
-        row_h = max(h / len(rows), 18)
+        row_h = self._fitted_row_h(h, len(rows), 18)
         f.setPixelSize(self._px(int(row_h * 0.5), 9))
         p.setFont(f)
         y = top
@@ -3438,7 +3450,7 @@ class FlightPlan(QWidget):
             p.setPen(QPen(QColor("#808080")))
             p.drawText(QRectF(0, top, w, h), Qt.AlignmentFlag.AlignCenter, "NO AIRPORTS")
             return
-        row_h = max(h / len(results), 18)
+        row_h = self._fitted_row_h(h, len(results), 18)
         f.setPixelSize(self._px(int(row_h * 0.42), 9))
         p.setFont(f)
         y = top
@@ -3525,7 +3537,7 @@ class FlightPlan(QWidget):
                        Qt.AlignmentFlag.AlignCenter, "NO STORED ROUTES")
             return
         ref_lat, ref_lon = self._aircraft_position()
-        row_h = max(18, min((bottom - top) / len(entries), (bottom - top) * 0.22))
+        row_h = self._fitted_row_h(bottom - top, len(entries), 18)
         f.setPixelSize(self._px(int(row_h * 0.4), 9))
         p.setFont(f)
         y = top
@@ -3718,7 +3730,7 @@ class FlightPlan(QWidget):
             p.setPen(QPen(QColor("#808080")))
             p.drawText(QRectF(0, top, w, list_h), Qt.AlignmentFlag.AlignCenter, "NO MATCHES")
             return
-        row_h = max(list_h / len(rows), 14)
+        row_h = self._fitted_row_h(list_h, len(rows), 14)
         ref_lat, ref_lon = self._entry_ref()
         y = top
         for wp in rows:
