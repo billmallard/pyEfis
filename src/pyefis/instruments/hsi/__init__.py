@@ -940,8 +940,7 @@ class HSI(QGraphicsView):
             ext = self.r - self.fontSize * 2.0
             bar = self.cdippw
             self._showCDI = self._cdi_shown()
-            self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
-                and not (self._GsiOld or self._GsiBad or self._GsiFail)
+            self._showGSI = self._gs_expected() and not self._gs_flag_shown()
 
             if self.cdi_enabled and self._course_valid():
                 # Lateral deviation scale dots (white) along the lateral axis.
@@ -1061,22 +1060,18 @@ class HSI(QGraphicsView):
         # Warning flags (AC 25-11B: warnings red). A flag positively annunciates
         # an invalid signal, distinct from merely hiding an element -- see
         # hsi_widget_spec.md sec 7.1. Heading (compass) flag: HEAD invalid.
-        self._showHdgFlag = self._HeadFail or self._HeadBad
+        self._showHdgFlag = self._hdg_flag_shown()
         if self._showHdgFlag:
             self._draw_flag(c, "HDG", self.cx, self.fontSize * 1.1)
-        # NAV (lateral) flag: selected lateral source invalid. The CDI bar is
-        # already removed by _showCDI; the flag positively annunciates the loss.
-        self._showNavFlag = self._CdiFail or self._CdiBad \
-            or (self.cdi_enabled and self._no_lateral_signal())
+        # NAV (lateral) flag: every reason the CDI bar is removed (see
+        # _nav_flag_shown); the flag positively annunciates the loss.
+        self._showNavFlag = self._nav_flag_shown()
         if self._showNavFlag:
             self._draw_flag(c, "NAV", self.cx - self.r * 0.4, self.cy)
-        # GS flag: glideslope expected (present per GSV) but its signal is
-        # unreliable (bad/failed). The diamond (_showGSI) already excludes bad/fail,
-        # so the diamond and this flag are mutually exclusive. Distinct from 'no GS
-        # present' (GSV<0.5), where the scale is simply absent -- no flag.
-        self._showGsFlag = (self.gsi_enabled
-                            and self._gsv is not None and self._gsv >= 0.5
-                            and (self._GsiFail or self._GsiBad))
+        # GS flag: every reason the GS diamond is removed while a glideslope is
+        # expected, so the diamond and this flag are mutually exclusive. Distinct
+        # from 'no GS present' (GSV<0.5), where the scale is simply absent.
+        self._showGsFlag = self._gs_flag_shown()
         if self._showGsFlag:
             self._draw_flag(c, "GS", self.cx + self.r * 0.72, self.cy)
 
@@ -1548,6 +1543,27 @@ class HSI(QGraphicsView):
             and not (self._CdiOld or self._CdiBad or self._CdiFail) \
             and not self._no_lateral_signal()
 
+    # Failure flags (Bill, 2026-11-08): the HSI never tells the pilot about a
+    # failure only by taking a symbol away. Each flag covers every reason its
+    # symbols are removed, on the rose and the arc alike.
+    def _hdg_flag_shown(self):
+        return self._HeadFail or self._HeadBad
+
+    def _nav_flag_shown(self):
+        # Every reason _cdi_shown() drops the bar: CDI stale, invalid or failed,
+        # no lateral signal (CDIV = 0), or no valid COURSE to draw it against.
+        return self.cdi_enabled and (
+            self._CdiOld or self._CdiBad or self._CdiFail
+            or self._no_lateral_signal() or not self._course_valid())
+
+    def _gs_expected(self):
+        # GSV absent (an older gateway) leaves the GS on its own quality.
+        return self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5)
+
+    def _gs_flag_shown(self):
+        return self._gs_expected() \
+            and (self._GsiOld or self._GsiBad or self._GsiFail)
+
     def _no_lateral_signal(self):
         # CDIV published and 0: the selected radio receives no lateral guidance.
         return self._cdiv is not None and self._cdiv < 0.5
@@ -1814,8 +1830,7 @@ class HSI(QGraphicsView):
                 self._draw_arc_bearing_needle(c, _n, cx, own_y)
 
         self._showCDI = self._cdi_shown()
-        self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
-            and not (self._GsiOld or self._GsiBad or self._GsiFail)
+        self._showGSI = self._gs_expected() and not self._gs_flag_shown()
         if self.cdi_enabled or self.gsi_enabled:
             self._draw_arc_course(c, cx, own_y)
 
@@ -1845,15 +1860,13 @@ class HSI(QGraphicsView):
         self._draw_readouts(c)
 
         # 8. Warning flags (same rules as the rose path).
-        self._showHdgFlag = self._HeadFail or self._HeadBad
+        self._showHdgFlag = self._hdg_flag_shown()
         if self._showHdgFlag:
             self._draw_flag(c, "HDG", cx, top_y)
-        self._showNavFlag = self._CdiFail or self._CdiBad \
-            or (self.cdi_enabled and self._no_lateral_signal())
+        self._showNavFlag = self._nav_flag_shown()
         if self._showNavFlag:
             self._draw_flag(c, "NAV", cx, own_y - self.fontSize * 2.0)
-        self._showGsFlag = (self.gsi_enabled and self._gsv is not None
-                            and self._gsv >= 0.5 and (self._GsiFail or self._GsiBad))
+        self._showGsFlag = self._gs_flag_shown()
         if self._showGsFlag:
             self._draw_flag(c, "GS", self.width() - self.fontSize * 1.5, own_y)
 

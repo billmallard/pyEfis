@@ -703,6 +703,92 @@ def test_hsi_g66_invalid_course_hides_pointer_bar_and_dashes_crs(fix, qtbot, fla
     assert painter.drawLine.call_count == 0 and painter.drawPolygon.call_count == 0
 
 
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("flag", ["bad", "fail"])
+def test_hsi_g66_invalid_course_raises_nav_flag(fix, qtbot, orientation, flag):
+    """G66 rework (Bill, 2026-11-08) | HSI-ANN-002 | A bad or failed COURSE
+    removes the pointer and the bar, so it raises the NAV flag: the CRS dashes
+    alone do not say why the pointer is gone."""
+    w = _mk_course_hsi(qtbot, orientation=orientation)
+    w.setCdiv(1)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showNavFlag is False                    # control: all valid
+    getattr(w, "setCourseBad" if flag == "bad" else "setCourseFail")(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False and w._showNavFlag is True
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_g66_stale_cdi_raises_nav_flag(fix, qtbot, orientation):
+    """G66 rework | A stale CDI removed the bar with no flag. It now raises NAV."""
+    w = _mk_course_hsi(qtbot, orientation=orientation)
+    w.setCdiOld(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False and w._showNavFlag is True
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("gsv", [None, 1])
+@pytest.mark.parametrize("flag", ["old", "bad", "fail"])
+def test_hsi_g66_lost_glideslope_raises_gs_flag(fix, qtbot, orientation, gsv, flag):
+    """G66 rework | HSI-ANN-003 | A stale, invalid or failed GSI with a
+    glideslope expected removes the diamond and raises the GS flag. That holds
+    with GSV absent (an older gateway) too, where the diamond already showed on
+    its own quality but the flag needed GSV."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w.orientation = orientation
+    w._GsiOld = w._GsiBad = w._GsiFail = False
+    w._gsv = gsv
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showGSI is True and w._showGsFlag is False
+    setattr(w, {"old": "_GsiOld", "bad": "_GsiBad", "fail": "_GsiFail"}[flag], True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showGSI is False and w._showGsFlag is True
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("flag", ["bad", "fail"])
+def test_hsi_g66_failed_heading_raises_hdg_flag(fix, qtbot, orientation, flag):
+    """G66 rework | HSI-ANN-001 | A bad or failed HEAD raises the HDG flag on
+    both layouts."""
+    w = _mk_course_hsi(qtbot, orientation=orientation)
+    w._HeadOld = w._HeadBad = w._HeadFail = False
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showHdgFlag is False
+    if flag == "bad":
+        w.setHeadBad(True)
+    else:
+        w.setHeadFail(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showHdgFlag is True
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_g66_no_symbol_removed_without_its_flag(fix, qtbot, orientation):
+    """G66 rework invariant | Over every combination of CDI, COURSE, CDIV, GSI
+    and GSV quality, the deviation bar is never removed without the NAV flag,
+    and an expected GS diamond never without the GS flag."""
+    import itertools
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w.orientation = orientation
+    states = {"valid": (False, False, False), "old": (True, False, False),
+              "bad": (False, True, False), "fail": (False, False, True)}
+    for cdi, crs, cdiv, gsi, gsv in itertools.product(
+            states, ("valid", "bad", "fail"), (None, 0, 1), states, (None, 0, 1)):
+        w._CdiOld, w._CdiBad, w._CdiFail = states[cdi]
+        w._CourseBad, w._CourseFail = crs == "bad", crs == "fail"
+        w._cdiv, w._gsv = cdiv, gsv
+        w._GsiOld, w._GsiBad, w._GsiFail = states[gsi]
+        w.paintEvent(QPaintEvent(w.rect()))
+        assert w._showCDI or w._showNavFlag
+        assert not (w._showCDI and w._showNavFlag)
+        if gsv is None or gsv >= 0.5:
+            assert w._showGSI or w._showGsFlag
+            assert not (w._showGSI and w._showGsFlag)
+        else:
+            assert not w._showGSI and not w._showGsFlag
+
+
 def test_hsi_g66_cdi_and_course_quality_setters_repaint(fix, qtbot):
     """G66 | a quality change alone (value unchanged) must repaint: the NAV flag
     and the bar removal otherwise wait for the next unrelated update."""
