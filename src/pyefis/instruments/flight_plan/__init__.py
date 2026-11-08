@@ -52,6 +52,7 @@ a drag (kinetic on release, clamped at both ends) and cancels the row tap it
 started on. Every other tap target still fires on press.
 """
 
+import copy
 import logging
 import math
 import time
@@ -59,7 +60,7 @@ import time
 from pyefis import display_metrics
 import os
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QWidget
 
@@ -104,6 +105,11 @@ ENC_LONG_PRESS_MS = 600
 # stays up before it clears itself (pyEfis #323: with no expiry, STORED sat
 # over the LEG/DIRECT/SUSP badge for the rest of a bench session).
 TOAST_MS = 4000
+# G61 (pyEfis #380): how long a route commit may go unanswered before the
+# page treats it as refused. The engine answers a commit on the same gateway
+# cycle -- FPLLDSEQ when it loads the route, FPLMSG when it refuses it -- so
+# this only fires when no answer arrives at all.
+COMMIT_ANSWER_MS = 2000
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
 
@@ -164,6 +170,11 @@ _FONT_FIT_ASPECT = 1.0
 
 class FlightPlan(QWidget):
     """The `flight_plan` instrument widget."""
+
+    # The bridge calls back on whichever thread wrote the key (the FIX
+    # client thread on a live bus); a QTimer may only be started from the
+    # thread it lives in, so the commit timer is armed through this signal.
+    _arm_commit_timer = pyqtSignal()
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  font_percent=None):
@@ -314,11 +325,34 @@ class FlightPlan(QWidget):
         self._wpt_timer.setInterval(1000)
         self._wpt_timer.timeout.connect(self.update)
 
+        # Refused commits (G61, pyEfis #380). After the engine refuses a
+        # route the slots on the bus still hold it, and only FPLLDSEQ says
+        # which commit the engine flies. _flown_plan is the last plan seen
+        # loaded (None when none has been seen this session); _refusal is
+        # (FPLSEQ, reason) of the refused commit on the bus; _draft is that
+        # commit's route, kept for the pilot to reopen; _draft_open is True
+        # while the page shows the draft instead of the flown plan.
+        # _pending_seq is a commit seen arriving that the engine has not
+        # answered yet; _seen_seq the last FPLSEQ this widget has read.
+        self.commit_answer_ms = COMMIT_ANSWER_MS
+        self._flown_plan = None
+        self._refusal = None
+        self._draft = None
+        self._draft_open = False
+        self._pending_seq = None
+        self._seen_seq = None
+        self._commit_timer = QTimer(self)
+        self._commit_timer.setSingleShot(True)
+        self._commit_timer.timeout.connect(self._on_commit_timeout)
+        self._arm_commit_timer.connect(self._start_commit_timer)
+
         self._bridge = fp_fixbridge.FixBridge(fix)
         if self._bridge.available:
             self._sync_plan_from_bridge()
             self._sync_engine_from_bridge()
             self._bridge.add_listener(self._on_bridge_change)
+            msg_item = self._bridge._get("FPLMSG")
+            msg_item.valueWrite[msg_item.dtype].connect(self._on_fplmsg)
         self._connect_hmi()
 
     # -- toast ----------------------------------------------------------------
@@ -444,13 +478,109 @@ class FlightPlan(QWidget):
             self.update()
 
     # -- bridge sync -------------------------------------------------------
-    def _sync_plan_from_bridge(self):
-        # The bus is the truth (RS2, route segments brief guardrail 1): the
-        # segment table says which slots are an airway, so there is nothing
-        # to carry over from the plan as it stood before this sync.
+    def _sync_plan_from_bridge(self, answered=False):
+        """Take the route on the bus as the plan -- but only once the
+        engine has loaded it (G61, pyEfis #380).
+
+        The bus is the truth (RS2, route segments brief guardrail 1): the
+        segment table says which slots are an airway, so there is nothing
+        to carry over from the plan as it stood before this sync. The slots
+        are only the flight plan when ``FPLLDSEQ`` equals ``FPLSEQ``. A
+        commit the engine has not answered yet leaves the page as it is
+        (the pilot's own edit stays on screen, with no flicker). A refused
+        one -- answered with ``FPLMSG`` (*answered*), unanswered for
+        ``commit_answer_ms``, or already on the bus when this widget first
+        looks -- puts the flown plan back on the page and keeps the refused
+        route as a draft. A gateway without ``FPLLDSEQ`` keeps the
+        behaviour from before the key."""
         plan = self._bridge.read_plan()
-        if plan is not None:
+        if plan is None:
+            return
+        seq = int(self._bridge._get("FPLSEQ").value)
+        first_look, self._seen_seq = self._seen_seq is None, seq
+        loaded = self._loaded_seq()
+        if loaded is None or loaded == seq:
             self._plan = plan
+            self._flown_plan = copy.deepcopy(plan)
+            self._refusal = self._draft = self._pending_seq = None
+            self._draft_open = False
+            return
+        if self._refusal is not None and self._refusal[0] == seq:
+            return
+        if not (first_look or answered):
+            if self._pending_seq != seq:
+                # A new commit on its way to the engine.
+                self._pending_seq = seq
+                self._arm_commit_timer.emit()
+            return
+        # On a first look the refusal happened before this widget existed,
+        # and FPLMSG on the bus is the engine's answer to it.
+        self._refuse(seq, plan, self._bridge._get("FPLMSG").value)
+
+    def _refuse(self, seq, plan, reason):
+        self._pending_seq = None
+        self._refusal = (seq, str(reason or "").strip() or "NO ENGINE ANSWER")
+        self._draft = plan
+        if self._draft_open:
+            # The pilot is correcting the draft: the refused edit is the new
+            # draft, and they stay in it.
+            self._plan = copy.deepcopy(plan)
+        else:
+            self._plan = (copy.deepcopy(self._flown_plan) if self._flown_plan is not None
+                          else fp_model.FlightPlan())
+
+    def _loaded_seq(self):
+        """``FPLLDSEQ``, or None when the gateway does not publish it."""
+        try:
+            return int(self._bridge._get("FPLLDSEQ").value)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _on_fplmsg(self, *_args):
+        # The engine's answer to a commit it refused. Only a commit still
+        # waiting for an answer takes it: FPLMSG also answers commands.
+        if self._pending_seq is None:
+            return
+        self._sync_plan_from_bridge(answered=True)
+        self._sync_engine_from_bridge()
+        self.update()
+
+    @pyqtSlot()
+    def _start_commit_timer(self):
+        self._commit_timer.start(self.commit_answer_ms)
+
+    def _on_commit_timeout(self):
+        if self._pending_seq is None:
+            return
+        self._pending_seq = None
+        plan = self._bridge.read_plan()
+        seq = int(self._bridge._get("FPLSEQ").value)
+        if plan is not None and self._loaded_seq() not in (None, seq):
+            self._refuse(seq, plan, "")
+        self.update()
+
+    def _plan_refused(self):
+        return self._refusal is not None
+
+    def _reopen_draft(self):
+        """Refusal strip "Edit draft": the refused route back on the page
+        for the pilot to correct. Every edit commits as usual; the engine
+        loading one ends the draft."""
+        if self._draft is None:
+            return
+        self._draft_open = True
+        self._plan = copy.deepcopy(self._draft)
+        self._list_scroll = 0.0
+        self.update()
+
+    def _show_flown_plan(self):
+        """Refusal strip "Flown plan": back to the plan the engine flies;
+        the draft is kept."""
+        self._draft_open = False
+        self._plan = (copy.deepcopy(self._flown_plan) if self._flown_plan is not None
+                      else fp_model.FlightPlan())
+        self._list_scroll = 0.0
+        self.update()
 
     def _sync_engine_from_bridge(self):
         self._engine = self._bridge.read_engine() or {}
@@ -899,6 +1029,9 @@ class FlightPlan(QWidget):
 
     # -- FPL page: segment rows (RS3, AER-3792) --------------------------------
     def _active_index(self):
+        if self._draft_open:
+            # FPLACTLEG counts legs of the flown plan, not of the draft.
+            return None
         active_leg = self._engine_value("FPLACTLEG")
         return int(active_leg) - 1 if active_leg else None
 
@@ -2348,9 +2481,11 @@ class FlightPlan(QWidget):
         # above the footer, and the list lays out above it so the active leg
         # and the missed approach fixes stay visible.
         banner_h = footer_h if interactive and self._suspended_at_map() else 0
+        # A refused commit (G61): its strip sits above that one.
+        refusal_h = footer_h if interactive and self._plan_refused() else 0
 
         self._paint_header(p, w, header_h, interactive)
-        self._paint_list(p, w, header_h, h - footer_h - banner_h,
+        self._paint_list(p, w, header_h, h - footer_h - banner_h - refusal_h,
                          self._row_h_cap(), interactive)
         self._paint_footer(p, w, h - footer_h, footer_h, interactive)
         overlay_open = (self._row_menu_index is not None or self._seg_menu is not None
@@ -2363,6 +2498,9 @@ class FlightPlan(QWidget):
         if banner_h:
             # Under an overlay it is drawn (and dimmed) but not tappable.
             self._paint_map_susp_banner(p, w, h - footer_h, banner_h, not overlay_open)
+        if refusal_h:
+            self._paint_refusal_banner(p, w, h - footer_h - banner_h, refusal_h,
+                                       not overlay_open)
 
         if self._row_menu_index is not None:
             self._paint_row_menu(p, w, h)
@@ -2409,6 +2547,40 @@ class FlightPlan(QWidget):
         p.drawText(QRectF(*btn), Qt.AlignmentFlag.AlignCenter, self._suspend_label())
         if tappable:
             self._tap(*btn, self._menu_suspend_resume, "soft")
+
+    def _refusal_text(self):
+        reason = self._refusal[1] if self._refusal else ""
+        if self._draft_open:
+            return f"DRAFT - NOT LOADED: {reason}"
+        return f"EDIT REFUSED: {reason}"
+
+    def _paint_refusal_banner(self, p, w, bottom, banner_h, tappable):
+        """The engine refused the last route commit (G61, pyEfis #380):
+        say so with the engine's FPLMSG reason, in the alert colour, above
+        the soft keys, with the way to the other view under a finger -- the
+        refused edit as a draft, or back from the draft to the flown plan."""
+        top = bottom - banner_h
+        p.setBrush(QBrush(QColor("#300000")))
+        p.setPen(QPen(QColor("#ff4040"), 2))
+        p.drawRect(QRectF(1, top, w - 2, banner_h - 1))
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(banner_h * 0.40), 9))
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QRectF(8, top, w * 0.64 - 8, banner_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                   | Qt.TextFlag.TextWordWrap, self._refusal_text())
+        btn = (w * 0.66, top + banner_h * 0.12, w * 0.34 - 6, banner_h * 0.76)
+        p.setBrush(QBrush(QColor("#ff4040")))
+        p.drawRect(QRectF(*btn))
+        p.setPen(QPen(QColor("#000000")))
+        if self._draft_open:
+            label, action = "Flown plan", self._show_flown_plan
+        else:
+            label, action = "Edit draft", self._reopen_draft
+        p.drawText(QRectF(*btn), Qt.AlignmentFlag.AlignCenter, label)
+        if tappable:
+            self._tap(*btn, action, "soft")
 
     def _paint_header(self, p, w, header_h, interactive):
         f = QFont(self.font_family)

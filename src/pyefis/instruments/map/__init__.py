@@ -22,6 +22,7 @@ from pyefis.flightplan import model as fp_model
 from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map import layers as map_layers
+from pyefis.instruments.map import nd as map_nd
 from pyefis.instruments.map.perf import MapPerfStats
 from pyefis.instruments.live_binding import LiveBind, LiveBindingMixin
 
@@ -108,7 +109,8 @@ class MapTransform:
     of projection math -- layers never do their own (spec section 3)."""
 
     def __init__(self, lat, lon, range_nm, rot_deg, w, h, anchor_frac,
-                 font_family="DejaVu Sans Condensed", palette=None):
+                 font_family="DejaVu Sans Condensed", palette=None,
+                 range_px=None):
         self.lat0, self.lon0 = lat, lon
         # G12: the map_style palette every layer paints with.
         self.palette = (palette if palette is not None
@@ -119,8 +121,16 @@ class MapTransform:
         self.cx = w / 2.0
         self.cy = h * (1.0 - anchor_frac)   # ownship anchor (% up from bottom)
         self.font_family = font_family
-        # range_nm = ownship anchor -> top edge
-        self._px_per_m = max(1.0, self.cy) / max(1.0, range_nm * NM_M)
+        # range_nm spans range_px screen px from the ownship anchor: the
+        # top edge by default, the compass arc in ND EXPANDED (G11a).
+        self.range_px = self.cy if range_px is None else float(range_px)
+        # Height a window image centred on the view centre must cover as if
+        # that centre were mid-panel: twice the farther of the top and
+        # bottom edges. Equal to h at the default 50% anchor; taller for a
+        # low anchor (ND EXPANDED), whose far top corners a window sized
+        # from hypot(w, h) would leave bare.
+        self.cover_h = 2.0 * max(self.cy, h - self.cy)
+        self._px_per_m = max(1.0, self.range_px) / max(1.0, range_nm * NM_M)
         self._coslat = math.cos(math.radians(lat))
         # MP1: True while a gesture is live or its settle timer is running
         # (MovingMap.defer_render). Layers skip _request/collect while set
@@ -235,6 +245,11 @@ class MovingMap(LiveBindingMixin, QWidget):
         # runtime. Empty = the setting stays a static config option.
         self.range_key = ""
         self.orientation_key = ""
+        # ND mode (G11a, #134): "off" or "expanded" (map/nd.py). Bound to a
+        # FIX key by nd_mode_key, the orientation_key precedent.
+        self.nd_mode = "off"
+        self.nd_mode_key = ""
+        self._nd_read = map_nd.Reader()
         # One-finger zoom rail (#205): a vertical detent control under the
         # status chip. Off by default so existing screens are unchanged.
         self.zoom_rail = False
@@ -501,9 +516,11 @@ class MovingMap(LiveBindingMixin, QWidget):
         q = max(1e-7, (0.5 * m_per_px) / M_PER_DEG_LAT)  # deg per half-px
         pose = (round(self._lat / q), round(self._lon / q),
                 round(self._track * 4.0), round(self._alt_ft / 100.0),
-                self.orientation, float(self.range_nm),
+                self.view_orientation(), float(self.range_nm),
                 round(self._pan_e), round(self._pan_n),
-                round(self._rot_offset * 4.0))
+                round(self._rot_offset * 4.0),
+                map_nd.signature(self, self._nd_read)
+                if self.nd_active() else None)
         if pose == self._frame_last_pose and not self._frame_dirty:
             return
         self._frame_last_pose = pose
@@ -580,7 +597,32 @@ class MovingMap(LiveBindingMixin, QWidget):
                      ladder_option="range_ladder"),
             LiveBind("orientation", "enum", "orientation_key",
                      enum=("track_up", "north_up")),
+            LiveBind("nd_mode", "enum", "nd_mode_key", enum=map_nd.ND_MODES),
         ]
+
+    # --- ND mode (G11a, billmallard/pyEfis#134) ------------------------------
+    def nd_active(self):
+        """True while an ND mode is drawn (EXPANDED; CTR is G11b)."""
+        return map_nd.normalize_mode(self.nd_mode) == "expanded"
+
+    def view_orientation(self):
+        """The orientation on screen: the ND is track-up whatever
+        ``orientation`` says, which is kept for when the ND is switched off."""
+        return "track_up" if self.nd_active() else self.orientation
+
+    def _anchor_frac(self):
+        """Ownship anchor, fraction up from the bottom: ``ownship_position``,
+        or the HSI arc's ``own_y = h * 0.82`` in ND EXPANDED."""
+        if self.nd_active():
+            return 1.0 - map_nd.EXPANDED_OWN_Y_FRAC
+        return max(0.0, min(100.0, float(self.ownship_position))) / 100.0
+
+    def _range_px(self, h):
+        """Screen px that ``range_nm`` spans from ownship: to the top edge,
+        or to the compass arc in ND EXPANDED."""
+        if self.nd_active():
+            return map_nd.expanded_geometry(float(self.width()), float(h))["r"]
+        return h * (1.0 - self._anchor_frac())
 
     def toggle_orientation(self):
         self.orientation = ("north_up" if self.orientation == "track_up"
@@ -793,10 +835,9 @@ class MovingMap(LiveBindingMixin, QWidget):
             return (self._pan_e, self._pan_n)
         if dx == 0.0 and dy == 0.0:
             return (self._pan_e, self._pan_n)
-        anchor = max(0.0, min(100.0, float(self.ownship_position))) / 100.0
-        cy = max(1.0, (self.height() or 1) * (1.0 - anchor))
-        px = cy / max(1.0, float(self.range_nm) * NM_M)     # screen px / metre
-        track = self._track if self.orientation == "track_up" else 0.0
+        px = (max(1.0, self._range_px(self.height() or 1))
+              / max(1.0, float(self.range_nm) * NM_M))      # screen px / metre
+        track = self._track if self.view_orientation() == "track_up" else 0.0
         rot = math.radians(track + self._rot_offset)
         c, s = math.cos(rot), math.sin(rot)
         # View centre moves opposite the finger drag, un-rotated to world ENU.
@@ -1237,10 +1278,9 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     # --- painting ----------------------------------------------------------
     def _transform(self):
-        track = self._track if self.orientation == "track_up" else 0.0
+        track = self._track if self.view_orientation() == "track_up" else 0.0
         rot = track + self._rot_offset
-        anchor = max(0.0, min(100.0,
-                              float(self.ownship_position))) / 100.0
+        anchor = self._anchor_frac()
         # View centre = ownship + the manual pan offset (east/north metres).
         # Feeding the OFFSET centre as the transform origin keeps every layer
         # (terrain image, vector features, rings) registered to it for free;
@@ -1250,7 +1290,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         vlon = self._lon + self._pan_e / (M_PER_DEG_LAT * coslat)
         x = MapTransform(vlat, vlon, float(self.range_nm),
                          rot, self.width(), self.height(), anchor,
-                         self.font_family, map_layers.palette(self))
+                         self.font_family, map_layers.palette(self),
+                         range_px=self._range_px(self.height()))
         x.defer_render = self.defer_render
         return x
 
@@ -1296,12 +1337,15 @@ class MovingMap(LiveBindingMixin, QWidget):
             QPointF(0, s * 0.35), QPointF(-s * 0.6, s * 0.8)]))
         p.restore()
 
+        if self.nd_active():
+            map_nd.paint(self, p, x, self._nd_read)
+
         # Status chip: range + orientation (+ NO POS when stale).
         f = QFont(self.font_family)
         f.setPixelSize(max(9, int(self.width() * 0.03)))
         p.setFont(f)
         p.setPen(QPen(QColor(255, 255, 255, 200)))
-        mode = "TRK UP" if self.orientation == "track_up" else "NORTH UP"
+        mode = "TRK UP" if self.view_orientation() == "track_up" else "NORTH UP"
         chip = "%s NM  %s" % (map_layers.format_range_nm(self.range_nm), mode)
         if stale:
             chip += "  NO POS"
