@@ -89,7 +89,9 @@ EFIS-AOA-001). Its marker's look is Bill's call on that PR's bench renders.
 ## Open enhancements (non-blocking, tracked in the specs)
 
 - **Airspeed:** takeoff inhibit of the low-speed red band (§17.7.a — needs a WoW/phase
-  signal); green-arc bottom is VS0 where §23.1545 wants VS1.
+  signal). The green-arc bottom (VS0 where §23.1545 wants VS1) is fixed by
+  [#396](https://github.com/billmallard/pyEfis/issues/396): green now starts at `Vs`, falling
+  back to `Vs0` when `Vs` is unset.
 - **Altimeter:** configurable range; the `screenbuilder_factory.py` `show_trend`/
   `trend_lookahead` forwarding is committed locally but **not yet deployed to the Pi** (the
   Pi's factory is a few commits behind — the trend still works via the dbkey default).
