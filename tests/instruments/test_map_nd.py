@@ -133,7 +133,9 @@ def test_expanded_anchor_range_and_track_up(qtbot):
     # The selected range ends on the compass arc, below the TRK box.
     assert x.nm_to_px(m.range_nm) == pytest.approx(g["r"])
     assert x.cy - g["r"] == pytest.approx(g["apex"])
-    assert g["apex"] > 4.0 + g["box_h"]
+    # Landscape: the arc reaches up to just under the TRK box at the top.
+    assert g["apex"] == pytest.approx(4.0 + g["box_h"] + g["fs"] * 0.5)
+    assert g["half"] == nd.ARC_HALF_DEG
     # Track-up although orientation says north_up; the setting is kept.
     assert x.rot == pytest.approx(math.radians(72.0))
     assert m.orientation == "north_up"
@@ -162,13 +164,18 @@ def test_layer_jobs_carry_the_scale(qtbot):
     assert plain.range_px == plain.cy
 
 
-def test_arc_half_angle_narrows_on_a_narrow_panel():
-    assert nd.arc_half_deg(800, 350) == nd.ARC_HALF_DEG
-    half = nd.arc_half_deg(300, 350)
-    assert half < nd.ARC_HALF_DEG
-    # Both ends inside 96% of the half-width.
-    assert 350 * math.sin(math.radians(half)) \
-        == pytest.approx(0.96 * 150)
+@pytest.mark.parametrize("w,h", [(650, 1000), (600, 600), (480, 800)])
+def test_tall_panel_keeps_the_sector_and_clears_the_scale(w, h):
+    """A radius sized from the height would leave a sliver of arc running
+    through the top corner blocks on a portrait panel: the radius shrinks
+    instead, the sector stays >= ARC_MIN_HALF_DEG, and the arc's ends stay
+    clear of the deviation scale and inside the panel."""
+    g = nd.expanded_geometry(w, h)
+    v = nd.vdev_geometry(w, h)
+    assert nd.ARC_MIN_HALF_DEG - 1e-9 <= g["half"] <= nd.ARC_HALF_DEG
+    end_x = w / 2.0 + g["r"] * math.sin(math.radians(g["half"]))
+    assert end_x <= min(0.96 * w, v["x"] - g["fs"]) + 1e-6
+    assert g["apex"] >= 4.0 + g["box_h"] + g["fs"] * 0.5 - 1e-6
 
 
 # --- vertical deviation scale ---------------------------------------------

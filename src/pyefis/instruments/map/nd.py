@@ -44,6 +44,9 @@ ND_MODES = ("off", "expanded")
 EXPANDED_OWN_Y_FRAC = 0.82
 #: widest half-sector the compass arc draws, the HSI arc's ``ARC_HALF_DEG``.
 ARC_HALF_DEG = 60.0
+#: narrowest: on a tall or narrow panel the range radius shrinks before the
+#: sector drops below this, so the arc never thins to a sliver at the top.
+ARC_MIN_HALF_DEG = 40.0
 
 # 737 ND colour code (#134 spec section 4), new ND elements only.
 WHITE = QColor("#ffffff")      # status, scales
@@ -77,27 +80,36 @@ def status_chip_height(w):
     return max(9, int(w * 0.03)) + 6
 
 
+def arc_reach(w, h):
+    """How far either side of centre the arc may reach: inside the panel,
+    and clear of the vertical deviation scale at the right edge."""
+    fs = font_px(w, h)
+    return max(1.0, min(0.96 * w / 2.0,
+                        vdev_geometry(w, h)["x"] - fs - w / 2.0))
+
+
 def expanded_geometry(w, h):
     """EXPANDED screen geometry. ``own_y`` is the ownship anchor, ``r`` the
     compass-arc radius -- the selected range in px, so a feature on the arc
-    is exactly ``range_nm`` away -- and ``box`` the TRK box over the arc's
-    apex, with the lubber triangle in the ``fs * 0.5`` between them."""
+    is exactly ``range_nm`` away -- ``apex`` the arc's top, ``half`` the
+    half-sector it spans, and the TRK box sits ``box_h`` tall over the apex
+    with the lubber triangle in the ``fs * 0.5`` between them.
+
+    On a landscape panel the arc reaches up to just under the TRK box at the
+    top edge and spans ARC_HALF_DEG. On a tall or narrow one that radius
+    would leave only a sliver of arc between the top corner blocks, so the
+    radius shrinks until the arc spans ARC_MIN_HALF_DEG, and the TRK box
+    follows the apex down."""
     fs = font_px(w, h)
     own_y = h * EXPANDED_OWN_Y_FRAC
     box_h = fs * 1.5
-    apex = 4.0 + box_h + fs * 0.5
-    r = max(1.0, own_y - apex)
-    return {"fs": fs, "own_y": own_y, "r": r, "apex": apex,
-            "box_h": box_h}
-
-
-def arc_half_deg(w, r):
-    """Half-sector the arc spans: ARC_HALF_DEG, narrowed so both ends stay
-    on a panel narrower than the arc."""
-    reach = 0.96 * w / 2.0
-    if r <= reach:
-        return ARC_HALF_DEG
-    return min(ARC_HALF_DEG, math.degrees(math.asin(reach / r)))
+    reach = arc_reach(w, h)
+    r = own_y - (4.0 + box_h + fs * 0.5)
+    r = max(1.0, min(r, reach / math.sin(math.radians(ARC_MIN_HALF_DEG))))
+    half = ARC_HALF_DEG if reach >= r else min(
+        ARC_HALF_DEG, math.degrees(math.asin(reach / r)))
+    return {"fs": fs, "own_y": own_y, "r": r, "apex": own_y - r,
+            "box_h": box_h, "half": half}
 
 
 def vdev_geometry(w, h):
@@ -341,9 +353,9 @@ def paint(widget, p, x, read, now=None):
     fs = g["fs"]
     family = x.font_family
     osp = x.to_screen(widget._lat, widget._lon)
-    r = x.nm_to_px(x.range_nm)
+    r = x.nm_to_px(x.range_nm)          # == g["r"]: range_px is the arc
     up = math.degrees(x.rot)            # bearing at the top of the screen
-    half = arc_half_deg(w, r)
+    half = g["half"]
     lw = max(1.5, w * 0.003)
 
     p.save()
@@ -390,7 +402,9 @@ def paint(widget, p, x, read, now=None):
         p.setFont(_font(family, px, bold=True))
         widths.append(p.fontMetrics().horizontalAdvance(text))
     bw = sum(widths) + sp * 4
-    box = QRectF(w / 2.0 - bw / 2.0, 4.0, bw, g["box_h"])
+    apex_y = osp.y() - r
+    box = QRectF(osp.x() - bw / 2.0, apex_y - fs * 0.5 - g["box_h"], bw,
+                 g["box_h"])
     p.setPen(QPen(col, lw))
     p.drawRect(box)
     tx = box.left() + sp
@@ -399,7 +413,6 @@ def paint(widget, p, x, read, now=None):
         p.drawText(QRectF(tx, box.top(), tw, box.height()),
                    Qt.AlignmentFlag.AlignCenter, text)
         tx += tw + sp
-    apex_y = osp.y() - r
     t = fs * 0.45
     p.setBrush(QBrush(col))
     p.drawPolygon(QPolygonF([QPointF(osp.x(), apex_y),

@@ -280,10 +280,14 @@ the plain map for an `expanded` screen.
   kept for when the ND is switched off). Ownship at `h * 0.82`, the HSI
   arc's `own_y`, overriding `ownship_position`. The selected range ends
   on a compass arc centred on ownship (`MapTransform.range_px`), not at
-  the top edge, so a feature on the arc is exactly `range_nm` away. The
-  arc spans the HSI's +/-60 deg, narrowed on a panel too narrow to hold
-  it; 5 deg ticks, numerals every 30 deg in tens. A TRK box (`TRACKM`,
-  MAG) sits over the arc apex with the lubber triangle under it.
+  the top edge, so a feature on the arc is exactly `range_nm` away. On a
+  landscape panel the arc reaches up to the TRK box at the top and spans
+  the HSI's +/-60 deg. On a tall or narrow panel that radius would leave
+  a sliver of arc running through the top corner blocks, so the radius
+  shrinks until the arc spans +/-40 deg, and its ends always stay clear
+  of the deviation scale. 5 deg ticks, numerals every 30 deg in tens. A
+  TRK box (`TRACKM`, MAG) sits over the arc apex with the lubber
+  triangle under it.
 - **Data blocks**, only fields the 737 material lists and the bus
   carries. Top left: `GS`, `TAS`, wind `WINDDIR`/`WINDSPD` and a wind
   arrow, below the range chip. Top right: the active waypoint per the
