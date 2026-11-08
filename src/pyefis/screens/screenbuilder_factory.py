@@ -353,6 +353,11 @@ def _ai_overlay_props():
         Prop("bankAngleMaximum", "integer", default=25,
              label="Max indicated bank (deg)",
              help="largest bank angle marked on the bank arc"),
+        Prop("excessiveBankDeg", "integer", default=60, minimum=30,
+             maximum=65, step=1, label="Excessive-bank caution (deg)",
+             help="the bank scale and pointer turn amber past this bank; "
+                  "set it above the steepest turn this aircraft is flown "
+                  "in on purpose (60 clears the 45 and 50 deg steep turns)"),
         Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)",
              help="length of the bank-arc ticks (auto-scale off)"),
         Prop("bank_position", "number", default=50, minimum=0, maximum=100,

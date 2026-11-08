@@ -531,9 +531,69 @@ def test_ai_cat_excessive_bank_annunciation(fix, qtbot):
     widget.rollAngle = 20            # normal bank -> no caution
     widget.paintEvent(event)
     assert widget._excessive_bank is False
-    widget.rollAngle = 60            # steep bank -> caution
+    widget.rollAngle = 62            # past the 60 deg default -> caution
     widget.paintEvent(event)
     assert widget._excessive_bank is True
+
+
+@pytest.mark.parametrize("roll", [-60, -55, -50, -45, -40, 40, 45, 50, 55, 60])
+def test_excessive_bank_default_clears_training_steep_turns(fix, qtbot, roll):
+    """AER-5149 | AI-BANK-001 | The default excessive-bank threshold is 60 deg
+    (Bill, 2026-11-07), so a Private (45 +/-5) or Commercial (50 +/-5) steep
+    turn, either direction, never lights the caution. At the old default (45)
+    every roll here past 45 cautioned."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    assert widget.excessiveBankDeg == 60
+    widget.rollAngle = roll
+    widget.paintEvent(event)
+    assert widget._excessive_bank is False
+
+
+@pytest.mark.parametrize("roll", [-61, 61])
+def test_excessive_bank_default_cautions_past_60(fix, qtbot, roll):
+    """AER-5149 | AI-BANK-001 | Past the 60 deg default the caution engages,
+    either direction."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.rollAngle = roll
+    widget.paintEvent(event)
+    assert widget._excessive_bank is True
+
+
+def test_excessive_bank_threshold_is_a_config_setting(fix, qtbot):
+    """AER-5149 | The threshold is an aircraft setting: a configured value --
+    including a quoted string, as the configurator writes scalars -- moves
+    the caution, and stays an int (the attribute type the coercion keys on)."""
+    from pyefis.screens.screenbuilder_options import _coerce_to_attr_type
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.excessiveBankDeg = _coerce_to_attr_type(
+        widget, "excessiveBankDeg", "50")
+    assert widget.excessiveBankDeg == 50
+    assert type(widget.excessiveBankDeg) is int
+    widget.rollAngle = 49
+    widget.paintEvent(event)
+    assert widget._excessive_bank is False
+    widget.rollAngle = 51
+    widget.paintEvent(event)
+    assert widget._excessive_bank is True
+
+
+def test_excessive_bank_prop_matches_widget_and_sits_below_declutter():
+    """AER-5149 | The configurator Prop exists on both attitude types with the
+    widget's default, and its range cannot put the caution past the 65 deg
+    unusual-attitude de-clutter (the caution must come first)."""
+    from pyefis.screens.screenbuilder_factory import REGISTRY
+    for t in ("atitude_indicator", "virtual_vfr"):
+        props = {p.name: p for p in REGISTRY[t].properties}
+        prop = props["excessiveBankDeg"]
+        assert prop.default == 60
+        assert prop.maximum <= 65
+        assert prop.minimum >= 30
 
 
 def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
@@ -559,9 +619,10 @@ def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
     widget.paintEvent(event)
     assert widget._decluttered is True
 
-    # A normal steep turn (excessive-bank caution) is NOT yet the unusual-attitude
-    # regime -- the display stays fully cluttered so the pilot keeps all cues.
-    widget.rollAngle = 50
+    # A bank past the excessive-bank caution (60 default) is NOT yet the
+    # unusual-attitude regime (65) -- the display stays fully cluttered so
+    # the pilot keeps all cues.
+    widget.rollAngle = 62
     widget.paintEvent(event)
     assert widget._excessive_bank is True
     assert widget._decluttered is False
