@@ -3,6 +3,6 @@
  "commit": "8017016a",
  "run": "local: docs/aer-5028-evidence/render_g66.py on origin/dev",
  "device": "sandbox Linux container (Qt offscreen, DejaVu Sans substituted)",
- "sha256": "ddca28ff47932df29151e199a3a6101fe76b6b829a1c2cee9f6dd2bd28a7b90f",
- "created_utc": "2026-11-07T19:16:42Z"
+ "sha256": "c589c1134340220a131b7b2f1130a6dd3c09118142111cb47930988aab274e2f",
+ "created_utc": "2026-11-08T14:02:14Z"
 }

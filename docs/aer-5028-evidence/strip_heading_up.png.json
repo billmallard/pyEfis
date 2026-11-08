@@ -1,8 +1,8 @@
 {
  "schema": "evidence-sidecar/1",
- "commit": "8017016a (top row) + eaf68599 (bottom row)",
+ "commit": "8017016a (top row) + dde5caa7 (bottom row)",
  "run": "composited from before/ and after/",
  "device": "sandbox Linux container (Qt offscreen, DejaVu Sans substituted)",
- "sha256": "ac636d9e6b5efbd58a3e06d2a863555c9392fc4b3757d08982af297da513ad13",
- "created_utc": "2026-11-07T19:16:43Z"
+ "sha256": "b05cc2804c06e5d19c44a423a396c240ee35905d89174712ce800aa06d9c61dc",
+ "created_utc": "2026-11-08T14:02:14Z"
 }
