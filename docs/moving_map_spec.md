@@ -267,6 +267,51 @@ background, the substrate for the Navigation Display mode (#134):
   keys to both when it lands. The computed ratios are a bound; the
   device check is the glass.
 
+### 5.7 Navigation Display mode (`nd_mode`, G11a, billmallard/pyEfis#134)
+
+`nd_mode` selects the transport-category ND idiom, built to the spec on
+#134 (issuecomment-5552767516) as amended by Bill's G11 rulings
+(2026-11-07). `off` (the default) is the map above, pixel-identical to
+the map before this option existed. `expanded` is EXPANDED MAP. CTR MAP
+and the configurator twin are G11b; until then the configurator draws
+the plain map for an `expanded` screen.
+
+- **Geometry.** Track-up whatever `orientation` says (the setting is
+  kept for when the ND is switched off). Ownship at `h * 0.82`, the HSI
+  arc's `own_y`, overriding `ownship_position`. The selected range ends
+  on a compass arc centred on ownship (`MapTransform.range_px`), not at
+  the top edge, so a feature on the arc is exactly `range_nm` away. The
+  arc spans the HSI's +/-60 deg, narrowed on a panel too narrow to hold
+  it; 5 deg ticks, numerals every 30 deg in tens. A TRK box (`TRACKM`,
+  MAG) sits over the arc apex with the lubber triangle under it.
+- **Data blocks**, only fields the 737 material lists and the bus
+  carries. Top left: `GS`, `TAS`, wind `WINDDIR`/`WINDSPD` and a wind
+  arrow, below the range chip. Top right: the active waypoint per the
+  engine rules posted on #134 (FP7): `WPNAME` magenta, ETA = now (UTC) +
+  `WPETE` as `HHMM.Mz`, `WPDIS`; drawn only while `FPLSTATE` != 0,
+  blank on `VECTORS`, red `XXX` on `fail`, grey on `bad`/`old`. Bottom
+  left: the enabled map options (ARPT / WPT / STA), cyan. Not drawn,
+  for want of a source: VOR1/VOR2 frequency and DME, the FMC source,
+  RNP/ANP, WXR.
+- **Vertical deviation scale**, screen-fixed at the right edge, centred
+  vertically: a white fixed scale (ticks at +/-0.5 and +/-1 of full
+  scale) and a magenta diamond at `GSI` (normalised +/-1, pegged
+  beyond), up for positive `GSI` like the HSI's needle. Gated exactly as
+  the HSI gates its glideslope: hidden at `GSV` < 0.5, shown on `GSI`'s
+  own quality when `GSV` is absent, the pointer hidden on
+  `old`/`bad`/`fail`, and the red GS flag when `GSV` says a glidepath is
+  present and `GSI` is bad or failed. No digital readout and no RNP band:
+  the 737's are in feet and `GSI` is not.
+- **No lateral deviation scale** (ruling 1: neither the 737 nor Garmin
+  AXIS draws one on the map). **737 colours on the new elements only**
+  (ruling 2): layers and ownship keep their palette.
+- **Mode key.** `nd_mode_key` names a FIX key that switches the mode at
+  runtime (0 = off, 1 = expanded), the `orientation_key` precedent: the
+  config default seeds the key, then the key drives the mode, and the
+  widget never writes it again. The gateway needs the key defined (a
+  `custom.yaml` stand-in like `MAPORIENT`, max = the mode count); the
+  widget does not mint it.
+
 ## 6. Future layers (design targets for the provider seam)
 
 Named now so the interfaces stay honest: `traffic` (ADS-B via

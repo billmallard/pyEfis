@@ -1081,7 +1081,8 @@ _register(InstrumentSpec(
     properties=[
         Prop("range_nm", "number", default=10.0, minimum=1, maximum=500,
              label="Range (NM)",
-             help="distance from the ownship anchor to the top edge",
+             help="distance from the ownship anchor to the top edge (to "
+                  "the compass arc in ND mode)",
              bindable=Binding("index_ladder", key_option="range_key",
                               ladder_option="range_ladder")),
         Prop("range_key", "fixkey", default="",
@@ -1110,6 +1111,19 @@ _register(InstrumentSpec(
              label="Orientation control key",
              help="optional FIX key that switches orientation at runtime "
                   "(0=track_up, 1=north_up). Empty = fixed"),
+        Prop("nd_mode", "enum", default="off", enum=["off", "expanded"],
+             label="ND mode",
+             help="off = the plain moving map; expanded = Navigation "
+                  "Display EXPANDED MAP: track-up compass arc at the "
+                  "selected range, ownship low (82% down), corner data "
+                  "blocks and a vertical deviation scale from GSI/GSV at "
+                  "the right edge. Overrides orientation and ownship "
+                  "position while on",
+             bindable=Binding("enum", key_option="nd_mode_key")),
+        Prop("nd_mode_key", "fixkey", default="",
+             label="ND mode control key",
+             help="optional FIX key that switches the ND mode at runtime "
+                  "(0=off, 1=expanded). Empty = fixed"),
         Prop("touch_gestures", "boolean", default=True,
              label="Touch gestures",
              help="two-finger pinch=zoom, drag=pan, twist=rotate; mouse wheel "
