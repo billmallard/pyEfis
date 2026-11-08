@@ -601,7 +601,7 @@ class Alt_Trend_Tape(QGraphicsView):
                 if not face.isValid():
                     face = QColor(Qt.GlobalColor.black)
                 face.setAlphaF(max(0.0, min(1.0, float(self.bg_opacity) / 100.0)))
-                p.fillRect(QRectF(0, top, w, h - top), face)
+                p.fillRect(QRectF(o.x(), o.y() + top, sw, h - top), face)
             else:
                 self.scene.render(p, QRectF(o.x(), o.y() + top, sw, h - top),
                                   QRectF(0, top, sw, h - top))
