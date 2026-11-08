@@ -35,3 +35,36 @@ python docs/aer-5178-evidence/render_tape_variants.py sheet variants_sheet.png \
 
 The Beelink has no DejaVu Sans Condensed, so text falls back to DejaVu Sans, as
 it does on the glass.
+
+## On the Beelink glass, fixgw stopped
+
+Beelink bench (X11/xcb, 1920x1080), 2026-11-08, CERT1's method (#411):
+`cert1_writer.py` feeds PITCH, ROLL, ALT, IAS, HEAD, VS, ALAT and TAS over
+netfix at 10 Hz, and `cert1a_capture.sh` SIGSTOPs the fix-gateway process,
+grabs, SIGCONTs and grabs again. Every frame is a full-framebuffer
+`ffmpeg -f x11grab` grab, taken twice 1 s apart; the second is kept.
+
+| Image | pyEfis | What it shows |
+|---|---|---|
+| `before_live.png` | dev `b5eb3dd` | Live feed. |
+| `before_stopped_6s.png` | dev `b5eb3dd` | 6 s after SIGSTOP: small red XXX in each readout box, every scale still drawn. Byte-identical to the 12 s frame. |
+| `before_resumed_4s.png` | dev `b5eb3dd` | 4 s after SIGCONT. The VSI readout is still a red XXX (see below). |
+| `after_live.png` | branch `5854923` | Live feed on the fix. |
+| `after_stopped_6s.png` | branch `5854923` | 6 s after SIGSTOP: red X across the airspeed, altitude and VSI tapes, scales blanked. Byte-identical to the 12 s frame. |
+| `after_resumed_4s.png` | branch `5854923` | 4 s after SIGCONT: every tape back, VSI reads 0. |
+| `contact_sheet.png` | - | PFD column, 0.5x: before stopped, after live (top); after stopped, after resumed (bottom). |
+| `vsi_header_resumed_4x.png` | - | VSI header 4 s after SIGCONT, 4x nearest: dev (stuck XXX) left, branch right. |
+
+`before_info.txt` and `after_info.txt` are the capture logs. The watchdog
+tripped 2.0-2.5 s after each SIGSTOP and recovered at the SIGCONT.
+
+The stuck VSI XXX on dev is a race: `Alt_Trend_Tape` routed flag changes
+through its rate-limited `redraw()`, so a change landing inside
+`update_period` was dropped, and with VS steady nothing redrew afterwards.
+CERT1's own capture did not hit it; today's dev capture did. One clean
+branch capture does not prove a race gone; the unit test
+`test_vsi_tape_flag_change_is_not_rate_limited` does, deterministically.
+
+The after captures ran unattended on the box (`cert1a_after_job.sh`): wait for
+the bench lock, stage the branch with `bench-deploy.sh --ref`, capture,
+`--restore` to dev.
