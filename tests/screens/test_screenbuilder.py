@@ -10,6 +10,7 @@ All tests run in the offscreen Qt platform (no physical display required).
 The pyavtools.fix mock from conftest.py is used so no FIX server is needed.
 """
 import pytest
+import re
 import time
 from pathlib import Path
 from PyQt6.QtGui import QColor, QPalette, QPixmap
@@ -2937,3 +2938,52 @@ class TestFlatSvsPropsReachRenderer:
             assert cfg.get(stripped) is sentinel, (
                 f"{name!r} did not arrive in svs_cfg as {stripped!r}"
             )
+
+
+# ── Every config value svs.py stores is read back somewhere ───────────────────
+#
+# G70 / pyEfis #395: svs_terrain_fill ("off = wireframe") was declared, stripped
+# and read by svs.py -- so both AER-680 tests above passed -- but the stored
+# self.terrain_fill was never consulted again, and no wireframe path existed.
+# Turning the option off still drew filled terrain. The option was removed
+# (Bill's ruling, 2026-11-07). This test closes the remaining gap: every
+# attribute svs.py assigns from config.get() must be read back somewhere in
+# the package, either as an attribute access or through getattr().
+
+class TestSvsConfigAttributesAreUsed:
+    _ASSIGN = re.compile(r"self\.(\w+)\s*=\s*[^\n]*config\.get\(")
+
+    def test_every_config_attribute_is_read_somewhere(self, qtbot):
+        svs_src = Path(svs_module.__file__).read_text()
+        pkg = Path(svs_module.__file__).resolve().parents[2]
+        all_src = "\n".join(p.read_text() for p in pkg.rglob("*.py"))
+        attrs = self._ASSIGN.findall(svs_src)
+        assert attrs, "no config-assigned attributes found -- test is stale"
+        unused = []
+        for attr in set(attrs):
+            # The assignment itself is one `.attr`; a reader adds at least one
+            # more, or reaches it by name through getattr().
+            reads = len(re.findall(r"\." + attr + r"\b", all_src))
+            reads += len(re.findall(
+                r"getattr\([^)]*[\"']" + attr + r"[\"']", all_src))
+            if reads < 2:
+                unused.append(attr)
+        assert not unused, (
+            "svs.py stores these config values but nothing reads them "
+            f"(inert option -- see pyEfis #395): {sorted(unused)}"
+        )
+
+    def test_terrain_fill_is_not_offered(self, qtbot):
+        names = {p.name for p in
+                 screenbuilder_factory.REGISTRY["virtual_vfr"].properties}
+        assert "svs_terrain_fill" not in names
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_saved_screen_with_terrain_fill_still_loads(self, value, tmp_path,
+                                                     qtbot):
+        # A screen saved before the removal still carries the key, in either
+        # state. It must pass through and be ignored, not break the renderer.
+        cfg = screenbuilder_factory._build_svs_cfg(
+            {"svs_terrain_fill": value, "svs_tile_path": str(tmp_path)})
+        r = svs_module.SVSRenderer(cfg)
+        assert not hasattr(r, "terrain_fill")
