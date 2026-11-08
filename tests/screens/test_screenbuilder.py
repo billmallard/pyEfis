@@ -1470,6 +1470,7 @@ class TestScreenBuilderPreferencesAndOptions:
         [
             (True, {}),
             ("hidden-option", {"hidden-option": False}),
+            ("not shown-option", {"shown-option": True}),
         ],
     )
     def test_option_disabled_widgets_are_hidden(
@@ -1492,6 +1493,29 @@ class TestScreenBuilderPreferencesAndOptions:
         screen.init_screen()
 
         assert screen.instruments[0].isHidden() is True
+
+    def test_option_disabled_not_flag_keeps_widget_when_flag_off(self, fix, qtbot):
+        """`options: {disabled: "not FLAG"}` on a plain instrument shows it
+        when FLAG is off, the same as a top-level or ganged `not FLAG`.
+        Before pyEfis #413 the whole string was looked up and raised KeyError."""
+        config = _config_with_instruments([
+            {
+                "type": "static_text",
+                "display_state": 2,
+                "row": 0,
+                "column": 0,
+                "options": {"text": "Shown", "disabled": "not hidden-option"},
+            }
+        ])
+        screen = Screen(
+            _TestParent(config, preferences={"enabled": {"hidden-option": False}})
+        )
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+
+        screen.init_screen()
+
+        assert screen.display_state_inst[2] == [0]
 
     def test_encoder_order_option_registers_selectable_instrument(self, fix, qtbot):
         config = _config_with_instruments([
