@@ -334,6 +334,41 @@ def hit_distance(xform, lat, lon, x, y, tol_px):
     return d if d <= tol_px else None
 
 
+#: G59 (pyEfis #375): a route point is the place a database layer drew when
+#: the idents match and the two project within this many metres (or 2 px,
+#: whichever is larger) -- generous for CIFP-vs-NASR coordinate rounding,
+#: far below the spacing of two same-ident places.
+_SAME_PLACE_M = 60.0
+
+
+def mark_drawn(xform, ident, pos, below, labelled):
+    """Record on this frame's transform that a database layer drew *ident*'s
+    symbol at screen point *pos*. *below* is the first free screen y under
+    what it drew (the ident label when *labelled*, else the symbol), so the
+    flight-plan layer can stack its own text under it instead of redrawing
+    the place (G59)."""
+    if not ident:
+        return
+    drawn = getattr(xform, "drawn_points", None)
+    if drawn is None:
+        drawn = xform.drawn_points = {}
+    drawn.setdefault(ident.upper(), []).append((pos, below, labelled))
+
+
+def find_drawn(xform, ident, pos):
+    """``(pos, below, labelled)`` for a place a database layer drew this
+    frame under *ident* at screen point *pos*, or None (G59)."""
+    hits = getattr(xform, "drawn_points", {}).get((ident or "").upper())
+    if not hits:
+        return None
+    tol = max(2.0, xform.nm_to_px(_SAME_PLACE_M / 1852.0))
+    for entry in hits:
+        q = entry[0]
+        if math.hypot(q.x() - pos.x(), q.y() - pos.y()) <= tol:
+            return entry
+    return None
+
+
 def parse_ring_fractions(text, default=(0.5, 1.0)):
     """``range_ring_fractions`` (comma list, the ``range_ladder`` idiom) ->
     sorted unique fractions of range_nm in (0, 2]. A ring past 2x range is
