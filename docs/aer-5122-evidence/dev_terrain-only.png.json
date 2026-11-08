@@ -1,0 +1,19 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "1523b45",
+ "run": "local: /tmp/hp_capture.py --offscreen --flat --terrain-only --width 1024 --height 768 --lat 24.30 --lon -81.80 --alt 100 --heading 180 --pitch -10 --roll 0 --range 30 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --out /home/pyefis/bench-scratch/aer5122/out/dev_terrain-only.png",
+ "device": "AZW MINI S",
+ "sha256": "4e59cac049a84564688037628671d090987b03b871321f60c9aa1259415e1119",
+ "created_utc": "2026-11-08T14:39:25Z",
+ "pyefis_rev": "1523b45",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  1024,
+  768
+ ],
+ "actual_size": [
+  1024,
+  768
+ ],
+ "argv": "/tmp/hp_capture.py --offscreen --flat --terrain-only --width 1024 --height 768 --lat 24.30 --lon -81.80 --alt 100 --heading 180 --pitch -10 --roll 0 --range 30 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --out /home/pyefis/bench-scratch/aer5122/out/dev_terrain-only.png"
+}
