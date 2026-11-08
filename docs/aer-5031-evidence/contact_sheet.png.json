@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "d76233e",
+ "run": "local: PIL montage of the four bench frames named in README.md",
+ "device": "sandbox (PIL, no Qt)",
+ "sha256": "f81e2a008da283df2b4bf9ee7553d9cb3932ad35b20f6b1e389591d4bbd8a95a",
+ "created_utc": "2026-11-07T19:33:18Z"
+}
