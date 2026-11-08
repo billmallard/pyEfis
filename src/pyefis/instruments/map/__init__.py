@@ -108,7 +108,8 @@ class MapTransform:
     of projection math -- layers never do their own (spec section 3)."""
 
     def __init__(self, lat, lon, range_nm, rot_deg, w, h, anchor_frac,
-                 font_family="DejaVu Sans Condensed", palette=None):
+                 font_family="DejaVu Sans Condensed", palette=None,
+                 range_px=None):
         self.lat0, self.lon0 = lat, lon
         # G12: the map_style palette every layer paints with.
         self.palette = (palette if palette is not None
@@ -119,8 +120,10 @@ class MapTransform:
         self.cx = w / 2.0
         self.cy = h * (1.0 - anchor_frac)   # ownship anchor (% up from bottom)
         self.font_family = font_family
-        # range_nm = ownship anchor -> top edge
-        self._px_per_m = max(1.0, self.cy) / max(1.0, range_nm * NM_M)
+        # range_nm spans range_px screen px from the ownship anchor: the
+        # top edge by default, the compass arc in ND EXPANDED (G11a).
+        self.range_px = self.cy if range_px is None else float(range_px)
+        self._px_per_m = max(1.0, self.range_px) / max(1.0, range_nm * NM_M)
         self._coslat = math.cos(math.radians(lat))
         # MP1: True while a gesture is live or its settle timer is running
         # (MovingMap.defer_render). Layers skip _request/collect while set

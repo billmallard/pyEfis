@@ -294,7 +294,7 @@ class RoadsLayer(MapLayer):
 
     # --- async build ------------------------------------------------------
     def _request(self, key, x):
-        job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy)
+        job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.range_px)
         with self._lock:
             # same-key reposts must not refresh the in-flight job (#89)
             if self._job is not None and self._job[0] == key:
@@ -419,10 +419,10 @@ class RoadsLayer(MapLayer):
                 np.cumsum([len(a) for a in lines], dtype=np.int64))
 
     def _render(self, job):
-        key, lat0, lon0, range_nm, w, h, cy = job
+        key, lat0, lon0, range_nm, w, h, range_px = job
         # Same window geometry as the terrain layer, so the overlay
         # registers exactly with the relief underneath.
-        px_per_m = max(1.0, cy) / max(1.0, range_nm * 1852.0)
+        px_per_m = max(1.0, range_px) / max(1.0, range_nm * 1852.0)
         half_diag_m = 0.5 * math.hypot(w, h) / px_per_m * 1.25
         n = int(min(1024, max(64, 2 * half_diag_m * px_per_m)))
         mpp = 2 * half_diag_m / n
