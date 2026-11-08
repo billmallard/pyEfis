@@ -39,8 +39,15 @@ ALL_KEYS = PRIMARY_FLIGHT_KEYS + OTHER_KEYS
 
 TIMEOUT_S = 1.0
 INTERVAL_S = 0.25
-# The trip lands on the first tick at or after TIMEOUT_S of silence.
-DEADLINE_MS = int((TIMEOUT_S + 2 * INTERVAL_S) * 1000)
+# The real-socket tests below run on Qt timers, which a loaded CI runner
+# can delay by a second or more (pyEfis#411: a 1.5 s deadline missed with
+# the trip landing at 1.3 s of silence).  They prove the behaviour -- it
+# trips, never early, and recovers -- under a generous ceiling.  The exact
+# timing (trip on the first tick at or after the timeout, once per outage)
+# is pinned on an injected clock in test_liveness_ignores_wall_clock_steps.
+WAIT_MS = 15000
+# How long the no-watchdog test watches a hung gateway for a flag.
+NO_WATCHDOG_WATCH_MS = int((TIMEOUT_S + 2 * INTERVAL_S) * 1000) + 500
 
 
 class FakeGateway:
@@ -172,7 +179,7 @@ def test_without_watchdog_hung_gateway_leaves_data_good(gateway_and_db, qtbot):
     # never notices a gateway that stops talking with the socket open.
     gw, db = gateway_and_db
     gw.hang()
-    qtbot.wait(DEADLINE_MS + 500)
+    qtbot.wait(NO_WATCHDOG_WATCH_MS)
     assert not any(i.fail for i in primary_items(db))
 
 
@@ -186,7 +193,7 @@ def test_hung_gateway_marks_primary_flight_data_failed(gateway_and_db, qtbot):
     gw.hang()
     hung_at = time.monotonic()
     qtbot.waitUntil(lambda: all(i.fail for i in primary_items(db)),
-                    timeout=DEADLINE_MS)
+                    timeout=WAIT_MS)
     assert time.monotonic() - hung_at >= TIMEOUT_S - INTERVAL_S
     assert all(i.fail for i in all_items(db))
     assert w.tripped
@@ -200,7 +207,7 @@ def test_reset_connection_marks_primary_flight_data_failed(gateway_and_db, qtbot
     w = make_watchdog(db)
     gw.reset()
     qtbot.waitUntil(lambda: all(i.fail for i in primary_items(db)),
-                    timeout=DEADLINE_MS)
+                    timeout=WAIT_MS)
     assert w.tripped
     w.stop()
 
@@ -209,14 +216,14 @@ def test_next_good_frame_clears_the_failed_state(gateway_and_db, qtbot):
     gw, db = gateway_and_db
     w = make_watchdog(db)
     gw.hang()
-    qtbot.waitUntil(lambda: w.tripped, timeout=DEADLINE_MS)
+    qtbot.waitUntil(lambda: w.tripped, timeout=WAIT_MS)
     assert all(i.fail for i in all_items(db))
 
     # Values that never change are not re-sent by a subscription; the
     # recovery re-read is what brings them back.
     gw.resume()
     qtbot.waitUntil(lambda: not any(i.fail for i in all_items(db)),
-                    timeout=int(4 * INTERVAL_S * 1000))
+                    timeout=WAIT_MS)
     assert not w.tripped
     w.stop()
 
