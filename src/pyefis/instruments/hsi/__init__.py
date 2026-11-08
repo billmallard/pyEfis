@@ -2318,7 +2318,7 @@ class HSI(QGraphicsView):
 
 
 class HeadingDisplay(QWidget):
-    def __init__(self, parent=None, fg_color="#aaaaaa", bg_color="#000000", bg_opacity=100, font_family="DejaVu Sans Condensed" ):
+    def __init__(self, parent=None, fg_color="#ffffff", bg_color="#000000", bg_opacity=100, font_family="DejaVu Sans Condensed" ):
         super(HeadingDisplay, self).__init__(parent)
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
