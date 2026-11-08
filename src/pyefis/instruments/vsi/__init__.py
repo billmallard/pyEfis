@@ -479,17 +479,23 @@ class Alt_Trend_Tape(QGraphicsView):
         self.pph = float(remaining_height) / (maxvs * 2)
 
         tapePen = QPen(QColor(Qt.GlobalColor.white))
+        # The graduations, hidden as one under a failed VS (CERT1a).
+        self._scale_items = []
         for i in range(maxvs, -maxvs - 1, -minor):
             y = self.y_offset(i)
             if i % numbered == 0:
-                self.scene.addLine(w_2 + 5, y, w, y, tapePen)
+                self._scale_items.append(
+                    self.scene.addLine(w_2 + 5, y, w, y, tapePen))
                 t = self.scene.addText(str(int(i / 100)))
                 t.setFont(f)
                 t.setDefaultTextColor(QColor(Qt.GlobalColor.white))
                 t.setX(0)
                 t.setY(y - t.boundingRect().height() / 2)
+                self._scale_items.append(t)
             else:
-                self.scene.addLine(w_2 + 10, y, w, y, tapePen)
+                self._scale_items.append(
+                    self.scene.addLine(w_2 + 10, y, w, y, tapePen))
+        self._apply_fail_look()
         self.setScene(self.scene)
         if not self._signals_connected:
             # resizeEvent fires repeatedly; connect the FIX signals once.
@@ -575,36 +581,29 @@ class Alt_Trend_Tape(QGraphicsView):
     def setFail(self, b):
         if self._fail != b:
             self._fail = b
+            self._apply_fail_look()
             self.redraw()
             self.viewport().update()
     fail = property(getFail, setFail)
 
+    def _apply_fail_look(self):
+        """CERT1a: blank the graduations and the VS bar under a failed VS.
+        The header (the "VSI" label and the red XXX readout) and the face stay."""
+        blank = self._fail and helpers.FAILED_TAPE_BLANK_SCALE
+        for it in getattr(self, "_scale_items", ()):
+            it.setVisible(not blank)
+        if self.indicator_line is not None:
+            self.indicator_line.setVisible(not self._fail)
+
     def paintEvent(self, event):
-        if not self._fail:
-            super(Alt_Trend_Tape, self).paintEvent(event)
+        super(Alt_Trend_Tape, self).paintEvent(event)
+        if not self._fail or not hasattr(self, "top_margin"):
             return
-        # CERT1a: a failed VS keeps only its header (the "VSI" label and the
-        # red XXX readout); the scale below it is blanked under a red X.
-        w = self.viewport().width()
+        # CERT1a: the red X spans the scale below the header.
         h = self.viewport().height()
-        top = min(float(getattr(self, "top_margin", 0.0)), float(h))
+        top = min(float(self.top_margin), float(h))
         p = QPainter(self.viewport())
-        # self.scene shadows QGraphicsView.scene() once resizeEvent has run;
-        # top_margin is set in the same place, so it says the scene is built.
-        if hasattr(self, "top_margin"):
-            o = self.mapFromScene(QPointF(0, 0))
-            sw = self.scene.width()
-            self.scene.render(p, QRectF(o.x(), o.y(), sw, top),
-                              QRectF(0, 0, sw, top))
-            if helpers.FAILED_TAPE_BLANK_SCALE:
-                face = QColor(str(self.bg_color))
-                if not face.isValid():
-                    face = QColor(Qt.GlobalColor.black)
-                face.setAlphaF(max(0.0, min(1.0, float(self.bg_opacity) / 100.0)))
-                p.fillRect(QRectF(o.x(), o.y() + top, sw, h - top), face)
-            else:
-                self.scene.render(p, QRectF(o.x(), o.y() + top, sw, h - top),
-                                  QRectF(0, top, sw, h - top))
         helpers.draw_failed_tape_x(
-            p, QRectF(0, top, w - self.RIGHT_MARGIN, h - top))
+            p, QRectF(0, top, self.viewport().width() - self.RIGHT_MARGIN,
+                      h - top))
         p.end()

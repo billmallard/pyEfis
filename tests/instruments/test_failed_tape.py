@@ -152,6 +152,11 @@ def test_failed_vsi_tape_keeps_its_header(fix, qtbot):
               for y in range(0, int(w.top_margin))
               for x in range(img.width())]
     assert any(_is_red(c) for c in header), "the red XXX readout is gone"
+    # No scale label may peek out under the header (the top graduation label
+    # straddles top_margin, so a crop at top_margin would leave half of it).
+    shown = sorted(t.toPlainText() for t in w.scene.items()
+                   if hasattr(t, "toPlainText") and t.isVisible())
+    assert shown == ["VSI", "XXX"], shown
 
 
 def test_failed_tape_x_stays_inside_rect(qtbot):
