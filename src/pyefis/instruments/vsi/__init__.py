@@ -565,7 +565,7 @@ class Alt_Trend_Tape(QGraphicsView):
     def setBad(self, b):
         if self._bad != b:
             self._bad = b
-            self.redraw()
+            self._redraw_now()
     bad = property(getBad, setBad)
 
     def getOld(self):
@@ -573,7 +573,7 @@ class Alt_Trend_Tape(QGraphicsView):
     def setOld(self, b):
         if self._old != b:
             self._old = b
-            self.redraw()
+            self._redraw_now()
     old = property(getOld, setOld)
 
     def getFail(self):
@@ -582,9 +582,17 @@ class Alt_Trend_Tape(QGraphicsView):
         if self._fail != b:
             self._fail = b
             self._apply_fail_look()
-            self.redraw()
+            self._redraw_now()
             self.viewport().update()
     fail = property(getFail, setFail)
+
+    def _redraw_now(self):
+        """A quality-flag change bypasses redraw()'s update_period rate limit.
+        Rate-limited, a flag change landing inside the window was dropped, and
+        with a steady VS no later update came: the readout stayed XXX after the
+        gateway recovered, or kept the last value on onset (CERT1a bench)."""
+        self.last_update_time = 0
+        self.redraw()
 
     def _apply_fail_look(self):
         """CERT1a: blank the graduations and the VS bar under a failed VS.

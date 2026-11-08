@@ -172,3 +172,21 @@ def test_failed_tape_x_stays_inside_rect(qtbot):
         for x in range(img.width()):
             if img.pixelColor(x, y).alpha():
                 assert 20 <= x < 80 and 50 <= y < 250, (x, y)
+
+
+@pytest.mark.parametrize("flag", ["fail", "bad", "old"])
+def test_vsi_tape_flag_change_is_not_rate_limited(fix, qtbot, flag):
+    """A quality-flag change refreshes the readout even inside the
+    update_period window. Rate-limited, the Beelink capture showed the readout
+    stuck at XXX 4 s after fix-gateway recovered, with VS steady at 0."""
+    item = fix.db.get_item("VS")
+    _clear(item)
+    item.value = 0
+    w = vsi.Alt_Trend_Tape()
+    w.myparent = _parent(update_period=60)   # one redraw a minute at most
+    _show(qtbot, w)
+    assert w.vstext.toPlainText() == "0"
+    setattr(item, flag, True)
+    assert w.vstext.toPlainText() == ("XXX" if flag == "fail" else "")
+    setattr(item, flag, False)
+    assert w.vstext.toPlainText() == "0"
