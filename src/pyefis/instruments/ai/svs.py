@@ -623,7 +623,6 @@ class SVSRenderer:
                              _PALETTES["clearance"])
         (self.c_safe, self.c_caution, self.c_warning,
          self.c_conflict, self.c_water) = _pal
-        self.terrain_fill  = config.get("terrain_fill", True)
         self.auto_range    = config.get("auto_range", True)
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
         # Hysteresis state for the collect-cache range bucket (AER-678).
@@ -876,7 +875,7 @@ class SVSRenderer:
              ac_lat: float, ac_lon: float, ac_alt_ft: float,
              pitch_deg: float, roll_deg: float, heading_deg: float,
              pixels_per_deg: float, device_pixel_ratio: float = 1.0,
-             roll_pivot_px: float = 0.0):
+             roll_pivot_px: float = 0.0, lens_shift_px: float = 0.0):
         """
         Draw the SVS terrain overlay onto the AI viewport.
 
@@ -935,7 +934,8 @@ class SVSRenderer:
                     p, w, h, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg,
                     pixels_per_deg, range_nm, device_pixel_ratio,
-                    roll_pivot_px=roll_pivot_px)
+                    roll_pivot_px=roll_pivot_px,
+                    lens_shift_px=lens_shift_px)
             # Terrain painted successfully — the AI may now show sky (not brown)
             # above the synthetic terrain.
             self.drew_terrain = True
@@ -2663,18 +2663,24 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             head_true = ai._fpm_head - getattr(ai, "_magvar", 0.0)
             # SVSRenderer.draw does its own save/resetTransform/restore so the
             # outer scene transform is preserved for the next item in z order.
-            # Depress the terrain camera by horizon_position's look-down angle
-            # so the terrain horizon rises to match the AI's raised reference
-            # (no-op when horizon_position == 50). Sign verified on the Pi --
-            # if the terrain horizon moves the wrong way, flip the subtraction.
-            pitch_for_svs = ai._pitchAngle - ai._horizon_offset_deg()
+            # Raise the terrain to the AI's raised reference with a lens
+            # shift of horizon_position's pixel offset, and give the
+            # camera the true pitch. The ladder puts zero pitch at
+            # offset_px - pitch * ppd; the shifted camera puts the
+            # horizon at offset_px - tan(pitch) (scaled to pixels), the
+            # same residual as at horizon_position 50. Depressing the camera by the offset
+            # as an angle sent the offset through the tangent as well,
+            # 1.2 deg off at 50/75 and pitch -10 (AER-5122). No-op when
+            # horizon_position == 50.
+            offset_px = ai._horizon_offset_px()
             self._renderer.draw(
                 painter, vp.width(), vp.height(),
                 ai._svs_lat, ai._svs_lon, ai._svs_alt,
-                pitch_for_svs, ai._rollAngle, head_true,
+                ai._pitchAngle, ai._rollAngle, head_true,
                 ppd, vp.devicePixelRatioF(),
                 # Roll the terrain about the same raised point the AI
                 # widget rolls its ladder about (redraw(), #304).
-                roll_pivot_px=ai._horizon_offset_px())
+                roll_pivot_px=offset_px,
+                lens_shift_px=offset_px)
 
     return _SVSGraphicsItem(renderer, ai_widget)

@@ -64,9 +64,7 @@ adding buttons with the action **Set EGT mode**.
 | **Reset Peak** | Starts the peaks again from the present values. |
 
 Choosing one clears the others, and the active button is green. In Normalize the
-colour bands stay on the absolute scale. The indicator is meant to turn blue in
-Normalize; today it stays white
-([#399](https://github.com/billmallard/pyEfis/issues/399)).
+colour bands stay on the absolute scale, and the indicator turns blue.
 
 **Hottest cylinder.** Give a bar a `highlight_key`, such as `EGTMAX1` or
 `CHTMAX1`, and it draws a magenta ball at its foot while it is the hottest. The
