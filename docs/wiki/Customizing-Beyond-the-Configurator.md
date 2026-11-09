@@ -282,7 +282,7 @@ An instrument refers to a flag with `disabled:`:
 |---|---|---|
 | `disabled: FLAG` beside `type:` | Not built at all when the flag is false. `true` always leaves it out. | yes |
 | `options: {disabled: FLAG}` in a ganged group | Built, then hidden; its slot is kept. | yes |
-| `options: {disabled: FLAG}` on any other instrument | Built, then hidden. | no ([#413](https://github.com/billmallard/pyEfis/issues/413)) |
+| `options: {disabled: FLAG}` on any other instrument | Built, then hidden. | yes |
 
 A flag that is not in `enabled:` stops the screen loading.
 
