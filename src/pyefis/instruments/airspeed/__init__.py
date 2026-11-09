@@ -459,6 +459,10 @@ class Airspeed_Tape(QGraphicsView):
 
         self.resetTransform()
         self.centerOn(self.scene.width() / 2, -self._airspeed * self.pph + tape_start)
+        if self.item.fail:
+            # centerOn() may blit-scroll the viewport, which would drag the
+            # fixed failed-tape X along with the (hidden) scale.
+            self.viewport().update()
         self.numerical_display.value = self._airspeed
 
     #  Index Line that doesn't move to make it easy to read the airspeed.
@@ -467,14 +471,25 @@ class Airspeed_Tape(QGraphicsView):
         # scale in/out at the top and bottom instead of hard-clipping.
         # Overlays below (TAS box, pointer, trend) stay solid on top.
         _fade = bool(getattr(self, "edge_fade", False))
-        if _fade > 0:
-            helpers.render_view_edge_faded(self, 15.0)
-        else:
-            super(Airspeed_Tape, self).paintEvent(event)
+        failed = self.item.fail
         w = self.width()
         h = self.height()
-        p = QPainter(self.viewport())
+        if failed:
+            # CERT1a: no scale, bands or trend under a failed IAS -- only the
+            # tape's own face, so nothing left on it reads as a speed.
+            p = QPainter(self.viewport())
+            face = QColor(32, 32, 32)
+            face.setAlphaF(self.backgroundOpacity)
+            p.fillRect(self.viewport().rect(), face)
+        else:
+            if _fade > 0:
+                helpers.render_view_edge_faded(self, 15.0)
+            else:
+                super(Airspeed_Tape, self).paintEvent(event)
+            p = QPainter(self.viewport())
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if failed:
+            helpers.draw_failed_tape_x(p, QRectF(self.viewport().rect()))
 
         # TAS box at the bottom of the tape. P5c: the same rounded, translucent
         # readout panel the boxed IAS uses (it used to be a solid-white slab
@@ -519,8 +534,8 @@ class Airspeed_Tape(QGraphicsView):
         # Trend — translated to tape/box boundary midpoint.
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
 
-        # Airspeed trend indicator
-        if self.show_trend:
+        # Airspeed trend indicator (not under a failed IAS: it is derived from it)
+        if self.show_trend and not failed:
             noise_floor_px = self.trend_min_change * self.pph
             if abs(self._trend_px) >= noise_floor_px:
                 trend_color = QColor(0, 220, 255)
@@ -581,6 +596,7 @@ class Airspeed_Tape(QGraphicsView):
 
     def setAsFail(self, b):
         self.numerical_display.fail = b
+        self.viewport().update()
 
     # We don't want this responding to keystrokes
     def keyPressEvent(self, event):
