@@ -138,6 +138,11 @@ The attitude / Virtual-VFR widget can render a GL-accelerated **Synthetic
 Vision** view: a perspective terrain picture with water, major roads,
 obstacles, and airports/runways drawn in 3D over the live attitude.
 
+.. image:: docs/images/svs-coastal.jpg
+   :alt: pyEfis Synthetic Vision over a coastline: terrain, ocean and the live attitude
+
+Development write-up: `pyEfis Synthetic Vision Now Hides Water Behind Ridges <https://aerocommons.org/articles/2026-11-04-pyefis-synthetic-vision-hides-water-behind-ridges/>`_ (aerocommons.org, 4 Nov 2026).
+
 * **Terrain** — elevation-shaded relief from SRTM / Copernicus GLO-30 tiles,
   drawn as a forward polar fan with distance-based level of detail.
 * **Water** — coastlines, lakes, and reservoirs (OpenStreetMap, ODbL).
