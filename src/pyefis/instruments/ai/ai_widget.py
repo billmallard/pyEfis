@@ -24,11 +24,18 @@ import logging
 
 import pyavtools.fix as fix
 from pyefis import common
+from pyefis.instruments import edit_focus, helpers
+from pyefis.instruments.helpers import bugs
 from pyefis.instruments.ai.svs import SVSRenderer, make_svs_item
 from pyefis.instruments.ai.pose import PoseSource
 from pyefis.instruments.ai.camera import terrain_horizontal_px
 
 log = logging.getLogger(__name__)
+
+# Target-bank bug knob (AER-5149): 5 deg detents, 0 = off, up to 60 (the
+# Commercial steep spiral's limit) or the excessive-bank caution if lower.
+BANK_BUG_STEP_DEG = 5
+BANK_BUG_MAX_DEG = 60
 
 # TODO:
 #   Check TAS quality and revert to turn rate indication
@@ -148,14 +155,17 @@ class AI(QGraphicsView):
         # (65 deg, past the excessive-bank caution, is the unusual-attitude
         # regime -- not a normal steep turn.) Configurable.
         self.unusualBankDeg = 65
-        # Target-bank bug (AER-5149, ATT1 scope item 2): a selected bank
-        # magnitude drawn on both sides of the bank scale with a tolerance
-        # band, so holding a steep turn reads as "pointer inside the band".
-        # 0 = off. The ACS steep turns are flown to +/-5 deg (Private 45,
-        # Commercial 50). Cyan: the selected-value colour the HDG bug uses.
-        self.bankBug = 0.0
+        # Target-bank bug (AER-5149, ATT1): the selected bank magnitude
+        # (FIX key BANKBUG, 0 = off) drawn on both sides of the bank scale
+        # with a tolerance band, so holding a steep turn reads as "pointer
+        # inside the band". bankBugTolerance is a configurator setting; the
+        # ACS steep turns are flown to +/-5 deg (Private 45, Commercial 50).
+        # Cyan: the selected-value colour the HDG bug uses. Set by touching
+        # the bank scale and turning the knob (pyEfis #308 focus model).
         self.bankBugTolerance = 5.0
         self.bank_bug_color = "#00ffff"
+        self.touch_edit = True
+        self._bank_bug_focused = False
         self._decluttered = False
         # Pitch-limit indicator (AC 25-11B App A A.2.4, AI-LIM-001): the
         # pitch at which the stall-warning AOA would be reached at the
@@ -430,6 +440,12 @@ class AI(QGraphicsView):
         except KeyError:
             log.warning(
                 "AI: FIX key 'AOA' not defined — pitch-limit indicator disabled")
+
+        # BANKBUG: absent from the database -> no bug and nothing to touch
+        # (BugBinding logs and leaves .item None; no local fallback).
+        self._bank_bug = bugs.BugBinding("BANKBUG", self)
+        self._bank_bug.changed.connect(
+            lambda: setattr(self, "_frame_dirty", True))
 
         # We store all the pitch tick marks and text in a list so that
         # we can adjust the opacity of the items.
@@ -1580,7 +1596,7 @@ class AI(QGraphicsView):
                 p.drawPolygon(diamond)
                 p.restore()
             # Target-bank bug (non-essential -- de-cluttered too).
-            if self.bankBug > 0 and not self._decluttered:
+            if self.bank_bug_target() > 0 and not self._decluttered:
                 self._draw_bank_bug(p, r, m)
             if bank_op < 1.0:
                 p.setOpacity(1.0)
@@ -1600,6 +1616,9 @@ class AI(QGraphicsView):
         if self._show_pitch_limit:
             self._draw_pitch_limit(p, w, h, margin)
 
+        # Target-bank bug edit readout / focus marks (hidden when decluttered).
+        self._draw_bank_bug_edit(p)
+
         # Unusual-attitude recovery chevrons (AC 25-11B App A A.2.2). Past the
         # pitch thresholds, guide the recovery toward the nearest horizon. Drawn
         # last so they sit on top of the de-cluttered display.
@@ -1611,9 +1630,9 @@ class AI(QGraphicsView):
         Called in the scale's own (rolled) frame, centred on the arc centre,
         so the band rotates with the scale and the fixed roll pointer reads
         against it."""
-        t = max(0.0, min(float(self.bankBug), 90.0))
+        t = self.bank_bug_target()
         tol = max(0.0, float(self.bankBugTolerance))
-        col = QColor(self.bank_bug_color)
+        col = self._bank_bug.color(QColor(self.bank_bug_color))
         p.save()
         # Band: a translucent arc over the short-tick ring (r-m .. r). The
         # fixed roll pointer's tip touches the ring, so on target it sits
@@ -1648,6 +1667,147 @@ class AI(QGraphicsView):
             p.rotate(sign * t)
             p.drawPolygon(bug)
             p.restore()
+        p.restore()
+
+    # --- target-bank bug: value, touch + knob edit (AER-5149) -------------
+
+    def bank_bug_target(self):
+        """The selected bank magnitude to draw, in degrees; 0 = no bug (off,
+        or BANKBUG missing or failed)."""
+        if not self._bank_bug.drawable():
+            return 0.0
+        try:
+            return max(0.0, min(float(self._bank_bug.value), 90.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def bank_bug_cap(self):
+        """The highest bug the knob sets: 60, or the excessive-bank caution
+        if lower, rounded down to a whole step. A bug past the caution
+        would ask the pilot to fly in it."""
+        top = min(float(BANK_BUG_MAX_DEG), float(self.excessiveBankDeg))
+        return BANK_BUG_STEP_DEG * math.floor(top / BANK_BUG_STEP_DEG)
+
+    def bank_bug_step(self, steps):
+        """Move the bug ``steps`` knob detents (5 deg each) from the value
+        shown, snapped to the step, clamped to 0 (off) .. bank_bug_cap(),
+        and send it to fix-gateway. Returns False with no BANKBUG key."""
+        item = self._bank_bug.item
+        if item is None:
+            return False
+        step = BANK_BUG_STEP_DEG
+        base = step * round(self.bank_bug_target() / step)
+        value = max(0.0, min(float(self.bank_bug_cap()),
+                             base + step * int(steps)))
+        item.bad = False
+        item.fail = False
+        item.value = float(value)
+        # A local assignment alone never leaves pyEfis (pyEfis #294).
+        item.output_value()
+        self._frame_dirty = True
+        self.viewport().update()
+        return True
+
+    def bank_bug_editable(self):
+        """The bank scale is touch-editable: the ``touch_edit`` option is on
+        (YAML may hand it over as a string) and BANKBUG exists."""
+        on = self.touch_edit
+        if isinstance(on, str):
+            on = on.strip().lower() not in ("false", "0", "no", "off", "")
+        return bool(on) and self._bank_bug.item is not None
+
+    def _bank_scale_hit(self, pt):
+        """Is viewport point ``pt`` on the bank scale? An annulus around the
+        arc from inside the short ticks to past the bug arrows, over the
+        upper half of the dial (the scale rolls, so it is not cut to the
+        +/-60 marks). The slip ball and the aircraft symbol sit inside it."""
+        if self._decluttered:
+            return False
+        r = float(self.bankAngleRadius)
+        m = float(self.bankMarkSize)
+        dx = pt.x() - self.width() / 2.0
+        dy = pt.y() - self._bank_anchor_y(self.height())
+        d = math.hypot(dx, dy)
+        if not (r - 2.0 * m <= d <= r + 3.0 * m):
+            return False
+        return abs(math.degrees(math.atan2(dx, -dy))) <= 90.0
+
+    def _encoder_controller(self):
+        w = self.parent()
+        while w is not None:
+            ctl = getattr(w, "encoder_controller", None)
+            if ctl is not None:
+                return ctl
+            w = w.parent()
+        return None
+
+    def mousePressEvent(self, event):
+        if self.bank_bug_editable() and self._bank_scale_hit(event.position()):
+            ctl = self._encoder_controller()
+            if ctl is not None and ctl.touch_focus(self):
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def edit_focus_hit(self, global_pos):
+        local = self.viewport().mapFromGlobal(global_pos.toPoint())
+        return self._bank_scale_hit(QPointF(local))
+
+    # The EncoderController protocol (pyEfis #308).
+    def enc_selectable(self):
+        return self.bank_bug_editable()
+
+    def enc_highlight(self, onoff):
+        self._bank_bug_focused = bool(onoff)
+        self._frame_dirty = True
+        self.viewport().update()
+
+    def enc_select(self):
+        if not self.bank_bug_editable():
+            return False
+        self._bank_bug_focused = True
+        self._frame_dirty = True
+        return True
+
+    def enc_changed(self, steps):
+        return self.bank_bug_step(steps)
+
+    def enc_clicked(self):
+        # Push ends the edit and keeps the value, as the timeout does.
+        return False
+
+    def _bank_bug_readout_rect(self):
+        """The BANK readout box, in viewport px: centred under the slip
+        ball, inside the arc. Drawn only while the bug has edit focus."""
+        r = float(self.bankAngleRadius)
+        m = float(self.bankMarkSize)
+        bh = max(12.0, self.fontSize * 0.45)
+        bw = bh * 4.2
+        cy = self._bank_anchor_y(self.height()) - r + 4.2 * m + bh / 2.0
+        return QRectF(self.width() / 2.0 - bw / 2.0, cy - bh / 2.0, bw, bh)
+
+    def _draw_bank_bug_edit(self, p):
+        """Edit focus: the BANK readout with the focus ring and icon; at
+        rest (panel hint on) the dim icon alone, where the ring's would sit."""
+        if not self.bank_bug_editable() or self._decluttered:
+            return
+        rect = self._bank_bug_readout_rect()
+        p.save()
+        p.resetTransform()
+        if self._bank_bug_focused:
+            helpers.draw_readout_panel(
+                p, rect, helpers.READOUT_RADIUS_RATIO * rect.height(),
+                QColor(self.bank_bug_color),
+                pen_width=max(1.0, rect.height() * 0.06), fill_alpha=1.0)
+            t = self.bank_bug_target()
+            f = QFont(self.font_family, -1, QFont.Weight.Bold)
+            f.setPixelSize(max(8, qRound(rect.height() * 0.7)))
+            p.setFont(f)
+            p.setPen(QColor(self.bank_bug_color))
+            p.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                       "BANK %d" % round(t) if t > 0 else "BANK OFF")
+        edit_focus.draw_edit_marks(p, rect, focused=self._bank_bug_focused,
+                                   bounds=QRectF(self.rect()))
         p.restore()
 
     # We don't want this responding to keystrokes

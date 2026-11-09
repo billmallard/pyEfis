@@ -40,6 +40,7 @@ ladder). Already present:
 | `PITCH`, `ROLL` | attitude | AHRS |
 | `ALAT` | slip/skid ball (lateral accel) | AHRS |
 | `TAS` | standard-rate bank marker | ADC |
+| `BANKBUG` | target-bank bug (AI-BUG-001); 0 = off, missing = no bug and no touch edit | the pilot, through pyEfis (touch + knob) |
 | `VS`,`GS`,`TRACK`,`HEAD`,`VPATH` | FPM solution | GPS/AHRS |
 | `LAT`,`LONG`,`ALT` | SVS camera position; `LAT`/`LONG` quality gates the terrain (AI-SVS-001) | GPS / ADC |
 | `AOA` + aux `AOA.Warn` | pitch-limit (AI-LIM-001): margin = `AOA.Warn - AOA`; `AOA` old/bad/fail or `AOA.Warn` None removes the marker | fix-gateway `onspeed` plugin ([`fixgw_onspeed_in_spec.md`](fixgw_onspeed_in_spec.md)) |
@@ -70,6 +71,7 @@ test catalog (§5). **Status** is the widget as of this writing.
 | **AI-DCL-001** | **De-clutter** at unusual attitude | unusual attitude | Remove non-essential overlays, retain recovery info | AC 25-11B p.47; §A.2 | **DONE** — `_decluttered` suppresses FPM / standard-rate diamonds / horizon heading scale |
 | **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **DONE** — amber ball |
 | **AI-LIM-001** | **Pitch-limit / stall-margin** indication | approaching stall AOA | Pitch-limit marker `AOA.Warn - AOA` deg above the aircraft symbol | App A §A.2.4 p.70 | **DONE** — `_draw_pitch_limit` (AER-5086); look pending Bill's call on the PR renders |
+| **AI-BUG-001** | **Target-bank bug** (ATT1, AER-5149) | `BANKBUG` > 0 | Cyan arrow at ±`BANKBUG` outside the bank scale and a ±`bankBugTolerance` band over it, rolling with the scale, so on target the fixed pointer sits inside the band; hidden by the de-clutter; greyed when old/bad, absent when failed. Touch the scale + knob: 5° detents, 0 to 60 or `excessiveBankDeg` if lower | ACS steep turns (Private 45° ±5°, Commercial 50° ±5°) | **DONE** — `_draw_bank_bug`, `bank_bug_step` |
 
 **Thresholds.** "Unusual attitude" follows common EFIS/Part 25 convention — all
 configurable attributes:
@@ -128,6 +130,7 @@ removal. No `xfail` remains: `AI-LIM-001` left it with AER-5086.
 | 103 | **AI-DCL-001** | `declutter_at_unusual_attitude` | pass |
 | 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | pass |
 | 105 | **AI-LIM-001** | `pitch_limit_indication`; `test_ai_pitch_limit_hidden_on_degraded_aoa`, `_hidden_without_warn_setpoint`, `_disabled_without_aoa_key`, `_survives_declutter` | pass |
+| 106 | **AI-BUG-001** | `test_bank_bug.py` (band under the pointer inside tolerance, outside it off target, de-clutter, knob detents and cap, touch focus, missing key) | pass |
 
 ## 6. Conventions and standards basis
 

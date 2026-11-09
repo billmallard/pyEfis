@@ -21,6 +21,7 @@ terrain is `atitude_indicator`.
 | **Horizon line** | White, drawn over the terrain at zero pitch. |
 | **Pitch ladder** | Lines every few degrees, numbered every **Numbered division** (5° on the bench panel, 10° by default). Lines more than the **Pitch label range** from your pitch fade out. |
 | **Bank scale** | An arc with marks at 10, 20, 30, 45 and 60 degrees, a fixed white datum at the top and a pointer that turns with the aircraft. Both turn amber past the **Excessive-bank caution** setting, 60° of bank by default, so a 45° or 50° steep turn does not light it. |
+| **Bank bug** | Optional. A cyan arrow outside the bank scale at the target bank you set, on both sides, with a cyan band 5° either side of it over the scale. Hold the turn with the white pointer inside the band. Set it by touching the bank scale and turning the knob; 0 is off. Hidden past 65° of bank with the other de-clutter. See [below](#bank-bug). |
 | **Standard-rate marks** | Two small diamonds on the arc at the bank for a standard-rate turn at your true airspeed, capped at **Max indicated bank** (25°). |
 | **Slip/skid indicator** | The ball just under the bank pointer. It moves sideways with `ALAT` and turns amber at 0.25 g and beyond. |
 | **Flight path marker** | A green circle with wings: where the aircraft is actually going, from GPS track, groundspeed and vertical speed. See [below](#flight-path-marker). |
@@ -30,8 +31,26 @@ terrain is `atitude_indicator`.
 ### At an unusual attitude
 
 Beyond 30° nose up, 20° nose down, or 65° of bank, or with the horizon off the
-screen, the display declutters. The flight path marker, the standard-rate marks
-and the horizon heading marks go, leaving what you need to recover.
+screen, the display declutters. The flight path marker, the standard-rate marks,
+the bank bug and the horizon heading marks go, leaving what you need to recover.
+
+### Bank bug
+
+The bank bug holds a steep or standard-rate turn to a target bank. Touch the
+bank scale: a cyan focus ring and a `BANK` readout appear under the slip ball.
+Each knob detent moves the target 5°, from off up to 60° (or the
+**Excessive-bank caution** setting, if that is lower). Push the knob, or wait
+for the timeout, and the edit ends with the value kept.
+
+A cyan arrow then marks the target outside the scale on both sides, so the
+second turn of a steep-turn pair is already set. A cyan band covers the scale
+from 5° under to 5° over the target (**Bank bug tolerance**). The scale turns
+under the fixed white pointer as you bank: with the pointer inside the band,
+you are within tolerance. If the band is off to one side, roll toward it.
+
+The value is the FIX key `BANKBUG`, so every display on the bus shows the same
+bug. If the gateway does not define `BANKBUG`, there is no bug and touching the
+scale does nothing.
 
 ### Flight path marker
 
@@ -133,6 +152,8 @@ bench panel's value where it differs.
 | Standard-rate bank markers (`drawBankMarkers`) | on | | |
 | Max indicated bank (`bankAngleMaximum`) | 25 | | Cap for the standard-rate marks. |
 | Excessive-bank caution (`excessiveBankDeg`) | 60 | | The bank scale turns amber past this. Set it per aircraft, above the steepest turn you fly on purpose. |
+| Bank bug tolerance (`bankBugTolerance`) | 5 | | Half-width of the band around the bank bug. |
+| Touch to set bank bug (`touch_edit`) | on | | Off makes the bank scale ignore touches. |
 | Horizon heading marks (`horizon_heading_marks`) | off | on | |
 | Heading label interval (`horizon_heading_label_interval`) | 20 | 30 | |
 
@@ -211,6 +232,7 @@ data paths are where `pyefis-data` installs each pack; see
 | `LAT`, `LONG`, `ALT` | Where the terrain is drawn from |
 | `HEAD`, `MAGVAR` | Which way the terrain faces, and the horizon heading marks |
 | `VS`, `GS`, `TRACK`, `VPATH` | Flight path marker |
+| `BANKBUG` | Bank bug (written when you set it) |
 
 See [FIX Database Keys](FIX-Database-Keys).
 
