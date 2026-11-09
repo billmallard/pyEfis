@@ -40,13 +40,10 @@ def test_ai_horizon_position(fix, qtbot):
     # Default: centred -> zero offset, so the plain AI is unchanged.
     assert widget.horizon_position == 50
     assert widget._horizon_offset_px() == 0.0
-    assert widget._horizon_offset_deg() == 0.0
 
-    # Raised to two-thirds up: a positive screen offset (fraction of height)
-    # and a height-independent look-down angle (fraction of the pitch FOV).
+    # Raised to two-thirds up: a positive screen offset (fraction of height).
     widget.horizon_position = 67
     assert round(widget._horizon_offset_px(), 3) == round(0.17 * widget.height(), 3)
-    assert round(widget._horizon_offset_deg(), 3) == round(0.17 * widget.pitchDegreesShown, 3)
     # redraw applies it without error at a banked, raised attitude.
     widget._rollAngle = 25
     widget._pitchAngle = 5

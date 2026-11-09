@@ -218,14 +218,9 @@ class Screen(QWidget):
                 self.setup_instruments(
                     count, inst, replace=this_replacements, state=state
                 )
-                inst_disabled = inst.get("options", False)
-                if isinstance(inst_disabled, dict):
-                    inst_disabled = inst["options"].get("disabled", False)
-                if isinstance(inst_disabled, bool) and inst_disabled == True:
-                    self.instruments[count].setVisible(False)
-                elif (
-                    isinstance(inst_disabled, str)
-                    and not self.parent.preferences["enabled"][inst_disabled]
+                inst_options = inst.get("options", False)
+                if isinstance(inst_options, dict) and screenbuilder_config.is_disabled(
+                    inst_options, self.parent.preferences
                 ):
                     self.instruments[count].setVisible(False)
                 else:

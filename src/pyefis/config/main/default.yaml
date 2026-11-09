@@ -2,6 +2,14 @@
   FixServer: 127.0.0.1
   FixPort: 3490
 
+  # FIX link watchdog: if FIX-Gateway sends nothing for this many seconds
+  # (hung with the connection open, or the link dropped with an error),
+  # every value is marked failed until it answers again.  0 disables it.
+  # FixLinkTimeout: 2.0
+  # The input key used to ping the gateway; default is the first of
+  # PITCH, ROLL, ALT, IAS present in the FIX database.
+  # FixLinkPingKey: PITCH
+
   # nodeID, currently only used in touchscreen buttons
   # the value will replace {id} in the button's dbkey
   nodeID: 1
