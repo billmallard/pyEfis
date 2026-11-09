@@ -322,11 +322,39 @@ the plain map for an `expanded` screen.
   `custom.yaml` stand-in like `MAPORIENT`, max = the mode count); the
   widget does not mint it.
 
+### 5.8 Traffic (z=50, default on, P3b, billmallard/pyEfis#53)
+
+ADS-B traffic from the FIX `TFCk*` block that fix-gateway's traffic writer
+fills from GDL90 (`layers/traffic.py`). The contract is
+`docs/fix_dynamic_list_spec.md` section 5; nothing here adds to it.
+
+- Reads a slot only on its `TFCkTGT` write, keys state by the `TGT`
+  identity, and discovers the block size from the bus (`TFC1TGT`, `TFC2TGT`,
+  ... until a key is missing). No block on the bus: the layer is inert.
+- Symbol: an arrowhead along the target's track (true; a magnetic heading is
+  converted with `MAGVAR`), a diamond when the track is unknown (`TTYP = 0`,
+  or a magnetic heading with no `MAGVAR`).
+- Style (GDL90 G§3.5.1.1, G§3.5.1.6): normal = filled white; traffic alert
+  (`TFCkALRT = 1`) = yellow, flashing filled/open at 1 Hz, drawn on top;
+  degraded (NIC or NACp 4 or lower) = open outline; stale (`TFCkTGT` `old`)
+  = grey dashed outline, dropped by the display 12 s after it went stale if
+  the writer never evicts it; `TFCkTGT` `fail` = not drawn.
+- Data tag: relative altitude `TFCkALT - PALT` in hundreds of feet (`+05`
+  above the symbol, `-12` below), `--` when `TFCkALT` is `bad` or `PALT` is
+  absent / `old` / `bad` / `fail`. A trend arrow at +-500 fpm; none when
+  `TFCkVS` is `bad`.
+- `TFC FAIL` chip, bottom left, when `TFCCOUNT` is `fail` (receiver failed)
+  or `old` (writer stopped).
+- No geometric ownship filter (Bill's F6 ruling): a target on top of ownship
+  is drawn.
+- Not yet: absolute-altitude mode, air/ground and emitter-category symbols,
+  the audible alert, `TFCDROP` display, call-sign labels, hit-test.
+- Prop `layer_traffic` (default on).
+
 ## 6. Future layers (design targets for the provider seam)
 
-Named now so the interfaces stay honest: `traffic` (ADS-B via
-Stratux — FIX keys or a side TCP feed; symbol set = TIS-B standard),
-`metar_flags` / `fisb_weather` (Stratux FIS-B: NEXRAD raster as a
+Named now so the interfaces stay honest: `traffic` (shipped as
+section 5.8, over FIX keys), `metar_flags` / `fisb_weather` (Stratux FIS-B: NEXRAD raster as a
 tile layer — raster layers must be first-class), `lightning`,
 `airspace` (NASR CLS_ARSP/SUA — high value, data build like 5.3),
 `obstacles` (DOF, already on-device), `sectional_raster` (FAA VFR
@@ -469,7 +497,7 @@ not change.
 - Factory registration + Props: `range_nm`, `orientation`,
   `ownship_position`, `layers` (per-layer default-on booleans:
   `layer_terrain`, `layer_airports`, `layer_navaids`,
-  `layer_airways`, `layer_flight_plan`, `layer_range_rings`,
+  `layer_airways`, `layer_flight_plan`, `layer_traffic`, `layer_range_rings`,
   `layer_water`), `map_style` (section 5.6),
   `terrain_mode`, symbol options, `db paths` (default to
   /data/makerplane-data locations).
