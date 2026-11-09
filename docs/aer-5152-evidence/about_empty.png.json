@@ -1,0 +1,10 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "de037c4b-dirty",
+ "run": "local: docs/aer-5152-evidence/render_about_advisories.py docs/aer-5152-evidence",
+ "device": "Linux x86_64 (offscreen)",
+ "sha256": "bee16a31395feb2d4a719cfdcfb366f9bc1087040134e205e8b6f06d9b6d3610",
+ "created_utc": "2026-11-08T16:05:29Z",
+ "case": "empty",
+ "pyefis_version_pinned": "2.2.1"
+}
