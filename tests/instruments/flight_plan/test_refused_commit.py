@@ -32,7 +32,8 @@ def _flown():
 
 def _refused():
     """The issue's repro: a route with an RF leg and no turn direction,
-    which the engine answers with BADTURN."""
+    which the engine answers with ``BADTURN RF XRAYB`` (G61a: the page
+    says it in plain words)."""
     return fp_model.FlightPlan(name="REFUSED", waypoints=[
         fp_model.Waypoint(id="XRAYA", type="fix", lat=35.0, lon=-118.0),
         fp_model.Waypoint(id="XRAYB", type="fix", lat=35.1, lon=-118.0, pt="RF",
@@ -61,7 +62,7 @@ def _accept(fix):
     fix.db.set_value("FPLLDSEQ", int(fix.db.get_item("FPLSEQ").value))
 
 
-def _refuse(fix, reason="BADTURN"):
+def _refuse(fix, reason="BADTURN RF XRAYB"):
     fix.db.set_value("FPLMSG", reason)
 
 
@@ -123,13 +124,13 @@ def test_refused_commit_is_not_listed_as_the_loaded_plan(fix, qtbot, monkeypatch
     assert _ids(w._plan) == ["ALPHA", "BRAVO", "CHARL"]
 
     _other_display(fix).publish(_refused())
-    _refuse(fix, "BADTURN")
+    _refuse(fix)
     assert int(fix.db.get_item("FPLSEQ").value) == 2
     assert int(fix.db.get_item("FPLLDSEQ").value) == 1
 
     assert _ids(w._plan) == ["ALPHA", "BRAVO", "CHARL"]
     texts = _painted_text(w, monkeypatch)
-    assert "EDIT REFUSED: BADTURN" in texts
+    assert "EDIT REFUSED: ARC AT XRAYB: NO TURN DIRECTION" in texts
     assert not any(t.startswith("XRAY") for t in texts)
     assert any(t.startswith("ALPHA") for t in texts)
 
@@ -144,13 +145,13 @@ def test_a_refused_route_already_on_the_bus_at_start_is_never_listed(fix, qtbot,
     other.publish(_flown())
     _accept(fix)
     other.publish(_refused())
-    _refuse(fix, "BADTURN")
+    _refuse(fix)
 
     w = _widget(qtbot)
     assert _ids(w._plan) == []
     assert _ids(w._draft) == ["XRAYA", "XRAYB"]
     texts = _painted_text(w, monkeypatch)
-    assert "EDIT REFUSED: BADTURN" in texts
+    assert "EDIT REFUSED: ARC AT XRAYB: NO TURN DIRECTION" in texts
     assert not any(t.startswith("XRAY") for t in texts)
 
 
@@ -175,6 +176,7 @@ def test_own_refused_edit_reverts_and_is_kept_as_a_draft(fix, qtbot, monkeypatch
     w = _flying(fix, qtbot)
     _append(w, "DELTA", 34.5, -119.0)
     w._commit()
+    # A code this display has no words for (G61a) still shows, raw.
     _refuse(fix, "BADLEG 4")
 
     assert _ids(w._plan) == ["ALPHA", "BRAVO", "CHARL"]
@@ -185,20 +187,20 @@ def test_own_refused_edit_reverts_and_is_kept_as_a_draft(fix, qtbot, monkeypatch
 def test_draft_reopens_for_correction_and_a_load_ends_it(fix, qtbot, monkeypatch):
     w = _flying(fix, qtbot)
     _other_display(fix).publish(_refused())
-    _refuse(fix, "BADTURN")
+    _refuse(fix)
 
     _tap_on(w, w._reopen_draft)
     assert w._draft_open
     assert _ids(w._plan) == ["XRAYA", "XRAYB"]
     texts = _painted_text(w, monkeypatch)
-    assert "DRAFT - NOT LOADED: BADTURN" in texts
+    assert "DRAFT - NOT LOADED: ARC AT XRAYB: NO TURN DIRECTION" in texts
     assert "Flown plan" in texts
     monkeypatch.undo()
 
     # A correction the engine refuses again keeps the pilot in the draft.
     _append(w, "XRAYC", 35.2, -118.0)
     w._commit()
-    _refuse(fix, "BADTURN")
+    _refuse(fix)
     assert w._draft_open
     assert _ids(w._plan) == ["XRAYA", "XRAYB", "XRAYC"]
 
@@ -215,7 +217,7 @@ def test_draft_reopens_for_correction_and_a_load_ends_it(fix, qtbot, monkeypatch
 def test_flown_plan_button_leaves_the_draft_and_keeps_it(fix, qtbot):
     w = _flying(fix, qtbot)
     _other_display(fix).publish(_refused())
-    _refuse(fix, "BADTURN")
+    _refuse(fix)
     _tap_on(w, w._reopen_draft)
     _tap_on(w, w._show_flown_plan)
     assert not w._draft_open
@@ -230,7 +232,7 @@ def test_draft_has_no_active_leg(fix, qtbot):
     fix.db.set_value("FPLACTLEG", 2)
     assert w._active_index() == 1
     _other_display(fix).publish(_refused())
-    _refuse(fix, "BADTURN")
+    _refuse(fix)
     assert w._active_index() == 1
     w._reopen_draft()
     assert w._active_index() is None
@@ -266,6 +268,6 @@ def test_gateway_without_fplldseq_keeps_the_pre_key_behaviour(fix, qtbot):
     _bus(fix, loaded=False)
     w = _widget(qtbot)
     _other_display(fix).publish(_refused())
-    _refuse(fix, "BADTURN")
+    _refuse(fix)
     assert _ids(w._plan) == ["XRAYA", "XRAYB"]
     assert w._refusal is None
