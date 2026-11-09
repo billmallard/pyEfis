@@ -42,7 +42,9 @@ NDB, triangle for a fix, circle for an airport, filled diamond for a user
 waypoint and filled square for a point made on the map. Labels carry `IAF`,
 `FAF`, `MAP` or `MAHP` where the procedure says so, and altitude constraints
 are drawn with chart-style bars: a bar above for at-or-below, below for
-at-or-above, both for at.
+at-or-above, both for at. Where the airport, navaid or waypoint layer already
+shows the place, the plan keeps that layer's symbol and ident and adds only
+the ring and the role.
 
 ![The bench in the WINCH hold, 10 nm north up: the hold drawn as a magenta racetrack at WINCH, with the coastline, Avila and the airports around San Luis Obispo](../images/map/bench_map_hold.png)
 
