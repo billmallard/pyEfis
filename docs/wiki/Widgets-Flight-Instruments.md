@@ -108,10 +108,12 @@ No options in the configurator beyond the ones every instrument takes.
 
 ## `airspeed_trend_tape`
 
-A bar meant to grow up or down with the airspeed trend. It reads no FIX key
-today, so the bar does not move
-([#403](https://github.com/billmallard/pyEfis/issues/403)). Use the trend arrow
-on `airspeed_tape`.
+A white bar that grows up from the centre line while IAS is increasing and
+down while it is decreasing. Its length is the IAS rate of change over the
+last 3 seconds, and it reaches the top or bottom edge at 5 kt/s. The bar is
+not drawn while `IAS` is flagged bad, failed or old. Before
+[#403](https://github.com/billmallard/pyEfis/issues/403) was fixed the widget
+read no FIX key and the bar never moved.
 
 <!-- generated:airspeed_trend_tape -->
 
@@ -320,7 +322,7 @@ FIX keys it reads by default: `HEAD`.
 
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|
-| `fg_color` | Foreground | `#aaaaaa` | colour | heading-text colour |
+| `fg_color` | Foreground | `#ffffff` | colour | heading-text colour |
 | `bg_color` | Background | `#000000` | colour | background-box fill colour |
 | `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
 

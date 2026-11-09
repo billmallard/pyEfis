@@ -66,9 +66,9 @@ def test_vertical_bar_gauge(fix,qtbot):
     assert tracker.was_called_with("setColor", QColor(Qt.GlobalColor.black))
     widget.setNormalizeMode(True)
     assert widget._normalizeMode == True
-    assert widget.penGoodColor == widget.normalizePenColor
+    assert widget.pen_good_color == widget.normalizePenColor
     widget.setNormalizeMode(True)
-    assert widget.penGoodColor == widget.normalizePenColor
+    assert widget.pen_good_color == widget.normalizePenColor
     widget.setNormalizeMode(False)
     assert widget._normalizeMode == False
     widget.setPeakMode(True)
@@ -121,6 +121,39 @@ def test_vertical_bar_gauge(fix,qtbot):
     widget.paintEvent(None)
     widget.normalize_range = 400
     widget.paintEvent(None)
+
+def _indicator_pixel(widget):
+    # Centre of the indicator rect at the bar's midpoint, where the line sits
+    # in normalize mode when value == normalizeReference.
+    img = widget.grab().toImage()
+    x = int(widget.lineLeft + widget.lineWidth / 2)
+    y = int(widget.barTop + widget.barHeight / 2)
+    return img.pixelColor(x, y)
+
+
+def test_vertical_bar_normalize_mode_indicator_color(fix, qtbot):
+    # pyEfis #399: setNormalizeMode wrote penGoodColor, which nothing reads,
+    # so the indicator stayed white instead of turning normalizePenColor.
+    widget = gauges.VerticalBar()
+    widget.setDbkey("NUMOK")
+    widget.setupGauge()
+    qtbot.addWidget(widget)
+    widget.resize(300, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+    widget.normalize_range = 400
+    good = QColor(widget.pen_good_color)
+    assert _indicator_pixel(widget) != widget.normalizePenColor
+
+    widget.setNormalizeMode(True)
+    assert widget.pen_good_color == widget.normalizePenColor
+    assert widget.penColor == widget.normalizePenColor
+    assert _indicator_pixel(widget) == widget.normalizePenColor
+
+    widget.setNormalizeMode(False)
+    assert QColor(widget.pen_good_color) == good
+    assert widget.penColor == good
+
 
 def test_vertical_bar_gauge_min_size_false(fix,qtbot):
     widget = gauges.VerticalBar(min_size=False)

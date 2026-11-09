@@ -28,15 +28,15 @@ All seven areas below are **verified + deployed to the Pi**. "Code gaps" counts
 | Instrument | Spec | Suite | Open code gaps | Data-blocked (tracked) |
 |------------|------|-------|----------------|------------------------|
 | **HSI** | [hsi_widget_spec.md](hsi_widget_spec.md) | 25 pass | none (3 warning flags done) | — |
-| **Attitude (AI)** | [ai_widget_spec.md](ai_widget_spec.md) | 22 pass / 1 xfail | none | **AI-LIM-001** pitch-limit → AOA |
+| **Attitude (AI)** | [ai_widget_spec.md](ai_widget_spec.md) | all pass, no xfail (AI-LIM-001 closed, AER-5086) | none | — |
 | **Airspeed tape** | [airspeed_widget_spec.md](airspeed_widget_spec.md) | 12 pass | none | — |
 | **Altimeter tape** | [altimeter_widget_spec.md](altimeter_widget_spec.md) | 14 pass (+ `test_altsel.py`) | none | — (AL-BUG-001 shipped on `ALTSEL`, pyEfis #310) |
 | **VSI** | [vsi_widget_spec.md](vsi_widget_spec.md) | 11 pass | none | — |
 | **Turn coordinator / slip-skid** | [tc_widget_spec.md](tc_widget_spec.md) | 9 pass | none | — |
 | **Heading / compass** | [heading_widget_spec.md](heading_widget_spec.md) | (in HSI suite) 29 pass | none | — |
 
-**Net: no implementable code gap is open.** EFIS-ALTSEL-006 is implemented (below). The remaining
-data-blocked item waits on a fix-gateway key (further below).
+**Net: no implementable code gap is open.** EFIS-ALTSEL-006 is implemented (below). The last
+data-blocked item, AI-LIM-001, closed with AER-5086 (further below).
 
 ## What shipped (highlights)
 
@@ -81,17 +81,17 @@ the colour on 2026-11-01: amber on both the box and the bug.
 
 ## Data-blocked gaps (need a fix-gateway key)
 
-The remaining gap is specified, contracted, and carries an `xfail(strict)` gap-tracker test; it will
-auto-close (flip the run red) the moment the key is published. (AL-BUG-001 closed with pyEfis #310.)
-
-| pyEfis gap | Needs | fix-gateway tracking |
-|------------|-------|----------------------|
-| **AI-LIM-001** — pitch-limit / stall-margin on the AI (A.2.4) | an **AOA / stall-margin** key | **[billmallard/fix-gateway#13](https://github.com/billmallard/fix-gateway/issues/13)** (EFIS-AOA-001) |
+None open. AL-BUG-001 closed with pyEfis #310. AI-LIM-001 (pitch-limit / stall margin on the
+AI, A.2.4) closed with AER-5086, on `AOA` + `AOA.Warn` from fix-gateway's `onspeed` plugin
+(fix-gateway#121, which answered [billmallard/fix-gateway#13](https://github.com/billmallard/fix-gateway/issues/13),
+EFIS-AOA-001). Its marker's look is Bill's call on that PR's bench renders.
 
 ## Open enhancements (non-blocking, tracked in the specs)
 
 - **Airspeed:** takeoff inhibit of the low-speed red band (§17.7.a — needs a WoW/phase
-  signal); green-arc bottom is VS0 where §23.1545 wants VS1.
+  signal). The green-arc bottom (VS0 where §23.1545 wants VS1) is fixed by
+  [#396](https://github.com/billmallard/pyEfis/issues/396): green now starts at `Vs`, falling
+  back to `Vs0` when `Vs` is unset.
 - **Altimeter:** configurable range; the `screenbuilder_factory.py` `show_trend`/
   `trend_lookahead` forwarding is committed locally but **not yet deployed to the Pi** (the
   Pi's factory is a few commits behind — the trend still works via the dbkey default).

@@ -41,8 +41,11 @@ def _widget(qtbot, svs, width=400, height=600):
     if svs:
         # Configured and enabled, but not drawing: the scale choice must
         # not depend on whether the last frame happened to paint terrain.
+        # consume_async_dirty: the 30 Hz frame tick calls it whenever it
+        # lands inside the test; without it the run fails on timing.
         widget._svs_renderer = SimpleNamespace(
-            enabled=True, ready=False, gl_failed=False, drew_terrain=False)
+            enabled=True, ready=False, gl_failed=False, drew_terrain=False,
+            consume_async_dirty=lambda: False)
     qtbot.addWidget(widget)
     widget.resize(width, height)
     widget.show()
@@ -96,3 +99,13 @@ def test_heading_ticks_go_through_the_horizontal_mapping(fix, qtbot):
     widget.paintEvent(event)
     # Ticks every 10 deg: 90 sits 3 deg right of a heading of 87.
     assert any(d == pytest.approx(3.0) for d in seen)
+
+
+def test_svs_stub_survives_a_frame_tick(fix, qtbot):
+    """The frame timer ticks whenever it likes, so the stub must answer
+    everything _frame_tick asks of it. A missing method only fails when
+    the timer fires mid-test, which made this file flaky (AER-5123);
+    calling the tick directly makes that deterministic."""
+    _reset_ai_items(fix)
+    widget, _ = _widget(qtbot, svs=True)
+    widget._frame_tick()

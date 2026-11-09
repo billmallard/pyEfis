@@ -154,7 +154,9 @@ Every value carries fix-gateway's quality flags, and each instrument shows them.
 | A red value on a gauge | That item is annunciating. See [Engine Monitoring](Engine-Monitoring). |
 
 These come from the data, not from the display: check the sensor or its
-fix-gateway plugin.
+fix-gateway plugin. If every value fails at once, pyEFIS has heard nothing from
+fix-gateway for 2 s (the default); see the
+[link watchdog](Customizing-Beyond-the-Configurator#the-data).
 
 ## Units and brightness
 
@@ -169,5 +171,5 @@ Neither is on the bench panel; both come with the stock screens.
 ## See also
 
 - [Designing Your Panel](Designing-Your-Panel): building the panel.
-- [Screens Overview](Screens-Overview): the stock screens.
+- [Legacy](Legacy): the stock screens.
 - [Widget Reference](Widget-Reference): every instrument's options.

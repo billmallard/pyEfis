@@ -337,10 +337,12 @@ class Airspeed_Tape(QGraphicsView):
         x.setOpacity(self.backgroundOpacity)
 
         # Add Markings
-        # Green Bar
+        # Green Bar: VS1 -> VNO (sec 23.1545(b)(3)). The clean stall speed is the
+        # IAS aux "Vs"; when it is unset the bottom falls back to VS0 (#396).
+        green_bottom = self.Vs if self.Vs > 0 else self.Vs0
         r = QRectF(
             QPointF(0, -self.Vno * self.pph + tape_start),
-            QPointF(self.markWidth, -self.Vs0 * self.pph + tape_start),
+            QPointF(self.markWidth, -green_bottom * self.pph + tape_start),
         )
         x = self.scene.addRect(r, QPen(QColor(0, 155, 0)), QBrush(QColor(0, 155, 0)))
         x.setOpacity(self.foregroundOpacity)

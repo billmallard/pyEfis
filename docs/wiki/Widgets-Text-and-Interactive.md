@@ -397,4 +397,4 @@ configurations number them in blocks by include (for example `100011`).
   go when you select a data row.
 - A **checklist** keeps the knob until the knob's timeout.
 
-How the knob is wired is on [Screen Builder](Screen-Builder#encoder-control).
+How the knob is wired is on [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-knob).

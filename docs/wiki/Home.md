@@ -6,6 +6,11 @@ supplied by FIX-Gateway.
 
 > pyEFIS is experimental software. It is not certified. It is provided as-is
 > with no warranty, and any use of it is at your own risk.
+>
+> Do not use pyEFIS as the sole source of attitude information in instrument
+> meteorological conditions. Fly with independent standby attitude, airspeed
+> and altitude instruments: ones that share no sensor, computer, software,
+> power source or display with pyEFIS.
 
 ## The system in three parts
 
@@ -35,10 +40,11 @@ parts connect.
 | Lay out your panel and enter your aircraft's numbers | [Designing Your Panel](Designing-Your-Panel) |
 | Operate the display in the cockpit | [The Panel at a Glance](The-Panel-at-a-Glance), then a page per instrument: [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision), [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed), [The HSI](The-HSI), [Moving Map](Moving-Map), [Flight Plan](Flight-Plan), [Engine Monitoring](Engine-Monitoring) |
 | Keep the navigation data current | [Data Status, Updates and Notices](Data-Status-Updates-and-Notices) |
-| Edit screens and preferences by hand | [Screen Builder](Screen-Builder), [Preferences & Styling](Preferences-and-Styling) |
+| Edit screens and preferences by hand | [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator) |
 | Look up an instrument and its options | [Widget Reference](Widget-Reference) |
 | Look up the data keys pyEFIS reads and writes | [FIX Database Keys](FIX-Database-Keys) |
 | Run pyEFIS from a source checkout on a desktop | [Running from Source](Running-from-Source) |
+| See the original stock screens, which still ship | [Legacy](Legacy) |
 
 ## The other manuals
 
