@@ -178,6 +178,150 @@ def test_tall_panel_keeps_the_sector_and_clears_the_scale(w, h):
     assert g["apex"] >= 4.0 + g["box_h"] + g["fs"] * 0.5 - 1e-6
 
 
+def _arc_top_at(g, dx):
+    """Screen y of the compass arc at |x - cx| = dx, or None past its ends."""
+    if dx > g["r"] * math.sin(math.radians(g["half"])) + 1e-9:
+        return None
+    return g["own_y"] - math.sqrt(g["r"] ** 2 - dx ** 2)
+
+
+@pytest.mark.parametrize("family", [None, "DejaVu Sans"])
+@pytest.mark.parametrize("w,h", [(800, 480), (1024, 600), (650, 1000),
+                                 (600, 600), (480, 800)])
+def test_arc_stays_out_of_the_top_corner_blocks(w, h, family, qtbot):
+    """G11c: wherever the arc runs under a top corner block's worst-case
+    extent (its widest possible line, backing panel and clearance), it is
+    below the block's bottom. G11a's first portrait cut ran the arc through
+    both blocks; a height-sized radius with no block bound does it again."""
+    g = nd.expanded_geometry(w, h, family)
+    fs = g["fs"]
+    tl_w, tr_w = nd.block_widths(family, fs)
+    bottom = nd.corner_block_bottom(w, h)
+    for bw in (tl_w, tr_w):
+        inner = 6.0 + bw + nd.panel_pad(fs)
+        y = _arc_top_at(g, w / 2.0 - inner)
+        assert y is None or y >= bottom - 1e-6, (w, h, bw, y, bottom)
+
+
+@pytest.mark.parametrize("w,h", [(650, 1000), (480, 800)])
+def test_portrait_arc_uses_the_height(w, h):
+    """G11c: on the bench's 650x1000 panel G11a ended the arc 40% down, with
+    map beyond the selected range above it. The radius now grows with the
+    height until the blocks bind: the arc's top is in the top sixth."""
+    g = nd.expanded_geometry(w, h)
+    assert g["apex"] <= h / 6.0
+    # It grew past G11a's 40-degree radius, and the sector narrowed to pay.
+    assert g["r"] > nd.arc_reach(w, h) / math.sin(math.radians(40.0))
+    assert nd.ARC_MIN_HALF_DEG <= g["half"] < 40.0
+
+
+def test_landscape_geometry_is_g11a_unchanged():
+    """The 7-inch landscape panel keeps G11a's arc exactly: the TRK box at
+    the top edge binds first, and the sector is the full +/-60."""
+    g = nd.expanded_geometry(W, H, "DejaVu Sans")
+    assert g["r"] == pytest.approx(H * 0.82 - (4.0 + g["box_h"]
+                                               + g["fs"] * 0.5))
+    assert g["half"] == nd.ARC_HALF_DEG
+
+
+def _ring_layer(m):
+    return next(lay for lay in m._layers if lay.id == "range_rings")
+
+
+@pytest.mark.parametrize("w,h", [(W, H), (650, 1000)])
+def test_trk_box_keeps_the_range_ring_label_out(fix, qtbot, w, h):
+    """G11c: the full-range ring's top label lands on the lubber, just under
+    the TRK box. In EXPANDED it is kept out; the half-range one is drawn."""
+    m = _map(qtbot, nd_mode="expanded")
+    m.resize(w, h)
+    m._build_layers()
+    m._track = 72.0
+    x = m._transform()
+    rings = _ring_layer(m)
+    assert rings.label_angle == 0.0          # the default
+    radii = dict(zip(rings.fractions, rings.ring_radii_px(x)))
+    assert rings.label_kept_out(x, rings.label_rect(x, radii[1.0]))
+    assert not rings.label_kept_out(x, rings.label_rect(x, radii[0.5]))
+    # The keep-out is the TRK box the paint draws, down through the lubber.
+    g = nd.expanded_geometry(float(w), float(h), x.font_family)
+    box, _r, _s = nd.trk_box(x.font_family, g["fs"], g["box_h"], 72.0,
+                             x.cx, x.cy - g["r"])
+    (k,) = x.label_keep_out
+    assert (k.left(), k.top(), k.width()) == pytest.approx(
+        (box.left(), box.top(), box.width()))
+    assert k.bottom() > x.cy - g["r"]
+    # And paint honours it: a recording painter sees "5", never "10".
+    from unittest.mock import MagicMock
+    p = MagicMock()
+    rings.paint(p, x)
+    drawn = [c.args[-1] for c in p.drawText.call_args_list]
+    assert drawn == ["5"]
+    # Moved off the top by the option, it is drawn again.
+    rings.label_angle = 300.0
+    assert not rings.label_kept_out(x, rings.label_rect(x, radii[1.0]))
+    p = MagicMock()
+    rings.paint(p, x)
+    assert [c.args[-1] for c in p.drawText.call_args_list] == ["5", "10"]
+
+
+def test_no_keep_out_with_the_nd_off(fix, qtbot):
+    m = _map(qtbot)
+    m._build_layers()
+    assert m._transform().label_keep_out == ()
+
+
+def _render_nd(fix, qtbot, monkeypatch, panel=None):
+    for key, value in (("GS", 112.0), ("TAS", 118.0), ("WINDDIR", 300.0),
+                       ("WINDSPD", 14.0), ("FPLSTATE", 1),
+                       ("FPLPHASE", "TERM"), ("WPNAME", "KSBA"),
+                       ("WPDIS", 8.4), ("WPETE", 270)):
+        _define(fix, key, value)
+    if panel is not None:
+        monkeypatch.setattr(nd, "PANEL", panel)
+        monkeypatch.setattr(nd, "TRK_FILL", panel)
+    m = _map(qtbot, nd_mode="expanded", layer_terrain=False,
+             layer_roads=False, layer_rivers=False, layer_range_rings=False)
+    m._build_layers()
+    m._lat, m._lon, m._track = 34.38, -120.0, 72.0
+    img = QImage(W, H, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    m.render(img)
+    return m, img
+
+
+def test_blocks_and_trk_box_sit_on_backing(fix, qtbot, monkeypatch):
+    """G11c: each corner block has a dark panel under it and the TRK box is
+    filled, so a map label under them cannot overprint them. Sampled in the
+    panels' padding (no text there) against the same frame with the fills
+    made transparent, which shows the bare map background."""
+    from PyQt6.QtGui import QColor
+    m, img = _render_nd(fix, qtbot, monkeypatch)
+    _m, bare = _render_nd(fix, qtbot, monkeypatch, panel=QColor(0, 0, 0, 0))
+    g = nd.expanded_geometry(W, H, m.font_family)
+    fs = g["fs"]
+    lh = fs * 1.3
+    top = 4.0 + nd.status_chip_height(W) + 2.0
+    x = m._transform()
+    box, _r, _s = nd.trk_box(m.font_family, fs, g["box_h"], 72.0, x.cx,
+                             x.cy - g["r"])
+    probes = {
+        "top-left": (2, top + lh * 0.5),
+        # right of the wind arrow, below the wind line: only the lines'
+        # rect covers it (the chip's rect ends above ``top``)
+        "top-left lines": (6.0 + fs * 2.0 + 2, top + lh * 2 + fs * 1.5),
+        "top-right": (W - 3, top + lh * 0.5),
+        "bottom-left": (2, H - 6.0 - lh * 1.5),
+        "TRK box": (box.left() + 4, box.top() + 4),
+    }
+    for name, (px, py) in probes.items():
+        c = img.pixelColor(int(px), int(py))
+        b = bare.pixelColor(int(px), int(py))
+        assert b.lightness() > 0, name           # the probe sees the map
+        assert c.lightness() < b.lightness(), name
+    tb = img.pixelColor(int(box.left() + 4), int(box.top() + 4))
+    assert (tb.red(), tb.green(), tb.blue()) == (0, 0, 0)
+
+
 def _window_entry(x, cover_h):
     from pyefis.instruments.map.layers.terrain import TerrainLayer
     n, mpp, _c, _la, _lo = TerrainLayer()._window(
