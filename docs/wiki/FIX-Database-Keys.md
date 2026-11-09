@@ -65,10 +65,9 @@ airspeed bands; see
 source `NAVSRC` selects. The per-source keys (`NAV1CRS`, `NAV1CDI`, `GPSCRS`
 and so on) live in fix-gateway, whose `compute` plugin routes the selected one
 into the canonical keys. See [The HSI](The-HSI#nav-sources) and
-[The HSI: feeding it](The-HSI#feeding-it). The shipped `cdi-source` button
-assumes a different numbering
-([#412](https://github.com/billmallard/pyEfis/issues/412)); use the HSI's source
-tab.
+[The HSI: feeding it](The-HSI#feeding-it). `NAVSRC` is 0 NAV1, 1 NAV2, 2 GPS.
+The HSI's source tab and the shipped `cdi-source` button both cycle it in that
+order and colour it the same way: green for a NAV source, magenta for GPS.
 
 ## Flight plan
 
