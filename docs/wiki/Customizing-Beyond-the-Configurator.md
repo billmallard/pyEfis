@@ -23,7 +23,7 @@ then, and `preferences.yaml` must sit beside it.
 | `default.yaml` | The top of the configuration. Each section is a pointer into the `includes:` map of the preferences. |
 | `preferences.yaml` | The shipped preferences: styles, gauge slots, feature flags, includes. |
 | `preferences.yaml.custom` | Your changes to the preferences. |
-| `main/default.yaml` | Display-wide settings: the FIX-Gateway address (`FixServer`, `FixPort`), `nodeID`, `screenFullSize`, `screenColor` and `defaultScreen`. |
+| `main/default.yaml` | Display-wide settings: the FIX-Gateway address (`FixServer`, `FixPort`), the [link watchdog](#the-data) (`FixLinkTimeout`, `FixLinkPingKey`), `nodeID`, `screenFullSize`, `screenColor` and `defaultScreen`. |
 | `screens/` | One file per screen, plus `default_list.yaml`, the list of screens to load. |
 | `includes/` | Reusable groups of instruments. |
 | `buttons/` | Button definitions. |
@@ -387,6 +387,19 @@ value, a range (min and max), units, quality flags and **aux** values.
 
 Each instrument's page says how it shows them. The keys pyEFIS reads and writes
 are on [FIX Database Keys](FIX-Database-Keys).
+
+**Link watchdog.** pyEFIS asks fix-gateway for one input key every 0.5 s (every
+half `FixLinkTimeout` when that is under 1 s). If nothing comes back for
+`FixLinkTimeout` seconds (2.0), it marks every value failed; when the gateway
+answers again, it re-reads every key. Both settings go in `main/default.yaml`:
+
+| Key | Default | What it does |
+|---|---|---|
+| `FixLinkTimeout` | `2.0` | Seconds of silence before every value is marked failed. `0` turns the watchdog off. |
+| `FixLinkPingKey` | the first of `PITCH`, `ROLL`, `ALT`, `IAS` in the database | The key it asks for. Pick an input key pyEFIS never writes. |
+
+If the ping key is not in the database, the watchdog does not run and pyEFIS
+logs an error.
 
 ### Gauge colours
 
