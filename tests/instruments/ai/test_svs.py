@@ -251,6 +251,104 @@ class TestSVSRendererConfig:
         assert r._clearance_color(-50)  == COLOR_CONFLICT
 
 
+class TestTerrainPalette:
+    """Issue #394: the `palette` SVS option (configurator `svs_palette`)
+    recolours the five clearance bands on the OpenGL path. Before the fix
+    the terrain fragment shader hard-coded the stock colours and the
+    chosen palette reached no draw path at all."""
+
+    @staticmethod
+    def _rgb01(qcolors):
+        return tuple((c.redF(), c.greenF(), c.blueF()) for c in qcolors)
+
+    @pytest.mark.parametrize("name", ["clearance", "subdued",
+                                      "high_contrast"])
+    def test_palette_rgb01_matches_palettes_table(self, name):
+        from pyefis.instruments.ai.svs import _PALETTES
+        r = SVSRenderer({"enabled": True, "palette": name})
+        assert r.palette_rgb01() == self._rgb01(_PALETTES[name])
+
+    def test_default_and_unknown_palette_are_stock(self):
+        from pyefis.instruments.ai.svs import COLOR_WATER
+        stock = self._rgb01((COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING,
+                             COLOR_CONFLICT, COLOR_WATER))
+        assert SVSRenderer({"enabled": True}).palette_rgb01() == stock
+        assert SVSRenderer({"enabled": True,
+                            "palette": "nonsense"}).palette_rgb01() == stock
+
+    def test_non_stock_palettes_change_every_band(self):
+        stock = SVSRenderer({"enabled": True}).palette_rgb01()
+        for name in ("subdued", "high_contrast"):
+            bands = SVSRenderer({"enabled": True,
+                                 "palette": name}).palette_rgb01()
+            for i, (got, base) in enumerate(zip(bands, stock)):
+                assert got != base, f"{name} band {i} equals stock"
+
+    def test_terrain_shader_takes_bands_as_uniforms(self):
+        """The fragment shader must read the band colours from uniforms,
+        not compile-time constants, or no palette can reach the glass."""
+        import re
+        from pyefis.instruments.ai.svs_gl import (_FRAG_BODY,
+                                                  _PALETTE_UNIFORMS)
+        for name in _PALETTE_UNIFORMS:
+            assert re.search(rf"uniform\s+vec3\s+{name}\s*;", _FRAG_BODY), name
+            assert not re.search(rf"const\s+vec3\s+{name}\b", _FRAG_BODY)
+            # ...and the shader actually uses it.
+            assert re.search(rf"base\s*=\s*{name}\s*;", _FRAG_BODY), name
+
+    @pytest.mark.parametrize("name", ["clearance", "subdued",
+                                      "high_contrast"])
+    def test_gl_uploads_selected_palette(self, name):
+        """GL-free: the per-frame upload hands the selected palette to the
+        COLOR_* uniform locations resolved at link time."""
+        from pyefis.instruments.ai.svs import _PALETTES
+        from pyefis.instruments.ai.svs_gl import (SVSGLRenderer,
+                                                  _PALETTE_UNIFORMS)
+        r = SVSRenderer({"enabled": True, "palette": name})
+        gl = SVSGLRenderer(r)
+        gl._u = {u: 40 + i for i, u in enumerate(_PALETTE_UNIFORMS)}
+        prog = mock.Mock()
+        gl._set_palette_uniforms(prog)
+        got = {c.args[0]: c.args[1:] for c in
+               prog.setUniformValue.call_args_list}
+        want = dict(zip(gl._u.values(), self._rgb01(_PALETTES[name])))
+        assert got == want
+
+    def test_gl_render_recolours_terrain(self, tmp_path):
+        """Real GL: the same flat CAUTION-band scene renders in each
+        palette's caution colour. Skips without a GL context (CI)."""
+        from PyQt6.QtGui import QImage
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        px = {}
+        for name in ("clearance", "subdued", "high_contrast"):
+            r = SVSRenderer({
+                "enabled": True, "tile_path": str(root),
+                "renderer": "opengl", "palette": name,
+                "range_nm": 30, "auto_range": False,
+                "terrain_texture": 0.0, "terrain_grid": 0.0,
+            })
+            img = QImage(400, 300, QImage.Format.Format_RGB32)
+            img.fill(0x000000)
+            painter = QPainter(img)
+            try:
+                # 500 m terrain = 1640 ft; 2400 ft MSL -> ~760 ft clearance,
+                # inside the 500..1000 ft CAUTION band.
+                r.draw(painter, 400, 300, 32.5, -96.5, 2400.0,
+                       -10.0, 0.0, 0.0, 12.0)
+            finally:
+                painter.end()
+            if r.gl_failed or r._gl_draw_failures or r._gl_renderer is None:
+                pytest.skip("no GL context in this environment")
+            px[name] = img.pixelColor(200, 280).getRgb()[:3]
+        assert px["subdued"] != px["clearance"]
+        assert px["high_contrast"] != px["clearance"]
+        # high_contrast caution (245,190,0) is brighter than stock
+        # (180,130,0), subdued (120,95,15) darker, in red and green.
+        for ch in (0, 1):
+            assert px["subdued"][ch] < px["clearance"][ch] \
+                < px["high_contrast"][ch], px
+
+
 class TestSVSPerfLogForce:
     """AER-1976: svs_capture.py's --perf-log forces one summary report so a
     single-shot capture (which typically settles well under the profiler's
