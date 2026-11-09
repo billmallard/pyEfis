@@ -5,7 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPaintEvent, QPen
 from PyQt6.QtWidgets import QApplication, QGraphicsRectItem
 
-from pyefis.instruments import vsi
+from pyefis.instruments import helpers, vsi
 from tests.utils import track_calls
 
 
@@ -290,7 +290,9 @@ def test_alt_trend_tape_resize_config_and_redraw_states(fix, qtbot):
     widget.bad = False
     widget.old = True
     assert widget.getOld() is True
-    assert widget.vstext.toPlainText() == ""
+    # CERT1b: an expired VS is flagged like a failed one, bar removed.
+    assert widget.vstext.toPlainText() == "XXX"
+    assert widget.indicator_line is None
 
     widget.old = False
     widget.setVs(123.4)
@@ -411,8 +413,8 @@ def test_vsi_cat_dial_invalid_annunciation(fix, qtbot):
 
 
 def test_vsi_cat_tape_invalid_annunciation(fix, qtbot):
-    """VSI-TC-003 | VSI-ANN-001 | The VS tape annunciates invalid VS: fail -> XXX + bar
-    removed, old/bad -> blank value. AC 25-11B Table 4-6 (p.32, Major); ref sec 2."""
+    """VSI-TC-003 | VSI-ANN-001 | The VS tape annunciates invalid VS: fail or old -> XXX +
+    bar removed (CERT1b), bad -> blank value. AC 25-11B Table 4-6 (p.32, Major); ref sec 2."""
     _reset_vs_item(fix)
     widget = vsi.Alt_Trend_Tape()
     widget.myparent = _parent(qtbot, update_period=0)
@@ -428,13 +430,15 @@ def test_vsi_cat_tape_invalid_annunciation(fix, qtbot):
     assert widget.vstext.toPlainText() == ""               # bad -> no live value
     widget.bad = False
     widget.old = True
-    assert widget.vstext.toPlainText() == ""               # old -> no live value
+    assert widget.vstext.toPlainText() == "XXX"            # old -> flag (CERT1b)
+    assert widget.indicator_line is None                   # ...and bar removed
 
 
 def test_vsi_cat_pfd_invalid_annunciation(fix, qtbot):
     """VSI-TC-004 | VSI-ANN-001 | The PFD moving-dot VSI must annunciate invalid VS rather
     than keep drawing the magenta dot (misleading VS = Major, AC 25-11B Table 4-6 p.32).
-    Contract: on fail paintEvent draws a red flag (no magenta dot); on old/bad the dot greys."""
+    Contract: on fail or old paintEvent draws a red flag (no dot; CERT1b); on bad the dot
+    turns amber inside an amber frame."""
     item = _reset_vs_item(fix)
     widget = vsi.VSI_PFD()
     event = _show_widget(qtbot, widget)
@@ -448,9 +452,16 @@ def test_vsi_cat_pfd_invalid_annunciation(fix, qtbot):
 
     item.fail = False
     item.old = True
+    widget.repaint()
+    img = widget.grab().toImage()
+    c = img.pixelColor(img.width() // 2, img.height() // 2)
+    assert (c.red(), c.green(), c.blue()) == (255, 0, 0)      # expired -> red X (CERT1b)
+
+    item.old = False
+    item.bad = True
     with track_calls(QColor, "__init__") as tracker:
         widget.paintEvent(event)
-    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.gray))  # degraded -> grey
+    assert tracker.was_called_with("__init__", helpers.SUSPECT_TAPE_COLOR)  # suspect -> amber
 
 
 def test_vsi_cat_trend_tape_configurable_scale(fix, qtbot):

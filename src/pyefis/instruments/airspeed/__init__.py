@@ -265,6 +265,9 @@ class Airspeed_Tape(QGraphicsView):
             self.tas_item = fix.db.get_item("TAS")
             self._tas = self.tas_item.value
             self.tas_item.valueChanged[float].connect(self._on_tas_changed)
+            for sig in (self.tas_item.oldChanged, self.tas_item.badChanged,
+                        self.tas_item.failChanged):
+                sig[bool].connect(self._on_tas_flag)
 
         if self.show_trend:
             self._trend_history = []  # list of (monotonic_time, ias) tuples
@@ -459,9 +462,9 @@ class Airspeed_Tape(QGraphicsView):
 
         self.resetTransform()
         self.centerOn(self.scene.width() / 2, -self._airspeed * self.pph + tape_start)
-        if self.item.fail:
+        if helpers.tape_invalid(self.item) or self.item.bad:
             # centerOn() may blit-scroll the viewport, which would drag the
-            # fixed failed-tape X along with the (hidden) scale.
+            # fixed failed-tape X or suspect frame along with the scale.
             self.viewport().update()
         self.numerical_display.value = self._airspeed
 
@@ -471,7 +474,9 @@ class Airspeed_Tape(QGraphicsView):
         # scale in/out at the top and bottom instead of hard-clipping.
         # Overlays below (TAS box, pointer, trend) stay solid on top.
         _fade = bool(getattr(self, "edge_fade", False))
-        failed = self.item.fail
+        # CERT1b: an expired (old) IAS is frozen at its last value, so it
+        # gets the failed look too.
+        failed = helpers.tape_invalid(self.item)
         w = self.width()
         h = self.height()
         if failed:
@@ -490,6 +495,8 @@ class Airspeed_Tape(QGraphicsView):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         if failed:
             helpers.draw_failed_tape_x(p, QRectF(self.viewport().rect()))
+        elif self.item.bad:
+            helpers.draw_suspect_tape_frame(p, QRectF(self.viewport().rect()))
 
         # TAS box at the bottom of the tape. P5c: the same rounded, translucent
         # readout panel the boxed IAS uses (it used to be a solid-white slab
@@ -522,12 +529,7 @@ class Airspeed_Tape(QGraphicsView):
             p.drawText(QRectF(0, box_y + 2, w, lbl_px + 2),
                        int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), "TAS")
             p.setFont(val_font)
-            if self.tas_item.fail:
-                tas_str = "---"
-            elif self.tas_item.bad or self.tas_item.old:
-                tas_str = "---"
-            else:
-                tas_str = str(int(round(self._tas)))
+            tas_str = self.tas_text()
             p.drawText(QRectF(0, box_y + lbl_px + 2, w, val_px + 4),
                        int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter), tas_str)
 
@@ -586,16 +588,32 @@ class Airspeed_Tape(QGraphicsView):
         self._tas = tas
         self.viewport().update()
 
+    def tas_text(self):
+        """The TAS box value: dashes under an invalid TAS, and (CERT1b) under
+        a failed or expired IAS too. TAS comes off the same pitot, so a live
+        number there is either wrong as well or contradicts the X beside it."""
+        if (helpers.tape_invalid(self.item) or helpers.tape_invalid(self.tas_item)
+                or self.tas_item.bad):
+            return "---"
+        return str(int(round(self._tas)))
+
+    def _on_tas_flag(self, b):
+        self.viewport().update()
+
     airspeed = property(getAirspeed, setAirspeed)
 
     def setAsOld(self, b):
         self.numerical_display.old = b
+        self.numerical_display.fail = bool(b or self.item.fail)
+        self.viewport().update()
 
     def setAsBad(self, b):
         self.numerical_display.bad = b
+        self.viewport().update()
 
     def setAsFail(self, b):
-        self.numerical_display.fail = b
+        # CERT1b: an expired (old) key keeps the readout's XXX too.
+        self.numerical_display.fail = bool(b or self.item.old)
         self.viewport().update()
 
     # We don't want this responding to keystrokes
