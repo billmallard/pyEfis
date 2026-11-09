@@ -915,15 +915,28 @@ def test_fetch_fixture_rejects_a_sha256_mismatch(mpf, monkeypatch, tmp_path):
                           manifest_path=manifest)
 
 
-def test_checked_in_manifest_is_honestly_unpublished(mpf):
-    """Pins the current state of tools/perf_fixtures.json so a future
-    change to it (e.g. someone fabricating a sha256 without actually
-    publishing) is a visible diff, not a silent drift."""
+def test_checked_in_manifest_pins_the_release_assets(mpf):
+    """Pins tools/perf_fixtures.json to the perf-fixtures-2026-09
+    prerelease and the sha256/bytes AVIONICS-DATA reported when it cut
+    the real packs (AER-1137, AER-1138), so a change to any pin is a
+    visible diff, not a silent drift. The clean-cache fetch against these
+    exact values is recorded on AER-1138."""
     manifest = mpf._load_manifest()
-    for scene in mpf.SCENES:
+    assert "status" not in manifest
+    expected = {
+        "raleigh": (83_891_162, "249d4d2b861729ed404568f1139cd09f"
+                                "85aeaa263c5ebd7c88284965465f81a4"),
+        "key_west": (34_482_134, "de1fa2959dc9b2f9f83244118e085e51"
+                                 "e898eeadb39652c37ffe11da177cc663"),
+    }
+    assert set(manifest["scenes"]) == set(mpf.SCENES) == set(expected)
+    for scene, (size, sha256) in expected.items():
         entry = manifest["scenes"][scene]
-        assert entry["sha256"] is None
-        assert entry["url"] is None
+        assert entry["url"] == mpf.release_asset_url(
+            "perf-fixtures-2026-09", scene)
+        assert entry["sha256"] == sha256
+        assert entry["bytes"] == size
+        assert entry["bytes"] < mpf.MAX_PACK_BYTES
 
 
 # --- _publish --------------------------------------------------------------
