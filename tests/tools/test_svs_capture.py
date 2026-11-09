@@ -97,6 +97,31 @@ def test_nonzero_magvar_changes_only_magvar(svs_capture):
         assert shifted[key] == baseline[key]
 
 
+def test_bank_bug_omitted_leaves_the_key_undefined(svs_capture):
+    """No --bank-bug: BANKBUG is not seeded, so an existing capture is
+    unchanged (the AI draws no bug and the bank scale is not editable)."""
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+    ])
+    assert args.bank_bug is None
+    values = svs_capture.seed_mock_fix(_args())
+    assert "BANKBUG" not in values
+
+
+def test_bank_bug_seeds_the_key(svs_capture):
+    """AER-5149: --bank-bug 45 defines BANKBUG and writes 45, valid."""
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+        "--bank-bug", "45",
+    ])
+    assert args.bank_bug == 45.0
+    values = svs_capture.seed_mock_fix(_args(bank_bug=45.0))
+    item = svs_capture.fix.db.get_item("BANKBUG")
+    assert values["BANKBUG"] == 45.0
+    assert item.value == 45.0
+    assert not (item.bad or item.fail)
+
+
 def test_magvar_direction_matches_west_positive_convention(svs_capture):
     """West-positive MAGVAR (FAA "West is best": MAG = TRUE + W_VAR) means
     the AI widget's ``head_true = HEAD - MAGVAR`` must read LOWER than the

@@ -199,6 +199,14 @@ def parse_args(argv=None):
         "capture byte-for-byte",
     )
 
+    pose.add_argument(
+        "--bank-bug",
+        type=float,
+        default=None,
+        help="target-bank bug, degrees (FIX key BANKBUG, AER-5149). Omitted: "
+        "the key is not defined, so a capture is unchanged from before it",
+    )
+
     view = p.add_argument_group("view")
     view.add_argument("--range", type=float, default=30.0, dest="range_nm")
     view.add_argument(
@@ -709,6 +717,13 @@ def seed_mock_fix(args):
         "ALT": args.alt,
         "MAGVAR": args.magvar,
     }
+    if getattr(args, "bank_bug", None) is not None:
+        fix.db.define_item("BANKBUG", "Bank bug", "float", 0.0, 65.0, "deg",
+                           0, "")
+        item = fix.db.get_item("BANKBUG")
+        item.bad = False
+        item.fail = False
+        values["BANKBUG"] = args.bank_bug
     for key, value in values.items():
         fix.db.set_value(key, value)
     return values
