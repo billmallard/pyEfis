@@ -3,7 +3,7 @@ from unittest import mock
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPaintEvent, QPen
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QGraphicsRectItem
 
 from pyefis.instruments import vsi
 from tests.utils import track_calls
@@ -110,41 +110,138 @@ def test_vsi_pfd_resize_without_font_mask(fix, qtbot):
     assert widget.fontSize >= 0
 
 
-def test_as_trend_tape_tracks_changed_and_unchanged_values(fix, qtbot):
+class _Clock:
+    """Hand-stepped stand-in for time.monotonic."""
+
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def _reset_ias_item(fix, value=110.0):
+    item = fix.db.get_item("IAS")
+    item.value = value
+    item.bad = False
+    item.old = False
+    item.fail = False
+    return item
+
+
+def _trend_bar_height(widget):
+    """Signed height of the trend bar in the scene: positive = drawn upward
+    (accelerating), 0 = no bar. Reads the scene, not widget internals, so it
+    holds against any implementation that draws a bar at all."""
+    bars = [i for i in widget.scene.items()
+            if isinstance(i, QGraphicsRectItem)
+            and i.rect().width() < widget.width()]
+    if not bars:
+        return 0.0
+    r = bars[0].rect()
+    up = r.center().y() < widget.height() / 2
+    return r.height() if up else -r.height()
+
+
+def test_as_trend_tape_bar_follows_changing_ias(fix, qtbot):
+    # G74 / pyEfis #403: the placed tape must subscribe to IAS itself. Drive
+    # the FIX item only -- never the widget -- and the bar has to move.
+    item = _reset_ias_item(fix, 100.0)
     widget = vsi.AS_Trend_Tape()
-    _show_widget(qtbot, widget)
+    clock = _Clock()
+    widget._clock = clock
+    _show_widget(qtbot, widget, width=80, height=400)
+    assert _trend_bar_height(widget) == 0.0
 
-    widget.setAS_Trend(10)
+    for _ in range(10):          # +2 kt/s for 1 s
+        clock.t += 0.1
+        item.value = item.value + 0.2
+    accel = _trend_bar_height(widget)
+    assert accel > 0
 
-    assert widget._airspeed == 10
-    assert widget._airspeed_trend == [10]
-    assert widget._airspeed_diff == 600
+    for _ in range(40):          # -2 kt/s, long enough to flush the window
+        clock.t += 0.1
+        item.value = item.value - 0.2
+    assert _trend_bar_height(widget) < 0
+    assert abs(_trend_bar_height(widget)) == pytest.approx(accel, rel=0.05)
 
-    widget.setAS_Trend(10)
 
-    assert widget._airspeed == 10
-    assert widget._airspeed_trend == [10, 0]
+def test_as_trend_tape_bar_returns_to_zero_when_ias_holds(fix, qtbot):
+    item = _reset_ias_item(fix, 100.0)
+    widget = vsi.AS_Trend_Tape()
+    clock = _Clock()
+    widget._clock = clock
+    _show_widget(qtbot, widget, width=80, height=400)
+    for _ in range(10):
+        clock.t += 0.1
+        item.value = item.value + 0.5
+    assert _trend_bar_height(widget) > 0
 
-    widget._airspeed_trend = list(range(widget.freq))
-    widget.setAS_Trend(20)
+    # A steady IAS emits no valueChanged; the periodic sample must still
+    # age the old acceleration out of the window.
+    for _ in range(int(widget.trend_window / 0.1) + 2):
+        clock.t += 0.1
+        widget._sample()
+    assert _trend_bar_height(widget) == 0.0
 
-    assert len(widget._airspeed_trend) == widget.freq
-    assert widget._airspeed_trend[-1] == 10
 
-    widget._airspeed_trend = list(range(widget.freq))
-    widget.setAS_Trend(20)
+def test_as_trend_tape_scale_clamps_to_half_height(fix, qtbot):
+    item = _reset_ias_item(fix, 50.0)
+    widget = vsi.AS_Trend_Tape()
+    clock = _Clock()
+    widget._clock = clock
+    _show_widget(qtbot, widget, width=80, height=400)
+    # Half of full scale -> a quarter of the widget height.
+    for _ in range(10):
+        clock.t += 0.1
+        item.value = item.value + widget.max_rate / 2 * 0.1
+    assert _trend_bar_height(widget) == pytest.approx(100, abs=2)
+    # Far past full scale -> pinned at the edge, not off-scene.
+    for _ in range(40):
+        clock.t += 0.1
+        item.value = item.value + widget.max_rate * 0.3
+    assert _trend_bar_height(widget) == pytest.approx(200, abs=1)
 
-    assert len(widget._airspeed_trend) == widget.freq
-    assert widget._airspeed_trend[-1] == 0
 
-    class NeitherEqualNorDifferent:
-        def __eq__(self, other):
-            return False
+@pytest.mark.parametrize("flag", ["bad", "fail", "old"])
+def test_as_trend_tape_hides_bar_on_invalid_ias(fix, qtbot, flag):
+    item = _reset_ias_item(fix, 100.0)
+    widget = vsi.AS_Trend_Tape()
+    clock = _Clock()
+    widget._clock = clock
+    _show_widget(qtbot, widget, width=80, height=400)
+    for _ in range(10):
+        clock.t += 0.1
+        item.value = item.value + 0.5
+    assert _trend_bar_height(widget) > 0
 
-        def __ne__(self, other):
-            return False
+    setattr(item, flag, True)
+    assert _trend_bar_height(widget) == 0.0
+    setattr(item, flag, False)
+    assert _trend_bar_height(widget) > 0
 
-    widget.setAS_Trend(NeitherEqualNorDifferent())
+
+def test_as_trend_tape_accepts_quoted_yaml_options(fix, qtbot):
+    # apply_options setattrs raw YAML; managed panels quote scalars.
+    item = _reset_ias_item(fix, 100.0)
+    widget = vsi.AS_Trend_Tape()
+    clock = _Clock()
+    widget._clock = clock
+    widget.max_rate = "2"
+    widget.trend_window = "1"
+    _show_widget(qtbot, widget, width=80, height=400)
+    for _ in range(10):
+        clock.t += 0.1
+        item.value = item.value + 0.1      # 1 kt/s = half of full scale
+    assert _trend_bar_height(widget) == pytest.approx(100, abs=2)
+
+
+def test_as_trend_tape_redraw_before_first_resize_is_safe(fix, qtbot):
+    _reset_ias_item(fix)
+    widget = vsi.AS_Trend_Tape()
+    qtbot.addWidget(widget)
+    widget.setAS_Trend(120.0)
+    widget._sample()
 
 
 def test_alt_trend_tape_resize_config_and_redraw_states(fix, qtbot):
@@ -344,9 +441,10 @@ def test_vsi_cat_pfd_invalid_annunciation(fix, qtbot):
     widget.value = 500
 
     item.fail = True
-    with track_calls(QPen, "__init__") as tracker:
-        widget.paintEvent(event)
-    assert tracker.was_called_with("__init__", QColor(Qt.GlobalColor.red))   # red fail flag
+    widget.repaint()
+    img = widget.grab().toImage()
+    c = img.pixelColor(img.width() // 2, img.height() // 2)
+    assert (c.red(), c.green(), c.blue()) == (255, 0, 0)      # red fail X (CERT1a)
 
     item.fail = False
     item.old = True

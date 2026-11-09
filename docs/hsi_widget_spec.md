@@ -329,12 +329,17 @@ failed, and is removed only when a valid signal drives the needle.*
 
 | ID | Flag | Trigger | Required response | Cite | Status |
 |----|------|---------|-------------------|------|--------|
-| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag; compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
-| **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) fail/bad/absent, or no lateral signal received (`CDIV` = 0) | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
-| **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (ILS tuned, LOC valid) but the GS signal is invalid/unstable/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **DONE** — red GS flag; diamond suppressed |
+| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag inside the card, upper right (clear of the readout panels); compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
+| **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) stale/bad/fail/absent, no lateral signal received (`CDIV` = 0), or `COURSE` bad/fail | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
+| **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (`GSV` ≥ 0.5, or `GSV` absent) but the GS signal is stale/invalid/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **DONE** — red GS flag; diamond suppressed |
 
 The HSI-ANN-003 distinction matters: **no glideslope tuned/expected → no GS scale**
-(handled by `GSV`); **glideslope expected but signal lost → GS *flag*** (still a gap).
+(handled by `GSV`); **glideslope expected but signal lost → GS *flag***.
+
+**HSI-ANN-004 (rule, Bill 2026-11-08).** The HSI never annunciates a failure only by
+removing a symbol: every reason the CDI bar is removed raises NAV, and every reason an
+expected GS diamond is removed raises GS, on the rose and the arc alike. A unit test
+sweeps the signal-quality combinations to hold this.
 
 ### 7.2 Per-signal failure response (HSI-FAIL)
 
@@ -344,19 +349,23 @@ convention, and no element is left showing its last-good value after loss:
 | Signal | valid | old (stale) | bad (invalid) | fail | absent |
 |--------|-------|-------------|---------------|------|--------|
 | `HEAD` | normal | grey card | grey + HDG flag (ANN-001) | HDG flag, freeze/blank card | HDG flag |
-| `COURSE` | normal | grey pointer | grey pointer | remove pointer | pointer removed |
-| `CDI` | normal | hide bar | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
+| `COURSE` | normal | grey pointer | remove pointer + CDI scale/bar + NAV flag; CRS readout `---°` | remove pointer + CDI scale/bar + NAV flag; CRS readout `---°` | pointer removed |
+| `CDI` | normal | hide + NAV flag | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
 | `CDIV` | CDI on its own quality | — | — | — | CDI on its own quality; `CDIV` = 0 → hide bar + NAV flag (ANN-002) |
-| `GSI`/`GSV` | normal | hide diamond | hide diamond | hide/flag (ANN-003) | no scale |
+| `GSI`/`GSV` | normal | hide + GS flag | hide + GS flag | hide + GS flag (ANN-003) | no scale |
 | `HEADBUG` | normal | grey bug | grey bug | remove bug | no bug |
 | `TRACKM`/`GS` | normal | hide diamond | hide diamond | hide diamond | no diamond |
 | `TOFROM` | normal | hide | hide | hide | hide |
 | `BRG1`/`BRG2` | normal | hide needle | hide needle | hide needle | no needle |
 
 The widget now renders all three flags (ANN-001..003), and `_showGSI` hides on `fail`
-too. Open items: gating `_showCDI` on `fail` (currently old/bad only — the NAV flag
-covers annunciation, but a pure-fail CDI is not yet removed) and confirming
-`HEAD`/`COURSE`/`HEADBUG` each fully honor the convention.
+too. `_showCDI` hides on `fail` as well as old/bad (G66, pyEfis#392): the bar is gone
+whenever the NAV flag shows, on the rose and the arc. A bad or failed `COURSE` has no
+direction to draw, so it removes the pointer and the deviation scale rotated to it, and
+the CRS readout shows dashes rather than the failed value (000), and the NAV flag
+shows. A CRS edit in progress still shows the value being edited. A stale CDI or GSI
+now raises its flag too. Open items: the grey `old` treatments (`COURSE`,
+`HEADBUG`) and confirming `HEAD`/`HEADBUG` each fully honor the convention.
 
 ### 7.3 Colour (HSI-COLOR)
 
