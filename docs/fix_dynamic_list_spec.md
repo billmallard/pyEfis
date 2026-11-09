@@ -455,8 +455,11 @@ May assume:
   entry the writer never evicts means the writer itself has stopped; the
   display drops it on its own timer. React to `TFCkTGT` writes; when one
   arrives, the slot's other fields are already that target's (§2.5, §2.6).
-- `TFCCOUNT` `fail` (source failed, §4.7) or `old` (writer stopped) means an
-  empty map is not an empty sky; the display annunciates it.
+- `TFCCOUNT` `fail` (source failed, §4.7) or `old` (writer stopped), after
+  the block has been seen live, means an empty map is not an empty sky; the
+  display annunciates it. A block that has never been live is an
+  installation with no receiver (the gateway's default database carries the
+  block regardless) and is not a failure.
 - Slot numbers carry no meaning and an entry may move slot after eviction and
   re-acquisition; key any display state (trails, selection) by `TFCkTGT`, not
   by `k`.

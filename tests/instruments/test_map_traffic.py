@@ -276,6 +276,23 @@ def test_no_palt_key_dashes_relative_altitude(fix, qtbot):
     assert layer.palt_ft() is None
 
 
+def test_a_block_never_seen_live_is_no_traffic_not_a_failure(fix, qtbot):
+    """The default gateway database carries TFC with no receiver fitted:
+    TFCCOUNT sits old (or fail) from boot. That is not TFC FAIL."""
+    _define_block(fix)
+    fix.db.get_item("TFCCOUNT").old = True
+    layer, _owner = _layer(qtbot)
+    assert layer.source_failed() is False
+    fix.db.get_item("TFCCOUNT").fail = True
+    assert layer.source_failed() is False
+    # the receiver comes up, then fails: now it is a failure
+    it = fix.db.get_item("TFCCOUNT")
+    it.old = it.fail = False
+    fix.db.set_value("TFCCOUNT", 1)
+    it.fail = True
+    assert layer.source_failed() is True
+
+
 def test_source_failed_follows_tfccount(fix, qtbot):
     _define_block(fix)
     layer, _owner = _layer(qtbot)

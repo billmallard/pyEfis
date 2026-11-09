@@ -182,6 +182,7 @@ class TrafficBlock:
         self._by_ident = {}       # TGT value -> Target
         self._slot_ident = {}     # slot n -> TGT value held there
         self.slots = []
+        self._seen_live = False
         self.count_item = self._get("TFCCOUNT")
         n = 1
         while n <= MAX_SLOTS:
@@ -194,8 +195,10 @@ class TrafficBlock:
             tgt.failChanged.connect(lambda _f, n=n: self.read_slot(n))
             n += 1
         if self.count_item is not None:
-            self.count_item.failChanged.connect(lambda _f: self._changed())
-            self.count_item.oldChanged.connect(lambda _o: self._changed())
+            self.count_item.valueWrite[int].connect(lambda _v: self._count())
+            self.count_item.failChanged.connect(lambda _f: self._count())
+            self.count_item.oldChanged.connect(lambda _o: self._count())
+            self._count()
         for n in self.slots:
             self.read_slot(n)
 
@@ -208,6 +211,12 @@ class TrafficBlock:
             return self._db.get_item(key)
         except KeyError:
             return None
+
+    def _count(self):
+        c = self.count_item
+        if not (c.fail or c.old):
+            self._seen_live = True
+        self._changed()
 
     def _changed(self):
         if self._on_change is not None:
@@ -264,9 +273,18 @@ class TrafficBlock:
 
     def source_failed(self):
         """True when the writer reports its source failed (``TFCCOUNT``
-        ``fail``) or has stopped writing (``TFCCOUNT`` ``old``)."""
+        ``fail``) or has stopped writing (``TFCCOUNT`` ``old``) -- once it
+        has been seen working. The gateway's default database carries the
+        ``TFC`` block whether or not a receiver is fitted, so a block that
+        has never been live is an installation without traffic, not a
+        failure, and gets no chip."""
         c = self.count_item
-        return c is not None and bool(c.fail or c.old)
+        if c is None:
+            return False
+        if not (c.fail or c.old):
+            self._seen_live = True
+            return False
+        return self._seen_live
 
 
 def _float_or_none(v):

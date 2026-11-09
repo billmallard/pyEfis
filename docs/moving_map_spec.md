@@ -344,7 +344,10 @@ fills from GDL90 (`layers/traffic.py`). The contract is
   absent / `old` / `bad` / `fail`. A trend arrow at +-500 fpm; none when
   `TFCkVS` is `bad`.
 - `TFC FAIL` chip, bottom left, when `TFCCOUNT` is `fail` (receiver failed)
-  or `old` (writer stopped).
+  or `old` (writer stopped) after it has been seen live. Never live since
+  pyEfis started = no receiver fitted, no chip (the gateway's default
+  database carries the block either way); a receiver that never comes up
+  at all is therefore silent.
 - No geometric ownship filter (Bill's F6 ruling): a target on top of ownship
   is drawn.
 - Not yet: absolute-altitude mode, air/ground and emitter-category symbols,

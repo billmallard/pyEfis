@@ -1276,7 +1276,7 @@ _register(InstrumentSpec(
              help="ADS-B traffic from the FIX TFC block: relative altitude "
                   "(needs PALT), trend arrow, alerted targets flash yellow, "
                   "degraded targets drawn open, stale ones grey; TFC FAIL "
-                  "when the receiver stops (no database)"),
+                  "when a working receiver stops (no database)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = "

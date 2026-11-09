@@ -12,12 +12,13 @@ the document's own vectors.
 The scenario places six targets around ownship, one per display state the
 P3b definition of done names (plus the non-directional symbol):
 
-  normal      1.0 NM, 330 deg relative, +500 ft, level
-  alert       0.8 NM, 030 deg relative, -300 ft, climbing 1000 fpm, alert bit
-  degraded    1.3 NM, 290 deg relative, +1500 ft, NIC 3 / NACp 3
-  stale       1.2 NM, 070 deg relative, +800 ft; reports stop after --warmup
-  alt-invalid 1.0 NM, 230 deg relative, altitude 0xFFF
-  no-track    1.4 NM, 130 deg relative, -1200 ft, track not valid (m = 00)
+  normal      2.5 NM, 330 deg relative, +500 ft, level
+  alert       2.0 NM, 030 deg relative, -300 ft, climbing 1000 fpm, alert bit
+  degraded    3.2 NM, 290 deg relative, +1500 ft, NIC 3 / NACp 3
+  stale       3.0 NM, 070 deg relative, +800 ft, descending; reports stop
+              after --warmup
+  alt-invalid 2.5 NM, 230 deg relative, altitude 0xFFF
+  no-track    3.5 NM, 130 deg relative, -1200 ft, track not valid (m = 00)
 
 With ``--ownship`` it also writes ownship LAT/LONG/ALT/BARO/TRACK/TRACKM
 over netfix once a second (fix-gateway's own ``fixgw.netfix`` client), for a
@@ -120,12 +121,12 @@ def offset(lat, lon, brg_deg, nm):
 
 #: name, relative bearing, NM, relative alt (None = invalid), report kwargs
 SCENARIO = (
-    ("normal", 330, 1.0, 500, dict(vs_fpm=0, trk_rel=150, callsign="N111NM")),
-    ("alert", 30, 0.8, -300, dict(vs_fpm=1000, trk_rel=200, alert=1, callsign="N222AL")),
-    ("degraded", 290, 1.3, 1500, dict(vs_fpm=0, trk_rel=90, nic=3, nacp=3, callsign="N333DG")),
-    ("stale", 70, 1.2, 800, dict(vs_fpm=-600, trk_rel=250, callsign="N444ST")),
-    ("alt-invalid", 230, 1.0, None, dict(vs_fpm=0, trk_rel=40, callsign="N555AI")),
-    ("no-track", 130, 1.4, -1200, dict(vs_fpm=0, trk_rel=0, ttyp=0, callsign="N666NT")),
+    ("normal", 330, 2.5, 500, dict(vs_fpm=0, trk_rel=150, callsign="N111NM")),
+    ("alert", 30, 2.0, -300, dict(vs_fpm=1000, trk_rel=200, alert=1, callsign="N222AL")),
+    ("degraded", 290, 3.2, 1500, dict(vs_fpm=0, trk_rel=90, nic=3, nacp=3, callsign="N333DG")),
+    ("stale", 70, 3.0, 800, dict(vs_fpm=-600, trk_rel=250, callsign="N444ST")),
+    ("alt-invalid", 230, 2.5, None, dict(vs_fpm=0, trk_rel=40, callsign="N555AI")),
+    ("no-track", 130, 3.5, -1200, dict(vs_fpm=0, trk_rel=0, ttyp=0, callsign="N666NT")),
 )
 
 
