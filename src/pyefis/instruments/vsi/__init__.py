@@ -265,23 +265,18 @@ class VSI_PFD(QWidget):
         # Draw the Black Background
         p.fillRect(0, 0, w, h, QColor(0,0,0,40))
 
-        # Insert Background
-        p.drawPixmap(0, 0, self.background)
-
         # VS-invalid annunciation (AC 25-11B Table 4-6: loss / misleading
         # vertical speed = Major). On fail remove the moving dot and show a red
         # X so a frozen dot cannot be read as a valid vertical speed; on old/bad
         # grey the dot instead of magenta. Same fail/old/bad convention the VSI
-        # dial and tape already follow.
+        # dial and tape already follow. CERT1a: the X spans the whole tape and
+        # the scale is blanked, like the airspeed and altitude tapes.
         if self.item.fail:
-            pen = QPen(QColor(Qt.GlobalColor.red))
-            pen.setWidth(max(2, int(w * 0.08)))
-            p.setPen(pen)
-            m = w * 0.30
-            cx, cy = w / 2.0, h / 2.0
-            p.drawLine(QPointF(cx - m, cy - m), QPointF(cx + m, cy + m))
-            p.drawLine(QPointF(cx - m, cy + m), QPointF(cx + m, cy - m))
+            helpers.draw_failed_tape_x(p, QRectF(0, 0, w, h))
             return
+
+        # Insert Background
+        p.drawPixmap(0, 0, self.background)
 
         dot_color = (QColor(Qt.GlobalColor.gray)
                      if (self.item.old or self.item.bad)
@@ -526,17 +521,23 @@ class Alt_Trend_Tape(QGraphicsView):
         self.pph = float(remaining_height) / (maxvs * 2)
 
         tapePen = QPen(QColor(Qt.GlobalColor.white))
+        # The graduations, hidden as one under a failed VS (CERT1a).
+        self._scale_items = []
         for i in range(maxvs, -maxvs - 1, -minor):
             y = self.y_offset(i)
             if i % numbered == 0:
-                self.scene.addLine(w_2 + 5, y, w, y, tapePen)
+                self._scale_items.append(
+                    self.scene.addLine(w_2 + 5, y, w, y, tapePen))
                 t = self.scene.addText(str(int(i / 100)))
                 t.setFont(f)
                 t.setDefaultTextColor(QColor(Qt.GlobalColor.white))
                 t.setX(0)
                 t.setY(y - t.boundingRect().height() / 2)
+                self._scale_items.append(t)
             else:
-                self.scene.addLine(w_2 + 10, y, w, y, tapePen)
+                self._scale_items.append(
+                    self.scene.addLine(w_2 + 10, y, w, y, tapePen))
+        self._apply_fail_look()
         self.setScene(self.scene)
         if not self._signals_connected:
             # resizeEvent fires repeatedly; connect the FIX signals once.
@@ -606,7 +607,7 @@ class Alt_Trend_Tape(QGraphicsView):
     def setBad(self, b):
         if self._bad != b:
             self._bad = b
-            self.redraw()
+            self._redraw_now()
     bad = property(getBad, setBad)
 
     def getOld(self):
@@ -614,7 +615,7 @@ class Alt_Trend_Tape(QGraphicsView):
     def setOld(self, b):
         if self._old != b:
             self._old = b
-            self.redraw()
+            self._redraw_now()
     old = property(getOld, setOld)
 
     def getFail(self):
@@ -622,5 +623,36 @@ class Alt_Trend_Tape(QGraphicsView):
     def setFail(self, b):
         if self._fail != b:
             self._fail = b
-            self.redraw()
+            self._apply_fail_look()
+            self._redraw_now()
+            self.viewport().update()
     fail = property(getFail, setFail)
+
+    def _redraw_now(self):
+        """A quality-flag change bypasses redraw()'s update_period rate limit.
+        Rate-limited, a flag change landing inside the window was dropped, and
+        with a steady VS no later update came: the readout stayed XXX after the
+        gateway recovered, or kept the last value on onset (CERT1a bench)."""
+        self.last_update_time = 0
+        self.redraw()
+
+    def _apply_fail_look(self):
+        """CERT1a: blank the graduations and the VS bar under a failed VS.
+        The header (the "VSI" label and the red XXX readout) and the face stay."""
+        for it in getattr(self, "_scale_items", ()):
+            it.setVisible(not self._fail)
+        if self.indicator_line is not None:
+            self.indicator_line.setVisible(not self._fail)
+
+    def paintEvent(self, event):
+        super(Alt_Trend_Tape, self).paintEvent(event)
+        if not self._fail or not hasattr(self, "top_margin"):
+            return
+        # CERT1a: the red X spans the scale below the header.
+        h = self.viewport().height()
+        top = min(float(self.top_margin), float(h))
+        p = QPainter(self.viewport())
+        helpers.draw_failed_tape_x(
+            p, QRectF(0, top, self.viewport().width() - self.RIGHT_MARGIN,
+                      h - top))
+        p.end()

@@ -26,7 +26,8 @@ fixed pointer). Already present:
 
 - **Moving-scale tape** with major/minor tick marks + numeric labels, a **fixed pointer**
   (index triangle) and a **digital IAS read-out** (`NumericalDisplay`) — the §17.6 format.
-- **Conventional arcs** (§23.1545 markings): **green** VS0→VNO, **white** flap arc
+- **Conventional arcs** (§23.1545 markings): **green** VS1→VNO (VS0→VNO when `Vs` is
+  unset), **white** flap arc
   VS0→VFE, **yellow** caution arc VNO→VNE, and a thin **red VNE line**.
 - **V-speeds** from the `IAS` FIX item aux values (`Vs`, `Vs0`, `Vno`, `Vne`, `Vfe`), with
   safe defaults when unset (notably `Vne` defaults to 200; tape top `max = Vne * 1.25`).
@@ -66,7 +67,7 @@ catalog (§5). **Status** is the widget as of this writing.
 | ID | Requirement | Trigger | Required response | Cite | Status |
 |----|-------------|---------|-------------------|------|--------|
 | **AS-DISP-001** | Moving-scale tape: scrolling scale, fixed pointer, digital read-out | always | Present-value read-out + fixed index over a moving scale | §17.6 p.40 | **DONE** |
-| **AS-MARK-001** | Conventional V-speed arcs | always | White VS0→VFE, green VS0/VS1→VNO, yellow VNO→VNE arcs | §23.1545; §22.2 Table 4 | **DONE** |
+| **AS-MARK-001** | Conventional V-speed arcs | always | White VS0→VFE, green VS1→VNO (VS0 if `Vs` unset), yellow VNO→VNE arcs | §23.1545; §22.2 Table 4 | **DONE** |
 | **AS-ANN-001** | Airspeed-invalid annunciation | `IAS` fail / old / bad | Read-out `XXX` on fail; blank (not a stale number) on old/bad | §18; §2 governing principle | **DONE** |
 | **AS-LSA-001** | **Low-speed red band VSO→0** | always (optional takeoff inhibit) | Red band from VSO down to zero — low-speed awareness (not a limit) | §17.7.1.a p.40–41 (Fig 2) | **DONE** — `low_speed_band` |
 | **AS-HSA-001** | **High-speed red band VNE→top** | always | Red band (or barber pole) from VNE up to the top of the tape — not merely a hairline radial | §17.7.1.b p.40–41 (Fig 2) | **DONE** — `high_speed_band` |
@@ -101,6 +102,8 @@ marker's removal.
 | 001 | AS-DISP-001 | `moving_scale_tape_format` | pass |
 | 002 | AS-MARK-001 | `conventional_vspeed_arcs` | pass |
 | 003 | AS-ANN-001 | `airspeed_invalid_annunciation` | pass |
+| 004 | AS-MARK-001 | `green_arc_starts_at_vs1` | pass |
+| 005 | AS-MARK-001 | `green_arc_falls_back_to_vs0_without_vs` | pass |
 | 101 | **AS-LSA-001** | `low_speed_red_band` | pass |
 | 102 | **AS-HSA-001** | `high_speed_red_band` | pass |
 
@@ -117,7 +120,7 @@ Match the *conventions* (unprotected, a safety benefit); never copy a vendor's *
 - **Takeoff inhibit (§17.7.a):** the low-speed red arc *should not* display during takeoff.
   Deferred — needs a phase-of-flight signal (weight-on-wheels / a takeoff mode) the stack
   does not publish yet; record as a follow-up so the band can be suppressed on the ground.
-- **Green-arc bottom:** the tape currently draws the green arc from **VS0**; §23.1545 puts
-  the green (normal-operating) arc bottom at **VS1** (`Vs`). Minor deviation — confirm and
-  align when the bands land (the white flap arc already runs VS0→VFE).
+- **Green-arc bottom:** resolved by [#396](https://github.com/billmallard/pyEfis/issues/396).
+  The tape draws the green arc from **VS1** (`Vs`), per §23.1545, and falls back to **VS0**
+  only when `Vs` is unset (AS-TC-004/005).
 - V-speed values are FIX-DB (#64); they belong to fix-gateway/config, not the editor schema.
