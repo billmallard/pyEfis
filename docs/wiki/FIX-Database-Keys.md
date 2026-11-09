@@ -97,6 +97,7 @@ what pyEFIS touches.
 | `FPLSTATE` / `FPLACTLEG` | | 0 none, 1 leg, 2 direct, 3 suspended / slot of the TO waypoint | engine |
 | `FPLPHASE` / `FPLAPR` / `FPLINTEG` | | Phase / approach state / integrity | engine |
 | `FPLSUSPMAP` | | Suspended at the missed approach point | engine |
+| `FPLLDSEQ` | | The `FPLSEQ` of the route the engine has loaded; differs from `FPLSEQ` after a refused commit | engine |
 | `CDISCALE` | nm | Full-scale deflection | engine |
 | `FPLCRS` / `FPLXTK` / `FPLCDI` / `FPLTF` | deg / nm / -1 to 1 / | Desired track / cross-track / deviation / TO-FROM | engine |
 | `FPLFRLAT` / `FPLFRLON` | deg | Where a Direct-To started | engine |
