@@ -176,7 +176,10 @@ class VirtualVfr(AI):
         self.pov = PointOfView(dbpath,
                                indexpath,
                                self.myparent.get_config_item('refresh_period'))
-        self.pov.initialize(["Runway", "Airport"], self.scene.width(),
+        # The projection scale is the widget diagonal -- what the scene
+        # width was before #319 widened the scene for a raised horizon.
+        self.pov.initialize(["Runway", "Airport"],
+                    math.hypot(self.width(), self.height()),
                     self.lng, self.lat, self.altitude, self.true_heading)
 
         self.setHeading(self.head_item.value)
