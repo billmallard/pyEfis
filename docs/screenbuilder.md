@@ -565,9 +565,14 @@ Options:
   * trend_min_change - default 0.5; minimum rate (kt/s) below which trend is suppressed
 
 ## airspeed_trend_tape
+Vertical bar showing the IAS rate of change (reads FIX key `IAS`). Grows up
+from the centre line when accelerating, down when decelerating; hidden while
+`IAS` is bad, failed or old.
 
 Options:
   * font_family - default 'DejaVu Sans Condensed'
+  * trend_window - default 3.0; seconds of IAS history the rate is measured over
+  * max_rate - default 5.0; rate (kt/s) at which the bar reaches the edge
 
 ## altimeter_dial
 Analog altimeter dial
