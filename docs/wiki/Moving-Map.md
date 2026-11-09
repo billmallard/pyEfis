@@ -82,6 +82,13 @@ arc instead of the top edge.
 A failed value in a data block reads red `XXX`; an old or bad one is grey. A
 key fix-gateway does not define is left out.
 
+#### CTR MAP
+
+With `nd_mode: ctr` the map shows the same elements around a full compass rose,
+with ownship at the centre of the panel. The rose is at the selected range, so
+the range reaches the same distance ahead and behind. It is sized to fit the
+panel under the TRK box, clear of the deviation scale.
+
 ## Using it
 
 - **Zoom:** pinch, or the mouse wheel on a desktop. Zoom is continuous between
@@ -139,8 +146,8 @@ used, with defaults and the bench panel's value where it differs:
 | Zoom rail (`zoom_rail`) | off | | A one-finger zoom strip down one edge. |
 | Orientation (`orientation`) | `track_up` | `north_up` | |
 | Orientation control key (`orientation_key`) | | | A FIX key: 0 track up, 1 north up. |
-| ND mode (`nd_mode`) | `off` | | `expanded` draws the [ND EXPANDED MAP](#nd-mode-expanded-map). |
-| ND mode control key (`nd_mode_key`) | | | A FIX key: 0 off, 1 expanded. |
+| ND mode (`nd_mode`) | `off` | | `expanded` draws the [ND EXPANDED MAP](#nd-mode-expanded-map); `ctr` draws [CTR MAP](#ctr-map). |
+| ND mode control key (`nd_mode_key`) | | | A FIX key: 0 off, 1 expanded, 2 ctr. |
 | Touch gestures (`touch_gestures`) | on | | Off ignores every touch and the wheel. |
 | Gesture auto-revert (`gesture_timeout`) | 30 s | | 0 stays where you leave it. |
 | Ownship position (`ownship_position`) | 50 | | Percent up from the bottom; 30 shows more ahead. |
