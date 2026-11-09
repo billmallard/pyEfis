@@ -472,7 +472,7 @@ class Airspeed_Tape(QGraphicsView):
         failed = self.item.fail
         w = self.width()
         h = self.height()
-        if failed and helpers.FAILED_TAPE_BLANK_SCALE:
+        if failed:
             # CERT1a: no scale, bands or trend under a failed IAS -- only the
             # tape's own face, so nothing left on it reads as a speed.
             p = QPainter(self.viewport())

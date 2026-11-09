@@ -517,7 +517,7 @@ class Altimeter_Tape(QGraphicsView):
         failed = self.item.fail
         w = self.width()
         h = self.height()
-        if failed and helpers.FAILED_TAPE_BLANK_SCALE:
+        if failed:
             # CERT1a: no scale, altitude bug or trend under a failed altitude
             # -- only the tape's own face, so nothing on it reads as a height.
             p = QPainter(self.viewport())

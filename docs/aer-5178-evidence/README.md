@@ -8,16 +8,17 @@ coloured bands and trend vectors that can still be read as live.
 ## The two looks (offscreen widget renders, Beelink fonts)
 
 `variants_sheet.png`, left to right: the tapes live, the tapes failed on `dev`
-today, look A (red X over the scale), look B (scale blanked + red X; the
-branch default). Each panel is airspeed, altitude, VSI trend tape at their
+today, look A (red X over the scale), look B (scale blanked + red X;
+Bill's pick). Each panel is airspeed, altitude, VSI trend tape at their
 Beelink PFD sizes (120x590, 115x590, 65x400). The single strips are
 `live.png`, `dev_failed.png`, `x_over_scale.png` and `blanked.png`.
 
 In both looks the readout boxes keep their red XXX, the VSI tape keeps its
 "VSI / XXX" header, and the TAS and baro boxes keep drawing, because those are
 their own data (TAS, BARO). Look B also drops the trend vectors, the altitude
-bug and the VSI moving dot. `helpers.FAILED_TAPE_BLANK_SCALE` selects between
-them.
+bug and the VSI moving dot. Bill picked look B on 2026-11-09 (AER-5178), and
+the setting that switched between them was removed. Look A now renders only
+from the branch at `16b26b7`.
 
 Regenerate (from a pyEfis tree; a `dev` tree for `live` and `dev`, the branch
 for the two looks):

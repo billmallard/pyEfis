@@ -272,8 +272,6 @@ class VSI_PFD(QWidget):
         # dial and tape already follow. CERT1a: the X spans the whole tape and
         # the scale is blanked, like the airspeed and altitude tapes.
         if self.item.fail:
-            if not helpers.FAILED_TAPE_BLANK_SCALE:
-                p.drawPixmap(0, 0, self.background)
             helpers.draw_failed_tape_x(p, QRectF(0, 0, w, h))
             return
 
@@ -597,9 +595,8 @@ class Alt_Trend_Tape(QGraphicsView):
     def _apply_fail_look(self):
         """CERT1a: blank the graduations and the VS bar under a failed VS.
         The header (the "VSI" label and the red XXX readout) and the face stay."""
-        blank = self._fail and helpers.FAILED_TAPE_BLANK_SCALE
         for it in getattr(self, "_scale_items", ()):
-            it.setVisible(not blank)
+            it.setVisible(not self._fail)
         if self.indicator_line is not None:
             self.indicator_line.setVisible(not self._fail)
 

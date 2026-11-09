@@ -6,6 +6,8 @@ live and failed, for the look pick. No gateway: uses tests/mock_db.
 
 Run with PYTHONPATH=src:. and QT_QPA_PLATFORM=offscreen from a pyEfis tree.
 "dev" is the failed state as the tree draws it (use a dev tree for the before).
+"x_over_scale" (look A) needs the branch at 16b26b7, before the look switch was
+removed; "blanked" (look B, the one Bill picked) is what the branch draws now.
 """
 import sys
 
@@ -34,8 +36,10 @@ def strip(mode, out):
     fn = fn() if fn else getattr(fx, "__pytest_wrapped__").obj
     fix = next(fn())
     from pyefis.instruments import airspeed, altimeter, helpers, vsi
-    if mode in ("x_over_scale", "blanked"):
-        helpers.FAILED_TAPE_BLANK_SCALE = (mode == "blanked")
+    if mode == "x_over_scale":
+        if not hasattr(helpers, "FAILED_TAPE_BLANK_SCALE"):
+            sys.exit("look A needs the branch at 16b26b7 (the look switch is gone)")
+        helpers.FAILED_TAPE_BLANK_SCALE = False
     ias = fix.db.get_item("IAS")
     for k, v in (("Vs0", 50), ("Vs", 55), ("Vfe", 85), ("Vno", 130), ("Vne", 150)):
         ias.set_aux_value(k, v)

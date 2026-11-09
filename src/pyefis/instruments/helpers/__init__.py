@@ -107,12 +107,11 @@ def draw_readout_panel(painter, rect, radius, border_color, pen_width=1.0,
 #: show its failure only as a small red XXX in the readout box while the scale,
 #: the coloured bands and the trend vector kept drawing, and those can still be
 #: read as live. The glass convention is a large red X across the whole failed
-#: tape. With FAILED_TAPE_BLANK_SCALE the scale is also removed, so nothing
-#: under the X looks like a reading.
+#: tape. The scale is also removed, so nothing under the X looks like a
+#: reading (Bill's pick of the two looks, AER-5178).
 FAILED_TAPE_X_COLOR = QColor(255, 0, 0)
 #: X stroke width as a fraction of the tape's narrow side.
 FAILED_TAPE_X_PEN_RATIO = 0.06
-FAILED_TAPE_BLANK_SCALE = True
 
 
 def draw_failed_tape_x(painter, rect):
