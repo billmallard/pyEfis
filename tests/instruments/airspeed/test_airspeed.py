@@ -226,6 +226,14 @@ def _rect_rgb(widget):
             for it in widget.scene.items() if isinstance(it, QGraphicsRectItem)]
 
 
+def _green_rect(widget):
+    """Scene rect of the single green normal-operating arc, found by colour."""
+    greens = [it for it in widget.scene.items() if isinstance(it, QGraphicsRectItem)
+              and it.brush().color().getRgb()[:3] == (0, 155, 0)]
+    assert len(greens) == 1
+    return greens[0].sceneBoundingRect()
+
+
 def _tape_y(widget, v):
     """The tape's own speed -> scene-y mapping."""
     tape_start = widget.max * widget.pph + widget.height() / 2
@@ -259,6 +267,27 @@ def test_as_cat_conventional_vspeed_arcs(fix, qtbot):
                  if isinstance(it, QGraphicsLineItem)
                  and it.pen().color().getRgb()[:3] == (255, 0, 0)]
     assert red_lines
+
+
+def test_as_cat_green_arc_starts_at_vs1(fix, qtbot):
+    """AS-TC-004 | AS-MARK-001 | The green normal-operating arc runs from VS1 (the IAS aux
+    "Vs", clean stall) up to VNO, not from VS0. sec 23.1545(b)(3); pyEfis #396."""
+    assert fix.db.get_item("IAS").get_aux_value("Vs") == 45   # fixture: Vs=45, Vs0=40
+    widget = _show_tape(qtbot)
+    r = _green_rect(widget)
+    assert r.bottom() == pytest.approx(_tape_y(widget, 45), abs=1)    # from VS1
+    assert r.top() == pytest.approx(_tape_y(widget, widget.Vno), abs=1)  # up to VNO
+
+
+def test_as_cat_green_arc_falls_back_to_vs0_without_vs(fix, qtbot):
+    """AS-TC-005 | AS-MARK-001 | With "Vs" unset the green arc's lower edge falls back to
+    VS0 rather than running down to 0. pyEfis #396."""
+    fix.db.get_item("IAS").set_aux_value("Vs", None)
+    widget = _show_tape(qtbot)
+    assert widget.Vs == 0
+    r = _green_rect(widget)
+    assert r.bottom() == pytest.approx(_tape_y(widget, 40), abs=1)    # VS0
+    assert r.top() == pytest.approx(_tape_y(widget, widget.Vno), abs=1)
 
 
 def test_as_cat_airspeed_invalid_annunciation(fix, qtbot):

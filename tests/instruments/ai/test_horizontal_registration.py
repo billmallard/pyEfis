@@ -99,3 +99,13 @@ def test_heading_ticks_go_through_the_horizontal_mapping(fix, qtbot):
     widget.paintEvent(event)
     # Ticks every 10 deg: 90 sits 3 deg right of a heading of 87.
     assert any(d == pytest.approx(3.0) for d in seen)
+
+
+def test_svs_stub_survives_a_frame_tick(fix, qtbot):
+    """The frame timer ticks whenever it likes, so the stub must answer
+    everything _frame_tick asks of it. A missing method only fails when
+    the timer fires mid-test, which made this file flaky (AER-5123);
+    calling the tick directly makes that deterministic."""
+    _reset_ai_items(fix)
+    widget, _ = _widget(qtbot, svs=True)
+    widget._frame_tick()
