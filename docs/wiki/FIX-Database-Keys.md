@@ -35,6 +35,7 @@ airspeed bands; see
 | `ALAT` | g | Lateral acceleration (slip) | attitude displays, `turn_coordinator` |
 | `ROT` | deg/s | Rate of turn | `turn_coordinator` |
 | `VPATH` | deg | Flight path angle, used before `VS`/`GS` when published | flight path marker |
+| `AOA` | deg | Angle of attack; its `Warn` aux is the stall-warning AOA | the attitude displays' pitch-limit indicator |
 
 ## Heading, position and navigation
 

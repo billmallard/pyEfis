@@ -176,6 +176,7 @@ ignored.
 | `LAT`, `LONG`, `ALT` | Where the terrain is drawn from. Old, bad, failed or missing: no terrain, and `SVS UNAVAIL`. |
 | `HEAD`, `MAGVAR` | Which way the terrain faces, and the horizon heading marks. |
 | `VS`, `GS`, `TRACK`, `VPATH` | The flight path marker. |
+| `AOA` and its `Warn` aux | The pitch-limit indicator, drawn `Warn` minus `AOA` degrees above the aircraft symbol when that is 8 or less. Old, bad, failed, missing, or no `Warn`: not drawn. |
 | `COURSE` | The legacy CIFP overlay's heading. |
 
 Any of `PITCH`, `ROLL`, `ALAT` or `TAS` old or bad turns the sky grey; any
