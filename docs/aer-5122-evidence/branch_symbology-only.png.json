@@ -1,0 +1,19 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "d96f61f",
+ "run": "local: /tmp/hp_capture.py --offscreen --flat --symbology-only --width 1024 --height 768 --lat 24.30 --lon -81.80 --alt 100 --heading 180 --pitch -10 --roll 0 --range 30 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --out /home/pyefis/bench-scratch/aer5122/out/aer-5122_svs-horizon-offset-tangent_symbology-only.png",
+ "device": "AZW MINI S",
+ "sha256": "53db0a840213ef7a6302e59e0113791fe85cd046afe89a2630e322dba3c0acc5",
+ "created_utc": "2026-11-08T14:39:39Z",
+ "pyefis_rev": "d96f61f",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  1024,
+  768
+ ],
+ "actual_size": [
+  1024,
+  768
+ ],
+ "argv": "/tmp/hp_capture.py --offscreen --flat --symbology-only --width 1024 --height 768 --lat 24.30 --lon -81.80 --alt 100 --heading 180 --pitch -10 --roll 0 --range 30 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --out /home/pyefis/bench-scratch/aer5122/out/aer-5122_svs-horizon-offset-tangent_symbology-only.png"
+}

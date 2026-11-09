@@ -1,0 +1,16 @@
+fixgw=3037468 pyefis=3038052 pyEfis_head=d76233e branch=aer-5031/cert1-fix-link-watchdog
+19:31:52 grabbed 1_live
+19:31:56 grabbed 2_live_b
+19:31:56 SIGSTOP fixgw
+19:31:58 grabbed 3_stopped_1s
+19:32:04 grabbed 4_stopped_6s
+19:32:11 grabbed 5_stopped_12s
+19:32:11 SIGCONT fixgw
+19:32:16 grabbed 6_resumed_4s
+PITCH 3.0
+ROLL -3.92
+ALT 4472.56
+IAS 110.0
+Nov 07 19:30:35 <bench> xinit[3038052]: INFO:20261107-19:30:35:pyefis.fix_watchdog - FIX link watchdog: ping PITCH, fail after 2.0 s
+Nov 07 19:31:58 <bench> xinit[3038052]: ERROR:20261107-19:31:58:pyefis.fix_watchdog - No frame from FIX gateway for 2.0 s: marking all data failed
+Nov 07 19:32:11 <bench> xinit[3038052]: WARNING:20261107-19:32:11:pyefis.fix_watchdog - FIX gateway answering again: re-reading 3134 items

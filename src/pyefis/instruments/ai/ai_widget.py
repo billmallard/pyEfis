@@ -1313,14 +1313,6 @@ class AI(QGraphicsView):
                            float(getattr(self, "bank_position", 50))))
         return h * (1.0 - pos / 100.0)
 
-    def _horizon_offset_deg(self):
-        # The same shift expressed as a look-down angle (offset_px /
-        # pixelsPerDeg, which reduces to height-independent form). The SVS
-        # terrain projects pitch=0 to the viewport centre, so depressing its
-        # camera by this angle raises the terrain horizon to match the AI's.
-        return (float(getattr(self, "horizon_position", 50)) / 100.0
-                - 0.5) * self.pitchDegreesShown
-
     @staticmethod
     def _horizon_exit_pitch(horizon_position, pitch_degrees_shown):
         # Pure geometry (AC 23.1311-1C 8.5(b)): the pitch=0 horizon line

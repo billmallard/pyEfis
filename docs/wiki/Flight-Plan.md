@@ -67,6 +67,14 @@ starts the missed approach.
 There is no separate step to activate a plan: each change is sent as you make
 it.
 
+If the engine refuses a change, a red strip above the soft keys reads
+`EDIT REFUSED:` and the engine's reason (`FPLMSG`), or `NO ENGINE ANSWER` when
+none comes within 2 seconds, and the list goes back to the plan the engine is
+flying. **Edit draft** brings the refused route back to correct; the strip then
+reads `DRAFT - NOT LOADED:` and its button, **Flown plan**, goes back. The draft
+ends when the engine loads a change. This needs an engine that publishes
+`FPLLDSEQ`.
+
 **Touch a waypoint row** for its menu:
 
 | Item | What it does |
@@ -134,12 +142,6 @@ route that is managed for you; it cannot be edited or deleted here.
 Touch a route for **Activate**, **Invert & Activate**, **Edit** (load it
 without flying it), **Copy** and **Delete**. **NEW** starts a new plan, asking first if the current one has unsaved edits;
 **DELETE ALL** removes every unlocked route.
-
-![The catalog with one stored route: the route's row is drawn oversized and runs off the edge](../images/flightplan/bench_catalog_one_route.png)
-
-With a single stored route, the row is drawn far too large and clipped, as
-above ([#400](https://github.com/billmallard/pyEfis/issues/400)). Two or more
-routes draw at the normal size.
 
 Routes live in `<flightplan_dir>/routes/` as JSON files, beside
 `user_waypoints.json` and `recent.json`. With no directory set, the catalog
@@ -241,7 +243,7 @@ The page needs fix-gateway's flight-plan engine. It writes the whole route
 Direct-To target (`DTOID`, `DTOLAT`, `DTOLON`, `DTOTYPE`), and commands to
 `FPLCMD`: `ACT`, `DTO`, `DTOX`, `SUSP`, `RESUME` and `SCALE`. It reads the
 engine's state back (`FPLSTATE`, `FPLACTLEG`, `FPLAPR`, `FPLINTEG`,
-`FPLREMDIS`, `FPLREMETE`, `WPETE`, `FPLSUSPMAP`). Without the engine's keys the
+`FPLREMDIS`, `FPLREMETE`, `WPETE`, `FPLSUSPMAP`, `FPLLDSEQ`, `FPLMSG`). Without the engine's keys the
 page shows the plan read-only, with `FPL: GATEWAY KEYS MISSING` in red. See
 [FIX Database Keys](FIX-Database-Keys).
 

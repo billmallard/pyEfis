@@ -70,7 +70,8 @@ def terrain_horizontal_px(bearing_deg, viewport_h):
 
 def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
                     pixels_per_deg, viewport_w, viewport_h,
-                    pixels_per_deg_h=None, roll_pivot_px=0.0):
+                    pixels_per_deg_h=None, roll_pivot_px=0.0,
+                    lens_shift_px=0.0):
     """Build the 4x4 view-projection matrix (numpy float64, row-major)
     mapping ENU-metre world positions to GL clip space.
 
@@ -85,6 +86,15 @@ def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
     *roll_pivot_px* is the screen point the roll turns about, in pixels
     above the viewport centre. Pass the AI widget's horizon offset so the
     terrain rolls about the same point as the ladder (horizon_position).
+
+    *lens_shift_px* moves the principal point (where the boresight lands)
+    that many pixels above the viewport centre: an off-axis lens shift,
+    applied to the projected image before the roll. Pass the AI widget's
+    horizon offset so the boresight sits on its raised reference and the
+    terrain horizon lands at offset - tan(pitch) (scaled to pixels), next
+    to the ladder's linear offset - pitch. Depressing the camera by the offset as an
+    angle instead sends the offset through the tangent too, and the two
+    drift apart with nose-down pitch (AER-5122).
 
     *pixels_per_deg_h* (AER-1806) lets the horizontal (terrain HFOV)
     scale be set independently of the vertical pitch-ladder scale;
@@ -128,6 +138,12 @@ def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
                   [0,  1,  0,  0.0]])
 
     M = C @ P @ H @ T
+    if lens_shift_px:
+        # Pixel-space translation on clip y; rides on clip w, so it stays
+        # linear in homogeneous clip space like the roll below.
+        L = np.eye(4)
+        L[1, 3] = 2.0 * lens_shift_px / viewport_h
+        M = L @ M
     if not roll_deg:
         return M
     # Roll in pixel space: clip (x, y) -> pixels (x*W/2, y*H/2), rotate
