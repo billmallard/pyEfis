@@ -298,3 +298,93 @@ def test_reload_picks_up_a_new_acceptance(app, tmp_path):
     texts = _texts(w)
     assert about.NO_ACK_RECORD not in texts
     assert "2026-10-31 14:05:09 UTC  accepted by pi@pyefis" in texts
+
+
+# --- safety advisories (BACKLOG L5, AER-5152) ---
+
+ADVISORY = {
+    "id": "MPA-2026-001", "issued": "2026-12-01", "severity": "warning",
+    "title": "Altitude tape can freeze after a fix-gateway restart",
+    "description": "The tape keeps the last value with no failure flag.",
+    "action": "Update pyEfis to 2.2.2 before the next flight.",
+    "applies": "unknown",
+    "affects": [{"software": "pyefis", "introduced": "2.2.0", "fixed": "2.2.2",
+                 "result": "unknown"}],
+}
+
+ADV_ON = {"enabled": True, "sequence": 3, "generated": "2026-12-01T00:00:00Z",
+          "checked": "2099-01-01T00:00:00Z", "error": None}
+
+
+def _with_adv(block):
+    return dict(STATUS, advisories=block)
+
+
+def _adv_texts(w):
+    return [lbl.text() for lbl in w._adv_labels]
+
+
+def test_applicable_advisory_shows_severity_title_and_action(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(about.pyefis, "__version__", "2.2.1")
+    w = about.AboutSystem(status_path=_write(
+        tmp_path, _with_adv(dict(ADV_ON, active=[ADVISORY]))))
+    assert _adv_texts(w) == [
+        "Safety advisories",
+        "WARNING  Altitude tape can freeze after a fix-gateway restart",
+        "MPA-2026-001, 2026-12-01",
+        "The tape keeps the last value with no failure flag.",
+        "Required action: Update pyEfis to 2.2.2 before the next flight.",
+    ]
+    assert not w._adv_box.isHidden()
+    # Under the version, above the notice: on screen without scrolling.
+    col = w.title.parentWidget().layout()
+    assert col.indexOf(w._adv_box) == col.indexOf(w.version) + 1
+
+
+def test_pyefis_target_is_settled_against_the_running_version(app, tmp_path, monkeypatch):
+    path = _write(tmp_path, _with_adv(dict(ADV_ON, active=[ADVISORY])))
+    monkeypatch.setattr(about.pyefis, "__version__", "2.2.2")      # the fixed release
+    w = about.AboutSystem(status_path=path)
+    assert _adv_texts(w) == [] and w._adv_box.isHidden()
+    monkeypatch.setattr(about.pyefis, "__version__", "2.2.0")
+    w.reload()
+    assert "WARNING  Altitude tape can freeze after a fix-gateway restart" in _adv_texts(w)
+
+
+def test_empty_active_list_is_silence(app, tmp_path):
+    w = about.AboutSystem(status_path=_write(tmp_path, _with_adv(dict(ADV_ON, active=[]))))
+    assert _adv_texts(w) == []
+    assert w._adv_box.isHidden()
+    assert not any("advisor" in t.lower() for t in _texts(w))
+
+
+@pytest.mark.parametrize("status", [STATUS, None, {"advisories": "x"}])
+def test_no_advisory_block_shows_nothing(app, tmp_path, status):
+    path = _write(tmp_path, status) if status is not None else str(tmp_path / "none.json")
+    w = about.AboutSystem(status_path=path)
+    assert _adv_texts(w) == [] and w._adv_box.isHidden()
+
+
+def test_channel_off_is_one_quiet_line(app, tmp_path):
+    w = about.AboutSystem(status_path=_write(tmp_path, _with_adv({"enabled": False})))
+    assert _adv_texts(w) == [about.ADVISORIES_OFF]
+
+
+def test_unsettled_target_says_it_may_apply(app, tmp_path):
+    a = dict(ADVISORY, severity="caution", affects=[
+        {"software": "pyefis-gauges", "fixed": "1.0", "result": "unknown"}])
+    w = about.AboutSystem(status_path=_write(tmp_path, _with_adv(dict(ADV_ON, active=[a]))))
+    texts = _adv_texts(w)
+    assert texts[1].startswith("CAUTION  ")
+    assert texts[2] == ("MPA-2026-001, 2026-12-01. May apply to this device: could not "
+                        "tell the installed version of pyefis-gauges.")
+
+
+def test_stale_feed_shows_its_age_and_last_failure_alone(app, tmp_path):
+    block = dict(ADV_ON, active=[], checked="2020-01-01T00:00:00Z",
+                 error="signature did not verify")
+    w = about.AboutSystem(status_path=_write(tmp_path, _with_adv(block)))
+    texts = _adv_texts(w)
+    assert texts[0] == "Safety advisories"
+    assert texts[1].startswith("Safety advisories last verified 2020-01-01 (")
+    assert texts[1].endswith("Last check: signature did not verify.")
