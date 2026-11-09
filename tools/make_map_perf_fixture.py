@@ -112,15 +112,20 @@ Usage, cutting from a real pack tree on a workstation that holds it
         --navaid-db  /data/makerplane-data/navaids/current/navaids.sqlite \\
         --out dist/perf-fixtures/raleigh
 
-Add ``--publish`` to additionally push the packaged tarball to R2 under
-``test-fixtures/<scene>/`` via the boto3 S3 API (AER-1137: a bucket-scoped
-R2 API token authorizes S3 but not the wrangler/Cloudflare REST objects
-path, which needs a much broader account-wide grant): it skips cleanly
-with a warning, exit 0, when ``R2_ACCESS_KEY_ID``/``R2_SECRET_ACCESS_KEY``/
-``R2_ENDPOINT`` are unset rather than failing a CI run that has no
-secrets. A successful publish also rewrites this scene's entry in
-``tools/perf_fixtures.json`` -- the checked-in, sha256-pinned manifest
-``fetch_fixture`` reads.
+Add ``--publish`` to additionally upload the packaged tarball as an asset
+on a GitHub prerelease of ``billmallard/pyEfis`` (``--release-tag``,
+default ``perf-fixtures-<YYYY-MM>``; created as a prerelease if it does
+not exist yet). Fixtures are public, unsigned test data, so they live on
+the release page -- not in the configurator's ``makerplane-configs``
+bucket and not on navdata.aerocommons.org, which serves only signed,
+manifest-listed packs (Bill, AER-1138). An asset of the same name already
+on that release is refused, never overwritten: a re-cut goes under a new
+tag so every pinned URL keeps resolving to the bytes it was pinned
+against. It skips cleanly with a warning, exit 0, when ``GITHUB_TOKEN``
+is unset rather than failing a CI run that has no secrets. A successful
+publish also rewrites this scene's entry in ``tools/perf_fixtures.json``
+-- the checked-in, sha256-pinned manifest ``fetch_fixture`` reads -- with
+the asset's public download URL.
 
 On-demand fetch side (what a perf test in ``tests/perf/`` calls)::
 
@@ -132,20 +137,13 @@ is truthy (CI sets it; a bare local ``pytest`` run must skip cleanly, not
 fail) and never adds a runtime dependency -- download/verify/extract are
 stdlib (``urllib``, ``hashlib``, ``tarfile``).
 
-**Honest limitation, current as of AER-1142.** The ``sha256``/``url``
-fields in ``tools/perf_fixtures.json`` start ``null`` for both scenes.
-Producing the real packs requires (a) access to the full production
-terrain/water/highway/navaid packs, which live in the data-manager
-pipeline's storage, not in a pyEfis checkout, and (b) R2 write
-credentials. Neither is available in the sandbox this rework was authored
-in either -- the concentric-cut/per-layer-footprint math below is
-exercised against synthetic packs in the test suite, the same way MP8a's
-count budgets are, but the **measured** tarball ratio against the real
-packs (the number that decides whether 200 MB actually holds) still needs
-AVIONICS-DATA's access (AER-1134). Whoever runs ``cut --publish`` against
-the real packs fills the manifest in; until then ``fetch_fixture`` raises
-a clear, actionable ``PerfFixtureUnavailable`` rather than silently
-returning nothing or fabricating a pin.
+**Provenance of the current pins (AER-1138).** AVIONICS-DATA cut both
+scenes from the real production packs (AER-1137, 2026-09-27); the
+tarballs were copied byte-for-byte to the ``perf-fixtures-2026-09``
+prerelease and the manifest pins that release's download URLs with the
+sha256/bytes reported at cut time. A scene whose entry is ``null`` makes
+``fetch_fixture`` raise a clear, actionable ``PerfFixtureUnavailable``
+rather than silently returning nothing or fabricating a pin.
 """
 
 from __future__ import annotations
@@ -1090,8 +1088,8 @@ def fetch_fixture(scene: str, cache_dir: Path | None = None,
             f"PYEFIS_PERF_FIXTURE is set but scene {scene!r} has no "
             f"published pin in {manifest_path} yet. Run "
             "`make_map_perf_fixture.py cut --scene "
-            f"{scene} --publish` against the real data packs with R2 "
-            "credentials, then re-check in the updated manifest.")
+            f"{scene} --publish` against the real data packs with a "
+            "GITHUB_TOKEN, then re-check in the updated manifest.")
 
     cache_dir = Path(cache_dir or os.environ.get("PYEFIS_FIXTURE_CACHE")
                      or (Path.home() / ".cache" / "pyefis-fixtures"))
@@ -1153,54 +1151,108 @@ def _cmd_cut(args) -> int:
           f"(raw dir {stats['raw_bytes'] / 1e6:.1f} MB, advisory)")
 
     if args.publish:
-        _publish(args.scene, tarball, size, sha256)
+        _publish(args.scene, tarball, size, sha256,
+                 release_tag=args.release_tag)
     else:
-        print("(not publishing -- pass --publish to push to R2 and pin "
-              "the manifest)")
+        print("(not publishing -- pass --publish to upload to the GitHub "
+              "release and pin the manifest)")
     return 0
 
 
-def _publish(scene: str, tarball: Path, size: int, sha256: str) -> bool:
-    """Push ``tarball`` to R2 under test-fixtures/<scene>/ via the S3 API,
-    skip cleanly (return False, exit 0) with a warning when credentials
-    are absent -- this is a CI-safe no-op, not a failure, on a fork or a
-    dev box with no secrets. On success, rewrite this scene's manifest
-    entry so fetch_fixture can find it.
+#: Where fixture tarballs are published: release assets on this repo
+#: (Bill, AER-1138). Public, so ``fetch_fixture`` needs no credentials.
+RELEASE_REPO = "billmallard/pyEfis"
+_GITHUB_API = "https://api.github.com"
+_GITHUB_UPLOADS = "https://uploads.github.com"
 
-    Uses boto3 against the R2 S3-compatible endpoint, not the wrangler
-    CLI/Cloudflare REST objects API: a bucket-scoped R2 API token (Object
-    Read & Write on one bucket) authorizes the S3 API but 403s against
-    the REST objects endpoint wrangler calls, which needs account-wide
-    Workers R2 Storage: Edit -- a much broader grant this tool should not
-    require (AER-1137). Mirrors the upload convention makerplane-data's
-    own pack pipeline already uses for R2 writes."""
-    access_key = os.environ.get("R2_ACCESS_KEY_ID")
-    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY")
-    endpoint = os.environ.get("R2_ENDPOINT")
-    if not access_key or not secret_key or not endpoint:
-        print("WARNING: R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_ENDPOINT "
-              "not set -- skipping publish (the pack was still cut and "
-              f"packaged locally at {tarball}).")
+
+def default_release_tag() -> str:
+    import datetime
+    return f"perf-fixtures-{datetime.date.today():%Y-%m}"
+
+
+def release_asset_url(tag: str, scene: str,
+                      repo: str = RELEASE_REPO) -> str:
+    """The public download URL GitHub serves ``<scene>.tar.gz`` at."""
+    return f"https://github.com/{repo}/releases/download/{tag}/{scene}.tar.gz"
+
+
+def _github(method: str, url: str, token: str, data=None,
+            headers: dict | None = None):
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        **(headers or {})})
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read() or b"null")
+
+
+def _publish(scene: str, tarball: Path, size: int, sha256: str,
+             release_tag: str | None = None,
+             repo: str = RELEASE_REPO) -> bool:
+    """Upload ``tarball`` as ``<scene>.tar.gz`` on the ``release_tag``
+    prerelease of ``repo`` (creating the prerelease if needed); skip
+    cleanly (return False, exit 0) with a warning when ``GITHUB_TOKEN`` is
+    absent -- a CI-safe no-op, not a failure, on a fork or a dev box with
+    no secrets. On success, rewrite this scene's manifest entry with the
+    asset's public download URL so fetch_fixture can find it.
+
+    Stdlib only (``urllib``) against the GitHub REST API, so publishing
+    needs no extra dependency. Refuses to replace an existing asset of the
+    same name: a pinned URL must keep serving the bytes it was pinned
+    against, so a re-cut is published under a new tag."""
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        print("WARNING: GITHUB_TOKEN not set -- skipping publish (the pack "
+              f"was still cut and packaged locally at {tarball}).")
         return False
 
-    import boto3
+    import urllib.error
+    import urllib.parse
 
-    key = f"test-fixtures/{scene}/{scene}.tar.gz"
-    print(f"publishing: s3 upload makerplane-configs/{key} via {endpoint}")
-    client = boto3.client("s3", endpoint_url=endpoint, region_name="auto",
-                          aws_access_key_id=access_key,
-                          aws_secret_access_key=secret_key)
-    client.upload_file(str(tarball), "makerplane-configs", key,
-                        ExtraArgs={"ContentType": "application/gzip"})
+    tag = release_tag or default_release_tag()
+    try:
+        release = _github(
+            "GET", f"{_GITHUB_API}/repos/{repo}/releases/tags/{tag}", token)
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+        print(f"publishing: creating prerelease {repo}@{tag}")
+        release = _github(
+            "POST", f"{_GITHUB_API}/repos/{repo}/releases", token,
+            data=json.dumps({
+                "tag_name": tag, "name": tag, "prerelease": True,
+                "body": "Map perf-test fixtures cut by "
+                        "tools/make_map_perf_fixture.py. Test data only; "
+                        "pinned by sha256 in tools/perf_fixtures.json.",
+            }).encode(), headers={"Content-Type": "application/json"})
 
-    url = f"https://makerplane-configs.r2.dev/{key}"
-    manifest = (_load_manifest() if MANIFEST_PATH.is_file()
+    name = f"{scene}.tar.gz"
+    if any(a.get("name") == name for a in release.get("assets", [])):
+        raise PerfFixtureError(
+            f"{repo}@{tag} already has an asset named {name}; refusing to "
+            "replace a pinned fixture -- publish the re-cut under a new "
+            "--release-tag.")
+
+    print(f"publishing: upload {name} ({size / 1e6:.1f} MB) to {repo}@{tag}")
+    with open(tarball, "rb") as f:
+        asset = _github(
+            "POST", f"{_GITHUB_UPLOADS}/repos/{repo}/releases/"
+                    f"{release['id']}/assets?"
+                    + urllib.parse.urlencode({"name": name}),
+            token, data=f, headers={"Content-Type": "application/gzip",
+                                    "Content-Length": str(size)})
+
+    url = asset.get("browser_download_url") or release_asset_url(
+        tag, scene, repo)
+    manifest = (_load_manifest(MANIFEST_PATH) if MANIFEST_PATH.is_file()
                 else {"scenes": {}})
     manifest.setdefault("scenes", {})[scene] = {
         "lat": SCENES[scene]["lat"], "lon": SCENES[scene]["lon"],
         "sha256": sha256, "url": url, "bytes": size,
     }
-    _save_manifest(manifest)
+    _save_manifest(manifest, MANIFEST_PATH)
     print(f"manifest updated: {MANIFEST_PATH}")
     return True
 
@@ -1236,8 +1288,13 @@ def _parse_args(argv=None):
                           "concentrically by mip level regardless)")
     cut.add_argument("--max-bytes", type=int, default=MAX_PACK_BYTES)
     cut.add_argument("--publish", action="store_true",
-                     help="push the packaged tarball to R2 and pin the "
-                          "manifest (skips cleanly with no credentials)")
+                     help="upload the packaged tarball to the GitHub "
+                          "prerelease and pin the manifest (skips cleanly "
+                          "with no GITHUB_TOKEN)")
+    cut.add_argument("--release-tag", default=None,
+                     help="prerelease tag to publish under (default "
+                          "perf-fixtures-<YYYY-MM>); never reuse a tag "
+                          "that already holds this scene")
     cut.set_defaults(func=_cmd_cut)
 
     fetch = sub.add_parser("fetch", help="fetch + verify a published scene")
