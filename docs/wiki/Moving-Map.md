@@ -89,6 +89,8 @@ with ownship at the centre of the panel. The rose is at the selected range, so
 the range reaches the same distance ahead and behind. It is sized to fit the
 panel under the TRK box, clear of the deviation scale.
 
+![ND CTR MAP on the bench's map panel, 10 NM, tracking 072 toward KSBA: the full compass rose round the centred ownship, with the same TRK box, data blocks and deviation scale as EXPANDED](../images/aer5262_nd_ctr/panel/nd_ctr_approach_standard.png)
+
 ## Using it
 
 - **Zoom:** pinch, or the mouse wheel on a desktop. Zoom is continuous between
