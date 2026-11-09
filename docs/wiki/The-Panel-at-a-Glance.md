@@ -154,7 +154,9 @@ Every value carries fix-gateway's quality flags, and each instrument shows them.
 | A red value on a gauge | That item is annunciating. See [Engine Monitoring](Engine-Monitoring). |
 
 These come from the data, not from the display: check the sensor or its
-fix-gateway plugin.
+fix-gateway plugin. If every value fails at once, pyEFIS has heard nothing from
+fix-gateway for 2 s (the default); see the
+[link watchdog](Customizing-Beyond-the-Configurator#the-data).
 
 ## Units and brightness
 
