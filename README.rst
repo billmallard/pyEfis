@@ -22,9 +22,9 @@ pyEfis
 .. warning::
 
    pyEfis is not certified, and it is not to be used as the sole source of
-   attitude information in instrument meteorological conditions. Fly with an
-   independent standby: one that shares no sensor, computer, software, power
-   source or display with pyEfis.
+   attitude information in instrument meteorological conditions. Fly with
+   independent standby attitude, airspeed and altitude instruments: ones that
+   share no sensor, computer, software, power source or display with pyEfis.
 
 Getting Started
 ---------------

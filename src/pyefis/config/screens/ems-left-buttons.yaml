@@ -128,12 +128,6 @@ EMS:
             -
               preferences: BAR22
             -
-              preferences: BAR23
-            -
-              preferences: BAR24
-            -
-              preferences: BAR25
-            -
               preferences: BAR26
 
         - name: Temps
@@ -176,12 +170,6 @@ EMS:
           instruments:
             -
               preferences: BAR22
-            -
-              preferences: BAR23
-            -
-              preferences: BAR24
-            -
-              preferences: BAR25
             -
               preferences: BAR26
 
