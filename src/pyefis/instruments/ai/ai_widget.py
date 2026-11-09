@@ -579,8 +579,15 @@ class AI(QGraphicsView):
                 self.bankMarkSize = qRound(self.fontSize * 0.3 )
         #Setup the scene that we use for the background of the AI
         sceneHeight = self.height() * 4.5
+        # Wide enough for the viewport rotated to any bank about the point
+        # redraw() pivots on: the raised horizon, _horizon_offset_px() off
+        # centre. The farthest viewport corner is sqrt((w/2)^2 +
+        # (h/2 + |off|)^2) from that pivot; sizing for the centre instead
+        # (sqrt(w^2 + h^2)) left a background triangle in a top corner at
+        # moderate bank whenever horizon_position != 50 (pyEfis #319).
+        _reach = self.height() + 2.0 * abs(self._horizon_offset_px())
         sceneWidth = math.sqrt(self.width() * self.width() +
-                               self.height() * self.height())
+                               _reach * _reach)
         self.pixelsPerDeg = self.height() / self.pitchDegreesShown
         self.scene = QGraphicsScene(0, 0, sceneWidth, sceneHeight)
         # Setup default values. bank_radius (percent of height, default
