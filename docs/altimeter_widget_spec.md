@@ -59,7 +59,7 @@ anchor the test catalog (§5). **Status** is the widget as of this writing.
 | ID | Requirement | Trigger | Required response | Cite | Status |
 |----|-------------|---------|-------------------|------|--------|
 | **AL-DISP-001** | Linear moving-scale tape: scrolling scale, fixed pointer, digital read-out | always | Present-value read-out + fixed index over a moving scale | §17.8.a p.43 | **DONE** |
-| **AL-ANN-001** | Altitude-invalid annunciation | `ALT` fail / old / bad | Read-out `XXX` on fail; blank (not a stale number) on old/bad | §18; §2 governing principle | **DONE** |
+| **AL-ANN-001** | Altitude-invalid annunciation | `ALT` fail / old / bad | Fail or old (expired TOL): read-out `XXX`, scale/alt bug/trend blanked under a red X (CERT1a/CERT1b). Bad (suspect): read-out blank, scale kept inside an amber frame (CERT1b). BARO stays live | §18; §2 governing principle | **DONE** |
 | **AL-BARO-001** | **Baro setting box on the tape** | ALT tape (`show_baro`) | `BARO` at the bottom of the tape in inHg (`29.92`) or hPa (`1013`); touch selects it, inner/outer knob step 0.01/0.10 inHg or 1/10 hPa (whole hPa after the round trip), push sets standard, clamped to 27.5-31.5 inHg | pyEfis #311 | **DONE** |
 | **AL-MARK-001** | **Standard 500-/1,000-ft increment denotation** | always | Distinct emphasis at 1,000-ft (label + longest tick) and 500-ft (intermediate tick), above the minor ticks | §17.8.a p.43 | **DONE** — three tick tiers |
 | **AL-TREND-001** | **6-second altitude-trend indicator** | always (unless a VSI is adjacent right) | A trend vector predicting altitude ~6 s ahead (level-off look-ahead) | §17.8.b p.43 | **DONE** — cyan trend vector (`show_trend`, ALT-default) |
