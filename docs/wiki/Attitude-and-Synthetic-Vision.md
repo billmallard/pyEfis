@@ -7,9 +7,9 @@ with synthetic vision (SVS) turned on. The same attitude symbology without
 terrain is `atitude_indicator`.
 
 > pyEFIS is not certified. Do not use it as the sole source of attitude
-> information in instrument meteorological conditions. Fly with an independent
-> standby: one that shares no sensor, computer, software, power source or
-> display with pyEFIS.
+> information in instrument meteorological conditions. Fly with independent
+> standby attitude, airspeed and altitude instruments: ones that share no
+> sensor, computer, software, power source or display with pyEFIS.
 
 ![The bench in a left turn in the WINCH hold, over the sea at about 4,000 ft: pitch ladder and bank scale tilted, the garmin aircraft symbol, standard-rate marks on the bank arc, the coastline and terrain beyond, and the 33 heading mark on the horizon](../images/attitude/bench_turn_over_water.png)
 
@@ -26,6 +26,7 @@ terrain is `atitude_indicator`.
 | **Flight path marker** | A green circle with wings: where the aircraft is actually going, from GPS track, groundspeed and vertical speed. See [below](#flight-path-marker). |
 | **Horizon heading marks** | Optional compass ticks along the horizon line, with labels: `N`, `E`, `S`, `W`, or the heading in tens (`33` is 330). |
 | **Recovery chevrons** | Three amber chevrons pointing back to the horizon at an unusual attitude. |
+| **Pitch-limit indicator** | Two short bars, three ticks on each, either side of the aircraft symbol, at the pitch where `AOA` would reach the stall-warning AOA (the `Warn` aux of `AOA`). It appears once that margin is 8° or less, amber while there is margin left and red at or past it. It stays on at an unusual attitude, and is hidden while `AOA` is old, bad or failed or has no `Warn`. |
 
 ### At an unusual attitude
 
@@ -159,10 +160,10 @@ The full list, including the tick sizes and opacities, is on
 | PAPI lights (`svs_papi`) | on | | |
 | Road colour, casing and width options (`svs_road_*`) | | | The road ribbons' look. |
 
-Two options in the list do nothing on the device today: **Terrain palette**
-(`svs_palette`, [#394](https://github.com/billmallard/pyEfis/issues/394)) and
-**Fill terrain** (`svs_terrain_fill`,
-[#395](https://github.com/billmallard/pyEfis/issues/395)).
+One option in the list does nothing on the device today: **Terrain palette**
+(`svs_palette`, [#394](https://github.com/billmallard/pyEfis/issues/394)).
+Terrain is always drawn filled; there is no wireframe mode
+([#395](https://github.com/billmallard/pyEfis/issues/395)).
 
 The configurator does not offer the airport proximity rule. It is set in
 the screen file's `svs:` block: `airport_proximity_nm` (5, and 0 turns it off)
@@ -210,6 +211,7 @@ data paths are where `pyefis-data` installs each pack; see
 | `LAT`, `LONG`, `ALT` | Where the terrain is drawn from |
 | `HEAD`, `MAGVAR` | Which way the terrain faces, and the horizon heading marks |
 | `VS`, `GS`, `TRACK`, `VPATH` | Flight path marker |
+| `AOA` and its `Warn` aux | Pitch-limit indicator |
 
 See [FIX Database Keys](FIX-Database-Keys).
 

@@ -623,7 +623,6 @@ class SVSRenderer:
                              _PALETTES["clearance"])
         (self.c_safe, self.c_caution, self.c_warning,
          self.c_conflict, self.c_water) = _pal
-        self.terrain_fill  = config.get("terrain_fill", True)
         self.auto_range    = config.get("auto_range", True)
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
         # Hysteresis state for the collect-cache range bucket (AER-678).

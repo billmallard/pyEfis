@@ -420,8 +420,6 @@ def _svs_props():
              help="green at/above this height over terrain"),
         Prop("svs_clearance_yellow_ft", "number", default=500, apply="special",
              label="Caution clearance (ft)", help="amber above this; red below"),
-        Prop("svs_terrain_fill", "boolean", default=True, apply="special",
-             label="Fill terrain", help="off = wireframe" + dev),
         Prop("svs_terrain_grid", "number", default=0.35, minimum=0.0, maximum=1.0,
              apply="special", label="Terrain grid", help=dev.strip()),
         Prop("svs_terrain_texture", "number", default=0.35, minimum=0.0,
