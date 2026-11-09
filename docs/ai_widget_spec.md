@@ -21,7 +21,11 @@ margin, excessive bank/sideslip). This spec holds it to that bar and tracks the 
 ladder). Already present:
 
 - **Attitude** — pitch ladder + roll from `PITCH`/`ROLL`; `pitchDegreesShown` FOV;
-  raised-horizon option (`horizon_position`) for the SVS.
+  raised-horizon option (`horizon_position`) for the SVS. With SVS configured the
+  ladder scale is the terrain camera's tangent, `ppd * deg(tan(e))` for a rung `e`
+  degrees off the boresight, so the zero-pitch line, every rung, the FPM, the horizon
+  heading ticks and the pitch-limit cue register with the terrain at any pitch
+  (AC 23-26 3.c, AC 20-167B 4.3.2.5.3; AER-5125). Without SVS the ladder is linear.
 - **Bank** — a moving bank scale + standard-rate-turn markers, clamped at
   `bankAngleMaximum` (25°).
 - **Slip/skid ball** — from `ALAT` (lateral acceleration).

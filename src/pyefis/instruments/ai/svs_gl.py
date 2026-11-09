@@ -215,6 +215,11 @@ void main() {
 }
 """
 
+# Terrain fragment-shader palette uniforms, in SVSRenderer.palette_rgb01()
+# order (safe, caution, warning, conflict, water).
+_PALETTE_UNIFORMS = ("COLOR_SAFE", "COLOR_CAUTION", "COLOR_WARNING",
+                     "COLOR_CONFLICT", "COLOR_WATER")
+
 _FRAG_BODY = """
 in float v_clearance_ft;
 in float v_intensity;
@@ -233,12 +238,14 @@ uniform float u_grid_amp;        // world-grid darkening, 0 = off
 uniform float u_ac_alt_ft;       // aircraft altitude (shared w/ vertex)
 uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
 
-// Match the CPU tier's COLOR_* constants in svs.py.
-const vec3 COLOR_SAFE     = vec3(0.0,   0.392, 0.0  );  // (  0, 100,   0)
-const vec3 COLOR_CAUTION  = vec3(0.706, 0.510, 0.0  );  // (180, 130,   0)
-const vec3 COLOR_WARNING  = vec3(0.784, 0.157, 0.0  );  // (200,  40,   0)
-const vec3 COLOR_CONFLICT = vec3(0.706, 0.0,   0.706);  // (180,   0, 180)
-const vec3 COLOR_WATER    = vec3(0.078, 0.314, 0.588);  // ( 20,  80, 150)
+// Clearance-band colours of the selected terrain palette (svs.py
+// _PALETTES, chosen by the `palette` SVS option; issue #394). Uploaded
+// every frame from SVSRenderer.palette_rgb01().
+uniform vec3 COLOR_SAFE;
+uniform vec3 COLOR_CAUTION;
+uniform vec3 COLOR_WARNING;
+uniform vec3 COLOR_CONFLICT;
+uniform vec3 COLOR_WATER;
 
 // Washed-out horizon tone the haze fades toward — keyed to the AI's
 // sky gradient at the horizon so far terrain melts into the sky.
@@ -687,7 +694,8 @@ class SVSGLRenderer:
     # ------------------------------------------------------------------
     def draw(self, painter, w, h, ac_lat, ac_lon, ac_alt_ft,
              pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-             range_nm=None, device_pixel_ratio=1.0, roll_pivot_px=0.0):
+             range_nm=None, device_pixel_ratio=1.0, roll_pivot_px=0.0,
+             lens_shift_px=0.0):
         """Render terrain + overlays directly into the painter's GL
         surface between begin/endNativePainting. Requires the AI view
         to carry a QOpenGLWidget viewport; raises when no GL context
@@ -721,7 +729,8 @@ class SVSGLRenderer:
             self._ensure_heightmap(ac_lat, ac_lon)
             self._update_camera(w, h, ac_lat, ac_lon, ac_alt_ft,
                                 pitch_deg, roll_deg, heading_deg,
-                                pixels_per_deg, roll_pivot_px)
+                                pixels_per_deg, roll_pivot_px,
+                                lens_shift_px)
             # Qt leaves the GL viewport undefined inside native
             # painting; set it to the full backing store (device
             # pixels, hence the DPR scale).
@@ -780,7 +789,7 @@ class SVSGLRenderer:
     # ------------------------------------------------------------------
     def _update_camera(self, w, h, ac_lat, ac_lon, ac_alt_ft,
                        pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-                       roll_pivot_px=0.0):
+                       roll_pivot_px=0.0, lens_shift_px=0.0):
         """Build the per-frame unified camera (P3): aircraft ENU
         position relative to the heightmap patch origin, the 4x4
         view-projection matrix, and the ENU conversion factors used
@@ -800,7 +809,8 @@ class SVSGLRenderer:
         vp = view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg,
                              roll_deg, pixels_per_deg, w, h,
                              pixels_per_deg_h=pixels_per_deg_h,
-                             roll_pivot_px=roll_pivot_px)
+                             roll_pivot_px=roll_pivot_px,
+                             lens_shift_px=lens_shift_px)
         self._frame_vp = QMatrix4x4(*[float(x) for x in vp.ravel()])
         self._frame_ac_e = ac_e
         self._frame_ac_n = ac_n
@@ -875,6 +885,7 @@ class SVSGLRenderer:
                     self._u["u_green_ft"], float(p.green_ft))
                 self._program.setUniformValue(
                     self._u["u_yellow_ft"], float(p.yellow_ft))
+                self._set_palette_uniforms(self._program)
                 near = self._near_airport(ac_lat, ac_lon)
                 self._program.setUniformValue(
                     self._u["u_near_airport"], 1.0 if near else 0.0)
@@ -1448,9 +1459,9 @@ class SVSGLRenderer:
                         tris = p._collect_water_triangles(
                             ac_lat, ac_lon, ac_alt_ft, range_nm)
                     if tris is not None and tris.size > 0:
-                        # COLOR_WATER from svs.py = (20, 80, 150).
-                        color = (20 / 255.0, 80 / 255.0,
-                                 150 / 255.0, 1.0)
+                        # The palette's water band, so polygon water
+                        # matches void/ocean terrain cells.
+                        color = (*p.palette_rgb01()[4], 1.0)
                         with p._perf.time("water.gl_draw"):
                             self._draw_overlay_cached(
                                 "water", tris, color,
@@ -1753,12 +1764,19 @@ class SVSGLRenderer:
                      "u_heightmap",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_apt_gate_ft", "u_safe_grad", "u_tex_amp",
-                     "u_grid_amp"):
+                     "u_grid_amp") + _PALETTE_UNIFORMS:
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)
             self._u[name] = loc
         self._program = prog
+
+    def _set_palette_uniforms(self, prog):
+        """Upload the selected terrain palette's band colours to the
+        fragment shader's COLOR_* uniforms (issue #394)."""
+        for name, rgb in zip(_PALETTE_UNIFORMS,
+                             self._parent.palette_rgb01()):
+            prog.setUniformValue(self._u[name], *rgb)
 
     def _ensure_mesh(self):
         if self._vao is not None:

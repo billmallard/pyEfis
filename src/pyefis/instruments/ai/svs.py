@@ -159,7 +159,8 @@ COLOR_WATER     = QColor( 20,  80, 150)   # ocean blue  — SRTM void / open wat
 # the five clearance bands (safe, caution, warning, conflict, water).
 # "clearance" is the stock scheme (the module COLOR_* constants); the others
 # tune saturation / contrast. set_svs_config copies the chosen set onto the
-# instance (self.c_*); _clearance_color falls back to the module constants when
+# instance (self.c_*); palette_rgb01 hands them to the GL terrain shader as
+# its COLOR_* uniforms (issue #394), falling back to the module constants when
 # no palette was selected, so behaviour is identical unless a palette is named.
 _PALETTES = {
     "clearance": (COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
@@ -860,6 +861,17 @@ class SVSRenderer:
                 round(ac_lon / step) * step,
                 range_nm) + extra
 
+    def palette_rgb01(self):
+        """The selected palette's five band colours (safe, caution,
+        warning, conflict, water) as 0..1 RGB tuples -- the terrain
+        shader's COLOR_* uniforms (issue #394)."""
+        bands = (getattr(self, "c_safe", COLOR_SAFE),
+                 getattr(self, "c_caution", COLOR_CAUTION),
+                 getattr(self, "c_warning", COLOR_WARNING),
+                 getattr(self, "c_conflict", COLOR_CONFLICT),
+                 getattr(self, "c_water", COLOR_WATER))
+        return tuple((c.redF(), c.greenF(), c.blueF()) for c in bands)
+
     def _clearance_color(self, clearance_ft: float) -> QColor:
         # Use the selected palette's band colours; fall back to the module
         # constants if set_svs_config has not run (palette unset == stock).
@@ -875,7 +887,7 @@ class SVSRenderer:
              ac_lat: float, ac_lon: float, ac_alt_ft: float,
              pitch_deg: float, roll_deg: float, heading_deg: float,
              pixels_per_deg: float, device_pixel_ratio: float = 1.0,
-             roll_pivot_px: float = 0.0):
+             roll_pivot_px: float = 0.0, lens_shift_px: float = 0.0):
         """
         Draw the SVS terrain overlay onto the AI viewport.
 
@@ -934,7 +946,8 @@ class SVSRenderer:
                     p, w, h, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg,
                     pixels_per_deg, range_nm, device_pixel_ratio,
-                    roll_pivot_px=roll_pivot_px)
+                    roll_pivot_px=roll_pivot_px,
+                    lens_shift_px=lens_shift_px)
             # Terrain painted successfully — the AI may now show sky (not brown)
             # above the synthetic terrain.
             self.drew_terrain = True
@@ -2662,18 +2675,24 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             head_true = ai._fpm_head - getattr(ai, "_magvar", 0.0)
             # SVSRenderer.draw does its own save/resetTransform/restore so the
             # outer scene transform is preserved for the next item in z order.
-            # Depress the terrain camera by horizon_position's look-down angle
-            # so the terrain horizon rises to match the AI's raised reference
-            # (no-op when horizon_position == 50). Sign verified on the Pi --
-            # if the terrain horizon moves the wrong way, flip the subtraction.
-            pitch_for_svs = ai._pitchAngle - ai._horizon_offset_deg()
+            # Raise the terrain to the AI's raised reference with a lens
+            # shift of horizon_position's pixel offset, and give the
+            # camera the true pitch. The ladder puts zero pitch at
+            # offset_px - pitch * ppd; the shifted camera puts the
+            # horizon at offset_px - tan(pitch) (scaled to pixels), the
+            # same residual as at horizon_position 50. Depressing the camera by the offset
+            # as an angle sent the offset through the tangent as well,
+            # 1.2 deg off at 50/75 and pitch -10 (AER-5122). No-op when
+            # horizon_position == 50.
+            offset_px = ai._horizon_offset_px()
             self._renderer.draw(
                 painter, vp.width(), vp.height(),
                 ai._svs_lat, ai._svs_lon, ai._svs_alt,
-                pitch_for_svs, ai._rollAngle, head_true,
+                ai._pitchAngle, ai._rollAngle, head_true,
                 ppd, vp.devicePixelRatioF(),
                 # Roll the terrain about the same raised point the AI
                 # widget rolls its ladder about (redraw(), #304).
-                roll_pivot_px=ai._horizon_offset_px())
+                roll_pivot_px=offset_px,
+                lens_shift_px=offset_px)
 
     return _SVSGraphicsItem(renderer, ai_widget)

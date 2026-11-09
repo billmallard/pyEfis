@@ -28,6 +28,11 @@ class _FakeAI:
         self.horizon_position = horizon_position
         self._pitchAngle = pitch_angle
 
+    def _svs_conformal(self):
+        # No SVS: the linear ladder's exits. The tangent case is pinned in
+        # test_svs_horizon_registration.py (AER-5125).
+        return False
+
 
 def _chevrons_fire(pitch_degrees_shown, horizon_position, pitch_angle):
     fake = _FakeAI(pitch_degrees_shown, horizon_position, pitch_angle)

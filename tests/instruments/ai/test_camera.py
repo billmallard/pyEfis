@@ -214,8 +214,8 @@ class TestTerrainRollRegistration:
     @pytest.mark.parametrize("roll", [30.0, 90.0, 180.0])
     def test_horizon_pivots_on_the_raised_reference(self, roll):
         # horizon_position raises the AI's horizon by offset_px and rolls
-        # the ladder about that point; svs.py depresses the terrain camera
-        # by the same angle. The rolled terrain horizon must still pass
+        # the ladder about that point; svs.py lens-shifts the terrain by
+        # the same pixels (AER-5122). The rolled terrain horizon must still pass
         # through the raised point, or the two horizons are parallel but
         # apart by offset_px * (1 - cos roll).
         from pyefis.instruments.ai.svs_gl import _TERRAIN_HFOV_PITCH_DEG
@@ -224,16 +224,17 @@ class TestTerrainRollRegistration:
         ppd = h / pds
         offset_deg = 0.18 * pds          # horizon_position = 68
         offset_px = offset_deg * ppd
-        vp = view_projection(0.0, 0.0, 300.0, 0.0, -offset_deg, roll,
+        vp = view_projection(0.0, 0.0, 300.0, 0.0, 0.0, roll,
                              ppd, w, h,
                              pixels_per_deg_h=h / _TERRAIN_HFOV_PITCH_DEG,
-                             roll_pivot_px=offset_px)
+                             roll_pivot_px=offset_px,
+                             lens_shift_px=offset_px)
         (x1, y1), (x2, y2) = self._horizon_px(vp, w, h)
         # Perpendicular distance from the pivot (0, offset_px) to the line.
         dist = abs((x2 - x1) * (y1 - offset_px) - (y2 - y1) * x1) / math.hypot(
             x2 - x1, y2 - y1)
-        # tan vs linear for the 4.5 deg depression is ~0.45 px; allow 1.
-        assert dist < 1.0
+        # At pitch 0 the lens-shifted horizon passes through it exactly.
+        assert dist < 1e-6
 
     def test_wings_level_matrix_is_unchanged_by_the_pivot(self):
         a = view_projection(0.0, 0.0, 300.0, 30.0, 5.0, 0.0, 24.0, 1248, 1200,

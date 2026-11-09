@@ -713,6 +713,8 @@ class AI(QGraphicsView):
                 l = self.scene.addLine(left, y, right, y, pen)
                 l.setZValue(1)
                 self.pitchItems.append((i, l))
+        # Each item's linear scene y; setPitchItems offsets from it.
+        self._pitchItemY = [item.y() for _i, item in self.pitchItems]
         self.setPitchItems()
 
         # Draws the static overlay stuff to a pixmap
@@ -1078,7 +1080,11 @@ class AI(QGraphicsView):
         # (pitch - fpa) below the symbol -- i.e. fpa above the horizon. In
         # nose-high level flight (high AoA, fpa ~ 0) that drops the marker from
         # the boresight onto the horizon line, where it belongs.
-        y_roll = (self._pitchAngle - fpa_deg) * ppd
+        # On the ladder's scale, so over SVS terrain it is the terrain's
+        # tangent: the FPM sits on the terrain the airplane is headed for
+        # (AC 23-26 3.c, AER-5125).
+        y_roll = self._pitch_px(self._pitchAngle - fpa_deg, ppd)
+        self._fpm_y_px = y_roll  # pre-clamp; observability for AER-5125 tests
 
         # Clamp to widget interior (in rolled frame, conservative)
         max_x = w / 2.0 - sym_r * 3.0
@@ -1157,7 +1163,7 @@ class AI(QGraphicsView):
         glass so a large margin pins at the edge instead of vanishing."""
         ppd = getattr(self, "pixelsPerDeg", self.height() / self.pitchDegreesShown)
         cy = h / 2.0 - self._horizon_offset_px()
-        y = cy - margin * ppd
+        y = cy - self._pitch_px(margin, ppd)
         pad = h * 0.04
         y = max(pad, min(h - pad, y))
 
@@ -1207,8 +1213,27 @@ class AI(QGraphicsView):
             r = self.bankAngleRadius if self.bankAngleRadius else h / 3
             m = self.bankMarkSize
             cut = self._bank_anchor_y(h) - r + m * 4.3
-        for each in self.pitchItems:
-            if abs(each[0] - self._pitchAngle) < self.visiblePitchAngle:
+        # Over SVS terrain each visible rung moves off its linear scene y to
+        # the terrain's tangent (_pitch_px): rung i belongs _pitch_px(i - p)
+        # above the boresight, and the view centres the boresight
+        # _pitch_px(p) above the scene's horizon. Zero shift without SVS.
+        base_y = getattr(self, "_pitchItemY", None)
+        if base_y is not None and len(base_y) != len(self.pitchItems):
+            base_y = None
+        conformal = self._svs_conformal()
+        p = self._pitchAngle
+        ppd = getattr(self, "pixelsPerDeg", self.height() / self.pitchDegreesShown)
+        horizon_px = self._pitch_px(p, ppd) if conformal else 0.0
+        for n, each in enumerate(self.pitchItems):
+            visible = abs(each[0] - p) < self.visiblePitchAngle
+            if base_y is not None:
+                dy = 0.0
+                if conformal and visible:
+                    dy = (ppd * each[0] - horizon_px
+                          - self._pitch_px(each[0] - p, ppd))
+                if each[1].y() != base_y[n] + dy:
+                    each[1].setY(base_y[n] + dy)
+            if visible:
                 if cut is not None:
                     pt = self.mapFromScene(
                         each[1].sceneBoundingRect().center())
@@ -1248,7 +1273,7 @@ class AI(QGraphicsView):
         p.resetTransform()
         p.translate(w / 2.0, h / 2.0 - self._horizon_offset_px())
         p.rotate(-roll)
-        horizon_y = self._pitchAngle * ppd   # the pitch=0 line in this frame
+        horizon_y = self._pitch_px(self._pitchAngle, ppd)   # the pitch=0 line in this frame
 
         pen = QPen(col)
         pen.setWidth(max(1, qRound(self.fontSize * 0.04)))
@@ -1284,10 +1309,39 @@ class AI(QGraphicsView):
         (h/pitchDegreesShown vs the terrain's pinned h/30) and linear where
         the terrain is a tangent (pyEfis #304). Without SVS there is no
         terrain to register with, so the long-standing linear scale stays."""
-        s = self._live_svs()
-        if s is not None and getattr(s, "enabled", False):
+        if self._svs_conformal():
             return terrain_horizontal_px(deg, self.height())
         return deg * ppd
+
+    def _pitch_px(self, deg, ppd=None):
+        """Screen offset, in pixels along the rolled vertical, of something
+        *deg* above the boresight on the pitch ladder's scale (negative =
+        below). Every pitch-scale consumer goes through here: the ladder
+        rungs, the zero-pitch line, the FPM, the horizon heading ticks and
+        the pitch-limit cue.
+
+        With SVS configured it is the terrain camera's own tangent,
+        ppd * deg(tan(deg)), the same projection view_projection applies
+        vertically. A linear ladder over a pinhole camera puts the terrain
+        horizon 0.35 deg off the zero-pitch line at 15 deg of pitch and
+        0.85 deg at 20, which lets terrain above the aircraft draw below
+        that line (AC 23-26 3.c, AC 20-167B 4.3.2.5.3; AER-5125). Without
+        SVS there is no terrain to register with, so the long-standing
+        linear ladder stays, as in _horizontal_px."""
+        if ppd is None:
+            ppd = getattr(self, "pixelsPerDeg",
+                          self.height() / self.pitchDegreesShown)
+        if self._svs_conformal():
+            d = max(-89.0, min(89.0, float(deg)))
+            return ppd * math.degrees(math.tan(math.radians(d)))
+        return deg * ppd
+
+    def _svs_conformal(self):
+        """True when SVS terrain is configured and enabled, so the symbology
+        must register with its projection. Deliberately not _svs_drawing():
+        the scale must not jump when one frame fails to paint terrain."""
+        s = self._live_svs()
+        return s is not None and bool(getattr(s, "enabled", False))
 
     @staticmethod
     def _heading_label(deg):
@@ -1313,14 +1367,6 @@ class AI(QGraphicsView):
                            float(getattr(self, "bank_position", 50))))
         return h * (1.0 - pos / 100.0)
 
-    def _horizon_offset_deg(self):
-        # The same shift expressed as a look-down angle (offset_px /
-        # pixelsPerDeg, which reduces to height-independent form). The SVS
-        # terrain projects pitch=0 to the viewport centre, so depressing its
-        # camera by this angle raises the terrain horizon to match the AI's.
-        return (float(getattr(self, "horizon_position", 50)) / 100.0
-                - 0.5) * self.pitchDegreesShown
-
     @staticmethod
     def _horizon_exit_pitch(horizon_position, pitch_degrees_shown):
         # Pure geometry (AC 23.1311-1C 8.5(b)): the pitch=0 horizon line
@@ -1342,6 +1388,11 @@ class AI(QGraphicsView):
         # horizon_position / pitchDegreesShown rather than a fixed angle.
         top, bottom = self._horizon_exit_pitch(
             getattr(self, "horizon_position", 50), self.pitchDegreesShown)
+        if self._svs_conformal():
+            # The horizon rides the terrain's tangent (_pitch_px), so it
+            # reaches the edge at the pitch whose tangent is the linear exit.
+            top, bottom = (math.degrees(math.atan(math.radians(a)))
+                           for a in (top, bottom))
         return self._pitchAngle <= top or self._pitchAngle >= bottom
 
     def redraw(self):
@@ -1367,7 +1418,7 @@ class AI(QGraphicsView):
         self.centerOn(
             scene.width() / 2 + _off * math.sin(_rr),
             scene.height() / 2 + _off * math.cos(_rr)
-            + self._pitchAngle * self.pixelsPerDeg * -1.0)
+            - self._pitch_px(self._pitchAngle, self.pixelsPerDeg))
         self.rotate(self._rollAngle * -1.0)
 
         # Pitch-item visibility tracks the pose applied above. This is

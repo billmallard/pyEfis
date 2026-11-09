@@ -309,24 +309,24 @@ gauges:
     dbkey: FUELQT
 
   BAR4:
-    name: "Left"
+    name: "Tank 1"
     dbkey: FUELQ1
     decimal_places: 1
   BAR5:
-    name: "Center"
+    name: "Tank 2"
     decimal_places: 1
     dbkey: FUELQ2
     styles: 
       dseg:
         font_mask: "0000"
         units_font_mask: '~~'
-        name_font_mask: '~~~~~'
+        name_font_mask: '~~~~~~'
       ghost:
         font_ghost_mask: "~~~~~"
         units_font_ghost_mask: "~~"
-        name_font_ghost_mask: '~~~~~'
+        name_font_ghost_mask: '~~~~~~'
   BAR6:
-    name: "Right"
+    name: "Tank 3"
     decimal_places: 1
     dbkey: FUELQ3
 
@@ -482,7 +482,7 @@ gauges:
 #            line_width_percent: 0.7
 #            text_gap: 8
   BAR19:
-    name: "Left"
+    name: "Tank 1"
     dbkey: FUELQ1
     decPlaces: 0
     show_units: false
@@ -492,7 +492,7 @@ gauges:
     small_font_percent: 0.060
 
   BAR20:
-    name: "Center"
+    name: "Tank 2"
     dbkey: FUELQ2
     decPlaces: 0
     show_units: false
@@ -502,8 +502,8 @@ gauges:
     small_font_percent: 0.060
 
   BAR21:
-    name: "Right"
-    dbkey: FUELQ1
+    name: "Tank 3"
+    dbkey: FUELQ3
     decPlaces: 0
     show_units: false
     bar_width_percent: 0.5
@@ -525,20 +525,8 @@ gauges:
     decimal_places: 0
     dbkey: MAP1
 
-  BAR23:
-    name: IT
-    decimal_places: 0
-    dbkey: MAP1
-
-  BAR24:
-    name: AFR
-    decimal_places: 0
-    dbkey: MAP1
-
-  BAR25:
-    name: EGO
-    decimal_places: 0
-    dbkey: MAP1
+  # BAR23-25 (IT, AFR, EGO) removed (AER-5179): fix-gateway defines no key
+  # for any of them, and all three were bound to MAP1.
 
   BAR26:
     name: MAP
