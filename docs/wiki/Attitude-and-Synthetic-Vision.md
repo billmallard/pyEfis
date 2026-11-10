@@ -22,7 +22,7 @@ terrain is `atitude_indicator`.
 | **Pitch ladder** | Lines every few degrees, numbered every **Numbered division** (5° on the bench panel, 10° by default). Lines more than the **Pitch label range** from your pitch fade out. |
 | **Bank scale** | An arc with marks at 10, 20, 30, 45 and 60 degrees, a fixed white datum at the top and a pointer that turns with the aircraft. Both turn amber past the **Excessive-bank caution** setting, 60° of bank by default, so a 45° or 50° steep turn does not light it. |
 | **Bank bug** | Optional. A cyan arrow outside the bank scale at the target bank you set, on both sides, with a cyan band 5° either side of it over the scale. Hold the turn with the white pointer inside the band. Set it by touching the bank scale and turning the knob; 0 is off. Hidden past 65° of bank with the other de-clutter. See [below](#bank-bug). |
-| **Standard-rate marks** | Two small diamonds on the arc at the bank for a standard-rate turn at your true airspeed, capped at **Max indicated bank** (25°). |
+| **Standard-rate marks** | Two small diamonds on the arc at the bank for a standard-rate turn (3° per second) at your true airspeed, capped at **Max indicated bank** (25°). See [Flying training turns](#flying-training-turns). |
 | **Slip/skid indicator** | The ball just under the bank pointer. It moves sideways with `ALAT` and turns amber at 0.25 g and beyond. |
 | **Flight path marker** | A green circle with wings: where the aircraft is actually going, from GPS track, groundspeed and vertical speed. See [below](#flight-path-marker). |
 | **Horizon heading marks** | Optional compass ticks along the horizon line, with labels: `N`, `E`, `S`, `W`, or the heading in tens (`33` is 330). |
@@ -52,6 +52,46 @@ you are within tolerance. If the band is off to one side, roll toward it.
 The value is the FIX key `BANKBUG`, so every display on the bus shows the same
 bug. If the gateway does not define `BANKBUG`, there is no bug and touching the
 scale does nothing.
+
+### Flying training turns
+
+The attitude display has a cue for each of the turns you practise for a
+checkride. In each case, put the white pointer on the cue and hold it there.
+
+| Turn | Cue | Standard |
+|---|---|---|
+| Standard rate | The two diamonds on the bank arc | 3° per second |
+| Private steep turn | Bank bug at 45 | 45° ±5°, altitude ±100 ft, airspeed ±10 kt, roll out on the entry heading ±10° (Private Pilot ACS, Area V Task A) |
+| Commercial steep turn | Bank bug at 50 | 50° ±5°, with the same altitude, airspeed and heading tolerances (Commercial Pilot ACS, Area V Task A) |
+| Steep spiral | Bank bug at 60 | Do not exceed 60° (Commercial Pilot ACS, Area V Task B) |
+| Chandelle, lazy eight | Bank bug at 30 | About 30°. The ACS states no bank tolerance |
+
+**Standard rate.** The diamonds sit at the bank for a 3° per second turn at
+your true airspeed (`TAS`): about 14° at 90 kt and 18° at 120 kt. They follow
+airspeed until that bank reaches **Max indicated bank** (25° by default), and
+then stay at 25°. Standard rate needs 25° at about 170 KTAS. Above that the
+diamonds give the bank to fly, not standard rate, and your turn is slower than
+3° per second. This is deliberate. AIM 5-3-8 has you turn at 3° per second,
+30° of bank, or 25° of bank with a flight director, whichever needs the least
+bank. Like the bank bug, the diamonds are removed past 65° of bank with the
+other de-clutter.
+
+**Steep turns.** Set the bank bug to the target before you roll in. The arrow
+and band are on both sides, so a left turn followed by a right turn needs no
+second setting. With the default **Bank bug tolerance** of 5°, the band is the
+ACS bank tolerance: the pointer inside the band is within standard. Two other
+references help with the rest of the task:
+
+- **Heading.** Push the HDG knob at entry to sync the heading bug to your
+  heading, and roll out on it. See [Setting heading and course](The-HSI#setting-heading-and-course).
+- **Altitude.** Set the selected altitude (`ALTSEL`) to your entry altitude.
+  It marks the altitude to hold ±100 ft on the tape. See [Selected altitude](Airspeed-Altitude-and-Vertical-Speed#selected-altitude).
+
+**Excessive-bank caution.** The bank scale and pointer turn amber past the
+**Excessive-bank caution** setting, 60° by default. A 45° or 50° steep turn
+does not light it, and a steep spiral at 60° stays just under it. If your
+aircraft is limited to less bank, set the caution lower in the configurator.
+The bank bug then cannot be set above it.
 
 ### Flight path marker
 

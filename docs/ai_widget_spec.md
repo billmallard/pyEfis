@@ -26,8 +26,11 @@ ladder). Already present:
   degrees off the boresight, so the zero-pitch line, every rung, the FPM, the horizon
   heading ticks and the pitch-limit cue register with the terrain at any pitch
   (AC 23-26 3.c, AC 20-167B 4.3.2.5.3; AER-5125). Without SVS the ladder is linear.
-- **Bank** — a moving bank scale + standard-rate-turn markers, clamped at
-  `bankAngleMaximum` (25°).
+- **Bank** — a moving bank scale + standard-rate-turn markers at
+  `standard_rate_bank_deg()`: atan(TAS/364), the 3°/s bank, clamped at
+  `bankAngleMaximum` (25°). The clamp is the bank to fly (AIM 5-3-8: 3°/s,
+  30°, or 25° with a flight director, whichever is least), reached at about
+  170 KTAS; pinned by `test_ai_standard_rate_*` (AER-5149).
 - **Slip/skid ball** — from `ALAT` (lateral acceleration).
 - **Aircraft symbol** + **Flight Path Marker** (FPM, gated below `_FPM_MIN_GS_KT`, #70).
 - **Failure annunciation** — `setFail(fail, item)` swaps to a `fail_scene` that shows

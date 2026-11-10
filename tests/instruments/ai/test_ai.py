@@ -361,6 +361,47 @@ def test_ai_paint_caps_standard_rate_bank_marker_angle(fix, qtbot):
     assert widget._tas == 10000
 
 
+@pytest.mark.parametrize("tas, expected", [
+    (90, 13.888),    # trainer cruise: well under the cap
+    (120, 18.246),
+    (169, 24.905),   # just under 25: standard rate reaches 25 at ~170 KTAS
+    (171, 25.0),     # just over: held at the cap
+    (400, 25.0),
+])
+def test_ai_standard_rate_bank_follows_tas_then_caps_at_25(fix, qtbot, tas, expected):
+    # AER-5149 / ATT1: the diamonds sit at atan(TAS/364), the 3 deg/s bank,
+    # until that passes bankAngleMaximum (AIM 5-3-8 holding bank), then hold.
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    widget.setTrueAirspeed(tas)
+
+    assert widget.standard_rate_bank_deg() == pytest.approx(expected, abs=0.01)
+
+
+def test_ai_standard_rate_cap_moves_with_max_indicated_bank(fix, qtbot):
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    widget.setTrueAirspeed(400)
+    widget.bankAngleMaximum = 30
+
+    assert widget.standard_rate_bank_deg() == pytest.approx(30.0)
+    widget.setTrueAirspeed(150)
+    assert widget.standard_rate_bank_deg() == pytest.approx(22.396, abs=0.01)
+
+
+def test_ai_paint_places_standard_rate_marks_from_the_capped_bank(fix, qtbot):
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.setTrueAirspeed(400)
+
+    with mock.patch.object(widget, "standard_rate_bank_deg",
+                           wraps=widget.standard_rate_bank_deg) as srb:
+        widget.paintEvent(event)
+
+    srb.assert_called()
+
+
 def test_fd_target_resize_and_update(qtbot):
     center = QPointF(100, 120)
     widget = ai.FDTarget(center, pixelsPerDeg=5)
