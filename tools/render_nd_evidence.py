@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #  SPDX-License-Identifier: GPL-2.0-or-later
-"""Render the moving map's ND mode offscreen at a fixed pose (G11a, #134).
+"""Render the moving map's ND mode offscreen at a fixed pose (G11a/G11b, #134).
 
 The real ``MovingMap`` widget, real layer workers and real data packs, with
 the in-memory mock FIX database from render_instrument.py (no fix-gateway),
@@ -22,7 +22,12 @@ Scenes (all at the same pose: 9 NM west of KSBA, tracking 072 toward it):
 - ``noglide``:  no plan (FPLSTATE 0), GSV 0 (no scale, no waypoint block);
 - ``off``:      ``nd_mode`` off -- the plain map, for the dev comparison.
 
-Writes ``<out>/nd_<scene>_<style>.png`` (+ sidecar) and prints each sha256.
+``--mode`` picks the ND mode the other scenes draw: ``expanded`` (default)
+or ``ctr`` (G11b).
+
+Writes ``<out>/nd_<scene>_<style>.png`` (``nd_ctr_<scene>_<style>.png`` in
+CTR; ``off`` is always ``nd_off_<style>.png``) + sidecar, and prints each
+sha256.
 """
 
 import argparse
@@ -55,7 +60,7 @@ def _dist_nm(a, b):
     return math.degrees(math.acos(max(-1.0, min(1.0, c)))) * 60.0
 
 
-def _scene(name):
+def _scene(name, nd_mode="expanded"):
     """(nd_mode, {key: (dtype, value, flags)}) for scene *name*."""
     dis = _dist_nm((POSE["lat"], POSE["lon"]), KSBA)
     keys = {
@@ -66,7 +71,7 @@ def _scene(name):
         "WPETE": ("int", int(dis / GS_KT * 3600.0), {}),
         "GSI": ("float", 0.4, {}), "GSV": ("float", 1.0, {}),
     }
-    mode = "expanded"
+    mode = nd_mode
     if name == "gsflag":
         keys["GSI"] = ("float", 0.4, {"bad": True})
     elif name == "noglide":
@@ -107,7 +112,7 @@ def render(scene, style, args, app):
     from pyavtools import fix
     from pyefis.instruments.map import MovingMap
 
-    mode, keys = _scene(scene)
+    mode, keys = _scene(scene, args.mode)
     for key, val in (("LAT", POSE["lat"]), ("LONG", POSE["lon"]),
                      ("TRACKM", POSE["track"]), ("ALT", POSE["alt"])):
         _define(fix, key, "float", val, {})
@@ -139,7 +144,8 @@ def render(scene, style, args, app):
     for _ in range(2):
         w.repaint()
         app.processEvents()
-    out = os.path.join(args.out, "nd_%s_%s.png" % (scene, style))
+    prefix = "nd_ctr" if mode == "ctr" else "nd"
+    out = os.path.join(args.out, "%s_%s_%s.png" % (prefix, scene, style))
     w.grab().save(out)
     w.close()
     try:
@@ -164,6 +170,7 @@ def main(argv=None):
     ap.add_argument("--scenes", nargs="+",
                     default=["approach", "gsflag", "noglide", "off"])
     ap.add_argument("--styles", nargs="+", default=["standard", "nav_only"])
+    ap.add_argument("--mode", choices=["expanded", "ctr"], default="expanded")
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--out", default=".")
     args = ap.parse_args(argv)

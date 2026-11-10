@@ -26,6 +26,13 @@ published airway, entry to exit, asserting the exact published order (see
 the "published sequence" tests below) -- V27's own fixture only ever
 covered a 3-fix slice.
 
+V27's fixture is the real SXC..ORCUT stretch of FAA CIFP cycle 2611
+(``_V27_LEGS``), decoded by makerplane-data's ``packtools.arinc424`` --
+it pins RS5 (AER-5267): each expanded fix's type comes from the pack, and
+each leg's MEA comes from the row of the fix that STARTS the leg in record
+order, in both directions of travel (see the ``airways`` module docstring
+for the sources).
+
 A third airway (A1) carries a coded one-way (Direction Restriction) leg --
 the real cycle-2609 golden fixture PA1 ships has none, so the
 direction-enforcement path is only exercised here, deliberately, against a
@@ -67,13 +74,27 @@ CREATE INDEX idx_awyleg_awy ON airway_legs(airway_id, seq);
 CREATE INDEX idx_awyleg_fix ON airway_legs(fix_id);
 """
 
-# Real cycle-2609 V27 coordinates/altitudes (AER-2151 replacement for the
-# struck GVO/POM/RZS scenario), decoded from a live CIFP file with
-# packtools.arinc424.iter_airway_legs -- GVO is a VOR, AFOXY and ORCUT are
-# waypoints, all three consecutive on the published airway.
+# Real cycle-2611 V27 rows SXC..ORCUT (AER-5267; GVO/AFOXY/ORCUT are the
+# AER-2151 replacement for the struck GVO/POM/RZS scenario), decoded from
+# FAACIFP18 (2026-10-29) by makerplane-data packtools.arinc424
+# .iter_airway_legs -- the same reader the pack builder runs. min_alt is the
+# raw row value: the MEA of the leg from this fix to the NEXT seq.
 GVO = (34.53132, -120.09109)
-AFOXY = (34.60868, -120.16213)
 ORCUT = (34.85474, -120.38915)
+_V27_LEGS = [
+    (140, "SXC",   (33.37506, -118.41991), "vor",      4000, 17500, None),
+    (150, "PAROL", (33.59605, -118.60494), "waypoint", 4000, 17500, None),
+    (160, "DOYLE", (33.74199, -118.73036), "waypoint", 4000, 17500, None),
+    (170, "EXERT", (33.87776, -118.84609), "waypoint", 5000, 17500, None),
+    (180, "VTU",   (34.11506, -119.04950), "vor",      5000, 17500, None),
+    (190, "HENER", (34.33106, -119.22769), "waypoint", 5000, 17500, None),
+    (200, "DEANO", (34.31666, -119.41645), "waypoint", 5000, 17500, None),
+    (210, "KWANG", (34.30911, -119.51415), "waypoint", 4000, 17500, None),
+    (220, "GOLET", (34.28135, -119.86437), "waypoint", 6400, 17500, None),
+    (230, "GVO",   GVO,                    "vor",      6000, 17500, None),
+    (240, "AFOXY", (34.60868, -120.16213), "waypoint", 6000, 17500, None),
+    (250, "ORCUT", ORCUT,                  "waypoint", 4000, 17500, None),
+]
 
 # Real cycle-2609 A315 and A509 -- copied verbatim (ident, seq, fix,
 # lat/lon, altitudes) from makerplane-data's golden CIFP fixture
@@ -120,13 +141,8 @@ def pack_path(tmp_path):
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (airway_id, seq, fix_id, lat, lon, fix_type, min_alt, max_alt, direction))
 
-    # V27: KSBA GVO V27 ORCUT KSMX -- GVO -> AFOXY -> ORCUT, no direction
-    # restriction, the AER-2151 replacement design-of-day scenario.
-    insert_airway("V27", [
-        (100, "GVO", GVO, "vor", 6000, 17500, None),
-        (110, "AFOXY", AFOXY, "waypoint", 6000, 17500, None),
-        (120, "ORCUT", ORCUT, "waypoint", 4000, 17500, None),
-    ])
+    # V27: real rows, no direction restriction (see _V27_LEGS).
+    insert_airway("V27", _V27_LEGS)
     # A1: a one-way (forward-only) restriction on the WOODY->WISKI leg --
     # synthetic; see module docstring for why.
     insert_airway("A1", [
@@ -203,8 +219,8 @@ def test_airways_through_fix_unknown_fix_is_empty(graph):
 
 def test_legs_are_published_order(graph):
     legs = graph.legs("v27")  # case-insensitive
-    assert [leg.fix_id for leg in legs] == ["GVO", "AFOXY", "ORCUT"]
-    assert [leg.seq for leg in legs] == [100, 110, 120]
+    assert [leg.fix_id for leg in legs] == [r[1] for r in _V27_LEGS]
+    assert [leg.seq for leg in legs] == [r[0] for r in _V27_LEGS]
 
 
 def test_legs_unknown_ident_is_empty(graph):
@@ -217,7 +233,6 @@ def test_legs_unknown_ident_is_empty(graph):
 def test_expand_forward_yields_published_sequence(graph):
     wps = graph.expand("V27", "GVO", "ORCUT")
     assert [wp.id for wp in wps] == ["GVO", "AFOXY", "ORCUT"]
-    assert all(wp.type == "fix" for wp in wps)
     assert wps[0].lat == pytest.approx(GVO[0])
     assert wps[0].lon == pytest.approx(GVO[1])
     assert wps[-1].lat == pytest.approx(ORCUT[0])
@@ -227,6 +242,78 @@ def test_expand_forward_yields_published_sequence(graph):
 def test_expand_reverse_yields_reversed_sequence(graph):
     wps = graph.expand("V27", "ORCUT", "GVO")
     assert [wp.id for wp in wps] == ["ORCUT", "AFOXY", "GVO"]
+
+
+# ---------------------------------------------------------------------------
+# RS5 (AER-5267): fix type from the pack, MEA from the row that starts the leg
+# ---------------------------------------------------------------------------
+def test_expand_types_each_fix_from_the_pack(graph):
+    # VTU and SXC are VORs inside the expansion; before RS5 every expanded
+    # fix was "fix" and they went on the bus as FPLfTYPE 4, not 2.
+    wps = graph.expand("V27", "GVO", "SXC")
+    assert {wp.id: wp.type for wp in wps} == {
+        "GVO": "vor", "GOLET": "fix", "KWANG": "fix", "DEANO": "fix",
+        "HENER": "fix", "VTU": "vor", "EXERT": "fix", "DOYLE": "fix",
+        "PAROL": "fix", "SXC": "vor"}
+    assert model.TYPE_TO_FPLTYPE[wps[5].type] == 2  # VTU
+
+
+def test_expand_fix_type_fallback_is_fix(tmp_path):
+    path = tmp_path / "types.pack"
+    con = sqlite3.connect(str(path))
+    con.executescript(_SCHEMA)
+    awy_id = con.execute("INSERT INTO airways (ident, cycle) VALUES ('B2', '2611')").lastrowid
+    for seq, fix, ftype in [(100, "NDBX", "ndb"), (110, "RWYX", "runway"),
+                            (120, "BLNK", None), (130, "KAPT", "airport")]:
+        con.execute("INSERT INTO airway_legs (airway_id, seq, fix_id, fix_lat, fix_lon, "
+                    "fix_type, min_alt_ft, max_alt_ft, direction) "
+                    "VALUES (?, ?, ?, 35.0, -118.0, ?, NULL, NULL, NULL)",
+                    (awy_id, seq, fix, ftype))
+    con.commit()
+    con.close()
+    g = AirwayGraph(path)
+    assert [wp.type for wp in g.expand("B2", "NDBX", "KAPT")] == ["ndb", "fix", "fix", "airport"]
+    g.close()
+
+
+# Published MEA of each V27 leg, keyed by its two fixes (NASR AWY_SEG_ALT,
+# cycle 2611, which agrees with the lower-seq row of each pair in CIFP).
+_V27_LEG_MEA = {
+    ("SXC", "PAROL"): 4000, ("PAROL", "DOYLE"): 4000, ("DOYLE", "EXERT"): 4000,
+    ("EXERT", "VTU"): 5000, ("VTU", "HENER"): 5000, ("HENER", "DEANO"): 5000,
+    ("DEANO", "KWANG"): 5000, ("KWANG", "GOLET"): 4000, ("GOLET", "GVO"): 6400,
+    ("GVO", "AFOXY"): 6000, ("AFOXY", "ORCUT"): 6000,
+}
+
+
+def _leg_mea(a, b):
+    return _V27_LEG_MEA.get((a, b), _V27_LEG_MEA.get((b, a)))
+
+
+@pytest.mark.parametrize("entry, exit_", [("SXC", "ORCUT"), ("ORCUT", "SXC")])
+def test_expand_mea_is_the_leg_flown_in_both_directions(graph, entry, exit_):
+    wps = graph.expand("V27", entry, exit_)
+    assert wps[0].alt == ""  # the leg into the entry fix is not on the airway
+    for prev, wp in zip(wps, wps[1:]):
+        assert wp.alt == f"+{_leg_mea(prev.id, wp.id)}", (prev.id, wp.id)
+
+
+def test_expand_gvo_golet_kwang_mountain_leg(graph):
+    # The case fix-gateway#145 found: GVO->GOLET crosses the Santa Ynez
+    # range at MEA 6,400; GOLET->KWANG runs the coast at 4,000.
+    wps = graph.expand("V27", "GVO", "KWANG")
+    assert [(wp.id, wp.alt) for wp in wps] == [
+        ("GVO", ""), ("GOLET", "+6400"), ("KWANG", "+4000")]
+    wps = graph.expand("V27", "KWANG", "GVO")
+    assert [(wp.id, wp.alt) for wp in wps] == [
+        ("KWANG", ""), ("GOLET", "+4000"), ("GVO", "+6400")]
+
+
+def test_altitude_range_counts_only_the_legs_flown(graph):
+    # KWANG->GOLET (4,000) only: GOLET's own 6,400 is the leg beyond it.
+    assert graph.altitude_range("V27", "KWANG", "GOLET") == (4000, 17500)
+    assert graph.altitude_range("V27", "GOLET", "KWANG") == (4000, 17500)
+    assert graph.altitude_range("V27", "GOLET", "GVO") == (6400, 17500)
 
 
 def test_expand_returns_insertable_waypoints(graph):
@@ -293,8 +380,8 @@ def test_unrestricted_leg_permits_both_directions(graph):
 # Altitude range (brief section 3.4: min/max become enforced validation)
 # ---------------------------------------------------------------------------
 def test_altitude_range_is_the_binding_min_and_max(graph):
-    # GVO(min 6000) -> AFOXY(min 6000) -> ORCUT(min 4000): binding min is
-    # 6000. All three share max 17500.
+    # Legs GVO->AFOXY (6000) and AFOXY->ORCUT (6000): binding min is 6000.
+    # ORCUT's own row (4000) is the leg beyond the exit. All share max 17500.
     lo, hi = graph.altitude_range("V27", "GVO", "ORCUT")
     assert (lo, hi) == (6000, 17500)
 
