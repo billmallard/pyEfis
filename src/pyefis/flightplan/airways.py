@@ -11,14 +11,44 @@ indexes ``idx_awy_ident``, ``idx_awyleg_awy(airway_id, seq)`` and
 three indexes -- none of them is a table scan.
 
 Every airway leg is a ``TF`` leg (great circle, fly-by):
-:meth:`AirwayGraph.expand` returns ordinary ``model.Waypoint``
-(``type="fix"``) legs, which :meth:`pyefis.flightplan.model.FlightPlan.insert_airway`
-wraps in one ``airway`` segment (RS2, billmallard/pyEfis#305). Each leg
-carries the MEA of the airway leg that ends at it as its packed altitude
-constraint (``alt="+7000"``), so the bridge can publish it as ``FPLfALT``
-(route segments brief section 3); the entry fix carries none, because the
-leg into it is not on the airway. :meth:`AirwayGraph.altitude_range` still
-answers the segment-wide MEA/ceiling question.
+:meth:`AirwayGraph.expand` returns ordinary ``model.Waypoint`` legs, which
+:meth:`pyefis.flightplan.model.FlightPlan.insert_airway` wraps in one
+``airway`` segment (RS2, billmallard/pyEfis#305). Each waypoint's ``type``
+comes from the pack's ``fix_type`` (``vor``/``ndb``/``airport`` carry over;
+``waypoint``, ``runway`` and blank become ``fix``), so a VOR inside an
+airway publishes the same ``FPLfTYPE`` as the same VOR entered by name
+(RS5, AER-5267). Each leg carries the MEA of the airway leg that ends at it
+as its packed altitude constraint (``alt="+7000"``), so the bridge can
+publish it as ``FPLfALT`` (route segments brief section 3); the entry fix
+carries none, because the leg into it is not on the airway.
+:meth:`AirwayGraph.altitude_range` still answers the segment-wide
+MEA/ceiling question.
+
+Which leg a row's altitudes describe (RS5, AER-5267). An ``ER`` record's
+Minimum Altitude, Maximum Altitude, Route Distance From and Outbound Course
+all describe the segment FROM the record's fix TO the next fix in sequence
+order -- not the leg that ends at it. Settled from two FAA sources, cycle
+2611 (2026-10-29): (1) FAA NASR ``AWY_SEG_ALT.csv`` publishes the MEA per
+named from/to segment, and on V27 it gives KWANG->GOLET 4,000 and
+GOLET->GVO 6,400 -- the values on the KWANG and GOLET rows of FAACIFP18
+(the GOLET row's 18.7 nm route distance is GOLET->GVO too). (2) Across all
+1,244 airways in FAACIFP18 the first record always carries a Minimum
+Altitude and the end-of-route record (description code ``E``) never does:
+the last fix starts no segment. The ARINC 424 field text itself (5.30) is
+not public and was not consulted. So the MEA of the leg between two
+adjacent fixes is on the row with the LOWER ``seq`` of the pair, in either
+direction of travel. Before AER-5267 ``expand`` took it from the row of the
+fix that ends the leg in travel order, which put every airway MEA one leg
+off: flying V27 GVO->GOLET->KWANG published GOLET ``+6000`` (record 6,400,
+over the Santa Ynez range) and KWANG ``+6400`` (record 4,000).
+
+Not handled: the record's second Minimum Altitude (cols 89-93), the MEA for
+travel AGAINST sequence order where it differs (639 FAACIFP18 rows; V1
+INLET->PLANN is 2,100 north-east bound, 5,000 south-west bound in both CIFP
+and NASR). The pack does not carry it, so backward travel uses the forward
+MEA. V27 has no second MEA. The Direction Restriction convention (see
+:meth:`AirwayGraph._resolve_segment`) is likewise unverified: FAACIFP18
+codes no direction restriction on any airway, so the data cannot settle it.
 
 Construction never raises: a missing or unreadable pack just leaves
 ``ready`` False and every query answers as if the airway table were empty
@@ -70,6 +100,11 @@ class AirwayLeg:
     min_alt_ft: int | None
     max_alt_ft: int | None
     direction: str | None  # None (both directions) | "F" | "B"
+
+
+#: Pack ``fix_type`` -> ``model.Waypoint.type``. Anything not listed
+#: (``waypoint``, ``runway``, blank) is a plain ``fix``.
+_PACK_FIX_TYPES = {"vor": "vor", "ndb": "ndb", "airport": "airport"}
 
 
 def _norm(ident: str) -> str:
@@ -168,18 +203,17 @@ class AirwayGraph:
         :class:`AirwayDirectionError` if the requested direction crosses a
         leg coded one-way against it."""
         segment = self._resolve_segment(ident, entry_fix_id, exit_fix_id)
-        # The MEA of a leg is coded on the row of the fix that ends it in
-        # published (ascending seq) order -- the same row as its Direction
-        # Restriction, see _resolve_segment. Flying backward, the leg into a
-        # fix is the published leg that ends at the fix BEFORE it in travel
-        # order.
-        forward = len(segment) < 2 or segment[0].seq < segment[1].seq
+        # The MEA of a leg is coded on the row of the fix that STARTS it in
+        # published (ascending seq) order -- the lower seq of the pair, in
+        # either direction of travel (module docstring).
         out = []
         for n, leg in enumerate(segment):
             mea = None
             if n > 0:
-                mea = leg.min_alt_ft if forward else segment[n - 1].min_alt_ft
-            out.append(model.Waypoint(id=leg.fix_id, type="fix", lat=leg.lat, lon=leg.lon,
+                mea = min(segment[n - 1], leg, key=lambda r: r.seq).min_alt_ft
+            out.append(model.Waypoint(id=leg.fix_id,
+                                       type=_PACK_FIX_TYPES.get(leg.fix_type or "", "fix"),
+                                       lat=leg.lat, lon=leg.lon,
                                        alt=f"+{int(mea)}" if mea else ""))
         return out
 
@@ -204,8 +238,12 @@ class AirwayGraph:
         planned altitude and states the actual figure in the warning --
         this method only enforces direction, per brief section 3.4."""
         segment = self._resolve_segment(ident, entry_fix_id, exit_fix_id)
-        mins = [leg.min_alt_ft for leg in segment if leg.min_alt_ft is not None]
-        maxs = [leg.max_alt_ft for leg in segment if leg.max_alt_ft is not None]
+        # Each row describes the leg it starts (module docstring), so the
+        # highest-seq fix of the segment contributes nothing: its row is the
+        # leg beyond the exit (or the entry, flying backward).
+        flown = sorted(segment, key=lambda r: r.seq)[:-1]
+        mins = [leg.min_alt_ft for leg in flown if leg.min_alt_ft is not None]
+        maxs = [leg.max_alt_ft for leg in flown if leg.max_alt_ft is not None]
         return (max(mins) if mins else None, min(maxs) if maxs else None)
 
     def _resolve_segment(self, ident: str, entry_fix_id: str,
@@ -229,9 +267,11 @@ class AirwayGraph:
         if exit_idx is None:
             raise FixNotOnAirwayError(f"{exit_fix_id!r} is not on airway {ident}")
 
-        # Direction Restriction (ARINC 424 5.4) is coded on the row of the
-        # fix that TERMINATES a leg, describing that one leg (the segment
-        # from the previous seq to this one): "F" = forward (ascending seq)
+        # Direction Restriction (ARINC 424 5.4) is read here as coded on the
+        # row of the fix that TERMINATES a leg -- the opposite of the row's
+        # altitudes (module docstring), and unverified: FAACIFP18 codes no
+        # direction restriction, so no real row can settle it. Read so, it
+        # describes the segment from the previous seq to this one: "F" = forward (ascending seq)
         # only, "B" = backward (descending seq) only, blank = both. Walking
         # forward crosses the terminating rows of every leg strictly after
         # entry up to and including exit; walking backward crosses the same

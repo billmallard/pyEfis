@@ -28,6 +28,13 @@ Status screen; a pack row with no ``notice`` (every pack published before the
 field existed) says so rather than borrowing the software notice. A missing
 or malformed status file yields an "unavailable" line and never raises.
 
+Safety advisories (L5) come from the ``advisories`` block of the same file,
+settled against the running version by ``pyefis.advisories.resolve``, and sit
+directly under the version so they are on screen without scrolling. Each one
+shows its severity, title, description and required action. The normal case,
+an empty list, shows nothing at all; a channel the user has not opted into
+shows one quiet "off" line.
+
 The acknowledgment history is read from the append-only log defined by
 makerplane-data ``docs/install_acknowledgment.md`` through the same reader the
 startup banner uses (``startup_notice.read_records``), newest first. pyEfis
@@ -44,7 +51,7 @@ from PyQt6.QtWidgets import (QWidget, QPushButton, QScrollArea, QVBoxLayout,
                              QHBoxLayout, QLabel)
 
 import pyefis
-from pyefis import startup_notice
+from pyefis import advisories, startup_notice
 from pyefis.instruments.data_status import DEFAULT_STATUS_PATH, load_status
 
 log = logging.getLogger(__name__)
@@ -64,6 +71,11 @@ _VIA = {
     "caller": "Accepted on screen in the installer or pack picker",
     "bench": "Auto-accepted on a bench unit; not a person's accept",
 }
+
+ADVISORIES_OFF = "Safety advisories: off"
+
+# Annunciator colours for the feed's annunciator words.
+_ADV_COLOUR = {"warning": "#FF4D4D", "caution": "#FFB000", "advisory": "#EBEBEB"}
 
 _BTN_STYLE = (
     "QPushButton { color: #EEEEEE; background-color: #202830;"
@@ -90,6 +102,38 @@ def pack_notices(status):
         label = f"{name} ({pid})" if name and pid and pid != name else (name or pid)
         out.append((label, str(p["cycle"]), notice or None))
     return out
+
+
+def advisory_rows(status, version=None, now=None):
+    """``[(text, role), ...]`` for the advisory section, from a parsed status
+    document; role is a severity word, "heading", "body", "action" or
+    "quiet". Empty when there is nothing to say -- the normal state. Never
+    raises."""
+    block = status.get("advisories") if isinstance(status, dict) else None
+    if isinstance(block, dict) and block.get("enabled") is False:
+        return [(ADVISORIES_OFF, "quiet")]
+    active = advisories.resolve(block, version) or []
+    health = advisories.feed_health(block, now)
+    rows = [("Safety advisories", "heading")] if active or health else []
+    for a in active:
+        sev = a["severity"]
+        rows.append((f"{sev.upper()}  {a.get('title') or a.get('id') or ''}", sev))
+        meta = ", ".join(str(a[k]) for k in ("id", "issued") if a.get(k))
+        if a["applies"] != advisories.YES:
+            names = advisories.unknown_components(a)
+            may = "May apply to this device"
+            meta = (f"{meta}. " if meta else "") + (
+                f"{may}: could not tell the installed version of {', '.join(names)}."
+                if names else f"{may}.")
+        if meta:
+            rows.append((meta, "quiet"))
+        if isinstance(a.get("description"), str) and a["description"].strip():
+            rows.append((a["description"].strip(), "body"))
+        if isinstance(a.get("action"), str) and a["action"].strip():
+            rows.append((f"Required action: {a['action'].strip()}", "action"))
+    if health:
+        rows.append((health, "quiet"))
+    return rows
 
 
 def _str_map(d):
@@ -155,6 +199,11 @@ class AboutSystem(QWidget):
         self.packs_title.setStyleSheet("color:#EBEBEB;")
         self.ack_title.setStyleSheet("color:#EBEBEB;")
 
+        self._adv_box = QWidget()
+        self._adv_col = QVBoxLayout(self._adv_box)
+        self._adv_col.setContentsMargins(0, 10, 0, 0)
+        self._adv_labels = []
+
         self._packs_box = QWidget()
         self._packs_col = QVBoxLayout(self._packs_box)
         self._packs_col.setContentsMargins(0, 0, 0, 0)
@@ -169,6 +218,7 @@ class AboutSystem(QWidget):
         col.setContentsMargins(16, 12, 16, 12)
         col.addWidget(self.title)
         col.addWidget(self.version)
+        col.addWidget(self._adv_box)
         col.addSpacing(10)
         col.addWidget(self.notice)
         col.addSpacing(16)
@@ -206,6 +256,7 @@ class AboutSystem(QWidget):
             lbl.deleteLater()
         self._pack_labels = []
         status = load_status(self.status_path)        # construct-never-raises
+        self._fill_advisories(advisory_rows(status))
         rows = pack_notices(status)
         if status is None:
             texts = [("Data pack status unavailable on this device.", False)]
@@ -233,6 +284,29 @@ class AboutSystem(QWidget):
                 texts.append((detail, False))
         self._fill(self._ack_col, self._ack_labels, texts)
         self._apply_fonts()
+
+    def _fill_advisories(self, rows):
+        for lbl in self._adv_labels:
+            lbl.setParent(None)
+            lbl.deleteLater()
+        self._adv_labels = []
+        while self._adv_col.count():          # spacers left by the last fill
+            self._adv_col.takeAt(0)
+        for i, (text, role) in enumerate(rows):
+            if role in _ADV_COLOUR and i > 1:
+                self._adv_col.addSpacing(8)   # keep consecutive advisories apart
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            colour = _ADV_COLOUR.get(role) or {
+                "heading": "#EBEBEB", "action": "#EBEBEB", "quiet": "#969696",
+            }.get(role, "#AFBBC4")
+            lbl.setStyleSheet(f"color:{colour};")
+            lbl.setProperty("heading", role in _ADV_COLOUR)
+            lbl.setProperty("role", role)
+            self._adv_col.addWidget(lbl)
+            self._adv_labels.append(lbl)
+        # Nothing to say takes no space: the normal case is silence.
+        self._adv_box.setVisible(bool(rows))
 
     @staticmethod
     def _fill(column, labels, texts):
@@ -269,8 +343,10 @@ class AboutSystem(QWidget):
         self.notice.setFont(self._f(row * 0.70))
         self.packs_title.setFont(self._f(row * 0.70))
         self.ack_title.setFont(self._f(row * 0.70))
-        for lbl in self._pack_labels + self._ack_labels:
-            lbl.setFont(self._f(row * (0.60 if lbl.property("heading") else 0.55)))
+        for lbl in self._pack_labels + self._ack_labels + self._adv_labels:
+            size = (0.70 if lbl.property("role") == "heading"   # the section title
+                    else 0.60 if lbl.property("heading") else 0.55)
+            lbl.setFont(self._f(row * size))
         self.btn_back.setFont(self._f(row * 0.70))
         self.btn_back.setMinimumSize(qRound(self.width() * 0.22),
                                      max(44, qRound(self.height() * 0.10)))
