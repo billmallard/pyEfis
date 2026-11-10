@@ -358,6 +358,16 @@ def _ai_overlay_props():
              help="the bank scale and pointer turn amber past this bank; "
                   "set it above the steepest turn this aircraft is flown "
                   "in on purpose (60 clears the 45 and 50 deg steep turns)"),
+        Prop("bankBugTolerance", "number", default=5, minimum=1, maximum=10,
+             step=1, label="Bank bug tolerance (+/- deg)",
+             help="half-width of the cyan band around the target-bank bug "
+                  "(BANKBUG); the ACS steep turns are flown to +/-5"),
+        Prop("touch_edit", "boolean", default=True,
+             label="Touch to set bank bug",
+             help="touch the bank scale, then turn the knob to set the "
+                  "target-bank bug (BANKBUG) in 5 deg steps, from off up to "
+                  "60 or the excessive-bank caution if lower; push or the "
+                  "timeout ends the edit"),
         Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)",
              help="length of the bank-arc ticks (auto-scale off)"),
         Prop("bank_position", "number", default=50, minimum=0, maximum=100,

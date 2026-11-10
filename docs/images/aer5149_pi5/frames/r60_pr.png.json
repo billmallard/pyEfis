@@ -1,0 +1,19 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "bdf9b447",
+ "run": "local: /home/wpballard/bench-scratch/aer5149/pr/tools/svs_capture.py --offscreen --width 1248 --height 1200 --range 30 --tiles /data/makerplane-data/terrain/tiles --nasr /data/makerplane-data/navdata/current/airports.sqlite --dof /data/makerplane-data/obstacles/current/obstacles.sqlite --water /data/makerplane-data/water/current/water.sqlite --highways /data/makerplane-data/highways/current/highways.sqlite --timeout 80 --lat 39.75 --lon -104.75 --alt 8500 --heading 200 --roll 60 --bank-bug 60 --out /home/wpballard/bench-scratch/aer5149/sheet/r60_pr.png",
+ "device": "Raspberry Pi 5 Model B Rev 1.1 (eglfs)",
+ "sha256": "784c76ef7942988860434f9999a688645af532ba5429eee3e53f76b78b67bb5d",
+ "created_utc": "2026-11-09T20:03:44Z",
+ "pyefis_rev": "bdf9b447",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  1248,
+  1200
+ ],
+ "actual_size": [
+  1248,
+  1200
+ ],
+ "argv": "/home/wpballard/bench-scratch/aer5149/pr/tools/svs_capture.py --offscreen --width 1248 --height 1200 --range 30 --tiles /data/makerplane-data/terrain/tiles --nasr /data/makerplane-data/navdata/current/airports.sqlite --dof /data/makerplane-data/obstacles/current/obstacles.sqlite --water /data/makerplane-data/water/current/water.sqlite --highways /data/makerplane-data/highways/current/highways.sqlite --timeout 80 --lat 39.75 --lon -104.75 --alt 8500 --heading 200 --roll 60 --bank-bug 60 --out /home/wpballard/bench-scratch/aer5149/sheet/r60_pr.png"
+}
