@@ -124,7 +124,16 @@ stays as it is, so the pilot's own edit does not flicker on every keystroke. An
 `FPLMSG` write, or `commit_answer_ms` (2 s) with no answer at all, marks the
 commit refused. The page then shows the last plan it saw loaded (an empty list
 if it has seen none this session) and a red strip above the soft keys:
-`EDIT REFUSED: <FPLMSG>`, or `NO ENGINE ANSWER` if nothing came back.
+`EDIT REFUSED: <reason>`, or `NO ENGINE ANSWER` if nothing came back.
+The reason is the engine's `FPLMSG` code in plain words, naming the waypoint
+the code names (G61a, `pyefis/flightplan/refusal.py`): `BADTURN RF RFFIX` reads
+`ARC AT RFFIX: NO TURN DIRECTION`, `UNSUPP FC GVO` reads
+`CAN'T FLY FC LEG AT GVO`, and a segment-table code reads
+`ROUTE TABLE ERROR AT V27 (ENTRY FIX)`. A code the display has no words for
+(an engine newer than the display) shows as it came. The moving map's
+`REJECTED:` toast for a refused command uses the same words.
+`tests/flightplan/test_refusal.py` reads the engine's source (CI checks out
+fix-gateway `dev`) and fails when the engine can publish a code with no words.
 **Edit draft** puts the refused route back on the page as a draft
 (`DRAFT - NOT LOADED: <reason>`, no active-leg colour). Its edits commit as
 usual, a refusal of one keeps the pilot in the draft, and **Flown plan** goes

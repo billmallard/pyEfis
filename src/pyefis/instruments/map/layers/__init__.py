@@ -476,6 +476,13 @@ class RangeRingsLayer(MapLayer):
         return QRectF(ax.x() + self._LABEL_DX, ax.y(), self._LABEL_W,
                       self.label_pixel_size(x) + 6)
 
+    @staticmethod
+    def label_kept_out(x, rect):
+        """True when *rect* overlaps a rect an overlay draws over (G11c:
+        the ND's TRK box sits on the full-range ring's top label)."""
+        return any(rect.intersects(k)
+                   for k in getattr(x, "label_keep_out", ()))
+
     def paint(self, p, x):
         ring_c, label_c = self.colors(x)
         pen = QPen(ring_c)
@@ -490,6 +497,9 @@ class RangeRingsLayer(MapLayer):
             p.setPen(pen)
             p.drawEllipse(QPointF(x.cx, x.cy), r_px, r_px)
             if self.labels:
+                rect = self.label_rect(x, r_px)
+                if self.label_kept_out(x, rect):
+                    continue
                 p.setPen(label_pen)
-                p.drawText(self.label_rect(x, r_px), Qt.AlignmentFlag.AlignLeft,
+                p.drawText(rect, Qt.AlignmentFlag.AlignLeft,
                            format_range_nm(x.range_nm * frac))

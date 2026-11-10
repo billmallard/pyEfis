@@ -72,6 +72,7 @@ from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import model as fp_model
 from pyefis.flightplan import procedures as fp_procedures
+from pyefis.flightplan import refusal as fp_refusal
 from pyefis.flightplan import waypoints as fp_waypoints
 
 logger = logging.getLogger(__name__)
@@ -519,7 +520,8 @@ class FlightPlan(QWidget):
 
     def _refuse(self, seq, plan, reason):
         self._pending_seq = None
-        self._refusal = (seq, str(reason or "").strip() or "NO ENGINE ANSWER")
+        # G61a: the engine's code in plain words, naming the waypoint.
+        self._refusal = (seq, fp_refusal.plain_reason(reason, plan) or "NO ENGINE ANSWER")
         self._draft = plan
         if self._draft_open:
             # The pilot is correcting the draft: the refused edit is the new
@@ -2568,9 +2570,10 @@ class FlightPlan(QWidget):
 
     def _paint_refusal_banner(self, p, w, bottom, banner_h, tappable):
         """The engine refused the last route commit (G61, pyEfis #380):
-        say so with the engine's FPLMSG reason, in the alert colour, above
-        the soft keys, with the way to the other view under a finger -- the
-        refused edit as a draft, or back from the draft to the flown plan."""
+        say so with the engine's FPLMSG reason in plain words (G61a), in the
+        alert colour, above the soft keys, with the way to the other view
+        under a finger -- the refused edit as a draft, or back from the draft
+        to the flown plan."""
         top = bottom - banner_h
         p.setBrush(QBrush(QColor("#300000")))
         p.setPen(QPen(QColor("#ff4040"), 2))

@@ -170,12 +170,15 @@ The existing per-key flags keep their meaning (`database.py` `db_item`:
 
 | Flag | On a field key | On the slot's identity key | On a block-level key |
 |---|---|---|---|
-| `old` | that field has not been refreshed within `tol` | the slot is stale; **do not display the entry** | the writer has gone quiet |
+| `old` | that field has not been refreshed within `tol` | the slot is stale; **display it only as stale**, never as current, until the writer evicts it (§4.6) | the writer has gone quiet |
 | `bad` | the source says this field is unavailable (a protocol special value, §4.5); dash that field only | never set (an entry with no identity is not allocated) | the block-level value is not trustworthy |
 | `fail` | not used per field | set on every occupied slot when the source fails (§4.7) | the source has failed |
 
-The slot identity key governs the slot: if it is `old` or `fail`, the entry is
-not drawn, whatever its fields say. A field's own `bad` dashes that field and
+The slot identity key governs the slot: if it is `fail`, the entry is not
+drawn, whatever its fields say; if it is `old`, the entry is drawn only in a
+stale style. (Amended by P3b, AER-5266: this paragraph used to hide `old`
+entries too, which contradicted §4.6's "a stale target is shown as stale
+(`old`) before it disappears".) A field's own `bad` dashes that field and
 nothing else. Writers pass the flags as the tuple `(value, annunc, bad, fail)`
 the value setter already accepts.
 
@@ -447,8 +450,16 @@ source-selection problem of roadmap §9 item 3 and is a follow-on (§9, F5).
 May assume:
 
 - An entry exists in slot `k` exactly when `TFCkTGT != -1` and `TFCkTGT` is
-  not `old` or `fail`. React to `TFCkTGT` writes; when one arrives, the slot's
-  other fields are already that target's (§2.5, §2.6).
+  not `fail`. When `TFCkTGT` is `old` the entry is stale: show it as stale,
+  never as current, until the writer evicts it at `evict_s` (§4.6). A stale
+  entry the writer never evicts means the writer itself has stopped; the
+  display drops it on its own timer. React to `TFCkTGT` writes; when one
+  arrives, the slot's other fields are already that target's (§2.5, §2.6).
+- `TFCCOUNT` `fail` (source failed, §4.7) or `old` (writer stopped), after
+  the block has been seen live, means an empty map is not an empty sky; the
+  display annunciates it. A block that has never been live is an
+  installation with no receiver (the gateway's default database carries the
+  block regardless) and is not a failure.
 - Slot numbers carry no meaning and an entry may move slot after eviction and
   re-acquisition; key any display state (trails, selection) by `TFCkTGT`, not
   by `k`.

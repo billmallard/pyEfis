@@ -66,6 +66,7 @@ FIX keys it reads by default: `LAT`, `LONG`, `TRACKM`.
 | `layer_airways` | Layer: airways | off | on / off | victor/T-route segments with idents |
 | `navaid_db_path` | Navaid db path | empty |  | navaids.sqlite (tools/build_navaid_db.py; on the Pi /data/makerplane-data/navaids/current/navaids.sqlite) |
 | `layer_flight_plan` | Layer: flight plan | on | on / off | active route: past/active/future legs, waypoint symbols, direct-to and the suspended-at-MAP extended final course (no database, reads the FIX flight-plan bus) |
+| `layer_traffic` | Layer: traffic | on | on / off | ADS-B traffic from the FIX TFC block: relative altitude (needs PALT), trend arrow, alerted targets flash yellow, degraded targets drawn open, stale ones grey; TFC FAIL when a working receiver stops (no database) |
 | `terrain_mode` | Terrain mode | `relief` | `relief`, `caution` | relief = sectional-style hypsometric; caution = TAWS-style amber/red relative to altitude |
 | `water_db_path` | Water db path | empty |  | water.sqlite (the SVS water_db_path; on the Pi /data/makerplane-data/water/current/water.sqlite). When set, lakes and coastline from the water pack are rasterized into the terrain image |
 | `water_max_vertices` | Water vertex cap | `512` | 16 to 1024, step 16 | per-polygon vertex cap for map water rasterization (higher = more coastline/lake detail per rebuild) |
