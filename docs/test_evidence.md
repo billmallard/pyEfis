@@ -48,10 +48,12 @@ and what its sidecar says about it (commit, run, device), with
 
 ## Releases
 
-Each push to `master` (a `qa -> master` promotion) runs the `release` job: a GitHub
-Release tagged `promotion-<sha7>`, with that commit's job summary as its notes and
-`verification.json`, `junit.xml` and the rendered site (`evidence-site.zip`) attached.
-A red promotion is released as a pre-release that says so. Details in `evidence.md`.
+Each push to `master` (a `qa -> master` promotion) runs the `release` job: an
+annotated tag `baseline-YYYY-MM-DD` naming the fix-gateway baseline it flies with, and a
+GitHub Release with that commit's job summary and open safety problems as its notes and
+`verification.json`, `junit.xml`, the rendered site (`evidence-site.zip`), the resolved
+lock file and an SBOM attached. A red promotion is released as a pre-release that says
+so. Details in `evidence.md`.
 
 A test joins the requirements table by naming the ID in its docstring, as the
 instrument catalogues already do (`"""AI-TC-102 | AI-BANK-001 | ..."""`). `-TC-` IDs
