@@ -1639,9 +1639,7 @@ class AI(QGraphicsView):
             # Draw standard rate turn markers (non-essential -- de-cluttered
             # at an unusual attitude).
             if self.drawBankMarkers and not self._decluttered:
-                a = math.degrees(math.atan(self._tas/364.0))
-                if a > self.bankAngleMaximum:
-                    a = self.bankAngleMaximum
+                a = self.standard_rate_bank_deg()
                 diamond = QPolygonF([QPointF(0, -r),
                                     QPointF(-m*0.8, -(r+m*0.8)),
                                     QPointF(-0, -r - m*1.6),
@@ -1728,6 +1726,16 @@ class AI(QGraphicsView):
         p.restore()
 
     # --- target-bank bug: value, touch + knob edit (AER-5149) -------------
+
+    def standard_rate_bank_deg(self):
+        """Bank for a standard-rate (3 deg/s) turn at the current TAS, where
+        the standard-rate diamonds sit: atan(TAS/364), capped at
+        bankAngleMaximum (25 by default). The cap is the bank to fly, not a
+        display limit: AIM 5-3-8 holds at 3 deg/s, 30 deg or 25 deg with a
+        flight director, whichever needs least bank. Standard rate reaches
+        25 deg at about 170 KTAS (AER-5149)."""
+        a = math.degrees(math.atan(self._tas / 364.0))
+        return min(a, self.bankAngleMaximum)
 
     def bank_bug_target(self):
         """The selected bank magnitude to draw, in degrees; 0 = no bug (off,
