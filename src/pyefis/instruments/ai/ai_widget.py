@@ -117,7 +117,13 @@ class AI(QGraphicsView):
         self.bankAngleMaximum = 25  # Largest bank angle that will be indicated
         # Envelope-awareness caution thresholds (AC 25-11B App A A.2.5 / A.2.6):
         # amber annunciation past excessive bank / sideslip. Configurable.
-        self.excessiveBankDeg = 45
+        # excessiveBankDeg is a per-aircraft configurator setting (Prop in
+        # screenbuilder_factory). Default 60 (Bill, 2026-11-07, AER-5149):
+        # above the Commercial steep turn (50 +/-5) and the Private one
+        # (45 +/-5), so neither practised manoeuvre lights the caution, and
+        # at the 14 CFR 91.307 aerobatic-flight bank. Was 45, which cautioned
+        # the Private steep turn itself.
+        self.excessiveBankDeg = 60
         self.excessiveSlip = 0.25
         self._excessive_bank = False
         self._excessive_slip = False

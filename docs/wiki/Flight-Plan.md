@@ -68,7 +68,8 @@ There is no separate step to activate a plan: each change is sent as you make
 it.
 
 If the engine refuses a change, a red strip above the soft keys reads
-`EDIT REFUSED:` and the engine's reason (`FPLMSG`), or `NO ENGINE ANSWER` when
+`EDIT REFUSED:` and the engine's reason in plain words, naming the waypoint
+(for example `ARC AT RFFIX: NO TURN DIRECTION`), or `NO ENGINE ANSWER` when
 none comes within 2 seconds, and the list goes back to the plan the engine is
 flying. **Edit draft** brings the refused route back to correct; the strip then
 reads `DRAFT - NOT LOADED:` and its button, **Flown plan**, goes back. The draft

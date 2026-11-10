@@ -226,9 +226,10 @@ def test_airway_is_published_as_a_segment_on_the_bus(fix, qtbot, pack_path):
         == [1, "V27", "GVO", "RZS", 1, 3]
     assert [db.get_item(f"FPL{n}SGI").value for n in (1, 2, 3)] == [1, 1, 1]
     # The MEA of each airway leg rides on FPLfALT -- coded on the row of the
-    # fix that ends the leg (POM 6000, RZS 4000 in the fixture). The leg into
-    # the entry fix is not on the airway, so it carries none.
-    assert [db.get_item(f"FPL{n}ALT").value for n in (1, 2, 3)] == ["", "+6000", "+4000"]
+    # fix that starts the leg (GVO 5000, POM 6000 in the fixture; RS5,
+    # AER-5267). The leg into the entry fix is not on the airway, so it
+    # carries none.
+    assert [db.get_item(f"FPL{n}ALT").value for n in (1, 2, 3)] == ["", "+5000", "+6000"]
     assert [db.get_item(f"FPL{n}PT").value for n in (1, 2, 3)] == ["TF", "TF", "TF"]
 
 
@@ -266,7 +267,7 @@ def test_a_second_display_reading_the_bus_sees_the_airway(fix, qtbot, pack_path)
 
     _insert_v27(editor)
     assert _airways(other._plan) == [("V27", ["GVO", "POM", "RZS"])]
-    assert other._plan.waypoints[1].alt == "+6000"
+    assert other._plan.waypoints[1].alt == "+5000"
 
 
 def test_segment_menu_change_exit_reexpands_the_airway(fix, qtbot, pack_path):

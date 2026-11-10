@@ -1,5 +1,5 @@
 #  SPDX-License-Identifier: GPL-2.0-or-later
-"""Navigation Display (ND) mode for the moving map (G11a, billmallard/pyEfis#134).
+"""Navigation Display (ND) mode for the moving map (G11a/G11b, billmallard/pyEfis#134).
 
 EXPANDED MAP: the transport-category ND idiom built to the spec posted on
 #134 (issuecomment-5552767516) as amended by Bill's G11 rulings (2026-11-07):
@@ -19,8 +19,12 @@ EXPANDED MAP: the transport-category ND idiom built to the spec posted on
 Not drawn, because nothing on the bus carries them: the bottom-left VOR1 /
 FMC-source line, the bottom-centre RNP/ANP block, the bottom-right VOR2
 block, the VNAV digital deviation readout (it is in feet; ``GSI`` is a
-normalised deviation) and the RNP band. CTR MAP and the configurator twin
-are G11b.
+normalised deviation) and the RNP band.
+
+CTR MAP (G11b): the same symbol set framed as a full compass rose with
+ownship at the centre (the spec's section 5: "a closed compass rose instead
+of an arc, no other confirmed differences"). The rose sits at the selected
+range, as the EXPANDED arc does, so a feature on either is ``range_nm`` away.
 
 The model functions read through ``read(key)`` -> ``(value, old, bad, fail)``
 or None for a key the gateway does not define, so tests assert what is drawn
@@ -36,14 +40,16 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
 import pyavtools.fix as fix
 
 #: ``nd_mode`` values, in ``nd_mode_key`` index order. Append only: the index
-#: is what a button writes, so G11b's "ctr" goes on the end.
-ND_MODES = ("off", "expanded")
+#: is what a button writes.
+ND_MODES = ("off", "expanded", "ctr")
 
 #: ownship screen height in EXPANDED, as a fraction of the map height -- the
 #: HSI arc's ``own_y = h * 0.82`` (hsi/__init__.py ``_arc_params``).
 EXPANDED_OWN_Y_FRAC = 0.82
 #: widest half-sector the compass arc draws, the HSI arc's ``ARC_HALF_DEG``.
 ARC_HALF_DEG = 60.0
+#: ownship screen height in CTR MAP: the panel centre.
+CTR_OWN_Y_FRAC = 0.5
 #: narrowest: on a tall or narrow panel the range radius shrinks before the
 #: sector drops below this, so the arc never thins to a sliver at the top.
 ARC_MIN_HALF_DEG = 40.0
@@ -110,6 +116,36 @@ def expanded_geometry(w, h):
         ARC_HALF_DEG, math.degrees(math.asin(reach / r)))
     return {"fs": fs, "own_y": own_y, "r": r, "apex": own_y - r,
             "box_h": box_h, "half": half}
+
+
+def ctr_geometry(w, h):
+    """CTR MAP screen geometry, the keys ``expanded_geometry`` returns, with
+    ``half`` = 180 (the closed rose). The radius is the largest that keeps the
+    TRK box and lubber over the rose's top inside the panel, the rose's
+    bottom ``fs`` clear of the bottom edge, and its sides inside
+    ``arc_reach``."""
+    fs = font_px(w, h)
+    own_y = h * CTR_OWN_Y_FRAC
+    box_h = fs * 1.5
+    r = min(own_y - (4.0 + box_h + fs * 0.5), h - own_y - fs,
+            arc_reach(w, h))
+    r = max(1.0, r)
+    return {"fs": fs, "own_y": own_y, "r": r, "apex": own_y - r,
+            "box_h": box_h, "half": 180.0}
+
+
+def geometry(mode, w, h):
+    """The geometry for an ``nd_mode`` that is on (``ctr`` or ``expanded``)."""
+    if normalize_mode(mode) == "ctr":
+        return ctr_geometry(w, h)
+    return expanded_geometry(w, h)
+
+
+def own_y_frac(mode):
+    """Ownship screen height for an ``nd_mode`` that is on, as a fraction of
+    the map height down from the top."""
+    return CTR_OWN_Y_FRAC if normalize_mode(mode) == "ctr" \
+        else EXPANDED_OWN_Y_FRAC
 
 
 def vdev_geometry(w, h):
@@ -346,10 +382,11 @@ def _draw_lines(p, lines, x, y, lh, align_right=False, right=None):
 
 
 def paint(widget, p, x, read, now=None):
-    """Paint the EXPANDED overlay over the map layers and ownship. *x* is the
-    frame's MapTransform, built with ``range_px`` = the arc radius."""
+    """Paint the ND overlay (EXPANDED arc or CTR rose) over the map layers
+    and ownship. *x* is the frame's MapTransform, built with ``range_px`` =
+    the compass radius."""
     w, h = float(x.w), float(x.h)
-    g = expanded_geometry(w, h)
+    g = geometry(widget.nd_mode, w, h)
     fs = g["fs"]
     family = x.font_family
     osp = x.to_screen(widget._lat, widget._lon)
@@ -361,16 +398,16 @@ def paint(widget, p, x, read, now=None):
     p.save()
     p.setBrush(Qt.BrushStyle.NoBrush)
 
-    # Compass arc: the circle at the selected range, 5 deg ticks, longer
-    # every 10, a numeral every 30 (tens of degrees, 737 style).
+    # Compass arc (EXPANDED) or closed rose (CTR): the circle at the
+    # selected range, 5 deg ticks, longer every 10, a numeral every 30 (tens
+    # of degrees, 737 style).
     rect = QRectF(osp.x() - r, osp.y() - r, 2 * r, 2 * r)
     path = QPainterPath()
     path.arcMoveTo(rect, 90.0 + half)
-    path.arcTo(rect, 90.0 + half, -2.0 * half)
+    path.arcTo(rect, 90.0 + half, -2.0 * half)     # 360 deg in CTR
     tick = fs * 0.6
     numerals = []
-    first = int(math.ceil((up - half) / 5.0)) * 5
-    for b in range(first, int(math.floor(up + half)) + 1, 5):
+    for b in tick_bearings(up, half):
         rel = math.radians(b - up)
         sx, sy = math.sin(rel), -math.cos(rel)
         tl = tick if b % 10 == 0 else tick * 0.5
@@ -436,6 +473,16 @@ def paint(widget, p, x, read, now=None):
 
     _paint_vdev(p, vdev_geometry(w, h), vdev(read), family, lw)
     p.restore()
+
+
+def tick_bearings(up, half):
+    """Bearings that get a tick: every multiple of 5 within ``half`` of the
+    bearing at the top of the screen, ends included on an arc. A closed rose
+    (``half`` >= 180) lists each bearing once, not both ends."""
+    first = int(math.ceil((up - half) / 5.0)) * 5
+    if half >= 180.0:
+        return range(first, first + 360, 5)
+    return range(first, int(math.floor(up + half)) + 1, 5)
 
 
 def _wind_arrow(p, c, length, screen_deg, lw):
