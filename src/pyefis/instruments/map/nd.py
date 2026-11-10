@@ -16,6 +16,12 @@ EXPANDED MAP: the transport-category ND idiom built to the spec posted on
 - 737 colours on these new elements only (ruling 2): the map's own layers
   and ownship keep their palette.
 
+G11c polish (Bill's review of #420): the corner blocks sit on dark backing
+panels and the TRK box is filled, so map labels under them cannot overprint
+them; the range-ring label the TRK box would cover is kept out
+(``MapTransform.label_keep_out``); and on a portrait panel the arc uses the
+height (see ``expanded_geometry``).
+
 Not drawn, because nothing on the bus carries them: the bottom-left VOR1 /
 FMC-source line, the bottom-centre RNP/ANP block, the bottom-right VOR2
 block, the VNAV digital deviation readout (it is in feet; ``GSI`` is a
@@ -35,7 +41,8 @@ import math
 import time
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
+from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QPainterPath,
+                         QPen, QPolygonF)
 
 import pyavtools.fix as fix
 
@@ -50,9 +57,11 @@ EXPANDED_OWN_Y_FRAC = 0.82
 ARC_HALF_DEG = 60.0
 #: ownship screen height in CTR MAP: the panel centre.
 CTR_OWN_Y_FRAC = 0.5
-#: narrowest: on a tall or narrow panel the range radius shrinks before the
-#: sector drops below this, so the arc never thins to a sliver at the top.
-ARC_MIN_HALF_DEG = 40.0
+#: narrowest: on a tall or narrow panel the radius grows with the height
+#: until the sector reaches this, so the arc never thins to a sliver. G11a
+#: held it at 40, which on the bench's 650x1000 panel ended the arc 40% down
+#: with map beyond the selected range above it (G11c).
+ARC_MIN_HALF_DEG = 20.0
 
 # 737 ND colour code (#134 spec section 4), new ND elements only.
 WHITE = QColor("#ffffff")      # status, scales
@@ -60,6 +69,11 @@ MAGENTA = QColor("#ff00ff")    # active / fly-to
 CYAN = QColor("#00ffff")       # selected map options
 RED = QColor("#ff0000")        # failed field, warning flag
 GREY = QColor("#808080")       # bad / stale (the nav_status convention)
+#: backing behind the corner blocks (G11c): dark enough that a waypoint label
+#: under a block cannot be read through it, the map still faintly there.
+PANEL = QColor(0, 0, 0, 200)
+#: the TRK box is filled opaque, as the 737's is.
+TRK_FILL = QColor(0, 0, 0)
 
 FAIL_TEXT = "XXX"
 BAD_TIME = "--:--"
@@ -86,6 +100,20 @@ def status_chip_height(w):
     return max(9, int(w * 0.03)) + 6
 
 
+def corner_block_bottom(w, h):
+    """Lowest y either top corner block can reach, backing included: the
+    top-left block's two lines and wind arrow, or the top-right's three
+    lines. Worst case, so the arc does not move when a field drops out."""
+    fs = font_px(w, h)
+    lh = fs * 1.3
+    return (4.0 + status_chip_height(w) + 2.0
+            + max(2 * lh + fs * 1.9, 3 * lh) + panel_pad(fs))
+
+
+def panel_pad(fs):
+    return fs * 0.3
+
+
 def arc_reach(w, h):
     """How far either side of centre the arc may reach: inside the panel,
     and clear of the vertical deviation scale at the right edge."""
@@ -94,24 +122,60 @@ def arc_reach(w, h):
                         vdev_geometry(w, h)["x"] - fs - w / 2.0))
 
 
-def expanded_geometry(w, h):
+#: the widest line each top corner block can hold, for the arc's clearance:
+#: the layout must not move when a value changes width.
+TL_WORST = ("GS 999 TAS 999", "360°/199")
+TR_WORST = ("WWWWW", "2359.9z", "99.9 NM", "9999 NM")
+
+
+def block_widths(family, fs):
+    """Worst-case widths of the top-left and top-right blocks' text, measured
+    in *family*, or an em estimate when no family is given."""
+    if family is None:
+        return fs * 8.5, fs * 4.5
+    fm = QFontMetrics(_font(family, fs))
+    return (max(fm.horizontalAdvance(t) for t in TL_WORST),
+            max(fm.horizontalAdvance(t) for t in TR_WORST))
+
+
+def expanded_geometry(w, h, family=None):
     """EXPANDED screen geometry. ``own_y`` is the ownship anchor, ``r`` the
     compass-arc radius -- the selected range in px, so a feature on the arc
     is exactly ``range_nm`` away -- ``apex`` the arc's top, ``half`` the
     half-sector it spans, and the TRK box sits ``box_h`` tall over the apex
     with the lubber triangle in the ``fs * 0.5`` between them.
 
-    On a landscape panel the arc reaches up to just under the TRK box at the
-    top edge and spans ARC_HALF_DEG. On a tall or narrow one that radius
-    would leave only a sliver of arc between the top corner blocks, so the
-    radius shrinks until the arc spans ARC_MIN_HALF_DEG, and the TRK box
-    follows the apex down."""
+    The radius is the largest that keeps three things clear (G11c):
+    the TRK box inside the top edge, the arc out of the top corner blocks
+    (worst-case width, see ``block_widths``), and the sector at least
+    ARC_MIN_HALF_DEG. On a landscape panel the first binds: the arc reaches
+    up to just under the TRK box and spans ARC_HALF_DEG. On a portrait panel
+    the second does: the arc uses the height and its sector narrows, so the
+    selected range ends near the top rather than mid-screen. The TRK box
+    follows the apex."""
     fs = font_px(w, h)
     own_y = h * EXPANDED_OWN_Y_FRAC
     box_h = fs * 1.5
     reach = arc_reach(w, h)
     r = own_y - (4.0 + box_h + fs * 0.5)
-    r = max(1.0, min(r, reach / math.sin(math.radians(ARC_MIN_HALF_DEG))))
+    # Corner blocks: over |x - cx| >= dx (the nearer block's inner edge,
+    # plus clearance) the arc must stay below the blocks' bottom, d above
+    # ownship. The arc is highest where it crosses dx, at sqrt(r^2 - dx^2)
+    # above ownship, so r <= hypot(d, dx) -- unless the arc ends short of dx
+    # (r * sin(60) < dx), which a radius up to dx / sin(60) still does.
+    pad = panel_pad(fs)
+    clear = fs * 0.3
+    d = own_y - (corner_block_bottom(w, h) + clear)
+    tl_w, tr_w = block_widths(family, fs)
+    dx = w / 2.0 - (6.0 + max(tl_w, tr_w) + pad + clear)
+    if dx < reach:
+        r_blocks = math.hypot(d, max(0.0, dx))
+        if dx > 0.0:
+            r_blocks = max(r_blocks,
+                           dx / math.sin(math.radians(ARC_HALF_DEG)))
+        r = min(r, r_blocks)
+    r = min(r, reach / math.sin(math.radians(ARC_MIN_HALF_DEG)))
+    r = max(1.0, r)
     half = ARC_HALF_DEG if reach >= r else min(
         ARC_HALF_DEG, math.degrees(math.asin(reach / r)))
     return {"fs": fs, "own_y": own_y, "r": r, "apex": own_y - r,
@@ -134,11 +198,12 @@ def ctr_geometry(w, h):
             "box_h": box_h, "half": 180.0}
 
 
-def geometry(mode, w, h):
-    """The geometry for an ``nd_mode`` that is on (``ctr`` or ``expanded``)."""
+def geometry(mode, w, h, family=None):
+    """The geometry for an ``nd_mode`` that is on (``ctr`` or ``expanded``).
+    *family* is the map font, which EXPANDED measures its corner blocks in."""
     if normalize_mode(mode) == "ctr":
         return ctr_geometry(w, h)
-    return expanded_geometry(w, h)
+    return expanded_geometry(w, h, family)
 
 
 def own_y_frac(mode):
@@ -146,6 +211,43 @@ def own_y_frac(mode):
     the map height down from the top."""
     return CTR_OWN_Y_FRAC if normalize_mode(mode) == "ctr" \
         else EXPANDED_OWN_Y_FRAC
+
+
+def trk_box(family, fs, box_h, track, osp_x, apex_y):
+    """The TRK box rect and its runs ``[(text, px, width)]``. One function
+    for paint and for the label keep-out, so the two cannot drift."""
+    sp = QFontMetrics(_font(family, fs, bold=True)).horizontalAdvance(" ")
+    runs = []
+    for text, px in (("TRK", fs * 0.8), (_fmt_deg(track), fs * 1.05),
+                     ("MAG", fs * 0.8)):
+        tw = QFontMetrics(_font(family, px, bold=True)).horizontalAdvance(text)
+        runs.append((text, px, tw))
+    bw = sum(r[2] for r in runs) + sp * 4
+    box = QRectF(osp_x - bw / 2.0, apex_y - fs * 0.5 - box_h, bw, box_h)
+    return box, runs, sp
+
+
+def keep_out(widget, x):
+    """Rects the ND draws over, for MapTransform.label_keep_out: the TRK box
+    and the lubber under it, where the full-range ring's top label lands
+    (G11c). EXPANDED only: CTR MAP keeps the look accepted on #441."""
+    if not polished(widget):
+        return ()
+    g = expanded_geometry(float(x.w), float(x.h), x.font_family)
+    osp = x.to_screen(widget._lat, widget._lon)
+    apex_y = osp.y() - g["r"]
+    box, _runs, _sp = trk_box(x.font_family, g["fs"], g["box_h"],
+                              widget._track, osp.x(), apex_y)
+    # Down through the lubber triangle and the arc's tick band at the apex:
+    # a ring label anchored on the arc's top lands there.
+    return (QRectF(box.left(), box.top(), box.width(),
+                   apex_y + g["fs"] * 0.6 - box.top()),)
+
+
+def polished(widget):
+    """True when the G11c backing panels, filled TRK box and ring-label
+    keep-out apply: EXPANDED. CTR MAP is drawn as accepted on #441."""
+    return normalize_mode(widget.nd_mode) == "expanded"
 
 
 def vdev_geometry(w, h):
@@ -363,6 +465,33 @@ def _font(family, px, bold=False):
     return f
 
 
+def _lines_width(fm, lines):
+    space = fm.horizontalAdvance(" ")
+    best = 0
+    for line in lines:
+        runs = [t for t, _ in line if t]
+        best = max(best, sum(fm.horizontalAdvance(t) for t in runs)
+                   + space * max(0, len(runs) - 1))
+    return best
+
+
+def _backing(p, rects, fs):
+    """A dark panel behind a data block, so map labels under it do not
+    overprint it (G11c). Several rects fill as one shape, so where they
+    overlap the panel is not darker."""
+    rad = fs * 0.25
+    path = QPainterPath()
+    for rect in rects:
+        part = QPainterPath()
+        part.addRoundedRect(rect, rad, rad)
+        path = path.united(part)
+    p.save()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(PANEL))
+    p.drawPath(path)
+    p.restore()
+
+
 def _draw_lines(p, lines, x, y, lh, align_right=False, right=None):
     """Draw ``lines`` of ``(text, colour)`` runs from ``(x, y)`` down, left
     aligned at x, or right aligned at ``right``."""
@@ -386,7 +515,7 @@ def paint(widget, p, x, read, now=None):
     and ownship. *x* is the frame's MapTransform, built with ``range_px`` =
     the compass radius."""
     w, h = float(x.w), float(x.h)
-    g = geometry(widget.nd_mode, w, h)
+    g = geometry(widget.nd_mode, w, h, x.font_family)
     fs = g["fs"]
     family = x.font_family
     osp = x.to_screen(widget._lat, widget._lon)
@@ -428,24 +557,17 @@ def paint(widget, p, x, read, now=None):
     # TRK box at the top centre with the lubber triangle under it.
     trk_stale = widget._old.get("TRACKM", True)
     col = GREY if trk_stale else WHITE
-    bf = _font(family, fs, bold=True)
-    p.setFont(bf)
-    fm = p.fontMetrics()
-    sp = fm.horizontalAdvance(" ")
-    runs = [("TRK", fs * 0.8), (_fmt_deg(widget._track), fs * 1.05),
-            ("MAG", fs * 0.8)]
-    widths = []
-    for text, px in runs:
-        p.setFont(_font(family, px, bold=True))
-        widths.append(p.fontMetrics().horizontalAdvance(text))
-    bw = sum(widths) + sp * 4
     apex_y = osp.y() - r
-    box = QRectF(osp.x() - bw / 2.0, apex_y - fs * 0.5 - g["box_h"], bw,
-                 g["box_h"])
+    box, runs, sp = trk_box(family, fs, g["box_h"], widget._track, osp.x(),
+                            apex_y)
+    polish = polished(widget)
     p.setPen(QPen(col, lw))
+    if polish:
+        p.setBrush(QBrush(TRK_FILL))
     p.drawRect(box)
+    p.setBrush(Qt.BrushStyle.NoBrush)
     tx = box.left() + sp
-    for (text, px), tw in zip(runs, widths):
+    for text, px, tw in runs:
         p.setFont(_font(family, px, bold=True))
         p.drawText(QRectF(tx, box.top(), tw, box.height()),
                    Qt.AlignmentFlag.AlignCenter, text)
@@ -457,18 +579,44 @@ def paint(widget, p, x, read, now=None):
                              QPointF(osp.x() + t, apex_y - t)]))
     p.setBrush(Qt.BrushStyle.NoBrush)
 
-    # Corner blocks.
+    # Corner blocks, each on a backing panel. The top-left panel also backs
+    # the map's range chip, which paintEvent draws over it afterwards.
     p.setFont(_font(family, fs))
+    fm = p.fontMetrics()
     lh = fs * 1.3
+    pad = panel_pad(fs)
     top = 4.0 + status_chip_height(w) + 2.0
     tl_lines, arrow = top_left(read)
+    stale = widget._old.get("LAT", True) or widget._old.get("LONG", True)
+    chip_w = QFontMetrics(_font(family, max(9, int(w * 0.03)))) \
+        .horizontalAdvance(widget._status_chip_text(stale))
+    tl_bottom = top + lh * len(tl_lines) + (fs * 1.9 if arrow is not None
+                                            else 0.0)
+    tl_w = max(_lines_width(fm, tl_lines),
+               fs * 1.9 if arrow is not None else 0.0)
+    # The chip row and the lines as one shape: the chip's font scales with
+    # the width, not min(w, h), so on a landscape panel it is the wider one
+    # and a single rect would reach out over the arc.
+    if polish:
+        _backing(p, [QRectF(6.0 - pad, 4.0 - pad * 0.5, chip_w + 2 * pad,
+                            top - 4.0 + pad * 0.5),
+                     QRectF(6.0 - pad, top - pad, tl_w + 2 * pad,
+                            tl_bottom - top + 2 * pad)], fs)
     y = _draw_lines(p, tl_lines, 6.0, top, lh)
     if arrow is not None:
         _wind_arrow(p, QPointF(6.0 + fs, y + fs), fs * 0.9,
                     arrow + 180.0 - up, lw)
-    _draw_lines(p, top_right(read, now), 0.0, top, lh,
-                align_right=True, right=w - 6.0)
+    tr = top_right(read, now)
+    if tr and polish:
+        tr_w = _lines_width(fm, tr)
+        _backing(p, [QRectF(w - 6.0 - tr_w - pad, top - pad,
+                            tr_w + 2 * pad, lh * len(tr) + 2 * pad)], fs)
+    _draw_lines(p, tr, 0.0, top, lh, align_right=True, right=w - 6.0)
     bl = bottom_left(enabled_layers(widget))
+    if bl and polish:
+        bl_top = h - 6.0 - lh * len(bl)
+        _backing(p, [QRectF(6.0 - pad, bl_top - pad, _lines_width(fm, bl)
+                            + 2 * pad, lh * len(bl) + 2 * pad)], fs)
     _draw_lines(p, bl, 6.0, h - 6.0 - lh * len(bl), lh)
 
     _paint_vdev(p, vdev_geometry(w, h), vdev(read), family, lw)

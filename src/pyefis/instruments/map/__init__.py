@@ -142,6 +142,9 @@ class MapTransform:
         # a database layer drew this frame (layers.mark_drawn/find_drawn).
         # One transform per paint, so it starts empty every frame.
         self.drawn_points = {}
+        # G11c: screen rects an overlay draws over (ND EXPANDED's TRK box).
+        # A label that would land in one is not drawn. Empty off the ND.
+        self.label_keep_out = ()
 
     def nm_to_px(self, nm):
         return nm * NM_M * self._px_per_m
@@ -631,7 +634,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         or to the compass arc / rose in ND mode."""
         if self.nd_active():
             return map_nd.geometry(self.nd_mode, float(self.width()),
-                                   float(h))["r"]
+                                   float(h), self.font_family)["r"]
         return h * (1.0 - self._anchor_frac())
 
     def toggle_orientation(self):
@@ -1304,7 +1307,17 @@ class MovingMap(LiveBindingMixin, QWidget):
                          self.font_family, map_layers.palette(self),
                          range_px=self._range_px(self.height()))
         x.defer_render = self.defer_render
+        if self.nd_active():
+            x.label_keep_out = map_nd.keep_out(self, x)
         return x
+
+    def _status_chip_text(self, stale):
+        """The top-left status chip: range + orientation (+ NO POS)."""
+        mode = "TRK UP" if self.view_orientation() == "track_up" else "NORTH UP"
+        chip = "%s NM  %s" % (map_layers.format_range_nm(self.range_nm), mode)
+        if stale:
+            chip += "  NO POS"
+        return chip
 
     def paintEvent(self, event):
         _perf_t0 = time.perf_counter()
@@ -1356,10 +1369,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         f.setPixelSize(max(9, int(self.width() * 0.03)))
         p.setFont(f)
         p.setPen(QPen(QColor(255, 255, 255, 200)))
-        mode = "TRK UP" if self.view_orientation() == "track_up" else "NORTH UP"
-        chip = "%s NM  %s" % (map_layers.format_range_nm(self.range_nm), mode)
-        if stale:
-            chip += "  NO POS"
+        chip = self._status_chip_text(stale)
         p.drawText(QRectF(6, 4, self.width() - 12, f.pixelSize() + 6),
                    Qt.AlignmentFlag.AlignLeft, chip)
 
