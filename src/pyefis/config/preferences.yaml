@@ -534,7 +534,8 @@ gauges:
     dbkey: MAP1
 
   BAR27:
-    name: IAT
+    # Reads CAT, cabin air temperature (AER-5321). Was labelled "IAT".
+    name: CAT
     decimal_places: 0
     dbkey: CAT
     temperature: true

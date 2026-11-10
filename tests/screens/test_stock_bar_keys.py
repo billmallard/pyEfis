@@ -1,16 +1,19 @@
 """
 Stock bar gauges show the key their label names (AER-5179, BACKLOG CERT2b).
 
-Two misleading-display bugs shipped in the stock configs:
+Three misleading-display bugs shipped in the stock configs:
 
 - EMS2's "Right" fuel bar (BAR21) read ``FUELQ1``, the same key as "Left"
   (BAR19). A pilot with a dry right tank saw the left tank's quantity.
 - EMS's "IT", "AFR" and "EGO" bars (BAR23-25) all read ``MAP1``, so they
   showed manifold pressure under three other names.
+- EMS's BAR27 read ``CAT`` (cabin air temperature) labelled "IAT", while
+  ARC12 on the same screens labels that key "CAT" (AER-5321, CERT2e).
 
 Bill's ruling (2026-11-07): fuel bars carry neutral labels, "Tank N" for
 ``FUELQN``. Stock configs never map Left, Center or Right to a tank number;
-tank names will come from the aircraft profile.
+tank names will come from the aircraft profile. Bill's ruling (2026-11-09):
+BAR27 is labelled "CAT", the key it reads.
 
 The checks, over every stock screen with its includes and ``preferences:``
 references resolved the way ``screenbuilder`` resolves them:
@@ -112,17 +115,6 @@ def test_no_two_fuel_bars_in_a_block_share_a_key(fname, name, screen):
             f"{fname}:{name}: fuel bars share a key: {fuel}")
 
 
-# Known, not yet ruled on. EMS's BAR27 "IAT" (intake air) reads CAT, which
-# fix-gateway defines as Cabin Air Temperature; the same screen also labels
-# it "CAT". Which label is right changes the glass, so it is Bill's call
-# (BACKLOG CERT2e). Listed exactly, so a fix or a new case fails this test.
-KNOWN_CONTRADICTIONS = {
-    ("ems.yaml", "EMS"): {"CAT": ["CAT", "IAT"]},
-    ("ems-left-buttons.yaml", "EMS"): {"CAT": ["CAT", "IAT"]},
-    ("ems-portrait.yaml", "EMS"): {"CAT": ["CAT", "IAT"]},
-}
-
-
 @pytest.mark.parametrize("fname,name,screen", SCREENS, ids=SCREEN_IDS)
 def test_one_key_one_name_per_screen(fname, name, screen):
     prefs = _preferences()
@@ -133,7 +125,7 @@ def test_one_key_one_name_per_screen(fname, name, screen):
                 names_by_key.setdefault(key, set()).add(bar_name)
     contradictions = {k: sorted(map(str, v))
                       for k, v in names_by_key.items() if len(v) > 1}
-    assert contradictions == KNOWN_CONTRADICTIONS.get((fname, name), {}), (
+    assert contradictions == {}, (
         f"{fname}:{name}: one key shown under several names: {contradictions}")
 
 
