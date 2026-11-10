@@ -327,7 +327,8 @@ def test_direct_to_bare_point_writes_mapwpt_and_issues_dto(fix, qtbot):
 
 def test_direct_to_toast_reports_the_engine_answer(fix, qtbot):
     """The banner says what the engine did: nothing until FPLCMDACK, then
-    DIRECT TO on success or FPLMSG on rejection (bench: NO POSITION)."""
+    DIRECT TO on success or FPLMSG on rejection, in plain words (bench: NO
+    POSITION, G61a)."""
     _define_all_fp1_keys(fix)
     m = _map(qtbot)
     _put_navaids(m, [("RZS", "VORTAC", "114.90", LAT0, LON0)])
@@ -338,7 +339,7 @@ def test_direct_to_toast_reports_the_engine_answer(fix, qtbot):
     seq = int(fix.db.get_item("FPLCMD").value.split()[0])
     fix.db.set_value("FPLMSG", "NO POSITION")
     fix.db.set_value("FPLCMDACK", -seq)
-    assert m._toast == "REJECTED: NO POSITION"
+    assert m._toast == "REJECTED: NO GPS POSITION"
     _tap(m, x.cx, x.cy)
     m.banner_direct_to()
     seq = int(fix.db.get_item("FPLCMD").value.split()[0])
