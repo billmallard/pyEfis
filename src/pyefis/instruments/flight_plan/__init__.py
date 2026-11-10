@@ -183,6 +183,10 @@ class FlightPlan(QWidget):
         self.parent = parent
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        from . import _g79_probe
+        self._g79 = _g79_probe
+        self._g79_sig = None
+        _g79_probe.install()
 
         # The common `font_percent` option (editor/schema.py common_options,
         # not an InstrumentSpec Prop). For this widget it is a multiplier on
@@ -2178,8 +2182,10 @@ class FlightPlan(QWidget):
         callback = self._hit(x, y)
         if callback is not None:
             callback()
+            self._g79.log("fp_press_cb", cb=self._g79_name(callback), page=self._page)
             event.accept()
             return
+        self._g79.log("fp_press_none", page=self._page)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -2220,6 +2226,7 @@ class FlightPlan(QWidget):
                 self._start_fling(-(samples[-1][1] - samples[0][1]) / dt)
         elif press["target"] is not None:
             press["target"]()
+            self._g79.log("fp_release_cb", cb=self._g79_name(press["target"]), page=self._page)
         event.accept()
 
     def wheelEvent(self, event):
@@ -2441,11 +2448,31 @@ class FlightPlan(QWidget):
         legibility floors are kept as they were)."""
         return max(minimum, int(value * self._font_scale()))
 
+    def update(self, *args):
+        self._g79.log("fp_update", vis=self.isVisible())
+        super().update(*args)
+
+    def _g79_name(self, cb):
+        code = getattr(cb, "__code__", None) or getattr(getattr(cb, "__func__", None), "__code__", None)
+        return "%s:%s" % (getattr(cb, "__qualname__", type(cb).__name__),
+                          code.co_firstlineno if code else "?")
+
     def paintEvent(self, event):
+        t0 = self._g79.time.monotonic()
         try:
             self._paint()
         except Exception:
             logger.warning("flight_plan: paint error", exc_info=True)
+        g = self.mapToGlobal(self.rect().topLeft())
+        targets = [(round(x), round(y), round(w), round(h), self._g79_name(cb))
+                   for x, y, w, h, cb in self._tap_targets]
+        sig = hash((self._page, tuple(targets), self._message))
+        self._g79.log("fp_paint", page=self._page, sig=sig,
+                      dur=round(self._g79.time.monotonic() - t0, 4))
+        if sig != self._g79_sig:
+            self._g79_sig = sig
+            self._g79.log("fp_targets", page=self._page, ox=g.x(), oy=g.y(),
+                          msg=self._message, t=targets)
 
     def _paint(self, device=None):
         if self._page not in _INSTRUMENT_PAGES:
