@@ -1,16 +1,21 @@
 """
 Stock bar gauges show the key their label names (AER-5179, BACKLOG CERT2b).
 
-Two misleading-display bugs shipped in the stock configs:
+Four misleading-display bugs shipped in the stock configs:
 
 - EMS2's "Right" fuel bar (BAR21) read ``FUELQ1``, the same key as "Left"
   (BAR19). A pilot with a dry right tank saw the left tank's quantity.
 - EMS's "IT", "AFR" and "EGO" bars (BAR23-25) all read ``MAP1``, so they
   showed manifold pressure under three other names.
+- EMS's BAR27 read ``CAT`` (cabin air temperature) labelled "IAT", while
+  ARC12 on the same screens labels that key "CAT" (AER-5321, CERT2e).
+- EMS's Engine group showed two MAP bars, BAR22 and BAR26, both on
+  ``MAP1`` (AER-5321).
 
 Bill's ruling (2026-11-07): fuel bars carry neutral labels, "Tank N" for
 ``FUELQN``. Stock configs never map Left, Center or Right to a tank number;
-tank names will come from the aircraft profile.
+tank names will come from the aircraft profile. Bill's ruling (2026-11-09):
+BAR27 is labelled "CAT", the key it reads, and the duplicate MAP bar goes.
 
 The checks, over every stock screen with its includes and ``preferences:``
 references resolved the way ``screenbuilder`` resolves them:
@@ -18,7 +23,8 @@ references resolved the way ``screenbuilder`` resolves them:
 1. Within one gauge block, no two fuel-quantity bars share a key.
 2. On one screen, two gauges in ganged blocks bound to the same key carry
    the same name. A second name on a key is a label that contradicts it.
-3. Every stock fuel-quantity bar, on a screen or in an include, is labelled
+3. Within one gauge block, no two bars of any kind share a key.
+4. Every stock fuel-quantity bar, on a screen or in an include, is labelled
    "Tank N" for its ``FUELQN`` ("Total" for ``FUELQT``).
 """
 import glob
@@ -112,15 +118,17 @@ def test_no_two_fuel_bars_in_a_block_share_a_key(fname, name, screen):
             f"{fname}:{name}: fuel bars share a key: {fuel}")
 
 
-# Known, not yet ruled on. EMS's BAR27 "IAT" (intake air) reads CAT, which
-# fix-gateway defines as Cabin Air Temperature; the same screen also labels
-# it "CAT". Which label is right changes the glass, so it is Bill's call
-# (BACKLOG CERT2e). Listed exactly, so a fix or a new case fails this test.
-KNOWN_CONTRADICTIONS = {
-    ("ems.yaml", "EMS"): {"CAT": ["CAT", "IAT"]},
-    ("ems-left-buttons.yaml", "EMS"): {"CAT": ["CAT", "IAT"]},
-    ("ems-portrait.yaml", "EMS"): {"CAT": ["CAT", "IAT"]},
-}
+@pytest.mark.parametrize("fname,name,screen", SCREENS, ids=SCREEN_IDS)
+def test_no_two_bars_in_a_block_share_a_key(fname, name, screen):
+    """EMS's Engine group showed MAP twice, BAR22 and BAR26 both on MAP1,
+    side by side (AER-5321). A second bar on a key a block already shows
+    is a duplicate the pilot has to reconcile."""
+    prefs = _preferences()
+    for block in _gauge_blocks(screen["instruments"], prefs):
+        keys = [k for _, k in block if k]
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        assert not dupes, (
+            f"{fname}:{name}: one gauge block shows a key twice: {dupes}")
 
 
 @pytest.mark.parametrize("fname,name,screen", SCREENS, ids=SCREEN_IDS)
@@ -133,7 +141,7 @@ def test_one_key_one_name_per_screen(fname, name, screen):
                 names_by_key.setdefault(key, set()).add(bar_name)
     contradictions = {k: sorted(map(str, v))
                       for k, v in names_by_key.items() if len(v) > 1}
-    assert contradictions == KNOWN_CONTRADICTIONS.get((fname, name), {}), (
+    assert contradictions == {}, (
         f"{fname}:{name}: one key shown under several names: {contradictions}")
 
 

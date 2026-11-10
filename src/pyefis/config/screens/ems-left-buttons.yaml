@@ -127,8 +127,6 @@ EMS:
           instruments:
             -
               preferences: BAR22
-            -
-              preferences: BAR26
 
         - name: Temps
           gap: 0
@@ -170,8 +168,6 @@ EMS:
           instruments:
             -
               preferences: BAR22
-            -
-              preferences: BAR26
 
         - name: Temps
           common_options:
