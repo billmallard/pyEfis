@@ -1,5 +1,5 @@
 #  SPDX-License-Identifier: GPL-2.0-or-later
-"""ND mode, EXPANDED MAP (G11a, billmallard/pyEfis#134).
+"""ND mode, EXPANDED MAP (G11a) and CTR MAP (G11b), billmallard/pyEfis#134.
 
 Geometry is pinned closed-form against the spec: ownship at ``h * 0.82``
 (the HSI arc's ``own_y``), the selected range reaching the compass arc,
@@ -92,8 +92,8 @@ def test_mode_follows_key(fix, qtbot):
 
 
 def test_button_wrap_cycles_modes(fix, qtbot):
-    """A button's 'change value wrap' on the key steps off -> expanded -> off
-    (key max = the mode count, the MAPORIENT convention)."""
+    """A button's 'change value wrap' on the key steps off -> expanded -> ctr
+    -> off (key max = the mode count, the MAPORIENT convention)."""
     fix.db.define_item("MAPNDMODE", "MAPNDMODE", "int", 0, len(nd.ND_MODES),
                        "", 0, "")
     fix.db.set_value("MAPNDMODE", 0)
@@ -102,10 +102,10 @@ def test_button_wrap_cycles_modes(fix, qtbot):
     m = _map(qtbot, nd_mode_key="MAPNDMODE")
     m.init_live_bindings(m._live_binding_specs())
     seen = []
-    for _ in range(3):
+    for _ in range(4):
         seen.append(m.nd_mode)
         functions.changeValueWrap("MAPNDMODE,1")
-    assert seen == ["off", "expanded", "off"]
+    assert seen == ["off", "expanded", "ctr", "off"]
 
 
 # --- geometry --------------------------------------------------------------
@@ -141,6 +141,66 @@ def test_expanded_anchor_range_and_track_up(qtbot):
     assert m.orientation == "north_up"
     m.nd_mode = "off"
     assert m._transform().rot == 0.0
+
+
+def test_ctr_anchor_range_and_track_up(qtbot):
+    """CTR MAP: ownship at the panel centre, the selected range on the rose,
+    track-up whatever orientation says."""
+    m = _map(qtbot, nd_mode="ctr", ownship_position=30,
+             orientation="north_up")
+    m._track = 72.0
+    x = m._transform()
+    g = nd.ctr_geometry(W, H)
+    assert m.nd_active()
+    assert x.cy == pytest.approx(H * 0.5)
+    assert x.cx == pytest.approx(W * 0.5)
+    assert x.nm_to_px(m.range_nm) == pytest.approx(g["r"])
+    assert g["half"] == 180.0
+    # Landscape: the height binds -- the TRK box sits on the top edge.
+    assert g["apex"] == pytest.approx(4.0 + g["box_h"] + g["fs"] * 0.5)
+    assert x.rot == pytest.approx(math.radians(72.0))
+    assert m.orientation == "north_up"
+    assert x.cover_h == pytest.approx(H)
+    m.nd_mode = "expanded"
+    assert m._transform().cy == pytest.approx(H * 0.82)
+
+
+@pytest.mark.parametrize("w,h", [(800, 480), (1024, 600), (650, 1000),
+                                 (600, 600), (480, 800)])
+def test_ctr_rose_fits_the_panel(w, h):
+    """The whole rose and the TRK box over it stay inside the panel, and the
+    rose's sides stay clear of the deviation scale, on landscape, square and
+    portrait panels alike."""
+    g = nd.ctr_geometry(w, h)
+    v = nd.vdev_geometry(w, h)
+    fs = g["fs"]
+    assert g["own_y"] == pytest.approx(h * 0.5)
+    assert g["apex"] - fs * 0.5 - g["box_h"] >= 4.0 - 1e-6
+    assert g["own_y"] + g["r"] <= h - fs + 1e-6
+    assert w / 2.0 + g["r"] <= min(0.96 * w, v["x"] - fs) + 1e-6
+    assert w / 2.0 - g["r"] >= 0.0
+    # The radius is the largest that meets those: one of them binds.
+    assert min(g["apex"] - fs * 0.5 - g["box_h"] - 4.0,
+               h - fs - g["own_y"] - g["r"],
+               nd.arc_reach(w, h) - g["r"]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_geometry_dispatches_on_mode():
+    assert nd.geometry("ctr", W, H) == nd.ctr_geometry(W, H)
+    assert nd.geometry("expanded", W, H) == nd.expanded_geometry(W, H)
+    assert nd.own_y_frac("ctr") == 0.5
+    assert nd.own_y_frac("expanded") == nd.EXPANDED_OWN_Y_FRAC
+
+
+@pytest.mark.parametrize("up", [0.0, 72.0, 137.5, 359.0])
+def test_closed_rose_ticks_every_bearing_once(up):
+    ticks = list(nd.tick_bearings(up, 180.0))
+    assert len(ticks) == 72
+    assert sorted(b % 360 for b in ticks) == list(range(0, 360, 5))
+
+
+def test_arc_ticks_include_both_ends():
+    assert list(nd.tick_bearings(90.0, 60.0)) == list(range(30, 151, 5))
 
 
 def test_expanded_pan_uses_the_nd_scale(qtbot):
@@ -538,6 +598,47 @@ def test_frame_clock_repaints_on_nd_data_only_while_on(fix, qtbot):
     assert m._frame_last_pose == pose
 
 
+def test_frame_clock_repaints_on_expanded_to_ctr(fix, qtbot):
+    """EXPANDED -> CTR from the key changes the anchor and the compass, but
+    neither the orientation nor the data blocks: the pose must carry the
+    mode or the switch waits for the aircraft to move."""
+    m = _map(qtbot, nd_mode="expanded")
+    m.isVisible = lambda: True
+    m.update = lambda: None
+    m._frame_tick()
+    pose = m._frame_last_pose
+    m.nd_mode = "ctr"
+    m._frame_tick()
+    assert m._frame_last_pose != pose
+
+
+def _white_rows(img, x0, y_from, y_to):
+    return [y for y in range(max(0, y_from), min(img.height(), y_to))
+            if (lambda c: min(c.red(), c.green(), c.blue()) > 200)(
+                img.pixelColor(x0, y))]
+
+
+@pytest.mark.parametrize("mode", ["expanded", "ctr"])
+def test_compass_below_ownship_only_in_ctr(fix, qtbot, mode):
+    """Paint a frame: the CTR rose closes below ownship at the selected
+    range; the EXPANDED arc draws nothing there."""
+    m = _map(qtbot, nd_mode=mode, layer_terrain=False, layer_roads=False,
+             layer_rivers=False, layer_range_rings=False,
+             layer_airports=False, layer_navaids=False)
+    m._track = 0.0
+    m._build_layers()
+    img = QImage(W, H, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    m.render(img)
+    g = nd.geometry(mode, W, H)
+    bottom = int(round(g["own_y"] + g["r"]))
+    rows = _white_rows(img, W // 2, bottom - 3, bottom + 4)
+    if mode == "ctr":
+        assert rows, "no rose at the selected range below ownship"
+    else:
+        assert rows == []
+
+
 def test_paint_off_draws_no_nd(fix, qtbot, monkeypatch):
     # Count calls, never keep the args: holding paintEvent's QPainter past
     # render() lets it be destroyed after its device, at monkeypatch undo --
@@ -553,3 +654,6 @@ def test_paint_off_draws_no_nd(fix, qtbot, monkeypatch):
     m.nd_mode = "expanded"
     m.render(img)
     assert len(calls) == 1
+    m.nd_mode = "ctr"
+    m.render(img)
+    assert len(calls) == 2

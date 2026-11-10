@@ -77,7 +77,7 @@ subscriptions):
 `track_indicator_enabled`, `track_color`, `track_min_speed`.
 
 **Source-selection chain (fix-gateway, config-driven — already built):**
-`NAVSRC` (`0=GPS, 1=NAV1, 2=NAV2`, `max=3` so a button cycles 0→1→2→0) →
+`NAVSRC` (`0=NAV1, 1=NAV2, 2=GPS`, `max=3` so a button cycles 0→1→2→0) →
 `compute` `select` routes `{GPS,NAV1,NAV2}{CRS,CDI,GSI}` into `COURSE`/`CDI`/`GSI`
 → `compute` `remap` produces `XPHSISRC` for X-Plane HSI feedback. The on-screen
 "control" is a **generic `button`** instrument configured to cycle `NAVSRC`;
