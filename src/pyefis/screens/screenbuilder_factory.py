@@ -353,6 +353,11 @@ def _ai_overlay_props():
         Prop("bankAngleMaximum", "integer", default=25,
              label="Max indicated bank (deg)",
              help="largest bank angle marked on the bank arc"),
+        Prop("excessiveBankDeg", "integer", default=60, minimum=30,
+             maximum=65, step=1, label="Excessive-bank caution (deg)",
+             help="the bank scale and pointer turn amber past this bank; "
+                  "set it above the steepest turn this aircraft is flown "
+                  "in on purpose (60 clears the 45 and 50 deg steep turns)"),
         Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)",
              help="length of the bank-arc ticks (auto-scale off)"),
         Prop("bank_position", "number", default=50, minimum=0, maximum=100,
@@ -1109,19 +1114,21 @@ _register(InstrumentSpec(
              label="Orientation control key",
              help="optional FIX key that switches orientation at runtime "
                   "(0=track_up, 1=north_up). Empty = fixed"),
-        Prop("nd_mode", "enum", default="off", enum=["off", "expanded"],
+        Prop("nd_mode", "enum", default="off",
+             enum=["off", "expanded", "ctr"],
              label="ND mode",
              help="off = the plain moving map; expanded = Navigation "
                   "Display EXPANDED MAP: track-up compass arc at the "
                   "selected range, ownship low (82% down), corner data "
                   "blocks and a vertical deviation scale from GSI/GSV at "
-                  "the right edge. Overrides orientation and ownship "
-                  "position while on",
+                  "the right edge; ctr = CTR MAP: the same with a full "
+                  "compass rose and ownship at the centre. Overrides "
+                  "orientation and ownship position while on",
              bindable=Binding("enum", key_option="nd_mode_key")),
         Prop("nd_mode_key", "fixkey", default="",
              label="ND mode control key",
              help="optional FIX key that switches the ND mode at runtime "
-                  "(0=off, 1=expanded). Empty = fixed"),
+                  "(0=off, 1=expanded, 2=ctr). Empty = fixed"),
         Prop("touch_gestures", "boolean", default=True,
              label="Touch gestures",
              help="two-finger pinch=zoom, drag=pan, twist=rotate; mouse wheel "

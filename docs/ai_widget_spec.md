@@ -87,9 +87,13 @@ configurable attributes:
   reference well inside the fixed constants without a cue — the defect this closed. De-
   clutter *also* engages on a steep bank **> 65°** (`unusualBankDeg`), past the
   excessive-bank caution — the unusual-attitude regime, not a normal steep turn.
-- **Excessive-bank caution** (amber bank scale) engages earlier, at bank **> 45°**
-  (`excessiveBankDeg`); a 45–65° steep turn shows the caution but stays fully cluttered
-  so the pilot keeps all cues.
+- **Excessive-bank caution** (amber bank scale) engages earlier, at bank **> 60°** by
+  default (`excessiveBankDeg`, a per-aircraft configurator setting, 30 to 65). The 60°
+  default (Bill, 2026-11-07, AER-5149) clears the ACS steep turns -- Private 45° ±5°,
+  Commercial 50° ±5° -- so the manoeuvre being practised is not cautioned, and sits at
+  the 14 CFR 91.307 aerobatic-flight bank. It was 45°, which lit the caution through a
+  Private steep turn. A 60–65° bank shows the caution but stays fully cluttered so the
+  pilot keeps all cues.
 - **Pitch-limit marker** (AI-LIM-001): the margin to the stall-warning AOA is
   `AOA.Warn - AOA` deg. Because AOA and pitch move together at a constant flight path, the
   marker is drawn that far above the aircraft symbol at the ladder scale, which is

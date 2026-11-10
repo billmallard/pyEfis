@@ -18,6 +18,7 @@ from pyefis import display_metrics
 from pyefis import hmi
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
+from pyefis.flightplan import refusal as fp_refusal
 from pyefis.flightplan import model as fp_model
 from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
@@ -250,8 +251,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         # runtime. Empty = the setting stays a static config option.
         self.range_key = ""
         self.orientation_key = ""
-        # ND mode (G11a, #134): "off" or "expanded" (map/nd.py). Bound to a
-        # FIX key by nd_mode_key, the orientation_key precedent.
+        # ND mode (G11a/G11b, #134): "off", "expanded" or "ctr" (map/nd.py).
+        # Bound to a FIX key by nd_mode_key, the orientation_key precedent.
         self.nd_mode = "off"
         self.nd_mode_key = ""
         self._nd_read = map_nd.Reader()
@@ -524,6 +525,7 @@ class MovingMap(LiveBindingMixin, QWidget):
                 self.view_orientation(), float(self.range_nm),
                 round(self._pan_e), round(self._pan_n),
                 round(self._rot_offset * 4.0),
+                map_nd.normalize_mode(self.nd_mode),
                 map_nd.signature(self, self._nd_read)
                 if self.nd_active() else None)
         if pose == self._frame_last_pose and not self._frame_dirty:
@@ -608,8 +610,8 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     # --- ND mode (G11a, billmallard/pyEfis#134) ------------------------------
     def nd_active(self):
-        """True while an ND mode is drawn (EXPANDED; CTR is G11b)."""
-        return map_nd.normalize_mode(self.nd_mode) == "expanded"
+        """True while an ND mode (EXPANDED or CTR) is drawn."""
+        return map_nd.normalize_mode(self.nd_mode) != "off"
 
     def view_orientation(self):
         """The orientation on screen: the ND is track-up whatever
@@ -618,16 +620,18 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def _anchor_frac(self):
         """Ownship anchor, fraction up from the bottom: ``ownship_position``,
-        or the HSI arc's ``own_y = h * 0.82`` in ND EXPANDED."""
+        the HSI arc's ``own_y = h * 0.82`` in ND EXPANDED, or the centre in
+        ND CTR."""
         if self.nd_active():
-            return 1.0 - map_nd.EXPANDED_OWN_Y_FRAC
+            return 1.0 - map_nd.own_y_frac(self.nd_mode)
         return max(0.0, min(100.0, float(self.ownship_position))) / 100.0
 
     def _range_px(self, h):
         """Screen px that ``range_nm`` spans from ownship: to the top edge,
-        or to the compass arc in ND EXPANDED."""
+        or to the compass arc / rose in ND mode."""
         if self.nd_active():
-            return map_nd.expanded_geometry(float(self.width()), float(h))["r"]
+            return map_nd.geometry(self.nd_mode, float(self.width()),
+                                   float(h))["r"]
         return h * (1.0 - self._anchor_frac())
 
     def toggle_orientation(self):
@@ -978,11 +982,12 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def _ack_handler(self, done_text):
         """An ``FPLCMDACK`` callback that toasts *done_text* on success and
-        the engine's ``FPLMSG`` on rejection -- the banner reports what the
+        the engine's ``FPLMSG`` on rejection, in plain words (G61a) -- the banner reports what the
         engine did, not what was asked. The ack arrives on the FIX client
         thread; the signal queues the toast onto the GUI thread."""
         def on_ack(_seq, ok, msg):
-            self._ack_toast.emit(done_text if ok else "REJECTED: %s" % (msg or "?"))
+            self._ack_toast.emit(done_text if ok else
+                                 "REJECTED: %s" % (fp_refusal.plain_reason(msg) or "?"))
         return on_ack
 
     def banner_direct_to(self):

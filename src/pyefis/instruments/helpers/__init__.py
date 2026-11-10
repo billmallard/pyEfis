@@ -135,6 +135,42 @@ def draw_failed_tape_x(painter, rect):
     painter.restore()
 
 
+#: Suspect-tape look (CERT1b, AER-5269). A `bad` key is suspect, not absent:
+#: its source still sends a value but has flagged it as untrustworthy. So the
+#: tape keeps its scale and an amber frame marks it as a caution, unlike the
+#: red X of a failed or expired (`old`) key (Bill's ruling, 2026-11-09).
+SUSPECT_TAPE_COLOR = QColor(255, 176, 0)
+#: Frame stroke width as a fraction of the tape's narrow side.
+SUSPECT_TAPE_PEN_RATIO = 0.04
+
+
+def tape_invalid(item):
+    """True when a tape's key must not be read at all: failed, or expired
+    (`old`: its time-to-live ran out with the gateway still running, so the
+    value is frozen at the last one received). Both get the failed-tape look
+    (CERT1b; `old` used to blank only the readout digits)."""
+    return bool(item.fail or item.old)
+
+
+def draw_suspect_tape_frame(painter, rect):
+    """Draw the suspect-tape amber frame just inside `rect`.
+
+    Painter state is saved and restored."""
+    rect = QRectF(rect)
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    pen_w = max(2.0, min(rect.width(), rect.height()) * SUSPECT_TAPE_PEN_RATIO)
+    r = rect.adjusted(pen_w / 2, pen_w / 2, -pen_w / 2, -pen_w / 2)
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(SUSPECT_TAPE_COLOR, pen_w)
+    pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRect(r)
+    painter.restore()
+
+
 #: WCAG 2.x contrast floor for text/label colour derived from a bright,
 #: config-selectable fill (AER-473 / pyEfis#147). Named so a caller can cite
 #: the standard being met rather than a bare number, and so the target can be

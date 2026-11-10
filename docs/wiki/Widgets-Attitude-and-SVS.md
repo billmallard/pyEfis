@@ -48,6 +48,7 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `
 | `numberedDivWidth` | Numbered tick width (px) | `50` |  | length of the numbered pitch ticks (auto-scale off) |
 | `drawBankMarkers` | Standard-rate bank markers | on | on / off | show the bank-angle tick arc across the top |
 | `bankAngleMaximum` | Max indicated bank (deg) | `25` |  | largest bank angle marked on the bank arc |
+| `excessiveBankDeg` | Excessive-bank caution (deg) | `60` | 30 to 65, step 1 | the bank scale and pointer turn amber past this bank; set it above the steepest turn this aircraft is flown in on purpose (60 clears the 45 and 50 deg steep turns) |
 | `bankMarkSize` | Bank tick size (px) | `10` |  | length of the bank-arc ticks (auto-scale off) |
 | `bank_position` | Bank scale position (%) | `50` | 0 to 100 | vertical position of the bank-arc centre, percent up from the bottom (50 = centred, the classic look); the whole cluster incl. pointer and slip ball moves with it |
 | `bank_radius` | Bank scale radius (% height) | `33.333` | 10 to 60, step 0.1 | radius of the bank arc as a percent of widget height (33.3 = the classic height/3); an explicit bankAngleRadius px in YAML overrides it |
@@ -218,6 +219,7 @@ FIX keys it reads by default: `PITCH`, `ROLL`, `ALAT`, `TAS`.
 | `numberedDivWidth` | Numbered tick width (px) | `50` |  | length of the numbered pitch ticks (auto-scale off) |
 | `drawBankMarkers` | Standard-rate bank markers | on | on / off | show the bank-angle tick arc across the top |
 | `bankAngleMaximum` | Max indicated bank (deg) | `25` |  | largest bank angle marked on the bank arc |
+| `excessiveBankDeg` | Excessive-bank caution (deg) | `60` | 30 to 65, step 1 | the bank scale and pointer turn amber past this bank; set it above the steepest turn this aircraft is flown in on purpose (60 clears the 45 and 50 deg steep turns) |
 | `bankMarkSize` | Bank tick size (px) | `10` |  | length of the bank-arc ticks (auto-scale off) |
 | `bank_position` | Bank scale position (%) | `50` | 0 to 100 | vertical position of the bank-arc centre, percent up from the bottom (50 = centred, the classic look); the whole cluster incl. pointer and slip ball moves with it |
 | `bank_radius` | Bank scale radius (% height) | `33.333` | 10 to 60, step 0.1 | radius of the bank arc as a percent of widget height (33.3 = the classic height/3); an explicit bankAngleRadius px in YAML overrides it |

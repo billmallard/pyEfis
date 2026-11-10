@@ -273,14 +273,15 @@ background, the substrate for the Navigation Display mode (#134):
   keys to both when it lands. The computed ratios are a bound; the
   device check is the glass.
 
-### 5.7 Navigation Display mode (`nd_mode`, G11a, billmallard/pyEfis#134)
+### 5.7 Navigation Display mode (`nd_mode`, G11a/G11b, billmallard/pyEfis#134)
 
 `nd_mode` selects the transport-category ND idiom, built to the spec on
 #134 (issuecomment-5552767516) as amended by Bill's G11 rulings
 (2026-11-07). `off` (the default) is the map above, pixel-identical to
-the map before this option existed. `expanded` is EXPANDED MAP. CTR MAP
-and the configurator twin are G11b; until then the configurator draws
-the plain map for an `expanded` screen.
+the map before this option existed. `expanded` is EXPANDED MAP; `ctr`
+is CTR MAP (G11b, below). The configurator twin is G11b's makerplane-data
+half; until it lands the configurator draws the plain map for an ND
+screen.
 
 - **Geometry.** Track-up whatever `orientation` says (the setting is
   kept for when the ND is switched off). Ownship at `h * 0.82`, the HSI
@@ -312,11 +313,19 @@ the plain map for an `expanded` screen.
   `old`/`bad`/`fail`, and the red GS flag when `GSV` says a glidepath is
   present and `GSI` is bad or failed. No digital readout and no RNP band:
   the 737's are in feet and `GSI` is not.
+- **CTR MAP** (`ctr`, G11b). The same symbol set framed as a closed
+  compass rose with ownship at the panel centre, per the spec's section
+  5 ("a closed compass rose instead of an arc, no other confirmed
+  differences"). The rose is at the selected range, like the arc. Its
+  radius is the largest that keeps the TRK box over its top inside the
+  panel, its bottom one text height above the bottom edge and its sides
+  inside the arc's reach (clear of the deviation scale). Data blocks,
+  TRK box and deviation scale are EXPANDED's, unchanged.
 - **No lateral deviation scale** (ruling 1: neither the 737 nor Garmin
   AXIS draws one on the map). **737 colours on the new elements only**
   (ruling 2): layers and ownship keep their palette.
 - **Mode key.** `nd_mode_key` names a FIX key that switches the mode at
-  runtime (0 = off, 1 = expanded), the `orientation_key` precedent: the
+  runtime (0 = off, 1 = expanded, 2 = ctr), the `orientation_key` precedent: the
   config default seeds the key, then the key drives the mode, and the
   widget never writes it again. The gateway needs the key defined (a
   `custom.yaml` stand-in like `MAPORIENT`, max = the mode count); the

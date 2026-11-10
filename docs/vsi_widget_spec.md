@@ -58,7 +58,7 @@ a Major hazard. IDs (`VSI-<CLASS>-<NNN>`) are stable and anchor the test catalog
 | ID | Requirement | Trigger | Required response | Cite | Status |
 |----|-------------|---------|-------------------|------|--------|
 | **VSI-DISP-001** | Performance-appropriate scale, clear zero, up=climb/down=descend | always | Zero reference + signed scale over a climb/descent-appropriate range | §8.11 p.24; §A.6 p.74 | **DONE** — `Alt_Trend_Tape` range + graduations now config (`maxvs`/`minorDiv`/`numberedDiv`); dial + PFD ranges still fixed (see §7) |
-| **VSI-ANN-001** | VS-invalid annunciation on **every** variant | `VS` fail / old / bad | `fail` → remove the moving element + show a clear flag; `old`/`bad` → grey / blank (never a live-looking value) | Table 4-6 p.32 (Major); §2 | **DONE** — all three variants: `VSI_PFD` now flags fail (red X, no dot) + greys old/bad |
+| **VSI-ANN-001** | VS-invalid annunciation on **every** variant | `VS` fail / old / bad | `fail` or `old` (expired TOL) → remove the moving element and scale + show a red X (CERT1a/CERT1b); `bad` → amber frame, dot amber / readout blank (never a live-looking value) | Table 4-6 p.32 (Major); §2 | **DONE** — all three variants: `VSI_PFD` flags fail and old (red X, no dot), amber dot and frame on bad |
 
 **Contract for the gap.** `VSI_PFD.paintEvent` must consume the `VS` item quality: on
 `fail`, **do not draw the magenta dot** — draw a red failure flag (an `X`) so a frozen dot

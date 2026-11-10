@@ -915,12 +915,106 @@ def test_fetch_fixture_rejects_a_sha256_mismatch(mpf, monkeypatch, tmp_path):
                           manifest_path=manifest)
 
 
-def test_checked_in_manifest_is_honestly_unpublished(mpf):
-    """Pins the current state of tools/perf_fixtures.json so a future
-    change to it (e.g. someone fabricating a sha256 without actually
-    publishing) is a visible diff, not a silent drift."""
+def test_checked_in_manifest_pins_the_release_assets(mpf):
+    """Pins tools/perf_fixtures.json to the perf-fixtures-2026-09
+    prerelease and the sha256/bytes AVIONICS-DATA reported when it cut
+    the real packs (AER-1137, AER-1138), so a change to any pin is a
+    visible diff, not a silent drift. The clean-cache fetch against these
+    exact values is recorded on AER-1138."""
     manifest = mpf._load_manifest()
-    for scene in mpf.SCENES:
+    assert "status" not in manifest
+    expected = {
+        "raleigh": (83_891_162, "249d4d2b861729ed404568f1139cd09f"
+                                "85aeaa263c5ebd7c88284965465f81a4"),
+        "key_west": (34_482_134, "de1fa2959dc9b2f9f83244118e085e51"
+                                 "e898eeadb39652c37ffe11da177cc663"),
+    }
+    assert set(manifest["scenes"]) == set(mpf.SCENES) == set(expected)
+    for scene, (size, sha256) in expected.items():
         entry = manifest["scenes"][scene]
-        assert entry["sha256"] is None
-        assert entry["url"] is None
+        assert entry["url"] == mpf.release_asset_url(
+            "perf-fixtures-2026-09", scene)
+        assert entry["sha256"] == sha256
+        assert entry["bytes"] == size
+        assert entry["bytes"] < mpf.MAX_PACK_BYTES
+
+
+# --- _publish --------------------------------------------------------------
+
+class _FakeGitHub:
+    """Records every GitHub REST call _publish makes and answers it."""
+
+    def __init__(self, existing_release=None):
+        self.calls = []
+        self.release = existing_release
+
+    def __call__(self, method, url, token, data=None, headers=None):
+        import urllib.error
+        body = data.read() if hasattr(data, "read") else data
+        self.calls.append((method, url, token, body, headers or {}))
+        if method == "GET":
+            if self.release is None:
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            return self.release
+        if url.endswith("/releases"):
+            self.release = {"id": 7, "assets": [], **json.loads(body)}
+            return self.release
+        name = url.rsplit("name=", 1)[1]
+        return {"name": name, "browser_download_url":
+                f"https://github.com/o/r/releases/download/t/{name}"}
+
+
+def test_publish_skips_cleanly_without_a_token(mpf, monkeypatch, tmp_path):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    fake = _FakeGitHub()
+    monkeypatch.setattr(mpf, "_github", fake)
+    assert mpf._publish("raleigh", tmp_path / "x.tar.gz", 1, "0" * 64) is False
+    assert fake.calls == []
+
+
+def test_publish_creates_a_prerelease_uploads_and_pins(
+        mpf, monkeypatch, tmp_path):
+    tarball = tmp_path / "raleigh.tar.gz"
+    tarball.write_bytes(b"tarball-bytes")
+    manifest = tmp_path / "perf_fixtures.json"
+    monkeypatch.setattr(mpf, "MANIFEST_PATH", manifest)
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    fake = _FakeGitHub()
+    monkeypatch.setattr(mpf, "_github", fake)
+
+    assert mpf._publish("raleigh", tarball, 13, "a" * 64,
+                        release_tag="perf-fixtures-2099-01")
+
+    (_, create_url, _, create_body, _) = fake.calls[1]
+    assert create_url.endswith(f"/repos/{mpf.RELEASE_REPO}/releases")
+    assert json.loads(create_body) == {
+        "tag_name": "perf-fixtures-2099-01", "name": "perf-fixtures-2099-01",
+        "prerelease": True, "body": json.loads(create_body)["body"]}
+    (method, upload_url, token, body, headers) = fake.calls[2]
+    assert method == "POST" and token == "tok"
+    assert upload_url.startswith("https://uploads.github.com/")
+    assert upload_url.endswith("/releases/7/assets?name=raleigh.tar.gz")
+    assert body == b"tarball-bytes"
+    assert headers["Content-Type"] == "application/gzip"
+
+    entry = json.loads(manifest.read_text())["scenes"]["raleigh"]
+    assert entry["url"] == ("https://github.com/o/r/releases/download/t/"
+                            "raleigh.tar.gz")
+    assert entry["sha256"] == "a" * 64 and entry["bytes"] == 13
+
+
+def test_publish_refuses_to_replace_an_existing_asset(
+        mpf, monkeypatch, tmp_path):
+    tarball = tmp_path / "raleigh.tar.gz"
+    tarball.write_bytes(b"x")
+    monkeypatch.setattr(mpf, "MANIFEST_PATH", tmp_path / "m.json")
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    fake = _FakeGitHub(existing_release={
+        "id": 7, "assets": [{"name": "raleigh.tar.gz"}]})
+    monkeypatch.setattr(mpf, "_github", fake)
+    with pytest.raises(mpf.PerfFixtureError, match="new --release-tag"):
+        mpf._publish("raleigh", tarball, 1, "a" * 64,
+                     release_tag="perf-fixtures-2026-09")
+    assert [c[0] for c in fake.calls] == ["GET"]
+    assert not (tmp_path / "m.json").exists()

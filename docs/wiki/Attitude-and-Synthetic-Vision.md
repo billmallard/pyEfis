@@ -20,7 +20,7 @@ terrain is `atitude_indicator`.
 | **Aircraft symbol** | Fixed. On the bench panel it is the `garmin` style: a yellow two-tone bat wing with a short bar each side at horizon level. |
 | **Horizon line** | White, drawn over the terrain at zero pitch. |
 | **Pitch ladder** | Lines every few degrees, numbered every **Numbered division** (5° on the bench panel, 10° by default). Lines more than the **Pitch label range** from your pitch fade out. |
-| **Bank scale** | An arc with marks at 10, 20, 30, 45 and 60 degrees, a fixed white datum at the top and a pointer that turns with the aircraft. Both turn amber past 45° of bank. |
+| **Bank scale** | An arc with marks at 10, 20, 30, 45 and 60 degrees, a fixed white datum at the top and a pointer that turns with the aircraft. Both turn amber past the **Excessive-bank caution** setting, 60° of bank by default, so a 45° or 50° steep turn does not light it. |
 | **Standard-rate marks** | Two small diamonds on the arc at the bank for a standard-rate turn at your true airspeed, capped at **Max indicated bank** (25°). |
 | **Slip/skid indicator** | The ball just under the bank pointer. It moves sideways with `ALAT` and turns amber at 0.25 g and beyond. |
 | **Flight path marker** | A green circle with wings: where the aircraft is actually going, from GPS track, groundspeed and vertical speed. See [below](#flight-path-marker). |
@@ -133,6 +133,7 @@ bench panel's value where it differs.
 | Bank scale radius (`bank_radius`) | 33.3 | 25 | Percent of the height. |
 | Standard-rate bank markers (`drawBankMarkers`) | on | | |
 | Max indicated bank (`bankAngleMaximum`) | 25 | | Cap for the standard-rate marks. |
+| Excessive-bank caution (`excessiveBankDeg`) | 60 | | The bank scale turns amber past this. Set it per aircraft, above the steepest turn you fly on purpose. |
 | Horizon heading marks (`horizon_heading_marks`) | off | on | |
 | Heading label interval (`horizon_heading_label_interval`) | 20 | 30 | |
 
