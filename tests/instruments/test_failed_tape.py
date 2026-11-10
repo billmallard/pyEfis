@@ -5,6 +5,12 @@ and trend vector and showed the failure only as a small red XXX in the readout
 box (pyEfis #411's "fixgw stopped 6 s" frame). These tests render the real
 paintEvent and assert, for each tape, that a failed tape draws a red X corner to
 corner, that the scale under it is blanked, and that both clear on recovery.
+
+CERT1b (AER-5269): an expired key (`old`: its time-to-live ran out while
+fix-gateway kept running, the likeliest field failure) gets the same look, and
+a suspect key (`bad`) keeps its scale inside an amber frame. On `dev` before
+CERT1b an old tape blanked only its readout digits and kept drawing its scale,
+bands and trend at the frozen value, and a bad tape showed no cue at all.
 """
 from unittest import mock
 
@@ -79,6 +85,10 @@ def _grab(qtbot, w):
     return target.grab().toImage()
 
 
+def _is_amber(c):
+    return c.red() > 200 and 130 < c.green() < 210 and c.blue() < 60
+
+
 def _is_red(c):
     return c.red() > 200 and c.green() < 60 and c.blue() < 60
 
@@ -120,8 +130,31 @@ def _scale_ink_count(w, img):
                for y in range(y0, y1, 2) for x in range(x0, x1, 2))
 
 
+def _frame_amber_fraction(w, img):
+    """Share of sample points on the four edges of the X region (2 px in)
+    that are amber."""
+    x0, y0, x1, y1 = _x_region(w, img)
+    pts = []
+    for i in range(1, 20):
+        t = i / 20.0
+        x = int(x0 + (x1 - x0) * t)
+        y = int(y0 + (y1 - y0) * t)
+        pts += [(x0 + 1, y), (x1 - 2, y), (x, y0 + 1), (x, y1 - 2)]
+    return sum(_is_amber(img.pixelColor(x, y)) for x, y in pts) / len(pts)
+
+
+def _readout_shows_failed(w):
+    """The tape's own readout carries the failed annunciation (red XXX)."""
+    if isinstance(w, vsi.Alt_Trend_Tape):
+        return w.vstext.toPlainText() == "XXX"
+    if isinstance(w, vsi.VSI_PFD):
+        return True  # no readout of its own
+    return w.numerical_display.fail
+
+
+@pytest.mark.parametrize("flag", ["fail", "old"])
 @pytest.mark.parametrize("name", sorted(TAPES))
-def test_failed_tape_draws_red_x_and_blanks_scale(fix, qtbot, name):
+def test_failed_tape_draws_red_x_and_blanks_scale(fix, qtbot, name, flag):
     w, item = TAPES[name](fix)
     _show(qtbot, w)
 
@@ -129,17 +162,107 @@ def test_failed_tape_draws_red_x_and_blanks_scale(fix, qtbot, name):
     assert _diagonal_red_fraction(w, live) < 0.5, "live tape already shows an X"
     assert _scale_ink_count(w, live) > 0, "control: the live scale draws ink"
 
-    item.fail = True
+    setattr(item, flag, True)
     failed = _grab(qtbot, w)
     assert _diagonal_red_fraction(w, failed) > 0.9, \
-        "a failed tape must carry a red X corner to corner"
+        "a %s tape must carry a red X corner to corner" % flag
     assert _scale_ink_count(w, failed) == 0, \
-        "the scale under a failed tape must be blanked"
+        "the scale under a %s tape must be blanked" % flag
+    assert _readout_shows_failed(w), "the readout must show the red XXX"
 
-    item.fail = False
+    setattr(item, flag, False)
     back = _grab(qtbot, w)
     assert _diagonal_red_fraction(w, back) < 0.5, "the X must clear on recovery"
     assert _scale_ink_count(w, back) > 0, "the scale must return on recovery"
+
+
+@pytest.mark.parametrize("name", sorted(TAPES))
+def test_bad_tape_keeps_scale_inside_amber_frame(fix, qtbot, name):
+    """CERT1b: suspect is not absent. A bad tape keeps its scale, carries an
+    amber frame and no red X, and the frame clears on recovery."""
+    w, item = TAPES[name](fix)
+    _show(qtbot, w)
+
+    live = _grab(qtbot, w)
+    assert _frame_amber_fraction(w, live) < 0.2, "live tape already framed"
+
+    item.bad = True
+    bad = _grab(qtbot, w)
+    assert _frame_amber_fraction(w, bad) > 0.9, \
+        "a bad tape must carry an amber frame"
+    assert _diagonal_red_fraction(w, bad) < 0.5, "a bad tape is not a red X"
+    assert _scale_ink_count(w, bad) > 0, "a bad tape keeps its scale"
+
+    item.bad = False
+    back = _grab(qtbot, w)
+    assert _frame_amber_fraction(w, back) < 0.2, "the frame must clear"
+
+
+def test_fail_or_old_outranks_bad(fix, qtbot):
+    """A key both expired and suspect shows the X, not the amber frame."""
+    w, item = _airspeed(fix)
+    _show(qtbot, w)
+    item.bad = True
+    item.old = True
+    img = _grab(qtbot, w)
+    assert _diagonal_red_fraction(w, img) > 0.9
+    assert _frame_amber_fraction(w, img) < 0.2
+
+
+def test_vsi_pfd_bad_dot_is_amber(fix, qtbot):
+    """VSI_PFD keeps its dot under a bad VS, amber rather than magenta."""
+    w, item = _vsi_pfd(fix)
+    _show(qtbot, w)
+    item.bad = True
+    img = _grab(qtbot, w)
+    magenta = sum(1 for y in range(img.height()) for x in range(img.width())
+                  if (lambda c: c.red() > 200 and c.blue() > 200
+                      and c.green() < 60)(img.pixelColor(x, y)))
+    inner_amber = sum(_is_amber(img.pixelColor(x, y))
+                      for y in range(8, img.height() - 8)
+                      for x in range(8, img.width() - 8))
+    assert magenta == 0, "the dot must not stay magenta under a bad VS"
+    assert inner_amber > 20, "the dot must be drawn amber"
+
+
+@pytest.mark.parametrize("ias_flag", ["fail", "old"])
+def test_tas_blanks_under_failed_or_old_ias(fix, qtbot, ias_flag):
+    """CERT1b: no TAS number beside a failed or expired IAS (same pitot)."""
+    for k in ("IAS", "TAS"):
+        _clear(fix.db.get_item(k))
+    fix.db.get_item("IAS").value = 100
+    fix.db.get_item("TAS").value = 108
+    w = airspeed.Airspeed_Tape(show_tas=True, show_trend=False)
+    _show(qtbot, w)
+    assert w.tas_text() == "108", "control: a live TAS reads"
+    setattr(fix.db.get_item("IAS"), ias_flag, True)
+    assert w.tas_text() == "---"
+    setattr(fix.db.get_item("IAS"), ias_flag, False)
+    assert w.tas_text() == "108"
+
+
+def test_tas_stays_live_under_bad_ias(fix, qtbot):
+    """The ruling blanks TAS under a failed or expired IAS only; a suspect IAS
+    keeps its TAS (it is flagged on its own key if it is suspect too)."""
+    for k in ("IAS", "TAS"):
+        _clear(fix.db.get_item(k))
+    fix.db.get_item("TAS").value = 108
+    w = airspeed.Airspeed_Tape(show_tas=True, show_trend=False)
+    _show(qtbot, w)
+    fix.db.get_item("IAS").bad = True
+    assert w.tas_text() == "108"
+
+
+def test_tas_flag_change_repaints(fix, qtbot, monkeypatch):
+    """A TAS flag change repaints the tape (it used to wait for a value)."""
+    for k in ("IAS", "TAS"):
+        _clear(fix.db.get_item(k))
+    w = airspeed.Airspeed_Tape(show_tas=True, show_trend=False)
+    _show(qtbot, w)
+    hits = []
+    monkeypatch.setattr(w.viewport(), "update", lambda *a: hits.append(1))
+    fix.db.get_item("TAS").old = True
+    assert hits, "a TAS flag change must repaint the TAS box"
 
 
 def test_failed_vsi_tape_keeps_its_header(fix, qtbot):
@@ -187,6 +310,6 @@ def test_vsi_tape_flag_change_is_not_rate_limited(fix, qtbot, flag):
     _show(qtbot, w)
     assert w.vstext.toPlainText() == "0"
     setattr(item, flag, True)
-    assert w.vstext.toPlainText() == ("XXX" if flag == "fail" else "")
+    assert w.vstext.toPlainText() == ("" if flag == "bad" else "XXX")
     setattr(item, flag, False)
     assert w.vstext.toPlainText() == "0"

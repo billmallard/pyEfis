@@ -485,10 +485,11 @@ class Altimeter_Tape(QGraphicsView):
         self.centerOn(
             self.scene.width() / 2, self.y_offset(self._altimeter + self.maxalt)
         )
-        if self.baro_shown() or self.item.fail:
+        if (self.baro_shown() or helpers.tape_invalid(self.item)
+                or self.item.bad):
             # centerOn() may blit-scroll the viewport, which would drag the
-            # fixed baro box (or the failed-tape X) along with the scale;
-            # repaint it in place.
+            # fixed baro box (or the failed-tape X, or the suspect frame)
+            # along with the scale; repaint it in place.
             self.viewport().update()
         if self.numerical_display is not None:
             if self.round_to:
@@ -514,7 +515,9 @@ class Altimeter_Tape(QGraphicsView):
         # edge_fade (percent of height, 0 = off): melt the scrolling
         # scale in/out at the top and bottom instead of hard-clipping.
         _fade = bool(getattr(self, "edge_fade", False))
-        failed = self.item.fail
+        # CERT1b: an expired (old) altitude is frozen at its last value, so
+        # it gets the failed look too.
+        failed = helpers.tape_invalid(self.item)
         w = self.width()
         h = self.height()
         if failed:
@@ -535,6 +538,9 @@ class Altimeter_Tape(QGraphicsView):
             helpers.draw_failed_tape_x(p, QRectF(self.viewport().rect()))
         else:
             self._paint_alt_bug(p)
+            if self.item.bad:
+                helpers.draw_suspect_tape_frame(
+                    p, QRectF(self.viewport().rect()))
 
         p.translate(self.numeric_box_pos.x(), self.numeric_box_pos.y())
 
@@ -897,14 +903,18 @@ class Altimeter_Tape(QGraphicsView):
     def setAltOld(self, b):
         if self.numerical_display is not None:
             self.numerical_display.old = b
+            self.numerical_display.fail = bool(b or self.item.fail)
+        self.viewport().update()
 
     def setAltBad(self, b):
         if self.numerical_display is not None:
             self.numerical_display.bad = b
+        self.viewport().update()
 
     def setAltFail(self, b):
         if self.numerical_display is not None:
-            self.numerical_display.fail = b
+            # CERT1b: an expired (old) key keeps the readout's XXX too.
+            self.numerical_display.fail = bool(b or self.item.old)
         self.viewport().update()
 
     # --- selected altitude: box, bug and knob editing (pyEfis #310) ---------

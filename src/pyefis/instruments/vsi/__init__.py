@@ -270,16 +270,20 @@ class VSI_PFD(QWidget):
         # X so a frozen dot cannot be read as a valid vertical speed; on old/bad
         # grey the dot instead of magenta. Same fail/old/bad convention the VSI
         # dial and tape already follow. CERT1a: the X spans the whole tape and
-        # the scale is blanked, like the airspeed and altitude tapes.
-        if self.item.fail:
+        # the scale is blanked, like the airspeed and altitude tapes. CERT1b:
+        # an expired (old) VS is frozen at its last value, so it gets the X
+        # too (it used to grey the dot and leave it at the frozen rate); a
+        # suspect (bad) VS keeps its dot, amber, inside an amber frame.
+        if helpers.tape_invalid(self.item):
             helpers.draw_failed_tape_x(p, QRectF(0, 0, w, h))
             return
 
         # Insert Background
         p.drawPixmap(0, 0, self.background)
+        if self.item.bad:
+            helpers.draw_suspect_tape_frame(p, QRectF(0, 0, w, h))
 
-        dot_color = (QColor(Qt.GlobalColor.gray)
-                     if (self.item.old or self.item.bad)
+        dot_color = (QColor(helpers.SUSPECT_TAPE_COLOR) if self.item.bad
                      else QColor(Qt.GlobalColor.magenta))
 
         #p.drawEllipse(QPointF(w+4, h/2), 4.0, 4.0)
@@ -569,7 +573,7 @@ class Alt_Trend_Tape(QGraphicsView):
             top = self.zero_y
             bottom = y
         height = bottom - top
-        if self._fail:
+        if self._invalid():
             if self.indicator_line is not None:
                 self.scene.removeItem(self.indicator_line)
                 self.indicator_line = None
@@ -589,13 +593,10 @@ class Alt_Trend_Tape(QGraphicsView):
     vs = property(setVs)
 
     def setVsText(self):
-        if self._fail:
+        if self._invalid():
             self.vstext.setPlainText("XXX")
             self.vstext.setDefaultTextColor (QColor(Qt.GlobalColor.red))
         elif self._bad:
-            self.vstext.setPlainText("")
-            self.vstext.setDefaultTextColor (QColor(255, 150, 0))
-        elif self._old:
             self.vstext.setPlainText("")
             self.vstext.setDefaultTextColor (QColor(255, 150, 0))
         else:
@@ -608,6 +609,7 @@ class Alt_Trend_Tape(QGraphicsView):
         if self._bad != b:
             self._bad = b
             self._redraw_now()
+            self.viewport().update()
     bad = property(getBad, setBad)
 
     def getOld(self):
@@ -615,7 +617,9 @@ class Alt_Trend_Tape(QGraphicsView):
     def setOld(self, b):
         if self._old != b:
             self._old = b
+            self._apply_fail_look()
             self._redraw_now()
+            self.viewport().update()
     old = property(getOld, setOld)
 
     def getFail(self):
@@ -636,23 +640,34 @@ class Alt_Trend_Tape(QGraphicsView):
         self.last_update_time = 0
         self.redraw()
 
+    def _invalid(self):
+        """Failed, or expired (old): the VS must not be read (CERT1b)."""
+        return bool(self._fail or self._old)
+
     def _apply_fail_look(self):
         """CERT1a: blank the graduations and the VS bar under a failed VS.
-        The header (the "VSI" label and the red XXX readout) and the face stay."""
+        The header (the "VSI" label and the red XXX readout) and the face stay.
+        CERT1b: the same under an expired (old) VS."""
+        hide = self._invalid()
         for it in getattr(self, "_scale_items", ()):
-            it.setVisible(not self._fail)
+            it.setVisible(not hide)
         if self.indicator_line is not None:
-            self.indicator_line.setVisible(not self._fail)
+            self.indicator_line.setVisible(not hide)
 
     def paintEvent(self, event):
         super(Alt_Trend_Tape, self).paintEvent(event)
-        if not self._fail or not hasattr(self, "top_margin"):
+        invalid = self._invalid()
+        if not (invalid or self._bad) or not hasattr(self, "top_margin"):
             return
-        # CERT1a: the red X spans the scale below the header.
+        # CERT1a: the red X spans the scale below the header. CERT1b: a
+        # suspect (bad) VS frames that same area in amber instead.
         h = self.viewport().height()
         top = min(float(self.top_margin), float(h))
+        rect = QRectF(0, top, self.viewport().width() - self.RIGHT_MARGIN,
+                      h - top)
         p = QPainter(self.viewport())
-        helpers.draw_failed_tape_x(
-            p, QRectF(0, top, self.viewport().width() - self.RIGHT_MARGIN,
-                      h - top))
+        if invalid:
+            helpers.draw_failed_tape_x(p, rect)
+        else:
+            helpers.draw_suspect_tape_frame(p, rect)
         p.end()
