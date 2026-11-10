@@ -42,7 +42,9 @@ NDB, triangle for a fix, circle for an airport, filled diamond for a user
 waypoint and filled square for a point made on the map. Labels carry `IAF`,
 `FAF`, `MAP` or `MAHP` where the procedure says so, and altitude constraints
 are drawn with chart-style bars: a bar above for at-or-below, below for
-at-or-above, both for at.
+at-or-above, both for at. Where the airport, navaid or waypoint layer already
+shows the place, the plan keeps that layer's symbol and ident and adds only
+the ring and the role.
 
 ![The bench in the WINCH hold, 10 nm north up: the hold drawn as a magenta racetrack at WINCH, with the coastline, Avila and the airports around San Luis Obispo](../images/map/bench_map_hold.png)
 
@@ -58,6 +60,36 @@ at-or-above, both for at.
 
 Where airports crowd together, the two with the longest runways in each patch
 of the map are kept.
+
+### ND mode: EXPANDED MAP
+
+With `nd_mode: expanded` the map is drawn as a navigation display. It is
+always track up, whatever `orientation` says, and ownship sits 82% of the way
+down, whatever `ownship_position` says. The selected range reaches the compass
+arc instead of the top edge.
+
+![ND EXPANDED on the bench's map panel, 10 NM, tracking 072 toward KSBA: the compass arc with the TRK 072 MAG box, GS, TAS and wind top left, KSBA with its ETA and distance top right, ARPT, WPT and STA bottom left, and the vertical deviation scale at the right edge](../images/aer5085_nd_expanded/panel/nd_approach_standard.png)
+
+| Element | What it shows |
+|---|---|
+| **Compass arc** | At the selected range, ticks every 5°, a numeral every 30° in tens (`6` is 060). |
+| **TRK box** | `TRK`, the magnetic track and `MAG` over the top of the arc, with a pointer under it. Grey when `TRACKM` is stale. |
+| **Top left** | `GS` and `TAS`, then the wind as direction°/speed with an arrow pointing the way it blows. |
+| **Top right** | The active waypoint in magenta, its ETA in UTC (`HHMM.Mz`, now plus `WPETE`) and its distance in NM. Only while a plan is active (`FPLSTATE` not 0); ETA and distance are left out in the `VECTORS` phase. |
+| **Bottom left** | The map layers that are on, in cyan: `ARPT` (airports), `WPT` (waypoints), `STA` (navaids). |
+| **Vertical deviation scale** | Right edge, from `GSI`, with a magenta diamond pointer. Hidden when `GSV` is published and below 0.5 (no glidepath). A red `GS` flag shows when `GSV` says a glidepath is present and `GSI` is bad or failed. |
+
+A failed value in a data block reads red `XXX`; an old or bad one is grey. A
+key fix-gateway does not define is left out.
+
+#### CTR MAP
+
+With `nd_mode: ctr` the map shows the same elements around a full compass rose,
+with ownship at the centre of the panel. The rose is at the selected range, so
+the range reaches the same distance ahead and behind. It is sized to fit the
+panel under the TRK box, clear of the deviation scale.
+
+![ND CTR MAP on the bench's map panel, 10 NM, tracking 072 toward KSBA: the full compass rose round the centred ownship, with the same TRK box, data blocks and deviation scale as EXPANDED](../images/aer5262_nd_ctr/panel/nd_ctr_approach_standard.png)
 
 ## Using it
 
@@ -110,12 +142,14 @@ used, with defaults and the bench panel's value where it differs:
 
 | Option | Default | Bench | What it does |
 |---|---|---|---|
-| Range (`range_nm`) | 10 nm | | Distance from the ownship to the top edge at start. |
+| Range (`range_nm`) | 10 nm | | Distance from the ownship to the top edge at start; to the compass arc in ND mode. |
 | Range ladder (`range_ladder`) | `2,5,10,20,40,80,160` | `2,10,50,200,500,2000` | The ranges the buttons step through; also the zoom limits. |
 | Range control key (`range_key`) | | | A FIX key that steps the range. |
 | Zoom rail (`zoom_rail`) | off | | A one-finger zoom strip down one edge. |
 | Orientation (`orientation`) | `track_up` | `north_up` | |
 | Orientation control key (`orientation_key`) | | | A FIX key: 0 track up, 1 north up. |
+| ND mode (`nd_mode`) | `off` | | `expanded` draws the [ND EXPANDED MAP](#nd-mode-expanded-map); `ctr` draws [CTR MAP](#ctr-map). |
+| ND mode control key (`nd_mode_key`) | | | A FIX key: 0 off, 1 expanded, 2 ctr. |
 | Touch gestures (`touch_gestures`) | on | | Off ignores every touch and the wheel. |
 | Gesture auto-revert (`gesture_timeout`) | 30 s | | 0 stays where you leave it. |
 | Ownship position (`ownship_position`) | 50 | | Percent up from the bottom; 30 shows more ahead. |
@@ -152,7 +186,8 @@ Trimmed from the bench panel:
 ### Feeding it
 
 The map reads `LAT`, `LONG`, `TRACKM`, `ALT` and `MAGVAR`, and the flight-plan
-keys fix-gateway's flight-plan engine publishes. It writes `DTOID`, `DTOLAT`,
+keys fix-gateway's flight-plan engine publishes. ND mode also reads `GS`, `TAS`,
+`WINDDIR`, `WINDSPD`, `WPDIS`, `WPETE`, `GSI` and `GSV`. It writes `DTOID`, `DTOLAT`,
 `DTOLON`, `DTOTYPE` and `FPLCMD` for a Direct-To, the route block for an
 insert, and the range index to `range_key` when one is set. See
 [FIX Database Keys](FIX-Database-Keys).

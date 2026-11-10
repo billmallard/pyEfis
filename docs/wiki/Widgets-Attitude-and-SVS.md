@@ -66,7 +66,6 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `
 | `svs_palette` | Terrain palette | `clearance` | `clearance`, `subdued`, `high_contrast` | clearance-band colour scheme (rendered on the device; not shown in the editor preview) |
 | `svs_clearance_green_ft` | Safe clearance (ft) | `1000` |  | green at/above this height over terrain |
 | `svs_clearance_yellow_ft` | Caution clearance (ft) | `500` |  | amber above this; red below |
-| `svs_terrain_fill` | Fill terrain | on | on / off | off = wireframe (rendered on the device; not shown in the editor preview) |
 | `svs_terrain_grid` | Terrain grid | `0.35` | 0 to 1 | (rendered on the device; not shown in the editor preview) |
 | `svs_terrain_texture` | Terrain texture | `0.35` | 0 to 1 | (rendered on the device; not shown in the editor preview) |
 | `svs_safe_gradient` | Safe-band gradient | on | on / off | (rendered on the device; not shown in the editor preview) |
@@ -160,10 +159,13 @@ The bench panel's attitude display, trimmed:
       airport_provider_dir: /data/makerplane-data/airports
 ```
 
-Two terrain options in the configurator's list have no effect on the device
+One terrain option in the configurator's list has no effect on the device
 today: **Terrain palette**
-([#394](https://github.com/billmallard/pyEfis/issues/394)) and **Fill terrain**
-([#395](https://github.com/billmallard/pyEfis/issues/395)).
+([#394](https://github.com/billmallard/pyEfis/issues/394)). Terrain is always
+drawn filled; the old **Fill terrain** option was removed because no wireframe
+mode exists ([#395](https://github.com/billmallard/pyEfis/issues/395)). A saved
+screen that still carries `svs_terrain_fill` loads normally and the key is
+ignored.
 
 ### FIX keys
 
@@ -175,6 +177,7 @@ today: **Terrain palette**
 | `LAT`, `LONG`, `ALT` | Where the terrain is drawn from. Old, bad, failed or missing: no terrain, and `SVS UNAVAIL`. |
 | `HEAD`, `MAGVAR` | Which way the terrain faces, and the horizon heading marks. |
 | `VS`, `GS`, `TRACK`, `VPATH` | The flight path marker. |
+| `AOA` and its `Warn` aux | The pitch-limit indicator, drawn `Warn` minus `AOA` degrees above the aircraft symbol when that is 8 or less. Old, bad, failed, missing, or no `Warn`: not drawn. |
 | `COURSE` | The legacy CIFP overlay's heading. |
 
 Any of `PITCH`, `ROLL`, `ALAT` or `TAS` old or bad turns the sky grey; any

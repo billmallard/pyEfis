@@ -35,16 +35,16 @@ instruments:
               dbkey: FUELQT
           -
             options:
-              name: "Left"
+              name: "Tank 1"
               decimal_places: 1
               dbkey: FUELQ1
           -
             options:
-              name: "Center"
+              name: "Tank 2"
               decimal_places: 1
               dbkey: FUELQ2
           -
             options:
-              name: "Right"
+              name: "Tank 3"
               decimal_places: 1
               dbkey: FUELQ3

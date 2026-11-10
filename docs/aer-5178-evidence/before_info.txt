@@ -1,0 +1,15 @@
+fixgw=3169578 pyefis=3191183 pyEfis_head=b5eb3dd branch=dev
+22:10:32 grabbed 1_live 60ff80c9ffc3 60ff80c9ffc3
+22:10:35 grabbed 2_live_b b4ea9fe1f5e3 e7a31d9028e6
+22:10:35 SIGSTOP fixgw
+22:10:37 grabbed 3_stopped_1s e7a31d9028e6 e7a31d9028e6
+22:10:42 grabbed 4_stopped_6s 945afc4715c3 945afc4715c3
+22:10:49 grabbed 5_stopped_12s 945afc4715c3 945afc4715c3
+22:10:49 SIGCONT fixgw
+22:10:54 grabbed 6_resumed_4s 0e7c524a5573 76b810e6bc7c
+PITCH 3.0
+ROLL -19.21
+ALT 4505.64
+IAS 110.0
+Nov 08 22:10:37 beelinkpyefis xinit[3191183]: ERROR:20261108-22:10:37:pyefis.fix_watchdog - No frame from FIX gateway for 2.5 s: marking all data failed
+Nov 08 22:10:49 beelinkpyefis xinit[3191183]: WARNING:20261108-22:10:49:pyefis.fix_watchdog - FIX gateway answering again: re-reading 3131 items

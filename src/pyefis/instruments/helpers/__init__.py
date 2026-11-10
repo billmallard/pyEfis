@@ -103,6 +103,38 @@ def draw_readout_panel(painter, rect, radius, border_color, pen_width=1.0,
     return pen, brush
 
 
+#: Failed-tape look (CERT1a, AER-5178). A tape whose data has failed used to
+#: show its failure only as a small red XXX in the readout box while the scale,
+#: the coloured bands and the trend vector kept drawing, and those can still be
+#: read as live. The glass convention is a large red X across the whole failed
+#: tape. The scale is also removed, so nothing under the X looks like a
+#: reading (Bill's pick of the two looks, AER-5178).
+FAILED_TAPE_X_COLOR = QColor(255, 0, 0)
+#: X stroke width as a fraction of the tape's narrow side.
+FAILED_TAPE_X_PEN_RATIO = 0.06
+
+
+def draw_failed_tape_x(painter, rect):
+    """Draw the failed-tape red X corner to corner across `rect`.
+
+    The stroke is inset by half its width so the line ends stay inside the
+    tape. Painter state is saved and restored.
+    """
+    rect = QRectF(rect)
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    pen_w = max(3.0, min(rect.width(), rect.height()) * FAILED_TAPE_X_PEN_RATIO)
+    r = rect.adjusted(pen_w / 2, pen_w / 2, -pen_w / 2, -pen_w / 2)
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(FAILED_TAPE_X_COLOR, pen_w)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.drawLine(r.topLeft(), r.bottomRight())
+    painter.drawLine(r.bottomLeft(), r.topRight())
+    painter.restore()
+
+
 #: WCAG 2.x contrast floor for text/label colour derived from a bright,
 #: config-selectable fill (AER-473 / pyEfis#147). Named so a caller can cite
 #: the standard being met rather than a bare number, and so the target can be

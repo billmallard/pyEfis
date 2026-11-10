@@ -24,13 +24,15 @@ FIX keys it reads by default: `LAT`, `LONG`, `TRACKM`.
 
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|
-| `range_nm` | Range (NM) | `10` | 1 to 500 | distance from the ownship anchor to the top edge |
+| `range_nm` | Range (NM) | `10` | 1 to 500 | distance from the ownship anchor to the top edge (to the compass arc in ND mode) |
 | `range_key` | Range control key | empty | FIX key | optional FIX key that cycles the range at runtime (a button 'change value wrap' / the knob steps the ladder index). Empty = fixed range |
 | `range_ladder` | Range ladder | `2,5,10,20,40,80,160` |  | comma list of ranges the range buttons step through |
 | `zoom_rail` | Zoom rail | off | on / off | one-finger range control under the status chip: a vertical rail with one detent per range ladder rung, zoom in at the top. Tap +/- to step one rung, tap the rail to jump to a rung, or drag the thumb. Its touch zone is 20 mm wide and claims every touch inside it |
 | `zoom_rail_side` | Zoom rail side | `left` | `left`, `right` | map edge the zoom rail sits on |
 | `orientation` | Orientation | `track_up` | `track_up`, `north_up` | track-up rotates the world; north-up rotates ownship |
 | `orientation_key` | Orientation control key | empty | FIX key | optional FIX key that switches orientation at runtime (0=track_up, 1=north_up). Empty = fixed |
+| `nd_mode` | ND mode | `off` | `off`, `expanded`, `ctr` | off = the plain moving map; expanded = Navigation Display EXPANDED MAP: track-up compass arc at the selected range, ownship low (82% down), corner data blocks and a vertical deviation scale from GSI/GSV at the right edge; ctr = CTR MAP: the same with a full compass rose and ownship at the centre. Overrides orientation and ownship position while on |
+| `nd_mode_key` | ND mode control key | empty | FIX key | optional FIX key that switches the ND mode at runtime (0=off, 1=expanded, 2=ctr). Empty = fixed |
 | `touch_gestures` | Touch gestures | on | on / off | two-finger pinch=zoom, drag=pan, twist=rotate; mouse wheel zooms and left-drag pans / Shift-drag rotates on desktop; a tap selects (map pointer, Direct To / Insert banner) and a double-tap or the CTR chip re-centres. Off = touch/wheel/drag/tap input ignored |
 | `gesture_timeout` | Gesture auto-revert (s) | `30` | 0 to 600 | seconds after a two-finger pan/rotate before the view re-locks to ownship and the configured orientation. 0 = stay where left until a double-tap, the CTR chip or an HMI recenter |
 | `gesture_frame_rate` | Gesture frame rate (Hz) | `30` | 10 to 60 | repaint clock rate while a pinch/pan/rotate gesture is live (zoom_by/pan_by/rotate_by mark a frame dirty rather than repainting per event); the normal frame rate applies the rest of the time |

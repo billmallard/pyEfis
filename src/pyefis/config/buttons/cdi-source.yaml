@@ -3,18 +3,25 @@ text: "CDI\nSRC"
 dbkey: TSBTN{id}33
 bg_color: "#101418"
 fg_color: "#00ffff"
-# Cycles the nav-source selector NAVSRC (0=GPS, 1=NAV1; wraps). The fix-gateway
-# "select" compute routes the chosen source into the canonical COURSE/CDI the
-# HSI and autopilot read. Background turns green for GPS, blue for NAV1.
+# Cycles the nav-source selector NAVSRC on the HSI's scale: 0=NAV1, 1=NAV2,
+# 2=GPS (NAV1 -> NAV2 -> GPS -> NAV1, the same order as tapping the HSI source
+# tab). The wrap span is NAVSRC's database min..max (0..3), so the cycle stays
+# three steps only while fix-gateway defines max 3.0. The fix-gateway "select"
+# compute routes the chosen source into the canonical COURSE/CDI the HSI and
+# autopilot read. Colours match the HSI source tab: green fill for a NAV
+# source, magenta for GPS, each with its darkened label tint
+# (helpers.darken_to_contrast of the HSI's vloc_color / course_color).
 condition_keys:
   - NAVSRC
 conditions:
   - when: "CLICKED eq true"
     actions:
       - change value wrap: "NAVSRC, 1"
-  - when: "NAVSRC lt 0.5"
+  - when: "NAVSRC lt 1.5"
     actions:
-      - set bg color: "#1f6b1f"
-  - when: "NAVSRC ge 0.5"
+      - set bg color: "#00ff00"
+      - set fg color: "#007000"
+  - when: "NAVSRC ge 1.5"
     actions:
-      - set bg color: "#1a4d80"
+      - set bg color: "#ff00ff"
+      - set fg color: "#520052"
