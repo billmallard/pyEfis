@@ -18,6 +18,7 @@ from pyefis import display_metrics
 from pyefis import hmi
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
+from pyefis.flightplan import refusal as fp_refusal
 from pyefis.flightplan import model as fp_model
 from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
@@ -247,6 +248,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.layer_airways = False
         self.navaid_db_path = ""               # navaids.sqlite (Phase D)
         self.layer_flight_plan = True          # route/active-leg/direct-to (FP6)
+        self.layer_traffic = True              # ADS-B TFC block (P3b, #53)
         # Control-binding keys (control_bindings.md): when an <x>_key option
         # names a FIX key, a control (button/knob) drives that setting at
         # runtime. Empty = the setting stays a static config option.
@@ -543,6 +545,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         from pyefis.instruments.map.layers import rivers  # noqa: F401
         from pyefis.instruments.map.layers import roads  # noqa: F401
         from pyefis.instruments.map.layers import terrain  # noqa: F401
+        from pyefis.instruments.map.layers import traffic  # noqa: F401
         self._layers = []
         for lid, cls in sorted(map_layers.LAYER_REGISTRY.items(),
                                key=lambda kv: kv[1].z):
@@ -982,11 +985,12 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     def _ack_handler(self, done_text):
         """An ``FPLCMDACK`` callback that toasts *done_text* on success and
-        the engine's ``FPLMSG`` on rejection -- the banner reports what the
+        the engine's ``FPLMSG`` on rejection, in plain words (G61a) -- the banner reports what the
         engine did, not what was asked. The ack arrives on the FIX client
         thread; the signal queues the toast onto the GUI thread."""
         def on_ack(_seq, ok, msg):
-            self._ack_toast.emit(done_text if ok else "REJECTED: %s" % (msg or "?"))
+            self._ack_toast.emit(done_text if ok else
+                                 "REJECTED: %s" % (fp_refusal.plain_reason(msg) or "?"))
         return on_ack
 
     def banner_direct_to(self):

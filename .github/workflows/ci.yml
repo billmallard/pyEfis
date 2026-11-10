@@ -21,6 +21,16 @@ jobs:
       contents: write
     steps:
     - uses: actions/checkout@v6
+    # G61a: tests/flightplan/test_refusal.py reads the engine's source and fails when
+    # it can publish an FPLMSG refusal code the display has no plain words for.
+    - name: Check out fix-gateway's flightplan engine
+      uses: actions/checkout@v6
+      with:
+        repository: billmallard/fix-gateway
+        ref: dev
+        path: _fixgw
+        sparse-checkout: src/fixgw/plugins/flightplan/engine.py
+        sparse-checkout-cone-mode: false
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
       with:
@@ -44,6 +54,8 @@ jobs:
         flake8 src test --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       id: pytest
+      env:
+        FIXGW_FLIGHTPLAN_ENGINE: _fixgw/src/fixgw/plugins/flightplan/engine.py
       run: |
         # JUnit (xunit1 keeps each case's file and line) is the record the job summary
         # and the test-evidence page are built from (TV11).

@@ -68,7 +68,7 @@ catalog (§5). **Status** is the widget as of this writing.
 |----|-------------|---------|-------------------|------|--------|
 | **AS-DISP-001** | Moving-scale tape: scrolling scale, fixed pointer, digital read-out | always | Present-value read-out + fixed index over a moving scale | §17.6 p.40 | **DONE** |
 | **AS-MARK-001** | Conventional V-speed arcs | always | White VS0→VFE, green VS1→VNO (VS0 if `Vs` unset), yellow VNO→VNE arcs | §23.1545; §22.2 Table 4 | **DONE** |
-| **AS-ANN-001** | Airspeed-invalid annunciation | `IAS` fail / old / bad | Read-out `XXX` on fail; blank (not a stale number) on old/bad | §18; §2 governing principle | **DONE** |
+| **AS-ANN-001** | Airspeed-invalid annunciation | `IAS` fail / old / bad | Fail or old (expired TOL): read-out `XXX`, scale/bands/trend blanked under a red X, TAS box `---` (CERT1a/CERT1b). Bad (suspect): read-out blank, scale kept inside an amber frame (CERT1b) | §18; §2 governing principle | **DONE** |
 | **AS-LSA-001** | **Low-speed red band VSO→0** | always (optional takeoff inhibit) | Red band from VSO down to zero — low-speed awareness (not a limit) | §17.7.1.a p.40–41 (Fig 2) | **DONE** — `low_speed_band` |
 | **AS-HSA-001** | **High-speed red band VNE→top** | always | Red band (or barber pole) from VNE up to the top of the tape — not merely a hairline radial | §17.7.1.b p.40–41 (Fig 2) | **DONE** — `high_speed_band` |
 | **AS-LSA-002** | *(optional)* yellow band VSO→VS1 | always | Yellow low-speed band | §17.7.1.c p.41 | **OPTIONAL — not planned** (discouraged as clutter) |
