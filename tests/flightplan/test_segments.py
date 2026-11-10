@@ -30,7 +30,8 @@ CREATE INDEX idx_awyleg_awy ON airway_legs(airway_id, seq);
 CREATE INDEX idx_awyleg_fix ON airway_legs(fix_id);
 """
 
-# V27: GVO .. AVOLS, two-way. MEA is coded on the row that ends the leg.
+# V27: GVO .. AVOLS, two-way. MEA is coded on the row that starts the leg
+# in record order (RS5, AER-5267).
 V27 = [(10, "GVO", 34.53, -120.09, 5000, None), (20, "AFOXY", 34.61, -120.16, 6000, None),
        (30, "ORCUT", 34.85, -120.39, 7000, None), (40, "AVOLS", 35.10, -120.60, 8000, None)]
 # A1: the ALPHA -> ZULUU direction only from WOODY on ("F" on the legs that
@@ -92,7 +93,7 @@ def test_insert_airway_makes_one_segment_entered_at_its_own_first_leg(graph):
     assert (v27.entry, v27.exit, v27.cycle) == ("GVO", "AVOLS", "2610")
     # waypoints is the flat view every pre-RS2 reader uses
     assert [w.id for w in plan.waypoints] == ["KSBA", "GVO", "AFOXY", "ORCUT", "AVOLS", "KSMX"]
-    assert [w.alt for w in v27.legs] == ["", "+6000", "+7000", "+8000"]
+    assert [w.alt for w in v27.legs] == ["", "+5000", "+6000", "+7000"]
     assert plan.segment_span(1) == (1, 4)
 
 
@@ -201,9 +202,9 @@ def test_invert_reverses_segments_and_swaps_airway_entry_and_exit(graph):
         ("waypoint", "", ["KSBA"])]
     v27 = inverted.segments[1]
     assert (v27.entry, v27.exit) == ("AVOLS", "GVO")
-    # Flying it backward, the leg into each fix is the published leg that
-    # ends at the fix before it: ORCUT <- AVOLS is coded on AVOLS (8000).
-    assert [w.alt for w in v27.legs] == ["", "+8000", "+7000", "+6000"]
+    # Flying it backward, each leg is still coded on its lower-seq row:
+    # AVOLS -> ORCUT is coded on ORCUT (7000).
+    assert [w.alt for w in v27.legs] == ["", "+7000", "+6000", "+5000"]
     assert inverted.name == "KSMX-KSBA"
 
 
