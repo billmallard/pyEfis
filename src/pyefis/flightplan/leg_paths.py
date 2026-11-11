@@ -28,6 +28,15 @@ fix-gateway ``doc/flightplan_keys.md``):
   course, drawn as "to be vectored" (guardrail 4: the box flies no heading,
   so the map draws none past the stub either).
 
+Fly-by turns (TURN3, AER-5418): :func:`apply_flyby_turns` rounds each
+fix the engine will turn at by anticipation into the arc it flies, sized
+from the engine's own ``FPLfTA`` (fix-gateway ``doc/flightplan_keys.md``).
+The engine decides which fixes get an arc and how big; this module only
+draws it, with the construction of the engine's ``_fly_by_arc``. The arc is
+split at its apex, the bisector, where the engine sequences the waypoint,
+so the leg into the fix ends at the apex and the leg out of it starts
+there.
+
 Every point is computed once per route commit (the map layer's
 ``collect``), never per frame. Turn and racetrack radii use a nominal
 standard-rate turn at :data:`NOMINAL_GS_KT`: the engine sizes its own from
@@ -52,6 +61,11 @@ TURN_RADIUS_NM = NOMINAL_GS_KT / (60.0 * math.pi)
 #: chord sag of 0.0006 NM, well under a pixel at the closest map range.
 ARC_STEP_DEG = 5.0
 
+#: the synthetic FROM anchor the engine puts on a CF leg's coded course
+#: (fix-gateway engine ``CF_VIRTUAL_FROM_NM``). Only its bearing from the
+#: fix matters here.
+CF_ANCHOR_NM = 50.0
+
 #: length of a vector leg's "to be vectored" stub, and of the course-held
 #: tail of an FA leg past its fix.
 VECTOR_STUB_NM = 3.0
@@ -70,12 +84,16 @@ class LegPath:
     TO waypoint, the numbering ``FPLACTLEG`` uses. ``points`` run from the
     leg's start to its end. ``vector`` marks a "to be vectored" stub.
     ``pattern`` holds the racetrack or procedure-turn polyline flown at the
-    fix, drawn in the leg's colour."""
+    fix, drawn in the leg's colour. ``origin`` is the point the leg is
+    flown from (the previous fix, or a direct-to's FROM): ``points`` start
+    elsewhere when a fly-by turn rounds that fix (:func:`apply_flyby_turns`)
+    or a CF leg starts on its course line."""
 
     to_slot: int
     points: list = field(default_factory=list)
     vector: bool = False
     pattern: list = field(default_factory=list)
+    origin: tuple | None = None
 
 
 def _wrap180(deg):
@@ -265,7 +283,7 @@ def build_leg_paths(slots, magvar=0.0):
     for i in range(1, len(slots)):
         w = slots[i]
         fix = (w.lat, w.lon)
-        leg = LegPath(to_slot=i + 1)
+        leg = LegPath(to_slot=i + 1, origin=pos)
         pt = (w.pt or "TF").upper()
         if pt in ("CA", "VA", "VM", "VI"):
             crs = _true(w.crs, magvar)
@@ -323,3 +341,98 @@ def build_leg_paths(slots, magvar=0.0):
                 course = inbound
         out.append(leg)
     return out
+
+
+def flyby_arc(anchor, fix, nxt, d_ta):
+    """The fly-by turn at *fix*, as the fix-gateway engine builds it
+    (``_fly_by_arc``): the leg in is the great circle from *anchor*, the
+    leg out the one toward *nxt*. The arc leaves the leg in *d_ta* before
+    the fix and joins the leg out *d_ta* past it, tangent to both, so its
+    radius is ``d_ta / tan(delta / 2)``. Returns ``(into_apex, from_apex)``,
+    the two halves of the arc as ``[(lat, lon), ...]`` split at its apex
+    (the turn bisector), or ``None`` with no course change to turn through.
+    """
+    in_c = (geo.initial_bearing(fix[0], fix[1], anchor[0], anchor[1]) + 180.0) % 360.0
+    out_c = geo.initial_bearing(fix[0], fix[1], nxt[0], nxt[1])
+    delta = _wrap180(out_c - in_c)
+    if abs(delta) < 1e-6 or d_ta <= 0.0:
+        return None
+    half = math.radians(abs(delta)) / 2.0
+    back = (in_c + 180.0) % 360.0
+    inside = (back + _wrap180(out_c - back) / 2.0) % 360.0
+    center = geo.destination_point(fix[0], fix[1], inside, d_ta / math.sin(half))
+    radius = d_ta / math.tan(half)
+    start = geo.destination_point(fix[0], fix[1], back, d_ta)
+    end = geo.destination_point(fix[0], fix[1], out_c, d_ta)
+    # The apex is on the radial through the fix.
+    apex = geo.destination_point(center[0], center[1],
+                                 geo.initial_bearing(center[0], center[1], fix[0], fix[1]), radius)
+    turn = "R" if delta > 0.0 else "L"
+    return (arc_points(center, radius, start, apex, turn),
+            arc_points(center, radius, apex, end, turn))
+
+
+def _turn_anchor(k, slots, magvar, act_leg, fr):
+    """The point the engine measures the leg into slot *k* (1-based) from,
+    as ``turn_anticipations`` does: the active leg's FROM (``FPLFRLAT``/
+    ``LON``, which for a CF is already its course anchor), a CF's coded
+    course, or the slot before."""
+    w = slots[k - 1]
+    if k == act_leg and fr is not None:
+        return fr
+    if (w.pt or "TF").upper() == "CF":
+        back = (_true(w.crs, magvar) + 180.0) % 360.0
+        return geo.destination_point(w.lat, w.lon, back, CF_ANCHOR_NM)
+    p = slots[k - 2]
+    return (p.lat, p.lon)
+
+
+def _is_plain(leg):
+    return leg is not None and not leg.vector and not leg.pattern
+
+
+def apply_flyby_turns(paths, slots, ta, magvar=0.0, act_leg=0, fr=None):
+    """Round each fix with an ``FPLfTA`` into its fly-by arc, in place.
+
+    *paths* is :func:`build_leg_paths`' output for *slots*, *ta* the
+    ``FPLfTA`` value per slot (0 = no arc). *act_leg* and *fr* are
+    ``FPLACTLEG`` and the engine's FROM point: the active fix turns from
+    the leg the engine is flying, which after a direct-to is the straight
+    FROM -> TO line, so that leg is redrawn from *fr* first.
+
+    The leg into a turning fix ends at the arc's apex, and the leg out
+    starts there: the apex is the bisector, where the engine moves the
+    active leg on (brief section 3.3.1, row 2). A turn is left square when
+    either leg is shorter than its ``d_ta`` (after the turn before it took
+    its share) or is not a plain leg (a vector stub, a hold).
+
+    Returns the leading path when ``FPLACTLEG`` is 1 (FROM -> slot 1, which
+    is no slot's leg) and slot 1 turns, else ``None``."""
+    n = len(slots)
+    by_slot = {leg.to_slot: leg for leg in paths}
+    lead = None
+    if act_leg == 1 and fr is not None and n:
+        lead = LegPath(to_slot=1, points=[fr, (slots[0].lat, slots[0].lon)], origin=fr)
+        by_slot[1] = lead
+    active = by_slot.get(act_leg)
+    if active is not None and active is not lead and fr is not None and _is_plain(active) \
+            and 0 < act_leg <= len(ta) and ta[act_leg - 1] > 0.0 \
+            and geo.distance_nm(fr[0], fr[1], *active.origin) > 0.1:
+        active.points = [fr, (slots[act_leg - 1].lat, slots[act_leg - 1].lon)]
+        active.origin = fr
+    for k in range(1, min(n, len(ta)) + 1):
+        d_ta = ta[k - 1]
+        leg_in, leg_out = by_slot.get(k), by_slot.get(k + 1)
+        if d_ta <= 0.0 or k >= n or not (_is_plain(leg_in) and _is_plain(leg_out)):
+            continue
+        fix = (slots[k - 1].lat, slots[k - 1].lon)
+        a, b = leg_in.points[-2], leg_out.points[1]
+        if geo.distance_nm(a[0], a[1], *fix) < d_ta or geo.distance_nm(fix[0], fix[1], *b) < d_ta:
+            continue
+        nxt = slots[k]
+        halves = flyby_arc(_turn_anchor(k, slots, magvar, act_leg, fr), fix, (nxt.lat, nxt.lon), d_ta)
+        if halves is None:
+            continue
+        leg_in.points = leg_in.points[:-1] + halves[0]
+        leg_out.points = halves[1] + leg_out.points[1:]
+    return lead
