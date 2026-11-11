@@ -1,9 +1,9 @@
 """
 Airport / runway database for the SVS renderer.
 
-Two backends, both exposing the same range-based query API:
+One backend, merged across provider packs, exposing a range-based query API:
 
-    db = AirportDB(...)
+    db = make_airport_db(svs_config)
     for ap in db.airports_in_range(ac_lat, ac_lon, range_nm):
         ap.icao, ap.name, ap.ref_lat, ap.ref_lon, ap.elev_ft
         for rwy in ap.runways:
@@ -14,11 +14,12 @@ Two backends, both exposing the same range-based query API:
   displaced-threshold offsets, marking type, TDZ elevation, approach
   lighting — everything needed to render Tier C surface markings.
 
-* ``CIFPAirportDB`` — wraps ``pyavtools.CIFPObjects`` (the same FAA CIFP
-  data source used by Virtual VFR). Coarser detail: no width, no marking
-  type, but works if a user only has the CIFP download.
+The ``CIFPAirportDB`` backend (``pyavtools.CIFPObjects``, the data path of
+the legacy Virtual VFR overlay) was retired with that overlay (VVFR1,
+AER-5417): the NASR pack is the only airport source. A config that still sets
+``cifp_path`` gets a warning naming ``nasr_db_path`` and no airports.
 
-``make_airport_db(svs_config)`` picks the best available backend.
+``make_airport_db(svs_config)`` merges whatever NASR-format packs resolve.
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ class RunwayRecord:
     bearing_deg: float           # true bearing thr1 → thr2
     width_ft   : float = DEFAULT_RWY_WIDTH_FT
     surface    : str = ""        # NASR surface code ("ASPH", "TURF-GRVL", ...)
-    # Optional Tier C fields — populated by NASR backend; empty/zero from CIFP.
+    # Optional Tier C fields — populated by the NASR backend; empty/zero when the pack lacks them.
     thr1_designator : str = ""   # e.g. "07" or "25L"
     thr2_designator : str = ""
     thr1_marking    : str = ""   # PIR / NPI / BSC / ""
@@ -235,201 +236,6 @@ def _designator_sort_key(end_id: str):
 
 
 # ---------------------------------------------------------------------------
-# CIFP backend (existing behaviour — kept for users without NASR)
-# ---------------------------------------------------------------------------
-class CIFPAirportDB:
-    """Range-queryable airport/runway database backed by FAA CIFP data.
-
-    Construction never raises — if the CIFP files are missing or the import
-    fails, ``ready`` stays False and ``airports_in_range`` yields nothing.
-    """
-
-    def __init__(self, cifp_path: str | Path | None,
-                 index_path: str | Path | None):
-        self._cifp_path  = Path(cifp_path)  if cifp_path  else None
-        self._index_path = Path(index_path) if index_path else None
-        # Block cache: { (int_lat, int_lng): [CIFPObjects.Airport | Runway | Navaid, ...] }
-        self._block_cache: dict[tuple[int, int], list] = {}
-        self._cifp_module = None
-
-        if self._cifp_path is None or self._index_path is None:
-            return
-        if not self._cifp_path.is_file() or not self._index_path.is_file():
-            log.info("AirportDB: CIFP not found at %s / %s — runways disabled",
-                     self._cifp_path, self._index_path)
-            return
-        try:
-            import pyavtools.CIFPObjects as _cifp
-        except Exception as e:
-            log.warning("AirportDB: failed to import pyavtools.CIFPObjects: %s", e)
-            return
-        self._cifp_module = _cifp
-
-    @property
-    def ready(self) -> bool:
-        return self._cifp_module is not None
-
-    # ------------------------------------------------------------------
-    # Public query
-    # ------------------------------------------------------------------
-    def airports_in_range(self, ac_lat: float, ac_lon: float,
-                          range_nm: float):
-        """Yield AirportRecord for each airport within *range_nm* of the
-        aircraft. Skips airports with no matched runway pairs (which would
-        produce nothing drawable anyway)."""
-        if not self.ready:
-            return
-        lat_cos = math.cos(math.radians(ac_lat))
-        range_deg_lat = range_nm / NM_PER_DEG_LAT
-
-        # Load enough blocks to cover ±range_nm in both axes. CIFP blocks
-        # are keyed by the degree-part of the latitude/longitude string
-        # ("N34..."→34, "W119..."→-119), which Python's int() recovers via
-        # truncation toward zero. (math.floor is wrong for negative
-        # longitudes — floor(-119.84)=-120 but the index uses -119.)
-        range_deg_lon = range_deg_lat / max(lat_cos, 1e-6)
-        lat_min = int(ac_lat - range_deg_lat)
-        lat_max = int(ac_lat + range_deg_lat)
-        lon_min = int(ac_lon - range_deg_lon)
-        lon_max = int(ac_lon + range_deg_lon)
-
-        # Collect all objects from the covered blocks, matching runways
-        # across block boundaries as we go.
-        airports: dict[str, AirportRecord] = {}
-        unmatched_rwys: dict[str, list] = {}
-        for block_lat in range(lat_min, lat_max + 1):
-            for block_lon in range(lon_min, lon_max + 1):
-                for obj in self._block(block_lat, block_lon):
-                    cls_name = obj.__class__.__name__
-                    if cls_name == "Airport":
-                        if obj.id not in airports:
-                            airports[obj.id] = AirportRecord(
-                                icao=obj.id, name=obj.name,
-                                ref_lat=obj.lat, ref_lon=obj.lng,
-                                elev_ft=0.0)
-                    elif cls_name == "Runway":
-                        unmatched_rwys.setdefault(obj.airport_id, []).append(obj)
-
-        # Pair runways within each airport. CIFP runways come as one record
-        # per threshold ("RW07" and "RW25" are the same physical strip).
-        for icao, runways in unmatched_rwys.items():
-            consumed = set()
-            for i, a in enumerate(runways):
-                if i in consumed:
-                    continue
-                # Find the matching opposing runway.
-                partner_idx = None
-                for j in range(i + 1, len(runways)):
-                    if j in consumed:
-                        continue
-                    if self._runways_match(a, runways[j]):
-                        partner_idx = j
-                        break
-                if partner_idx is None:
-                    continue
-                b = runways[partner_idx]
-                consumed.add(i); consumed.add(partner_idx)
-
-                # Establish bearing thr1→thr2. CIFP carries each runway's
-                # own bearing; use the lower-numbered end as thr1 so the
-                # name "07" reads naturally.
-                if (b.name or "").lstrip("RW") < (a.name or "").lstrip("RW"):
-                    a, b = b, a
-                rec = RunwayRecord(
-                    airport_id=icao, name=(a.name or "").lstrip("RW"),
-                    thr1_lat=a.lat, thr1_lon=a.lng,
-                    thr1_elev_ft=float(a.elevation),
-                    thr2_lat=b.lat, thr2_lon=b.lng,
-                    thr2_elev_ft=float(b.elevation),
-                    length_ft=float(getattr(a, "length", 0) or 0),
-                    bearing_deg=float(getattr(a, "bearing", 0.0) or 0.0),
-                )
-                ap = airports.get(icao)
-                if ap is None:
-                    # CIFP sometimes has runways in a block whose airport
-                    # record is in a neighbouring block we haven't loaded.
-                    # Fabricate a minimal airport entry so the runway still
-                    # renders.
-                    ap = AirportRecord(
-                        icao=icao, name=icao,
-                        ref_lat=(a.lat + b.lat) * 0.5,
-                        ref_lon=(a.lng + b.lng) * 0.5,
-                        elev_ft=float(a.elevation))
-                    airports[icao] = ap
-                ap.runways.append(rec)
-
-        # Yield airports that ended up with at least one drawable runway and
-        # whose reference point is actually within range_nm of the aircraft.
-        range_nm_sq = range_nm * range_nm
-        for ap in airports.values():
-            if not ap.runways:
-                continue
-            d_lat = (ap.ref_lat - ac_lat) * NM_PER_DEG_LAT
-            d_lon = (ap.ref_lon - ac_lon) * NM_PER_DEG_LAT * lat_cos
-            if d_lat * d_lat + d_lon * d_lon > range_nm_sq:
-                continue
-            # Use the first runway's threshold elevation as the field elev.
-            ap.elev_ft = ap.runways[0].thr1_elev_ft
-            yield ap
-
-    # ------------------------------------------------------------------
-    # Internal block loader (cached)
-    # ------------------------------------------------------------------
-    def _block(self, block_lat: int, block_lon: int) -> list:
-        key = (block_lat, block_lon)
-        cached = self._block_cache.get(key)
-        if cached is not None:
-            return cached
-        try:
-            objs = self._cifp_module.find_objects(
-                str(self._cifp_path), str(self._index_path),
-                float(block_lat), float(block_lon))
-        except Exception as e:
-            log.warning("AirportDB: find_objects failed at (%d, %d): %s",
-                        block_lat, block_lon, e)
-            objs = []
-        self._block_cache[key] = objs
-        return objs
-
-    # ------------------------------------------------------------------
-    # CIFP runway pairing
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _runways_match(a, b) -> bool:
-        """Loose pair test that mirrors CIFPObjects.Runway.match() without
-        raising on the empty-name records VVfr's loop catches with try/except.
-        Two runways pair when they share an airport and their numbers
-        differ by ~18 (180° apart). Letter suffixes (L/R/C) and the W/G
-        helipad suffixes must agree."""
-        if a.airport_id != b.airport_id:
-            return False
-        na = (a.name or "").lstrip("RW")
-        nb = (b.name or "").lstrip("RW")
-        if not na or not nb:
-            return False
-        # Trailing letter suffix must match.
-        def split(s):
-            i = len(s)
-            while i and not s[i-1].isdigit():
-                i -= 1
-            return s[:i], s[i:]
-        num_a, suf_a = split(na)
-        num_b, suf_b = split(nb)
-        if suf_a != suf_b:
-            return False
-        try:
-            ia, ib = int(num_a), int(num_b)
-        except ValueError:
-            return False
-        diff = abs(ia - ib)
-        return diff == 18
-
-
-# Back-compat alias — earlier code imports ``AirportDB``.
-AirportDB = CIFPAirportDB
-
-
-# ---------------------------------------------------------------------------
 # Backend selector
 # ---------------------------------------------------------------------------
 class _MultiAirportDB:
@@ -467,8 +273,7 @@ def make_airport_db(config: dict):
     Preference order:
       1. NASR primary (``nasr_db_path``) + any provider packs discovered under
          ``airport_provider_dir`` (``<dir>/*/current/airports.sqlite``), merged.
-      2. CIFP if ``cifp_path`` and the index resolve.
-      3. A no-op stub (``ready == False``).
+      2. A no-op stub (``ready == False``).
 
     Provider packs auto-discover: dropping a new airports-<x> pack into the
     provider dir makes its airports appear with no config change.
@@ -492,14 +297,12 @@ def make_airport_db(config: dict):
     if dbs:
         return _MultiAirportDB(dbs)
 
-    cifp_path  = config.get("cifp_path", "")
-    index_path = config.get("cifp_index_path", "")
-    if cifp_path and not index_path:
-        index_path = str(Path(cifp_path).with_name("index.bin"))
-    if cifp_path:
-        db = CIFPAirportDB(cifp_path or None, index_path or None)
-        if db.ready:
-            return db
+    if config.get("cifp_path"):
+        # VVFR1: the CIFP airport backend is gone. Say so rather than draw
+        # no runways silently for a config written before the retirement.
+        log.warning("AirportDB: cifp_path is no longer read (the CIFP "
+                    "airport backend was retired); set nasr_db_path to the "
+                    "airports.sqlite NASR pack")
 
     # No data — return an empty stub so callers can rely on .ready.
     class _Empty:
