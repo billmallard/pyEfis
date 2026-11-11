@@ -27,6 +27,7 @@ def _load(name):
 
 es = _load("evidence_sidecar")
 ei = _load("evidence_index")
+vr = _load("verification_report")
 
 
 def _png(path, data=b"\x89PNG not really"):
@@ -145,11 +146,10 @@ def test_html_is_sanitized_pinned_and_plainly_worded(tmp_path):
         assert not re.search(rf"\b{word}\b", own), word
 
 
-
-def test_html_carries_no_board_id(tmp_path):
-    """CERT18c: the README title "Baro box (AER-1234)" is published as "Baro box" and the
-    issue column is gone. The directory keeps its lower-case name: it is the repository's
-    path."""
+def test_html_carries_no_board_id_and_no_first_person(tmp_path):
+    """CERT18c: the README title "Baro box (AER-1234)" is published as "Baro box", the
+    issue column is gone, and the page passes the same check the safety documents do. The
+    directory keeps its lower-case name: it is the repository's path."""
     root = _tree(tmp_path)
     (root / "docs/images/aer1234_baro_box/good.png.json").write_text(
         (root / "docs/images/aer1234_baro_box/good.png.json").read_text().replace(
@@ -159,6 +159,7 @@ def test_html_carries_no_board_id(tmp_path):
     text = out.read_text()
     assert not re.search(r"AER-\d", text)
     assert "Baro box" in text and "docs/images/aer1234_baro_box" in text and "<code>Bench session</code>" in text
+    assert vr.main(["check-text", str(out)]) == 0
 
 
 def test_committed_evidence_has_no_broken_sidecar():

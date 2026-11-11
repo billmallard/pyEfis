@@ -46,7 +46,7 @@ RID = re.compile(r"\b[A-Z]{2,6}(?:-[A-Z]{2,7})?-[A-Z]{2,7}-\d{3}\b")
 
 # Standing text, testing_visibility_plan.md 4.7 (D3), adapted from a data pack to software.
 STANDING_TEXT = (
-    "These are the automated tests we ran on this software, what each one exercises, "
+    "These are the automated tests run on this software, what each one exercises, "
     "and its last result. It is evidence, not a warranty and not a certification. "
     "No authority has reviewed or approved this software or these tests. A passing "
     "test does not mean the software is correct, complete or fit for any purpose. "

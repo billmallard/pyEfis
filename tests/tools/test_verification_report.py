@@ -307,9 +307,10 @@ def test_strip_board_ids(raw, public):
     assert not vr.BOARD_ID.search(vr.strip_board_ids(raw))
 
 
-def test_published_pages_drop_board_ids_from_test_text(record, tmp_path):
-    """The site carries no board id from a test docstring; the build job's record keeps the
-    docstring as written."""
+def test_published_pages_pass_the_public_text_check(record, tmp_path):
+    """The site carries no board id from a test docstring and no first person in its own
+    wording; the build job's record keeps the docstring as written."""
     page = _page_text(record, tmp_path)
     assert "AER-77" not in page and "AER-77" not in (tmp_path / "site" / "demo.json").read_text()
     assert _by_name(record, "test_untraced")["summary"] == "No requirement here (AER-77)."
+    assert vr.main(["check-text", str(tmp_path / "site" / "index.html")]) == 0
