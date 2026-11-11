@@ -327,9 +327,10 @@ screen.
 - **Mode key.** `nd_mode_key` names a FIX key that switches the mode at
   runtime (0 = off, 1 = expanded, 2 = ctr), the `orientation_key` precedent: the
   config default seeds the key, then the key drives the mode, and the
-  widget never writes it again. The gateway needs the key defined (a
-  `custom.yaml` stand-in like `MAPORIENT`, max = the mode count); the
-  widget does not mint it.
+  widget never writes it again. fix-gateway defines it as `MAPNDMODE`
+  (a `custom.yaml` stand-in beside `MAPORIENT`, max = the mode count);
+  the widget does not mint it. `map-controls-test.yaml` binds it to an
+  ND button.
 
 ### 5.8 Traffic (z=50, default on, P3b, billmallard/pyEfis#53)
 
