@@ -3,7 +3,8 @@
 
 The generator publishes to a public page, so the hygiene and wording rules are pinned
 here rather than trusted: the sanitizer, the leak guard that refuses to write a site,
-the banned-words rule over the page's own wording, and the deviation-register states.
+the banned-words rule over the page's own wording, the public-text check (no first
+person, no board ids) and the deviation-register states.
 Everything runs on a small hand-built JUnit file and test tree; no Qt."""
 
 import importlib.util
@@ -26,7 +27,7 @@ TEST_SRC = textwrap.dedent('''
         """XX-TC-101 | XX-BANK-001 | Bank alert past the threshold."""
 
     def test_untraced():
-        """No requirement here."""
+        """No requirement here (AER-77)."""
 
     @pytest.mark.xfail(strict=True, reason="XX-LIM-001 data-blocked: no AOA key at 203.0.113.5")
     def test_limit():
@@ -225,3 +226,90 @@ def test_sanitize_strips_paths_addresses_and_hosts(raw, gone):
 def test_sanitize_keeps_public_links_and_bare_ids():
     text = "see https://github.com/billmallard/pyEfis/issues/84 and AER-1149, AC 25-11B p.47"
     assert vr.sanitize(text) == text
+
+
+# ---------------------------------------------------------------- public text (CERT18c)
+
+SAFETY_DOCS = sorted((_ROOT / "docs" / "safety").glob("*.md"))
+
+
+def test_safety_documents_pass_the_public_text_check():
+    """docs/safety as committed (identical to pyEfis#447 as merged) speaks in no first person
+    and cites no board id. Its one capital I is the "Class I" airplane class."""
+    assert len(SAFETY_DOCS) >= 2
+    for doc in SAFETY_DOCS:
+        assert vr.find_public_text_faults(doc.read_text(encoding="utf-8")) == [], doc.name
+    assert vr.main(["check-text", *map(str, SAFETY_DOCS)]) == 0
+
+
+@pytest.mark.parametrize("word", vr.FIRST_PERSON + ("We", "OUR", "Me"))
+def test_first_person_on_a_planted_line_fails(word):
+    lines = SAFETY_DOCS[0].read_text(encoding="utf-8").splitlines()
+    lines.insert(10, f"The check {word} added here is planted.")
+    assert vr.find_public_text_faults("\n".join(lines)) == [(11, "first person", word)]
+
+
+def test_a_board_id_on_a_planted_line_fails():
+    lines = SAFETY_DOCS[-1].read_text(encoding="utf-8").splitlines()
+    lines.append("Mitigated per AER-5323.")
+    assert vr.find_public_text_faults("\n".join(lines)) == [(len(lines), "board id", "AER-5323")]
+
+
+@pytest.mark.parametrize("text", [
+    "an IFR, Class I airplane", "Appendix I lists", "a CAT I approach", "the I/O expander",
+    "the US primary", "issue us-east", "the user's own", "a me-too feature", "MYR, OURS-X", "aer-807",
+    "umami", "Ours-to-be", "AERO-12",
+], ids=lambda t: t)
+def test_numerals_names_and_parts_of_words_are_not_faults(text):
+    assert vr.find_public_text_faults(text) == []
+
+
+def test_lowercase_i_and_contractions_are_whole_words():
+    assert vr.find_public_text_faults("Then I ran it; I'd say we're done") == [
+        (1, "first person", "I"), (1, "first person", "I"), (1, "first person", "we're")]
+
+
+def test_quoted_text_is_allowed_only_on_a_marked_line_and_only_in_the_quote():
+    quote = 'Bill wrote "we ship it" in AER-1.'
+    assert [f[2] for f in vr.find_public_text_faults(quote)] == ["we", "AER-1"]
+    marked = 'Bill wrote "we ship it, AER-1" here. ' + vr.QUOTE_MARKER
+    assert vr.find_public_text_faults(marked) == []
+    outside = 'We wrote "ship it" here. ' + vr.QUOTE_MARKER
+    assert vr.find_public_text_faults(outside) == [(1, "first person", "We")]
+    assert vr.find_public_text_faults("> we said so " + vr.QUOTE_MARKER) == []
+    assert vr.find_public_text_faults("> we said so") == [(1, "first person", "we")]
+
+
+def test_check_text_names_file_line_and_word(tmp_path, capsys):
+    md = tmp_path / "doc.md"
+    md.write_text("# Title\n\nNothing here.\nSomething we ship (AER-42).\n")
+    page = tmp_path / "page.html"
+    page.write_text("<html><style>p{}</style>\n<p title=\"we\">fine</p>\n<td>our &amp; code</td>\n")
+    assert vr.main(["check-text", str(md), str(page)]) == 1
+    out = capsys.readouterr().out.splitlines()
+    assert out == [f"{md.as_posix()}:4: first person 'we'", f"{md.as_posix()}:4: board id 'AER-42'",
+                   f"{page.as_posix()}:3: first person 'our'"]
+
+
+@pytest.mark.parametrize("raw, public", [
+    ("Bank cue (AER-5149)", "Bank cue"),
+    ("AER-1709 regression: a PA3 gateway", "Regression: a PA3 gateway"),
+    ("AER-1709: PA3's bits", "PA3's bits"),
+    ("AER-5149 | AI-BANK-001 | The default", "AI-BANK-001 | The default"),
+    ("DoD (Elon, AER-1607): the turn side", "DoD (Elon): the turn side"),
+    ("The AER-2207 regression pin", "The regression pin"),
+    ("pyEfis#147 (AER-473): contrast", "pyEfis#147: contrast"),
+    ("AER-1081 -- offscreen capture", "Offscreen capture"),
+    ("No board id here", "No board id here"),
+])
+def test_strip_board_ids(raw, public):
+    assert vr.strip_board_ids(raw) == public
+    assert not vr.BOARD_ID.search(vr.strip_board_ids(raw))
+
+
+def test_published_pages_drop_board_ids_from_test_text(record, tmp_path):
+    """The site carries no board id from a test docstring; the build job's record keeps the
+    docstring as written."""
+    page = _page_text(record, tmp_path)
+    assert "AER-77" not in page and "AER-77" not in (tmp_path / "site" / "demo.json").read_text()
+    assert _by_name(record, "test_untraced")["summary"] == "No requirement here (AER-77)."
