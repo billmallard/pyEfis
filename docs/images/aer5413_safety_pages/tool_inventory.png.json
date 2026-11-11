@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "3892217d",
+ "run": "local: tools/verification_report.py page (dev CI records) --safety docs/safety; chrome-headless-shell --screenshot",
+ "device": "agent sandbox, chrome-headless-shell (Linux)",
+ "sha256": "3f842681c7f5a32058311475f0477976dea90b62d407d1e0377076c7c703fe25",
+ "created_utc": "2026-11-11T21:42:20Z"
+}
