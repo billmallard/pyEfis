@@ -637,8 +637,13 @@ class Airspeed_Box(QWidget):
         self._modeIndicator = 0
         self.fix_items = [fix.db.get_item(mode) for mode in self.modes]
         self.fix_item = self.fix_items[self._modeIndicator]
-        self.valueText = str(int(self.fix_item.value))
+        self.setASData(self.fix_item.value)
         self.fix_item.valueChanged[float].connect(self.setASData)
+        # CERT1d: a flag can change with the value holding steady, so every
+        # key's flags repaint the box. IAS's flags matter in TAS mode too.
+        for item in self.fix_items:
+            for sig in (item.oldChanged, item.badChanged, item.failChanged):
+                sig[bool].connect(self._on_flag)
 
         self.alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         self.valueAlignment = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -702,9 +707,17 @@ class Airspeed_Box(QWidget):
         self.setASData(self.fix_item.value)
         self.update()
 
+    def _on_flag(self, b):
+        self.setASData(self.fix_item.value)
+
     def setASData(self, d):
         if self.fix_item.fail:
             self.valueText = "XXX"
+        elif (self.fix_item.key == "TAS"
+                and helpers.tape_invalid(self.fix_items[self.modes.index("IAS")])):
+            # CERT1d: no TAS under a failed or expired IAS, as the tape's TAS
+            # box (CERT1b). TAS comes off the same pitot.
+            self.valueText = "---"
         elif self.fix_item.bad or self.fix_item.old:
             self.valueText = ""
         else:
