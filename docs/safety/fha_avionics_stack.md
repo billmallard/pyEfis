@@ -6,8 +6,7 @@ Experimental Amateur-Built use. A severity in this document describes the worst 
 a failure in an airplane; it is not a classification of the software, and it is not a software
 level. The classification of any real installation is the installer's, made per airplane.
 
-**Maintained by:** Safety and Compliance. **Edition:** 2, 2026-11-10 (AER-5323). The first edition,
-2026-11-07, was AER-5034. A living document: a change that adds a display function adds or updates
+**Maintained by:** Safety and Compliance. **Edition:** 2, 2026-11-10. The first edition was dated 2026-11-07. A living document: a change that adds a display function adds or updates
 a row here (section 6).
 
 ---
@@ -16,13 +15,13 @@ a row here (section 6).
 
 - **Shape:** a functional hazard assessment at proportionate depth: each function, crossed with
   two failure modes, each given a severity. The shape is the one FAA AC 23.1309-1E uses. SAE
-  ARP4761A describes the method in full; it is paywalled and I have not read it.
+  ARP4761A describes the method in full; it is paywalled, and this assessment has not read it.
 - **Failure modes:** **L** = total loss of the function, annunciated or obvious. **M** = misleading
   or malfunction **without** warning: the function shows a wrong value as valid.
 - **Severity:** per AC 23.1309-1E Appendix 1, for an **IFR, Class I** airplane (single
   reciprocating engine, 6,000 lb or less). That is the worst credible case for the airplanes this
   stack serves. **Cat** Catastrophic, **Haz** Hazardous, **Maj** Major, **Min** Minor. A cell marked
-  **TBD** has no Appendix 1 row I have checked and is flagged for analysis, not asserted.
+  **TBD** has no Appendix 1 row checked for it and is flagged for analysis, not asserted.
 - **Mitigating requirements:** the requirement IDs whose implementation turns an M into an L or
   lowers the probability of the failure. Every ID is written in full, exactly as it appears in its
   spec, with no ranges. IDs beginning `AI-`, `AL-`, `AS-`, `HDG-`, `HSI-`, `TC-`, `VSI-` and `EFIS-`
@@ -69,7 +68,7 @@ at once. Because of this, a standby that carries only attitude would leave the p
 airspeed and altitude after a single host failure, which is why A1 names all three.
 
 **A7. Experimental Amateur-Built.** E-AB carries no design standard and no software level. These
-assumptions are engineering practice and duty of care, not regulatory compliance.
+assumptions are good engineering practice, not regulatory compliance.
 
 ## 3. The assessment
 
@@ -137,10 +136,10 @@ repository's `dev` branch with tests; this document does not say which release c
 
 | Ref | What was wrong | Fix | Test evidence |
 |---|---|---|---|
-| H1 | A gateway that hung with its socket open left the last attitude and air data on the glass, shown valid | pyEfis#411 (AER-5031): a client watchdog marks every key failed after 2 s of silence; red XXX | `tests/test_fix_watchdog.py` against the real client and a fake gateway; on the Beelink bench a stopped gateway went red XXX within 2 s |
-| H2 | Three displayed keys (`TIMEL`, `EGTMAX1`, `CHTMAX1`) had a time-to-live of 0, so they never went old | fix-gateway#140 (AER-5032): time-to-live 2000 ms on those keys, plus a test over every key pyEfis displays | Unit test; fails on the previous `dev` for exactly those keys |
-| H3 | The device updater accepted an older, validly signed manifest, so expired data could be shown as current | makerplane-data#167 (AER-5033): refuse a manifest older than the cache | Unit tests that fail on the previous `dev`; replay refused on the Pi 5 bench with the production key |
-| H4 | The configurator saved an aircraft profile with V-speeds or bands out of order | makerplane-data#168 (AER-5060): server-side validation, one rule per test | 18 tests; 15 fail against the previous checks |
+| H1 | A gateway that hung with its socket open left the last attitude and air data on the glass, shown valid | pyEfis#411: a client watchdog marks every key failed after 2 s of silence; red XXX | `tests/test_fix_watchdog.py` against the real client and a fake gateway; on the Beelink bench a stopped gateway went red XXX within 2 s |
+| H2 | Three displayed keys (`TIMEL`, `EGTMAX1`, `CHTMAX1`) had a time-to-live of 0, so they never went old | fix-gateway#140: time-to-live 2000 ms on those keys, plus a test over every key pyEfis displays | Unit test; fails on the previous `dev` for exactly those keys |
+| H3 | The device updater accepted an older, validly signed manifest, so expired data could be shown as current | makerplane-data#167: refuse a manifest older than the cache | Unit tests that fail on the previous `dev`; replay refused on the Pi 5 bench with the production key |
+| H4 | The configurator saved an aircraft profile with V-speeds or bands out of order | makerplane-data#168: server-side validation, one rule per test | 18 tests; 15 fail against the previous checks |
 
 ## 4. What this assessment says
 
@@ -184,7 +183,7 @@ repository's `dev` branch with tests; this document does not say which release c
 - This repository's `docs/ai_widget_spec.md`, `airspeed_widget_spec.md`, `altimeter_widget_spec.md`,
   `heading_widget_spec.md`, `hsi_widget_spec.md`, `tc_widget_spec.md`, `vsi_widget_spec.md`,
   `requirements.md`, `instrument_verification_status.md`, `README.rst`.
-- canfix-spec `src/requirements.rst` (32 IDs, AER-5037).
+- canfix-spec `src/requirements.rst` (32 IDs).
 - The fix pull requests in section 3.5.
 - **Not read:** SAE ARP4761A and ARP4754B (paywalled). The shape here is from FAA public guidance
   and the SAE abstract.
