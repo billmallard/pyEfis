@@ -108,6 +108,40 @@ def test_button_wrap_cycles_modes(fix, qtbot):
     assert seen == ["off", "expanded", "ctr", "off"]
 
 
+def test_shipped_map_controls_screen_steps_the_nd_mode(fix, qtbot):
+    """G11d (AER-5388): the shipped map-controls screen binds MAPNDMODE and
+    its ND button steps it. The key is defined as fix-gateway's custom.yaml
+    ships it (int, 0..3)."""
+    from pathlib import Path
+
+    import yaml
+
+    import pyefis
+
+    path = (Path(pyefis.__file__).parent / "config" / "screens"
+            / "map-controls-test.yaml")
+    instruments = yaml.safe_load(path.read_text())["MAP_CTL_TEST"]["instruments"]
+    opts = next(i["options"] for i in instruments if i["type"] == "moving_map")
+    buttons = [i["options"] for i in instruments if i["type"] == "button"]
+    wraps = [a["change value wrap"] for b in buttons for c in b["conditions"]
+             for a in c["actions"] if "change value wrap" in a]
+    assert opts["nd_mode_key"] == "MAPNDMODE"
+    assert wraps.count("MAPNDMODE,1") == 1
+    assert len({b["dbkey"] for b in buttons}) == len(buttons)
+
+    fix.db.define_item("MAPNDMODE", "MAPNDMODE", "int", 0, 3, "index", 0, "")
+    fix.db.set_value("MAPNDMODE", 0)
+    item = fix.db.get_item("MAPNDMODE")
+    item.bad = item.fail = False
+    m = _map(qtbot, nd_mode_key=opts["nd_mode_key"])
+    m.init_live_bindings(m._live_binding_specs())
+    seen = []
+    for _ in range(4):
+        seen.append(m.nd_mode)
+        functions.changeValueWrap("MAPNDMODE,1")
+    assert seen == ["off", "expanded", "ctr", "off"]
+
+
 # --- geometry --------------------------------------------------------------
 
 def test_off_transform_is_unchanged(qtbot):
