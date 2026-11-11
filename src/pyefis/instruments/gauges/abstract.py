@@ -52,6 +52,9 @@ class AbstractGauge(QWidget):
         self._dbkey = None
         self.highlight_key = None
         self._highlightValue = 0.0
+        # False while the highlight key is old, bad or failed: the highlight
+        # is dropped, not greyed (CERT2c, Bill 2026-11-09).
+        self.highlightValid = True
         self._value = 0.0
         self._rawValue = 0.0
         self.peakValue = 0.0
@@ -206,6 +209,13 @@ class AbstractGauge(QWidget):
         self._highlightValue = value
         self.update()
 
+    def highlightFlags(self, *args):
+        # Read the configured key rather than trusting the signal argument, so
+        # a key that was swapped out by setupGauge cannot drive the state.
+        item = fix.db.get_item(self.highlight_key)
+        self.highlightValid = not (item.old or item.bad or item.fail)
+        self.update()
+
     def getDbkey(self):
         return self._dbkey
 
@@ -298,6 +308,15 @@ class AbstractGauge(QWidget):
                 highlightItem.valueChanged[float].connect(self.setHighlightValue)
             elif highlightItem.dtype == int:
                 highlightItem.valueChanged[int].connect(self.setHighlightValue)
+
+            for signal in (highlightItem.oldChanged, highlightItem.badChanged,
+                           highlightItem.failChanged):
+                try:
+                    signal.disconnect(self.highlightFlags)
+                except:
+                    pass # Not connected on the first setup
+                signal.connect(self.highlightFlags)
+            self.highlightFlags()
 
         if self.encoder_num_mask and self.encoder_num_enforce_multiplier:
             # We only need to re-calculate if the range changed

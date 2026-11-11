@@ -162,7 +162,7 @@ class VerticalBar(AbstractGauge):
 
     def paintEvent(self, event):
         if self.highlight_key:
-            if self._highlightValue == self._rawValue:
+            if self.highlightValid and self._highlightValue == self._rawValue:
                 self.highlight = True
             else:
                 self.highlight = False

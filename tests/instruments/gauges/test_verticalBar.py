@@ -171,3 +171,49 @@ def test_vertical_bar_gauge_min_size_false(fix,qtbot):
     widget.resizeEvent(None)
     widget.paintEvent(None)
 
+
+
+@pytest.mark.parametrize("flag", ["old", "bad", "fail"])
+def test_vertical_bar_highlight_dropped_when_highlight_key_flagged(fix, qtbot, flag):
+    # CERT2c: EGTMAX1/CHTMAX1 pick the highlighted cylinder. When the pick key
+    # goes old, bad or failed, the ball is dropped (Bill, 2026-11-09), not
+    # left on its last pick and not greyed.
+    fix.db.define_item("HLBAR", "Bar item", "float", 0, 1000, "", 50000, "")
+    fix.db.define_item("HLMAX", "Highlight item", "float", 0, 1000, "", 50000, "")
+    for key in ("HLBAR", "HLMAX"):
+        item = fix.db.get_item(key)
+        item.bad = False
+        item.fail = False
+        item.old = False
+        item.value = 500.0
+    widget = gauges.VerticalBar()
+    widget.highlight_key = "HLMAX"
+    widget.setDbkey("HLBAR")
+    qtbot.addWidget(widget)
+    widget.resize(300, 200)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    def ball_pixel():
+        img = widget.grab().toImage()
+        return img.pixelColor(int(widget.ballCenter.x()), int(widget.ballCenter.y()))
+
+    assert ball_pixel() == QColor(widget.highlight_good_color)
+    assert widget.highlight is True
+
+    setattr(fix.db.get_item("HLMAX"), flag, True)
+    assert ball_pixel() != QColor(widget.highlight_good_color)
+    assert ball_pixel() != QColor(widget.highlight_bad_color)
+    assert widget.highlight is False
+
+    setattr(fix.db.get_item("HLMAX"), flag, False)
+    assert ball_pixel() == QColor(widget.highlight_good_color)
+    assert widget.highlight is True
+
+    # The flag state comes from the configured key, not a stale connection:
+    # after switching keys, the old key's flags no longer drop the ball.
+    widget.highlight_key = "HLBAR"
+    widget.setupGauge()
+    setattr(fix.db.get_item("HLMAX"), flag, True)
+    assert ball_pixel() == QColor(widget.highlight_good_color)
+    assert widget.highlight is True
