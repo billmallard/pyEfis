@@ -242,7 +242,11 @@ def test_safety_documents_pass_the_public_text_check():
     assert vr.main(["check-text", *map(str, SAFETY_DOCS)]) == 0
 
 
-@pytest.mark.parametrize("word", vr.FIRST_PERSON + ("We", "OUR", "Me"))
+# Test ids are neutral: a parametrize id reaches the published page as part of the test name.
+PLANTED = vr.FIRST_PERSON + ("We", "OUR", "Me")
+
+
+@pytest.mark.parametrize("word", PLANTED, ids=[f"word{i}" for i in range(len(PLANTED))])
 def test_first_person_on_a_planted_line_fails(word):
     lines = SAFETY_DOCS[0].read_text(encoding="utf-8").splitlines()
     lines.insert(10, f"The check {word} added here is planted.")
@@ -259,7 +263,8 @@ def test_a_board_id_on_a_planted_line_fails():
     "an IFR, Class I airplane", "Appendix I lists", "a CAT I approach", "the I/O expander",
     "the US primary", "issue us-east", "the user's own", "a me-too feature", "MYR, OURS-X", "aer-807",
     "umami", "Ours-to-be", "AERO-12",
-], ids=lambda t: t)
+], ids=["class-numeral", "appendix-numeral", "cat-numeral", "io", "country", "hyphen-1", "possessive",
+        "hyphen-2", "caps-compound", "path", "inside-a-word", "hyphen-3", "longer-prefix"])
 def test_numerals_names_and_parts_of_words_are_not_faults(text):
     assert vr.find_public_text_faults(text) == []
 
@@ -295,13 +300,13 @@ def test_check_text_names_file_line_and_word(tmp_path, capsys):
     ("Bank cue (AER-5149)", "Bank cue"),
     ("AER-1709 regression: a PA3 gateway", "Regression: a PA3 gateway"),
     ("AER-1709: PA3's bits", "PA3's bits"),
-    ("AER-5149 | AI-BANK-001 | The default", "AI-BANK-001 | The default"),
+    ("AER-5149 | Bank cue | The default", "Bank cue | The default"),
     ("DoD (Elon, AER-1607): the turn side", "DoD (Elon): the turn side"),
     ("The AER-2207 regression pin", "The regression pin"),
     ("pyEfis#147 (AER-473): contrast", "pyEfis#147: contrast"),
     ("AER-1081 -- offscreen capture", "Offscreen capture"),
     ("No board id here", "No board id here"),
-])
+], ids=[f"case{i}" for i in range(9)])
 def test_strip_board_ids(raw, public):
     assert vr.strip_board_ids(raw) == public
     assert not vr.BOARD_ID.search(vr.strip_board_ids(raw))
