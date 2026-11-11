@@ -1,8 +1,8 @@
 # Tool inventory for the avionics stack
 
 **Nothing in this stack is certified, approved or compliant, and this inventory qualifies no
-tool.** No authority has reviewed it. It lists every tool that produces or verifies something we
-ship to an aircraft, and asks one question of each: if the tool is wrong, does anything
+tool.** No authority has reviewed it. It lists every tool that produces or verifies something the project
+ships to an aircraft, and asks one question of each: if the tool is wrong, does anything
 independent of it catch the error before it reaches the aircraft?
 
 **Maintained by:** Safety and Compliance. **Edition:** 2, 2026-11-10. The first edition was dated 2026-11-07. It is read beside the hazard assessment, `fha_avionics_stack.md` in this
@@ -93,7 +93,7 @@ These are gaps against the question above. None is a claim that a tool is wrong.
    that commit. Pinning the builder version is still open.
 2. **No navdata kind has an independent content check that blocks.** PROC-DIFF-001 has not run.
    PROC-GLD-001 runs against the parser in unit tests, not against the pack. TER-005, XS-001 and
-   XS-002 are non-blocking. For A1 to A5 and A7, nothing independent of our own code that blocks a
+   XS-002 are non-blocking. For A1 to A5 and A7, nothing independent of the project's own code that blocks a
    publish compares content against a second source. That is why every one of those rows reads
    Yes, and why a single differential against a second database would move more rows than any other work item.
 3. **Fixed (makerplane-data#181).** Sign and verify were one implementation, so a defect
