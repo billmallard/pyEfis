@@ -1,13 +1,12 @@
 # SVS Data Refresh Workflow
 
-Three external FAA datasets feed the SVS. All three are public-domain
+Two external FAA datasets feed the SVS. Both are public-domain
 and on regular cycles. This doc captures the current manual refresh
 process — download, drop, build, verify.
 
 | Source | Cycle | Size on disk | Built into |
 |--------|-------|--------------|-------------|
 | FAA NASR | 28 days | ~180 MB raw / 5.6 MB sqlite | `nasr/airports.sqlite` |
-| FAA CIFP | 28 days | ~53 MB raw / 1.8 MB index | `cifp/index.bin` |
 | FAA DOF  | 56 days | ~96 MB raw / 71 MB sqlite | `dof/obstacles.sqlite` |
 
 None of the raw data or derived sqlite files are tracked in git
@@ -87,58 +86,15 @@ for r in con.execute(\"SELECT icao, name, lat, lon, elev_ft FROM airports WHERE 
 
 ---
 
-## 2. CIFP — fallback airport data (also used by Virtual VFR)
+## 2. CIFP — no longer used by the SVS
 
-> **Deprecated for Virtual VFR (CIFP1).** With SVS enabled the legacy Virtual
-> VFR overlay no longer loads CIFP, so an SVS install needs none of this
-> section. It applies only to a `virtual_vfr` running without SVS, which is
-> itself deprecated and slated for removal.
-
-CIFP (Coded Instrument Flight Procedures) is the airline-grade IFR
-procedure database. SVS uses it as a fallback when NASR isn't built,
-but the Virtual VFR feature in pyEfis depends on it directly — so
-keep it current regardless.
-
-### Download
-
-Visit https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/
-
-Download the current cycle. The file is `cifp_<YYMMDD>.zip` — ~50 MB.
-
-### Drop & extract
-
-Extract so the main data file lands at `pyEfis/cifp/FAACIFP18`.
-Naming is fixed — that's the filename `pyavtools.CIFPObjects`
-expects, even though the cycle date is in the zip filename.
-
-### Build the index
-
-```bash
-cd pyEfis/cifp
-PYTHONPATH="C:/pylib" python C:/pylib/pyavtools/utils/MakeCIFPIndex.py FAACIFP18 -o index.bin
-```
-
-This is *not* a tool we own — it ships with `pyavtools`. The index
-build takes ~10 s and shows a spinner. End state:
-
-```
-pyEfis/cifp/
-  FAACIFP18    (~53 MB)
-  index.bin    (~1.8 MB)
-```
-
-### Verify
-
-```bash
-python -c "
-import pyavtools.CIFPObjects as cifp
-objs = cifp.find_objects('cifp/FAACIFP18', 'cifp/index.bin', 34.0, -120.0)
-print(sum(1 for o in objs if o.__class__.__name__ == 'Airport'), 'airports in (34, -120)')
-"
-```
-
-(Should be a small positive number — 5 for the Santa Barbara block in
-the current cycle.)
+The SVS used to fall back to FAA CIFP (via `pyavtools.CIFPObjects`) when
+NASR was not built, and the legacy Virtual VFR overlay read it directly.
+Both are gone (VVFR1): NASR is the only airport source and nothing in the
+attitude display reads a CIFP file, so this refresh has no SVS step. A
+config that still sets `cifp_path` gets a warning in the log naming
+`nasr_db_path`. (CIFP still feeds flight planning, through the
+makerplane-data procedures pack, which the updater refreshes.)
 
 ---
 
@@ -207,7 +163,6 @@ print(n, 'obstacles >= 1000 ft AGL nationwide')
 If you fly often, refresh on this cadence:
 
 - **NASR**: every 28 days when the cycle changes (next dates published on the FAA page)
-- **CIFP**: same — same FAA cycle dates
 - **DOF**: every 56 days when the new daily file rotates (FAA describes it as "daily" but the underlying data updates every 56 days)
 
 If you fly occasionally, refresh **before each trip**, especially if

@@ -48,7 +48,7 @@ airspeed bands; see
 | `LAT`, `LONG` | deg | Position | synthetic vision, the moving map, the flight plan page, listbox Nearest sort | |
 | `HEADBUG` | deg | Selected heading | HSI | the HSI's HDG edit, the heading-bug buttons |
 | `NAVSRC` | | Selected nav source: `0` NAV1, `1` NAV2, `2` GPS | HSI | the HSI's source tab |
-| `COURSE` | deg | Course of the selected source | HSI; the legacy CIFP overlay's heading | |
+| `COURSE` | deg | Course of the selected source | HSI | |
 | `CDI` | -1 to 1 | Lateral deviation of the selected source | HSI | |
 | `CDIV` | | Lateral deviation valid | HSI | |
 | `TOFROM` | | TO/FROM of the selected source | HSI | |
