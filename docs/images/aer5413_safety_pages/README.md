@@ -5,7 +5,7 @@ latest successful `dev` CI records of pyEfis and fix-gateway (the `test-results`
 then screenshotted at 1200 px wide with Playwright's headless Chrome.
 
 - `index.png`: the top of `index.html`. The link bar, the new "Hazard assessment and tool
-  inventory" section, and Requirements rows carrying "mitigates PFD-n" back-links.
+  inventory" section, and Requirements rows carrying "cited in hazard rows PFD-n" back-links.
 - `hazard_assessment.png`: `hazard_assessment.html`, the first 5200 px. Requirement IDs link
   to their Requirements rows; IDs the table does not list are underlined with dots.
 - `tool_inventory.png`: `tool_inventory.html`, the first 4300 px.
