@@ -35,7 +35,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from evidence_sidecar import check_sidecar  # noqa: E402
-from verification_report import CSS, STANDING_TEXT, find_leaks, sanitize  # noqa: E402
+from verification_report import CSS, STANDING_TEXT, find_leaks, sanitize, strip_board_ids  # noqa: E402
 
 ROOT_GLOBS = ("docs/images/aer*", "docs/aer-*-evidence")
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
@@ -169,6 +169,12 @@ def _run_cell(run):
     return f"<code>{_e(run)}</code>" if run else "-"
 
 
+def _public(text):
+    # The page is public text: no board ids (CERT18c). The directory names keep theirs,
+    # lower case, because they are the repository's paths.
+    return strip_board_ids(text)
+
+
 def render_html(entries, repo="", sha=""):
     c = counts(entries)
     gen = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -193,7 +199,7 @@ def render_html(entries, repo="", sha=""):
          f"<p class=muted>{c['dirs']} directories, {c['images']} images, {c['ok']} with a "
          f"current sidecar, {c['legacy']} with an older one, {c['broken']} with a broken one.</p>",
          "<h2 id=index>Directories</h2>",
-         "<table><tr><th>Issue</th><th>Directory</th><th>What it shows (README title)</th>"
+         "<table><tr><th>Directory</th><th>What it shows (README title)</th>"
          "<th>Added in</th><th>Images</th></tr>"]
     for e in entries:
         n_ok = sum(1 for i in e["images"] if i["state"] == "ok")
@@ -201,13 +207,14 @@ def render_html(entries, repo="", sha=""):
         added_cell = (f"{_commit_cell(repo, added[0])} {_e(added[1]) if len(added) > 1 else ''}"
                       if e["added"] else "-")
         readme = _blob(repo, sha, e["readme"]) if e["readme"] else ""
-        title = f'<a href="{_e(readme)}">{_e(e["title"] or e["dir"])}</a>' if readme else _e(e["title"])
-        h.append(f'<tr><td class=nw>{_e(e["issue"]) or "-"}</td><td><a href="#{_e(e["dir"])}"><code>'
+        title = f'<a href="{_e(readme)}">{_e(_public(e["title"]) or e["dir"])}</a>' if readme \
+            else _e(_public(e["title"]))
+        h.append(f'<tr><td><a href="#{_e(e["dir"])}"><code>'
                  f'{_e(e["dir"])}</code></a></td><td>{title}</td><td>{added_cell}</td>'
                  f'<td>{len(e["images"])} ({n_ok} with sidecar)</td></tr>')
     h.append("</table>")
     for e in entries:
-        h.append(f'<h3 id="{_e(e["dir"])}">{_e(e["issue"] or e["dir"])}: {_e(e["title"])}</h3>')
+        h.append(f'<h3 id="{_e(e["dir"])}"><code>{_e(e["dir"])}</code>: {_e(_public(e["title"]))}</h3>')
         if not e["images"]:
             h.append("<p class=empty>No images in this directory (text or data only).</p>")
             continue
@@ -218,8 +225,8 @@ def render_html(entries, repo="", sha=""):
             thumb = (f'<a href="{_e(raw)}"><img loading=lazy src="{_e(raw)}" alt=""></a>' if raw else "")
             cls = "r-pass" if i["state"] == "ok" else "r-fail" if i["state"] in BROKEN else "r-none"
             h.append(f"<tr><td>{thumb}</td><td><code>{_e(i['path'].rsplit('/', 1)[-1])}</code></td>"
-                     f"<td>{_commit_cell(repo, i['commit'])}</td><td>{_run_cell(i['run'])}</td>"
-                     f"<td>{_e(i['device']) or '-'}</td><td class={cls}>{_e(STATE_WORDS[i['state']])}</td></tr>")
+                     f"<td>{_commit_cell(repo, i['commit'])}</td><td>{_run_cell(_public(i['run']))}</td>"
+                     f"<td>{_e(_public(i['device'])) or '-'}</td><td class={cls}>{_e(STATE_WORDS[i['state']])}</td></tr>")
         h.append("</table>")
     h.append('<p class=muted style="margin-top:40px">Generator: <code>tools/evidence_index.py</code> '
              "in billmallard/pyEfis. Sidecar convention: <code>docs/evidence.md</code>.</p>")

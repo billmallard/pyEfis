@@ -145,6 +145,22 @@ def test_html_is_sanitized_pinned_and_plainly_worded(tmp_path):
         assert not re.search(rf"\b{word}\b", own), word
 
 
+
+def test_html_carries_no_board_id(tmp_path):
+    """CERT18c: the README title "Baro box (AER-1234)" is published as "Baro box" and the
+    issue column is gone. The directory keeps its lower-case name: it is the repository's
+    path."""
+    root = _tree(tmp_path)
+    (root / "docs/images/aer1234_baro_box/good.png.json").write_text(
+        (root / "docs/images/aer1234_baro_box/good.png.json").read_text().replace(
+            "https://github.com/billmallard/pyEfis/actions/runs/7", "AER-1234 bench session"))
+    out = tmp_path / "site" / "evidence.html"
+    assert ei.main(["--repo-root", str(root), "--html", str(out)]) == 0
+    text = out.read_text()
+    assert not re.search(r"AER-\d", text)
+    assert "Baro box" in text and "docs/images/aer1234_baro_box" in text and "<code>Bench session</code>" in text
+
+
 def test_committed_evidence_has_no_broken_sidecar():
     """Every sidecar committed under docs/ that claims the convention matches its image."""
     broken = [i["path"] for e in ei.scan(_ROOT) for i in e["images"] if i["state"] in ei.BROKEN]
