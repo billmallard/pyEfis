@@ -135,13 +135,30 @@ def configure_tape_baro(screen):
             inst.configure_baro(prefs, other_readout=other)
 
 
+def _is_unbound(instrument, options):
+    """True when the configurator marked this gauge ``unbound: true`` (its
+    tank is gone from the aircraft profile) and the widget supports it."""
+    value = options.get("unbound", False)
+    if isinstance(value, str):
+        value = value.strip().lower() in ("true", "1", "yes", "on")
+    return value is True and callable(getattr(instrument, "setUnbound", None))
+
+
 def apply_options(screen, index, config, state=False):
     if "options" not in config:
         return
 
     instrument = screen.instruments[index]
     unit_switching = False
+    # Before any other option, so a dbkey listed ahead of the flag is never
+    # looked up (FUEL1 brief section 5).
+    unbound = _is_unbound(instrument, config["options"])
+    if unbound:
+        instrument.setUnbound()
     for option, value in config["options"].items():
+        if "unbound" == option and unbound:
+            continue
+
         if "encoder_order" == option and not state:
             if callable(getattr(instrument, "enc_selectable", None)):
                 screen.encoder_list.append(

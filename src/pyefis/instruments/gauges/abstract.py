@@ -62,6 +62,10 @@ class AbstractGauge(QWidget):
         self.fail = False
         self.bad = False
         self.old = False
+        # True when the configurator found nothing for this gauge to bind to
+        # (a removed tank): no FIX key, the failed-sensor look and its last
+        # label (FUEL1 brief section 5, decision D3). See setUnbound().
+        self.unbound = False
         self.annunciate = False
         self.highlight = False
         self.peakMode = False
@@ -219,7 +223,19 @@ class AbstractGauge(QWidget):
     def getDbkey(self):
         return self._dbkey
 
+    def setUnbound(self):
+        """Show this gauge as bound to nothing: value text ``xxx``, the bar
+        held at 0 and the bad colour set, with its ``name``. It never calls
+        ``fix.db.get_item``, so a stale reference cannot stop the EFIS
+        booting, and nothing can clear the fail state later."""
+        self.unbound = True
+        self.fail = True
+        self._value = 0.0
+        self.setColors()
+
     def setDbkey(self, key):
+        if self.unbound:
+            return
         item = fix.db.get_item(key)
         item.auxChanged.connect(self.setAuxData)
         item.reportReceived.connect(self.setupGauge)
@@ -260,6 +276,8 @@ class AbstractGauge(QWidget):
     # This should get called when the gauge is created and then again
     # anytime a new report of the db item is recieved from the server
     def setupGauge(self):
+        if self.unbound:
+            return
         item = fix.db.get_item(self.dbkey)
         # min and max should always be set for FIX Gateway data.
         if item.min: self.lowRange = self.conversionFunction(item.min)
@@ -411,6 +429,8 @@ class AbstractGauge(QWidget):
         self.update()
 
     def setUnits(self, args):
+        if self.unbound:
+            return
         x = args.split(':')
         command = x[1].lower()
         names = x[0].split(',')
@@ -439,7 +459,8 @@ class AbstractGauge(QWidget):
 
     # This instrument is selectable
     def enc_selectable(self):
-        return True
+        # An unbound gauge has no key to edit.
+        return not self.unbound
 
 
     # Highlight this instrument to show it is the current selection
