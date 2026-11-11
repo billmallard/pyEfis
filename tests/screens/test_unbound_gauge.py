@@ -110,7 +110,7 @@ _OPTION_SETS = [
     "numeric_display",
 ])
 def test_screen_with_unbound_gauge_builds_in_fail_state(
-        qtbot, lookups, inst_type, options):
+        qtbot, lookups, caplog, inst_type, options):
     screen = _build(qtbot, [
         {"type": inst_type, "row": 0, "column": 0, "span": {"rows": 4,
          "columns": 2}, "options": dict(options)},
@@ -118,6 +118,8 @@ def test_screen_with_unbound_gauge_builds_in_fail_state(
 
     _assert_failed_look(screen.instruments[0], "L TIP")
     assert lookups == []
+    # The flag is consumed, not reported as an option that does nothing.
+    assert "'unbound'" not in caplog.text
 
 
 def test_unbound_bar_in_a_ganged_fuel_block_builds(qtbot, fix, lookups):
