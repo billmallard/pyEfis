@@ -506,10 +506,10 @@ def render_page(records, missing=(), safety=None):
             doc = (f' <span class=muted>({_e(x["doc"])})</span>' if x["doc"]
                    else ' <span class=muted>(no spec definition found)</span>')
             hz = hazards_by_id.get(x["id"], [])
-            mitigates = ("<br><span class=muted>mitigates "
+            cited_in = ("<br><span class=muted>cited in hazard rows "
                          + ", ".join(f'<a href="{_e(hazard_href)}#{_e(z)}">{_e(z)}</a>' for z in hz)
                          + "</span>") if hz and hazard_href else ""
-            h.append(f'<tr id="{_e(r["name"])}-{_e(x["id"])}"><td><code>{_e(x["id"])}</code>{mitigates}</td>'
+            h.append(f'<tr id="{_e(r["name"])}-{_e(x["id"])}"><td><code>{_e(x["id"])}</code>{cited_in}</td>'
                      f"<td>{_e(x['title'])}{doc}</td><td>{tests}</td>"
                      f'<td class={_result_class(x["result"])}>{_e(x["result"])}</td></tr>')
         h.append("</table>")
@@ -585,11 +585,12 @@ def render_page(records, missing=(), safety=None):
 # site. (source file, page, one-line description for the index, hazard page?)
 SAFETY_PAGES = (
     ("fha_avionics_stack.md", "hazard_assessment.html",
-     "each function, how it can fail, the worst credible effect, and the requirements that "
-     "mitigate it. Each requirement links to its row below.", True),
+     "each function, how it can fail, the worst credible effect, the requirements cited against "
+     "each failure, and what is still open. Each requirement ID the Requirements table lists "
+     "links to its row there; the others are marked and listed at the end of the page.", True),
     ("tool_inventory.md", "tool_inventory.html",
-     "each tool that produces or checks something that reaches an aircraft, and what checks "
-     "the tool's own output.", False),
+     "each tool that produces or checks something the project ships to an aircraft, and whether "
+     "anything independent of the tool would catch an error in its output.", False),
 )
 
 # A hazard-table row ID: PFD-2, GW-3, CAN-1, H1, O3.
@@ -761,7 +762,7 @@ def render_safety_page(md_text, rel, records, pages, hazard=False):
          _nav(pages),
          f"<h1>{_e(title)}</h1>",
          f"<p class=muted>Rendered from {_doc_source(records, rel)}. The document in the "
-         "repository is the one copy; this page is generated from it on every CI run.</p>",
+         "repository is the source; CI regenerates this page from it.</p>",
          f"<div class=notice id=standing-text><p>{opening}</p></div>",
          body]
     if hazard:
@@ -769,9 +770,11 @@ def render_safety_page(md_text, rel, records, pages, hazard=False):
         unlisted = [i for i in cited if i not in anchors]
         h.append("<h2 id=unlisted>Requirements cited here that the Requirements table does not list</h2>")
         if unlisted:
-            h.append("<p>The Requirements table on the test evidence page lists the IDs defined "
-                     "in the pyEfis specs in a form it reads, and the IDs a test cites. These are "
-                     "cited above and are not in it, so they have no row to link to.</p>")
+            h.append("<p>The Requirements table on the test evidence page lists the requirement "
+                     "IDs it can read from the pyEfis specs, and the IDs a test cites. The IDs "
+                     "below are cited in this assessment but are not in that table, so they have "
+                     "no row to link to. The <code>CFX-</code> IDs are defined in the CAN-FIX "
+                     "specification, not in a pyEfis spec.</p>")
             h.append("<table><tr><th>Requirement</th><th>Hazard rows that cite it</th></tr>")
             for ident in sorted(unlisted):
                 where = ", ".join(f'<a href="#{_e(z)}">{_e(z)}</a>' for z in rows.get(ident, [])) \

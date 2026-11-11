@@ -298,11 +298,11 @@ def test_hazard_ids_link_to_requirement_rows_and_back(record, tmp_path):
     assert '<a href="index.html#demo-XX-BANK-001">XX-BANK-001</a>' in hz
     assert '<a href="index.html#demo-XX-LIM-001">XX-LIM-001</a>' in hz
     row = re.search(r'<tr id="demo-XX-BANK-001">.*?</tr>', index, re.S).group(0)
-    assert ('mitigates <a href="hazard_assessment.html#HZ-1">HZ-1</a>, '
+    assert ('cited in hazard rows <a href="hazard_assessment.html#HZ-1">HZ-1</a>, '
             '<a href="hazard_assessment.html#HZ-2">HZ-2</a>') in row
     # An ID in the "Open" column is cited, but it does not mitigate the row.
     none_row = re.search(r'<tr id="demo-XX-NONE-001">.*?</tr>', index, re.S).group(0)
-    assert "mitigates" not in none_row
+    assert "cited in hazard rows" not in none_row
 
 
 def test_a_cited_requirement_the_page_does_not_know_is_listed(record, tmp_path):

@@ -48,7 +48,8 @@ page (CERT18b):
 
 - `hazard_assessment.html` from `fha_avionics_stack.md`. Each requirement ID on it
   links to that ID's row in the Requirements table, and each Requirements row whose ID
-  sits in a hazard row's mitigation column links back to that hazard row. An ID the
+  sits in a hazard row's mitigation column says "cited in hazard rows" and links back to
+  each of them. An ID the
   assessment cites that the table does not list (canfix-spec's `CFX-` IDs, or a spec
   written in a form `parse_requirements` does not read) is marked where it appears and
   collected in a closing section, never dropped.
