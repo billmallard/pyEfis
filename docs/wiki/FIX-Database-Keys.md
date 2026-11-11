@@ -145,7 +145,7 @@ Each key's range and limits are its aux values (`Min`, `Max`, `lowWarn`,
 | `HIDEBUTTON` | Hides the stock screens' buttons | pyEFIS (button timeout), the **Show Menu** button |
 | `DIM` | Display brightness step | the dimmer buttons |
 | `TRIMP`, `TRIMR`, `TRIMY` | Trim position | the trim buttons |
-| `MAPRANGE`, `MAPORIENT`, `MAPTERRAIN` | Map range, orientation and terrain layer, when a panel binds them | map buttons |
+| `MAPRANGE`, `MAPORIENT`, `MAPTERRAIN`, `MAPNDMODE` | Map range, orientation, terrain layer and ND mode, when a panel binds them | map buttons |
 | `MAVSTATE`, `MAVMODE`, `MAVMSG`, `MAVADJ`, `MAVWPVALID` | Autopilot state, mode, message, adjustment, waypoint valid | |
 | `MAVREQADJ`, `MAVREQTRIM`, `MAVREQGUIDED`, `MAVREQCRUISE` | Autopilot requests | autopilot buttons |
 | `COM*{radio_id}` | Radio frequencies and status for the MGL radio screens (`COMACTFREQ1`) | radio controls |
