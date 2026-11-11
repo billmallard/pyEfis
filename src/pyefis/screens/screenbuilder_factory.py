@@ -36,7 +36,6 @@ from pyefis.instruments import tc
 from pyefis.instruments import vsi
 from pyefis.instruments import weston
 from pyefis.instruments import wind
-from pyefis.instruments.ai.VirtualVfr import VirtualVfr
 from pyefis.screens.instrument_spec import (
     Binding, ContainerSlot, InstrumentSpec, Prop, FixValue)
 
@@ -119,9 +118,10 @@ def build_virtual_vfr(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = config.get("options", {}) or {}
-    widget = VirtualVfr(screen, font_percent=font_percent, font_family=font_family)
-    # VirtualVfr inherits set_svs_config from AI; SVS config flows through
-    # the same way regardless of which widget type the screen uses.
+    # VVFR1 (AER-5417): the legacy CIFP screen-space overlay (VirtualVfr.py)
+    # is gone; virtual_vfr is the attitude widget plus synthetic vision. The
+    # type name stays because shipped screens and user configs name it.
+    widget = ai.AI(screen, font_percent=font_percent, font_family=font_family)
     widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
     widget.symbol_color = opts.get("symbol_color", "yellow")
     # SVS config: the legacy nested `svs:` dict, overlaid with the flat svs_*
@@ -413,10 +413,8 @@ def _svs_props():
     return [
         Prop("svs_enabled", "boolean", default=False, apply="special",
              label="Synthetic vision enabled",
-             help="master on/off" + dev + ". Off falls back to the legacy "
-                  "CIFP Virtual VFR overlay, which is DEPRECATED (to be "
-                  "removed) and needs a separate FAA CIFP download; on needs "
-                  "no CIFP data"),
+             help="master on/off" + dev + ". Off shows the plain "
+                  "sky/ground attitude view"),
         Prop("svs_tile_path", "string", default="", apply="special",
              label="Terrain tile path",
              help="SRTM3 HGT tile directory on the device"),
@@ -1624,11 +1622,9 @@ _register(InstrumentSpec(
     label="Virtual VFR / Synthetic Vision",
     category="attitude",
     builder=build_virtual_vfr,
-    # Deduped from the legacy default (which listed PITCH twice). The widget
-    # subscribes to COURSE, not HEAD, for its heading item (VirtualVfr.py --
-    # it keys the value internally under 'HEAD' but reads the COURSE FIX key);
-    # the default listed the wrong key (#46).
-    dbkeys=["PITCH", "LAT", "LONG", "COURSE", "ALT", "ROLL", "ALAT", "TAS"],
+    # The attitude keys plus the position keys the SVS camera reads. COURSE
+    # went with the legacy CIFP overlay (VVFR1, AER-5417), its only reader.
+    dbkeys=["PITCH", "LAT", "LONG", "ALT", "ROLL", "ALAT", "TAS"],
     svs_capable=True,
     offscreen_renderable=False,   # QOpenGLWidget SVS terrain; hangs offscreen
     builds_in_isolation=False,    # GL widget needs a real screen

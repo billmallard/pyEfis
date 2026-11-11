@@ -92,7 +92,7 @@ def test_build_highway_db_tool_importable_without_pyqt6():
 def test_ai_widget_still_resolves_lazily():
     """The thin ``__init__.py`` re-exports ``AI``/``FDTarget`` lazily (PEP
     562) so existing GUI callers (``screenbuilder_factory.py``,
-    ``VirtualVfr.py``, ``tests/instruments/ai/test_ai.py``) keep working
+    ``tests/instruments/ai/test_ai.py``) keep working
     unchanged. Skips if the local PyQt6/GL stack can't load at all -- that is
     an environment gap, not this regression."""
     try:
