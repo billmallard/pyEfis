@@ -531,9 +531,9 @@ class SVSRenderer:
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 
-        # Optional airport / runway database. NASR gives full
-        # CONUS coverage with widths/markings/displaced thresholds for
-        # Tier C rendering, CIFP gives coarser nationwide coverage.
+        # Optional airport / runway database: the NASR pack (plus any
+        # provider packs), with widths/markings/displaced thresholds for
+        # Tier C rendering.
         from pyefis.instruments.ai.airport_db import make_airport_db
         self.airport_db = make_airport_db(config)
         # Within this distance, runways render with painted surface markings
