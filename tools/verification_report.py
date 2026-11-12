@@ -26,6 +26,7 @@ Usage (CI):
         --run-url "$RUN_URL" --out reports/verification.json
     python tools/verification_report.py summary reports/verification.json >> "$GITHUB_STEP_SUMMARY"
     python tools/verification_report.py page reports/verification.json fgw.json --out site
+    python tools/verification_report.py check-text docs/safety/*.md site/*.html
 """
 
 import argparse
@@ -45,7 +46,7 @@ RID = re.compile(r"\b[A-Z]{2,6}(?:-[A-Z]{2,7})?-[A-Z]{2,7}-\d{3}\b")
 
 # Standing text, testing_visibility_plan.md 4.7 (D3), adapted from a data pack to software.
 STANDING_TEXT = (
-    "These are the automated tests we ran on this software, what each one exercises, "
+    "These are the automated tests run on this software, what each one exercises, "
     "and its last result. It is evidence, not a warranty and not a certification. "
     "No authority has reviewed or approved this software or these tests. A passing "
     "test does not mean the software is correct, complete or fit for any purpose. "
@@ -103,6 +104,69 @@ def find_leaks(text):
     for pat in LEAK_PATTERNS:
         leaks += [m.group(0) for m in pat.finditer(text)]
     return leaks
+
+
+# --------------------------------------------------------------------------- public text
+
+# Public text speaks for the project, not for whoever wrote it, and cites no internal
+# board ids (CERT18c; Bill's ruling on the safety documents in pyEfis#447). Checked by
+# ``check-text`` over docs/safety/*.md and every page the evidence site publishes.
+# Whole words; ``I`` is matched in capitals only, the rest in any case.
+FIRST_PERSON = ("I", "I'm", "I've", "me", "my", "we", "we're", "we've", "us", "our", "ours")
+_FIRST_PERSON = re.compile(
+    r"(?<![\w'’-])(?:I(?:['’](?:m|ve))?(?!/O\b)|(?i:we['’](?:re|ve)|me|my|we|us|ours|our))(?![\w-])")
+# "Class I", "Appendix I": a numeral, not a pronoun; nor is the I in "I/O".
+_NUMERAL_I = re.compile(r"\b(?:Appendix|Annex|Category|CAT|Chapter|Class|Division|Group|Level|Part|Phase|"
+                        r"Schedule|Section|Stage|Table|Tier|Type|Vol\.?|Volume)\s+$", re.I)
+BOARD_ID = re.compile(r"\bAER-\d+\b")
+# The one allowance: a line carrying this marker may quote first person or a board id,
+# and only inside the quotation ("...", a curly-quoted span, or a > blockquote line).
+QUOTE_MARKER = "<!-- public-text: quoted -->"
+_QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”")
+
+
+def _quoted_spans(line):
+    if line.lstrip().startswith(">"):
+        return [(0, len(line))]
+    return [m.span() for m in _QUOTED.finditer(line)]
+
+
+def find_public_text_faults(text):
+    """[(line number, kind, word)] for first-person words and board ids in ``text``."""
+    faults = []
+    for n, line in enumerate(text.splitlines(), 1):
+        hits = [("first person", m) for m in _FIRST_PERSON.finditer(line)
+                if not (m.group(0) == "I" and _NUMERAL_I.search(line[:m.start()]))
+                and m.group(0) != "US"]   # the country
+        hits += [("board id", m) for m in BOARD_ID.finditer(line)]
+        spans = _quoted_spans(line) if QUOTE_MARKER in line else []
+        faults += [(n, kind, m.group(0)) for kind, m in sorted(hits, key=lambda h: h[1].start())
+                   if not any(a <= m.start() and m.end() <= b for a, b in spans)]
+    return faults
+
+
+def visible_text(page_html):
+    """The words a reader sees on a generated page, line for line with the HTML (the
+    generators write one element per line), so a fault's line number is the file's."""
+    page_html = re.sub(r"<(style|script)\b.*?</\1>", lambda m: "\n" * m.group(0).count("\n"),
+                       page_html, flags=re.S | re.I)
+    keep = "\0quoted\0"   # the marker is an HTML comment, so it would go with the tags
+    return "\n".join(html.unescape(re.sub(r"<[^>]*>", " ", line.replace(QUOTE_MARKER, keep)))
+                     .replace(keep, QUOTE_MARKER) for line in page_html.split("\n"))
+
+
+def strip_board_ids(text):
+    """Drop board ids from text that came from a test or a source file, for a public page:
+    "Bank cue (AER-5149)" -> "Bank cue", "AER-1709: a PA3 gateway" -> "A PA3 gateway",
+    "AER-1081 -- offscreen capture" -> "Offscreen capture"."""
+    if not text or not BOARD_ID.search(text):
+        return text
+    out = re.sub(r"\s*\(\s*AER-\d+(?:\s*[,/;]\s*AER-\d+)*\s*\)", "", text)
+    out = re.sub(r"(?:,|\s/)\s*AER-\d+\b(?:['’]s)?", "", out)
+    out = re.sub(r"\bAER-\d+\b(?:['’]s)?(?:\s*(?:[:|/]|--|\u2014))?\s*", "", out)
+    out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r"[ \t]{2,}", " ", out).strip()
+    return out[:1].upper() + out[1:] if BOARD_ID.match(text.lstrip()) else out
 
 
 # --------------------------------------------------------------------------- collect
@@ -543,7 +607,7 @@ def render_page(records, missing=(), safety=None):
              "computers, as reported by the people running them. It will fill from a "
              "&ldquo;Tested on my hardware&rdquo; issue form on the repositories, which does not "
              "exist yet. Until it does, this page has nothing to show here, and an empty table "
-             "means exactly that: no reports, not no problems.</p></div>")
+             "means exactly that: no reports, not no problems.</p></div>" + QUOTE_MARKER)
 
     h.append("<h2 id=sim>Simulator runs</h2>")
     h.append("<div class=empty><p><b>No simulator results are published yet.</b> Results from the "
@@ -577,6 +641,17 @@ def render_page(records, missing=(), safety=None):
              + ". Generator: <code>tools/verification_report.py</code> in billmallard/pyEfis.</p>")
     h.append("</main></body></html>")
     return "\n".join(h)
+
+
+def public_record(record):
+    """The record as the site publishes it: board ids dropped from every string that came
+    from a test or a spec. The artifact the build job keeps is untouched."""
+    for t in record.get("tests", []):
+        for key in ("summary", "xfail_reason", "message"):
+            t[key] = strip_board_ids(t.get(key, ""))
+    for d in record.get("requirements", {}).values():
+        d["title"] = strip_board_ids(d.get("title", ""))
+    return record
 
 
 # --------------------------------------------------------------------------- safety pages
@@ -814,7 +889,7 @@ def page(args):
     for p in args.records:
         path = pathlib.Path(p)
         if path.is_file():
-            records.append(json.loads(path.read_text(encoding="utf-8")))
+            records.append(public_record(json.loads(path.read_text(encoding="utf-8"))))
     have = {r["name"] for r in records}
     missing = [(m, "Its CI has not published a record on the branch this page tracks.")
                for m in (args.expect or []) if m not in have]
@@ -840,6 +915,23 @@ def page(args):
     return 0
 
 
+def check_text(args):
+    """Fail on first person or a board id in public text, naming file, line and word."""
+    faults = 0
+    for p in args.files:
+        path = pathlib.Path(p)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if path.suffix.lower() in (".html", ".htm"):
+            text = visible_text(text)
+        for n, kind, word in find_public_text_faults(text):
+            print(f"{path.as_posix()}:{n}: {kind} '{word}'")
+            faults += 1
+    if faults:
+        sys.stderr.write(f"{faults} public-text fault(s): no first person and no board ids in public "
+                         f"text. Quote it on a line marked {QUOTE_MARKER} if it is a quotation.\n")
+    return 1 if faults else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -860,8 +952,10 @@ def main(argv=None):
     p.add_argument("--safety", default=None,
                    help="docs/safety directory: render the hazard assessment and tool inventory too")
     p.add_argument("--out", required=True)
+    t = sub.add_parser("check-text", help="fail on first person or board ids in public .md/.html files")
+    t.add_argument("files", nargs="+")
     args = ap.parse_args(argv)
-    return {"collect": collect, "summary": summary, "page": page}[args.cmd](args)
+    return {"collect": collect, "summary": summary, "page": page, "check-text": check_text}[args.cmd](args)
 
 
 if __name__ == "__main__":
