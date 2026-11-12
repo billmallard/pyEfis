@@ -547,3 +547,172 @@ def test_annunciation_tap_without_hmi_is_safe(app, tmp_path):
                      Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
                      Qt.KeyboardModifier.NoModifier)
     a.mousePressEvent(ev)               # no exception
+
+
+# --- Panel-change cue (CERT17; makerplane-data docs/panel_change_cue.md) ---
+
+HASH = "9f2c4b7a01de" + "5" * 52
+NEWER = "a1b2c3d4e5f6" + "6" * 52
+
+
+def _pending(h=HASH, trigger="boot", **extra):
+    block = {"pending": True, "config_hash": h, "config_version": 8,
+             "changed": "2026-11-12T14:03:22Z", "trigger": trigger,
+             "acknowledged": None}
+    block.update(extra)
+    return dict(SAMPLE, panel_change=block)
+
+
+_CLEAR = {"pending": False, "config_hash": None, "config_version": None,
+          "changed": None, "trigger": None, "acknowledged": None}
+
+
+def _banner_shown(w):
+    """The banner is up iff the Acknowledge button is (it is only shown
+    with a pending change) and the paint path draws it."""
+    return not w.btn_ack.isHidden()
+
+
+def _amber_pixels_in_banner(w):
+    img = w.grab().toImage()
+    r = w._banner_rect
+    n = 0
+    for x in range(int(r.left()) + 2, int(r.right()) - 2, 4):
+        for y in (int(r.top()), int(r.bottom()) - 1):
+            c = img.pixelColor(x, y)
+            # Amber hue (red well above blue), blended over whatever the
+            # offscreen palette paints behind the widget.
+            if c.red() > 200 and c.red() - c.blue() > 100:
+                n += 1
+    return n
+
+
+def test_panel_change_banner_shown_when_pending(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, _pending())))
+    w.resize(800, 480)
+    w.show()
+    assert _banner_shown(w)
+    assert w.btn_ack.isEnabled()
+    assert _amber_pixels_in_banner(w) > 20          # amber border painted
+    title, body = data_status.panel_change_text(w.status["panel_change"])
+    assert title == "PANEL CHANGED AT BOOT"
+    assert body == ("Config v8 installed 2026-11-12 14:03Z, hash 9f2c4b7a01de. "
+                    "Check every instrument shows the right source before flight.")
+    assert w.btn_continue.isVisible()               # Continue stays available
+
+
+@pytest.mark.parametrize("doc", [
+    SAMPLE,                                          # key absent
+    dict(SAMPLE, panel_change=_CLEAR),               # pending false
+    dict(SAMPLE, panel_change={"pending": "yes"}),   # not literally true
+    dict(SAMPLE, panel_change=None),
+    dict(SAMPLE, panel_change=[1, 2]),
+], ids=["absent", "false", "truthy-string", "null", "not-a-dict"])
+def test_panel_change_banner_hidden_when_not_pending(app, tmp_path, doc):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, doc)))
+    w.resize(800, 480)
+    w.show()
+    assert not _banner_shown(w)
+    assert _amber_pixels_in_banner(w) == 0
+    assert data_status.panel_change(w.status) is None
+
+
+def test_panel_change_missing_file_no_banner(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(tmp_path / "nope.json"))
+    w.resize(800, 480)
+    w.show()
+    assert not _banner_shown(w) and not w.grab().isNull()
+
+
+def test_panel_change_shown_even_when_status_not_ok(app, tmp_path):
+    # config-pull writes {"ok": false} with no packs when status.json did not
+    # exist yet; the pack list reads unknown but the cue still shows.
+    doc = {"ok": False, "packs": [], "panel_change": _pending()["panel_change"]}
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, doc)))
+    w.resize(800, 480)
+    w.show()
+    assert _banner_shown(w) and _amber_pixels_in_banner(w) > 20
+
+
+def test_panel_change_manual_trigger_title(app):
+    t, _ = data_status.panel_change_text(_pending(trigger="manual")["panel_change"])
+    assert t == "PANEL CHANGED"
+
+
+def test_panel_change_without_hash_cannot_acknowledge(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, _pending(h=None))))
+    w.resize(800, 480)
+    w.show()
+    calls = _stub_run(w)
+    assert _banner_shown(w) and not w.btn_ack.isEnabled()
+    w._on_ack()
+    assert calls == []
+
+
+def test_acknowledge_runs_panel_ack_with_displayed_hash(app, tmp_path):
+    p = _write(tmp_path, _pending())
+    w = data_status.DataStatus(status_path=str(p))
+    w.resize(800, 480)
+    w.show()
+    calls = _stub_run(w)
+    w.btn_ack.click()
+    assert calls[0][0] == ["panel-ack", "--yes", "--hash", HASH, "--json"]
+    # The 12 digits on the banner are the prefix of the hash acknowledged.
+    _, body = data_status.panel_change_text(w.status["panel_change"])
+    assert f"hash {calls[0][0][3][:12]}." in body
+    assert not w.btn_ack.isEnabled()                # no double submit
+    p.write_text(json.dumps(dict(SAMPLE, panel_change=_CLEAR)))   # panel-ack rewrote it
+    calls[0][1](0, json.dumps(_CLEAR))
+    assert not _banner_shown(w)
+    assert w.message == "Panel change acknowledged."
+
+
+def test_acknowledge_exit_2_shows_the_newer_change(app, tmp_path):
+    p = _write(tmp_path, _pending())
+    w = data_status.DataStatus(status_path=str(p))
+    w.resize(800, 480)
+    w.show()
+    calls = _stub_run(w)
+    w._on_ack()
+    p.write_text(json.dumps(_pending(h=NEWER)))     # a later pull landed
+    calls[0][1](2, "")
+    assert _banner_shown(w) and w.btn_ack.isEnabled()
+    assert "newer panel change" in w.message
+    w._on_ack()
+    assert calls[1][0] == ["panel-ack", "--yes", "--hash", NEWER, "--json"]
+
+
+def test_acknowledge_exit_2_same_change_is_not_recorded(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, _pending())))
+    w.resize(800, 480)
+    w.show()
+    calls = _stub_run(w)
+    w._on_ack()
+    calls[0][1](2, "")
+    assert _banner_shown(w) and w.btn_ack.isEnabled()
+    assert w.message.startswith("Couldn't record")
+
+
+def test_acknowledge_updater_missing_keeps_banner(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, _pending())),
+                               update_command=str(tmp_path / "no-such-updater"))
+    w.resize(800, 480)
+    w.show()
+    w._on_ack()
+    for _ in range(50):
+        app.processEvents()
+        if w._proc is None:
+            break
+        import time; time.sleep(0.02)
+    assert w._proc is None and _banner_shown(w) and w.btn_ack.isEnabled()
+
+
+def test_ack_hidden_while_picker_open(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, _pending())))
+    w.resize(800, 480)
+    w.show()
+    calls = _stub_run(w)
+    w._on_update()
+    calls[0][1](0, json.dumps({"network": True, "usb": []}))
+    calls[1][1](0, json.dumps(CATALOG))
+    assert w.mode == "picker" and w.btn_ack.isHidden()
