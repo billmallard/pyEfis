@@ -199,6 +199,15 @@ def test_page_never_uses_banned_words_outside_the_standing_text(record, tmp_path
     text = re.sub(r"<[^>]+>", " ", body).lower()
     for word in vr.BANNED_WORDS:
         assert not re.search(rf"\b{word}\b", text), word
+    # The same check with the safety pages on, so the index's added section is covered.
+    rc = vr.main(["page", str(tmp_path / "out" / "rec.json"), "--safety", str(_ROOT / "docs" / "safety"),
+                  "--out", str(tmp_path / "site2")])
+    assert rc == 0
+    body = re.sub(r'<div class=notice id=standing-text>.*?</div>', "",
+                  (tmp_path / "site2" / "index.html").read_text(), flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", body).lower()
+    for word in vr.BANNED_WORDS:
+        assert not re.search(rf"\b{word}\b", text), word
 
 
 def test_page_refuses_to_publish_a_leak(record, tmp_path):
@@ -221,6 +230,159 @@ def test_sanitize_strips_paths_addresses_and_hosts(raw, gone):
     out = vr.sanitize(raw)
     assert gone not in out
     assert not vr.find_leaks(out)
+
+
+# ---------------------------------------------------------------- safety pages (CERT18b)
+
+FHA_MD = textwrap.dedent('''
+    # Demo hazard assessment
+
+    **Nothing here is certified, approved or compliant.** An opening statement.
+
+    ## 1. Rows
+
+    | ID | Function | Mitigating requirements | Open |
+    |---|---|---|---|
+    | HZ-1 | Bank | XX-BANK-001 (alert), XX-ZZZ-001 | XX-NONE-001 is open, not a mitigation |
+    | HZ-2 | Limit | XX-LIM-001, XX-BANK-001 | |
+
+    Also named in the text: XX-PROSE-001, and `XX-CODE-001` in a code span.
+''')
+
+TOOLS_MD = textwrap.dedent('''
+    # Demo tool inventory
+
+    **Nothing here is certified, approved or compliant.** It qualifies no tool.
+
+    | # | Tool | Relied on unchecked |
+    |---|---|---|
+    | A1 | Builder | **Yes** |
+''')
+
+REAL_SAFETY = _ROOT / "docs" / "safety"
+
+
+def _safety_dir(tmp_path, fha=FHA_MD, tools=TOOLS_MD):
+    d = tmp_path / "safety"
+    d.mkdir(exist_ok=True)
+    (d / "fha_avionics_stack.md").write_text(fha)
+    (d / "tool_inventory.md").write_text(tools)
+    return d
+
+
+def _site(tmp_path, safety, records=None):
+    records = records or [str(tmp_path / "out" / "rec.json")]
+    rc = vr.main(["page", *records, "--safety", str(safety), "--out", str(tmp_path / "site")])
+    return rc, {p.name: p.read_text() for p in (tmp_path / "site").glob("*.html")}
+
+
+def _outside_notice(page):
+    """The page's visible text, minus the one notice box at its top."""
+    body = re.sub(r'<div class=notice id=standing-text>.*?</div>', "", page, count=1, flags=re.S)
+    return re.sub(r"<[^>]+>", " ", body).lower()
+
+
+def test_safety_pages_are_rendered_and_linked_from_the_index(record, tmp_path):
+    rc, site = _site(tmp_path, _safety_dir(tmp_path))
+    assert rc == 0
+    assert {"index.html", "hazard_assessment.html", "tool_inventory.html"} <= set(site)
+    for page in site.values():
+        assert 'href="hazard_assessment.html"' in page and 'href="tool_inventory.html"' in page
+    assert "<h1>Demo hazard assessment</h1>" in site["hazard_assessment.html"]
+    assert '<tr id="A1">' in site["tool_inventory.html"]
+
+
+def test_hazard_ids_link_to_requirement_rows_and_back(record, tmp_path):
+    _, site = _site(tmp_path, _safety_dir(tmp_path))
+    hz, index = site["hazard_assessment.html"], site["index.html"]
+    assert '<tr id="HZ-1">' in hz and '<tr id="HZ-2">' in hz
+    assert '<a href="index.html#demo-XX-BANK-001">XX-BANK-001</a>' in hz
+    assert '<a href="index.html#demo-XX-LIM-001">XX-LIM-001</a>' in hz
+    row = re.search(r'<tr id="demo-XX-BANK-001">.*?</tr>', index, re.S).group(0)
+    assert ('cited in hazard rows <a href="hazard_assessment.html#HZ-1">HZ-1</a>, '
+            '<a href="hazard_assessment.html#HZ-2">HZ-2</a>') in row
+    # An ID in the "Open" column is cited, but it does not mitigate the row.
+    none_row = re.search(r'<tr id="demo-XX-NONE-001">.*?</tr>', index, re.S).group(0)
+    assert "cited in hazard rows" not in none_row
+
+
+def test_a_cited_requirement_the_page_does_not_know_is_listed(record, tmp_path):
+    _, site = _site(tmp_path, _safety_dir(tmp_path))
+    hz = site["hazard_assessment.html"]
+    unlisted = hz[hz.index("id=unlisted"):]
+    assert '<span class=unlisted title="Not in the Requirements table on this site">XX-ZZZ-001</span>' in hz
+    assert '<code>XX-ZZZ-001</code></td><td><a href="#HZ-1">HZ-1</a>' in unlisted
+    assert "<code>XX-PROSE-001</code></td><td>named in the text only" in unlisted
+    for known in ("XX-BANK-001", "XX-LIM-001", "XX-NONE-001"):
+        assert known not in unlisted
+
+
+def test_every_id_the_real_assessment_cites_is_linked_or_listed(tmp_path):
+    """Against docs/safety as committed, with a pyEfis record built from docs/: no ID is
+    dropped. CFX- IDs (canfix-spec) have no row on this site and must be listed."""
+    rec = {"name": "pyEfis", "repo": "billmallard/pyEfis", "ref": "dev", "sha": "f" * 40,
+           "run_url": "", "generated_utc": "", "counts": {}, "total": 0,
+           "requirements": vr.parse_requirements(_ROOT / "docs"), "tests": []}
+    p = tmp_path / "pyEfis.json"
+    p.write_text(json.dumps(rec))
+    rc, site = _site(tmp_path, REAL_SAFETY, [str(p)])
+    assert rc == 0
+    hz = site["hazard_assessment.html"]
+    unlisted = hz[hz.index("id=unlisted"):]
+    fha = (REAL_SAFETY / "fha_avionics_stack.md").read_text()
+    cited = {i for i in vr.RID.findall(fha) if "-TC-" not in i}
+    linked = set(re.findall(r'<a href="index.html#pyEfis-([A-Z0-9-]+)">', hz))
+    listed = set(re.findall(r"<tr><td><code>([A-Z0-9-]+)</code></td>", unlisted))
+    assert linked | listed == cited and not linked & listed
+    assert {i for i in cited if i.startswith("CFX-")} <= listed
+    assert "AI-ANN-001" in linked
+
+
+def test_safety_documents_pass_sanitize_unchanged():
+    for src, *_ in vr.SAFETY_PAGES:
+        text = (REAL_SAFETY / src).read_text()
+        assert vr.sanitize(text) == text, src
+        assert not vr.find_leaks(text), src
+
+
+def test_safety_text_is_sanitized_and_the_leak_guard_backs_it(record, tmp_path, monkeypatch):
+    safety = _safety_dir(tmp_path, tools=TOOLS_MD + "\nrun on 192.0.2.40 from /home/someuser/x\n")
+    rc, site = _site(tmp_path, safety)
+    assert rc == 0
+    assert "192.0.2.40" not in site["tool_inventory.html"]
+    assert "/home/someuser" not in site["tool_inventory.html"]
+    # With sanitize() bypassed, the guard refuses to write the site at all.
+    monkeypatch.setattr(vr, "sanitize", lambda text, roots=(): text)
+    out = tmp_path / "site-raw"
+    assert vr.main(["page", str(tmp_path / "out" / "rec.json"), "--safety", str(safety),
+                    "--out", str(out)]) == 2
+    assert not (out / "tool_inventory.html").exists()
+
+
+def test_a_missing_safety_document_refuses_to_publish(record, tmp_path):
+    d = _safety_dir(tmp_path)
+    (d / "tool_inventory.md").unlink()
+    assert vr.main(["page", str(tmp_path / "out" / "rec.json"), "--safety", str(d),
+                    "--out", str(tmp_path / "site")]) == 2
+    assert not (tmp_path / "site" / "index.html").exists()
+
+
+def test_safety_pages_use_the_banned_words_only_in_their_opening_statement(record, tmp_path):
+    """The wording rule of the index holds on the safety pages, with one exemption: each
+    document's opening statement, that nothing in the stack is certified, approved or
+    compliant. It is rendered as the page's notice box and is the one place those words
+    appear. Nothing on any page mentions a certification effort (D8)."""
+    rc, site = _site(tmp_path, REAL_SAFETY)
+    assert rc == 0
+    for name in ("hazard_assessment.html", "tool_inventory.html"):
+        page = site[name]
+        notice = re.search(r"<div class=notice id=standing-text><p>(.*?)</p></div>", page, re.S).group(1)
+        assert re.match(r"<b>Nothing in this stack is certified, approved", notice), name
+        text = _outside_notice(page)
+        for word in vr.BANNED_WORDS:
+            assert not re.search(rf"\b{word}\b", text), (name, word)
+        assert "certif" not in text, name
+    assert "certif" not in _outside_notice(site["index.html"])
 
 
 def test_sanitize_keeps_public_links_and_bare_ids():

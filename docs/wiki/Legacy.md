@@ -42,7 +42,7 @@ tapes, a vertical-speed indicator (`vsi_pfd` or a VS tape, chosen by the
 for the altimeter setting, pressure and density altitude, OAT, time, autopilot
 status and aircraft ID, trim controls and a dimmer. Most parts are switched by
 an `enabled:` flag. Synthetic vision is off in this include; with it off, the
-attitude display draws the legacy Virtual VFR view (below).
+attitude display shows the plain sky/ground attitude.
 
 ## The screens
 
@@ -130,16 +130,14 @@ includes:
   SCREEN_PFD: screens/pfd-left-buttons.yaml
 ```
 
-## The legacy Virtual VFR view
+## The legacy Virtual VFR view (removed)
 
-With synthetic vision off, `virtual_vfr` draws its original view: airports and
-runways from the FAA's CIFP data, drawn over the plain sky-and-ground attitude.
-The data paths (`dbpath`, `indexpath`) come from `screens/virtualvfr_db.yaml`,
-included by the stock flight screens, and the CIFP data is a separate download.
-This view is deprecated: the configurator's synthetic vision replaces it and
-needs no CIFP data. See [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision).
-
-![The legacy Virtual VFR view](../images/virtual_vfr.png)
+`virtual_vfr` used to draw, with synthetic vision off, airports and runways from
+the FAA's CIFP data over the plain sky-and-ground attitude, with data paths from
+`screens/virtualvfr_db.yaml`. That view has been removed: synthetic vision
+replaces it and needs no CIFP data. The `virtual_vfr` type still works, and
+`screens/virtualvfr_db.yaml` stays as an empty file so a screen that still
+includes it loads. See [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision).
 
 ## The six-pack
 

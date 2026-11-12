@@ -33,6 +33,10 @@ each leg's MEA comes from the row of the fix that STARTS the leg in record
 order, in both directions of travel (see the ``airways`` module docstring
 for the sources).
 
+V1's fixture (``_V1_LEGS``) is the real cycle-2611 KIMMY/INLET/PLANN
+stretch, the case for RS6 (AER-5469): the INLET and PLANN rows carry a
+second Minimum Altitude, the MEA for travel against record order.
+
 A third airway (A1) carries a coded one-way (Direction Restriction) leg --
 the real cycle-2609 golden fixture PA1 ships has none, so the
 direction-enforcement path is only exercised here, deliberately, against a
@@ -421,6 +425,95 @@ def test_altitude_range_same_errors_as_expand(graph):
         graph.altitude_range("V27", "ZULUU", "ORCUT")
     with pytest.raises(AirwayError):
         graph.altitude_range("V27", "GVO", "GVO")
+
+
+# ---------------------------------------------------------------------------
+# Reverse-direction MEA (RS6, AER-5469)
+# ---------------------------------------------------------------------------
+# Real cycle-2611 V1 rows KIMMY/INLET/PLANN, verbatim from makerplane-data
+# tests/fixtures/cifp/FAACIFP18 (ER cols 84-88 / 89-93 / 94-98; lat/lon from
+# the matching EA records):
+#   ...0240KIMMY... 05000     17500
+#   ...0250INLET... 021000500017500
+#   ...0260PLANN... 021000500017500
+# (seq, fix, (lat, lon), fix_type, min_alt, max_alt, direction, min_alt2)
+_V1_LEGS = [
+    (240, "KIMMY", (33.27310, -79.50260), "waypoint", 5000, 17500, None, None),
+    (250, "INLET", (33.39275, -79.33183), "waypoint", 2100, 17500, None, 5000),
+    (260, "PLANN", (33.55845, -79.09407), "waypoint", 2100, 17500, None, 5000),
+]
+
+
+def _v1_pack(tmp_path, with_min_alt2):
+    """A pack holding only V1. *with_min_alt2* False builds the pre-#193
+    shape: no ``min_alt2_ft`` column at all."""
+    path = tmp_path / ("v1-new.pack" if with_min_alt2 else "v1-old.pack")
+    con = sqlite3.connect(str(path))
+    con.executescript(_SCHEMA)
+    if with_min_alt2:
+        con.execute("ALTER TABLE airway_legs ADD COLUMN min_alt2_ft INTEGER")
+    awy_id = con.execute("INSERT INTO airways (ident, cycle) VALUES ('V1', '2611')").lastrowid
+    for seq, fix_id, (lat, lon), fix_type, lo, hi, direction, lo2 in _V1_LEGS:
+        con.execute("INSERT INTO airway_legs (airway_id, seq, fix_id, fix_lat, fix_lon, "
+                    "fix_type, min_alt_ft, max_alt_ft, direction) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (awy_id, seq, fix_id, lat, lon, fix_type, lo, hi, direction))
+        if with_min_alt2:
+            con.execute("UPDATE airway_legs SET min_alt2_ft = ? WHERE seq = ?", (lo2, seq))
+    con.commit()
+    con.close()
+    return path
+
+
+@pytest.fixture()
+def v1_graph(tmp_path):
+    g = AirwayGraph(_v1_pack(tmp_path, with_min_alt2=True))
+    yield g
+    g.close()
+
+
+@pytest.fixture()
+def v1_old_graph(tmp_path):
+    g = AirwayGraph(_v1_pack(tmp_path, with_min_alt2=False))
+    yield g
+    g.close()
+
+
+def test_v1_inlet_plann_mea_follows_direction_of_travel(v1_graph):
+    # North-east bound (with seq) the INLET->PLANN leg is 2,100; south-west
+    # bound (against seq) it is 5,000, the INLET row's second MEA.
+    assert [(wp.id, wp.alt) for wp in v1_graph.expand("V1", "INLET", "PLANN")] == [
+        ("INLET", ""), ("PLANN", "+2100")]
+    assert [(wp.id, wp.alt) for wp in v1_graph.expand("V1", "PLANN", "INLET")] == [
+        ("PLANN", ""), ("INLET", "+5000")]
+
+
+def test_v1_blank_second_mea_applies_forward_mea_both_ways(v1_graph):
+    # KIMMY's row leaves the second MEA blank: KIMMY<->INLET is 5,000 either way.
+    assert [(wp.id, wp.alt) for wp in v1_graph.expand("V1", "PLANN", "KIMMY")] == [
+        ("PLANN", ""), ("INLET", "+5000"), ("KIMMY", "+5000")]
+    assert [(wp.id, wp.alt) for wp in v1_graph.expand("V1", "KIMMY", "PLANN")] == [
+        ("KIMMY", ""), ("INLET", "+5000"), ("PLANN", "+2100")]
+
+
+def test_v1_altitude_range_follows_direction_of_travel(v1_graph):
+    assert v1_graph.altitude_range("V1", "INLET", "PLANN") == (2100, 17500)
+    assert v1_graph.altitude_range("V1", "PLANN", "INLET") == (5000, 17500)
+    assert v1_graph.altitude_range("V1", "KIMMY", "PLANN") == (5000, 17500)
+
+
+def test_v1_legs_carry_second_mea(v1_graph):
+    assert [leg.min_alt2_ft for leg in v1_graph.legs("V1")] == [None, 5000, 5000]
+
+
+def test_old_shape_pack_without_column_uses_forward_mea(v1_old_graph):
+    # A pack built before makerplane-data#193 has no min_alt2_ft column: it
+    # still loads, and backward travel falls back to min_alt_ft.
+    assert v1_old_graph.ready
+    assert [leg.min_alt2_ft for leg in v1_old_graph.legs("V1")] == [None, None, None]
+    assert [(wp.id, wp.alt) for wp in v1_old_graph.expand("V1", "PLANN", "INLET")] == [
+        ("PLANN", ""), ("INLET", "+2100")]
+    assert v1_old_graph.altitude_range("V1", "PLANN", "INLET") == (2100, 17500)
 
 
 # ---------------------------------------------------------------------------
