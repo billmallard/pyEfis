@@ -42,11 +42,16 @@ fix that ends the leg in travel order, which put every airway MEA one leg
 off: flying V27 GVO->GOLET->KWANG published GOLET ``+6000`` (record 6,400,
 over the Santa Ynez range) and KWANG ``+6400`` (record 4,000).
 
-Not handled: the record's second Minimum Altitude (cols 89-93), the MEA for
-travel AGAINST sequence order where it differs (639 FAACIFP18 rows; V1
-INLET->PLANN is 2,100 north-east bound, 5,000 south-west bound in both CIFP
-and NASR). The pack does not carry it, so backward travel uses the forward
-MEA. V27 has no second MEA. The Direction Restriction convention (see
+Reverse-direction MEA (RS6, AER-5469). The record's second Minimum
+Altitude (cols 89-93) is the MEA for travel AGAINST sequence order where it
+differs: 639 FAACIFP18 rows in cycle 2611, e.g. V1 INLET->PLANN is 2,100
+north-east bound, 5,000 south-west bound in both CIFP and NASR. The pack
+carries it as ``airway_legs.min_alt2_ft`` (makerplane-data#193, AER-5460),
+NULL where the record leaves it blank, in which case ``min_alt_ft`` applies
+both ways. The column is additive (``schema_version`` stays 3), so packs
+built before it lack it entirely: :class:`AirwayGraph` probes
+``PRAGMA table_info`` once and, when it is absent, backward travel uses the
+forward MEA as before. V27 has no second MEA. The Direction Restriction convention (see
 :meth:`AirwayGraph._resolve_segment`) is likewise unverified: FAACIFP18
 codes no direction restriction on any airway, so the data cannot settle it.
 
@@ -100,6 +105,16 @@ class AirwayLeg:
     min_alt_ft: int | None
     max_alt_ft: int | None
     direction: str | None  # None (both directions) | "F" | "B"
+    # MEA against seq order (RS6); None = blank or an old-shape pack, so
+    # min_alt_ft applies both ways.
+    min_alt2_ft: int | None = None
+
+    def mea(self, backward: bool) -> int | None:
+        """MEA of the leg this row starts, flown forward (ascending seq) or
+        *backward*."""
+        if backward and self.min_alt2_ft is not None:
+            return self.min_alt2_ft
+        return self.min_alt_ft
 
 
 #: Pack ``fix_type`` -> ``model.Waypoint.type``. Anything not listed
@@ -118,6 +133,7 @@ class AirwayGraph:
     def __init__(self, procedures_db_path: str | Path | None = None):
         self._path = Path(procedures_db_path) if procedures_db_path else None
         self._con: sqlite3.Connection | None = None
+        self._has_min_alt2 = False
         if self._path is None or not self._path.is_file():
             log.info("AirwayGraph: %s not found -- airway lookup disabled",
                       self._path)
@@ -127,6 +143,8 @@ class AirwayGraph:
             con = sqlite3.connect(str(self._path), check_same_thread=False)
             con.row_factory = sqlite3.Row
             con.execute("SELECT 1 FROM airways LIMIT 1")
+            cols = {r["name"] for r in con.execute("PRAGMA table_info(airway_legs)")}
+            self._has_min_alt2 = "min_alt2_ft" in cols
             self._con = con
         except Exception as e:
             log.warning("AirwayGraph: cannot open %s: %s", self._path, e)
@@ -179,14 +197,16 @@ class AirwayGraph:
         norm = _norm(ident)
         rows = self._con.execute(
             "SELECT al.seq, al.fix_id, al.fix_lat, al.fix_lon, al.fix_type, "
-            "al.min_alt_ft, al.max_alt_ft, al.direction "
+            "al.min_alt_ft, al.max_alt_ft, al.direction, "
+            + ("al.min_alt2_ft " if self._has_min_alt2 else "NULL AS min_alt2_ft ") +
             "FROM airway_legs al JOIN airways a ON a.id = al.airway_id "
             "WHERE a.ident = ? ORDER BY al.seq", (norm,)).fetchall()
         return [AirwayLeg(seq=r["seq"], fix_id=r["fix_id"],
                            lat=r["fix_lat"], lon=r["fix_lon"],
                            fix_type=r["fix_type"],
                            min_alt_ft=r["min_alt_ft"], max_alt_ft=r["max_alt_ft"],
-                           direction=(r["direction"] or None))
+                           direction=(r["direction"] or None),
+                           min_alt2_ft=r["min_alt2_ft"])
                 for r in rows]
 
     # ------------------------------------------------------------------
@@ -205,12 +225,14 @@ class AirwayGraph:
         segment = self._resolve_segment(ident, entry_fix_id, exit_fix_id)
         # The MEA of a leg is coded on the row of the fix that STARTS it in
         # published (ascending seq) order -- the lower seq of the pair, in
-        # either direction of travel (module docstring).
+        # either direction of travel; flown backward, that row's second MEA
+        # applies where it has one (module docstring).
+        backward = segment[0].seq > segment[-1].seq
         out = []
         for n, leg in enumerate(segment):
             mea = None
             if n > 0:
-                mea = min(segment[n - 1], leg, key=lambda r: r.seq).min_alt_ft
+                mea = min(segment[n - 1], leg, key=lambda r: r.seq).mea(backward)
             out.append(model.Waypoint(id=leg.fix_id,
                                        type=_PACK_FIX_TYPES.get(leg.fix_type or "", "fix"),
                                        lat=leg.lat, lon=leg.lon,
@@ -232,7 +254,8 @@ class AirwayGraph:
         """``(min_alt_ft, max_alt_ft)`` enforceable over the segment of
         *ident* between *entry_fix_id* and *exit_fix_id* -- the highest
         published leg minimum (the MEA a pilot must be at or above for the
-        whole segment) and the lowest published leg maximum. Either may be
+        whole segment) and the lowest published leg maximum, each leg's
+        minimum taken for the direction of travel. Either may be
         ``None`` if the pack carries no restriction. Same errors as
         :meth:`expand`. The caller (PA6/PA9) compares this against the
         planned altitude and states the actual figure in the warning --
@@ -241,8 +264,9 @@ class AirwayGraph:
         # Each row describes the leg it starts (module docstring), so the
         # highest-seq fix of the segment contributes nothing: its row is the
         # leg beyond the exit (or the entry, flying backward).
+        backward = segment[0].seq > segment[-1].seq
         flown = sorted(segment, key=lambda r: r.seq)[:-1]
-        mins = [leg.min_alt_ft for leg in flown if leg.min_alt_ft is not None]
+        mins = [m for m in (leg.mea(backward) for leg in flown) if m is not None]
         maxs = [leg.max_alt_ft for leg in flown if leg.max_alt_ft is not None]
         return (max(mins) if mins else None, min(maxs) if maxs else None)
 
