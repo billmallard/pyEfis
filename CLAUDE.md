@@ -45,7 +45,7 @@ SVS_RENDERER=polar SVS_LAT=34.4275 SVS_LON=-119.8546 SVS_ALT=500 SVS_HEAD=87 \
 SVS_RANGE=8 SVS_AUTO_RANGE=false PYTHONPATH="C:/pylib;src" \
 python tests/visual_svs_test.py
 ```
-Other env vars: `SVS_PITCH`, `SVS_ROLL`, `SVS_GRID_LINES`, `SVS_CIFP_PATH`, `SVS_NASR_PATH`, `SVS_DOF_PATH`. The harness auto-discovers data files at `pyEfis/cifp/`, `pyEfis/nasr/airports.sqlite`, `pyEfis/dof/obstacles.sqlite` if present.
+Other env vars: `SVS_PITCH`, `SVS_ROLL`, `SVS_GRID_LINES`, `SVS_NASR_PATH`, `SVS_DOF_PATH`. The harness auto-discovers data files at `pyEfis/nasr/airports.sqlite`, `pyEfis/dof/obstacles.sqlite` if present.
 
 For background launches via the harness (so the user can interact with the window while we continue), use `run_in_background: true` and report the task ID.
 
@@ -55,7 +55,6 @@ For background launches via the harness (so the user can interact with the windo
 |------|------|--------|---------|
 | SRTM3 terrain tiles | `D:/EarthData/srtm3/<NSdir>/<tile>.hgt` | NASA SRTM v3 | Terrain elevation sampling |
 | FAA NASR CSVs | `pyEfis/nasr/APT_*.csv` + `airports.sqlite` | FAA NASR cycle | Airport / runway data (preferred) |
-| FAA CIFP | `pyEfis/cifp/FAACIFP18` + `index.bin` | FAA CIFP cycle | Fallback airport data (also used by VVfr) |
 | FAA DOF | `pyEfis/dof/DOF.CSV` + `obstacles.sqlite` | FAA DOF (56-day cycle) | Obstacles (towers, antennas) |
 
 Build the sqlite files with `tools/build_airport_db.py` and `tools/build_obstacle_db.py`.
@@ -72,7 +71,7 @@ The SVS lives in [src/pyefis/instruments/ai/](src/pyefis/instruments/ai/):
   - `_draw_runways` paints the runway quad and, when within `detail_distance_nm`, `_draw_runway_markings` adds Tier C surface markings per FAA AC 150/5340-1L (threshold bars, centreline, designators via `QTransform.quadToQuad` perspective, aiming point, TDZ for PIR, side stripes, chevrons).
   - `_draw_obstacles` projects FAA DOF towers/antennas as vertical poles, colour-coded by lighting and conflict.
   - Near-airport terrain coloring collapses to a 2-colour green/magenta scheme inside `airport_proximity_nm` so a normal approach doesn't paint the screen red.
-- **[airport_db.py](src/pyefis/instruments/ai/airport_db.py)** — `NASRAirportDB` (preferred sqlite) and `CIFPAirportDB` (fallback via `pyavtools.CIFPObjects`). `make_airport_db(config)` picks the best available.
+- **[airport_db.py](src/pyefis/instruments/ai/airport_db.py)** — `NASRAirportDB` over the NASR sqlite, merged across provider packs by `make_airport_db(config)`. The `CIFPAirportDB` fallback was retired with the legacy Virtual VFR overlay (VVFR1, AER-5417).
 - **[obstacle_db.py](src/pyefis/instruments/ai/obstacle_db.py)** — `ObstacleDB`, sqlite-backed range query for DOF records.
 - **[ai/__init__.py](src/pyefis/instruments/ai/__init__.py)** — the host AI widget. `SVSRenderer` is wrapped by a small `QGraphicsItem` factory (`make_svs_item` in `svs.py`) so SVS participates in scene z-order: default `z=0.5` sits between the sky/land background (z=0) and the pitch ladder (z=1).
 
