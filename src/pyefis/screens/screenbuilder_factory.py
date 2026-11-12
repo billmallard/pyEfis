@@ -543,6 +543,16 @@ _register(InstrumentSpec(
     preview={"pitch": -2.0, "roll": 4.0, "slip": 1.0},
 ))
 
+# Bind a gauge to a fuel tank on the aircraft profile (FUEL1 brief section 5).
+# The configurator resolves the stored tank id at serve time into the plain
+# `dbkey: FUELQ<slot>` and `name: <label>` options, so the widget is unchanged;
+# a tank removed from the profile is served `unbound: true` instead.
+def _tank_prop():
+    return Prop("tank", "aircraft_ref", source="aircraft.fuel.tanks",
+                resolves={"dbkey": "slot_key", "name": "label"},
+                label="Tank", help="Bind to a tank from the aircraft page")
+
+
 _register(InstrumentSpec(
     type="arc_gauge",
     label="Arc Gauge",
@@ -566,6 +576,7 @@ _register(InstrumentSpec(
         Prop("name_location", "enum", default="top", enum=["top", "right"],
              label="Name location",
              help="where the name label sits relative to the gauge"),
+        _tank_prop(),
     ],
     # The colour-band thresholds and the value range are FIX-database values
     # (item min/max + aux), set in fix-gateway, not in the panel editor (#64).
@@ -902,6 +913,7 @@ def _bar_gauge_props():
              help="append the FIX key's engineering units to the readout"),
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
+        _tank_prop(),
     ]
 
 
