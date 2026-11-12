@@ -1090,7 +1090,7 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: moving_map.MovingMap(
                  screen, font_family=font_family)),
-    dbkeys=["LAT", "LONG", "TRACKM"],
+    dbkeys=["LAT", "LONG", "TRACKM", "TRACK"],
     properties=[
         Prop("range_nm", "number", default=10.0, minimum=1, maximum=500,
              label="Range (NM)",

@@ -44,7 +44,11 @@ pyAvMap's tile logic can be mined if wanted.
   whole on pan/zoom, and layer pixmap caching does the heavy lifting;
   no GL requirement, so it renders offscreen for CI/screenshots and
   runs on GL-less panels).
-- **FIX inputs**: LAT/LONG (position), TRACKM/HEAD (orientation), GS
+- **FIX inputs**: LAT/LONG (position), TRACK (orientation: the layers
+  project true lat/lon about true north, so track-up turns by true track
+  and the ownship arrow points along it; TRACKM only on a gateway without
+  TRACK), TRACKM (the ND TRK box; the ND rose is labelled magnetic by
+  MAGVAR), GS
   (ground speed for the track vector), ALT (terrain-relative coloring,
   later TAWS layer). Standard fail/old/bad handling: stale position
   greys the ownship + annunciates; the map does NOT freeze silently.

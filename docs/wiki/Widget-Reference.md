@@ -84,7 +84,7 @@ See [Engine & Data Gauges](Widgets-Engine-Gauges#ganged-gauges).
 | `horizontal_bar_gauge` | Horizontal Bar Gauge | gauge | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#horizontal_bar_gauge) |
 | `horizontal_situation_indicator` | Horizontal Situation Indicator (HSI) | navigation | `COURSE`, `CDI`, `GSI`, `HEAD`, `BRG1`, `BRG2`, `BRG1SRC`, `BRG2SRC` | [Flight Instruments](Widgets-Flight-Instruments#horizontal_situation_indicator) |
 | `listbox` | Listbox | list | -- | [Text & Interactive](Widgets-Text-and-Interactive#listbox) |
-| `moving_map` | Moving Map | navigation | `LAT`, `LONG`, `TRACKM` | [Navigation](Widgets-Navigation#moving_map) |
+| `moving_map` | Moving Map | navigation | `LAT`, `LONG`, `TRACKM`, `TRACK` | [Navigation](Widgets-Navigation#moving_map) |
 | `nav_status` | Nav Status | navigation | `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`, `WPNEXT`, `WPDIS`, `WPETE` | [Navigation](Widgets-Navigation#nav_status) |
 | `numeric_display` | Numeric Display | text | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#numeric_display) |
 | `static_text` | Static Text | text | -- | [Text & Interactive](Widgets-Text-and-Interactive#static_text) |

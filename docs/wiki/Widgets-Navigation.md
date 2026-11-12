@@ -20,7 +20,7 @@ in the fix-gateway wiki.
 
 How it reads and flies: [Moving Map](Moving-Map).
 
-FIX keys it reads by default: `LAT`, `LONG`, `TRACKM`.
+FIX keys it reads by default: `LAT`, `LONG`, `TRACKM`, `TRACK`.
 
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|

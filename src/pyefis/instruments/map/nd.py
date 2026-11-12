@@ -520,7 +520,7 @@ def paint(widget, p, x, read, now=None):
     family = x.font_family
     osp = x.to_screen(widget._lat, widget._lon)
     r = x.nm_to_px(x.range_nm)          # == g["r"]: range_px is the arc
-    up = math.degrees(x.rot)            # bearing at the top of the screen
+    up = rose_up(widget, x)             # magnetic bearing at the top
     half = g["half"]
     lw = max(1.5, w * 0.003)
 
@@ -621,6 +621,14 @@ def paint(widget, p, x, read, now=None):
 
     _paint_vdev(p, vdev_geometry(w, h), vdev(read), family, lw)
     p.restore()
+
+
+def rose_up(widget, x):
+    """The magnetic bearing at the top of the screen, what the rose and the
+    wind arrow (``WINDDIR`` is magnetic) are drawn against. The map turns by
+    true track (``x.rot``), so the rose is labelled magnetic by ``MAGVAR``,
+    the way a Garmin ND does, and the lubber reads the TRK box (P3g)."""
+    return math.degrees(x.rot) + widget.rose_variation()
 
 
 def tick_bearings(up, half):
