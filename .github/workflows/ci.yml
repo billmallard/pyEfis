@@ -55,6 +55,9 @@ jobs:
         flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 src test --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: Public safety documents speak in no first person and cite no board id
+      # CERT18c. Fails naming file, line and word; tools/verification_report.py check-text.
+      run: python tools/verification_report.py check-text docs/safety/*.md
     - name: Test with pytest
       id: pytest
       env:
@@ -156,6 +159,9 @@ jobs:
         # A broken sidecar fails the build job's tests, not this deploy.
         python tools/evidence_index.py --html site/evidence.html \
           --repo "$GITHUB_REPOSITORY" --sha "${{ github.event.pull_request.head.sha || github.sha }}"
+    - name: Every published page speaks in no first person and cites no board id
+      # CERT18c: before the upload and the deploy, so a failing page is never published.
+      run: python tools/verification_report.py check-text site/*.html
     - uses: actions/upload-artifact@v6
       with:
         name: evidence-page
