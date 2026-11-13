@@ -1,8 +1,6 @@
-dbpath: ~/makerplane/pyefis/CIFP/FAACIFP18
-indexpath: ~/makerplane/pyefis/CIFP/index.bin
-# If metadata file exists the old or new indexes will be used 
-# according to the date and metadata.
-# If missing then dbpath and indexpath above are used
-# This was added to support a content snap to distribute the
-# FAA CIFP data
-metadata: /usr/share/makerplane/CIFP/metadata.yaml
+# Retired (VVFR1, AER-5417). This file carried dbpath/indexpath/metadata, the
+# FAA CIFP paths read by the legacy Virtual VFR overlay. The overlay is gone and
+# nothing reads these keys any more. The file stays, empty, only so a screen
+# that still lists it under `include:` (older user configs, configurator pulls)
+# keeps loading; a missing include is a hard error.
+{}

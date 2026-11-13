@@ -66,8 +66,13 @@ from pyefis.screens import color_tokens
 # Editor-facing field kinds; each maps to an input in the configurator's
 # properties panel. ``fixkey`` is a free-text FIX-database key (rendered as a
 # string input today, a key-picker once the FIX editor exists).
+# ``aircraft_ref`` is a reference to an item on the aircraft profile (a fuel
+# tank, a checklist), picked in the editor and resolved by the configurator at
+# serve time into plain device options (FUEL1 brief section 5). The panel stores
+# only the item id; the device never needs the reference itself.
 PROP_KINDS = frozenset({
     "string", "number", "integer", "boolean", "enum", "color", "fixkey",
+    "aircraft_ref",
 })
 
 # How a config property reaches the widget when a screen is built.
@@ -122,6 +127,18 @@ class Prop:
 
     ``name`` is BOTH the YAML option key and the widget attribute it is applied
     to (for ``apply="attr"``), so a property name maps 1:1 to widget state.
+
+    ``kind="aircraft_ref"`` carries three more fields, and only that kind may
+    set them:
+      * ``source``   -- the aircraft-profile collection the editor picks from
+                        (``aircraft.fuel.tanks``); required;
+      * ``multi``    -- the option holds a list of ids rather than one;
+      * ``resolves`` -- ``{device option: item field}`` the configurator's
+                        resolver writes for the picked item (``{"dbkey":
+                        "slot_key", "name": "label"}``). Each key must be
+                        another property of the same instrument.
+    The reference never reaches the widget: it is ``apply="special"`` and the
+    screen builder skips it.
     """
 
     name: str
@@ -137,12 +154,42 @@ class Prop:
     apply: str = APPLY_ATTR
     bindable: object = None   # a Binding when this setting is live-bindable
     token: str = ""           # colour props: the semantic token it reads
+    source: str = ""          # aircraft_ref: the profile collection
+    multi: bool = False       # aircraft_ref: a list of ids
+    resolves: dict | None = None  # aircraft_ref: {device option: item field}
 
     def __post_init__(self):
         if self.kind not in PROP_KINDS:
             raise ValueError(
                 f"Prop {self.name!r}: unknown kind {self.kind!r} "
                 f"(expected one of {sorted(PROP_KINDS)})")
+        if self.kind == "aircraft_ref":
+            if not self.source:
+                raise ValueError(
+                    f"Prop {self.name!r}: kind 'aircraft_ref' requires "
+                    f"source=")
+            if self.default is not None:
+                raise ValueError(
+                    f"Prop {self.name!r}: kind 'aircraft_ref' takes no "
+                    f"default (an id is aircraft-specific)")
+            if self.resolves is not None and not (
+                    isinstance(self.resolves, dict)
+                    and all(isinstance(k, str) and isinstance(v, str)
+                            and k and v
+                            for k, v in self.resolves.items())):
+                raise ValueError(
+                    f"Prop {self.name!r}: resolves must map option names to "
+                    f"item fields")
+            if self.apply == APPLY_ATTR:
+                self.apply = "special"
+            if self.apply != "special":
+                raise ValueError(
+                    f"Prop {self.name!r}: kind 'aircraft_ref' is resolved "
+                    f"before the device; apply must be 'special'")
+        elif self.source or self.multi or self.resolves is not None:
+            raise ValueError(
+                f"Prop {self.name!r}: source/multi/resolves are only for kind "
+                f"'aircraft_ref'")
         if self.kind == "enum" and not self.enum:
             raise ValueError(
                 f"Prop {self.name!r}: kind 'enum' requires a non-empty enum=[...]")
@@ -265,6 +312,12 @@ class InstrumentSpec:
             raise ValueError(
                 f"InstrumentSpec {self.type!r}: duplicate container names "
                 f"{container_dupes}")
+        for p in self.properties:
+            missing = sorted(set(p.resolves or {}) - set(names))
+            if missing:
+                raise ValueError(
+                    f"InstrumentSpec {self.type!r}: {p.name!r} resolves "
+                    f"options it does not declare {missing}")
         overlap = sorted(set(names) & set(container_names))
         if overlap:
             raise ValueError(

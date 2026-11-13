@@ -205,7 +205,7 @@ The full list, including the tick sizes and opacities, is on
 
 | Option | Default | Bench | What it does |
 |---|---|---|---|
-| Synthetic vision enabled (`svs_enabled`) | off | on | Off falls back to the legacy CIFP Virtual VFR overlay, which is deprecated. |
+| Synthetic vision enabled (`svs_enabled`) | off | on | Off shows the plain sky/ground attitude. |
 | Terrain tile path (`svs_tile_path`) | | `/data/makerplane-data/terrain/tiles` | Where the terrain pack is installed. |
 | Obstacle / Water / Highway DB path | | the installed packs | Optional; leave one empty to drop that layer. |
 | Range (`svs_range_nm`) | 50 nm | | How far ahead terrain is drawn. |

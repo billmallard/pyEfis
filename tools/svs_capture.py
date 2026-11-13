@@ -272,7 +272,9 @@ def parse_args(argv=None):
     data.add_argument("--tiles", default=r"D:\EarthData\srtm3")
     data.add_argument("--water", default=None)
     data.add_argument("--nasr", default=None)
-    data.add_argument("--cifp", default=None)
+    # Accepted and ignored: the CIFP airport backend was retired (VVFR1,
+    # AER-5417); capture_service and older callers still pass it.
+    data.add_argument("--cifp", default=None, help=argparse.SUPPRESS)
     data.add_argument("--dof", default=None)
     data.add_argument("--highways", default="")
     data.add_argument(
@@ -792,15 +794,14 @@ def main(argv=None):
         # collectors they'd feed never run and never record a cache key.
         # Forcing every source off here keeps settled()'s bookkeeping empty
         # instead of waiting forever on state that will never arrive.
-        water = nasr = cifp = dof = highways = ""
+        water = nasr = dof = highways = ""
     else:
         water = args.water if args.water is not None else _default_water()
         nasr = _default(args.nasr, "nasr", "airports.sqlite")
-        cifp = _default(args.cifp, "cifp", "FAACIFP18")
         dof = _default(args.dof, "dof", "obstacles.sqlite")
 
     expect_layers = set()
-    if nasr or cifp:
+    if nasr:
         expect_layers.add("airports")
     if dof:
         expect_layers.add("obstacles")
@@ -825,7 +826,6 @@ def main(argv=None):
         "auto_range": args.auto_range,
         "clearance_green_ft": 1000,
         "clearance_yellow_ft": 500,
-        "cifp_path": cifp,
         "nasr_db_path": nasr,
         "dof_db_path": dof,
         "water_db_path": water,

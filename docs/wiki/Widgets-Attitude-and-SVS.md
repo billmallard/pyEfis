@@ -24,7 +24,7 @@ that way.
 
 How it reads and flies: [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision).
 
-FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `ALAT`, `TAS`.
+FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `ALT`, `ROLL`, `ALAT`, `TAS`.
 
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|
@@ -60,7 +60,7 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `
 | `horizon_heading_label_interval` | Heading label interval (deg) | `20` | 5 to 90, step 5 | degrees of heading between the numeric labels |
 | `horizon_heading_tick_length` | Heading tick length (px) | `5` | 1 to 30, step 1 | length of the horizon heading ticks (px) |
 | `horizon_heading_color` | Heading mark colour | `#ffffff` | colour | colour of the horizon heading ticks and labels |
-| `svs_enabled` | Synthetic vision enabled | off | on / off | master on/off (rendered on the device; not shown in the editor preview). Off falls back to the legacy CIFP Virtual VFR overlay, which is DEPRECATED (to be removed) and needs a separate FAA CIFP download; on needs no CIFP data |
+| `svs_enabled` | Synthetic vision enabled | off | on / off | master on/off (rendered on the device; not shown in the editor preview). Off shows the plain sky/ground attitude view |
 | `svs_tile_path` | Terrain tile path | empty |  | SRTM3 HGT tile directory on the device |
 | `svs_range_nm` | Range (NM) | `50` |  | (rendered on the device; not shown in the editor preview) |
 | `svs_auto_range` | Auto range by altitude | on | on / off | (rendered on the device; not shown in the editor preview) |
@@ -91,8 +91,8 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `
 <!-- /generated -->
 
 Synthetic vision draws only with **Synthetic vision enabled** on. With it off,
-the instrument falls back to the legacy CIFP overlay, which is deprecated and
-needs a separate FAA CIFP download.
+the instrument shows the plain sky/ground attitude. (The legacy CIFP Virtual
+VFR overlay it used to fall back to has been removed.)
 
 ### How the terrain options reach the renderer
 
@@ -105,7 +105,6 @@ configurator's list and can only be set in the `svs:` block:
 |---|---|---|
 | `nasr_db_path` | empty | The airports pack: runways, PAPI and airport flags. |
 | `airport_provider_dir` | empty | A directory of extra airport packs, found automatically. |
-| `cifp_path`, `cifp_index_path` | empty | Airport data from CIFP, used only when the airports pack is not available. |
 | `paved_only` | `true` | Draw only paved runways. |
 | `airport_proximity_nm` | `5` | Within this distance of an airport, low terrain is drawn green; 0 turns this off. |
 | `airport_gate_agl_ft` | `400` | How far above field elevation that rule reaches. |
@@ -180,7 +179,6 @@ ignored.
 | `HEAD`, `MAGVAR` | Which way the terrain faces, and the horizon heading marks. |
 | `VS`, `GS`, `TRACK`, `VPATH` | The flight path marker. |
 | `AOA` and its `Warn` aux | The pitch-limit indicator, drawn `Warn` minus `AOA` degrees above the aircraft symbol when that is 8 or less. Old, bad, failed, missing, or no `Warn`: not drawn. |
-| `COURSE` | The legacy CIFP overlay's heading. |
 
 Any of `PITCH`, `ROLL`, `ALAT` or `TAS` old or bad turns the sky grey; any
 failed shows a dark grey display with a red `XXX`.

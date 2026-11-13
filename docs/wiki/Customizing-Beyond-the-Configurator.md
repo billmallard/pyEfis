@@ -139,7 +139,7 @@ the attitude display first and the tapes and HSI after it.
 | `encoder_outer` | The outer ring's FIX key, if there is one. |
 | `encoder_timeout` | How long a selection lasts with no input, in ms (10000). |
 | `alat_multiplier`, `alat_filter_depth` | The turn coordinator's ball gain and smoothing. |
-| `dbpath`, `indexpath`, `metadata`, `refresh_period` | The legacy CIFP Virtual VFR data, from `screens/virtualvfr_db.yaml`. |
+| `dbpath`, `indexpath`, `metadata`, `refresh_period` | Ignored. They carried the data paths of the removed legacy Virtual VFR overlay; `screens/virtualvfr_db.yaml` is now an empty stub kept so an older include still loads. |
 | `update_period` | The VSI tape's redraw period, in seconds (0.1). |
 
 The shipped screens take the knob keys from the `HMI_ENCODER_BUTTONS` include

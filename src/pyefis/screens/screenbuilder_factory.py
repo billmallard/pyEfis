@@ -36,7 +36,6 @@ from pyefis.instruments import tc
 from pyefis.instruments import vsi
 from pyefis.instruments import weston
 from pyefis.instruments import wind
-from pyefis.instruments.ai.VirtualVfr import VirtualVfr
 from pyefis.screens.instrument_spec import (
     Binding, ContainerSlot, InstrumentSpec, Prop, FixValue)
 
@@ -119,9 +118,10 @@ def build_virtual_vfr(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = config.get("options", {}) or {}
-    widget = VirtualVfr(screen, font_percent=font_percent, font_family=font_family)
-    # VirtualVfr inherits set_svs_config from AI; SVS config flows through
-    # the same way regardless of which widget type the screen uses.
+    # VVFR1 (AER-5417): the legacy CIFP screen-space overlay (VirtualVfr.py)
+    # is gone; virtual_vfr is the attitude widget plus synthetic vision. The
+    # type name stays because shipped screens and user configs name it.
+    widget = ai.AI(screen, font_percent=font_percent, font_family=font_family)
     widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
     widget.symbol_color = opts.get("symbol_color", "yellow")
     # SVS config: the legacy nested `svs:` dict, overlaid with the flat svs_*
@@ -413,10 +413,8 @@ def _svs_props():
     return [
         Prop("svs_enabled", "boolean", default=False, apply="special",
              label="Synthetic vision enabled",
-             help="master on/off" + dev + ". Off falls back to the legacy "
-                  "CIFP Virtual VFR overlay, which is DEPRECATED (to be "
-                  "removed) and needs a separate FAA CIFP download; on needs "
-                  "no CIFP data"),
+             help="master on/off" + dev + ". Off shows the plain "
+                  "sky/ground attitude view"),
         Prop("svs_tile_path", "string", default="", apply="special",
              label="Terrain tile path",
              help="SRTM3 HGT tile directory on the device"),
@@ -543,6 +541,16 @@ _register(InstrumentSpec(
     preview={"pitch": -2.0, "roll": 4.0, "slip": 1.0},
 ))
 
+# Bind a gauge to a fuel tank on the aircraft profile (FUEL1 brief section 5).
+# The configurator resolves the stored tank id at serve time into the plain
+# `dbkey: FUELQ<slot>` and `name: <label>` options, so the widget is unchanged;
+# a tank removed from the profile is served `unbound: true` instead.
+def _tank_prop():
+    return Prop("tank", "aircraft_ref", source="aircraft.fuel.tanks",
+                resolves={"dbkey": "slot_key", "name": "label"},
+                label="Tank", help="Bind to a tank from the aircraft page")
+
+
 _register(InstrumentSpec(
     type="arc_gauge",
     label="Arc Gauge",
@@ -566,6 +574,7 @@ _register(InstrumentSpec(
         Prop("name_location", "enum", default="top", enum=["top", "right"],
              label="Name location",
              help="where the name label sits relative to the gauge"),
+        _tank_prop(),
     ],
     # The colour-band thresholds and the value range are FIX-database values
     # (item min/max + aux), set in fix-gateway, not in the panel editor (#64).
@@ -902,6 +911,7 @@ def _bar_gauge_props():
              help="append the FIX key's engineering units to the readout"),
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
+        _tank_prop(),
     ]
 
 
@@ -1624,11 +1634,9 @@ _register(InstrumentSpec(
     label="Virtual VFR / Synthetic Vision",
     category="attitude",
     builder=build_virtual_vfr,
-    # Deduped from the legacy default (which listed PITCH twice). The widget
-    # subscribes to COURSE, not HEAD, for its heading item (VirtualVfr.py --
-    # it keys the value internally under 'HEAD' but reads the COURSE FIX key);
-    # the default listed the wrong key (#46).
-    dbkeys=["PITCH", "LAT", "LONG", "COURSE", "ALT", "ROLL", "ALAT", "TAS"],
+    # The attitude keys plus the position keys the SVS camera reads. COURSE
+    # went with the legacy CIFP overlay (VVFR1, AER-5417), its only reader.
+    dbkeys=["PITCH", "LAT", "LONG", "ALT", "ROLL", "ALAT", "TAS"],
     svs_capable=True,
     offscreen_renderable=False,   # QOpenGLWidget SVS terrain; hangs offscreen
     builds_in_isolation=False,    # GL widget needs a real screen

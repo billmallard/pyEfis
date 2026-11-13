@@ -68,6 +68,41 @@ def test_single_nasr_returns_plain_db(tmp_path):
     assert isinstance(db, NASRAirportDB)        # no provider dir -> single backend
 
 
+def test_cifp_path_alone_is_no_longer_a_backend(tmp_path, caplog):
+    """VVFR1 (AER-5417): the CIFP backend is retired. A config that only
+    names cifp_path gets the empty stub and a warning that names the key to
+    set instead -- never a silent runway-less view, never a raise."""
+    cifp = tmp_path / "FAACIFP18"
+    cifp.write_text("HDR01FAACIFP18\n")
+    with caplog.at_level("WARNING"):
+        db = make_airport_db({"cifp_path": str(cifp)})
+    assert not db.ready
+    assert list(db.airports_in_range(34.4, -119.8, 30)) == []
+    assert "nasr_db_path" in caplog.text
+
+
+def test_cifp_path_beside_nasr_is_ignored_quietly(tmp_path, caplog):
+    p = tmp_path / "navdata/current/airports.sqlite"
+    _mkdb(p, [("1", "KABC", 42.3, -83.0)])
+    with caplog.at_level("WARNING"):
+        db = make_airport_db({"nasr_db_path": str(p),
+                              "cifp_path": str(tmp_path / "FAACIFP18")})
+    assert isinstance(db, NASRAirportDB)
+    assert "cifp_path" not in caplog.text
+
+
+def test_no_legacy_cifp_or_spatial_import_in_src():
+    """The DoD line for VVFR1: pyavtools itself stays (fix, utilities), but
+    nothing under src/ imports its CIFP object model or Spatial projection."""
+    import re
+    src = Path(__file__).resolve().parents[3] / "src"
+    pat = re.compile(r"^\s*(import|from)\s+pyavtools(\.|\s+import\s+)"
+                     r"[^#\n]*\b(CIFPObjects|Spatial)\b", re.M)
+    hits = [str(f.relative_to(src)) for f in src.rglob("*.py")
+            if pat.search(f.read_text(encoding="utf-8"))]
+    assert hits == []
+
+
 def test_provider_dir_merges_us_and_canada(tmp_path):
     us = tmp_path / "navdata/current/airports.sqlite"
     _mkdb(us, [("1", "KABC", 42.30, -83.00)])
