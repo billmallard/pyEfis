@@ -67,6 +67,34 @@ The baseline rate varies from run to run (3 to 16 of 96, G79 had 4). The
 isolated instance ran fullscreen over the bench's own kiosk pyEfis, which kept
 running underneath.
 
+## The fix on the bench, and the rerun on the kiosk (2026-11-13)
+
+Bill accepted turning off page flipping on the Beelink (AER-5478, 2026-11-13).
+`/etc/X11/xorg.conf.d/20-aer5478-noflip.conf` (copy in `tools/`) sets the
+modesetting driver's `Option "PageFlip" "off"`. The X log of the restarted
+server shows it applied. To revert, delete the file and restart `pyefis`
+(xinit restarts X).
+
+The rerun used the bench's own kiosk pyEfis, staged with the probe cherry-picked
+onto current `dev` (branch `aer-5478/g82-probe-on-dev`, `de1c15f6` = `dev`
+`161ded3a` + the probe). It was the G79 sequence, data stale, and both
+recorders (`tools/kiosk.sh`).
+
+| run | condition | taps | click to flush, max | X image late > 0.2 s | X image max | scanout raw max | scanout minus X, on-time taps |
+|---|---|---|---|---|---|---|---|
+| kiosk1 | PageFlip off, cold | 96 | 0.531 (tap 0 first build) | 1 (tap 0, flush itself 0.531) | 0.600 | 0.712 (tap 0) | 0.077-0.135 |
+| kiosk2 | PageFlip off, warm | 96 | 0.045 | **0** | **0.113** | 0.190 | about 0.07 |
+
+kiosk2 meets the done-when: 96 taps, the same sequence, with no tap later than
+0.2 s on the X image, against G79's baseline of 4. In kiosk1, tap 0's own flush
+came 0.531 s after the click (the first entry-page build after the restart),
+and the X image followed it 0.07 s later.
+
+Twice on this bench, a bench-deploy restart left the attitude panel black on
+the scanout too, after the deploy script's startup SIGUSR1 grab. That is
+pyEfis#360 (open). A plain `systemctl --user restart pyefis` with no grab
+rendered normally both times, with PageFlip off.
+
 ## The synthetic reproducer did not reproduce it
 
 `tools/repro.py` is a fullscreen window shaped like the panel: a QGraphicsView
@@ -110,12 +138,11 @@ needs root, and the bench user has no sudo).
 
 ## Not covered
 
-- The fix on the X image is shown only by preventing flips with a clip
-  window. A persistent version (modesetting `Option "PageFlip" "off"`) needs
-  an X server restart and was not tried. Whether copy mode then tears on fast
-  motion is unmeasured.
-- The bench's own kiosk instance was not measured: a review held the bench,
-  so these runs used an isolated pyEfis over it (below).
+- Whether copy mode (PageFlip off) tears on fast motion is unmeasured. A
+  scanout grab copies whole buffers and cannot show tearing; that needs an eye
+  on the panel.
+- The 2026-11-12 A/B runs used an isolated pyEfis over the kiosk, because a
+  review held the bench. The 2026-11-13 rerun is on the kiosk itself.
 - The X server mechanism (why the root pixmap catches up only on a later
   present) is inferred from the flip/no-flip A/B, not traced in the server.
 
