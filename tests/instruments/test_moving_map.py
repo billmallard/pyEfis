@@ -998,7 +998,7 @@ def _panmap(qtbot, orientation="track_up", track=0.0):
     w.ownship_position = 50          # cy = 200
     w.range_nm = 10.0                # px_per_m = 200 / (10*1852)
     w.orientation = orientation
-    w._track = track
+    w._track = w._track_true = track
     return w
 
 
