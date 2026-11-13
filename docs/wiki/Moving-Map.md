@@ -72,7 +72,7 @@ arc instead of the top edge.
 
 | Element | What it shows |
 |---|---|
-| **Compass arc** | At the selected range, ticks every 5°, a numeral every 30° in tens (`6` is 060). |
+| **Compass arc** | At the selected range, ticks every 5°, a numeral every 30° in tens (`6` is 060). Labelled magnetic: the map turns by true track, and the arc is offset by `MAGVAR`, so the bearing under the pointer is the TRK box's. With no `MAGVAR` published the arc reads true. |
 | **TRK box** | `TRK`, the magnetic track and `MAG` over the top of the arc, with a pointer under it. Grey when `TRACKM` is stale. |
 | **Top left** | `GS` and `TAS`, then the wind as direction°/speed with an arrow pointing the way it blows. |
 | **Top right** | The active waypoint in magenta, its ETA in UTC (`HHMM.Mz`, now plus `WPETE`) and its distance in NM. Only while a plan is active (`FPLSTATE` not 0); ETA and distance are left out in the `VECTORS` phase. |
@@ -101,7 +101,9 @@ panel under the TRK box, clear of the deviation scale.
 - **Back to your position:** double-tap, or tap the amber **CTR** chip in the
   top right. The map re-centres by itself 30 seconds after the last gesture.
 - **Orientation** is track up or north up. It is set in the configurator, or
-  switched by a key bound to the map.
+  switched by a key bound to the map. Track up puts the true ground track
+  (`TRACK`) at the top, so your path over the ground runs straight up the
+  screen; the ownship arrow points along the true track in north up.
 
 ### Tap something
 
@@ -185,7 +187,7 @@ Trimmed from the bench panel:
 
 ### Feeding it
 
-The map reads `LAT`, `LONG`, `TRACKM`, `ALT` and `MAGVAR`, and the flight-plan
+The map reads `LAT`, `LONG`, `TRACK`, `TRACKM`, `ALT` and `MAGVAR`, and the flight-plan
 keys fix-gateway's flight-plan engine publishes. ND mode also reads `GS`, `TAS`,
 `WINDDIR`, `WINDSPD`, `WPDIS`, `WPETE`, `GSI` and `GSV`. It writes `DTOID`, `DTOLAT`,
 `DTOLON`, `DTOTYPE` and `FPLCMD` for a Direct-To, the route block for an
