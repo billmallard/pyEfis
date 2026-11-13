@@ -2192,6 +2192,15 @@ class HSI(QGraphicsView):
             self._brg_label_rect[_n] = (lx - pad, ly - fm.ascent() - pad,
                                         tw + 2 * pad, th + 2 * pad)
 
+    @staticmethod
+    def _send_key(key, value):
+        """Set a FIX key and send it to fix-gateway. fix.db.set_value() alone
+        only changes pyEfis's local copy (pyEfis #294): the source taps looked
+        right on the glass while the gateway's select never re-routed."""
+        item = fix.db.get_item(key)
+        item.value = value
+        item.output_value()
+
     def _cycle_bearing_src(self, n):
         """Step pointer n Off -> each source that is not the CDI's (VOR1, VOR2,
         GPS order) -> Off (HSIBRG1). A source step writes BRGnSRC, so the
@@ -2209,7 +2218,7 @@ class HSI(QGraphicsView):
         else:
             self._brgOn[n] = True
             if self._brg_src_index(n) != cycle[i]:
-                fix.db.set_value("BRG%dSRC" % n, float(cycle[i]))
+                self._send_key("BRG%dSRC" % n, float(cycle[i]))
                 # Track the write at once; the item's own valueChanged lands
                 # the same value through _setBrgSrc.
                 self._brgSrc[n] = float(cycle[i])
@@ -2223,7 +2232,7 @@ class HSI(QGraphicsView):
             px, py = event.pos().x(), event.pos().y()
             if r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]:
                 cur = int(round(self._navsrc)) if self._navsrc is not None else 2
-                fix.db.set_value("NAVSRC", float((cur + 1) % 3))
+                self._send_key("NAVSRC", float((cur + 1) % 3))
                 event.accept()
                 return
         # Tapping a BRG tab row or a bearing-source label steps that pointer

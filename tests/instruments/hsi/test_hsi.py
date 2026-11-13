@@ -209,13 +209,18 @@ def test_hsi_source_label_tap_cycles_navsrc(fix, qtbot, monkeypatch):
     widget.resize(200, 200)
     widget.show()
     qtbot.waitExposed(widget)
+    fix.db.define_item("NAVSRC", "NAVSRC", "float", 0.0, 3.0, "", 0, "")
     widget.navsrcdb = object()             # simulate a panel with a nav source
     widget._navsrc = 2                      # GPS
     widget.paintEvent(QPaintEvent(widget.rect()))   # sets the tap rect
     assert widget._source_label_rect is not None
 
+    # Record what is queued for fix-gateway, not the local value: a local
+    # set_value() never left pyEfis (pyEfis #294), and a test patched on it
+    # passed while the bench gateway never saw a tap (AER-5548).
     written = []
-    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: written.append(
+        tuple(b.decode().split(";")[:2])))
 
     class _P:
         def __init__(s, x, y): s._x, s._y = x, y
@@ -229,7 +234,7 @@ def test_hsi_source_label_tap_cycles_navsrc(fix, qtbot, monkeypatch):
 
     r = widget._source_label_rect
     widget.mousePressEvent(_Ev(r[0] + r[2] // 2, r[1] + r[3] // 2))   # inside label
-    assert written == [("NAVSRC", 0.0)]    # GPS(2) -> NAV1(0)
+    assert written == [("NAVSRC", "0.0")]  # GPS(2) -> NAV1(0)
 
 
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):
@@ -1554,14 +1559,19 @@ def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
     """pyEfis#140 acceptance #5: the whole tab rect (not just the glyphs) is
     the tap target, and mousePressEvent still cycles NAVSRC unchanged."""
     widget = _mk_hsi(qtbot, font_percent=0.08)
+    fix.db.define_item("NAVSRC", "NAVSRC", "float", 0.0, 3.0, "", 0, "")
     widget.navsrcdb = object()
     widget._navsrc = 2                               # GPS
     widget.paintEvent(QPaintEvent(widget.rect()))
     r = widget._source_label_rect
     assert r is not None
 
+    # Record what is queued for fix-gateway, not the local value: a local
+    # set_value() never left pyEfis (pyEfis #294), and a test patched on it
+    # passed while the bench gateway never saw a tap (AER-5548).
     written = []
-    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: written.append(
+        tuple(b.decode().split(";")[:2])))
 
     class _P:
         def __init__(s, x, y): s._x, s._y = x, y
@@ -1575,7 +1585,7 @@ def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
 
     # A point near the tab's rounded-left edge (not just its text glyphs).
     widget.mousePressEvent(_Ev(r[0] + 2, r[1] + r[3] / 2))
-    assert written == [("NAVSRC", 0.0)]
+    assert written == [("NAVSRC", "0.0")]
 
 
 def _painted_source_label_pen(widget, px, py, ph):
@@ -1747,17 +1757,23 @@ def test_brg_tab_labels(fix, qtbot):
     assert widget._bearing_tab_label(2, False) == "BRG2 GPS"
 
 
-def test_brg_tab_tap_steps_that_rows_pointer(fix, qtbot):
-    """Each row is its own tap target: tapping row 2 steps pointer 2 only."""
+def test_brg_tab_tap_steps_that_rows_pointer(fix, qtbot, monkeypatch):
+    """Each row is its own tap target: tapping row 2 steps pointer 2 only.
+    A source step reaches fix-gateway (queued), not just the local copy."""
     widget = _mk_brg_hsi(qtbot, fix, pointers=(1, 2))
+    sent = []
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: sent.append(
+        tuple(b.decode().split(";")[:2])))
     widget.paintEvent(QPaintEvent(widget.rect()))
     _tap_rect(widget, widget._brg_tab_rects[2])
     assert widget._brgOn == {1: False, 2: True}
     assert fix.db.get_item("BRG2SRC").value == 0.0       # VOR1 (CDI is GPS)
+    assert sent == []                                     # already VOR1
     widget.paintEvent(QPaintEvent(widget.rect()))
     _tap_rect(widget, widget._brg_tab_rects[1])
     assert widget._brgOn == {1: True, 2: True}
     assert fix.db.get_item("BRG1SRC").value == 0.0
+    assert sent == [("BRG1SRC", "0.0")]                   # GPS -> VOR1, sent
     for _ in range(2):                                    # VOR2, then Off
         widget.paintEvent(QPaintEvent(widget.rect()))
         _tap_rect(widget, widget._brg_tab_rects[1])
