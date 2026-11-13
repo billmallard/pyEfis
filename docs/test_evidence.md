@@ -42,6 +42,23 @@ Sections:
   issue form and the simulator CI tier exist. The empty state says so.
 - **Every test**, grouped by file.
 
+With `--safety docs/safety` the same `page` step renders the two documents in
+`docs/safety/` as pages of the site, linked from the index and from a link bar on every
+page (CERT18b):
+
+- `hazard_assessment.html` from `fha_avionics_stack.md`. Each requirement ID on it
+  links to that ID's row in the Requirements table, and each Requirements row whose ID
+  sits in a hazard row's mitigation column says "cited in hazard rows" and links back to
+  each of them. An ID the
+  assessment cites that the table does not list (canfix-spec's `CFX-` IDs, or a spec
+  written in a form `parse_requirements` does not read) is marked where it appears and
+  collected in a closing section, never dropped.
+- `tool_inventory.html` from `tool_inventory.md`.
+
+Each document's opening statement, that nothing in the stack is certified, approved or
+compliant, becomes the page's notice box. The documents pass through `sanitize()` like
+everything else, and `page` refuses to publish when either document is missing.
+
 The same job also renders `evidence.html`, an index of every committed evidence image
 and what its sidecar says about it (commit, run, device), with
 `tools/evidence_index.py` (TV12). The convention is in `evidence.md`.

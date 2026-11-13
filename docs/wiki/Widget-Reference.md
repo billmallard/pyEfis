@@ -92,7 +92,7 @@ See [Engine & Data Gauges](Widgets-Engine-Gauges#ganged-gauges).
 | `turn_coordinator` | Turn Coordinator | attitude | `ROT`, `ALAT` | [Flight Instruments](Widgets-Flight-Instruments#turn_coordinator) |
 | `value_text` | Value Text | text | -- | [Text & Interactive](Widgets-Text-and-Interactive#value_text) |
 | `vertical_bar_gauge` | Vertical Bar Gauge | gauge | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#vertical_bar_gauge) |
-| `virtual_vfr` | Virtual VFR / Synthetic Vision | attitude | `PITCH`, `LAT`, `LONG`, `COURSE`, `ALT`, `ROLL`, `ALAT`, `TAS` | [Attitude & SVS](Widgets-Attitude-and-SVS#virtual_vfr) |
+| `virtual_vfr` | Virtual VFR / Synthetic Vision | attitude | `PITCH`, `LAT`, `LONG`, `ALT`, `ROLL`, `ALAT`, `TAS` | [Attitude & SVS](Widgets-Attitude-and-SVS#virtual_vfr) |
 | `vsi_dial` | VSI Dial | vertical_speed | `VS` | [Flight Instruments](Widgets-Flight-Instruments#vsi_dial) |
 | `vsi_pfd` | VSI (PFD) | vertical_speed | `VS` | [Flight Instruments](Widgets-Flight-Instruments#vsi_pfd) |
 | `weston` | Weston | system | -- | [System & Containers](Widgets-System#weston) |

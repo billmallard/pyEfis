@@ -82,6 +82,12 @@ ENGINE_OUTPUT_KEYS = (
 # route the engine refused.
 OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP", "FPLLDSEQ")
 
+# TURN3 (fix-gateway flightplan.yaml, AER-5418): FPLfTA, each slot's fly-by
+# turn anticipation in nm, the one slot field the engine writes. Read and
+# watched when the gateway has it, never probed or written: an older
+# gateway reads as no arcs, the square corners drawn before the key.
+TURN_FIELD = "TA"
+
 _STATIC_KEYS = (
     "FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSEGCNT", "FPLDBCYC",
     "DTOID", "DTOLAT", "DTOLON", "DTOTYPE",
@@ -379,6 +385,12 @@ class FixBridge:
             item.valueWrite[item.dtype].connect(self._notify)
         for _key, item in self._optional_items():
             item.valueWrite[item.dtype].connect(self._notify)
+        for n in range(1, MAX_SLOTS + 1):
+            try:
+                item = self._get(_slot_key(n, TURN_FIELD))
+            except KeyError:
+                break
+            item.valueWrite[item.dtype].connect(self._notify)
         ack_item = self._get("FPLCMDACK")
         ack_item.valueWrite[ack_item.dtype].connect(self._on_cmdack)
 
@@ -413,6 +425,24 @@ class FixBridge:
         return RouteBlock(name=self._get("FPLNAME").value,
                            seq=int(self._get("FPLSEQ").value), waypoints=slots,
                            segments=segments, cycle=self._get("FPLDBCYC").value or "")
+
+    def read_turn_anticipations(self, count: int) -> list[float]:
+        """``FPLfTA`` for slots 1..*count*: the engine's fly-by turn
+        anticipation at each fix, 0.0 for no arc. All 0.0 when the gateway
+        does not publish the key (no arcs, as before it existed)."""
+        if not self.available:
+            return [0.0] * count
+        out = []
+        for i in range(1, count + 1):
+            try:
+                value = self._get(_slot_key(i, TURN_FIELD)).value
+            except KeyError:
+                return [0.0] * count
+            try:
+                out.append(max(float(value or 0.0), 0.0))
+            except (TypeError, ValueError):
+                out.append(0.0)
+        return out
 
     def read_plan(self):
         """The route on the bus as a ``model.FlightPlan``, segments and all

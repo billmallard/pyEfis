@@ -4,6 +4,15 @@ This document captures three intertwined questions that came up while
 considering how SVS relates to the existing Virtual VFR feature, and what
 the next concrete step on SVS should be.
 
+> **Superseded (VVfr removed, VVFR1 / AER-5417, 2026-11).** This is a
+> historical design record. Option 4 below shipped, and the legacy Virtual VFR
+> overlay it compares against has since been deleted: upstream MakerPlane asked
+> for its replacement (2026-10-30), so the "unlikely to be welcome upstream"
+> reasoning in section 3 no longer applies. `VirtualVfr.py` and the
+> `pyavtools.Spatial` projection it used are no longer in the tree; the links
+> below point at code that is gone. `virtual_vfr` remains the instrument type
+> for the attitude display with SVS.
+
 ## Background
 
 pyEfis already has a runway/airport rendering feature called **Virtual VFR**
