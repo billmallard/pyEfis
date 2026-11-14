@@ -1,0 +1,21 @@
+# PA14 slice C (AER-1613): FERN7's last leg VNY-DARTS, then the KSMO RNAV (GPS)
+# RWY 21 from DARTS (no transition: vectors to final in the box), the missed
+# approach to SADDE and three minutes in the SADDE hold. From 4 nm before VNY
+# at 4,500 ft (DARTS is +4,200).
+name: pa14-c-vny-ksmo-r21
+departure: KSBA
+destination: KSMO
+cifp: {cycle: "2611"}
+aircraft: {tas_kt: 110}
+start: {fix: VNY, before_nm: 4.0, alt_ft: 4500, heading: on_course}
+route:
+  - waypoint: FIM
+  - waypoint: VNY
+  - procedure: {airport: KSMO, approach: R21, missed: true}
+pilot:
+  missed_after_map_s: 8
+events:
+  - id: hold
+    at: {hold_at: SADDE}
+    do: {hold_min: 3}
+end: {after_event: hold, max_s: 2500}
