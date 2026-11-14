@@ -38,6 +38,14 @@
 #  polylines and painted through one affine transform taken from
 #  MapTransform, so a frame costs no per-vertex Python.
 #
+#  TURN3 (AER-5418, brief section 3.3.1 row 2): each fly-by turn is drawn
+#  as its arc, sized from the engine's FPLfTA, so through a turn the
+#  magenta path is the one the needle is measured from. The arc splits at
+#  its apex, where the engine moves FPLACTLEG on, so the magenta part
+#  moves there too. The layer never decides where a turn is: a fix with
+#  FPLfTA 0 (fly-over, over 120 deg, the MAP, an older gateway) stays a
+#  square corner.
+#
 #  Guardrail 1 on the map: a route the engine rejected draws nothing.
 #  After a rejected commit the slots on the bus still hold the refused
 #  route (the engine keeps flying the one it had), and only the engine
@@ -48,6 +56,7 @@
 
 import math
 import time
+from dataclasses import replace
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPen, QPolygonF, QTransform
@@ -360,7 +369,7 @@ def _leg_color(to_idx, act_leg, off_route):
     return FUTURE
 
 
-def build_leg_draws(route, engine, paths, kinds=None):
+def build_leg_draws(route, engine, paths, kinds=None, lead=None):
     """What :meth:`FlightPlanLayer.paint` strokes for the route's legs, in
     order: ``[(color, width, style, ref), ...]``. ``style`` is ``solid``,
     ``missed`` (a leg into a slot of the missed approach segment) or
@@ -373,7 +382,10 @@ def build_leg_draws(route, engine, paths, kinds=None):
     while the engine's FROM point (``FPLFRLAT``/``LON``) is where the path
     starts; after a direct-to into its fix it is the straight FROM -> TO
     line the engine flies. Legs still ahead in the active segment are wider
-    (:func:`build_segment_emphasis`)."""
+    (:func:`build_segment_emphasis`). *lead* is the FROM -> slot 1 path
+    when ``FPLACTLEG`` = 1 and slot 1 is a fly-by turn
+    (:func:`flightplan.leg_paths.apply_flyby_turns`), drawn as ``("lead",
+    None)`` in place of the straight line."""
     off_route = _off_route_direct(engine)
     act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
     fr = (_engine_val(engine, "FPLFRLAT", 0.0) or 0.0, _engine_val(engine, "FPLFRLON", 0.0) or 0.0)
@@ -382,7 +394,7 @@ def build_leg_draws(route, engine, paths, kinds=None):
     wide = set(_emphasis_slots(route, engine))
     out = []
     if act_leg == 1 and not off_route:
-        out.append((ACTIVE, _ACTIVE_WIDTH, "solid", ("line", (fr, to))))
+        out.append((ACTIVE, _ACTIVE_WIDTH, "solid", ("lead", None) if lead is not None else ("line", (fr, to))))
     for k, leg in enumerate(paths):
         to_idx = leg.to_slot
         color = _leg_color(to_idx, act_leg, off_route)
@@ -394,8 +406,9 @@ def build_leg_draws(route, engine, paths, kinds=None):
             width = _SEGMENT_WIDTH
         else:
             width = _LEG_WIDTH
+        origin = leg.origin or leg.points[0]
         on_path = (leg.vector or len(leg.points) > 2) and \
-            fp_geo.distance_nm(fr[0], fr[1], *leg.points[0]) <= _FROM_TOL_NM
+            fp_geo.distance_nm(fr[0], fr[1], *origin) <= _FROM_TOL_NM
         if color == ACTIVE and not on_path:
             out.append((color, width, style, ("line", (fr, to))))
         else:
@@ -486,6 +499,16 @@ class _Snapshot:
         self.kinds = kinds
         self.polys = [_polyline(leg.points) for leg in paths]
         self.patterns = [_polyline(leg.pattern) if leg.pattern else None for leg in paths]
+        self.set_turns(None, paths, None)
+
+    def set_turns(self, turn_key, paths, lead):
+        """The paths as drawn, with the fly-by turns (TURN3) applied for
+        *turn_key*. The route's own geometry above is never touched."""
+        self.turn_key = turn_key
+        self.draw_paths = paths
+        self.draw_polys = self.polys if paths is self.paths else [_polyline(leg.points) for leg in paths]
+        self.lead = lead
+        self.lead_poly = _polyline(lead.points) if lead is not None else None
 
 
 class _BridgeRelay(QObject):
@@ -549,6 +572,20 @@ class FlightPlanLayer(MapLayer):
                 int(get("FPLSEGCNT").value), ld,
                 None if magvar is None else round(magvar, 1))
 
+    def _turn_key(self, count, engine):
+        """What the fly-by turns (TURN3) are drawn from: FPLfTA, and the
+        active leg and FROM point the active fix turns from. None when no
+        fix turns, so a plan without arcs never re-applies them."""
+        ta = tuple(self._bridge.read_turn_anticipations(count))
+        if not any(ta) or _off_route_direct(engine):
+            return None
+        act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
+        fr_item = engine.get("FPLFRLAT")
+        fr = None
+        if act_leg and fr_item is not None and not fr_item.fail:
+            fr = (round(fr_item.value or 0.0, 6), round(_engine_val(engine, "FPLFRLON", 0.0) or 0.0, 6))
+        return ta, act_leg, fr
+
     def collect(self, xform):
         """Rebuild the leg geometry when the route, the loaded-route seq or
         the variation changed; otherwise keep the snapshot. Runs on every
@@ -556,15 +593,38 @@ class FlightPlanLayer(MapLayer):
         if self._bridge is None or not self._bridge.available:
             return
         key = self._route_key()
-        if self._snapshot is not None and self._snapshot.key == key:
+        snap = self._snapshot
+        if snap is None or snap.key != key:
+            route = self._bridge.read_route()
+            engine = self._bridge.read_engine()
+            if route is None or engine is None:
+                return
+            loaded = route_loaded(route, engine)
+            paths = fp_legs.build_leg_paths(route.waypoints, key[4] or 0.0) if loaded else []
+            snap = self._snapshot = _Snapshot(key, route, loaded, paths, segment_kinds(route))
+        elif not snap.loaded:
             return
-        route = self._bridge.read_route()
-        engine = self._bridge.read_engine()
-        if route is None or engine is None:
+        else:
+            engine = self._bridge.read_engine()
+            if engine is None:
+                return
+        if snap.loaded:
+            self._apply_turns(snap, engine, key[4] or 0.0)
+
+    def _apply_turns(self, snap, engine, magvar):
+        """Round the fly-by turns (TURN3) from the engine's FPLfTA, on a
+        copy of the route's paths, when the turns or the leg they are
+        flown from changed. Never rebuilds the route's geometry."""
+        turn_key = self._turn_key(len(snap.route.waypoints), engine)
+        if turn_key == snap.turn_key:
             return
-        loaded = route_loaded(route, engine)
-        paths = fp_legs.build_leg_paths(route.waypoints, key[4] or 0.0) if loaded else []
-        self._snapshot = _Snapshot(key, route, loaded, paths, segment_kinds(route))
+        if turn_key is None:
+            snap.set_turns(None, snap.paths, None)
+            return
+        ta, act_leg, fr = turn_key
+        paths = [replace(leg, points=list(leg.points)) for leg in snap.paths]
+        lead = fp_legs.apply_flyby_turns(paths, snap.route.waypoints, list(ta), magvar, act_leg, fr)
+        snap.set_turns(turn_key, paths, lead)
 
     def paint(self, p, x):
         t0 = time.perf_counter()
@@ -590,7 +650,7 @@ class FlightPlanLayer(MapLayer):
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setCosmetic(True)
         if snap.loaded:
-            draws = build_leg_draws(route, engine, snap.paths, snap.kinds)
+            draws = build_leg_draws(route, engine, snap.draw_paths, snap.kinds, snap.lead)
         else:
             draws = self._unloaded_draws(engine)
         lonlat = lonlat_transform(x)
@@ -603,7 +663,10 @@ class FlightPlanLayer(MapLayer):
                 (la1, lo1), (la2, lo2) = ref
                 p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
                 continue
-            poly = snap.polys[ref] if kind == "path" else snap.patterns[ref]
+            if kind == "lead":
+                poly = snap.lead_poly
+            else:
+                poly = snap.draw_polys[ref] if kind == "path" else snap.patterns[ref]
             p.save()
             p.setWorldTransform(lonlat, True)
             p.drawPolyline(poly)

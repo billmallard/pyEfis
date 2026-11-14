@@ -322,7 +322,12 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._ack_toast.connect(self.show_toast)
 
         self._lat = self._lon = 0.0
+        # _track is TRACKM (magnetic): what the TRK box and the rose read.
+        # _track_true is TRACK, what the map turns by, since the layers project
+        # true lat/lon about true north (P3g). None on a gateway without TRACK:
+        # the map then turns by TRACKM, as it did before.
         self._track = 0.0
+        self._track_true = None
         self._alt_ft = 0.0
         self._old = {}
 
@@ -385,6 +390,13 @@ class MovingMap(LiveBindingMixin, QWidget):
             except KeyError:
                 # Graceful missing-key pattern: run with what exists.
                 self._old[key] = True
+        try:
+            item = fix.db.get_item("TRACK")
+            item.valueChanged[float].connect(
+                lambda v: setattr(self, "_track_true", v))
+            self._track_true = item.value
+        except KeyError:
+            pass
 
     # --- frame clock (#89) --------------------------------------------------
     @property
@@ -524,7 +536,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         m_per_px = (float(self.range_nm) * NM_M) / max(1.0, self.height() / 2.0)
         q = max(1e-7, (0.5 * m_per_px) / M_PER_DEG_LAT)  # deg per half-px
         pose = (round(self._lat / q), round(self._lon / q),
-                round(self._track * 4.0), round(self._alt_ft / 100.0),
+                round(self._track * 4.0), round(self.view_track() * 4.0),
+                round(self._alt_ft / 100.0),
                 self.view_orientation(), float(self.range_nm),
                 round(self._pan_e), round(self._pan_n),
                 round(self._rot_offset * 4.0),
@@ -615,6 +628,29 @@ class MovingMap(LiveBindingMixin, QWidget):
     def nd_active(self):
         """True while an ND mode (EXPANDED or CTR) is drawn."""
         return map_nd.normalize_mode(self.nd_mode) != "off"
+
+    def view_track(self):
+        """The ground track the map turns by, true: ``TRACK``, or ``TRACKM``
+        on a gateway without it. The layers project true lat/lon about true
+        north, so a magnetic rotation would leave the ground under the
+        aircraft's path MAGVAR off screen-up (P3g)."""
+        return self._track if self._track_true is None else self._track_true
+
+    def rose_variation(self):
+        """Degrees to add to the true bearing at the top of the screen for
+        the ND rose to read magnetic: ``MAGVAR`` (MAG = TRUE + VAR) while the
+        map turns by ``TRACK``; 0 when it turns by ``TRACKM`` (already
+        magnetic) or the gateway publishes no ``MAGVAR``."""
+        if self._track_true is None:
+            return 0.0
+        return self._magvar() or 0.0
+
+    def ownship_screen_deg(self, x):
+        """Clockwise screen angle of the ownship nose: the true track as it
+        lands on screen. 0 in the locked track-up case, the true track in
+        locked north-up, and correct under a manual rotation offset (track
+        minus the screen rotation)."""
+        return self.view_track() - math.degrees(x.rot)
 
     def view_orientation(self):
         """The orientation on screen: the ND is track-up whatever
@@ -850,7 +886,8 @@ class MovingMap(LiveBindingMixin, QWidget):
             return (self._pan_e, self._pan_n)
         px = (max(1.0, self._range_px(self.height() or 1))
               / max(1.0, float(self.range_nm) * NM_M))      # screen px / metre
-        track = self._track if self.view_orientation() == "track_up" else 0.0
+        track = self.view_track() if self.view_orientation() == "track_up" \
+            else 0.0
         rot = math.radians(track + self._rot_offset)
         c, s = math.cos(rot), math.sin(rot)
         # View centre moves opposite the finger drag, un-rotated to world ENU.
@@ -1292,7 +1329,8 @@ class MovingMap(LiveBindingMixin, QWidget):
 
     # --- painting ----------------------------------------------------------
     def _transform(self):
-        track = self._track if self.view_orientation() == "track_up" else 0.0
+        track = self.view_track() if self.view_orientation() == "track_up" \
+            else 0.0
         rot = track + self._rot_offset
         anchor = self._anchor_frac()
         # View centre = ownship + the manual pan offset (east/north metres).
@@ -1350,10 +1388,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         osp = x.to_screen(self._lat, self._lon)   # off-centre when panned
         p.save()
         p.translate(osp.x(), osp.y())
-        # Nose points along the ground track as it lands on screen: 0 in the
-        # locked track-up case, self._track in locked north-up, and correct
-        # under a manual rotation offset (track minus the screen rotation).
-        p.rotate(self._track - math.degrees(x.rot))
+        p.rotate(self.ownship_screen_deg(x))
         p.setPen(QPen(QColor(Qt.GlobalColor.black), 1))
         p.setBrush(QBrush(col))
         p.drawPolygon(QPolygonF([

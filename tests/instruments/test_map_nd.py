@@ -148,7 +148,7 @@ def test_off_transform_is_unchanged(qtbot):
     """Off: ownship_position anchors ownship and range reaches the top edge,
     exactly as before the ND existed."""
     m = _map(qtbot, ownship_position=30, orientation="north_up")
-    m._track = 72.0
+    m._track = m._track_true = 72.0
     x = m._transform()
     assert x.cy == pytest.approx(H * 0.7)
     assert x.range_px == pytest.approx(x.cy)
@@ -159,7 +159,7 @@ def test_off_transform_is_unchanged(qtbot):
 def test_expanded_anchor_range_and_track_up(qtbot):
     m = _map(qtbot, nd_mode="expanded", ownship_position=30,
              orientation="north_up")
-    m._track = 72.0
+    m._track = m._track_true = 72.0
     x = m._transform()
     g = nd.expanded_geometry(W, H)
     assert x.cy == pytest.approx(H * 0.82)               # HSI arc own_y
@@ -182,7 +182,7 @@ def test_ctr_anchor_range_and_track_up(qtbot):
     track-up whatever orientation says."""
     m = _map(qtbot, nd_mode="ctr", ownship_position=30,
              orientation="north_up")
-    m._track = 72.0
+    m._track = m._track_true = 72.0
     x = m._transform()
     g = nd.ctr_geometry(W, H)
     assert m.nd_active()
@@ -329,7 +329,7 @@ def test_trk_box_keeps_the_range_ring_label_out(fix, qtbot, w, h):
     m = _map(qtbot, nd_mode="expanded")
     m.resize(w, h)
     m._build_layers()
-    m._track = 72.0
+    m._track = m._track_true = 72.0
     x = m._transform()
     rings = _ring_layer(m)
     assert rings.label_angle == 0.0          # the default
@@ -376,7 +376,8 @@ def _render_nd(fix, qtbot, monkeypatch, panel=None):
     m = _map(qtbot, nd_mode="expanded", layer_terrain=False,
              layer_roads=False, layer_rivers=False, layer_range_rings=False)
     m._build_layers()
-    m._lat, m._lon, m._track = 34.38, -120.0, 72.0
+    m._lat, m._lon = 34.38, -120.0
+    m._track = m._track_true = 72.0
     img = QImage(W, H, QImage.Format.Format_ARGB32)
     img.fill(0)
     m.render(img)
@@ -433,7 +434,7 @@ def test_terrain_window_covers_the_panel_with_ownship_low(fix, qtbot, track):
     from pyefis.instruments.map.layers import window_covers_viewport
     m = _map(qtbot, nd_mode="expanded")
     m.resize(650, 1000)
-    m._track = track
+    m._track = m._track_true = track
     x = m._transform()
     assert x.cover_h == pytest.approx(2 * 0.82 * 1000)
     assert window_covers_viewport(x, _window_entry(x, x.cover_h))
@@ -691,3 +692,137 @@ def test_paint_off_draws_no_nd(fix, qtbot, monkeypatch):
     m.nd_mode = "ctr"
     m.render(img)
     assert len(calls) == 2
+
+
+# --- P3g: the map turns by true track, the rose reads magnetic --------------
+
+_DTYPES.update({"TRACK": "float", "MAGVAR": "float"})
+
+
+def _var_map(fix, qtbot, **opts):
+    """TRACK 034 true, MAGVAR -12 (east, MAG = TRUE + VAR): TRACKM 022, the
+    P3b bench case (pyEfis#445)."""
+    _define(fix, "TRACK", 34.0)
+    _define(fix, "TRACKM", 22.0)
+    _define(fix, "MAGVAR", -12.0)
+    return _map(qtbot, **opts)
+
+
+@pytest.mark.parametrize("nd_mode", ["off", "expanded", "ctr"])
+def test_track_up_turns_by_true_track(fix, qtbot, nd_mode):
+    """The layers project true lat/lon about true north, so the bearing at
+    the top of the screen is TRACK, not TRACKM, and the nose points up."""
+    m = _var_map(fix, qtbot, orientation="track_up", nd_mode=nd_mode)
+    x = m._transform()
+    assert math.degrees(x.rot) == pytest.approx(34.0)
+    assert m.ownship_screen_deg(x) == pytest.approx(0.0)
+
+
+def test_north_up_ownship_points_along_true_track(fix, qtbot):
+    m = _var_map(fix, qtbot, orientation="north_up")
+    x = m._transform()
+    assert x.rot == 0.0
+    assert m.ownship_screen_deg(x) == pytest.approx(34.0)
+    # Under a manual rotation the nose still lands on the true track.
+    m.rotate_by(10.0)
+    x = m._transform()
+    assert m.ownship_screen_deg(x) == pytest.approx(24.0)
+
+
+def test_track_follows_the_live_track_key(fix, qtbot):
+    m = _var_map(fix, qtbot, orientation="track_up")
+    fix.db.set_value("TRACK", 100.0)
+    fix.db.set_value("TRACKM", 88.0)
+    x = m._transform()
+    assert math.degrees(x.rot) == pytest.approx(100.0)
+    assert m._track == pytest.approx(88.0)          # the TRK box reads mag
+
+
+@pytest.mark.parametrize("nd_mode", ["expanded", "ctr"])
+def test_rose_reads_magnetic_under_the_lubber(fix, qtbot, nd_mode):
+    m = _var_map(fix, qtbot, nd_mode=nd_mode)
+    x = m._transform()
+    assert nd.rose_up(m, x) == pytest.approx(22.0)   # == TRACKM, the box
+
+
+def _drawn_numerals(m, monkeypatch):
+    """``(label, centre x)`` for the rose numerals the ND paints, recorded
+    without keeping the painter (see test_paint_off_draws_no_nd)."""
+    from PyQt6.QtGui import QPainter
+    seen = []
+    real = QPainter.drawText
+
+    def spy(self, *args):
+        if len(args) == 3 and hasattr(args[0], "center") \
+                and isinstance(args[2], str) and args[2].isdigit():
+            seen.append((args[2], args[0].center().x(), args[0].center().y()))
+        return real(self, *args)
+
+    monkeypatch.setattr(QPainter, "drawText", spy)
+    img = QImage(W, H, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    m.render(img)
+    monkeypatch.undo()
+    return seen
+
+
+def test_rose_numerals_painted_magnetic(fix, qtbot, monkeypatch):
+    """With TRACKM 022 at the top, the 030 numeral ("3") sits 8 deg right of
+    the lubber. Labelled true (034 at the top) it would sit 4 deg left."""
+    m = _var_map(fix, qtbot, nd_mode="expanded", layer_terrain=False,
+                 layer_roads=False, layer_rivers=False,
+                 layer_range_rings=False, layer_airports=False,
+                 layer_navaids=False)
+    m._build_layers()
+    x = m._transform()
+    osp = x.to_screen(m._lat, m._lon)
+    threes = [(cx, cy) for label, cx, cy in _drawn_numerals(m, monkeypatch)
+              if label == "3"]
+    assert len(threes) == 1
+    cx, cy = threes[0]
+    rel = math.degrees(math.atan2(cx - osp.x(), osp.y() - cy))
+    assert rel == pytest.approx(8.0, abs=0.5)
+
+
+def test_without_track_key_the_map_turns_by_trackm(fix, qtbot, monkeypatch):
+    """A gateway without TRACK: the map turns by TRACKM as before P3g, and
+    the rose takes no MAGVAR on top of an already-magnetic rotation."""
+    _define(fix, "TRACKM", 22.0)
+    _define(fix, "MAGVAR", -12.0)
+    real = fix.db.get_item
+
+    def no_track(key, *a, **k):
+        if key == "TRACK":
+            raise KeyError(key)
+        return real(key, *a, **k)
+
+    monkeypatch.setattr(fix.db, "get_item", no_track)
+    m = _map(qtbot, orientation="track_up", nd_mode="expanded")
+    assert m._track_true is None
+    x = m._transform()
+    assert math.degrees(x.rot) == pytest.approx(22.0)
+    assert m.ownship_screen_deg(x) == pytest.approx(0.0)
+    assert nd.rose_up(m, x) == pytest.approx(22.0)
+
+
+def test_without_magvar_the_rose_reads_true(fix, qtbot):
+    _define(fix, "TRACK", 34.0)
+    _define(fix, "TRACKM", 22.0)
+    m = _map(qtbot, orientation="track_up", nd_mode="expanded")
+    assert nd.rose_up(m, m._transform()) == pytest.approx(34.0)
+
+
+def test_pan_follows_the_finger_under_true_track_up(fix, qtbot):
+    """A drag moves the map content with the finger: ownship lands exactly
+    (dx, dy) from where it was. Un-rotating the drag by TRACKM while the map
+    turns by TRACK would skew it by MAGVAR."""
+    _define(fix, "TRACK", 90.0)
+    _define(fix, "TRACKM", 78.0)
+    _define(fix, "MAGVAR", -12.0)
+    m = _map(qtbot, orientation="track_up")
+    m._lat, m._lon = 34.38, -120.0
+    before = m._transform().to_screen(m._lat, m._lon)
+    m.pan_by(60.0, -40.0)
+    after = m._transform().to_screen(m._lat, m._lon)
+    assert after.x() - before.x() == pytest.approx(60.0, abs=0.05)
+    assert after.y() - before.y() == pytest.approx(-40.0, abs=0.05)

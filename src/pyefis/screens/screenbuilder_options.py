@@ -144,6 +144,20 @@ def _is_unbound(instrument, options):
     return value is True and callable(getattr(instrument, "setUnbound", None))
 
 
+def _is_aircraft_ref(inst_type, option):
+    """True when *option* is an ``aircraft_ref`` property of *inst_type*. The
+    configurator resolves those into plain options before serving, so one
+    reaching the device (a hand-copied editor YAML) is ignored, never applied.
+    Never raises."""
+    try:
+        from pyefis.screens import screenbuilder_factory as _factory
+        spec = _factory.REGISTRY.get(inst_type)
+        prop = spec.prop(option) if spec is not None else None
+        return prop is not None and prop.kind == "aircraft_ref"
+    except Exception:
+        return False
+
+
 def apply_options(screen, index, config, state=False):
     if "options" not in config:
         return
@@ -157,6 +171,13 @@ def apply_options(screen, index, config, state=False):
         instrument.setUnbound()
     for option, value in config["options"].items():
         if "unbound" == option and unbound:
+            continue
+
+        if _is_aircraft_ref(config.get("type"), option):
+            log.warning(
+                "instrument '%s': option '%s' is an unresolved aircraft "
+                "reference; ignored (the configurator resolves it)",
+                config.get("type"), option)
             continue
 
         if "encoder_order" == option and not state:
