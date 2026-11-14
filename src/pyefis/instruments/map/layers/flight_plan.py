@@ -132,6 +132,16 @@ _STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
 _DRAW_KEYS = ("FPLSTATE", "FPLACTLEG", "FPLACTSEG", "FPLAPR", "FPLPHASE",
               "FPLFRLAT", "FPLFRLON", "WPLAT", "WPLON", "FPLCRS", "FPLLDSEQ")
 
+# The engine outputs this layer draws nothing from: the readouts. A write
+# of one is skipped without a lookup (FlightPlanLayer._wants_collect).
+_READOUT_KEYS = frozenset(fp_fixbridge.ENGINE_OUTPUT_KEYS
+                          + fp_fixbridge.OPTIONAL_ENGINE_OUTPUT_KEYS) - frozenset(_DRAW_KEYS)
+
+# A write that changed nothing drawn is skipped, but at most this long goes
+# by without a full collect, so what is drawn from keys the bridge does not
+# watch (MAGVAR, the route counts) still converges on the bus.
+_RECHECK_S = 1.0
+
 
 def _engine_val(engine, key, default=None):
     item = engine.get(key)
@@ -548,7 +558,7 @@ class _BridgeRelay(QObject):
     changed; anything else asks ``owner`` for a frame -- through its frame
     clock (``request_frame``) when it has one, else ``update()``."""
 
-    changed = pyqtSignal()
+    changed = pyqtSignal(str)
 
     def __init__(self, owner, on_change=None):
         super().__init__(owner)
@@ -556,14 +566,14 @@ class _BridgeRelay(QObject):
         self._on_change = on_change
         self.changed.connect(self._deliver)
 
-    def on_bridge_change(self):
-        self.changed.emit()
+    def on_bridge_change(self, key=""):
+        self.changed.emit(key or "")
 
-    @pyqtSlot()
-    def _deliver(self):
+    @pyqtSlot(str)
+    def _deliver(self, key):
         # On the GUI thread (this relay's affinity): the layer re-collects
         # here, between frames, never inside paint().
-        if self._on_change is not None and self._on_change() is False:
+        if self._on_change is not None and self._on_change(key) is False:
             return
         request = getattr(self._owner, "request_frame", None)
         if request is not None:
@@ -586,26 +596,61 @@ class FlightPlanLayer(MapLayer):
         self._relay = None
         self._snapshot = None
         self._drawn_sig = None
+        # (value, fail, bad) of each watched key at its last write, and when
+        # the last full collect ran (_wants_collect).
+        self._seen = {}
+        self._clock = time.monotonic
+        self._collected_at = None
 
     def configure(self, owner):
         self._owner = owner
         self._bridge = fp_fixbridge.FixBridge(pyavtools_fix)
         if self._bridge.available:
             self._relay = _BridgeRelay(owner, self._on_bridge_change)
-            self._bridge.add_listener(self._relay.on_bridge_change)
+            self._bridge.add_listener(self._relay.on_bridge_change, keyed=True)
             self.collect(None)
             self._drawn_sig = self._draw_signature()
 
-    def _on_bridge_change(self):
-        """A bus notification, on the GUI thread: re-collect, and say
+    def _on_bridge_change(self, key=""):
+        """A bus write of *key*, on the GUI thread: re-collect, and say
         whether a frame is wanted -- False when nothing this layer draws
         changed, or the layer is switched off."""
+        if not self._wants_collect(key):
+            return False
         self.collect(None)
         sig = self._draw_signature()
         if sig == self._drawn_sig:
             return False
         self._drawn_sig = sig
         return bool(self.enabled)
+
+    def _wants_collect(self, key):
+        """False when the write of *key* cannot have changed anything this
+        layer draws, so the collect and signature can be skipped. The
+        engine rewrites all 25 of its outputs each guidance cycle, changed
+        or not, and a collect plus signature costs some 70 FIX lookups: on
+        every write that was most of the bridge's time on the GUI thread
+        (pyEfis #480). Skipped: a readout, and a watched key written with
+        the value and flags it already had. At most _RECHECK_S goes by
+        between full collects whatever was written."""
+        changed = True
+        if key in _READOUT_KEYS:
+            changed = False
+        elif key:
+            try:
+                item = self._bridge._get(key)
+            except KeyError:
+                pass
+            else:
+                state = (item.value, bool(item.fail), bool(item.bad))
+                changed = self._seen.get(key) != state
+                self._seen[key] = state
+        now = self._clock()
+        if (changed or self._collected_at is None
+                or now - self._collected_at >= _RECHECK_S):
+            self._collected_at = now
+            return True
+        return False
 
     def _draw_signature(self):
         """Everything paint() draws from, as a comparable tuple: the route
