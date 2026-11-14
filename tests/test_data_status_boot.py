@@ -11,10 +11,10 @@
 #  GNU General Public License for more details.
 
 """The nav-data management screen stays loaded -- the PFD data annunciation
-opens it -- but is never the boot screen: it is a click-through, and pyEfis
-can restart in flight (BACKLOG L3). Guards ``gui._ensure_data_status_screen``:
-it boots the configured flight screen, points Continue at it, and never
-returns DataStatus while any other screen exists."""
+opens it. Whether it boots is decided by airspeed (BACKLOG BOOT1, see
+test_ground_boot.py); this guards ``gui._ensure_data_status_screen``, which
+picks the flight screen: it returns the configured default, points Continue
+at it, and never returns DataStatus while any other screen exists."""
 
 import logging
 

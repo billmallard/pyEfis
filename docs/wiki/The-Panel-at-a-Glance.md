@@ -29,13 +29,16 @@ position and option is yours to set in the
 
 ## Start-up
 
-pyEFIS opens straight on its boot screen, the one marked as the default in the
-configurator. A strip across the bottom reads *"pyEfis is experimental software
+On the ground, pyEFIS opens on the
+[Data Status](Data-Status-Updates-and-Notices) screen; **Continue** takes you to
+the flight screen, the one marked as the default in the configurator. If the
+aircraft is moving, or airspeed is not valid, it opens straight on the flight
+screen. A strip across the bottom reads *"pyEfis is experimental software
 for Experimental / Amateur-Built aircraft. It is not certified. It is provided
 as-is with no warranty, and any use of it is at your own risk."* It needs no
 tap. Touches pass through it to the instruments, and it clears by itself: after
 8 seconds once the notice has been accepted on this install, after 20 seconds
-if not. Nothing at start-up waits for a tap, so a restart in flight puts you
+if not. In flight nothing at start-up waits for a tap, so a restart puts you
 back on the instruments at once. How the notice is accepted is on
 [Data Status, Updates and Notices](Data-Status-Updates-and-Notices#the-software-notice-at-start-up).
 
