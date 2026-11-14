@@ -543,7 +543,12 @@ class MovingMap(LiveBindingMixin, QWidget):
         and async layer completions still call update() directly."""
         if not self.isVisible():
             return
-        m_per_px = (float(self.range_nm) * NM_M) / max(1.0, self.height() / 2.0)
+        # Metres per screen px as the transform draws them: range_nm spans
+        # range_px (the compass radius in ND mode, about 280 px on a
+        # 650x1000 portrait panel), not half the height, which made the
+        # clock repaint for every 0.28 px of motion there (MAPPAINT1).
+        m_per_px = (float(self.range_nm) * NM_M) / max(
+            1.0, self._range_px(self.height()))
         q = max(1e-7, (0.5 * m_per_px) / M_PER_DEG_LAT)  # deg per half-px
         pose = (round(self._lat / q), round(self._lon / q),
                 round(self._track * 4.0), round(self.view_track() * 4.0),
