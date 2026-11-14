@@ -139,6 +139,27 @@ def test_main_with_config_file_runs_startup_and_shutdown(
     patched_runtime.fms.stop.assert_called_once_with()
 
 
+def test_main_in_kiosk_mode_loads_no_keybindings(
+    monkeypatch, config_files, patched_runtime
+):
+    # DEMO4: a demo kiosk has no keyboard, and a key must not reach exit
+    config_file, _preferences_file = config_files
+    config = {"hooks": {}, "keybindings": [{"key": "Q", "action": "exit"}],
+              "kiosk": {"enabled": True}}
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value=config))
+    monkeypatch.setattr(main_module.kiosk, "initialize", mock.Mock())
+    try:
+        with pytest.raises(SystemExit):
+            main_module.main()
+        assert main_module.kiosk.locked()
+        main_module.hmi.keys.initialize.assert_not_called()
+        main_module.kiosk.initialize.assert_called_once_with(
+            main_module.gui.mainWindow, main_module.fix, main_module.gui.screens)
+    finally:
+        main_module.kiosk.configure(None)
+
+
 def test_main_sigusr1_screenshot_disabled_on_eglfs(
     monkeypatch, config_files, patched_runtime, caplog
 ):

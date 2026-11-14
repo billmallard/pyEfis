@@ -18,8 +18,11 @@ import logging
 from PyQt6.QtCore import pyqtSignal, pyqtBoundSignal
 from PyQt6.QtWidgets import QWidget
 
+from pyefis import kiosk
 from pyefis.hmi import functions
 from .menu import activateMenu
+
+log = logging.getLogger(__name__)
 
 
 class ActionClass(QWidget):
@@ -94,6 +97,11 @@ class ActionClass(QWidget):
 
     def trigger(self, action, argument=""):
         a = self.signalMap[action.lower()]
+        # DEMO4: a demo kiosk refuses the actions that leave the app or run
+        # arbitrary code (makerplane/briefs/demo_mode_redesign.md 6.2).
+        if not kiosk.action_allowed(action):
+            log.warning("kiosk: action %r refused", action)
+            return
         if isinstance(a, pyqtBoundSignal):
             a.emit(argument)
         else:  # It's not a signal so assume it's a function

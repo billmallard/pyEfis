@@ -447,6 +447,35 @@ Gauge editing options:
 | `clipping` | Keep the value inside the key's range. |
 | `touch_edit` | Allow selecting it by touch too. |
 
+## Demo kiosk
+
+A show-floor panel running the gateway's demo source can be locked so that
+visitors can look and touch without changing anything. Add a top-level
+`kiosk:` block to the main config file:
+
+```yaml
+kiosk:
+  enabled: true
+  idle_return_s: 60
+```
+
+With the kiosk on:
+
+- The panel follows the demo script's page (`DEMOPAGE`). After any touch it
+  stays where the visitor left it for `idle_return_s` seconds, then returns
+  to the page the script is on.
+- The flight plan page is read-only, and its soft keys are greyed out.
+- The map's pointer banner offers only INFO and X. DIRECT TO, INSERT and
+  CREATE WPT are hidden.
+- The Data Status **Update** button is off.
+- No keybindings load, and buttons cannot run `exit` or `evaluate`.
+
+Map pan and range, screen and tab buttons, and baro and selected-altitude
+edits still work.
+
+The DEMO marking does not need the kiosk. It shows on any panel while the
+gateway's demo source is running (`DEMOLIVE`).
+
 ## How options reach an instrument
 
 An instrument's options are the screen file's `options:` with its style and
