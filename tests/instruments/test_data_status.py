@@ -716,3 +716,49 @@ def test_ack_hidden_while_picker_open(app, tmp_path):
     calls[0][1](0, json.dumps({"network": True, "usb": []}))
     calls[1][1](0, json.dumps(CATALOG))
     assert w.mode == "picker" and w.btn_ack.isHidden()
+
+
+# --- Pack list fits above the buttons (bench look, AER-5481) ---
+
+def _many_packs(n=12):
+    return [{"id": f"p{i}", "name": f"Pack {i}", "status": "current",
+             "severity": "amber" if i == n - 1 else "none", "detail": "2611"}
+            for i in range(n)]
+
+
+@pytest.mark.parametrize("size", [(800, 480), (1024, 600), (1920, 1080)])
+@pytest.mark.parametrize("pending", [True, False], ids=["banner", "no-banner"])
+def test_long_pack_list_ends_above_the_buttons(app, tmp_path, size, pending):
+    # The bench's status.json has 12 packs; under the banner the last five
+    # used to paint behind Continue/About/Update, an expired one included.
+    doc = dict(SAMPLE, packs=_many_packs())
+    if pending:
+        doc = dict(doc, panel_change=_pending()["panel_change"])
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, doc)))
+    w.resize(*size)
+    w.show()
+    w.grab()
+    top, bottom = w._pack_span
+    assert bottom <= w.btn_continue.y()
+    assert (bottom - top) / 12 > 0                    # every row has room
+    if pending:
+        assert top >= w._banner_rect.bottom()
+
+
+def test_long_pack_list_ends_above_the_message(app, tmp_path):
+    doc = dict(SAMPLE, packs=_many_packs(), panel_change=_pending()["panel_change"])
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, doc)))
+    w.resize(800, 480)
+    w.show()
+    w.message = "Panel change acknowledged."
+    w.grab()
+    assert w._pack_span[1] <= 480 * 0.74
+
+
+def test_short_pack_list_keeps_full_row_height(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    w.show()
+    w.grab()
+    top, bottom = w._pack_span
+    assert bottom - top == 2 * w.row_h
