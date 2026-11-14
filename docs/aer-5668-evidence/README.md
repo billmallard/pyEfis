@@ -59,7 +59,7 @@ Runs alternated dev, branch, dev, branch on a quiet box (load 0.25):
 
 Cost of one layer redraw, by layer, from the dev runs: roads 6.3 ms, ND
 overlay 4.6 ms, terrain 3.7 ms, range rings 2.7 ms, airways 2.1 ms, fixes
-1.6 ms. The branch takes the rings to about 0.5 ms. Airways and fixes stay
+1.6 ms. The branch takes the rings to 0.95 ms. Airways and fixes stay
 close to what they were, because their cost is Qt stroking the lines that
 are on screen, not the Python loop. Roads and terrain are two rotated
 full-panel image blits and are unchanged.
