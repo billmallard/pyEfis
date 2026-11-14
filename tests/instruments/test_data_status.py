@@ -762,3 +762,55 @@ def test_short_pack_list_keeps_full_row_height(app, tmp_path):
     w.grab()
     top, bottom = w._pack_span
     assert bottom - top == 2 * w.row_h
+
+
+# --- PFD DATA flag lights for a pending panel change (Bill, AER-5481) ---
+
+def _flag_pixels(a):
+    """Count amber pixels the DATA flag painted."""
+    img = a.grab().toImage()
+    n = 0
+    for x in range(img.width()):
+        for y in range(img.height()):
+            c = img.pixelColor(x, y)
+            if c.red() > 200 and c.red() - c.blue() > 100:
+                n += 1
+    return n
+
+
+_CURRENT = {"ok": True, "packs": [{"name": "Airports", "severity": "none"}]}
+
+
+def test_annunciation_amber_for_pending_panel_change(app, tmp_path):
+    doc = dict(_CURRENT, panel_change=_pending()["panel_change"])
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, doc)))
+    a.resize(120, 40)
+    assert data_status.worst_severity(a.status) == "none"      # packs current
+    assert data_status.annunciation_severity(a.status) == "amber"
+    assert _flag_pixels(a) > 20
+
+
+def test_annunciation_amber_for_panel_change_when_status_not_ok(app, tmp_path):
+    # config-pull's own status.json: ok false, no packs, cue pending.
+    doc = {"ok": False, "packs": [], "panel_change": _pending()["panel_change"]}
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, doc)))
+    a.resize(120, 40)
+    assert data_status.annunciation_severity(a.status) == "amber"
+    assert _flag_pixels(a) > 20
+
+
+@pytest.mark.parametrize("block", [None, _CLEAR, {"pending": "yes"}],
+                         ids=["absent", "acknowledged", "truthy-string"])
+def test_annunciation_hidden_without_pending_panel_change(app, tmp_path, block):
+    doc = dict(_CURRENT) if block is None else dict(_CURRENT, panel_change=block)
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, doc)))
+    a.resize(120, 40)
+    assert data_status.annunciation_severity(a.status) == "none"
+    assert _flag_pixels(a) == 0
+
+
+def test_annunciation_severity_falls_back_to_packs(app):
+    assert data_status.annunciation_severity(None) == "none"
+    assert data_status.annunciation_severity(SAMPLE) == "amber"
+    soon = {"ok": True, "packs": [{"severity": "white"}]}
+    assert data_status.annunciation_severity(soon) == "white"
