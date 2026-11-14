@@ -276,3 +276,21 @@ def test_a_write_that_changes_nothing_drawn_never_reaches_the_relay_signal(fix, 
 
     _engine_cycle(fix, FPLACTLEG=3)
     assert emitted == ["FPLACTLEG"]
+
+
+def test_desired_track_moving_under_a_tenth_of_a_degree_skips_the_collect(fix, qtbot, monkeypatch):
+    """In flight FPLCRS moves in the fourth decimal every cycle; the layer
+    draws it only to 0.1 deg (the extension past the MAP)."""
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+    collects = []
+    collect = layer.collect
+    monkeypatch.setattr(layer, "collect", lambda x: (collects.append(1), collect(x)))
+    fix.db.set_value("FPLCRS", 217.31)
+    del collects[:]
+
+    for crs in (217.3199, 217.3195, 217.3191):
+        _engine_cycle(fix, FPLCRS=crs)
+    assert collects == []
+
+    _engine_cycle(fix, FPLCRS=217.6)
+    assert collects == [1]

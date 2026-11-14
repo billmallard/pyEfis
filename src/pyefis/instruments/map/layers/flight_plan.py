@@ -142,6 +142,11 @@ _READOUT_KEYS = frozenset(fp_fixbridge.ENGINE_OUTPUT_KEYS
 # watch (MAGVAR, the route counts) still converges on the bus.
 _RECHECK_S = 1.0
 
+# A drawn key the layer only ever uses rounded, with its digits: the desired
+# track moves in the fourth decimal every cycle in flight, and the extension
+# past the MAP draws it to 0.1 deg (_draw_signature).
+_SEEN_DIGITS = {"FPLCRS": 1}
+
 
 def _engine_val(engine, key, default=None):
     item = engine.get(key)
@@ -651,7 +656,13 @@ class FlightPlanLayer(MapLayer):
             except KeyError:
                 pass
             else:
-                state = (item.value, bool(item.fail), bool(item.bad))
+                value = item.value
+                if key in _SEEN_DIGITS:
+                    try:
+                        value = round(float(value), _SEEN_DIGITS[key])
+                    except (TypeError, ValueError):
+                        pass
+                state = (value, bool(item.fail), bool(item.bad))
                 changed = self._seen.get(key) != state
                 self._seen[key] = state
         now = self._clock()
