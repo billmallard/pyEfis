@@ -263,12 +263,21 @@ def fast_wait(monkeypatch):
     monkeypatch.setattr(gui, "BOOT_GROUND_SETTLE_S", 0.0)
 
 
-def test_initialize_on_ground_boots_data_status(app, fix, fast_wait):
+def _booted_line(caplog):
+    # bench-deploy.sh reports the booted screen from the last such line.
+    lines = [r.getMessage() for r in caplog.records
+             if r.getMessage().startswith("data-status: booting ")]
+    return lines[-1].split()[2]
+
+
+def test_initialize_on_ground_boots_data_status(app, fix, fast_wait, caplog):
+    caplog.set_level(logging.INFO)
     _ias(fix, 0.0)
     _gs(fix, 0.0)
     cfg = _config()
     gui.initialize(cfg, "/config", {"includes": {}})
     assert _running(gui.mainWindow) == "DataStatus"
+    assert _booted_line(caplog) == "DataStatus"
     # Continue goes to the configured flight screen.
     assert cfg["screens"]["DataStatus"]["instruments"][0]["options"][
         "continue_screen"] == "PFD"
@@ -277,11 +286,13 @@ def test_initialize_on_ground_boots_data_status(app, fix, fast_wait):
     assert gui.mainWindow.groundBootWatch is not None
 
 
-def test_initialize_moving_boots_flight(app, fix, fast_wait):
+def test_initialize_moving_boots_flight(app, fix, fast_wait, caplog):
+    caplog.set_level(logging.INFO)
     _ias(fix, 110.0)
     _gs(fix, 105.0)
     gui.initialize(_config(), "/config", {"includes": {}})
     assert _running(gui.mainWindow) == "PFD"
+    assert _booted_line(caplog) == "PFD"
     assert gui.mainWindow.groundBootWatch is None
 
 

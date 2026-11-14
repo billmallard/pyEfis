@@ -310,8 +310,7 @@ def _ensure_data_status_screen(config, configured_default):
             for inst in scr_config.get("instruments", []):
                 if inst.get("type") == "data_status":
                     inst.setdefault("options", {})["continue_screen"] = boot
-        log.info("data-status: booting %s (data status reachable from the "
-                 "annunciation)", boot)
+        log.info("data-status: flight screen is %s", boot)
         return boot
     except Exception as e:
         log.error("data-status: could not set up the built-in screen "
@@ -511,7 +510,12 @@ def initialize(config, config_path, preferences):
     on_ground = (flight != DATA_STATUS_SCREEN
                  and DATA_STATUS_SCREEN in [s.name for s in screens]
                  and _boot_on_ground())
-    setDefaultScreen(DATA_STATUS_SCREEN if on_ground else flight)
+    boot = DATA_STATUS_SCREEN if on_ground else flight
+    # bench-deploy.sh reads this line to report the booted screen.
+    log.info("data-status: booting %s (%s)", boot,
+             "on the ground; Continue goes to %s" % flight if on_ground
+             else "data status reachable from the annunciation")
+    setDefaultScreen(boot)
     _ensure_about_screen(config)
 
     mainWindow = Main(config, config_path, preferences)
