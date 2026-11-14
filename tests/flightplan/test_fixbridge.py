@@ -152,8 +152,8 @@ def test_publish_writes_slots_in_order_and_seq_last(fix):
 
     # On the wire, not just in pyEfis's local copy: every field of slot 1,
     # then of slot 2, then the segment table rows, then the counts (RS1
-    # writer order: FPLSEGCNT and FPLCOUNT after the rows), name and
-    # cycle, then seq last.
+    # writer order: FPLSEGCNT and FPLCOUNT after the rows), name, approach
+    # type and cycle, then seq last.
     slot = [name for name, _, _ in fixbridge.SLOT_FIELDS]
     row = [name for name, _, _ in fixbridge.SEGMENT_FIELDS]
     assert slot == ["ID", "LAT", "LON", "TYPE", "PT", "CRS", "DST", "ALT", "SPD", "SGI",
@@ -161,7 +161,7 @@ def test_publish_writes_slots_in_order_and_seq_last(fix):
     assert order == (
         [f"FPL1{f}" for f in slot] + [f"FPL2{f}" for f in slot]
         + [f"FPLS1{f}" for f in row] + [f"FPLS2{f}" for f in row]
-        + ["FPLSEGCNT", "FPLCOUNT", "FPLNAME", "FPLDBCYC", "FPLSEQ"])
+        + ["FPLSEGCNT", "FPLCOUNT", "FPLNAME", "FPLAPRTYPE", "FPLDBCYC", "FPLSEQ"])
     assert fix.db.get_item("FPL1ID").value == "WP00"
     assert fix.db.get_item("FPL2ID").value == "WP01"
     assert fix.db.get_item("FPLCOUNT").value == 2

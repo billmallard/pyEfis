@@ -3,7 +3,7 @@
 from-to-next field (Pilot's Guide 190-02488-01 Rev. B, 3-41/3-42) as a
 one-line chip.
 
-    [LEG] KSBA > GVO > RZS   12.4 NM  0:06  TERM
+    [LEG] KSBA > GVO > RZS   12.4 NM  0:06  TERM  RNAV 2611  TURN R
 
 ``WPFROM`` -> ``WPNAME`` (the TO waypoint, active colour) -> ``WPNEXT``, a
 ``FPLSTATE`` badge (LEG / DIRECT / SUSP, none while no plan is active),
@@ -11,6 +11,15 @@ optional ``WPDIS`` / ``WPETE`` and the flight phase (``FPLPHASE``, green;
 yellow for ``LOI``). A missing ident is drawn as underscores. A tap fires the
 ``flightplan page fpl`` HMI action so the flight_plan instrument opens its FPL
 page; ``tap_screen`` optionally switches to the screen that holds it first.
+
+The loaded procedure (PA9, billmallard/pyEfis#240): the approach type
+(``FPLAPRTYPE``) and the AIRAC cycle the procedures came from (``FPLDBCYC``),
+white -- or, once that cycle has expired, the cycle and ``EXPIRED`` in amber.
+Expired data is annunciated here, on the approach, never refused (brief
+guardrail 3). ``FPLTURN`` (fix-gateway, AER-4541) shows ``TURN L``/``TURN R``
+while the engine flies the coded turn that opens a DF leg. Both read the
+engine's keys only: the direction is never derived from ``FPLfTURN`` and the
+track, and a gateway without one of these keys shows nothing for it.
 
 Reads only engine outputs (fix-gateway ``flightplan`` plugin, brief section
 3.3); it owns no FIX keys and never writes. Construct-never-raises: a key the
@@ -33,6 +42,7 @@ from PyQt6.QtWidgets import QWidget
 
 from pyavtools import fix
 from pyefis import hmi
+from pyefis.flightplan import airac
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +51,24 @@ STATE_LABELS = {1: "LEG", 2: "DIRECT", 3: "SUSP"}
 
 NAV_KEYS = ("FPLSTATE", "FPLPHASE", "WPFROM", "WPNAME", "WPNEXT", "WPDIS",
             "WPETE")
+# Newer than the chip: read when the gateway has them, never required (an
+# older gateway leaves the chip available and the field blank).
+OPTIONAL_KEYS = ("FPLAPRTYPE", "FPLDBCYC", "FPLTURN")
 
 MISSING_IDENT = "____"
 FAIL_TEXT = "XXX"
 BAD_ETE = "--:--"
 SEPARATOR = ">"
 TEMPLATE_IDENT = "WWWWW"
+EXPIRED_TEXT = "EXPIRED"
+TURN_TEXT = {"L": "TURN L", "R": "TURN R"}
 
 _GREY = QColor("#808080")
 _FAIL = QColor("#ff0000")
 _PHASE = QColor("#00ff00")
 _PHASE_LOI = QColor("#ffff00")
+# The data-status screen's expired colour (data_status SEVERITY_COLORS amber).
+_EXPIRED = QColor(255, 176, 0)
 _BADGE_COLORS = {"LEG": QColor("#ffffff"), "DIRECT": QColor("#ff00ff"),
                  "SUSP": QColor("#ffff00")}
 
@@ -76,13 +93,15 @@ class NavStatus(QWidget):
         self.show_distance = True
         self.show_ete = True
         self.show_phase = True
+        self.show_procedure = True
+        self.show_turn = True
         self.hmi_group = ""
         self.tap_screen = ""
         self.active_color = "#ff00ff"
         self.text_color = "#ffffff"
 
         self._items = {}
-        for key in NAV_KEYS:
+        for key in NAV_KEYS + OPTIONAL_KEYS:
             try:
                 item = fix.db.get_item(key)
             except KeyError:
@@ -160,11 +179,36 @@ class NavStatus(QWidget):
                 data.append((format_ete(ete), text))
         if self.show_phase and phase:
             data.append((phase, _PHASE_LOI if phase == "LOI" else _PHASE))
+        if self.show_procedure and badge:
+            proc = self.procedure_text()
+            if proc:
+                data.append(proc)
+        if self.show_turn and badge:
+            turn, _, _, _ = self._read("FPLTURN")
+            turn = TURN_TEXT.get(turn.strip().upper() if isinstance(turn, str) else "")
+            if turn:
+                data.append((turn, text))
 
         if stale:
             runs = [(t, _GREY) for t, _ in runs]
             data = [(t, _GREY) for t, _ in data]
         return badge, runs, data, stale
+
+    def procedure_text(self, today=None):
+        """(text, colour) for the loaded procedure, or None: ``RNAV 2611``
+        white; ``RNAV 2609 EXPIRED`` amber once the cycle has expired (UTC
+        *today*, now by default); a departure or arrival with no approach
+        shows the cycle alone. Nothing without a cycle on the bus."""
+        aprtype, _, _, _ = self._read("FPLAPRTYPE")
+        cycle, _, _, _ = self._read("FPLDBCYC")
+        aprtype = aprtype.strip() if isinstance(aprtype, str) else ""
+        cycle = cycle.strip() if isinstance(cycle, str) else ""
+        if not cycle:
+            return None
+        words = [w for w in (aprtype, cycle) if w]
+        if airac.is_expired(cycle, today):
+            return " ".join(words + [EXPIRED_TEXT]), _EXPIRED
+        return " ".join(words), QColor(self.text_color)
 
     # -- paint ------------------------------------------------------------
     def _font(self, px):
@@ -207,6 +251,13 @@ class NavStatus(QWidget):
             data.append(("88:88", None))
         if self.show_phase:
             data.append(("0.30 NM", None))
+        # The usual procedure, not the longest: an expired cycle or a long
+        # type (LOCBC) is rare and shrinks the text further when it shows,
+        # rather than shrinking every chip all the time.
+        if self.show_procedure:
+            data.append(("RNAV 8888", None))
+        if self.show_turn:
+            data.append((TURN_TEXT["L"], None))
         return "DIRECT", runs, data
 
     def _fit_px(self, device, avail, h, badge, runs, data):

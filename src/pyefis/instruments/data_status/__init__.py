@@ -36,6 +36,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QEvent, QTimer, QRectF, QProcess, qRound
 from PyQt6.QtGui import QColor, QFont, QPainter
+from pyefis import kiosk
 from pyefis.instruments.helpers import font_scale
 from PyQt6.QtWidgets import (QWidget, QPushButton, QCheckBox, QScrollArea,
                              QVBoxLayout, QHBoxLayout, QLabel)
@@ -644,6 +645,8 @@ class DataStatus(QWidget):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_continue.clicked.connect(self._on_continue)
         self.btn_update.clicked.connect(self._on_update)
+        # DEMO4: a demo kiosk's packs are frozen before the show (brief 4).
+        self.btn_update.setEnabled(not kiosk.locked())
         self.btn_about.clicked.connect(self._on_about)
 
         # Refresh periodically so a USB import (handled by the updater's udev
@@ -770,7 +773,7 @@ class DataStatus(QWidget):
         self._close_picker()
         self.mode = "status"
         self.message = message
-        self.btn_update.setEnabled(True)
+        self.btn_update.setEnabled(not kiosk.locked())
         self._ack_hash = None
         self._sync_visibility()
         self.update()
@@ -779,7 +782,7 @@ class DataStatus(QWidget):
     def _on_update(self):
         """Tapping Update no longer blindly runs an OTA update; it first asks
         what sources are available, then shows the pack picker."""
-        if self._proc is not None or self.mode != "status":
+        if self._proc is not None or self.mode != "status" or kiosk.locked():
             return
         self.message = "Checking for updates…"
         self.btn_update.setEnabled(False)
@@ -961,7 +964,7 @@ class DataStatus(QWidget):
         self._close_picker()
         self.mode = "status"
         self._prog = None
-        self.btn_update.setEnabled(True)
+        self.btn_update.setEnabled(not kiosk.locked())
         self.message = ("Update complete." if code == 0 else
                         "Update finished with problems — your previous data is "
                         "still in place. See the rows above.")

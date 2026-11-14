@@ -124,13 +124,15 @@ waypoints and the recent list are kept under `flightplan_dir`: `routes/*.json`,
 
 How it reads and flies: [Flight Plan](Flight-Plan#the-nav-status-line).
 
-FIX keys it reads by default: `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`, `WPNEXT`, `WPDIS`, `WPETE`.
+FIX keys it reads by default: `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`, `WPNEXT`, `WPDIS`, `WPETE`, `FPLAPRTYPE`, `FPLDBCYC`, `FPLTURN`.
 
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|
 | `show_distance` | Show distance | on | on / off | distance to the TO waypoint (WPDIS), nm |
 | `show_ete` | Show ETE | on | on / off | time to the TO waypoint (WPETE), H:MM; '--:--' below 30 kt ground speed |
 | `show_phase` | Show phase | on | on / off | flight phase / CDI scale annunciation (FPLPHASE): ENR, TERM, LNAV, ... green; LOI yellow |
+| `show_procedure` | Show procedure | on | on / off | loaded approach type (FPLAPRTYPE) and AIRAC cycle (FPLDBCYC); the cycle and EXPIRED in amber once it has expired |
+| `show_turn` | Show turn | on | on / off | TURN L / TURN R while the engine flies the coded turn that opens a DF leg (FPLTURN) |
 | `hmi_group` | HMI group | empty |  | hmi_group of the flight_plan instrument a tap opens; blank = every flight_plan instrument |
 | `tap_screen` | Tap screen | empty |  | screen to show before opening the FPL page on a tap (the screen holding the flight_plan instrument); blank = stay on this screen |
 | `active_color` | Active waypoint colour | `#ff00ff` | colour | colour of the TO waypoint ident (WPNAME) |

@@ -34,8 +34,9 @@ source ([fix-gateway#137](https://github.com/billmallard/fix-gateway/issues/137)
 | **TO / FROM triangle** | On the course pointer: pointing towards its head for TO, towards its tail for FROM. Hidden when the source gives neither, for example on a localizer. |
 | **Heading bug** (cyan) | On the rim, at the selected heading. |
 | **Track diamond** (magenta) | On the rim, at your GPS ground track. Shown at or above `track_min_speed` (20 kt on the bench panel, 5 kt by default). |
-| **Bearing pointers** | Pointer 1 is a single bar, pointer 2 a double bar. Each points at a station or waypoint: magenta for GPS, green for a VOR. |
-| **Bearing labels** (bottom corners) | `1 GPS`, `2 VOR1` and so on, coloured like the pointer. Tap one to change that pointer's source. |
+| **Bearing pointers** (cyan) | Pointer 1 is a single bar, pointer 2 a double bar. Each points at a station or waypoint. They are cyan whatever the source: magenta and green belong to the course pointer. Each is off until you turn it on, and never on the course pointer's own source. |
+| **BRG tab** (right of the HDG / MAG / CRS panel) | `BRG OFF`, or the pointer and its source: `BRG1 VOR1`. One row per pointer the panel offers. Tap a row to step that pointer: off, then each source that is not the course pointer's, then off. Filled cyan while its needle is on. |
+| **Bearing labels** (bottom corners) | `1 GPS`, `2 VOR1` and so on, in cyan, while a pointer is on. Without the top panel they also read `1 OFF`; tap one to step that pointer as on the BRG tab. |
 | **Glideslope scale** (right of centre) | Shown only when the source has vertical guidance. The diamond is your glidepath. |
 
 ## Nav sources
@@ -229,9 +230,9 @@ last column where it differs.
 | Track diamond (`track_indicator_enabled`) | on | | Draw the diamond at `TRACKM`. |
 | Track diamond color (`track_color`) | `#ff00ff` | | |
 | Track min speed (`track_min_speed`) | 5 kt | 20 kt | Hide the diamond below this groundspeed. |
-| Bearing pointer 1 (`bearing1_enabled`) | off | on | Draw pointer 1 (`BRG1`) and its label. |
-| Bearing pointer 2 (`bearing2_enabled`) | off | on | Draw pointer 2 (`BRG2`) and its label. |
-| Bearing pointer color (`bearing_color`) | `#00ffff` | | Used only while a pointer's source is unknown. |
+| Bearing pointer 1 (`bearing1_enabled`) | off | on | Offer pointer 1 (`BRG1`): its BRG tab row and label. It starts off. |
+| Bearing pointer 2 (`bearing2_enabled`) | off | on | Offer pointer 2 (`BRG2`): its BRG tab row and label. It starts off. |
+| Bearing pointer color (`bearing_color`) | `#00ffff` | | Both pointers, their labels and the BRG tab. |
 | Source label (`source_label_enabled`) | on | | Show the source tab or label. |
 | Source auto-color (`source_auto_color`) | on | | Colour by source. Off: always `course_color`. |
 | Course pointer color (`course_color`) | `#ff00ff` | | GPS colour, and the colour when auto-colour is off. |

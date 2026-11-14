@@ -16,6 +16,7 @@ import pyavtools.fix as fix
 
 from pyefis import display_metrics
 from pyefis import hmi
+from pyefis import kiosk
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import refusal as fp_refusal
@@ -1034,6 +1035,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         """Stage ``DTO*`` for the object (or ``MAPWPT`` at the pointer) and
         issue ``DTO``. A plan waypoint is matched to its slot by the engine
         (Appendix C: ident and position within 0.001 deg)."""
+        if kiosk.locked():
+            return
         wp = self.pointer_waypoint()
         if wp is None:
             return
@@ -1049,6 +1052,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         """Insert into the plan on the bus at the leg nearest the pointer
         (append when it has no leg yet) and publish -- every flight_plan
         instrument re-reads it on ``FPLSEQ``."""
+        if kiosk.locked():
+            return
         wp = self.pointer_waypoint()
         if wp is None:
             return
@@ -1076,6 +1081,8 @@ class MovingMap(LiveBindingMixin, QWidget):
     def banner_create_wpt(self):
         """Open the flight_plan instrument's user-waypoint form, prefilled
         with the pointer position."""
+        if kiosk.locked():
+            return
         p = self._pointer
         if p is None:
             return
@@ -1652,6 +1659,9 @@ class MovingMap(LiveBindingMixin, QWidget):
                 ("CREATE WPT", self.banner_create_wpt, True, 1.25),
                 ("INFO", self.banner_info, True, 0.85),
                 ("X", self.clear_pointer, True, 0.6))
+        if kiosk.locked():
+            # DEMO4: a demo kiosk keeps the read-only keys only (brief 6.2).
+            keys = tuple(k for k in keys if k[0] in ("INFO", "X"))
         total = sum(k[3] for k in keys)
         gap = pad
         unit = (tw - gap * (len(keys) - 1)) / total

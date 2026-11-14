@@ -209,13 +209,18 @@ def test_hsi_source_label_tap_cycles_navsrc(fix, qtbot, monkeypatch):
     widget.resize(200, 200)
     widget.show()
     qtbot.waitExposed(widget)
+    fix.db.define_item("NAVSRC", "NAVSRC", "float", 0.0, 3.0, "", 0, "")
     widget.navsrcdb = object()             # simulate a panel with a nav source
     widget._navsrc = 2                      # GPS
     widget.paintEvent(QPaintEvent(widget.rect()))   # sets the tap rect
     assert widget._source_label_rect is not None
 
+    # Record what is queued for fix-gateway, not the local value: a local
+    # set_value() never left pyEfis (pyEfis #294), and a test patched on it
+    # passed while the bench gateway never saw a tap (AER-5548).
     written = []
-    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: written.append(
+        tuple(b.decode().split(";")[:2])))
 
     class _P:
         def __init__(s, x, y): s._x, s._y = x, y
@@ -229,7 +234,7 @@ def test_hsi_source_label_tap_cycles_navsrc(fix, qtbot, monkeypatch):
 
     r = widget._source_label_rect
     widget.mousePressEvent(_Ev(r[0] + r[2] // 2, r[1] + r[3] // 2))   # inside label
-    assert written == [("NAVSRC", 0.0)]    # GPS(2) -> NAV1(0)
+    assert written == [("NAVSRC", "0.0")]  # GPS(2) -> NAV1(0)
 
 
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):
@@ -1002,9 +1007,12 @@ def test_bearing_visibility_gated_by_enable_heading_and_quality(fix, qtbot):
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
     widget.bearing1_enabled = True
-    # good state -> visible
     widget._HeadFail = widget._HeadBad = False
     widget._brgOld[1] = widget._brgBad[1] = widget._brgFail[1] = False
+    # available but not stepped on: Off is the default (HSIBRG1)
+    assert widget._bearing_visible(1) is False
+    widget._brgOn[1] = True
+    # good state -> visible
     assert widget._bearing_visible(1) is True
     # disabled -> hidden
     widget.bearing1_enabled = False
@@ -1028,33 +1036,100 @@ def test_bearing_visibility_gated_by_enable_heading_and_quality(fix, qtbot):
     assert widget._bearing_visible(2) is False
 
 
-def test_bearing_color_follows_source(fix, qtbot):
+@pytest.mark.parametrize("src", [0.0, 1.0, 2.0, None])
+def test_bearing_color_is_cyan_whatever_the_source(fix, qtbot, src):
+    """HSIBRG1: source colour is the CDI's alone (HSI-COLOR-001). A GPS
+    bearing needle used to take the course pointer's magenta and read as the
+    course pointer drawn twice; every needle is now bearing_color (cyan)."""
     _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=20.0, src2=0.0)
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
-    widget._brgSrc[1] = 2.0                       # GPS -> magenta (course_color)
-    assert widget._bearing_color(1) == QColor(widget.course_color)
-    widget._brgSrc[1] = 0.0                       # VOR1 -> green (vloc_color)
-    assert widget._bearing_color(1) == QColor(widget.vloc_color)
-    widget._brgSrc[1] = 1.0                       # VOR2 -> green
-    assert widget._bearing_color(1) == QColor(widget.vloc_color)
-    widget._brgSrc[1] = None                      # unknown -> generic bearing_color
+    widget._brgSrc[1] = src
     assert widget._bearing_color(1) == QColor(widget.bearing_color)
+    assert widget._bearing_color(1) == QColor("#00ffff")
+    assert widget._bearing_color(1) != QColor(widget.course_color)
+    assert widget._bearing_color(1) != QColor(widget.vloc_color)
 
 
-def test_bearing_source_cycle_writes_key(fix, qtbot):
+@pytest.mark.parametrize("navsrc, cycle", [
+    (None, [0.0, 1.0, 2.0]),     # no NAVSRC: every source
+    (2.0, [0.0, 1.0]),           # CDI on GPS: VOR1, VOR2
+    (0.0, [1.0, 2.0]),           # CDI on NAV1: VOR2, GPS
+    (1.0, [0.0, 2.0]),           # CDI on NAV2: VOR1, GPS
+])
+def test_bearing_cycle_steps_off_sources_off_skipping_the_cdi(fix, qtbot, navsrc, cycle):
+    """A tap steps a pointer Off -> each source that is not the CDI's -> Off.
+    A source step writes BRGnSRC; Off is the display's own state and leaves
+    BRGnSRC alone."""
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.bearing1_enabled = True
+    widget._navsrc = navsrc
+    assert widget._bearing_selected(1) is False             # Off by default
+    seen = []
+    for _ in cycle:
+        widget._cycle_bearing_src(1)
+        assert widget._bearing_selected(1) is True
+        seen.append(fix.db.get_item("BRG1SRC").value)
+    assert seen == cycle
+    widget._cycle_bearing_src(1)                            # past the last -> Off
+    assert widget._bearing_selected(1) is False
+    assert fix.db.get_item("BRG1SRC").value == cycle[-1]    # untouched by Off
+    widget._cycle_bearing_src(1)                            # and round again
+    assert widget._bearing_selected(1) is True
+    assert fix.db.get_item("BRG1SRC").value == cycle[0]
+
+
+def test_bearing_cycle_needs_the_layout_switch_and_the_key(fix, qtbot):
+    """bearingN_enabled is the layout switch that makes a pointer available
+    at all; without it, or without BRGnSRC to carry the source, a tap does
+    nothing."""
     _define_bearing_keys(fix, brg1=10.0, src1=0.0)
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
-    widget._brgSrc[1] = 0.0
-    widget._cycle_bearing_src(1)                  # VOR1 -> VOR2
-    assert fix.db.get_item("BRG1SRC").value == 1.0
-    widget._brgSrc[1] = 1.0
-    widget._cycle_bearing_src(1)                  # VOR2 -> GPS
-    assert fix.db.get_item("BRG1SRC").value == 2.0
-    widget._brgSrc[1] = 2.0
-    widget._cycle_bearing_src(1)                  # GPS -> VOR1 (wrap)
-    assert fix.db.get_item("BRG1SRC").value == 0.0
+    widget._cycle_bearing_src(1)
+    assert widget._brgOn[1] is False
+    widget.bearing2_enabled = True                 # BRG2SRC never defined
+    widget._cycle_bearing_src(2)
+    assert widget._brgOn[2] is False
+
+
+@pytest.mark.parametrize("navsrc", [0.0, 1.0, 2.0])
+def test_bearing_on_the_cdi_source_is_never_drawn(fix, qtbot, navsrc):
+    """Bill's rule (HSIBRG1): no needle repeats the CDI. A pointer whose
+    source becomes NAVSRC -- by a NAVSRC change or by BRGnSRC written
+    elsewhere -- is turned Off, not just hidden, so it does not come back
+    unasked when the CDI source moves on."""
+    _define_bearing_keys(fix, brg1=10.0, src1=navsrc)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.bearing1_enabled = True
+    widget._HeadFail = widget._HeadBad = False
+    widget._brgOld[1] = widget._brgBad[1] = widget._brgFail[1] = False
+    widget._brgSrc[1] = navsrc
+    other = (navsrc + 1.0) % 3.0
+    widget.setNavsrc(other)
+    widget._brgOn[1] = True
+    assert widget._bearing_visible(1) is True
+    # the CDI moves onto the pointer's source
+    widget.setNavsrc(navsrc)
+    assert widget._bearing_visible(1) is False
+    assert widget._brgOn[1] is False
+    widget.setNavsrc(other)                        # moving away does not revive it
+    assert widget._bearing_visible(1) is False
+    # the pointer's source is written onto the CDI's from elsewhere
+    widget._brgSrc[1] = (other + 1.0) % 3.0
+    widget._brgOn[1] = True
+    assert widget._bearing_visible(1) is True
+    widget._setBrgSrc(1, other)
+    assert widget._bearing_visible(1) is False
+    assert widget._brgOn[1] is False
+    # and the draw rule holds on its own, whatever path set the state
+    widget._brgOn[1] = True
+    widget._brgSrc[1] = navsrc
+    widget._navsrc = navsrc
+    assert widget._bearing_visible(1) is False
 
 
 def test_bearing_source_label_text(fix, qtbot):
@@ -1085,6 +1160,7 @@ def test_bearing_enabled_paint_never_raises_with_keys(fix, qtbot):
     widget._HeadFail = widget._HeadBad = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgOn[n] = True
     event = QPaintEvent(widget.rect())
     widget.paintEvent(event)                       # must not raise
     assert widget._bearing_visible(1) is True
@@ -1238,6 +1314,7 @@ def test_arc_forward_clip_hides_rear_bearing(fix, qtbot):
     widget._HeadFail = widget._HeadBad = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgOn[n] = True
     widget._heading = 0.0
     assert widget._arc_in_sector(widget._brg[1]) is True     # 10 deg ahead
     assert widget._arc_in_sector(widget._brg[2]) is False    # 180 behind
@@ -1303,6 +1380,7 @@ def test_arc_bearing_label_hidden_when_pointer_clipped_out_of_sector(fix, qtbot)
     widget._HeadFail = widget._HeadBad = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgOn[n] = True
     widget._heading = 0.0
     assert widget._arc_in_sector(widget._brg[1]) is True      # pointer 1: on screen
     assert widget._arc_in_sector(widget._brg[2]) is False     # pointer 2: clipped, valid data
@@ -1327,6 +1405,7 @@ def test_arc_bearing_label_stays_when_invalid_regardless_of_sector(fix, qtbot):
     widget.show()
     qtbot.waitExposed(widget)
     widget._heading = 0.0
+    widget._brgOn[1] = True
     widget._brgOld[1] = True                          # stale -- invalid
     assert widget._arc_in_sector(widget._brg[1]) is False
 
@@ -1463,6 +1542,8 @@ def test_hsi_split_bearing_labels_are_not_hidden_under_the_bottom_boxes(fix, qtb
     for n in (1, 2):
         setattr(widget, "bearing%d_enabled" % n, True)
         widget.brgdb[n] = object()
+        widget.brgsrcdb[n] = object()
+        widget._brgOn[n] = True
         widget._brg[n] = 0.0
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
         widget._brgSrc[n] = 0
@@ -1478,14 +1559,19 @@ def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
     """pyEfis#140 acceptance #5: the whole tab rect (not just the glyphs) is
     the tap target, and mousePressEvent still cycles NAVSRC unchanged."""
     widget = _mk_hsi(qtbot, font_percent=0.08)
+    fix.db.define_item("NAVSRC", "NAVSRC", "float", 0.0, 3.0, "", 0, "")
     widget.navsrcdb = object()
     widget._navsrc = 2                               # GPS
     widget.paintEvent(QPaintEvent(widget.rect()))
     r = widget._source_label_rect
     assert r is not None
 
+    # Record what is queued for fix-gateway, not the local value: a local
+    # set_value() never left pyEfis (pyEfis #294), and a test patched on it
+    # passed while the bench gateway never saw a tap (AER-5548).
     written = []
-    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: written.append(
+        tuple(b.decode().split(";")[:2])))
 
     class _P:
         def __init__(s, x, y): s._x, s._y = x, y
@@ -1499,7 +1585,7 @@ def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
 
     # A point near the tab's rounded-left edge (not just its text glyphs).
     widget.mousePressEvent(_Ev(r[0] + 2, r[1] + r[3] / 2))
-    assert written == [("NAVSRC", 0.0)]
+    assert written == [("NAVSRC", "0.0")]
 
 
 def _painted_source_label_pen(widget, px, py, ph):
@@ -1591,6 +1677,147 @@ def test_hsi_source_tab_width_is_constant_across_labels(fix, qtbot):
         "VLOC2": tab_width(1, None),
     }
     assert len(set(widths.values())) == 1, widths
+
+
+# --- BRG tab: bearing-pointer selector on the panel's right edge (HSIBRG1) ---
+
+class _TapPos:
+    def __init__(self, x, y): self._x, self._y = x, y
+    def x(self): return self._x
+    def y(self): return self._y
+
+
+class _Tap:
+    def __init__(self, x, y): self._p = _TapPos(x, y)
+    def pos(self): return self._p
+    def position(self): return QPointF(self._p.x(), self._p.y())
+    def accept(self): pass
+
+
+def _mk_brg_hsi(qtbot, fix, pointers=(1,), **kw):
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=20.0, src2=0.0)
+    widget = _mk_hsi(qtbot, font_percent=0.05, **kw)
+    for n in pointers:
+        setattr(widget, "bearing%d_enabled" % n, True)
+    widget._HeadFail = widget._HeadBad = widget._HeadOld = False
+    widget.navsrcdb = object()
+    widget._navsrc = 2                               # CDI on GPS
+    return widget
+
+
+def _tap_rect(widget, rect):
+    x, y, w, h = rect
+    widget.mousePressEvent(_Tap(x + w * 0.9, y + h * 0.5))
+
+
+def test_brg_tab_only_when_a_pointer_is_available(fix, qtbot):
+    widget = _mk_brg_hsi(qtbot, fix, pointers=())
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._brg_tab_rects == {}
+    widget.bearing1_enabled = True
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert list(widget._brg_tab_rects) == [1]
+    widget.bearing2_enabled = True
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert list(widget._brg_tab_rects) == [1, 2]
+    widget.readout_layout = "corners"                 # no top panel, no tab
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._brg_tab_rects == {}
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_brg_tab_mirrors_the_source_tab_on_the_right(fix, qtbot, orientation):
+    """Same top and height as the nav-source tab, left edge flush with the
+    panel's right edge; two pointers split that height into two rows."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1, 2))
+    widget.orientation = orientation
+    widget.resize(600, 400)
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    px, top, height = _expected_tab_rect(widget)
+    pw = widget.fontSize * 12.5
+    r1 = widget._brg_tab_rects[1]
+    r2 = widget._brg_tab_rects[2]
+    assert r1[0] == pytest.approx(px + pw) == r2[0]
+    assert r1[1] == pytest.approx(top)
+    assert r1[3] + r2[3] == pytest.approx(height)
+    assert r2[1] == pytest.approx(top + r1[3])
+    assert r1[0] + r1[2] <= widget.width()           # inside the widget
+
+
+def test_brg_tab_labels(fix, qtbot):
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1,))
+    assert widget._bearing_tab_label(1, True) == "BRG OFF"
+    widget._cycle_bearing_src(1)
+    assert widget._bearing_tab_label(1, True) == "BRG1 VOR1"
+    widget.bearing2_enabled = True
+    assert widget._bearing_tab_label(2, False) == "BRG2 OFF"
+    widget._navsrc = 0.0                                  # CDI on NAV1
+    widget._brgOn[2] = True
+    widget._brgSrc[2] = 2.0
+    assert widget._bearing_tab_label(2, False) == "BRG2 GPS"
+
+
+def test_brg_tab_tap_steps_that_rows_pointer(fix, qtbot, monkeypatch):
+    """Each row is its own tap target: tapping row 2 steps pointer 2 only.
+    A source step reaches fix-gateway (queued), not just the local copy."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1, 2))
+    sent = []
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: sent.append(
+        tuple(b.decode().split(";")[:2])))
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    _tap_rect(widget, widget._brg_tab_rects[2])
+    assert widget._brgOn == {1: False, 2: True}
+    assert fix.db.get_item("BRG2SRC").value == 0.0       # VOR1 (CDI is GPS)
+    assert sent == []                                     # already VOR1
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    _tap_rect(widget, widget._brg_tab_rects[1])
+    assert widget._brgOn == {1: True, 2: True}
+    assert fix.db.get_item("BRG1SRC").value == 0.0
+    assert sent == [("BRG1SRC", "0.0")]                   # GPS -> VOR1, sent
+    for _ in range(2):                                    # VOR2, then Off
+        widget.paintEvent(QPaintEvent(widget.rect()))
+        _tap_rect(widget, widget._brg_tab_rects[1])
+    assert widget._brgOn == {1: False, 2: True}
+
+
+def test_brg_corner_labels_with_and_without_the_tab(fix, qtbot):
+    """Under top_panel the tab carries Off and a corner label only names an
+    on pointer's source; without the top panel an Off pointer keeps a "1 OFF"
+    corner label, which takes the tap."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1,))
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._brg_label_rect[1] is None
+    _tap_rect(widget, widget._brg_tab_rects[1])
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._bearing_corner_label(1) == ("1 VOR1", False)
+    assert widget._brg_label_rect[1] is not None
+    widget._brgOn[1] = False
+    for layout in ("corners", "split", "none"):
+        widget.readout_layout = layout
+        widget.paintEvent(QPaintEvent(widget.rect()))
+        assert widget._bearing_corner_label(1) == ("1 OFF", False)
+        _tap_rect(widget, widget._brg_label_rect[1])
+        assert widget._brgOn[1] is True, layout
+        widget._brgOn[1] = False
+
+
+def test_brg_needle_paint_uses_cyan_on_a_gps_cdi(fix, qtbot):
+    """The case Bill reported: CDI on GPS with a GPS bearing pointer drew two
+    magenta pointers at the waypoint. Now that pointer cannot be on; a VOR1
+    pointer beside the GPS CDI paints in cyan, and no bearing pen is magenta."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1,), cdi_enabled=True)
+    widget.source_auto_color = True
+    widget._brgOld[1] = widget._brgBad[1] = widget._brgFail[1] = False
+    widget._brgSrc[1] = 2.0
+    widget._brgOn[1] = True
+    widget._drop_bearings_on_cdi_source()
+    assert widget._bearing_visible(1) is False
+    widget._cycle_bearing_src(1)                          # -> VOR1
+    assert widget._bearing_visible(1) is True
+    painter = mock.MagicMock()
+    widget._draw_bearing_needle(painter, 1)
+    pens = [call.args[0].color() for call in painter.setPen.call_args_list]
+    assert pens and all(c == QColor("#00ffff") for c in pens)
 
 
 # --------------------------------------------------------------------------

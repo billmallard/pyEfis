@@ -67,6 +67,8 @@ from PyQt6.QtWidgets import QWidget
 
 from pyavtools import fix
 from pyefis import hmi
+from pyefis import kiosk
+from pyefis.flightplan import airac as fp_airac
 from pyefis.flightplan import airways as fp_airways
 from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge as fp_fixbridge
@@ -93,6 +95,9 @@ KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
 _STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
 _STATE_SUSP = 3
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
+# Expired procedure data (PA9): the data-status screen's expired amber.
+_EXPIRED_COLOR = "#ffb000"
+_CYCLE_COLOR = "#9a9a9a"
 _CDI_SCALE_CHOICES = ("0.3", "1.0", "2.0", "AUTO")
 _INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog", "proc")
 # PROC page (PA7): its tabs, in the guide's order, and the fields each kind
@@ -430,6 +435,9 @@ class FlightPlan(QWidget):
         group = parts[1] if len(parts) > 1 else ""
         if not self._targeted(group):
             return
+        if kiosk.locked() and page != "fpl":
+            # DEMO4: every other page edits the plan or the catalog.
+            return
         if page == "fpl":
             self._row_menu_index = None
             self._seg_menu = None
@@ -482,6 +490,8 @@ class FlightPlan(QWidget):
         with LAT/LON prefilled from the map pointer *pos* ``(lat, lon)``,
         opened where it always lives -- over the Entry page's User tab, so
         the new waypoint is listed there to add once it is saved."""
+        if kiosk.locked():
+            return
         try:
             lat, lon = float(pos[0]), float(pos[1])
         except (TypeError, ValueError, IndexError):
@@ -496,7 +506,7 @@ class FlightPlan(QWidget):
         parts = str(arg or "").split(None, 1)
         ident = parts[0] if parts else ""
         group = parts[1] if len(parts) > 1 else ""
-        if not self._targeted(group):
+        if not self._targeted(group) or kiosk.locked():
             return
         if not ident:
             self._footer_direct_to()
@@ -661,6 +671,26 @@ class FlightPlan(QWidget):
 
     def _approach_text(self):
         return _APR_TEXT.get(int(self._engine_value("FPLAPR", 0) or 0), "")
+
+    @staticmethod
+    def _cycle_text(cycle):
+        """``(text, colour)`` for an AIRAC *cycle* label: ``AIRAC 2611``
+        grey, or ``AIRAC 2609 EXPIRED`` amber once it has expired (PA9).
+        Expired data is annunciated, never refused (brief guardrail 3)."""
+        if fp_airac.is_expired(cycle):
+            return f"AIRAC {cycle} EXPIRED", _EXPIRED_COLOR
+        return f"AIRAC {cycle}", _CYCLE_COLOR
+
+    def _procedure_text(self):
+        """``(text, colour)`` for the header: the loaded approach's type and
+        the cycle the plan's procedures came from (``RNAV  AIRAC 2611``), or
+        None with no procedure loaded."""
+        cycle = next((s.cycle for s in self._plan.segments if s.cycle), "")
+        if not cycle:
+            return None
+        text, color = self._cycle_text(cycle)
+        aprtype = fp_proc.approach_type(self._plan.segments)
+        return (f"{aprtype}  {text}" if aprtype else text), color
 
     def _row_color(self, i, active_idx):
         if active_idx is not None and i == active_idx:
@@ -2131,7 +2161,7 @@ class FlightPlan(QWidget):
     # highlight between instruments; a push on this one calls enc_select and
     # from then on every turn/push lands here until a method returns False.
     def enc_selectable(self):
-        return True
+        return not kiosk.locked()
 
     def enc_highlight(self, onoff):
         self._enc_highlighted = bool(onoff)
@@ -2747,7 +2777,7 @@ class FlightPlan(QWidget):
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             w, h = self.width(), self.height()
             p.fillRect(0, 0, w, h, QColor("#000000"))
-            page = self._page if self._bridge.available else "fpl"
+            page = self._page if self._editable() else "fpl"
             if page == "entry":
                 self._paint_entry(p, w, h)
             elif page == "dto":
@@ -2770,8 +2800,15 @@ class FlightPlan(QWidget):
             self.clearFocus()
 
     # -- FPL page --------------------------------------------------------------
+    def _editable(self):
+        """The plan can be edited here: the gateway's keys are present and
+        this is not a demo kiosk (DEMO4: the FPL page is read-only there,
+        so an attendee's edit never disagrees with the demo's route)."""
+        return self._bridge.available and not kiosk.locked()
+
     def _paint_fpl(self, p, w, h):
-        interactive = self._bridge.available
+        bus = self._bridge.available
+        interactive = self._editable()
         # 2.0 because this header draws TWO lines -- name/badge/remaining in
         # the top half, approach state or the gateway warning in the bottom --
         # so it is worth two rows. The footer is a soft-key touch row: 1.3
@@ -2782,11 +2819,11 @@ class FlightPlan(QWidget):
         # Suspended at the MAP (G49): the alert takes a soft-key-high strip
         # above the footer, and the list lays out above it so the active leg
         # and the missed approach fixes stay visible.
-        banner_h = footer_h if interactive and self._suspended_at_map() else 0
+        banner_h = footer_h if bus and self._suspended_at_map() else 0
         # A refused commit (G61): its strip sits above that one.
-        refusal_h = footer_h if interactive and self._plan_refused() else 0
+        refusal_h = footer_h if bus and self._plan_refused() else 0
 
-        self._paint_header(p, w, header_h, interactive)
+        self._paint_header(p, w, header_h, bus)
         self._paint_list(p, w, header_h, h - footer_h - banner_h - refusal_h,
                          self._row_h_cap(), interactive)
         self._paint_footer(p, w, h - footer_h, footer_h, interactive)
@@ -2798,11 +2835,12 @@ class FlightPlan(QWidget):
             # The list under an overlay neither scrolls nor takes a press.
             self._list_view = None
         if banner_h:
-            # Under an overlay it is drawn (and dimmed) but not tappable.
-            self._paint_map_susp_banner(p, w, h - footer_h, banner_h, not overlay_open)
+            # Under an overlay, or read-only, it is drawn but not tappable.
+            self._paint_map_susp_banner(p, w, h - footer_h, banner_h,
+                                        interactive and not overlay_open)
         if refusal_h:
             self._paint_refusal_banner(p, w, h - footer_h - banner_h, refusal_h,
-                                       not overlay_open)
+                                       interactive and not overlay_open)
 
         if self._row_menu_index is not None:
             self._paint_row_menu(p, w, h)
@@ -2921,10 +2959,19 @@ class FlightPlan(QWidget):
             p.drawText(QRectF(4, header_h * 0.52, w * 0.5, header_h * 0.46),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, apr_text)
 
+        # The procedure's type and cycle, right-aligned; left of LOI when the
+        # integrity alarm is up, so neither covers the other.
+        right = w - 4
         if self._engine_value("FPLINTEG", True) is False:
             p.setPen(QPen(QColor("#ff0000")))
             p.drawText(QRectF(w * 0.55, header_h * 0.52, w * 0.42, header_h * 0.46),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "LOI")
+            right -= w * 0.03 + p.fontMetrics().horizontalAdvance("LOI  ")
+        proc = self._procedure_text()
+        if proc:
+            p.setPen(QPen(QColor(proc[1])))
+            p.drawText(QRectF(w * 0.30, header_h * 0.52, right - w * 0.30, header_h * 0.46),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, proc[0])
 
     def _column_text(self, col, i, active_idx):
         """Column *col* of flat fix *i*. DTK and DIS are the leg INTO the fix
@@ -3258,7 +3305,8 @@ class FlightPlan(QWidget):
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(footer_h * 0.34), 9))
         p.setFont(f)
-        p.setPen(QPen(QColor("#ffffff")))
+        # Read-only in a demo kiosk (DEMO4): the soft keys are greyed out.
+        p.setPen(QPen(QColor("#555555" if kiosk.locked() else "#ffffff")))
         for i, label in enumerate(labels):
             x = i * seg
             p.drawText(QRectF(x, top, seg, footer_h), Qt.AlignmentFlag.AlignCenter, label)
@@ -3461,11 +3509,13 @@ class FlightPlan(QWidget):
         small = QFont(f)
         small.setPixelSize(self._px(int(row_h * 0.36), 8))
         p.setFont(small)
-        p.setPen(QPen(QColor("#9a9a9a")))
         if seg.cycle:
+            cycle_text, cycle_color = self._cycle_text(seg.cycle)
+            p.setPen(QPen(QColor(cycle_color)))
             p.drawText(QRectF(box_x + 12, box_top, box_w - 24, title_h),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       f"AIRAC {seg.cycle}")
+                       cycle_text)
+        p.setPen(QPen(QColor("#9a9a9a")))
 
         # FIX | CRS | DIS | MEA, columns right-aligned like the route list. A
         # procedure's last column is the leg's altitude constraint as coded.
@@ -3628,7 +3678,7 @@ class FlightPlan(QWidget):
 
         footer_top = box_y + box_h * 0.8
         footer_h = box_h * 0.2
-        if wp.type == "user":
+        if wp.type == "user" and not kiosk.locked():
             seg = box_w / 3.0
             edit_rect = (box_x, footer_top, seg, footer_h)
             p.setPen(QPen(QColor("#00ffff")))
@@ -3920,14 +3970,18 @@ class FlightPlan(QWidget):
         title = segments[0].ident
         if st["proc"].runway:
             title += f"   RWY {st['proc'].runway}"
-        if segments[0].cycle:
-            title += f"   AIRAC {segments[0].cycle}"
         legs = [(seg.kind, wp) for seg in segments for wp in seg.legs]
         if y + line_h > bottom:
             return
         p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(10, y, w - 20, line_h),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
+        if segments[0].cycle:
+            # Right-aligned so an expired cycle keeps its own colour.
+            cycle_text, cycle_color = self._cycle_text(segments[0].cycle)
+            p.setPen(QPen(QColor(cycle_color)))
+            p.drawText(QRectF(10, y, w - 20, line_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, cycle_text)
         y += line_h
         fit = max(0, int((bottom - y) // line_h))
         shown = legs if len(legs) <= fit else legs[:max(0, fit - 1)]

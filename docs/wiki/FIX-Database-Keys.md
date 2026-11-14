@@ -151,6 +151,8 @@ Each key's range and limits are its aux values (`Min`, `Max`, `lowWarn`,
 | `COM*{radio_id}` | Radio frequencies and status for the MGL radio screens (`COMACTFREQ1`) | radio controls |
 | `PYEFIS_VERSION` | pyEFIS's version | pyEFIS |
 | `GATEWAY_VERSION`, `ACID`, `TIMEZ`, `TIMEL` | Gateway version, aircraft ID, UTC and local time, shown on the stock screens | |
+| `DEMOLIVE` | The gateway's demo source is running. pyEFIS shows the DEMO marking while it is true and current | the demo source |
+| `DEMOPAGE` | The page the demo script wants up, `SCREEN` or `SCREEN/TAB`. Followed only in kiosk mode | the demo source |
 
 ## Quality flags
 
