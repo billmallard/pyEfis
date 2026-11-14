@@ -24,7 +24,10 @@ a state badge in orange, and the remaining distance and time in cyan.
 | `SUSP` | Sequencing is suspended: the engine holds the current leg and does not move on. |
 
 **Header, second line**, in green: the approach state, `APR ARM`, `LNAV` or
-`MISSED`. A red `LOI` means the GPS has lost integrity.
+`MISSED`. A red `LOI` means the GPS has lost integrity. On the right, in grey,
+the type of the loaded approach and the AIRAC cycle its procedures came from,
+for example `RNAV  AIRAC 2611`. Once that cycle has expired the text turns
+amber and reads `RNAV  AIRAC 2609 EXPIRED`.
 
 **The list.** Each row is a waypoint: a symbol for its type, the ident and any
 procedure role (`IAF`, `FAF`, `MAP`, `MAHP`), then the columns.
@@ -128,6 +131,10 @@ of the legs, it keeps the plan it had and says why in red, for example
 procedure fit. The missed approach is loaded but not flown until you choose
 **Fly the missed** at the missed approach point.
 
+Procedures from an expired AIRAC cycle still load. The box does not refuse
+them. The cycle is shown in amber with `EXPIRED`: on the page before you
+load, in the header of the flight plan page, and on the nav status line.
+
 ## Direct-To
 
 ![Direct To: the Waypoint, FPL and NRST APT tabs, the keypad, and ACTIVATE](../images/flightplan/bench_direct_to.png)
@@ -211,6 +218,11 @@ It reads `[BADGE] FROM > TO > NEXT   distance  time  PHASE`:
 - Distance is in nm; time is `H:MM`, or a grey `--:--` when it is unknown.
 - The phase is shown as fix-gateway publishes it (`ENR`, `TERM`, `LNAV` and so
   on) in green, and `LOI` in yellow.
+- The loaded procedure: the approach type and AIRAC cycle, for example
+  `RNAV 2611`, in white. With no approach loaded, the cycle shows alone. Once
+  the cycle has expired, the cycle and `EXPIRED` show in amber.
+- `TURN L` or `TURN R` while the box flies the turn coded at the start of a
+  direct-to-fix leg, as fix-gateway publishes it.
 - A red `XXX` replaces a failed field; the whole line greys when the plan state
   is stale.
 

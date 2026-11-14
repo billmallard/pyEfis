@@ -854,17 +854,20 @@ _register(InstrumentSpec(
                   "decluttered of the rear rose)"),
         Prop("bearing1_enabled", "boolean", default=False,
              label="Bearing pointer 1",
-             help="show the single-bar RMI bearing needle (BRG1), pointing to "
-                  "the pointer-1 source (VOR1/VOR2/GPS via BRG1SRC)"),
+             help="make the single-bar RMI bearing needle (BRG1) available. "
+                  "It starts Off; the pilot steps it through each source that "
+                  "is not the CDI's (VOR1/VOR2/GPS via BRG1SRC) with the BRG "
+                  "tab or its corner label"),
         Prop("bearing2_enabled", "boolean", default=False,
              label="Bearing pointer 2",
-             help="show the double-bar RMI bearing needle (BRG2), pointing to "
-                  "the pointer-2 source (VOR1/VOR2/GPS via BRG2SRC)"),
+             help="make the double-bar RMI bearing needle (BRG2) available. "
+                  "It starts Off; the pilot steps it through each source that "
+                  "is not the CDI's (VOR1/VOR2/GPS via BRG2SRC) with the BRG "
+                  "tab or its corner label"),
         Prop("bearing_color", "color", default="#00ffff",
              label="Bearing pointer color",
-             help="generic bearing-needle colour used when the source is "
-                  "unknown; a needle with a known source is coloured by it "
-                  "(magenta GPS / green VOR)",
+             help="colour of both bearing needles, their labels and the BRG "
+                  "tab, whatever the source (source colour is the CDI's)",
              token="nav.reference"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
@@ -1557,8 +1560,10 @@ _register(InstrumentSpec(
 
 # `nav_status` (FP7, billmallard/pyEfis#189): the GNX 375 from-to-next field
 # (guide 3-41/3-42) as a one-line chip -- WPFROM > WPNAME > WPNEXT, the
-# FPLSTATE badge, optional WPDIS/WPETE and FPLPHASE. Reads engine outputs
-# only; undefined keys read as absent (underscores), never a raise. A tap fires
+# FPLSTATE badge, optional WPDIS/WPETE and FPLPHASE, the loaded procedure's
+# type and AIRAC cycle (amber EXPIRED once it has expired; PA9) and FPLTURN.
+# Reads engine outputs only; undefined keys read as absent (underscores), never
+# a raise. A tap fires
 # the `flightplan page fpl` HMI action (after `show screen <tap_screen>` when
 # set), so a PFD-corner chip can open the plan on the flight-plan screen.
 _register(InstrumentSpec(
@@ -1569,7 +1574,7 @@ _register(InstrumentSpec(
     builds_in_isolation=True,
     offscreen_renderable=True,
     dbkeys=["FPLSTATE", "FPLPHASE", "WPFROM", "WPNAME", "WPNEXT", "WPDIS",
-            "WPETE"],
+            "WPETE", "FPLAPRTYPE", "FPLDBCYC", "FPLTURN"],
     properties=[
         Prop("show_distance", "boolean", default=True, label="Show distance",
              help="distance to the TO waypoint (WPDIS), nm"),
@@ -1579,6 +1584,13 @@ _register(InstrumentSpec(
         Prop("show_phase", "boolean", default=True, label="Show phase",
              help="flight phase / CDI scale annunciation (FPLPHASE): ENR, "
                   "TERM, LNAV, ... green; LOI yellow"),
+        Prop("show_procedure", "boolean", default=True, label="Show procedure",
+             help="loaded approach type (FPLAPRTYPE) and AIRAC cycle "
+                  "(FPLDBCYC); the cycle and EXPIRED in amber once it has "
+                  "expired"),
+        Prop("show_turn", "boolean", default=True, label="Show turn",
+             help="TURN L / TURN R while the engine flies the coded turn that "
+                  "opens a DF leg (FPLTURN)"),
         Prop("hmi_group", "string", default="", label="HMI group",
              help="hmi_group of the flight_plan instrument a tap opens; blank "
                   "= every flight_plan instrument"),

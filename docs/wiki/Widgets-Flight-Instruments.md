@@ -281,9 +281,9 @@ FIX keys it reads by default: `COURSE`, `CDI`, `GSI`, `HEAD`, `BRG1`, `BRG2`, `B
 | `depth_rings` | Depth rings | off | on / off | faint concentric rings inside the rose (a light structural cue; real depth comes from the translucent face over the map, so these are off by default) |
 | `shadow_enabled` | Drop shadow | off | on / off | soft drop shadow on the static elements -- the rose disc and the readout panel -- for a raised, layered look; off by default |
 | `orientation` | Orientation | `heading_up` | `heading_up`, `north_up`, `track_up`, `arc` | compass presentation. heading_up/north_up/track_up show the full 360 rotating rose (today's look); arc shows an expanded forward ~120 sector (finer resolution on the tracked heading, decluttered of the rear rose) |
-| `bearing1_enabled` | Bearing pointer 1 | off | on / off | show the single-bar RMI bearing needle (BRG1), pointing to the pointer-1 source (VOR1/VOR2/GPS via BRG1SRC) |
-| `bearing2_enabled` | Bearing pointer 2 | off | on / off | show the double-bar RMI bearing needle (BRG2), pointing to the pointer-2 source (VOR1/VOR2/GPS via BRG2SRC) |
-| `bearing_color` | Bearing pointer color | `#00ffff` | colour | generic bearing-needle colour used when the source is unknown; a needle with a known source is coloured by it (magenta GPS / green VOR) |
+| `bearing1_enabled` | Bearing pointer 1 | off | on / off | make the single-bar RMI bearing needle (BRG1) available. It starts Off; the pilot steps it through each source that is not the CDI's (VOR1/VOR2/GPS via BRG1SRC) with the BRG tab or its corner label |
+| `bearing2_enabled` | Bearing pointer 2 | off | on / off | make the double-bar RMI bearing needle (BRG2) available. It starts Off; the pilot steps it through each source that is not the CDI's (VOR1/VOR2/GPS via BRG2SRC) with the BRG tab or its corner label |
+| `bearing_color` | Bearing pointer color | `#00ffff` | colour | colour of both bearing needles, their labels and the BRG tab, whatever the source (source colour is the CDI's) |
 
 <!-- /generated -->
 

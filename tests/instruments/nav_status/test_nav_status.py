@@ -161,6 +161,9 @@ def test_active_ident_is_painted_magenta(chip, fix):
                     return True
         return False
 
+    # Wide enough that the glyphs stay a few pixels tall with the procedure
+    # and turn fields in the template, on a host with no fonts.
+    chip.resize(600, 40)
     assert not has_magenta(_paint(chip))
     _leg(fix)
     assert has_magenta(_paint(chip))
@@ -327,6 +330,120 @@ def test_tap_reaches_a_real_flight_plan_page_signal(chip, monkeypatch):
 def test_tap_without_hmi_is_a_no_op(chip, monkeypatch):
     monkeypatch.setattr(hmi, "actions", None)
     QTest.mouseClick(chip, Qt.MouseButton.LeftButton)  # does not raise
+
+
+# -- the loaded procedure and the coded turn (PA9) ----------------------------
+from datetime import date
+
+from pyefis.flightplan import airac
+
+AMBER = QColor(255, 176, 0)
+# AIRAC 2611 is current from 2026-10-29 until 2026-11-26.
+DURING_2611 = date(2026, 11, 14)
+AFTER_2611 = date(2026, 11, 26)
+
+
+def _define_pa9_keys(fix):
+    for key in ("FPLAPRTYPE", "FPLDBCYC", "FPLTURN"):
+        fix.db.define_item(key, key, "str", None, None, "", 0, "")
+        fix.db.set_value(key, "")
+        item = fix.db.get_item(key)
+        item.old = item.bad = item.fail = False
+
+
+@pytest.fixture
+def pa9_chip(qtbot, fix):
+    _define_keys(fix)
+    _define_pa9_keys(fix)
+    widget = nav_status.NavStatus()
+    qtbot.addWidget(widget)
+    widget.resize(800, 40)
+    return widget
+
+
+def test_approach_type_and_cycle_are_shown(pa9_chip, fix, monkeypatch):
+    monkeypatch.setattr(airac, "utc_today", lambda: DURING_2611)
+    _leg(fix)
+    _set(fix, FPLAPRTYPE="RNAV", FPLDBCYC="2611")
+    _, _, data, _ = pa9_chip.fields()
+    assert ("RNAV 2611", WHITE) in data
+
+
+def test_an_expired_cycle_is_named_in_amber(pa9_chip, fix, monkeypatch):
+    # Guardrail 3: expired procedure data is annunciated on the approach,
+    # naming the cycle -- the chip still shows the leg it is flying.
+    monkeypatch.setattr(airac, "utc_today", lambda: AFTER_2611)
+    _leg(fix)
+    _set(fix, FPLAPRTYPE="RNAV", FPLDBCYC="2611")
+    badge, runs, data, _ = pa9_chip.fields()
+    assert ("RNAV 2611 EXPIRED", AMBER) in data
+    assert badge == "LEG" and _texts(runs)[2] == "GVO"
+
+
+def test_a_departure_alone_shows_its_cycle(pa9_chip, fix, monkeypatch):
+    monkeypatch.setattr(airac, "utc_today", lambda: AFTER_2611)
+    _leg(fix)
+    _set(fix, FPLDBCYC="2611")
+    _, _, data, _ = pa9_chip.fields()
+    assert ("2611 EXPIRED", AMBER) in data
+
+
+def test_no_procedure_no_plan_or_option_off_shows_nothing(pa9_chip, fix):
+    _leg(fix)
+    _, _, data, _ = pa9_chip.fields()
+    assert not any("2611" in t for t, _ in data)
+    _set(fix, FPLAPRTYPE="RNAV", FPLDBCYC="2611", FPLSTATE=0)
+    _, _, data, _ = pa9_chip.fields()
+    assert not any("2611" in t for t, _ in data)
+    _set(fix, FPLSTATE=1)
+    pa9_chip.show_procedure = False
+    _, _, data, _ = pa9_chip.fields()
+    assert not any("2611" in t for t, _ in data)
+
+
+@pytest.mark.parametrize("value, text", [("L", "TURN L"), ("R", "TURN R"), ("", None)])
+def test_fplturn_is_annunciated_from_the_key(pa9_chip, fix, value, text):
+    _leg(fix)
+    _set(fix, FPLTURN=value)
+    _, _, data, _ = pa9_chip.fields()
+    turns = [t for t, _ in data if t.startswith("TURN")]
+    assert turns == ([text] if text else [])
+    pa9_chip.show_turn = False
+    _, _, data, _ = pa9_chip.fields()
+    assert not any(t.startswith("TURN") for t, _ in data)
+
+
+def test_a_gateway_without_the_pa9_keys_keeps_the_chip(chip, fix):
+    # No FPLAPRTYPE/FPLDBCYC/FPLTURN defined: available, nothing extra drawn.
+    assert chip.available
+    _leg(fix)
+    _, _, data, _ = chip.fields()
+    assert [t for t, _ in data] == ["12.4 NM", "0:06", "TERM"]
+
+
+def test_a_current_procedure_does_not_change_the_font_size(pa9_chip, fix, monkeypatch):
+    monkeypatch.setattr(airac, "utc_today", lambda: AFTER_2611)
+    device = QImage(pa9_chip.size(), QImage.Format.Format_ARGB32)
+    avail = pa9_chip.width() - 2 * pa9_chip.height() * 0.15
+
+    def px():
+        badge, runs, data, _ = pa9_chip.fields()
+        return pa9_chip._fit_px(device, avail, pa9_chip.height(), badge, runs, data)
+
+    monkeypatch.setattr(airac, "utc_today", lambda: DURING_2611)
+    _leg(fix)
+    sizes = {px()}
+    _set(fix, FPLAPRTYPE="RNAV", FPLDBCYC="2611", FPLTURN="L")
+    sizes.add(px())
+    assert len(sizes) == 1
+    # An expired cycle may shrink the text, never overrun the chip.
+    monkeypatch.setattr(airac, "utc_today", lambda: AFTER_2611)
+    _set(fix, FPLAPRTYPE="LOCBC")
+    badge, runs, data, _ = pa9_chip.fields()
+    from PyQt6.QtGui import QFontMetricsF
+    _, right = pa9_chip._layout(QFontMetricsF(pa9_chip._font(px()), device), badge, runs, data)
+    assert right <= avail
+    _paint(pa9_chip)
 
 
 # -- registry ------------------------------------------------------------------

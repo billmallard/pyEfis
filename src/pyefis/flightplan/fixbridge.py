@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 from . import geo
 from . import model
+from . import proc_load
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP", "FPLLDSEQ")
 TURN_FIELD = "TA"
 
 _STATIC_KEYS = (
-    "FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSEGCNT", "FPLDBCYC",
+    "FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSEGCNT", "FPLAPRTYPE", "FPLDBCYC",
     "DTOID", "DTOLAT", "DTOLON", "DTOTYPE",
     "FPLCMD", "FPLCMDACK", "FPLMSG",
 )
@@ -135,7 +136,7 @@ def route_key_specs():
             yield _seg_key(n, name), dtype, blank
     for key, dtype, blank in (
             ("FPLCOUNT", "int", 0), ("FPLNAME", "str", ""), ("FPLSEQ", "int", 0),
-            ("FPLSEGCNT", "int", 0), ("FPLDBCYC", "str", ""),
+            ("FPLSEGCNT", "int", 0), ("FPLAPRTYPE", "str", ""), ("FPLDBCYC", "str", ""),
             ("DTOID", "str", ""), ("DTOLAT", "float", 0.0), ("DTOLON", "float", 0.0),
             ("DTOTYPE", "int", 0), ("FPLCMD", "str", ""), ("FPLCMDACK", "int", 0),
             ("FPLMSG", "str", "")):
@@ -266,8 +267,9 @@ class FixBridge:
     def publish(self, plan) -> None:
         """Write every slot field and the segment table, blanking whatever
         the previous plan left past the new counts, then ``FPLSEGCNT`` and
-        ``FPLCOUNT``, ``FPLNAME``, ``FPLDBCYC``, and ``FPLSEQ`` last
-        (RS1 writer order: consumers act only on the ``FPLSEQ`` change).
+        ``FPLCOUNT``, ``FPLNAME``, ``FPLAPRTYPE`` (the loaded approach's
+        type, PA9), ``FPLDBCYC``, and ``FPLSEQ`` last (RS1 writer order:
+        consumers act only on the ``FPLSEQ`` change).
 
         ``FPLfCRS`` is magnetic. A leg with no coded course (every TF leg
         a pilot builds) gets the great-circle course into its fix,
@@ -318,6 +320,7 @@ class FixBridge:
         self._set("FPLSEGCNT", segcnt)
         self._set("FPLCOUNT", count)
         self._set("FPLNAME", plan.name or plan.default_name())
+        self._set("FPLAPRTYPE", proc_load.approach_type(plan.segments))
         self._set("FPLDBCYC", next((s.cycle for s in plan.segments if s.cycle), ""))
         self._set("FPLSEQ", int(self._get("FPLSEQ").value) + 1)
         self._published_count = count

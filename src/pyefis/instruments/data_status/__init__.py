@@ -36,6 +36,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QEvent, QTimer, QRectF, QProcess, qRound
 from PyQt6.QtGui import QColor, QFont, QPainter
+from pyefis import kiosk
 from pyefis.instruments.helpers import font_scale
 from PyQt6.QtWidgets import (QWidget, QPushButton, QCheckBox, QScrollArea,
                              QVBoxLayout, QHBoxLayout, QLabel)
@@ -153,6 +154,74 @@ def annunciation_severity(status):
     if panel_change(status) is not None:
         return "amber"
     return worst_severity(status)
+
+
+def _terrain_region(p):
+    """Region name of a terrain pack: its ``regions`` entry, else its id
+    without the ``terrain-`` prefix."""
+    if p.get("regions"):
+        return str(p["regions"][0])
+    pid = str(p.get("id", ""))
+    return pid[len("terrain-"):] if pid.startswith("terrain-") else pid
+
+
+def display_rows(packs):
+    """The Data Status rows for the status file's packs. Terrain ships one
+    pack per region, and identical "Terrain current 2024edr4" rows crowded
+    the list off the screen (Bill, 2026-11-14 on AER-5616), so two or more
+    terrain packs collapse into one row at the first terrain pack's place:
+    "Terrain (N regions)". When every region is current the row shows their
+    shared status and detail; otherwise it takes the worst region's severity
+    and status, and the detail names each region that is not current. Every
+    other pack is one row, unchanged."""
+    terrain = [p for p in packs if p.get("kind") == "terrain"]
+    if len(terrain) < 2:
+        return list(packs)
+    worst = max(terrain, key=lambda p: _SEV_RANK.get(p.get("severity", "white"), 1))
+    flagged = [p for p in terrain if p.get("severity", "white") != "none"]
+    if flagged:
+        status = worst.get("status", "")
+        detail = ", ".join(f"{_terrain_region(p)} {p.get('status', '')}"
+                           for p in flagged)
+    else:
+        statuses = {p.get("status", "") for p in terrain}
+        details = {p.get("detail", "") for p in terrain}
+        status = statuses.pop() if len(statuses) == 1 else "current"
+        detail = details.pop() if len(details) == 1 else ""
+    row = {"id": "terrain", "kind": "terrain",
+           "name": f"Terrain ({len(terrain)} regions)",
+           "status": status, "detail": detail,
+           "severity": worst.get("severity", "white")}
+    rows, placed = [], False
+    for p in packs:
+        if p.get("kind") == "terrain":
+            if not placed:
+                rows.append(row)
+                placed = True
+        else:
+            rows.append(p)
+    return rows
+
+
+def fit_detail(pk, fm, width):
+    """The pack's detail text if it fits ``width`` (QFontMetrics ``fm``).
+    Otherwise a short form from the pack's own fields, cycle and expiry
+    ("2611 to 2026-11-26", with ", next 2612 staged" when that also fits),
+    so a narrow column keeps the expiry instead of cutting it off mid-word.
+    Failing that, the detail elided at the column edge."""
+    full = str(pk.get("detail", "") or "")
+    if fm.horizontalAdvance(full) <= width:
+        return full
+    cycle, expires = pk.get("cycle"), pk.get("expires")
+    if cycle and expires:
+        short = f"{cycle} to {expires}"
+        if pk.get("next_staged") and pk.get("next_cycle"):
+            longer = f"{short}, next {pk['next_cycle']} staged"
+            if fm.horizontalAdvance(longer) <= width:
+                return longer
+        if fm.horizontalAdvance(short) <= width:
+            return short
+    return fm.elidedText(full, Qt.TextElideMode.ElideRight, int(width))
 
 
 def fmt_bytes(n):
@@ -634,6 +703,8 @@ class DataStatus(QWidget):
         self._ack_hash = None
         self._banner_rect = QRectF()
         self._pack_span = None        # (top, bottom) of the last painted pack list
+        self._painted_details = []    # detail strings as last painted (tests)
+        self._message_y = None        # y of the last painted message line (tests)
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
@@ -655,6 +726,8 @@ class DataStatus(QWidget):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_continue.clicked.connect(self._on_continue)
         self.btn_update.clicked.connect(self._on_update)
+        # DEMO4: a demo kiosk's packs are frozen before the show (brief 4).
+        self.btn_update.setEnabled(not kiosk.locked())
         self.btn_about.clicked.connect(self._on_about)
 
         # Refresh periodically so a USB import (handled by the updater's udev
@@ -781,7 +854,7 @@ class DataStatus(QWidget):
         self._close_picker()
         self.mode = "status"
         self.message = message
-        self.btn_update.setEnabled(True)
+        self.btn_update.setEnabled(not kiosk.locked())
         self._ack_hash = None
         self._sync_visibility()
         self.update()
@@ -790,7 +863,7 @@ class DataStatus(QWidget):
     def _on_update(self):
         """Tapping Update no longer blindly runs an OTA update; it first asks
         what sources are available, then shows the pack picker."""
-        if self._proc is not None or self.mode != "status":
+        if self._proc is not None or self.mode != "status" or kiosk.locked():
             return
         self.message = "Checking for updates…"
         self.btn_update.setEnabled(False)
@@ -972,7 +1045,7 @@ class DataStatus(QWidget):
         self._close_picker()
         self.mode = "status"
         self._prog = None
-        self.btn_update.setEnabled(True)
+        self.btn_update.setEnabled(not kiosk.locked())
         self.message = ("Update complete." if code == 0 else
                         "Update finished with problems — your previous data is "
                         "still in place. See the rows above.")
@@ -1071,7 +1144,7 @@ class DataStatus(QWidget):
         # 0.10h + 1.8 rows, as in paintEvent). Acknowledge sits at its right.
         x = qRound(w * 0.10)
         top = qRound(h * 0.10) + qRound(self.row_h * 1.8)
-        self._banner_rect = QRectF(x, top, w - 2 * x, self.row_h * 4.2)
+        self._banner_rect = QRectF(x, top, w - 2 * x, self.row_h * 3.6)
         aw, ah = qRound(w * 0.18), qRound(self.row_h * 1.8)
         self.btn_ack.setGeometry(qRound(self._banner_rect.right()) - aw - qRound(self.row_h * 0.4),
                                  qRound(self._banner_rect.center().y()) - ah // 2, aw, ah)
@@ -1158,13 +1231,10 @@ class DataStatus(QWidget):
             p.drawText(QRectF(x, y, w - 2 * x, self.row_h), flags,
                        "Data status unavailable — run an update to populate it.")
         else:
-            packs = self.status.get("packs", [])
-            step = self._pack_step(y, len(packs))
-            self._pack_span = (y, y + step * len(packs))     # for tests
-            if step < self.row_h:
-                f = QFont(self.font)
-                f.setPixelSize(max(1, qRound(self.font.pixelSize() * step / self.row_h)))
-                p.setFont(f)
+            packs = display_rows(self.status.get("packs", []))
+            step = self.row_h
+            self._pack_span = (y, y + step * len(packs))     # message line, tests
+            self._painted_details = []
             for pk in packs:
                 color = SEVERITY_COLORS.get(pk.get("severity", "white"),
                                             SEVERITY_COLORS["white"])
@@ -1173,32 +1243,23 @@ class DataStatus(QWidget):
                            str(pk.get("name", pk.get("id", ""))))
                 p.drawText(QRectF(col_status, y, col_detail - col_status, step), flags,
                            str(pk.get("status", "")))
-                p.drawText(QRectF(col_detail, y, w - col_detail - x, step), flags,
-                           str(pk.get("detail", "")))
+                dw = w - col_detail - x
+                detail = fit_detail(pk, p.fontMetrics(), dw)
+                self._painted_details.append(detail)
+                p.drawText(QRectF(col_detail, y, dw, step), flags, detail)
                 y += step
 
         if self.message:
             p.setFont(self.font)
             p.setPen(SEVERITY_COLORS["white"])
-            p.drawText(QRectF(x, h * 0.74, w - 2 * x, self.row_h), flags, self.message)
-
-    def _pack_list_bottom(self):
-        """The y the pack list must end above: the message line when one is
-        showing, else the top of the button row."""
-        bottom = self.btn_continue.y()
-        if self.message:
-            bottom = min(bottom, qRound(self.height() * 0.74))
-        return bottom - qRound(self.row_h * 0.2)
-
-    def _pack_step(self, top, n):
-        """Row pitch for ``n`` pack rows starting at ``top``: the normal row
-        height, or less when that would run the list under the message line or
-        the buttons (a long list, or one pushed down by the panel-change
-        banner). Every pack row stays on screen; the text shrinks with it."""
-        if n <= 0:
-            return self.row_h
-        room = self._pack_list_bottom() - top
-        return max(1.0, min(float(self.row_h), room / n))
+            # Below the pack list when the list reaches the usual message line
+            # (a long list under the panel-change banner), so it never paints
+            # over a row.
+            my = h * 0.74
+            if self._pack_span is not None and self.status and self.status.get("ok"):
+                my = max(my, self._pack_span[1])
+            self._message_y = my
+            p.drawText(QRectF(x, my, w - 2 * x, self.row_h), flags, self.message)
 
     def _paint_banner(self, p, block):
         """Amber panel-change banner (CERT17). Returns the y the pack list
@@ -1224,7 +1285,7 @@ class DataStatus(QWidget):
                           r.height() - self.row_h - pad),
                    int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft
                        | Qt.AlignmentFlag.AlignTop), body)
-        return qRound(r.bottom() + self.row_h * 0.6)
+        return qRound(r.bottom() + self.row_h * 0.25)
 
 
 class DataAnnunciation(QWidget):
