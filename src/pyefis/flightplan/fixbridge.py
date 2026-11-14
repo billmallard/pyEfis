@@ -228,6 +228,10 @@ class FixBridge:
     """Wraps ``pyavtools.fix``. *fix_module* is the imported ``pyavtools.fix``
     (or a compatible test double exposing ``.db``)."""
 
+    # _get()'s item cache, and the database it was filled from.
+    _items: dict | None = None
+    _items_db = None
+
     def __init__(self, fix_module):
         self._fix = fix_module
         self._last_seq = 0
@@ -253,7 +257,20 @@ class FixBridge:
             return False
 
     def _get(self, key):
-        return self._fix.db.get_item(key)
+        # pyavtools keeps one item object per key for the life of its
+        # database -- a gateway reconnect redefines the same object -- so
+        # the item is looked up once. get_item() takes a lock and waits on
+        # the database's init event every call, and the readers here make
+        # some 300 lookups for one route (pyEfis #480). A key that is not
+        # there is not cached: it may be defined later.
+        db = self._fix.db
+        if self._items is None or db is not self._items_db:
+            self._items = {}
+            self._items_db = db
+        item = self._items.get(key)
+        if item is None:
+            item = self._items[key] = db.get_item(key)
+        return item
 
     def _set(self, key, value) -> None:
         # set_value() only updates pyEfis's local copy: pyavtools sends a key
@@ -263,7 +280,7 @@ class FixBridge:
         # looked right on glass while the engine saw nothing (AER-810 bench,
         # 2026-10-10: three waypoints on screen, FPLCOUNT=1 on fixgw). Same
         # value-then-output_value() pattern as hmi/functions.py setValue.
-        item = self._fix.db.get_item(key)
+        item = self._get(key)
         item.value = value
         item.output_value()
 
