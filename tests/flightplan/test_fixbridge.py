@@ -8,8 +8,10 @@ separate repo and its ``database/flightplan.yaml`` is not part of this
 fixture.
 """
 
+import gc
 import subprocess
 import sys
+import weakref
 from pathlib import Path
 
 import pytest
@@ -485,3 +487,47 @@ def test_two_bridges_never_reuse_a_command_seq(fix):
     assert fpl.command("RESUME") == 3
     fix.db.set_value("FPLCMDACK", -9)      # another display got to 9
     assert mapb.command("DTOX") == 10
+
+
+def test_keyed_listener_gets_the_written_key(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    keys, plain = [], []
+    bridge.add_listener(keys.append, keyed=True)
+    bridge.add_listener(lambda: plain.append(1))
+
+    fix.db.set_value("WPDIS", 3.0)
+    fix.db.set_value("FPLSTATE", 1)
+
+    assert keys == ["WPDIS", "FPLSTATE"]
+    assert plain == [1, 1]
+
+
+def test_staging_a_direct_to_notifies_with_its_keys(fix):
+    """The map draws the staged point (off-route direct-to)."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    keys = []
+    bridge.add_listener(keys.append, keyed=True)
+
+    bridge.stage_direct_to(model.Waypoint(id="RZS", type="vor", lat=34.02, lon=-119.55))
+
+    assert set(keys) == {"DTOID", "DTOLAT", "DTOLON", "DTOTYPE"}
+
+
+def test_a_dropped_bridge_stops_notifying(fix):
+    """The item signals hold a bridge's slots weakly: a bridge nobody keeps
+    (a rebuilt widget, a second writer) neither stays alive nor keeps
+    calling its listeners."""
+    _define_all_fp1_keys(fix)
+    calls = []
+    bridge = fixbridge.FixBridge(fix)
+    bridge.add_listener(lambda: calls.append(1))
+    ref = weakref.ref(bridge)
+    del bridge
+    gc.collect()
+
+    fix.db.set_value("WPDIS", 3.0)
+
+    assert ref() is None
+    assert calls == []

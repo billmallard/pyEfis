@@ -27,6 +27,7 @@ importing Qt.
 from __future__ import annotations
 
 import logging
+import weakref
 from dataclasses import dataclass, field
 
 from . import geo
@@ -89,9 +90,13 @@ OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP", "FPLLDSEQ")
 # gateway reads as no arcs, the square corners drawn before the key.
 TURN_FIELD = "TA"
 
+# The staged direct-to point (Appendix A): watched as well, since the map
+# draws it, and its writes are rare (stage_direct_to).
+_DTO_KEYS = ("DTOID", "DTOLAT", "DTOLON", "DTOTYPE")
+
 _STATIC_KEYS = (
     "FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSEGCNT", "FPLAPRTYPE", "FPLDBCYC",
-    "DTOID", "DTOLAT", "DTOLON", "DTOTYPE",
+    *_DTO_KEYS,
     "FPLCMD", "FPLCMDACK", "FPLMSG",
 )
 
@@ -205,6 +210,20 @@ class DirectTo:
     type: str
 
 
+class _KeyedWrite:
+    """The slot of one watched item: FixBridge._notify with the item's key
+    (FixBridge._watch). Holds the bridge weakly."""
+
+    def __init__(self, bridge, key):
+        self._bridge = weakref.ref(bridge)
+        self._key = key
+
+    def notify(self, *_args) -> None:
+        bridge = self._bridge()
+        if bridge is not None:
+            bridge._notify(self._key)
+
+
 class FixBridge:
     """Wraps ``pyavtools.fix``. *fix_module* is the imported ``pyavtools.fix``
     (or a compatible test double exposing ``.db``)."""
@@ -215,7 +234,8 @@ class FixBridge:
         self._published_count = 0
         self._published_segcnt = 0
         self._ack_callbacks: dict[int, callable] = {}
-        self._listeners: list[callable] = []
+        self._listeners: list[tuple[callable, bool]] = []
+        self._watchers: list[_KeyedWrite] = []
 
         self.available = self._probe()
         if self.available:
@@ -369,14 +389,19 @@ class FixBridge:
         cb(seq, value >= 0, self._get("FPLMSG").value)
 
     # -- ActivePlan read-back ---------------------------------------------
-    def add_listener(self, callback) -> None:
+    def add_listener(self, callback, keyed=False) -> None:
         """*callback()* is invoked (no arguments) on every write of
-        ``FPLSEQ`` or of an engine output -- a write, not a change: the
-        engine rewrites all its outputs each cycle, so expect some 25 calls
-        per cycle. The listener re-reads what it needs via
+        ``FPLSEQ``, of an engine output, of a slot's ``FPLfTA`` or of the
+        staged direct-to point -- a write, not a change: the engine
+        rewrites all its outputs each cycle, so expect some 25 calls per
+        cycle. The listener re-reads what it needs via
         :meth:`read_engine`, and :meth:`read_route` only when
-        :meth:`route_key` has moved."""
-        self._listeners.append(callback)
+        :meth:`route_key` has moved.
+
+        With *keyed* the callback gets the written key, ``callback(key)``,
+        so a listener can skip a write that cannot change what it shows
+        without reading anything: most of the 25 are readouts."""
+        self._listeners.append((callback, keyed))
 
     def _optional_items(self):
         for key in OPTIONAL_ENGINE_OUTPUT_KEYS:
@@ -385,24 +410,37 @@ class FixBridge:
             except KeyError:
                 continue
 
+    def _watch(self, key, item):
+        # A bound method, not a partial or lambda: PyQt holds a bound
+        # method's object weakly, so a bridge that is dropped (a widget
+        # rebuilt, a second writer) disconnects instead of staying alive
+        # on the item's signal with its listeners. The bridge owns the
+        # _KeyedWrite, which holds the bridge only weakly.
+        watcher = _KeyedWrite(self, key)
+        self._watchers.append(watcher)
+        item.valueWrite[item.dtype].connect(watcher.notify)
+
     def _connect_readback(self):
-        for key in ("FPLSEQ",) + ENGINE_OUTPUT_KEYS:
-            item = self._get(key)
-            item.valueWrite[item.dtype].connect(self._notify)
-        for _key, item in self._optional_items():
-            item.valueWrite[item.dtype].connect(self._notify)
+        for key in ("FPLSEQ",) + ENGINE_OUTPUT_KEYS + _DTO_KEYS:
+            self._watch(key, self._get(key))
+        for key, item in self._optional_items():
+            self._watch(key, item)
         for n in range(1, MAX_SLOTS + 1):
+            key = _slot_key(n, TURN_FIELD)
             try:
-                item = self._get(_slot_key(n, TURN_FIELD))
+                item = self._get(key)
             except KeyError:
                 break
-            item.valueWrite[item.dtype].connect(self._notify)
+            self._watch(key, item)
         ack_item = self._get("FPLCMDACK")
         ack_item.valueWrite[ack_item.dtype].connect(self._on_cmdack)
 
-    def _notify(self, *_args) -> None:
-        for cb in list(self._listeners):
-            cb()
+    def _notify(self, key) -> None:
+        for cb, keyed in list(self._listeners):
+            if keyed:
+                cb(key)
+            else:
+                cb()
 
     def route_key(self):
         """``(FPLSEQ, FPLCOUNT, FPLSEGCNT, FPLLDSEQ)``: equal keys mean the
