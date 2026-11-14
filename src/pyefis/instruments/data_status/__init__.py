@@ -144,6 +144,17 @@ def worst_severity(status):
                key=lambda s: _SEV_RANK.get(s, 1), default="none")
 
 
+def annunciation_severity(status):
+    """What the PFD DATA flag shows: amber while a config pull's panel change
+    waits to be acknowledged (CERT17, Bill 2026-11-14 on AER-5481), else the
+    worst pack severity. Data Status never boots (BACKLOG L3), so this flag is
+    the pilot's only way to it; with every pack current the cue would
+    otherwise show nowhere the pilot looks."""
+    if panel_change(status) is not None:
+        return "amber"
+    return worst_severity(status)
+
+
 def fmt_bytes(n):
     """Human size for the picker (decimal-ish, GB/MB/KB)."""
     n = n or 0
@@ -1219,10 +1230,11 @@ class DataStatus(QWidget):
 class DataAnnunciation(QWidget):
     """A small, persistent 'DATA' flag for the flight (PFD) view.
 
-    Subtle by design: amber when any installed navdata is expired, white when
-    expiring soon or missing, and **hidden** when everything is current (or no
-    updater is present) so a healthy display is never cluttered. Tapping it
-    jumps to the Data Status screen.
+    Subtle by design: amber when any installed navdata is expired or a config
+    pull's panel change is waiting to be acknowledged, white when expiring
+    soon or missing, and **hidden** when everything is current (or no updater
+    is present) so a healthy display is never cluttered. Tapping it jumps to
+    the Data Status screen.
     """
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
@@ -1267,7 +1279,7 @@ class DataAnnunciation(QWidget):
             max(8, qRound(self.height() * 0.7 * font_scale(self.font_percent))))
 
     def paintEvent(self, event):
-        sev = worst_severity(self.status)
+        sev = annunciation_severity(self.status)
         if sev == "none":
             return                      # healthy / no updater -> show nothing
         p = QPainter(self)
