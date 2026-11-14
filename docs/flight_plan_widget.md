@@ -36,6 +36,24 @@ themselves). Every DB-backed object is construct-never-raises with
   `procedures_db_path` option and `_ensure_procedure_index()`, lazily, the
   same pattern as `nasr_db_path`/`navaid_db_path` -> `_ensure_waypoint_index`
   — PA7's PROC page is the first real consumer.
+- **`proc_load.py`** (PA7, procedures epic) — turns a `ProcedureIndex`
+  selection into route segments and places them in a plan. `assemble()`
+  returns one `departure`/`arrival` segment, or an `approach` segment and its
+  `missed` segment. Every leg keeps its path terminator (guardrail 1: an `FC`
+  reaches the engine, which refuses the route whole); IAF/FAF/MAP/MAHP come
+  from the pack's flags as roles and every slot gets `0x20` (from a coded
+  procedure). A leg with no fix (`CA`, `VA`) gets an empty ident and a point
+  2 nm along its course from the fix before it; a time-coded hold becomes a
+  distance at `hold_speed_kt`, because the bus carries no leg time; an `RF`
+  centre and radius come from the pack, an `AF` centre from its navaid, and a
+  value the data lacks is left empty for the engine to refuse. `insert()`
+  places the block in the guide's order (departure after the departure
+  airport, arrival before the approach, approach before a trailing
+  destination airport) and replaces the loaded one of that kind. Where it
+  meets the route at the same fix, the fix is kept once: a plain waypoint
+  there is dropped, a procedure's leading `IF` is merged into the procedure
+  before it (and `remove()` puts it back). Two slots at one fix are a
+  zero-length leg, which the engine flies as course 000 until it sequences.
 - **`model.py`** (FP4, RS2) — `Waypoint`, `Segment` and `FlightPlan`, the
   editor's working copy of a route. A route is an ordered list of segments
   (RS2, billmallard/pyEfis#305, route segments brief section 4): a plain
@@ -162,7 +180,8 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   Direct To (stages + `DTO k`), WPT Info (full detail, see below), Set Role
   (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
-  Direct To (the DTO page), Catalog (the Catalog page), Menu (Invert, Store,
+  Direct To (the DTO page), PROC (the PROC page, PA7), Catalog (the Catalog
+  page), Menu (Invert, Store,
   Clear, Suspend/Resume, CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
   Delete both confirm and both reset the working plan; a distinct "Delete"
   semantic can be added if the guide's usage turns out to need one).
@@ -216,6 +235,37 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   distance and MEA of the leg into it; tapping a fix (there, or a nested
   working row) offers Direct To, Activate Leg and WPT Info for that one fix.
   Renders: `docs/images/rs3_fpl_segments/` (`tools/render_fpl_segments.py`).
+- **Procedure segment rows** (PA7) -- a loaded departure, arrival, approach
+  and missed approach are each one segment row, the same two-line row as an
+  airway, except that the block's first fix is inside it (there is no plain
+  entry row: the leg into that fix is the procedure's). Line 1 is the name
+  (`ILS07.VECTORS`, `FLOUT5.RW07.VTU`), line 2 the kind and
+  "first → last", across the row. A leg with no fix is named by what ends
+  it (`075° TO +700`, `HDG 255°`). The active leg opens the block into
+  working rows exactly as in an airway. The segment menu offers Show Fixes
+  (course, distance and the coded altitude constraint into each leg),
+  Activate to the first fix, Select <kind> (the PROC page for that kind) and
+  Remove <kind>; the approach and its missed approach go together. A leg with
+  no fix offers only Activate Leg in its one-fix menu.
+- **PROC** (PA7, billmallard/pyEfis#238; guide pp. 3-64 to 3-75) -- tabs
+  Departure / Arrival / Approach, then one key per field showing the choice,
+  or underscores until it is made: Airport (opens the Entry page filtered to
+  airports, Nearest tab; picking one comes back here), the procedure, and
+  Runway and Transition in the order the issue gives: departure -> runway ->
+  transition, arrival -> transition -> runway, approach -> transition
+  (including `VECTORS`, the final alone). A single choice is taken without
+  asking. The airport offered is the plan's first waypoint for a departure
+  and its last airport for an arrival or approach, else the nearest airport.
+  Below the keys: what is loaded of this kind, a refusal or the page's
+  message, and a preview of every leg the selection loads (ident, role, path
+  terminator, constraint; the missed approach in cyan). Footer: **Load**
+  (replaces a loaded procedure of the kind, then opens the FPL page, as the
+  guide does) and **Remove** (the whole block). The page refuses what it
+  cannot assemble with the reason (`SELECT RUNWAY`, `CLEAR THE FAF/MAP ON
+  RZS BEFORE LOADING AN APPROACH`, `ROUTE FULL`); a procedure the engine
+  refuses is reported from `FPLMSG` by the FPL page's refusal strip (G61),
+  and the PROC page shows the same line. Expired data is never refused here
+  (guardrail 3); annunciating it is PA9's.
 - **Entry** (Add/Insert) — an ident field with FastFind: typed characters
   white, the predicted suffix (nearest match by distance from a mode-dependent
   reference point — the aircraft when appending to an empty plan, the last
@@ -361,7 +411,7 @@ screen, the `checklist` broadcast precedent).
 
 | Verb | Payload |
 |------|---------|
-| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog` open those pages |
+| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc` open those pages |
 | `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
 
 ### From the moving map (FP10)
@@ -403,6 +453,8 @@ the plan two ways:
 | `flightplan_dir` | `""` | directory for stored routes/user waypoints/recent list; blank disables catalog Store and the Recent/User tabs |
 | `nasr_db_path` | `""` | `airports.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
 | `navaid_db_path` | `""` | `navaids.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
+| `procedures_db_path` | `""` | the `procedures` pack: airways (PA2) and the PROC page (PA5/PA7) |
+| `hold_speed_kt` | `90` | speed a time-coded hold's leg is converted to a distance at (one minute at 90 kt = 1.5 nm), since the bus carries no leg time |
 | `columns` | `"DTK,DIS,CUM"` | comma-separated FPL page columns; choices DTK, DIS, CUM, ETE, ETA |
 | `keypad` | `true` | show the on-screen keypad on the Entry/DTO Waypoint pages and the generic modal |
 | `keyboard` | `false` | let a physical keyboard drive an open ident-entry surface (see above) |
