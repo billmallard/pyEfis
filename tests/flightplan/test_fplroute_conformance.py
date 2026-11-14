@@ -48,8 +48,6 @@ SEGMENT_FIELDS = [name for name, _, _ in fixbridge.SEGMENT_FIELDS]
 # the fix plus MAGVAR), so it is not compared there.
 COURSE_PTS = frozenset({"CF", "CA", "FA", "FC", "VA", "VM", "VI", "HM", "HF", "HA", "PI"})
 
-# Keys checked by their own test below, because pyEfis does not write them.
-NOT_WRITTEN_BY_PYEFIS = frozenset({"FPLAPRTYPE"})
 
 
 def _reference(profile):
@@ -130,7 +128,7 @@ def _first_difference(reference, published):
             if key not in got or not _same(ref[key], got[key]):
                 return (f"segment {k} field {name}: "
                         f"fplroute {ref[key]!r}, pyEfis {got.get(key, '<not written>')!r}")
-    for key in ("FPLSEGCNT", "FPLCOUNT", "FPLNAME", "FPLDBCYC", "FPLSEQ"):
+    for key in ("FPLSEGCNT", "FPLCOUNT", "FPLNAME", "FPLAPRTYPE", "FPLDBCYC", "FPLSEQ"):
         if key not in got or not _same(ref[key], got[key]):
             return f"{key}: fplroute {ref[key]!r}, pyEfis {got.get(key, '<not written>')!r}"
     return None
@@ -150,7 +148,7 @@ def test_fplseq_is_the_last_write_after_every_route_key(fix, profile):
     published = _publish(fix, profile)
     assert reference[-1][0] == "FPLSEQ"
     assert published[-1][0] == "FPLSEQ"
-    route_keys = {k for k, _ in reference} - {"FPLSEQ"} - NOT_WRITTEN_BY_PYEFIS
+    route_keys = {k for k, _ in reference} - {"FPLSEQ"}
     assert route_keys <= {k for k, _ in published[:-1]}
 
 
@@ -163,12 +161,10 @@ def test_the_differences_are_named_down_to_slot_and_field():
     assert _first_difference(reference, reference) is None
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "pyEfis never writes FPLAPRTYPE; fix-gateway doc/flightplan_keys.md makes the editor "
-    "its writer. Provenance only -- the engine stores and republishes it but flies "
-    "nothing from it. PA9 (AER-1608) owns the approach type."))
-@pytest.mark.parametrize("profile", PROFILES[:1])
+@pytest.mark.parametrize("profile", PROFILES)
 def test_pyefis_writes_the_approach_type(fix, profile):
+    """PA9 (AER-1608): the editor is FPLAPRTYPE's writer (fix-gateway
+    doc/flightplan_keys.md), and writes what fplroute writes."""
     got = dict(_publish(fix, profile))
     assert got.get("FPLAPRTYPE") == dict(_reference(profile))["FPLAPRTYPE"]
 

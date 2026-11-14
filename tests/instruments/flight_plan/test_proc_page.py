@@ -331,3 +331,74 @@ def test_the_hold_speed_option_sizes_a_timed_hold(page, fix):
     hm = [n for n in range(1, int(fix.db.get_item("FPLCOUNT").value) + 1)
           if fix.db.get_item(f"FPL{n}PT").value == "HM"]
     assert [fix.db.get_item(f"FPL{n}DST").value for n in hm] == [2.0]
+
+
+# ---------------------------------------------------------------------------
+# PA9: the approach's type and cycle, and an expired cycle (AER-1608)
+# ---------------------------------------------------------------------------
+from datetime import date
+from unittest.mock import MagicMock
+
+from pyefis.flightplan import airac
+
+# The fixture pack is AIRAC 2609: current 2026-09-03 until 2026-10-01.
+DURING_2609 = date(2026, 9, 10)
+AFTER_2609 = date(2026, 10, 1)
+
+
+def _header_texts(w):
+    p = MagicMock()
+    w._paint_header(p, w.width(), 80, True)
+    return [(c.args[-1], p.setPen.call_args_list[i].args[0].color().name())
+            for i, c in enumerate(p.drawText.call_args_list)
+            if i < len(p.setPen.call_args_list)]
+
+
+@pytest.mark.parametrize("how", ["touch", "encoder"])
+def test_an_expired_pack_loads_the_approach_and_says_so(page, fix, how, monkeypatch):
+    """Guardrail 3 (Bill 2026-09-18): expired procedure data is annunciated,
+    never refused. Driven through the page as a pilot would, the approach
+    loads, reaches the bus, and the header names the expired cycle."""
+    monkeypatch.setattr(airac, "utc_today", lambda: AFTER_2609)
+    page._open_proc_page("approach")
+    _press(page, how, _field(page, "proc"))
+    _press(page, how, _nth_row(0))                     # ILS07
+    _press(page, how, _field(page, "transition"))
+    _press(page, how, _nth_row(0))                     # GOLET
+    _press(page, how, _by_callback(page._proc_load))
+    assert page._page == "fpl"
+    assert page._proc is None or not page._proc.get("message")
+    assert [(s.kind, s.ident) for s in page._plan.segments][1:3] == [
+        ("approach", "ILS07.GOLET"), ("missed", "ILS07")]
+    assert fix.db.get_item("FPLS2ID").value == "ILS07.GOLET"
+    assert fix.db.get_item("FPLAPRTYPE").value == "ILS"
+    assert fix.db.get_item("FPLDBCYC").value == "2609"
+    assert page._procedure_text() == ("ILS  AIRAC 2609 EXPIRED", "#ffb000")
+    assert ("ILS  AIRAC 2609 EXPIRED", "#ffb000") in _header_texts(page)
+
+
+def test_a_current_pack_shows_type_and_cycle(page, fix, monkeypatch):
+    monkeypatch.setattr(airac, "utc_today", lambda: DURING_2609)
+    _load(page, "approach", "I07", "VECTORS")
+    assert page._procedure_text() == ("ILS  AIRAC 2609", "#9a9a9a")
+    assert ("ILS  AIRAC 2609", "#9a9a9a") in _header_texts(page)
+
+
+def test_a_departure_alone_shows_its_cycle_and_no_approach_type(page, fix, monkeypatch):
+    monkeypatch.setattr(airac, "utc_today", lambda: AFTER_2609)
+    page._plan = fp_model.FlightPlan(waypoints=[KSBA.copy(), RZS.copy()])
+    _load(page, "departure", "FLOUT5", "GVO", runway="RW07")
+    assert [s.kind for s in page._plan.segments][1] == "departure"
+    assert fix.db.get_item("FPLAPRTYPE").value == ""
+    assert page._procedure_text() == ("AIRAC 2609 EXPIRED", "#ffb000")
+
+
+def test_no_procedure_no_cycle_on_the_header(page):
+    assert page._procedure_text() is None
+
+
+def test_the_preview_and_the_fixes_sheet_name_an_expired_cycle(page, monkeypatch):
+    monkeypatch.setattr(airac, "utc_today", lambda: AFTER_2609)
+    assert page._cycle_text("2609") == ("AIRAC 2609 EXPIRED", "#ffb000")
+    monkeypatch.setattr(airac, "utc_today", lambda: DURING_2609)
+    assert page._cycle_text("2609") == ("AIRAC 2609", "#9a9a9a")

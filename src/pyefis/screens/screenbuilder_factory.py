@@ -1560,8 +1560,10 @@ _register(InstrumentSpec(
 
 # `nav_status` (FP7, billmallard/pyEfis#189): the GNX 375 from-to-next field
 # (guide 3-41/3-42) as a one-line chip -- WPFROM > WPNAME > WPNEXT, the
-# FPLSTATE badge, optional WPDIS/WPETE and FPLPHASE. Reads engine outputs
-# only; undefined keys read as absent (underscores), never a raise. A tap fires
+# FPLSTATE badge, optional WPDIS/WPETE and FPLPHASE, the loaded procedure's
+# type and AIRAC cycle (amber EXPIRED once it has expired; PA9) and FPLTURN.
+# Reads engine outputs only; undefined keys read as absent (underscores), never
+# a raise. A tap fires
 # the `flightplan page fpl` HMI action (after `show screen <tap_screen>` when
 # set), so a PFD-corner chip can open the plan on the flight-plan screen.
 _register(InstrumentSpec(
@@ -1572,7 +1574,7 @@ _register(InstrumentSpec(
     builds_in_isolation=True,
     offscreen_renderable=True,
     dbkeys=["FPLSTATE", "FPLPHASE", "WPFROM", "WPNAME", "WPNEXT", "WPDIS",
-            "WPETE"],
+            "WPETE", "FPLAPRTYPE", "FPLDBCYC", "FPLTURN"],
     properties=[
         Prop("show_distance", "boolean", default=True, label="Show distance",
              help="distance to the TO waypoint (WPDIS), nm"),
@@ -1582,6 +1584,13 @@ _register(InstrumentSpec(
         Prop("show_phase", "boolean", default=True, label="Show phase",
              help="flight phase / CDI scale annunciation (FPLPHASE): ENR, "
                   "TERM, LNAV, ... green; LOI yellow"),
+        Prop("show_procedure", "boolean", default=True, label="Show procedure",
+             help="loaded approach type (FPLAPRTYPE) and AIRAC cycle "
+                  "(FPLDBCYC); the cycle and EXPIRED in amber once it has "
+                  "expired"),
+        Prop("show_turn", "boolean", default=True, label="Show turn",
+             help="TURN L / TURN R while the engine flies the coded turn that "
+                  "opens a DF leg (FPLTURN)"),
         Prop("hmi_group", "string", default="", label="HMI group",
              help="hmi_group of the flight_plan instrument a tap opens; blank "
                   "= every flight_plan instrument"),

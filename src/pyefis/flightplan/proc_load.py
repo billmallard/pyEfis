@@ -126,6 +126,22 @@ def procedure_name(proc):
     return ident
 
 
+def approach_type(segments):
+    """``FPLAPRTYPE`` for a plan's *segments* (PA9): the letters that open
+    the loaded approach's name -- ``RNAV`` for ``RNAV30.GVO``, ``ILS`` for
+    ``ILS07.VECTORS``, ``VOR`` for ``VOR-A`` -- or ``""`` with no approach
+    loaded. Read from the segment ident :func:`procedure_name` wrote, so a
+    plan reloaded from a file or read back off the bus gives the same type."""
+    for seg in segments:
+        if seg.kind == "approach":
+            name = _norm(seg.ident).split(".")[0]
+            n = 0
+            while n < len(name) and "A" <= name[n] <= "Z":
+                n += 1
+            return name[:min(n, 8)]
+    return ""
+
+
 def segment_ident(proc, transition=None, runway=None):
     """The segment table's ``ID`` for this selection, at most 24 characters:
     ``ILS07.GOLET``, ``ILS07.VECTORS``, ``FLOUT5.RW07.GVO``,
