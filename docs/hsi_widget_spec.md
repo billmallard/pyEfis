@@ -282,7 +282,19 @@ Each item: what it does, the input(s), the convention.
 8. **Bearing pointers 1 & 2** — cyan needles pointing to `BRG1`/`BRG2`;
    single-line (1) / double-line (2); **hidden when heading is invalid**; they
    never override and are visually separated from the deviation bar. Each has a
-   selectable source label.
+   selectable source label. Cyan whatever the source: source colour is the CDI's,
+   not a bearing needle's (HSI-COLOR-001). *Status (HSIBRG1, AER-5548): P5b.2 had
+   coloured each needle by its source, so a GPS pointer beside a GPS CDI drew a
+   second magenta pointer at the same waypoint; every needle is now
+   `bearing_color`.* Opt-in at run time, Garmin-style: `bearing1_enabled` /
+   `bearing2_enabled` only make a pointer **available**; each is **Off** until the
+   pilot steps it on, and a step goes Off → each source that is not the CDI's
+   (VOR1, VOR2, GPS order) → Off. A source step writes `BRGnSRC`; Off is the
+   display's own state and leaves `BRGnSRC` as it was, so no FIX key changed. A
+   pointer on the CDI's source is never drawn: if `NAVSRC` (or a `BRGnSRC`
+   written elsewhere) puts the two on one source, that pointer turns Off. The
+   control is the BRG tab (7.4) under `top_panel`, and the bottom-corner labels
+   (`1 OFF` / `1 VOR1`) under the other layouts.
 9. **OBS mode** — when an OBS control sets the course, `COURSE` becomes
    pilot-settable; with a GPS source, asserting `OBSMODE` suspends waypoint
    sequencing and holds the active-to waypoint; annunciate **"OBS"**. **"SUSP"**
@@ -371,7 +383,7 @@ now raises its flag too. Open items: the grey `old` treatments (`COURSE`,
 
 | ID | Requirement | Cite |
 |----|-------------|------|
-| **HSI-COLOR-001** | Nav-source colour: **magenta = GPS**; **green = VOR/LOC (VLOC) and ADF bearing needles**. Established market convention (Garmin and others); a *documented, intentional* deviation from AC 25-11B Table 5-1's "ILS deviation pointer = magenta", chosen for source-identification clarity in a GPS-primary cockpit | `avionics_reference.md` §4.3 |
+| **HSI-COLOR-001** | Nav-source colour: **magenta = GPS**; **green = VOR/LOC (VLOC)**. Source colour is the CDI's (course pointer, deviation bar, TO/FROM, GS diamond, source tab), not a bearing needle's: bearing pointers are cyan whatever their source (6.8, HSIBRG1). Established market convention (Garmin and others); a *documented, intentional* deviation from AC 25-11B Table 5-1's "ILS deviation pointer = magenta", chosen for source-identification clarity in a GPS-primary cockpit | `avionics_reference.md` §4.3 |
 | **HSI-COLOR-002** | Warnings **red**; cautions **amber/yellow**; engaged/normal **green**; scales/tapes/text **white**; selected/bug markers **cyan**. Colour is never the sole code — pair with shape, size, or location | AC 25-11B Table 5-1, §5.8 |
 
 ### 7.4 Source annunciation (HSI-SRC)
@@ -379,6 +391,18 @@ now raises its flag too. Open items: the grey `old` treatments (`COURSE`,
 **HSI-SRC-001.** The active nav source is annunciated on the face at all times (e.g.
 "GPS", "VOR1", "LOC1"), coloured per HSI-COLOR-001, so the crew always knows what drives
 lateral/vertical guidance (14 CFR §23.2605(b); `avionics_reference.md` §4.1).
+*BRG tab (HSIBRG1, AER-5548).* The panel's right edge carries the mirror of the source
+tab: the bearing-pointer selector (`HSI._draw_bearing_tab`), drawn only when
+`bearing1_enabled` or `bearing2_enabled` makes a pointer available. One row per available
+pointer, stacked when both are; each row is its own tap target and steps its pointer as
+6.8 describes. Text: `BRG OFF` / `BRG1 VOR1` with one pointer, `BRG1 OFF` / `BRG2 GPS`
+per row with two. A row whose needle is on is filled `bearing_color` with a darkened label;
+an Off row is the panel's dark fill with a cyan label, inside a cyan outline. Its labels
+are longer than the source tab's, so its font shrinks to the room beside the panel (9 px
+floor) rather than run off the widget. Under `top_panel` the corner labels then name only
+an on pointer's source; under the other layouts an Off pointer keeps a `1 OFF` corner
+label as its control.
+
 *Status: implemented. In `readout_layout: top_panel` (the default), the annunciation is
 a coloured tab (`HSI._draw_source_tab`, pyEfis#140) on the left edge of the HDG | MAG |
 CRS panel, in line with those readouts: fill = active source colour (moving

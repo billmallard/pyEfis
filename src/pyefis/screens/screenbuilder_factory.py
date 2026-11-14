@@ -854,17 +854,20 @@ _register(InstrumentSpec(
                   "decluttered of the rear rose)"),
         Prop("bearing1_enabled", "boolean", default=False,
              label="Bearing pointer 1",
-             help="show the single-bar RMI bearing needle (BRG1), pointing to "
-                  "the pointer-1 source (VOR1/VOR2/GPS via BRG1SRC)"),
+             help="make the single-bar RMI bearing needle (BRG1) available. "
+                  "It starts Off; the pilot steps it through each source that "
+                  "is not the CDI's (VOR1/VOR2/GPS via BRG1SRC) with the BRG "
+                  "tab or its corner label"),
         Prop("bearing2_enabled", "boolean", default=False,
              label="Bearing pointer 2",
-             help="show the double-bar RMI bearing needle (BRG2), pointing to "
-                  "the pointer-2 source (VOR1/VOR2/GPS via BRG2SRC)"),
+             help="make the double-bar RMI bearing needle (BRG2) available. "
+                  "It starts Off; the pilot steps it through each source that "
+                  "is not the CDI's (VOR1/VOR2/GPS via BRG2SRC) with the BRG "
+                  "tab or its corner label"),
         Prop("bearing_color", "color", default="#00ffff",
              label="Bearing pointer color",
-             help="generic bearing-needle colour used when the source is "
-                  "unknown; a needle with a known source is coloured by it "
-                  "(magenta GPS / green VOR)",
+             help="colour of both bearing needles, their labels and the BRG "
+                  "tab, whatever the source (source colour is the CDI's)",
              token="nav.reference"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
