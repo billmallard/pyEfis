@@ -54,6 +54,7 @@ import pyefis.hooks as hooks
 import pyefis.fix_watchdog as fix_watchdog
 import pyefis.hmi as hmi
 import pyefis.gui as gui
+import pyefis.kiosk as kiosk
 
 
 config_filename = "default.yaml"
@@ -240,6 +241,9 @@ def main():
         fms = importlib.import_module ("FixIntf")
         fms.start(config["FMS"]["aircraft_config"])
 
+    # DEMO4: the kiosk lock is read by instruments as they build and paint.
+    kiosk.configure(config.get("kiosk"))
+
     try:
         gui.initialize(config,config_path,preferences)
     except Exception:
@@ -257,7 +261,14 @@ def main():
     # Do this after the widgets subscribe to the item
     pyefis_ver.value = __version__
 
-    if "keybindings" in config:
+    # DEMO4: the DEMO marking on every install, the page follower in kiosk
+    # mode. After the screens and the startup notice, so it stacks on top.
+    kiosk.initialize(gui.mainWindow, fix, gui.screens)
+
+    # A kiosk has no keyboard, and a key must not reach exit (brief 6.2).
+    if "keybindings" in config and kiosk.locked():
+        log.info("kiosk: keybindings not loaded")
+    elif "keybindings" in config:
         hmi.keys.initialize(gui.mainWindow, config["keybindings"])
     hooks.initialize(config['hooks'])
 

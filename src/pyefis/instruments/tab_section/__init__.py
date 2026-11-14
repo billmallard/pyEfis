@@ -144,6 +144,17 @@ class TabSection(QWidget):
                 return True
         return False
 
+    def show_tab_labelled(self, label):
+        """Show the tab labelled *label* (case-insensitive). Returns False
+        if this section has none. DEMO4: the kiosk's DEMOPAGE names a tab
+        by the label the attendee sees."""
+        want = str(label).strip().lower()
+        for i in range(self.tab_bar.count()):
+            if self.tab_bar.tabText(i).strip().lower() == want:
+                self._show_tab(i)
+                return True
+        return False
+
     @property
     def font_percent(self):
         return self._font_percent
