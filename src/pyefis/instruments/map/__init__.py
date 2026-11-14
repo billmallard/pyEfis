@@ -159,6 +159,18 @@ class MapTransform:
         return QPointF(self.cx + de * self._px_per_m,
                        self.cy - dn * self._px_per_m)
 
+    def to_screen_xy(self, lat, lon):
+        """:meth:`to_screen` over numpy arrays: ``(x, y)`` arrays, the same
+        arithmetic in the same order, so each point lands on the same float
+        as the scalar call (MAPPAINT1: one projection per layer per frame,
+        not one Python call per feature)."""
+        de = (lon - self.lon0) * M_PER_DEG_LAT * self._coslat
+        dn = (lat - self.lat0) * M_PER_DEG_LAT
+        if self.rot:
+            c, s = math.cos(self.rot), math.sin(self.rot)
+            de, dn = de * c - dn * s, de * s + dn * c
+        return self.cx + de * self._px_per_m, self.cy - dn * self._px_per_m
+
     def to_world(self, x, y):
         """Inverse of :meth:`to_screen`: screen px -> ``(lat, lon)`` (FP10
         map pointer)."""
