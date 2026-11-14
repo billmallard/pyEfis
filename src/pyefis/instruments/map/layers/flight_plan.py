@@ -560,13 +560,18 @@ class _BridgeRelay(QObject):
 
     changed = pyqtSignal(str)
 
-    def __init__(self, owner, on_change=None):
+    def __init__(self, owner, on_change=None, skip=None):
         super().__init__(owner)
         self._owner = owner
         self._on_change = on_change
+        self._skip = skip
         self.changed.connect(self._deliver)
 
     def on_bridge_change(self, key=""):
+        # *skip* drops a write before the signal: emitting it costs more
+        # than the layer's own check, and most writes are readouts.
+        if self._skip is not None and self._skip(key):
+            return
         self.changed.emit(key or "")
 
     @pyqtSlot(str)
@@ -606,7 +611,7 @@ class FlightPlanLayer(MapLayer):
         self._owner = owner
         self._bridge = fp_fixbridge.FixBridge(pyavtools_fix)
         if self._bridge.available:
-            self._relay = _BridgeRelay(owner, self._on_bridge_change)
+            self._relay = _BridgeRelay(owner, self._on_bridge_change, self._skips_write)
             self._bridge.add_listener(self._relay.on_bridge_change, keyed=True)
             self.collect(None)
             self._drawn_sig = self._draw_signature()
@@ -623,6 +628,15 @@ class FlightPlanLayer(MapLayer):
             return False
         self._drawn_sig = sig
         return bool(self.enabled)
+
+    def _skips_write(self, key):
+        """True for a readout write while the last full collect is recent:
+        _wants_collect would say False without reading anything. Reads only
+        this layer's own fields, so the relay may call it on any thread."""
+        if key not in _READOUT_KEYS:
+            return False
+        at = self._collected_at
+        return at is not None and self._clock() - at < _RECHECK_S
 
     def _wants_collect(self, key):
         """False when the write of *key* cannot have changed anything this
