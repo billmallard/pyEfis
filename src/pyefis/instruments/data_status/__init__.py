@@ -622,6 +622,7 @@ class DataStatus(QWidget):
         # the result can tell "a newer change arrived" from "not recorded".
         self._ack_hash = None
         self._banner_rect = QRectF()
+        self._pack_span = None        # (top, bottom) of the last painted pack list
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
@@ -1146,22 +1147,47 @@ class DataStatus(QWidget):
             p.drawText(QRectF(x, y, w - 2 * x, self.row_h), flags,
                        "Data status unavailable — run an update to populate it.")
         else:
-            for pk in self.status.get("packs", []):
+            packs = self.status.get("packs", [])
+            step = self._pack_step(y, len(packs))
+            self._pack_span = (y, y + step * len(packs))     # for tests
+            if step < self.row_h:
+                f = QFont(self.font)
+                f.setPixelSize(max(1, qRound(self.font.pixelSize() * step / self.row_h)))
+                p.setFont(f)
+            for pk in packs:
                 color = SEVERITY_COLORS.get(pk.get("severity", "white"),
                                             SEVERITY_COLORS["white"])
                 p.setPen(color)
-                p.drawText(QRectF(x, y, col_status - x, self.row_h), flags,
+                p.drawText(QRectF(x, y, col_status - x, step), flags,
                            str(pk.get("name", pk.get("id", ""))))
-                p.drawText(QRectF(col_status, y, col_detail - col_status, self.row_h), flags,
+                p.drawText(QRectF(col_status, y, col_detail - col_status, step), flags,
                            str(pk.get("status", "")))
-                p.drawText(QRectF(col_detail, y, w - col_detail - x, self.row_h), flags,
+                p.drawText(QRectF(col_detail, y, w - col_detail - x, step), flags,
                            str(pk.get("detail", "")))
-                y += self.row_h
+                y += step
 
         if self.message:
             p.setFont(self.font)
             p.setPen(SEVERITY_COLORS["white"])
             p.drawText(QRectF(x, h * 0.74, w - 2 * x, self.row_h), flags, self.message)
+
+    def _pack_list_bottom(self):
+        """The y the pack list must end above: the message line when one is
+        showing, else the top of the button row."""
+        bottom = self.btn_continue.y()
+        if self.message:
+            bottom = min(bottom, qRound(self.height() * 0.74))
+        return bottom - qRound(self.row_h * 0.2)
+
+    def _pack_step(self, top, n):
+        """Row pitch for ``n`` pack rows starting at ``top``: the normal row
+        height, or less when that would run the list under the message line or
+        the buttons (a long list, or one pushed down by the panel-change
+        banner). Every pack row stays on screen; the text shrinks with it."""
+        if n <= 0:
+            return self.row_h
+        room = self._pack_list_bottom() - top
+        return max(1.0, min(float(self.row_h), room / n))
 
     def _paint_banner(self, p, block):
         """Amber panel-change banner (CERT17). Returns the y the pack list
