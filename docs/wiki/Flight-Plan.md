@@ -95,9 +95,38 @@ Touch an airway row for **Change Exit**, **Change Entry**, **Show Fixes**
 A plan holds up to 100 waypoints. An airway that will not fit is refused with
 `ROUTE FULL`.
 
-The page does not load departures, arrivals or approaches yet. A procedure
-reaches the engine only as a route written to it from elsewhere; that is how
-the approach in the picture at the top was loaded.
+Touch a departure, arrival or approach row for **Show Fixes**, **Activate
+to** its first fix, **Select** another of that kind, and **Remove** it. An
+approach and its missed approach are removed together.
+
+## Departures, arrivals and approaches
+
+Touch **PROC**. Choose **Departure**, **Arrival** or **Approach** at the top,
+then touch each line to choose:
+
+- **Departure:** the airport, the departure, the runway, then the
+  transition.
+- **Arrival:** the airport, the arrival, the transition, then the runway.
+- **Approach:** the airport, the approach, then the transition. **VECTORS**
+  loads the final approach alone, for vectors to final.
+
+The airport starts as the plan's first airport for a departure and its last
+one otherwise. Touch it to pick another. A line with only one choice is
+filled in for you. Below the lines, the page lists every leg you are about
+to load, with its altitude constraint. The missed approach is in cyan.
+
+Touch **LOAD**. The procedure goes into the plan in the usual order:
+departure, en route, arrival, approach. It replaces one of the same kind,
+and the flight plan page opens. **REMOVE** takes it out again.
+
+If the plan already has the procedure's first fix just before it, that fix
+is used once, not twice.
+
+The box flies the procedure as coded, or not at all. If it cannot fly one
+of the legs, it keeps the plan it had and says why in red, for example
+`EDIT REFUSED: CAN'T FLY FC LEG AT LOBER`. It never drops a leg to make a
+procedure fit. The missed approach is loaded but not flown until you choose
+**Fly the missed** at the missed approach point.
 
 ## Direct-To
 
@@ -203,6 +232,7 @@ Touching it opens the flight plan page.
 | On-screen keypad (`keypad`) | on | | |
 | Physical keyboard (`keyboard`) | off | on | |
 | Default page (`default_page`) | `fpl` | | `entry` opens on the entry page. |
+| Hold speed (`hold_speed_kt`) | 90 kt | | A hold coded in minutes is flown as a distance: one minute at this speed. |
 | List row height (`row_height_mm`) | 14 mm | | Taller rows are easier to touch; shorter ones show more legs. Needs the screen size set right. |
 | Active / future / past leg colour | `#ff00ff` / `#ffffff` / `#808080` | | |
 | HMI group (`hmi_group`) | | | The name screen buttons use to open this page. |
@@ -235,7 +265,7 @@ From the bench panel:
 ```
 
 A screen button can open the page with the action `flightplan page` (`fpl`,
-`dto` or `catalog`), or start a Direct-To with `flightplan direct to <ident>`.
+`dto`, `proc` or `catalog`), or start a Direct-To with `flightplan direct to <ident>`.
 
 ### Feeding it
 

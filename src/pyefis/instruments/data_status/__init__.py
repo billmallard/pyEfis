@@ -79,6 +79,46 @@ def load_status(status_path):
         return None
 
 
+def panel_change(status):
+    """The pending ``panel_change`` block a config pull wrote into status.json
+    (CERT17; contract: makerplane-data ``docs/panel_change_cue.md``), or None
+    when nothing is waiting. Read defensively, like the rest of the file: a
+    missing key, a non-dict block or ``pending`` anything but true means no
+    banner. Independent of ``ok`` -- config-pull may write a status.json with
+    ``"ok": false`` and no packs, and the cue still shows."""
+    if not isinstance(status, dict):
+        return None
+    block = status.get("panel_change")
+    if not isinstance(block, dict) or block.get("pending") is not True:
+        return None
+    return block
+
+
+def _panel_hash(block):
+    """The full config hash to acknowledge, or None when the block has none."""
+    h = block.get("config_hash")
+    return h if isinstance(h, str) and h else None
+
+
+def panel_change_text(block):
+    """(title, body) for the panel-change banner. The wording is the proposal
+    in panel_change_cue.md, "Proposed cue"."""
+    title = ("PANEL CHANGED" if block.get("trigger") == "manual"
+             else "PANEL CHANGED AT BOOT")
+    ver = block.get("config_version")
+    what = f"Config v{ver}" if ver is not None else "A new config"
+    changed = block.get("changed")
+    when = ""
+    if isinstance(changed, str) and len(changed) >= 16:
+        # 2026-11-12T14:03:22Z -> 2026-11-12 14:03Z
+        when = f" {changed[:10]} {changed[11:16]}Z"
+    h = _panel_hash(block)
+    tag = f", hash {h[:12]}" if h else ""
+    body = (f"{what} installed{when}{tag}. Check every instrument shows the "
+            "right source before flight.")
+    return title, body
+
+
 def _parse_json(text):
     """Parse the last JSON object printed by a pyefis-data command. The updater
     may emit progress lines before the JSON, so scan from the first '{'. Returns
@@ -578,6 +618,10 @@ class DataStatus(QWidget):
         self._notice = None
         self._install_args = None
         self.notice_panel = None
+        # Panel-change cue (CERT17): the hash Acknowledge was pressed for, so
+        # the result can tell "a newer change arrived" from "not recorded".
+        self._ack_hash = None
+        self._banner_rect = QRectF()
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
@@ -588,8 +632,13 @@ class DataStatus(QWidget):
         self.btn_cancel_dl = QPushButton("Cancel", self)
         self.btn_cancel_dl.clicked.connect(self._cancel_download)
         self.btn_cancel_dl.setVisible(False)
+        # Acknowledge for the panel-change banner. Shown only while a change is
+        # pending; Continue stays available regardless.
+        self.btn_ack = QPushButton("Acknowledge", self)
+        self.btn_ack.clicked.connect(self._on_ack)
+        self.btn_ack.setVisible(False)
         for b in (self.btn_continue, self.btn_update, self.btn_about,
-                  self.btn_cancel_dl):
+                  self.btn_cancel_dl, self.btn_ack):
             b.setStyleSheet(_BTN_STYLE)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_continue.clicked.connect(self._on_continue)
@@ -606,6 +655,7 @@ class DataStatus(QWidget):
     # --- data ---
     def reload(self):
         self.status = load_status(self.status_path)   # construct-never-raises
+        self._sync_visibility()
         self.update()
 
     def showEvent(self, event):
@@ -630,6 +680,39 @@ class DataStatus(QWidget):
                 hmi.actions.trigger("show screen", self.about_screen)
             except Exception as e:
                 log.warning("About action failed: %s", e)
+
+    def _on_ack(self):
+        """Acknowledge the panel change on the banner. Passes the full hash of
+        the change displayed, so panel-ack refuses (exit 2) if a later pull has
+        installed a different config since."""
+        block = panel_change(self.status)
+        h = _panel_hash(block) if block else None
+        if h is None or self._proc is not None or self.mode != "status":
+            return
+        self._ack_hash = h
+        self.btn_ack.setEnabled(False)
+        self.message = "Recording acknowledgement…"
+        self.update()
+        self._run(["panel-ack", "--yes", "--hash", h, "--json"], self._after_ack)
+
+    def _after_ack(self, code, out):
+        shown, self._ack_hash = self._ack_hash, None
+        self.reload()                 # panel-ack rewrote status.json
+        block = panel_change(self.status)
+        now = _panel_hash(block) if block else None
+        if now is not None and now != shown:
+            # Exit 2: the installed config is no longer the one shown. The
+            # reload above put the newer change on the banner.
+            self.message = ("A newer panel change was installed. Check it, then "
+                            "acknowledge again.")
+        elif code == 0 and now is None:
+            self.message = "Panel change acknowledged."
+        else:
+            # Exit 2 with the same change still installed: the record could
+            # not be written.
+            self.message = "Couldn't record the acknowledgement. Try again."
+        self._sync_visibility()
+        self.update()
 
     # --- subprocess plumbing ---
     def _run(self, args, on_finish, on_line=None):
@@ -687,6 +770,7 @@ class DataStatus(QWidget):
         self.mode = "status"
         self.message = message
         self.btn_update.setEnabled(True)
+        self._ack_hash = None
         self._sync_visibility()
         self.update()
 
@@ -938,6 +1022,10 @@ class DataStatus(QWidget):
         self.btn_update.setVisible(status_mode)
         self.btn_about.setVisible(status_mode)
         self.btn_cancel_dl.setVisible(self.mode == "busy")
+        block = panel_change(self.status)
+        self.btn_ack.setVisible(status_mode and block is not None)
+        self.btn_ack.setEnabled(block is not None and _panel_hash(block) is not None
+                                and self._ack_hash is None)
         if self.mode == "busy":
             self.btn_cancel_dl.raise_()
         if self.picker is not None:
@@ -967,6 +1055,17 @@ class DataStatus(QWidget):
         # Cancel sits centred below the progress bar in the busy screen.
         self.btn_cancel_dl.setGeometry((w - bw) // 2, qRound(h * 0.62), bw, bh)
         self.btn_cancel_dl.setFont(f)
+        # Panel-change banner: under the title, above the pack list (title at
+        # 0.10h + 1.8 rows, as in paintEvent). Acknowledge sits at its right.
+        x = qRound(w * 0.10)
+        top = qRound(h * 0.10) + qRound(self.row_h * 1.8)
+        self._banner_rect = QRectF(x, top, w - 2 * x, self.row_h * 4.2)
+        aw, ah = qRound(w * 0.18), qRound(self.row_h * 1.8)
+        self.btn_ack.setGeometry(qRound(self._banner_rect.right()) - aw - qRound(self.row_h * 0.4),
+                                 qRound(self._banner_rect.center().y()) - ah // 2, aw, ah)
+        af = QFont(self.font_family)
+        af.setPixelSize(max(1, qRound(ah * 0.4 * scale)))
+        self.btn_ack.setFont(af)
         if self.picker is not None:
             self.picker.setGeometry(0, 0, w, h)
 
@@ -1037,6 +1136,10 @@ class DataStatus(QWidget):
                        f"catalog {gen[:10]}")
         y += qRound(self.row_h * 1.8)
 
+        block = panel_change(self.status)
+        if block is not None:
+            y = self._paint_banner(p, block)
+
         p.setFont(self.font)
         if not self.status or not self.status.get("ok"):
             p.setPen(SEVERITY_COLORS["white"])
@@ -1059,6 +1162,32 @@ class DataStatus(QWidget):
             p.setFont(self.font)
             p.setPen(SEVERITY_COLORS["white"])
             p.drawText(QRectF(x, h * 0.74, w - 2 * x, self.row_h), flags, self.message)
+
+    def _paint_banner(self, p, block):
+        """Amber panel-change banner (CERT17). Returns the y the pack list
+        starts at below it."""
+        r = self._banner_rect
+        amber = SEVERITY_COLORS["amber"]
+        p.setPen(amber)
+        p.setBrush(QColor(amber.red(), amber.green(), amber.blue(), 40))
+        p.drawRoundedRect(r, 6, 6)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        title, body = panel_change_text(block)
+        pad = self.row_h * 0.4
+        text_w = self.btn_ack.x() - r.x() - 2 * pad
+        bold = QFont(self.font)
+        bold.setBold(True)
+        p.setFont(bold)
+        p.drawText(QRectF(r.x() + pad, r.y() + pad * 0.5, text_w, self.row_h),
+                   int(Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft
+                       | Qt.AlignmentFlag.AlignVCenter), title)
+        p.setFont(self.font)
+        p.setPen(SEVERITY_COLORS["white"])
+        p.drawText(QRectF(r.x() + pad, r.y() + pad * 0.5 + self.row_h, text_w,
+                          r.height() - self.row_h - pad),
+                   int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft
+                       | Qt.AlignmentFlag.AlignTop), body)
+        return qRound(r.bottom() + self.row_h * 0.6)
 
 
 class DataAnnunciation(QWidget):

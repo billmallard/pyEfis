@@ -6,7 +6,8 @@ FPL page (route header, waypoint list, row menu, footer menu), Entry page
 (FastFind ident field, suggestion strip, Recent/Nearest/FPL/User tabs, an
 on-screen keypad), Direct To page (Waypoint/FPL/NRST APT tabs), Catalog page
 (stored-route list and its Activate/Invert & Activate/Edit/Copy/Delete
-actions), WPT Info (lat/lon, elevation/frequency, bearing/distance, user
+actions), PROC page (PA7, #238: departure/arrival/approach selection,
+loaded as a named block), WPT Info (lat/lon, elevation/frequency, bearing/distance, user
 waypoint Edit/Delete), the physical-keyboard input path and the encoder
 path (FP5c, #188) all live here.
 
@@ -71,6 +72,7 @@ from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import model as fp_model
+from pyefis.flightplan import proc_load as fp_proc
 from pyefis.flightplan import procedures as fp_procedures
 from pyefis.flightplan import refusal as fp_refusal
 from pyefis.flightplan import waypoints as fp_waypoints
@@ -92,7 +94,17 @@ _STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
 _STATE_SUSP = 3
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 _CDI_SCALE_CHOICES = ("0.3", "1.0", "2.0", "AUTO")
-_INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog")
+_INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog", "proc")
+# PROC page (PA7): its tabs, in the guide's order, and the fields each kind
+# asks for, in the order the pilot picks them (pyEfis #238).
+PROC_TABS = (("Departure", "departure"), ("Arrival", "arrival"), ("Approach", "approach"))
+_PROC_FIELDS = {"departure": ("airport", "proc", "runway", "transition"),
+                "arrival": ("airport", "proc", "transition", "runway"),
+                "approach": ("airport", "proc", "transition")}
+_PROC_FIELD_LABELS = {"airport": "Airport", "runway": "Runway", "transition": "Transition"}
+_PROC_KIND_LABELS = {"departure": "Departure", "arrival": "Arrival", "approach": "Approach"}
+_SEGMENT_PAGE_KIND = {"departure": "departure", "arrival": "arrival",
+                      "approach": "approach", "missed": "approach"}
 
 # Encoder (FP5c). The character set the knob scrolls through on an ident
 # field, in the order the brief gives (A-Z, 0-9, space); a space at the cursor
@@ -152,6 +164,14 @@ _SEG_MENU_ITEMS = (
     ("Show Fixes", "_seg_menu_show_fixes"),
     ("Activate", "_seg_menu_activate"),
     ("Remove Airway", "_seg_menu_remove"),
+)
+# PA7: a loaded procedure's segment row. The approach and its missed
+# approach are one block: each opens this menu, and Remove takes both.
+_PROC_SEG_MENU_ITEMS = (
+    ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Activate", "_seg_menu_activate"),
+    ("Select", "_seg_menu_select_procedure"),
+    ("Remove", "_seg_menu_remove_procedure"),
 )
 # One fix inside a segment: from a nested working row or the Show Fixes sheet.
 _SEG_FIX_MENU_ITEMS = (
@@ -214,6 +234,9 @@ class FlightPlan(QWidget):
         # bigger ones -- and deliberately independent of font_percent, which
         # still scales the text drawn inside the row.
         self.row_height_mm = 14.0
+        # PA7: the speed a time-coded hold's leg (one minute) is turned into
+        # a distance at, since the bus carries no leg time.
+        self.hold_speed_kt = fp_proc.HOLD_SPEED_KT
 
         self._page = None
         self._plan = fp_model.FlightPlan()
@@ -255,6 +278,12 @@ class FlightPlan(QWidget):
 
         self._dto_tab = "Waypoint"
         self._dto_target = None
+
+        # PROC page (PA7). _proc is the selection being built: kind, airport,
+        # proc (a procedures.Procedure), transition, runway and the page's
+        # message; _proc_picker the field whose choice list is open.
+        self._proc = None
+        self._proc_picker = None
 
         self._catalog_row_menu = None
         self._catalog_confirm = None
@@ -415,6 +444,8 @@ class FlightPlan(QWidget):
             self._open_dto_page()
         elif page == "catalog":
             self._open_catalog_page()
+        elif page == "proc":
+            self._open_proc_page()
 
     def _show_fpl_base(self):
         """Close every menu, overlay and entry surface and show the FPL
@@ -428,6 +459,7 @@ class FlightPlan(QWidget):
         self._modal = None
         self._uwpt_new = None
         self._uwpt_edit = None
+        self._proc_picker = None
         self._close_entry()
         self._page = "fpl"
 
@@ -787,12 +819,15 @@ class FlightPlan(QWidget):
         self._close_entry()
 
     def _close_entry(self):
+        # The PROC page's airport field opens this page over it, and back
+        # out goes back there.
+        back = "proc" if (self._entry_mode or {}).get("kind") == "proc_airport" else "fpl"
         self._entry_mode = None
         self._entry_field = ""
         self._entry_message = ""
         self._entry_dupe_choices = None
         self._entry_nav_index = None
-        self._page = "fpl"
+        self._page = back
         self.update()
 
     def _entry_enter(self):
@@ -833,6 +868,9 @@ class FlightPlan(QWidget):
         self._entry_nav_index = None
         self._entry_tab = "Recent"
         self._entry_type_filter = "All"
+        if mode.get("kind") == "proc_airport":
+            self._entry_tab = "Nearest"
+            self._entry_type_filter = "Apt"
         self._page = "entry"
         self.update()
 
@@ -842,6 +880,11 @@ class FlightPlan(QWidget):
         i = mode.get("index")
         new_wp = fp_model.Waypoint(id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon,
                                     name=getattr(wp, "name", "") or "")
+        if kind == "proc_airport":
+            self._ensure_waypoint_index().recent.push(wp.id)
+            self._close_entry()
+            self._proc_set_airport(wp.id)
+            return
         if kind == "direct_to":
             if self._bridge.available:
                 self._bridge.stage_direct_to(new_wp)
@@ -1046,16 +1089,21 @@ class FlightPlan(QWidget):
         leg is one of those, the segment opens into nested working rows --
         ``("fix", i, role)`` for the FROM fix, the active TO fix and the next
         fix -- and the rest ahead fold into ``("fold", k, n)``. Passed fixes
-        before FROM are not repeated: the header still names the entry."""
+        before FROM are not repeated: the header still names the entry. A
+        procedure (PA7) is the same, except that its first fix is inside the
+        block: there is no plain entry row before it."""
         rows = []
         for k, seg in enumerate(self._plan.segments):
             first, last = self._plan.segment_span(k)
-            if seg.kind != "airway":
+            if seg.kind == "waypoint":
                 rows.extend(("wpt", i) for i in range(first, last + 1))
                 continue
-            rows.append(("wpt", first))
+            if seg.kind == "airway":
+                rows.append(("wpt", first))
+            # PA7: a procedure is one named block, its first fix included --
+            # the leg into it is part of the procedure.
             rows.append(("seg", k))
-            if active_idx is None or not (first < active_idx <= last):
+            if active_idx is None or not (self._segment_first_leg(k) <= active_idx <= last):
                 continue
             rows.append(("fix", active_idx - 1, "from"))
             rows.append(("fix", active_idx, "to"))
@@ -1066,21 +1114,28 @@ class FlightPlan(QWidget):
                 rows.append(("fold", k, ahead))
         return rows
 
+    def _segment_first_leg(self, k):
+        """Flat index of the first leg segment *k*'s row stands for: an
+        airway's entry fix has a row of its own, a procedure's does not."""
+        first, _ = self._plan.segment_span(k)
+        return first + 1 if self._plan.segments[k].kind == "airway" else first
+
     def _segment_active(self, k, active_idx):
-        first, last = self._plan.segment_span(k)
-        return active_idx is not None and first < active_idx <= last
+        _, last = self._plan.segment_span(k)
+        return active_idx is not None and self._segment_first_leg(k) <= active_idx <= last
 
     def _segment_color(self, k, active_idx):
-        first, last = self._plan.segment_span(k)
-        if active_idx is None or active_idx <= first:
+        _, last = self._plan.segment_span(k)
+        if active_idx is None or active_idx < self._segment_first_leg(k):
             return self.future_color
         if active_idx <= last:
             return self.active_color
         return self.past_color
 
     def _segment_length(self, k):
-        first, last = self._plan.segment_span(k)
-        return sum(self._plan.leg(i)[1] for i in range(first, last))
+        _, last = self._plan.segment_span(k)
+        start = max(self._segment_first_leg(k) - 1, 0)
+        return sum(self._plan.leg(i)[1] for i in range(start, last))
 
     @staticmethod
     def _mea_text(wp):
@@ -1189,6 +1244,16 @@ class FlightPlan(QWidget):
         if self._bridge.available:
             self._bridge.command("ACT", first + 1)
 
+    def _seg_menu_select_procedure(self):
+        kind = _SEGMENT_PAGE_KIND[self._plan.segments[self._seg_menu].kind]
+        self._seg_menu = None
+        self._open_proc_page(kind)
+
+    def _seg_menu_remove_procedure(self):
+        kind = _SEGMENT_PAGE_KIND[self._plan.segments[self._seg_menu].kind]
+        self._seg_menu = None
+        self._proc_remove(kind)
+
     def _seg_menu_remove(self):
         k = self._seg_menu
         self._close_seg_menu()
@@ -1241,6 +1306,9 @@ class FlightPlan(QWidget):
 
     def _footer_catalog(self):
         self._open_catalog_page()
+
+    def _footer_proc(self):
+        self._open_proc_page()
 
     def _footer_menu(self):
         self._menu_open = not self._menu_open
@@ -1378,6 +1446,219 @@ class FlightPlan(QWidget):
         else:
             self._bridge.command("DTO")
         self._close_dto()
+
+    # -- PROC page (PA7, billmallard/pyEfis#238) -------------------------------
+    def _open_proc_page(self, kind=None):
+        """The PROC page for *kind* (``departure``/``arrival``/``approach``),
+        the approach by default, with the airport the guide would offer:
+        the departure airport for a departure, the destination otherwise."""
+        kind = kind if kind in fp_proc.PAGE_KINDS else "approach"
+        self._proc = {"kind": kind, "airport": self._proc_default_airport(kind),
+                      "proc": None, "transition": None, "runway": None, "message": ""}
+        self._proc_picker = None
+        self._page = "proc"
+        self.update()
+
+    def _close_proc(self):
+        self._proc = None
+        self._proc_picker = None
+        self._page = "fpl"
+        self.update()
+
+    def _proc_select_kind(self, kind):
+        if self._proc is None or self._proc["kind"] == kind:
+            return
+        self._open_proc_page(kind)
+
+    def _proc_default_airport(self, kind):
+        plain = [seg.legs[0] for seg in self._plan.segments if seg.kind == "waypoint"]
+        airports = [w for w in plain if w.type == "airport"]
+        if kind == "departure":
+            wps = self._plan.waypoints
+            if wps and wps[0].type == "airport":
+                return wps[0].id
+        elif airports:
+            return airports[-1].id
+        lat, lon = self._aircraft_position()
+        near = self._ensure_waypoint_index().nearest(lat, lon, types=frozenset({"airport"}))
+        return near[0][0].id if near else ""
+
+    def _proc_set_airport(self, ident):
+        if self._proc is None:
+            return
+        self._proc.update(airport=(ident or "").strip().upper(), proc=None, transition=None,
+                          runway=None, message="")
+        self.update()
+
+    def _proc_choices(self, field):
+        """The choice list behind *field*: ``[(label, value)]``."""
+        st = self._proc
+        index = self._ensure_procedure_index()
+        if field == "proc":
+            procs = index.procedures_at(st["airport"], fp_proc.PACK_KIND[st["kind"]])
+            return [(fp_proc.procedure_name(pr), pr) for pr in procs]
+        if st["proc"] is None:
+            return []
+        if field == "transition":
+            return [(t, t) for t in fp_proc.transition_choices(index, st["proc"])]
+        if field == "runway":
+            return [(r, r) for r in fp_proc.runway_choices(index, st["proc"])]
+        return []
+
+    def _proc_open_field(self, field):
+        st = self._proc
+        if field == "airport":
+            self._open_entry({"kind": "proc_airport"})
+            return
+        if field != "proc" and st["proc"] is None:
+            st["message"] = f"SELECT {_PROC_KIND_LABELS[st['kind']].upper()} FIRST"
+            self.update()
+            return
+        if not self._proc_choices(field):
+            if field == "proc":
+                st["message"] = (f"NO {_PROC_KIND_LABELS[st['kind']].upper()}S AT {st['airport']}"
+                                 if self._ensure_procedure_index().ready
+                                 else "NO PROCEDURES DATABASE")
+            else:
+                st["message"] = f"NO {field.upper()}S"
+            self.update()
+            return
+        self._proc_picker = field
+        self.update()
+
+    def _proc_close_picker(self):
+        self._proc_picker = None
+        self.update()
+
+    def _proc_pick(self, field, value):
+        st = self._proc
+        self._proc_picker = None
+        st["message"] = ""
+        if field == "proc":
+            st.update(proc=value, transition=None, runway=None)
+            # A single choice is no choice: take it (guide p. 3-64, "the
+            # specified ... procedure appear[s] on the associated key").
+            index = self._ensure_procedure_index()
+            trans = fp_proc.transition_choices(index, value)
+            runways = fp_proc.runway_choices(index, value)
+            if len(trans) == 1:
+                st["transition"] = trans[0]
+            if len(runways) == 1:
+                st["runway"] = runways[0]
+        else:
+            st[field] = value
+        self.update()
+
+    def _proc_field_value(self, field):
+        st = self._proc
+        if field == "airport":
+            return st["airport"]
+        if field == "proc":
+            return fp_proc.procedure_name(st["proc"]) if st["proc"] else ""
+        return st[field] or ""
+
+    def _proc_fields(self):
+        st = self._proc
+        fields = list(_PROC_FIELDS[st["kind"]])
+        if st["proc"] is not None and "runway" in fields and not fp_proc.needs_runway(
+                self._ensure_procedure_index(), st["proc"]):
+            fields.remove("runway")
+        return fields
+
+    def _proc_ready(self):
+        st = self._proc
+        return st["proc"] is not None and all(
+            self._proc_field_value(f) for f in self._proc_fields())
+
+    def _proc_airport_wp(self):
+        st = self._proc
+        for m in self._ensure_waypoint_index().lookup(st["airport"]):
+            if m.type == "airport":
+                return m
+        return next((w for w in self._plan.waypoints
+                     if w.type == "airport" and w.id == st["airport"]), None)
+
+    def _resolve_navaid(self, ident, lat, lon):
+        """An ``AF`` arc's centre: the navaid *ident* nearest (lat, lon)."""
+        best = None
+        for m in self._ensure_waypoint_index().lookup(ident or ""):
+            if m.type not in ("vor", "ndb"):
+                continue
+            d = fp_geo.distance_nm(lat, lon, m.lat, m.lon)
+            if best is None or d < best[0]:
+                best = (d, m)
+        return (best[1].lat, best[1].lon) if best is not None else None
+
+    def _proc_assemble(self):
+        st = self._proc
+        origin = self._proc_airport_wp()
+        if origin is None and st["kind"] == "departure":
+            # A SID's first leg leaves the runway with no fix of its own.
+            raise fp_proc.ProcedureLoadError(f"NO POSITION FOR {st['airport']}")
+        var = self._bridge.magvar_or_none() if self._bridge.available else None
+        try:
+            hold_speed = float(self.hold_speed_kt)
+        except (TypeError, ValueError):
+            hold_speed = fp_proc.HOLD_SPEED_KT
+        if not math.isfinite(hold_speed) or hold_speed <= 0:
+            hold_speed = fp_proc.HOLD_SPEED_KT
+        return fp_proc.assemble(self._ensure_procedure_index(), st["proc"], st["transition"],
+                                st["runway"], magvar=0.0 if var is None else var,
+                                hold_speed_kt=hold_speed, resolve_navaid=self._resolve_navaid,
+                                origin=origin)
+
+    def _proc_preview(self):
+        """``(segments, error)`` for the selection as it stands; both None
+        while it is incomplete."""
+        if self._proc is None or not self._proc_ready():
+            return None, None
+        try:
+            return self._proc_assemble(), None
+        except fp_proc.ProcedureLoadError as e:
+            return None, str(e)
+
+    def _proc_load(self):
+        """Load the selection into the flight plan, replacing a loaded
+        procedure of the same kind, and open the FPL page (guide p. 3-73:
+        "Tap Load Approach. The Active FPL page opens"). A procedure the
+        engine refuses is reported there, from FPLMSG, by the refusal
+        strip; this page only refuses what it cannot assemble."""
+        st = self._proc
+        if not self._proc_ready():
+            missing = next(f for f in self._proc_fields() if not self._proc_field_value(f))
+            label = (_PROC_KIND_LABELS[st["kind"]] if missing == "proc"
+                     else _PROC_FIELD_LABELS[missing])
+            st["message"] = f"SELECT {label.upper()}"
+            self.update()
+            return
+        plan = copy.deepcopy(self._plan)
+        try:
+            notices = fp_proc.insert(plan, st["kind"], self._proc_assemble(), st["airport"])
+        except (fp_proc.ProcedureLoadError, fp_model.FlightPlanError) as e:
+            st["message"] = str(e)
+            self.update()
+            return
+        self._plan = plan
+        self._plan_dirty = True
+        self._close_proc()
+        self._message = "; ".join(notices)
+        self._commit()
+
+    def _proc_remove(self, kind=None):
+        kind = kind or (self._proc["kind"] if self._proc else None)
+        if kind is None:
+            return
+        plan = copy.deepcopy(self._plan)
+        if not fp_proc.remove(plan, kind):
+            return
+        self._plan = plan
+        self._plan_dirty = True
+        self._close_proc()
+        self._commit()
+
+    def _proc_loaded_ident(self, kind):
+        ks = fp_proc.loaded(self._plan, kind)
+        return self._plan.segments[ks[0]].ident if ks else ""
 
     # -- Catalog page ---------------------------------------------------------
     def _open_catalog_page(self):
@@ -1977,7 +2258,8 @@ class FlightPlan(QWidget):
                 bool(self._entry_dupe_choices), self._catalog_row_menu,
                 self._catalog_confirm is not None, self._dto_tab,
                 self._dto_target is not None, self._seg_menu, self._seg_fixes,
-                self._seg_fix_menu)
+                self._seg_fix_menu, None if self._proc is None else self._proc["kind"],
+                self._proc_picker)
 
     def _enc_prepare(self):
         self._enc_refresh()
@@ -2102,12 +2384,16 @@ class FlightPlan(QWidget):
             self._close_catalog_row_menu()
         elif self._catalog_confirm is not None:
             self._catalog_confirm_no()
+        elif self._proc_picker is not None:
+            self._proc_close_picker()
         elif self._page == "entry":
             self._entry_cancel()
         elif self._page == "dto":
             self._close_dto()
         elif self._page == "catalog":
             self._close_catalog()
+        elif self._page == "proc":
+            self._close_proc()
         else:
             return False
         return True
@@ -2468,6 +2754,8 @@ class FlightPlan(QWidget):
                 self._paint_dto(p, w, h)
             elif page == "catalog":
                 self._paint_catalog(p, w, h)
+            elif page == "proc" and self._proc is not None:
+                self._paint_proc(p, w, h)
             else:
                 self._paint_fpl(p, w, h)
             self._paint_enc_focus(p, w, h)
@@ -2869,10 +3157,23 @@ class FlightPlan(QWidget):
             p.drawEllipse(pt, r * 0.18, r * 0.18)
         p.restore()
 
+    def _segment_detail(self, k):
+        """A segment row's second line: an airway's fix count and MEA; a
+        procedure's kind, leg count and AIRAC cycle (PA7)."""
+        seg = self._plan.segments[k]
+        if seg.kind == "airway":
+            detail = f"{len(seg.legs)} fixes"
+            mea = self._segment_mea(k)
+            if mea is not None:
+                detail += f"   MEA {mea}"
+            return detail
+        kind = "MISSED APPROACH" if seg.kind == "missed" else seg.kind.upper()
+        return f"{kind}   {self._segment_span_text(k)}"
+
     def _paint_segment_row(self, p, w, y, rh, k, active_idx, cols, interactive):
-        """One airway: ident and entry -> exit on the first line, the fix
-        count and MEA beneath it in a smaller face. Same geometry whether or
-        not the segment is active, so opening it never shifts the row."""
+        """One airway or procedure: ident and entry -> exit on the first
+        line, the detail beneath it in a smaller face. Same geometry whether
+        or not the segment is active, so opening it never shifts the row."""
         seg = self._plan.segments[k]
         color = QColor(self._segment_color(k, active_idx))
         p.setPen(QPen(color))
@@ -2888,21 +3189,22 @@ class FlightPlan(QWidget):
         p.drawText(QRectF(lx, y, w * 0.42 - lx, top_h),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, seg.ident)
         p.setFont(base)
-        p.drawText(QRectF(lx + ident_w, y, w * 0.42 - lx - ident_w, top_h),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
-                   f"{seg.entry} → {seg.exit}")
+        # A procedure's name fills line 1 (ILS07.VECTORS); its ends go on
+        # line 2, which the columns leave free across the row (PA7).
+        procedure = seg.kind != "airway"
+        if not procedure:
+            p.drawText(QRectF(lx + ident_w, y, w * 0.42 - lx - ident_w, top_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                       self._segment_span_text(k))
 
-        detail = f"{len(seg.legs)} fixes"
-        mea = self._segment_mea(k)
-        if mea is not None:
-            detail += f"   MEA {mea}"
+        detail = self._segment_detail(k)
         small = QFont(base)
         small.setPixelSize(max(9, int(base.pixelSize() * 0.86)))
         p.setFont(small)
         dim = QColor(color)
         dim.setAlpha(190)
         p.setPen(QPen(dim))
-        p.drawText(QRectF(lx, y + top_h, w * 0.42 - lx, rh - top_h),
+        p.drawText(QRectF(lx, y + top_h, (w * 0.97 if procedure else w * 0.42) - lx, rh - top_h),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, detail)
         p.setFont(base)
         p.setPen(QPen(color))
@@ -2923,9 +3225,11 @@ class FlightPlan(QWidget):
         ir, icx, lx = self._row_icon_geometry(rh)
         dx = self._nest_indent(rh)
         self._draw_type_icon(p, icx + dx, y + rh / 2, ir * 0.85, wp.type)
-        label = wp.id
+        label = fp_proc.leg_label(wp)
+        if ROLE_ABBREV.get(wp.role):
+            label = f"{label} {ROLE_ABBREV[wp.role]}"
         if role == "from":
-            label = f"{wp.id}  (from)"
+            label = f"{label}  (from)"
         p.drawText(QRectF(lx + dx, y, w * 0.42 - lx - dx, rh),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
         if role != "from":
@@ -2947,9 +3251,9 @@ class FlightPlan(QWidget):
     def _paint_footer(self, p, w, top, footer_h, interactive):
         p.setPen(QPen(QColor("#333333")))
         p.drawLine(0, top, w, top)
-        labels = ("ADD WPT", "DIRECT TO", "CATALOG", "MENU")
-        callbacks = (self._footer_add, self._footer_direct_to, self._footer_catalog,
-                     self._footer_menu)
+        labels = ("ADD WPT", "DIRECT TO", "PROC", "CATALOG", "MENU")
+        callbacks = (self._footer_add, self._footer_direct_to, self._footer_proc,
+                     self._footer_catalog, self._footer_menu)
         seg = w / len(labels)
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(footer_h * 0.34), 9))
@@ -3076,18 +3380,26 @@ class FlightPlan(QWidget):
             items.append((label, self._open_role_menu if attr is None else getattr(self, attr)))
         self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu")
 
-    def _segment_title(self, k):
+    def _segment_span_text(self, k):
         seg = self._plan.segments[k]
-        return f"{seg.ident}  {seg.entry} → {seg.exit}"
+        return f"{fp_proc.leg_label(seg.legs[0])} → {fp_proc.leg_label(seg.legs[-1])}"
+
+    def _segment_title(self, k):
+        return f"{self._plan.segments[k].ident}  {self._segment_span_text(k)}"
 
     def _paint_seg_menu(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
         k = self._seg_menu
         first, _ = self._plan.segment_span(k)
+        seg_kind = self._plan.segments[k].kind
+        page_kind = _SEGMENT_PAGE_KIND.get(seg_kind)
         items = []
-        for label, attr in _SEG_MENU_ITEMS:
+        for label, attr in (_SEG_MENU_ITEMS if page_kind is None else _PROC_SEG_MENU_ITEMS):
             if attr == "_seg_menu_activate":
-                label = f"Activate to {self._plan.waypoints[first].id}"
+                label = f"Activate to {fp_proc.leg_label(self._plan.waypoints[first])}"
+            elif page_kind is not None and attr in ("_seg_menu_select_procedure",
+                                                    "_seg_menu_remove_procedure"):
+                label = f"{label} {_PROC_KIND_LABELS[page_kind]}"
             items.append((label, getattr(self, attr)))
         self._paint_menu_list(p, w, h, items, self._close_seg_menu, scroll_key="seg_menu",
                               title=self._segment_title(k))
@@ -3095,9 +3407,13 @@ class FlightPlan(QWidget):
     def _paint_seg_fix_menu(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
         i = self._seg_fix_menu
-        items = [(label, getattr(self, attr)) for label, attr in _SEG_FIX_MENU_ITEMS]
+        wp = self._plan.waypoints[i]
+        # A leg that ends without a fix (a climb, a vector) has nowhere to go
+        # direct to and nothing to look up.
+        items = [(label, getattr(self, attr)) for label, attr in _SEG_FIX_MENU_ITEMS
+                 if wp.id or attr == "_seg_fix_activate_leg"]
         self._paint_menu_list(p, w, h, items, self._close_seg_fix_menu,
-                              scroll_key="seg_fix_menu", title=self._plan.waypoints[i].id)
+                              scroll_key="seg_fix_menu", title=fp_proc.leg_label(wp))
 
     def _seg_fixes_scroll_by(self, delta):
         self._menu_scroll_by("seg_fixes", delta)
@@ -3151,14 +3467,16 @@ class FlightPlan(QWidget):
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                        f"AIRAC {seg.cycle}")
 
-        # FIX | CRS | DIS | MEA, columns right-aligned like the route list.
+        # FIX | CRS | DIS | MEA, columns right-aligned like the route list. A
+        # procedure's last column is the leg's altitude constraint as coded.
+        procedure = seg.kind != "airway"
         col_x = [box_x + box_w * f_ for f_ in (0.40, 0.58, 0.76)]
         col_w = box_w * 0.18
         hy = box_top + title_h
         ir, icx, lx = self._row_icon_geometry(row_h)
         p.drawText(QRectF(box_x + lx, hy, box_w * 0.3, head_h),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "FIX")
-        for x, label in zip(col_x, ("CRS", "DIS", "MEA")):
+        for x, label in zip(col_x, ("CRS", "DIS", "ALT" if procedure else "MEA")):
             p.drawText(QRectF(x, hy, col_w, head_h),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, label)
         p.setPen(QPen(QColor("#333333")))
@@ -3172,10 +3490,12 @@ class FlightPlan(QWidget):
             p.setPen(QPen(QColor(color)))
             self._draw_type_icon(p, box_x + icx, y + row_h / 2, ir * 0.85, wp.type)
             p.drawText(QRectF(box_x + lx, y, box_w * 0.4 - lx, row_h),
-                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, wp.id)
-            leg = self._leg_in(i) if i > first else None
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       fp_proc.leg_label(wp) + (f" {ROLE_ABBREV[wp.role]}"
+                                                if ROLE_ABBREV.get(wp.role) else ""))
+            leg = self._leg_in(i) if (i > first or procedure) else None
             texts = ("", "", "") if leg is None else (
-                f"{leg[0]:03.0f}°", f"{leg[1]:.0f}", self._mea_text(wp))
+                f"{leg[0]:03.0f}°", f"{leg[1]:.0f}", wp.alt if procedure else self._mea_text(wp))
             for x, text in zip(col_x, texts):
                 p.drawText(QRectF(x, y, col_w, row_h),
                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
@@ -3433,7 +3753,7 @@ class FlightPlan(QWidget):
                 break
             selected = self._dto_target is not None and self._dto_target[:2] == ("fpl", i)
             p.setPen(QPen(QColor("#00ffff" if selected else "#ffffff")))
-            label = wp.id
+            label = fp_proc.leg_label(wp)
             role = ROLE_ABBREV.get(wp.role, "")
             if role:
                 label = f"{label} {role}"
@@ -3487,6 +3807,166 @@ class FlightPlan(QWidget):
         rect = (0, top, w, footer_h)
         p.drawText(QRectF(*rect), Qt.AlignmentFlag.AlignCenter, label)
         self._tap(*rect, self._dto_activate, "activate")
+
+    # -- PROC page (PA7) --------------------------------------------------------
+    def _paint_proc(self, p, w, h):
+        """The guide's procedure setup page (pp. 3-64, 3-69, 3-71, 3-73):
+        a Departure/Arrival/Approach tab, one key per field showing the
+        choice or underscores, a preview of the legs the selection loads,
+        and Load / Remove. Every control is a tap target, so the encoder
+        ring reaches each one too."""
+        st = self._proc
+        header_h = int(self._chrome_h(h, 1.3, 0.18))
+        tabs_h = int(self._chrome_h(h, 1.0, 0.12))
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
+        row_h = self._row_h_cap()
+
+        self._paint_proc_header(p, w, header_h)
+        y = header_h
+        self._paint_proc_tabs(p, w, y, tabs_h)
+        y += tabs_h
+        bottom = h - footer_h
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(row_h * 0.5), 9))
+        for field in self._proc_fields():
+            rh = min(row_h, bottom - y)
+            if rh <= 0:
+                break
+            self._paint_proc_field(p, w, y, rh, field, f)
+            y += rh
+        self._paint_proc_status(p, w, y, bottom, row_h)
+        self._paint_proc_footer(p, w, bottom, footer_h)
+
+        if self._proc_picker is not None:
+            self._paint_overlay_backdrop(p, w, h)
+            field = self._proc_picker
+            items = [(label, (lambda v=value, fld=field: self._proc_pick(fld, v)))
+                     for label, value in self._proc_choices(field)]
+            name = (_PROC_KIND_LABELS[st["kind"]] if field == "proc"
+                    else _PROC_FIELD_LABELS[field])
+            self._paint_menu_list(p, w, h, items, self._proc_close_picker,
+                                  scroll_key=f"proc_{field}", title=f"Select {name}")
+        if self._message:
+            self._paint_toast(p, w, h, self._message)
+
+    def _paint_proc_header(self, p, w, header_h):
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(header_h * 0.4), 10))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(0, 0, w, header_h), Qt.AlignmentFlag.AlignCenter, "PROCEDURES")
+        cancel_rect = (w - header_h, 0, header_h, header_h)
+        p.setPen(QPen(QColor("#ff8080")))
+        p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
+        self._tap(*cancel_rect, self._close_proc)
+
+    def _paint_proc_tabs(self, p, w, top, tabs_h):
+        seg = w / len(PROC_TABS)
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(tabs_h * 0.45), 9))
+        p.setFont(f)
+        for i, (label, kind) in enumerate(PROC_TABS):
+            x = i * seg
+            color = "#00ffff" if kind == self._proc["kind"] else "#808080"
+            p.setPen(QPen(QColor(color)))
+            p.drawText(QRectF(x, top, seg, tabs_h), Qt.AlignmentFlag.AlignCenter, label)
+            self._tap(x, top, seg, tabs_h, (lambda k=kind: self._proc_select_kind(k)))
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(0, top + tabs_h - 1), QPointF(w, top + tabs_h - 1))
+
+    def _paint_proc_field(self, p, w, y, rh, field, font):
+        label = (_PROC_KIND_LABELS[self._proc["kind"]] if field == "proc"
+                 else _PROC_FIELD_LABELS[field])
+        value = self._proc_field_value(field)
+        p.setFont(font)
+        p.setPen(QPen(QColor("#222222")))
+        p.drawRect(QRectF(2, y + 2, w - 4, rh - 4))
+        p.setPen(QPen(QColor("#9a9a9a")))
+        p.drawText(QRectF(10, y, w * 0.4, rh),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        # Underscores until chosen, as the guide's keys show (p. 3-64).
+        p.setPen(QPen(QColor("#00ffff" if value else "#808080")))
+        p.drawText(QRectF(w * 0.4, y, w * 0.6 - 12, rh),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   value or "_____")
+        self._tap(0, y, w, rh, (lambda fld=field: self._proc_open_field(fld)), "row")
+
+    def _paint_proc_status(self, p, w, top, bottom, row_h):
+        """Below the keys: what is loaded, a refusal or the page's message,
+        then the legs the selection would load."""
+        st = self._proc
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(row_h * 0.42), 9))
+        p.setFont(f)
+        line_h = max(14.0, row_h * 0.62)
+        y = top + 4
+        lines = []
+        loaded = self._proc_loaded_ident(st["kind"])
+        lines.append((f"LOADED: {loaded}" if loaded else "NONE LOADED", "#9a9a9a"))
+        segments, error = self._proc_preview()
+        if self._plan_refused():
+            lines.append((self._refusal_text(), "#ff4040"))
+        if st["message"] or error:
+            lines.append((st["message"] or error, "#ff4040"))
+        for text, color in lines:
+            if y + line_h > bottom:
+                return
+            p.setPen(QPen(QColor(color)))
+            p.drawText(QRectF(10, y, w - 20, line_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+            y += line_h
+        if not segments:
+            return
+        title = segments[0].ident
+        if st["proc"].runway:
+            title += f"   RWY {st['proc'].runway}"
+        if segments[0].cycle:
+            title += f"   AIRAC {segments[0].cycle}"
+        legs = [(seg.kind, wp) for seg in segments for wp in seg.legs]
+        if y + line_h > bottom:
+            return
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(10, y, w - 20, line_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
+        y += line_h
+        fit = max(0, int((bottom - y) // line_h))
+        shown = legs if len(legs) <= fit else legs[:max(0, fit - 1)]
+        for seg_kind, wp in shown:
+            role = ROLE_ABBREV.get(wp.role, "")
+            label = fp_proc.leg_label(wp) + (f" {role}" if role else "")
+            p.setPen(QPen(QColor("#00ffff" if seg_kind == "missed" else "#ffffff")))
+            p.drawText(QRectF(24, y, w * 0.5, line_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+            p.drawText(QRectF(w * 0.5, y, w * 0.16, line_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, wp.pt)
+            p.drawText(QRectF(w * 0.66, y, w * 0.32, line_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, wp.alt)
+            y += line_h
+        if len(shown) < len(legs):
+            p.setPen(QPen(QColor("#9a9a9a")))
+            p.drawText(QRectF(24, y, w - 34, line_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       f"+ {len(legs) - len(shown)} more")
+
+    def _paint_proc_footer(self, p, w, top, footer_h):
+        kind = _PROC_KIND_LABELS[self._proc["kind"]]
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(footer_h * 0.34), 9))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(0, top), QPointF(w, top))
+        half = w / 2
+        load_rect = (0, top, half, footer_h)
+        p.setPen(QPen(QColor("#00ff00" if self._proc_ready() else "#4a7a4a")))
+        p.drawText(QRectF(*load_rect), Qt.AlignmentFlag.AlignCenter, f"LOAD {kind.upper()}")
+        self._tap(*load_rect, self._proc_load, "activate")
+        remove_rect = (half, top, half, footer_h)
+        loaded = bool(self._proc_loaded_ident(self._proc["kind"]))
+        p.setPen(QPen(QColor("#ff8080" if loaded else "#505050")))
+        p.drawText(QRectF(*remove_rect), Qt.AlignmentFlag.AlignCenter,
+                   f"REMOVE {kind.upper()}")
+        if loaded:
+            self._tap(*remove_rect, self._proc_remove, "soft")
 
     # -- Catalog page -------------------------------------------------------------
     def _paint_catalog(self, p, w, h):

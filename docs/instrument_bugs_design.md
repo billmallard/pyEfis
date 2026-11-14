@@ -86,8 +86,8 @@ set-point parameters, so FIX keys mirror them 1:1:
 | Heading | `HEADBUG` | exists (`ahrs.yaml`) | **gap — no Selected Heading in the spec** (candidate addition via the canfix-spec fork) |
 | Course | `COURSE` | exists (`ahrs.yaml`) | 457 (0x1C9) Selected Course |
 | Altitude | `ALTSEL` | exists (`gcu.yaml`, fix-gateway #90) | 461 (0x1CD) Selected Altitude |
-| Airspeed (FLC) | `IASSEL` | **to add** (fix-gateway) | 460 (0x1CC) Selected Airspeed |
-| Vertical speed | `VSSEL` | later | 459 (0x1CB) Selected Vertical Speed |
+| Airspeed (FLC) | `IASSEL` | exists (`autopilot.yaml`, fix-gateway #172) | 460 (0x1CC) Selected Airspeed |
+| Vertical speed | `VSSEL` | exists (`autopilot.yaml`, fix-gateway #172) | 459 (0x1CB) Selected Vertical Speed |
 | Glidepath | — | later | 458 (0x1CA) Selected Glidepath Angle |
 
 Notes:
@@ -102,7 +102,8 @@ Notes:
   same keys. Displays never write bugs implicitly.
 - Autopilot *mode* annunciation (which target FLC/ALT-hold is actually
   flying) is a separate display concern on separate keys — not part of
-  the bug contract.
+  the bug contract. Those keys are fix-gateway `doc/autopilot_keys.md`
+  (AFC1), which also defines `VSSEL` and `IASSEL`.
 
 ## 6. Build order
 
@@ -112,7 +113,7 @@ Notes:
 2. **Altitude bug** on the altimeter tape against `ALTSEL` — first,
    because GCU P1 (Octavi bridge) gives it a live writer, so the
    interaction gets end-to-end feel-testing immediately.
-3. **Airspeed bug** against a new `IASSEL` (add key in fix-gateway).
+3. **Airspeed bug** against `IASSEL` (fix-gateway `autopilot.yaml`, #172).
 4. Configurator twins for each as they land; `value_text` readout
    chips where panels want numeric targets.
 

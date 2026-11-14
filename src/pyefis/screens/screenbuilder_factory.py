@@ -1518,6 +1518,11 @@ _register(InstrumentSpec(
              help="procedures-conus.pack for SID/STAR/approach lookup (PA5; "
                   "on the Pi /data/makerplane-data/procedures/current/"
                   "procedures.sqlite)"),
+        Prop("hold_speed_kt", "number", default=90.0, minimum=40.0, maximum=250.0,
+             step=5.0, label="Hold speed (kt)",
+             help="speed a hold coded in minutes is turned into a distance at "
+                  "when the PROC page loads it (one minute at 90 kt = 1.5 nm); "
+                  "the bus carries no leg time"),
         Prop("columns", "string", default="DTK,DIS,CUM", label="Columns",
              help="comma-separated FPL page data columns, in order; choices "
                   "DTK, DIS, CUM, ETE, ETA"),
