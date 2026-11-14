@@ -370,9 +370,12 @@ class FixBridge:
 
     # -- ActivePlan read-back ---------------------------------------------
     def add_listener(self, callback) -> None:
-        """*callback()* is invoked (no arguments) whenever the route block
-        (``FPLSEQ``) or any engine output changes. The listener re-reads
-        whatever it needs via :meth:`read_route` / :meth:`read_engine`."""
+        """*callback()* is invoked (no arguments) on every write of
+        ``FPLSEQ`` or of an engine output -- a write, not a change: the
+        engine rewrites all its outputs each cycle, so expect some 25 calls
+        per cycle. The listener re-reads what it needs via
+        :meth:`read_engine`, and :meth:`read_route` only when
+        :meth:`route_key` has moved."""
         self._listeners.append(callback)
 
     def _optional_items(self):
@@ -400,6 +403,29 @@ class FixBridge:
     def _notify(self, *_args) -> None:
         for cb in list(self._listeners):
             cb()
+
+    def route_key(self):
+        """``(FPLSEQ, FPLCOUNT, FPLSEGCNT, FPLLDSEQ)``: equal keys mean the
+        route block and the engine's answer to it are unchanged, so a
+        reader holding a route read under this key has nothing to re-read.
+        None when the bridge is unavailable; ``FPLLDSEQ`` is None on a
+        gateway that does not publish it.
+
+        Listeners are called on every write of an engine output, and the
+        engine rewrites all of them each guidance cycle whether or not they
+        changed. Reading the route costs a FIX lookup for every field of
+        every slot, so a listener compares this first (RS1 writer order:
+        ``FPLSEQ`` is written last, and consumers act only on its change;
+        the engine's own write-back ends with ``FPLSEQ`` then
+        ``FPLLDSEQ``)."""
+        if not self.available:
+            return None
+        try:
+            loaded = int(self._get("FPLLDSEQ").value)
+        except (KeyError, TypeError, ValueError):
+            loaded = None
+        return (int(self._get("FPLSEQ").value), int(self._get("FPLCOUNT").value),
+                int(self._get("FPLSEGCNT").value), loaded)
 
     def read_route(self) -> RouteBlock | None:
         if not self.available:
