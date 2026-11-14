@@ -227,14 +227,16 @@ def trk_box(family, fs, box_h, track, osp_x, apex_y):
     return box, runs, sp
 
 
-def keep_out(widget, x):
+def keep_out(widget, x, own=None):
     """Rects the ND draws over, for MapTransform.label_keep_out: the TRK box
     and the lubber under it, where the full-range ring's top label lands
-    (G11c). EXPANDED only: CTR MAP keeps the look accepted on #441."""
+    (G11c). EXPANDED only: CTR MAP keeps the look accepted on #441. *own*
+    is ownship ``(lat, lon)``, the widget's by default."""
     if not polished(widget):
         return ()
     g = expanded_geometry(float(x.w), float(x.h), x.font_family)
-    osp = x.to_screen(widget._lat, widget._lon)
+    lat, lon = own if own is not None else (widget._lat, widget._lon)
+    osp = x.to_screen(lat, lon)
     apex_y = osp.y() - g["r"]
     box, _runs, _sp = trk_box(x.font_family, g["fs"], g["box_h"],
                               widget._track, osp.x(), apex_y)
@@ -510,15 +512,17 @@ def _draw_lines(p, lines, x, y, lh, align_right=False, right=None):
     return y
 
 
-def paint(widget, p, x, read, now=None):
+def paint(widget, p, x, read, now=None, own=None):
     """Paint the ND overlay (EXPANDED arc or CTR rose) over the map layers
     and ownship. *x* is the frame's MapTransform, built with ``range_px`` =
-    the compass radius."""
+    the compass radius; *own* is ownship ``(lat, lon)`` as the map under
+    it was drawn, the widget's by default."""
     w, h = float(x.w), float(x.h)
     g = geometry(widget.nd_mode, w, h, x.font_family)
     fs = g["fs"]
     family = x.font_family
-    osp = x.to_screen(widget._lat, widget._lon)
+    osp = x.to_screen(*(own if own is not None
+                        else (widget._lat, widget._lon)))
     r = x.nm_to_px(x.range_nm)          # == g["r"]: range_px is the arc
     up = rose_up(widget, x)             # magnetic bearing at the top
     half = g["half"]
