@@ -569,7 +569,7 @@ class _BridgeRelay(QObject):
 
     def on_bridge_change(self, key=""):
         # *skip* drops a write before the signal: emitting it costs more
-        # than the layer's own check, and most writes are readouts.
+        # than the layer's own check, and most writes change nothing drawn.
         if self._skip is not None and self._skip(key):
             return
         self.changed.emit(key or "")
@@ -617,11 +617,9 @@ class FlightPlanLayer(MapLayer):
             self._drawn_sig = self._draw_signature()
 
     def _on_bridge_change(self, key=""):
-        """A bus write of *key*, on the GUI thread: re-collect, and say
-        whether a frame is wanted -- False when nothing this layer draws
-        changed, or the layer is switched off."""
-        if not self._wants_collect(key):
-            return False
+        """A bus write of *key* that _wants_collect let through, on the GUI
+        thread: re-collect, and say whether a frame is wanted -- False when
+        nothing this layer draws changed, or the layer is switched off."""
         self.collect(None)
         sig = self._draw_signature()
         if sig == self._drawn_sig:
@@ -630,13 +628,10 @@ class FlightPlanLayer(MapLayer):
         return bool(self.enabled)
 
     def _skips_write(self, key):
-        """True for a readout write while the last full collect is recent:
-        _wants_collect would say False without reading anything. Reads only
-        this layer's own fields, so the relay may call it on any thread."""
-        if key not in _READOUT_KEYS:
-            return False
-        at = self._collected_at
-        return at is not None and self._clock() - at < _RECHECK_S
+        """The relay's check, before its signal. It runs on whichever thread
+        delivers the bridge's callbacks -- one thread, whichever it is -- and
+        only that thread touches _seen and _collected_at."""
+        return not self._wants_collect(key)
 
     def _wants_collect(self, key):
         """False when the write of *key* cannot have changed anything this

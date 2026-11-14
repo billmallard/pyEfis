@@ -262,3 +262,17 @@ def test_staging_a_direct_to_marks_a_frame_with_no_engine_write(fix, qtbot, monk
         fp_model.Waypoint(id="RZS", type="vor", lat=34.5, lon=-119.7))
 
     assert w._frame_dirty is True
+
+
+def test_a_write_that_changes_nothing_drawn_never_reaches_the_relay_signal(fix, qtbot, monkeypatch):
+    """Emitting the relay's signal per write cost more than the check that
+    then dropped it; the relay asks the layer before it emits."""
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+    emitted = []
+    layer._relay.changed.connect(emitted.append)
+
+    _engine_cycle(fix, **{k: v + 1 for k, v in READOUTS.items()})
+    assert emitted == []
+
+    _engine_cycle(fix, FPLACTLEG=3)
+    assert emitted == ["FPLACTLEG"]
