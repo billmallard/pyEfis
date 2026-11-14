@@ -10,12 +10,18 @@ air start, RESUME 5 s after the MAP auto-SUSP. It grabs the panel every 30 s,
 in the hold (then back to Map).
 
 It never changes config and never restarts fixgw or pyEfis. At the end it puts
-the route block back to what it found (empty: FPLCOUNT 0) and NAVSRC/GPSSRC to
-their found values. Markers: ARMED, DONE, NOT_FLOWN; every step in events.log.
+the route block back to what it found, slot for slot, re-activates the leg
+that was active, and puts NAVSRC/GPSSRC back to their found values and the
+right-hand column on the tab it found. Markers: ARMED, DONE, NOT_FLOWN; every
+step in events.log.
 
-    setsid nohup ~/pyefis-venv/bin/python docs_flight.py <SID> <BENCH_URL> > follow.out 2>&1 < /dev/null &
+    setsid nohup ~/pyefis-venv/bin/python docs_flight.py <SID> <BENCH_URL> <DEADLINE_UTC> [map|fpl] \
+        > follow.out 2>&1 < /dev/null &
 
 BENCH_URL is the sim-bench service's base URL, http://<host>:<port>.
+DEADLINE_UTC ("2026-11-15 12:00") is the end of that night's flying window,
+06:00 Central. The last argument is the tab the bench was on when armed
+(default map).
 """
 import calendar
 import json
@@ -30,12 +36,13 @@ D = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, D)
 from nfx import NFX  # noqa: E402
 
-if len(sys.argv) != 3:
-    sys.exit("usage: docs_flight.py <SID> <BENCH_URL>")
+if len(sys.argv) not in (4, 5):
+    sys.exit("usage: docs_flight.py <SID> <BENCH_URL> <DEADLINE_UTC> [map|fpl]")
 SID = sys.argv[1]
 HEALTH = sys.argv[2].rstrip("/") + "/health"
 LOCK = "/tmp/pyefis-bench.lock"
-DEADLINE = calendar.timegm(time.strptime("2026-11-07 12:00", "%Y-%m-%d %H:%M"))  # 06:00 CST
+DEADLINE = calendar.timegm(time.strptime(sys.argv[3], "%Y-%m-%d %H:%M"))  # 06:00 Central
+FOUND_TAB = sys.argv[4] if len(sys.argv) == 5 else "map"
 PAMJI = (34.780069, -120.368208)
 WINCH = (35.073481, -120.6628)
 TAB_MAP, TAB_FPL = (1278, 13), (1345, 13)
@@ -118,29 +125,47 @@ def fplcmd(verb):
 def found_state():
     return {"NAVSRC": c.read("NAVSRC")[0], "GPSSRC": c.read("GPSSRC")[0],
             "FPLCOUNT": c.read("FPLCOUNT")[0], "FPLSEGCNT": c.read("FPLSEGCNT")[0],
-            "FPLNAME": c.read("FPLNAME")[0], "FPLDBCYC": c.read("FPLDBCYC")[0]}
+            "FPLNAME": c.read("FPLNAME")[0], "FPLDBCYC": c.read("FPLDBCYC")[0],
+            "FPLSTATE": c.read("FPLSTATE")[0], "FPLACTLEG": c.read("FPLACTLEG")[0]}
 
 
-def restore(found, ours_count, ours_segs):
-    # The route was empty when armed (checked before publishing): clear our slots,
-    # then commit an empty block. Any FPLSEQ change drops the activation.
+def snapshot_route(found):
+    """Every slot and segment field of the route block as found, so restore()
+    can put back a plan another session left loaded."""
+    n = int(float(found["FPLCOUNT"] or 0))
+    m = int(float(found["FPLSEGCNT"] or 0))
+    return ({(i, f): c.read("FPL%d%s" % (i, f))[0] for i in range(1, n + 1) for f in SLOT_F},
+            {(k, f): c.read("FPLS%d%s" % (k, f))[0] for k in range(1, m + 1) for f in SEG_F})
+
+
+def restore(found, ours_count, ours_segs, snap):
+    # Clear our slots, write back the found block (empty, or a plan another
+    # session left), then commit it. Any FPLSEQ change drops the activation,
+    # so a plan that was active is re-activated on its found leg.
+    slots, segs = snap
     for i in range(1, ours_count + 1):
         for f in SLOT_F:
             c.write("FPL%d%s" % (i, f), "" if f in ("ID", "PT", "ALT", "TURN") else 0)
     for k in range(1, ours_segs + 1):
         for f in SEG_F:
             c.write("FPLS%d%s" % (k, f), "" if f in ("ID", "ENT", "EXT") else 0)
-    c.write("FPLSEGCNT", 0)
-    c.write("FPLCOUNT", 0)
+    for (i, f), v in slots.items():
+        c.write("FPL%d%s" % (i, f), v)
+    for (k, f), v in segs.items():
+        c.write("FPLS%d%s" % (k, f), v)
+    c.write("FPLSEGCNT", int(float(found["FPLSEGCNT"] or 0)))
+    c.write("FPLCOUNT", int(float(found["FPLCOUNT"] or 0)))
     c.write("FPLNAME", found["FPLNAME"])
     c.write("FPLDBCYC", found["FPLDBCYC"])
     c.write("FPLSEQ", int(float(c.read("FPLSEQ")[0] or 0)) + 1)
     time.sleep(1.5)
     c.write("NAVSRC", int(float(found["NAVSRC"] or 2)))
     c.write("GPSSRC", int(float(found["GPSSRC"] or 0)))
-    tap(TAB_MAP)
+    if slots and found["FPLSTATE"] not in ("0", "0.0", "") and int(float(found["FPLACTLEG"] or 0)) > 0:
+        fplcmd("ACT %d" % int(float(found["FPLACTLEG"])))
+    tap(TAB_FPL if FOUND_TAB == "fpl" else TAB_MAP)
     time.sleep(1)
-    log("restored", found_state(), "FPLSTATE", c.read("FPLSTATE")[0])
+    log("restored", found_state())
 
 
 def main():
@@ -164,9 +189,8 @@ def main():
     log("session flying")
     found = found_state()
     log("found", found)
-    if found["FPLCOUNT"] not in ("0", "0.0"):
-        log("route block not empty; publishing nothing, grabbing only")
-        found = None
+    snap = snapshot_route(found)
+    log("snapshot", len(snap[0]), "slot fields,", len(snap[1]), "segment fields")
     t0 = time.time()
     while pos() is None:
         if time.time() - t0 > 300:
@@ -252,7 +276,7 @@ def main():
     finally:
         grab("end")
         if found:
-            restore(found, *ours)
+            restore(found, ours[0], ours[1], snap)
         mark("DONE")
         log("done")
 

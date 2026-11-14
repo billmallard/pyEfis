@@ -47,7 +47,7 @@ The tap writes `NAVSRC` (`0` NAV1, `1` NAV2, `2` GPS). fix-gateway's
 glideslope into the keys the HSI draws (`COURSE`, `CDI`, `TOFROM`, `GSI`,
 `GSV`, `CDIV`).
 
-![VOR1 selected, flying TO the station with the course 2 dots to the right](../images/hsi/vor1_to.png)
+![VOR1 selected, flying TO the station with the course 2 dots to the right; both bearing pointers off, so the green course pointer is the only needle](../images/hsi/vor1_to.png)
 
 - **GPS** is the flight plan. Which navigator supplies it is set by `GPSSRC`:
   `0` is pyEFIS's own flight plan, flown by fix-gateway's flight-plan engine,
@@ -101,8 +101,9 @@ of the active leg, and it moves to the next leg as the engine sequences. What
 you see on the HSI:
 
 **On a leg.** The course pointer is the leg's course and the triangle shows TO
-the waypoint. Bearing pointer 1, when it is set to GPS, points at that waypoint.
-Near the leg it lies close to the course pointer.
+the waypoint. A bearing pointer cannot be set to GPS while GPS is the source,
+because it would only repeat the course pointer. Set one to a VOR to keep a
+station in view alongside the plan.
 
 **Fly-by turns.** The engine starts the turn early, so you roll out on the next
 leg instead of overshooting it. The turn starts about `R tan(Δ/2)` before the
@@ -112,15 +113,17 @@ point:
 
 1. The course pointer swings towards the next leg's course, and the deviation
    bar measures from the curved path joining the two legs.
-2. Bearing pointer 1 still points at the waypoint you are turning abeam, so it
-   swings out to the side.
-3. Halfway round, at the turn's bisector, the engine sequences to the next
-   waypoint, and bearing pointer 1 jumps to it.
-4. You roll out on the next leg with the bar centred.
+2. Halfway round, at the turn's bisector, the engine sequences to the next
+   waypoint.
+3. You roll out on the next leg with the bar centred.
+
+In these four pictures bearing pointer 1 is on, set to VOR1 tuned to GVO, so
+it points west at the station throughout and stays clear of the course
+pointer.
 
 | Before the turn | In the turn | Sequenced | On the next leg |
 |---|---|---|---|
-| ![1.9 nm before HENER, course 073, centred](../images/hsi/gps_flyby_1_before_turn.png) | ![In the turn: heading 100, the course already 134, bearing pointer 1 out to the left at HENER](../images/hsi/gps_flyby_2_in_turn.png) | ![Sequenced at the bisector: bearing pointer 1 now at VTU](../images/hsi/gps_flyby_3_sequenced.png) | ![Rolled out on 134 to VTU](../images/hsi/gps_flyby_4_on_next_leg.png) |
+| ![About 2 nm before HENER, course 073, centred; the BRG tab reads BRG1 VOR1 and the cyan bearing pointer points at GVO](../images/hsi/gps_flyby_1_before_turn.png) | ![In the turn: heading 100, the course already 134](../images/hsi/gps_flyby_2_in_turn.png) | ![Sequenced at the bisector: heading 109, course 134 to VTU](../images/hsi/gps_flyby_3_sequenced.png) | ![Rolled out on 134 to VTU](../images/hsi/gps_flyby_4_on_next_leg.png) |
 
 A waypoint flagged fly-over, or a course change of more than 120 degrees, is not
 anticipated. There, the engine sequences abeam the waypoint and the pointer
@@ -195,7 +198,7 @@ The HSI never shows a needle it cannot trust.
 
 | Localizer tuned, no signal | No valid data at all (bench, simulator not running) |
 |---|---|
-| ![LOC1 with no signal: NAV flag, no deviation bar, no glideslope](../images/hsi/loc1_no_signal.png) | ![The bench HSI with nothing feeding it, over a blank synthetic vision: NAV flag, no numerals, both bearing labels marked X](../images/hsi/bench_no_data.png) |
+| ![LOC1 with no signal: NAV flag, no deviation bar, no glideslope](../images/hsi/loc1_no_signal.png) | ![The bench HSI with nothing feeding it, over a blank synthetic vision: NAV flag, no numerals, CRS dashed, and the BRG tab with both pointers off](../images/hsi/bench_no_data.png) |
 
 ## Arc view
 
@@ -204,7 +207,7 @@ instrument, for finer heading resolution. The course pointer, deviation bar,
 bug, track diamond and bearing pointers all draw on the arc, and the deviation
 bar stays on the course pointer, as on a G1000 or G3X arc HSI.
 
-![Arc orientation on the leg to VTU](../images/hsi/gps_arc_orientation.png)
+![Arc orientation on the leg to VTU. Bearing pointer 1 is on, but GVO is behind the aircraft, outside the arc, so it is not drawn](../images/hsi/gps_arc_orientation.png)
 
 `heading_up`, `north_up` and `track_up` are all offered, but today all three
 draw the same heading-up rose.

@@ -63,9 +63,9 @@ setsid nohup ~/pyefis-venv/bin/python docs_flight.py <session-id> http://<bench-
 ## Renders
 
 The other pictures are the real pyEFIS `HSI` widget
-(pyEFIS `dev` 980497e), rendered offscreen at 420 x 420 px. It is connected
-over netfix to a real fix-gateway (`dev` 5f1625c) running only netfix,
-compute and flightplan. The options are the Beelink bench panel's
+(pyEFIS `dev` a2d53d75), rendered offscreen at 420 x 420 px on 2026-11-14. It
+is connected over netfix to a real fix-gateway (`dev` b96875f) running only
+netfix, compute and flightplan. The options are the Beelink bench panel's
 (`screens/managed.yaml`), applied through the screen builder's own
 `apply_options`. The face is drawn over a dark green fill standing in for the
 synthetic vision, because the bench panel sets `bg_opacity: 30`.
@@ -78,6 +78,12 @@ synthetic vision, because the bench panel sets `bg_opacity: 30`.
   at HENER: right turns, inbound 073, 4 nm legs. The page shows the bench
   flight's leg and hold instead, so `gps_leg_right_of_course.png` and the three
   `gps_hold_*.png` are kept only as the script's output.
+- **Bearing pointers.** The setup is one a real panel would fly: one CDI on
+  its `NAVSRC`, and at most one bearing pointer, on another source. In the GPS
+  scenes pointer 1 is stepped on once (`make_hsi(brg1=True)`, what one tap on
+  its BRG tab row does), which puts it on VOR1, with NAV1 tuned to GVO (FAA
+  CIFP coordinates), off the route so its needle stays clear of the course
+  pointer. In the NAV radio scenes both pointers are off, their default.
 - **NAV radio scenes** (`vor1_*`, `loc1_*`): the script writes the radio keys
   an X-Plane or CAN-FIX source would publish (`NAV1CRS`, `NAV1CDI`, `NAV1TF`,
   `NAV1DH`, `NAV1GSI`, `NAV1GSF`, `VOR1BRG`).
@@ -120,6 +126,7 @@ The script prints the FIX keys behind every picture as it saves it.
 
 ## Bench, no data
 
-`bench_no_data.png` is the Beelink bench (pyEFIS `dev` 980497e), grabbed with
-`kill -USR1` under the bench lock on 2026-11-07 at 02:05 UTC, with no
-simulator running. It is cropped to the HSI from the 1920 x 1080 panel.
+`bench_no_data.png` is the Beelink bench (pyEFIS `dev` c445c000), grabbed with
+`kill -USR1` under the bench lock on 2026-11-14 at 15:49 UTC, with no
+simulator running. It is cropped to the HSI from the 1920 x 1080 panel, box
+(420, 640, 840, 1060).
