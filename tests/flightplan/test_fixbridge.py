@@ -531,3 +531,39 @@ def test_a_dropped_bridge_stops_notifying(fix):
 
     assert ref() is None
     assert calls == []
+
+
+def test_each_item_is_looked_up_in_the_database_once(fix, monkeypatch):
+    """get_item() takes a lock and waits on the init event every call; the
+    bridge keeps the item (pyavtools never replaces one)."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(_plan(3))
+    calls = []
+    get_item = fix.db.get_item
+    monkeypatch.setattr(fix.db, "get_item", lambda key, *a, **k: (calls.append(key), get_item(key, *a, **k))[1])
+
+    first = bridge.read_route()
+    looked_up = len(calls)
+    second = bridge.read_route()
+
+    assert first == second
+    assert len(calls) == looked_up
+    assert len(calls) == len(set(calls))
+
+
+def test_a_new_database_object_is_looked_up_again(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.read_route()
+
+    class DB:
+        def get_item(self, key):
+            raise KeyError(key)
+
+    real = bridge._fix.db
+    bridge._fix.db = DB()
+    with pytest.raises(KeyError):
+        bridge.read_route()
+    bridge._fix.db = real
+    assert bridge.read_route() is not None

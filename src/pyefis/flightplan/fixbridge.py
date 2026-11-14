@@ -26,6 +26,7 @@ importing Qt.
 
 from __future__ import annotations
 
+import functools
 import logging
 import weakref
 from dataclasses import dataclass, field
@@ -130,6 +131,20 @@ def _seg_key(k: int, name: str) -> str:
     return f"FPLS{k}{name}"
 
 
+_SLOT_NAMES = tuple(name for name, _, _ in SLOT_FIELDS)
+_SEG_NAMES = tuple(name for name, _, _ in SEGMENT_FIELDS)
+
+
+@functools.cache
+def _slot_keys(n: int) -> tuple[str, ...]:
+    return tuple(_slot_key(n, name) for name in _SLOT_NAMES)
+
+
+@functools.cache
+def _seg_keys(k: int) -> tuple[str, ...]:
+    return tuple(_seg_key(k, name) for name in _SEG_NAMES)
+
+
 def route_key_specs():
     """``(key, dtype, blank)`` for every route-block, segment-table, staging
     and command key this bridge writes or probes (not the engine outputs).
@@ -230,6 +245,7 @@ class FixBridge:
 
     # _get()'s item cache, and the database it was filled from.
     _items: dict | None = None
+    _item_rows: dict | None = None
     _items_db = None
 
     def __init__(self, fix_module):
@@ -266,11 +282,21 @@ class FixBridge:
         db = self._fix.db
         if self._items is None or db is not self._items_db:
             self._items = {}
+            self._item_rows = {}
             self._items_db = db
         item = self._items.get(key)
         if item is None:
             item = self._items[key] = db.get_item(key)
         return item
+
+    def _row(self, keys):
+        """The items for *keys* (one slot's or segment's fields), looked up
+        together and kept, as _get keeps one."""
+        self._get(keys[0])          # resets both caches on a new database
+        row = self._item_rows.get(keys)
+        if row is None:
+            row = self._item_rows[keys] = tuple(self._get(k) for k in keys)
+        return row
 
     def _set(self, key, value) -> None:
         # set_value() only updates pyEfis's local copy: pyavtools sends a key
@@ -488,7 +514,7 @@ class FixBridge:
         count = int(self._get("FPLCOUNT").value)
         slots = []
         for i in range(1, count + 1):
-            v = {name: self._get(_slot_key(i, name)).value for name, _, _ in SLOT_FIELDS}
+            v = dict(zip(_SLOT_NAMES, [item.value for item in self._row(_slot_keys(i))]))
             flags = int(v["FLAGS"])
             slots.append(RouteSlot(
                 id=v["ID"], lat=v["LAT"], lon=v["LON"],
@@ -499,7 +525,7 @@ class FixBridge:
                 ctr_lon=float(v["CTRLON"]), turn=v["TURN"] or ""))
         segments = []
         for k in range(1, int(self._get("FPLSEGCNT").value) + 1):
-            v = {name: self._get(_seg_key(k, name)).value for name, _, _ in SEGMENT_FIELDS}
+            v = dict(zip(_SEG_NAMES, [item.value for item in self._row(_seg_keys(k))]))
             kind = int(v["KIND"])
             segments.append(RouteSegment(
                 kind=model.SEGMENT_KINDS[kind] if 0 <= kind < len(model.SEGMENT_KINDS)
