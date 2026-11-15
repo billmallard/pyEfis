@@ -177,3 +177,60 @@ def test_route_key_without_fplldseq_reads_none_for_the_loaded_seq(fix, qtbot):
     bridge = fixbridge.FixBridge(fix)
     bridge.publish(refused._flown())
     assert bridge.route_key()[3] is None
+
+
+# pyEfis #480 (FPLWRITE2): an engine output write reads nothing. The page
+# used to build its engine dict (27 lookups) on every write, 25 writes a
+# cycle, for each widget loaded, hidden or not; now a write marks it stale
+# and the next read of a value rebuilds it.
+
+
+def _count_lookups(w, monkeypatch):
+    calls = []
+    get = w._bridge._get
+
+    def counted(key):
+        calls.append(key)
+        return get(key)
+
+    monkeypatch.setattr(w._bridge, "_get", counted)
+    return calls
+
+
+def test_an_engine_output_write_reads_nothing_from_the_bus(fix, qtbot, monkeypatch):
+    w, _clock = _flying_with_clock(fix, qtbot)
+    lookups = _count_lookups(w, monkeypatch)
+
+    for key in fixbridge.ENGINE_OUTPUT_KEYS:
+        if key != "WPDIS":
+            fix.db.set_value(key, fix.db.get_item(key).value)
+    fix.db.set_value("WPDIS", 4.0)
+
+    assert lookups == []
+    assert w._engine_value("WPDIS") == 4.0
+
+
+def test_the_engine_outputs_are_read_once_however_many_writes(fix, qtbot, monkeypatch):
+    w, _clock = _flying_with_clock(fix, qtbot)
+    reads = []
+    read_engine = w._bridge.read_engine
+    monkeypatch.setattr(w._bridge, "read_engine", lambda: (reads.append(1), read_engine())[1])
+
+    for n in range(5):
+        _engine_cycle(fix, 12.0 - n)
+    assert reads == []
+
+    assert w._engine_value("WPDIS") == 8.0
+    assert w._engine_value("FPLSTATE") == fix.db.get_item("FPLSTATE").value
+    assert reads == [1]
+
+
+def test_a_hidden_page_reads_nothing_on_engine_output_writes(fix, qtbot, monkeypatch):
+    w, _clock = _flying_with_clock(fix, qtbot)
+    w.hide()
+    lookups = _count_lookups(w, monkeypatch)
+
+    for n in range(5):
+        _engine_cycle(fix, 12.0 - n)
+
+    assert lookups == []

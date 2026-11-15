@@ -133,6 +133,11 @@ COMMIT_ANSWER_MS = 2000
 # slots on the bus against the route last read, so a slot value that arrived
 # after the key still reaches the page (FlightPlan._route_drifted).
 ROUTE_VERIFY_S = 1.0
+# The writes that can move FixBridge.route_key(): FPLSEQ goes last in a
+# commit (RS1), and FPLLDSEQ is the engine's answer to it. FPLCOUNT and
+# FPLSEGCNT are written before FPLSEQ and are not watched; a writer that
+# breaks that order is caught by the route_verify_s check.
+_ROUTE_KEY_WRITES = frozenset(("FPLSEQ", "FPLLDSEQ"))
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
 
@@ -251,7 +256,12 @@ class FlightPlan(QWidget):
         self._page = None
         self._plan = fp_model.FlightPlan()
         self._plan_dirty = False
+        # The engine outputs as last read (FixBridge.read_engine). A bus
+        # write only marks them stale; _engine_value() reads them again on
+        # the next use, so the 25 writes of an engine cycle cost one read,
+        # and none for a page that is not painted.
         self._engine = {}
+        self._engine_stale = False
         # Every assignment to _message goes through the property below, which
         # (re)starts this one-shot timer; a tap anywhere clears it early.
         self.toast_ms = TOAST_MS
@@ -400,7 +410,7 @@ class FlightPlan(QWidget):
         if self._bridge.available:
             self._sync_plan_from_bridge()
             self._sync_engine_from_bridge()
-            self._bridge.add_listener(self._on_bridge_change)
+            self._bridge.add_listener(self._on_bridge_change, keyed=True)
             msg_item = self._bridge._get("FPLMSG")
             msg_item.valueWrite[msg_item.dtype].connect(self._on_fplmsg)
         self._connect_hmi()
@@ -649,18 +659,24 @@ class FlightPlan(QWidget):
         self.update()
 
     def _sync_engine_from_bridge(self):
-        self._engine = self._bridge.read_engine() or {}
+        """Mark the engine outputs stale: the next _engine_value() reads
+        them from the bus."""
+        self._engine_stale = True
 
-    def _on_bridge_change(self):
-        """A write of ``FPLSEQ`` or of an engine output. The engine rewrites
-        every output each guidance cycle, so this runs some 25 times a
-        cycle: the engine values are taken every time, the route only when
-        it or the engine's answer to it changed (``route_key``). Reading
-        the route on every call cost a FIX lookup per slot field plus a
-        deep copy of the plan, on the GUI thread, for each widget loaded --
-        and put the bus route back over a catalog "Edit" working copy the
-        pilot had not committed yet."""
-        if (self._bridge.route_key() != self._synced_route_key
+    def _on_bridge_change(self, key=None):
+        """A write of *key*: ``FPLSEQ``, an engine output, a slot's
+        ``FPLfTA`` or the staged direct-to point. The engine rewrites every
+        output each guidance cycle, so this runs some 25 times a cycle, for
+        each widget loaded, hidden or not: it reads nothing from the bus.
+        The engine values are marked stale, and the route is read only when
+        it or the engine's answer to it changed (``route_key``, which only
+        a write of ``FPLSEQ`` or ``FPLLDSEQ`` moves). Reading the route on
+        every call cost a FIX lookup per slot field plus a deep copy of the
+        plan -- and put the bus route back over a catalog "Edit" working
+        copy the pilot had not committed yet; building the engine dict on
+        every call cost 27 lookups (pyEfis #480)."""
+        if (((key is None or key in _ROUTE_KEY_WRITES)
+                and self._bridge.route_key() != self._synced_route_key)
                 or self._route_drifted()):
             self._sync_plan_from_bridge()
         self._sync_engine_from_bridge()
@@ -688,6 +704,9 @@ class FlightPlan(QWidget):
         self.update()
 
     def _engine_value(self, key, default=None):
+        if self._engine_stale:
+            self._engine_stale = False
+            self._engine = self._bridge.read_engine() or {}
         item = self._engine.get(key)
         return item.value if item is not None else default
 
