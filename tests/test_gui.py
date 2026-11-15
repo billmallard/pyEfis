@@ -372,7 +372,8 @@ def test_initialize_loads_screens_menu_fms_window_and_button_timeout(
 
     # gui._ensure_data_status_screen injects the data-status screen (the
     # annunciation opens it) but boots the configured flight screen, with the
-    # startup notice as a banner over it -- nothing blocking (BACKLOG L3).
+    # startup notice as a banner over it -- nothing blocking (BACKLOG L3). The
+    # fixture's IAS has no Vgnd aux, so it cannot read "on the ground" (BOOT1).
     # gui._ensure_about_screen then appends the built-in About screen (L4).
     assert [screen.name for screen in gui.screens] == ["FIRST", "SECOND", "DataStatus", "About"]
     assert gui.screens[0].default is False

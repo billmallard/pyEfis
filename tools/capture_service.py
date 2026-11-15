@@ -162,7 +162,9 @@ import errno
 import fcntl
 import hashlib
 import json
+import math
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -410,6 +412,9 @@ _lock = threading.Lock()
 BENCH_MAP_SCENARIOS = frozenset({
     "pinch_out", "pinch_in", "rotate", "pan", "ladder", "all",
 })
+#: bench_map_gestures.py's own --water-raster choices, mirrored for the same
+#: reason as BENCH_MAP_SCENARIOS.
+BENCH_MAP_WATER_RASTERS = frozenset({"numpy", "qt"})
 
 # The full set of /bench/map request fields this service understands --
 # mirrors bench_map_gestures.py's own CLI, minus --out/--budget (the service
@@ -534,6 +539,48 @@ def build_argv(p: dict, out: str) -> list[str]:
     return argv
 
 
+def _one_of(value, choices, field: str) -> str:
+    """Return the member of `choices` equal to `value`.
+
+    The returned string is the service's own constant, not the request's, so
+    no request text reaches argv through an enum field (AER-5743).
+    """
+    for choice in sorted(choices):
+        if value == choice:
+            return choice
+    raise ValueError(f"unknown {field}: {value!r}")
+
+
+def _range_ladder(value) -> str:
+    """Re-serialize a comma-separated range ladder from parsed numbers.
+
+    The map widget parses the ladder as `float(v) for v in s.split(",") if v`
+    (instruments/map/__init__.py), so anything it would choke on is a 400
+    here instead, and argv carries the numbers, never the request's text.
+    `:g` keeps the default "2,5,10,20,40,80,160" byte-identical.
+    """
+    rungs = [float(v) for v in str(value).split(",") if v.strip()]
+    if not rungs or not all(math.isfinite(r) and r > 0 for r in rungs):
+        raise ValueError(f"range_ladder needs positive numbers: {value!r}")
+    return ",".join(f"{r:g}" for r in rungs)
+
+
+#: Characters a path field may not carry. Control characters (CR/LF above all)
+#: would ride into the X-Bench-Map-Argv response header and split it; a
+#: leading "-" would turn a path value into a harness option.
+_BAD_PATH_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _bench_path(value, field: str) -> str:
+    """Validate a /bench/map path field: "" (unconfigured) or a plain path."""
+    path = str(value)
+    if _BAD_PATH_CHARS.search(path):
+        raise ValueError(f"{field} contains a control character")
+    if path.startswith("-"):
+        raise ValueError(f"{field} may not start with '-': {path!r}")
+    return path
+
+
 def build_bench_map_argv(p: dict, out: str) -> list[str]:
     """Translate a /bench/map request dict into bench_map_gestures.py argv.
 
@@ -543,32 +590,38 @@ def build_bench_map_argv(p: dict, out: str) -> list[str]:
     unconfigured (empty), same rationale as HIGHWAYS in build_argv() above --
     this endpoint measures terrain+water, and a caller that wants roads or
     navaids configured can ask for them explicitly.
+
+    Every request value is validated before it reaches argv (AER-5743):
+    enums resolve to this service's own constants, numbers are parsed and
+    re-formatted, and paths may carry no control character or leading "-".
+    The argv is also echoed in a response header, so that is what keeps
+    CR/LF out of it.
     """
-    scenario = str(p.get("scenario", "all"))
-    if scenario not in BENCH_MAP_SCENARIOS:
-        raise ValueError(f"unknown scenario: {scenario!r}")
     argv = [
         PYTHON, BENCH_MAP_TOOL,
-        "--scenario", scenario,
+        "--scenario", _one_of(p.get("scenario", "all"), BENCH_MAP_SCENARIOS,
+                              "scenario"),
         "--w", str(int(p.get("w", 650))),
         "--h", str(int(p.get("h", 1040))),
         "--lat", f"{float(p.get('lat', 35.8)):.6f}",
         "--lon", f"{float(p.get('lon', -78.8)):.6f}",
         "--track", f"{float(p.get('track', 0.0)):.2f}",
         "--alt", f"{float(p.get('alt', 1500.0)):.1f}",
-        "--range-ladder", str(p.get("range_ladder", "2,5,10,20,40,80,160")),
-        "--tile-path", str(p.get("tile_path", TILES)),
-        "--water-db", str(p.get("water_db", WATER)),
+        "--range-ladder", _range_ladder(p.get("range_ladder",
+                                              "2,5,10,20,40,80,160")),
+        "--tile-path", _bench_path(p.get("tile_path", TILES), "tile_path"),
+        "--water-db", _bench_path(p.get("water_db", WATER), "water_db"),
         # ALWAYS explicit, same rationale as build_argv()'s --water-max-vertices:
         # omitting it silently renders corrupt water through the
         # decimation/clamp mismatch (AX-9). 1024 = what the appliance runs.
         "--water-max-vertices", str(int(p.get("water_max_vertices", 1024))),
-        "--water-raster", str(p.get("water_raster", "numpy")),
-        "--highway-db", str(p.get("highway_db", "")),
-        "--river-db", str(p.get("river_db", "")),
-        "--nasr-db", str(p.get("nasr_db", NASR)),
-        "--navaid-db", str(p.get("navaid_db", NAVAID)),
-        "--dof-db", str(p.get("dof_db", DOF)),
+        "--water-raster", _one_of(p.get("water_raster", "numpy"),
+                                  BENCH_MAP_WATER_RASTERS, "water_raster"),
+        "--highway-db", _bench_path(p.get("highway_db", ""), "highway_db"),
+        "--river-db", _bench_path(p.get("river_db", ""), "river_db"),
+        "--nasr-db", _bench_path(p.get("nasr_db", NASR), "nasr_db"),
+        "--navaid-db", _bench_path(p.get("navaid_db", NAVAID), "navaid_db"),
+        "--dof-db", _bench_path(p.get("dof_db", DOF), "dof_db"),
         "--out", out,
     ]
     if "pinch_lo_nm" in p:
@@ -831,8 +884,12 @@ class Handler(BaseHTTPRequestHandler):
             with _lock, bench_lock(lock_wait_budget) as lock_wait:
                 started = time.time()
                 try:
+                    # `executable` pins the program to the configured
+                    # interpreter, so argv (which carries request values) is
+                    # only ever that interpreter's arguments; no shell (AER-5743).
                     proc = subprocess.run(
-                        argv, cwd=str(PYEFIS_ROOT),
+                        argv, executable=PYTHON, shell=False,
+                        cwd=str(PYEFIS_ROOT),
                         env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
                         capture_output=True, text=True, timeout=timeout + 30,
                     )
@@ -873,7 +930,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("X-Bench-Map-Seconds", str(elapsed))
         self.send_header("X-Bench-Map-Lock-Wait-Seconds", str(lock_wait))
-        self.send_header("X-Bench-Map-Argv", " ".join(shlex.quote(a) for a in argv))
+        # build_bench_map_argv() already refuses control characters; the
+        # replace is the second line of defence for a header value (AER-5743).
+        argv_header = " ".join(shlex.quote(a) for a in argv)
+        self.send_header("X-Bench-Map-Argv",
+                         argv_header.replace("\n", " ").replace("\r", " "))
         self.end_headers()
         self.wfile.write(payload)
 
