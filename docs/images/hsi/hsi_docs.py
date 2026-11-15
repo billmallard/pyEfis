@@ -88,7 +88,10 @@ def pump(sec):
         time.sleep(0.02)
 
 
-def make_hsi(**over):
+def make_hsi(brg1=False, **over):
+    """brg1: step bearing pointer 1 on, as one tap on its BRG tab row does.
+    Pointers start Off; a tap turns one on at the first source that is not
+    the CDI's (VOR1 when the CDI is on GPS)."""
     h = HSI(font_percent=None, cdi_enabled=True, gsi_enabled=True, font_family="B612")
     # The screen builder's own option path (type coercion included).
     screen = type("S", (), {"instruments": [h], "encoder_list": []})()
@@ -97,6 +100,9 @@ def make_hsi(**over):
     h.resize(*SIZE)
     h.show()
     pump(0.3)
+    if brg1:
+        h._cycle_bearing_src(1)
+        pump(0.3)
     return h
 
 
@@ -194,8 +200,11 @@ def nav_defaults():
     w("NAVSRC", 2)
     w("GPS_FIX_TYPE", 3)
     w("GPS_ACCURACY_HORIZ", 15.0)
-    w("BRG1SRC", 2)
-    w("BRG2SRC", 0)
+    # One CDI on its NAVSRC, and at most one bearing pointer, on another
+    # source: a panel would not point a bearing needle at the CDI's own
+    # waypoint (and the HSI does not draw one there).
+    w("BRG1SRC", 0)
+    w("BRG2SRC", 1)
 
 
 # --- Fixes (FAA CIFP; as the bench's V27 golden route) ----------------------
@@ -230,15 +239,15 @@ def scene_gps_leg_and_flyby():
     print("ACT", cmd("ACT 3"), flush=True)
     check_live()
     w("HEADBUG", round(wrap(leg + MAGVAR + 10)))
-    h = make_hsi()
-    vor1(ac.pos)
+    h = make_hsi(brg1=True)
+    vor1(ac.pos, GVO)
     shot(h, "gps_leg_right_of_course")
     # Fly toward HENER; capture around the fly-by turn.
     seen = {"leg": io.r("FPLACTLEG")[0]}
     turned = False
     for i in range(900):
         ac.step()
-        vor1(ac.pos)
+        vor1(ac.pos, GVO)
         if not turned and _dist(ac.pos, HENER) < 2.0 and "before" not in seen:
             seen["before"] = 1
             shot(h, "gps_flyby_1_before_turn")
@@ -258,7 +267,7 @@ def scene_gps_leg_and_flyby():
             break
     h.hide()
     # Arc orientation on the next leg.
-    ha = make_hsi(orientation="arc")
+    ha = make_hsi(brg1=True, orientation="arc")
     shot(ha, "gps_arc_orientation")
     ha.hide()
     return ac
@@ -281,12 +290,12 @@ def scene_hold():
     warm(ac)
     print("ACT", cmd("ACT 3"), flush=True)
     check_live()
-    h = make_hsi()
+    h = make_hsi(brg1=True)
     shots = {}
     last_phase = None
     for i in range(1500):
         ac.step()
-        vor1(ac.pos)
+        vor1(ac.pos, GVO)
         ph = io.r("FPLPHASE")[0]
         leg_now = io.r("FPLACTLEG")[0]
         crs = float(io.r("FPLCRS")[0] or 0)

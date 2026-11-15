@@ -128,6 +128,11 @@ TOAST_MS = 4000
 # cycle -- FPLLDSEQ when it loads the route, FPLMSG when it refuses it -- so
 # this only fires when no answer arrives at all.
 COMMIT_ANSWER_MS = 2000
+# The route is read when FPLSEQ / FPLLDSEQ / the counts change, not on every
+# engine output write. This is how often, at most, a write also checks the
+# slots on the bus against the route last read, so a slot value that arrived
+# after the key still reaches the page (FlightPlan._route_drifted).
+ROUTE_VERIFY_S = 1.0
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
 
@@ -376,6 +381,16 @@ class FlightPlan(QWidget):
         self._draft_open = False
         self._pending_seq = None
         self._seen_seq = None
+        # FixBridge.route_key() at the last plan sync: the bridge notifies
+        # on every engine output write, and only a change of this is a
+        # reason to read the route again (_on_bridge_change). _synced_route
+        # is the route block read then; _route_drifted() checks the bus
+        # against it at most every route_verify_s.
+        self._synced_route_key = None
+        self._synced_route = None
+        self.route_verify_s = ROUTE_VERIFY_S
+        self._route_checked_at = 0.0
+        self._clock = time.monotonic
         self._commit_timer = QTimer(self)
         self._commit_timer.setSingleShot(True)
         self._commit_timer.timeout.connect(self._on_commit_timeout)
@@ -536,9 +551,16 @@ class FlightPlan(QWidget):
         looks -- puts the flown plan back on the page and keeps the refused
         route as a draft. A gateway without ``FPLLDSEQ`` keeps the
         behaviour from before the key."""
-        plan = self._bridge.read_plan()
-        if plan is None:
+        # The key before the route: a commit landing between the two reads
+        # leaves a key older than the route, and its own notification then
+        # syncs again.
+        self._synced_route_key = self._bridge.route_key()
+        route = self._bridge.read_route()
+        if route is None:
             return
+        self._synced_route = route
+        self._route_checked_at = self._clock()
+        plan = fp_fixbridge.route_to_plan(route)
         seq = int(self._bridge._get("FPLSEQ").value)
         first_look, self._seen_seq = self._seen_seq is None, seq
         loaded = self._loaded_seq()
@@ -630,9 +652,33 @@ class FlightPlan(QWidget):
         self._engine = self._bridge.read_engine() or {}
 
     def _on_bridge_change(self):
-        self._sync_plan_from_bridge()
+        """A write of ``FPLSEQ`` or of an engine output. The engine rewrites
+        every output each guidance cycle, so this runs some 25 times a
+        cycle: the engine values are taken every time, the route only when
+        it or the engine's answer to it changed (``route_key``). Reading
+        the route on every call cost a FIX lookup per slot field plus a
+        deep copy of the plan, on the GUI thread, for each widget loaded --
+        and put the bus route back over a catalog "Edit" working copy the
+        pilot had not committed yet."""
+        if (self._bridge.route_key() != self._synced_route_key
+                or self._route_drifted()):
+            self._sync_plan_from_bridge()
         self._sync_engine_from_bridge()
         self.update()
+
+    def _route_drifted(self):
+        """True when the slots on the bus no longer match the route last
+        synced although ``route_key`` has not moved: slot values that
+        arrived after the key (a gateway reconnect re-sending the database
+        in its own order), or a writer that did not write ``FPLSEQ`` last.
+        Reading the route on every notification used to hide both within
+        one engine cycle; this looks at most every ``route_verify_s``, so
+        the page still converges on the bus without the per-write cost."""
+        now = self._clock()
+        if now - self._route_checked_at < self.route_verify_s:
+            return False
+        self._route_checked_at = now
+        return self._bridge.read_route() != self._synced_route
 
     def _commit(self):
         if self._bridge.available:

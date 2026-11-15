@@ -31,13 +31,31 @@ the updater has not written a status yet.
 
 | Button | What it does |
 |---|---|
-| **Continue** | Go to the panel's boot screen. |
+| **Continue** | Go to the panel's flight screen, the one marked as the default. |
 | **About** | Open the About screen. |
 | **Update** | Check for and install newer packs. |
 
-**How you get here.** Touch the DATA flag where a screen carries one. The Data
-Status screen is never the boot screen: a panel that names it as the default
-boots to the screen behind Continue instead.
+**How you get here.** On the ground, pyEFIS starts on this screen, so you see
+the state of your data as part of a normal start. Touch **Continue** for the
+flight screen. Later, touch the DATA flag where a screen carries one.
+
+pyEFIS starts here only when it knows the aircraft is on the ground: airspeed
+is valid and below the aircraft's on-ground IAS limit (`IAS.Vgnd`, the
+configurator's "on-ground IAS limit", 40 kt by default), and a valid GPS
+groundspeed is below the same figure. In every other case it starts on the
+flight screen, because pyEFIS can restart in flight:
+
+- airspeed at or above the limit, or GPS groundspeed at or above it (a blocked
+  pitot reads slow);
+- airspeed flagged bad, failed or old, or no valid airspeed within 3 seconds
+  of start;
+- the limit not set for this aircraft.
+
+While this screen is up after a ground start, airspeed or groundspeed reaching
+the limit switches to the flight screen by itself, so a takeoff never waits on
+**Continue**. Otherwise it stays until you touch **Continue**. A panel that
+names this screen as its default uses the screen behind Continue as its flight
+screen.
 
 ### Updating
 
