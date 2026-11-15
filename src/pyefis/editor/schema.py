@@ -172,11 +172,13 @@ def _default_options(instrument_type):
 # Map an instrument_spec.Prop.kind to the editor's option-field "type". The
 # editor renders one input per field type; "fixkey" is a FIX-database key,
 # rendered as a type-ahead over the FIX key catalog (datalist#fixkeys), so it is
-# carried through rather than flattened to a plain text input.
+# carried through rather than flattened to a plain text input. "aircraft_ref"
+# is a picker over an aircraft-profile collection; the field also carries its
+# `source`, `multi` and `resolves` (FUEL1 brief section 5).
 _KIND_TO_FIELD_TYPE = {
     "string": "string", "number": "number", "integer": "integer",
     "boolean": "boolean", "enum": "enum", "color": "color",
-    "fixkey": "fixkey",
+    "fixkey": "fixkey", "aircraft_ref": "aircraft_ref",
 }
 
 
@@ -194,6 +196,13 @@ def _prop_to_field(p):
         field["step"] = p.step
     if p.help:
         field["help"] = p.help
+    if p.kind == "aircraft_ref":
+        # The editor fetches the picker's items from the refs endpoint for
+        # `source`; the configurator's resolver writes `resolves` onto the
+        # served config and drops the reference itself.
+        field["source"] = p.source
+        field["multi"] = p.multi
+        field["resolves"] = dict(p.resolves or {})
     if p.bindable is not None:
         # A live-bindable setting (control_bindings.md): the configurator's
         # binding surface reads this to offer "drive this with a control" and to
@@ -332,6 +341,18 @@ _ACTIONS = [
     {"verb": "checklist reset", "label": "Checklist: reset",
      "group": "checklist", "arg": {"kind": "string"},
      "help": "clear every acknowledgement in the active checklist"},
+    # --- flight plan (FP5a) ---
+    # The argument is "<payload> [group]": payload first, an optional trailing
+    # word names the target flight_plan instrument's hmi_group (blank = every
+    # flight_plan instrument on the screen), mirroring the checklist broadcast.
+    {"verb": "flightplan page", "label": "Flight plan: show page",
+     "group": "flightplan", "arg": {"kind": "string"},
+     "help": "switch the flight_plan instrument's page ('fpl', 'dto', or "
+             "'catalog')"},
+    {"verb": "flightplan direct to", "label": "Flight plan: direct to",
+     "group": "flightplan", "arg": {"kind": "string"},
+     "help": "blank opens the Direct To page; an ident stages and activates "
+             "direct-to that waypoint immediately"},
     # --- HMI menu navigation ---
     {"verb": "activate menu", "label": "Activate menu", "group": "menu",
      "arg": {"kind": "string"}, "help": "open an HMI menu"},

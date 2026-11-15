@@ -1,9 +1,7 @@
 # Example primary flight display
 PFD:
   include:
-  - screens/virtualvfr_db.yaml
   - HMI_ENCODER_BUTTONS
-    #refresh_period: 0.25
   module: pyefis.screens.screenbuilder
   title: Screen Builder
   layout:

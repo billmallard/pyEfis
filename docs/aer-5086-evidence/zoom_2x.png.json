@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "ef48024",
+ "run": "local: python3 docs/aer-5086-evidence/compose.py (crops of the bench frames)",
+ "device": "composed from the Beelink bench frames (Pillow)",
+ "sha256": "c6c11deb3a8508250bc4865ed09d7da53e0aee9e2fda80277cdcc32dbac8b168",
+ "created_utc": "2026-11-08T07:20:38Z"
+}

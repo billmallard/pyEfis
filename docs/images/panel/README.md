@@ -1,0 +1,34 @@
+# Panel pictures
+
+For [The Panel at a Glance](../../wiki/The-Panel-at-a-Glance.md).
+
+| File | Source frame | Crop box | Scale |
+|---|---|---|---|
+| `bench_panel_climb.png` | `063902_chg_FPLACTLEG_WPNAME_WINCH.png` | full frame | 1 |
+
+## Where they came from
+
+Every picture is cropped from a full-screen grab of the simulator bench (the
+Beelink, X11, 1920 x 1080) during sim-bench session `20cc77924924` on
+2026-11-15, 06:29-06:51 UTC. The bench was flying the KSMX RNAV (GPS) RWY 30
+with its missed approach and the WINCH hold, on pyEFIS `dev` 5d77ad82 (the bench
+checkout for the whole flight) with its configurator panel
+(`screens/managed.yaml`). Both HSI bearing pointers were off, their default.
+The grabs were taken by
+[`../hsi/bench_flight/docs_flight.py`](../hsi/bench_flight/docs_flight.py), run
+with that session id and the sim-bench service URL. Its event log is
+[`../hsi/bench_flight/flight3_events.log`](../hsi/bench_flight/flight3_events.log); the source frame names above are the
+names it gave each grab.
+
+The grabs used `ffmpeg -f x11grab`. Some of these grabs can show the
+previous grab's state, so every caption is read from the picture's own
+readouts, never from the logged keys.
+
+## Regenerate
+
+```python
+from PIL import Image
+im = Image.open(SOURCE_FRAME).convert("RGB").crop(BOX)
+im = im.resize((im.width * SCALE, im.height * SCALE), Image.NEAREST)  # SCALE 1 = no resize
+im.save(OUT, optimize=True)
+```

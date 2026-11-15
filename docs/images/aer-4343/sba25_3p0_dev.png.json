@@ -1,0 +1,14 @@
+{
+ "pyefis_rev": "71daf5c",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  800,
+  480
+ ],
+ "actual_size": [
+  800,
+  480
+ ],
+ "argv": "tools/svs_capture.py --offscreen --width 800 --height 480 --range 15 --pitch -3 --tiles /data/makerplane-data/terrain/tiles --nasr /data/makerplane-data/navdata/current/airports.sqlite --water /data/makerplane-data/water/current/water.sqlite --dof /data/makerplane-data/obstacles/current/obstacles.sqlite --lat 34.428452 --lon -119.797490 --alt 649 --heading 269 --out /home/pyefis/bench-scratch/aer4343/out/sba25_3p0_dev.png",
+ "sha256": "87fa83121d86b844544cad9c7ca9e1f60fc6c1cb54b8df6e456367bb3c486181"
+}

@@ -14,13 +14,18 @@ import yaml
 import os
 import operator
 from pyefis.instruments import misc
+from pyefis.instruments.helpers import font_scale
 import geopy.distance
 
 class ListBox(QGraphicsView):
-    def __init__(self, parent=None, lists=[], replace=None, font_family="DejaVu Sans Condensed"):
+    def __init__(self, parent=None, lists=[], replace=None, font_family="DejaVu Sans Condensed",
+                 font_percent=None):
         super(ListBox, self).__init__(parent)
         self.parent = parent
         self.font_family = font_family
+        # Font size: a multiplier on the table's height-derived text size,
+        # carried by the stylesheet like font_family (pyEfis #230).
+        self.font_percent = font_percent
         self.tlists = dict()
         for l in lists:
             config_path = os.path.join(self.parent.parent.config_path,l['file'])
@@ -43,7 +48,6 @@ class ListBox(QGraphicsView):
 
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        #self.table.horizontalHeader().setFont(QFont(self.font_family))
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
 
@@ -139,7 +143,9 @@ class ListBox(QGraphicsView):
         return True
 
     def resizeEvent(self,event):
-
+        # The stylesheet is the one carrier of the table's font (family and
+        # size); rows follow it through resizeRowsToContents().
+        font_px = max(1, qRound(self.height() * 7/100 * font_scale(self.font_percent)))
         style_sheet = f"""
         QTableView {{
             background-color: black;
@@ -147,7 +153,7 @@ class ListBox(QGraphicsView):
             gridline-color: white;
             color: white;
             font-family: "{self.font_family}";
-            font-size: {qRound(self.height() * 7/100)}px;
+            font-size: {font_px}px;
         }}
         QTableView::item:selected {{
             background-color: #87CEFA;
@@ -160,7 +166,7 @@ class ListBox(QGraphicsView):
             gridline-color: white;
             padding: 2px;
             font-family: "{self.font_family}";
-            font-size: {qRound(self.height() * 7/100)}px;
+            font-size: {font_px}px;
         }}
         QHeaderView::section:horizontal {{
             border-top: 1px solid white;
@@ -180,7 +186,6 @@ class ListBox(QGraphicsView):
         }}
         """
         self.table.setStyleSheet(style_sheet)
-        #self.table.setDefaultFont(QFont(self.font_family))
         self.table.setMinimumWidth(self.width())
         self.table.setMinimumHeight(int(self.height() * 90/100))
         self.table.move(0,int(self.height() * 10/100))

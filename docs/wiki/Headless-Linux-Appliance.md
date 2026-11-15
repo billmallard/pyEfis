@@ -58,8 +58,12 @@ pip install -e ~/src/pyEfis[qt,svs]
 ```
 On first run each app auto-seeds its config under `$HOME`
 (`~/makerplane/fixgw/config`, `~/makerplane/pyefis/config`) — see
-[Running from Source](Running-from-Source#first-run-behavior-and-file-locations).
+[Running from Source](Customizing-Beyond-the-Configurator#the-files-on-the-device).
 `fixgw` binds `0.0.0.0:3490`; verify with `ss -ltn | grep :3490`.
+
+**Install is not finished until the software notice is accepted** — install the
+nav-data updater, then run `pyefis-accept-notice`. See
+[Accept the software notice](#accept-the-software-notice-install-and-every-update).
 
 ---
 
@@ -205,11 +209,17 @@ Notes:
   boot is clean (`NRestarts=0`).
 
 ### Which screen it boots to
-The boot screen is the **first entry in `screens/default_list.yaml`**, *not* the
-`defaultScreen:` key in `main/default.yaml` (setting `defaultScreen` alone did
-not change it). Reorder `default_list.yaml` (put `SCREEN_PFD` first) to boot
-straight to the PFD instead of the nav-data screen. See
-[Preferences & Styling](Preferences-and-Styling).
+On the ground (valid airspeed below `IAS.Vgnd`, GPS not moving) pyEFIS boots
+to the Data Status screen, whose Continue goes to the flight screen. Moving,
+or with airspeed invalid or `IAS.Vgnd` unset, it boots straight to the flight
+screen; see
+[Data Status, Updates and Notices](Data-Status-Updates-and-Notices). The
+flight screen is the one named by `defaultScreen:` in `main/default.yaml`
+(`PFD` as shipped). If `defaultScreen` names the Data Status screen, or a
+screen that is not loaded, the flight screen is the Data Status screen's
+Continue target (or the first other screen) instead. A panel pulled from the configurator
+takes the `defaultScreen` name, so the device boots to it. See
+[Setting Up a Device](Setting-Up-a-Device#7-boot-to-the-efis).
 
 ---
 
@@ -227,13 +237,57 @@ python3 -m venv ~/pyefis-data-venv                     # its own venv
 ln -sf ~/pyefis-data-venv/bin/pyefis-data ~/.local/bin/pyefis-data
 ```
 
-- pyEFIS checks for the updater **at startup** — restart pyEFIS after installing
-  it, or the screen keeps saying "unavailable".
+- The Data Status screen runs the updater from its `update_command` option,
+  `~/.local/bin/pyefis-data` as shipped, which is why the symlink above goes
+  there. A bare `pyefis-data` would fail under a systemd service, whose `PATH`
+  excludes `~/.local/bin`.
 - Environment selection lives in `~/.makerplane/pyefis/data.yaml`
   (`configurator_url:` for device pairing / panel pull; `base_url:` for the
   nav-data packs, defaulting to production).
 - `~/.local/bin` is only on `PATH` for a login shell that sourced `~/.profile`
   *after* that directory existed — re-login if `pyefis-data` isn't found.
+
+---
+
+## Accept the software notice (install and every update)
+
+A fresh install and every pyEFIS update end with an explicit accept of this
+notice, at a terminal, before pyEFIS is started:
+
+> pyEfis is experimental software for Experimental / Amateur-Built aircraft. It is
+> not certified. It is provided as-is with no warranty, and any use of it is at
+> your own risk.
+
+```bash
+pyefis-accept-notice          # or: python -m pyefis.install_ack (from the pyEFIS venv)
+```
+
+It shows the full notice and requires the typed word `accept`. Anything else
+stops with exit code 3 and records nothing. Once accepted, re-running it for the
+same pyEFIS version just reports when and by whom. After a pyEFIS update
+(`git pull` + `pip install -e ~/src/pyEfis[qt,svs]`, or a new release), run it
+again: a new pyEFIS version needs a new accept.
+
+The record is written by the **updater**, not by pyEFIS: `pyefis-accept-notice`
+hands over to `pyefis-data accept --software pyefis=<version>`, so the updater
+must be installed first ([above](#the-nav-data-updater-is-a-separate-package)).
+It looks for it in `$PYEFIS_DATA`, then on `PATH`, then at
+`~/pyefis-data-venv/bin/pyefis-data`; `--pyefis-data <path>` overrides all three. The record is an append-only log at
+`~/.local/state/makerplane/acknowledgments.jsonl`, outside both config trees, so a
+config reset does not erase it. Its schema is in makerplane-data
+`docs/install_acknowledgment.md`.
+
+- `pyefis-accept-notice --check` exits 0 if this pyEFIS version is accepted and 3
+  if not, without prompting — for an install script.
+- Installing or updating **data** asks too. `pyefis-data update` at a terminal
+  asks on its own. On the touchscreen, the Data Status screen's **Update** picker
+  shows the same notice full-screen with **Accept** / **Decline** the first time
+  (and after a `pyefis-data` upgrade); Decline installs nothing.
+- Nothing here runs at boot. The accept is asked for only on the ground, during
+  install or update; pyEFIS itself never puts a modal in front of the
+  instruments.
+- An `ssh` session without a terminal (`ssh host cmd`) cannot accept; use
+  `ssh -t`.
 
 ---
 
@@ -257,6 +311,7 @@ ln -sf ~/pyefis-data-venv/bin/pyefis-data ~/.local/bin/pyefis-data
 - [ ] `systemctl is-active fixgw pyefis` → active/active; `NRestarts=0` after a
       cold reboot
 - [ ] `pyefis-data status` lists the pack catalog (`sources` shows `network: yes`)
+- [ ] `pyefis-accept-notice --check` → exit 0 (notice accepted for this pyEFIS version)
 - [ ] instruments come alive once a FIX source is pointed at `fixgw:3490` — until
       then they read stale / `XXX`, which is expected (see
-      [Concepts](Concepts#1-the-fix-database-the-data-bus))
+      [Customizing Beyond the Configurator](Customizing-Beyond-the-Configurator#the-data))

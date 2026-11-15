@@ -12,14 +12,19 @@
 
 import math
 import threading
+import time
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPolygonF)
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
-from pyefis.instruments.map.layers import MapLayer, register_layer
+from pyefis.instruments.map import raster
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           RenderHistory, map_style, palette,
+                                           paint_window_images, range_bucket,
+                                           register_layer)
 
 # Hypsometric stops: (elevation ft, r, g, b) -- sectional-inspired.
 _STOPS = [
@@ -38,6 +43,51 @@ _STOP_E = np.array([s[0] for s in _STOPS], np.float64)
 _STOP_R = np.array([s[1] for s in _STOPS], np.float64)
 _STOP_G = np.array([s[2] for s in _STOPS], np.float64)
 _STOP_B = np.array([s[3] for s in _STOPS], np.float64)
+
+
+def _decimate_to_pixel_grid(xs, ys, ring_ends):
+    """MP4 (brief section 4): drop water-ring vertices that round to the
+    same image pixel as the previously KEPT vertex, per ring; drop a
+    ring outright if fewer than 3 vertices survive. *xs*/*ys* are the
+    already-projected image-pixel float coordinates for one polygon's
+    concatenated rings; *ring_ends* are cumulative END offsets (the
+    WaterPolygon.rings convention -- a single-ring polygon passes
+    ``[len(xs)]``).
+
+    Fully vectorised, no per-vertex or per-ring Python loop: a run of
+    consecutive vertices sharing a rounded pixel collapses to its first
+    member (equivalent to comparing against the previous KEPT vertex,
+    since every vertex in the run shares the same rounded value as the
+    run's first/kept member); ring starts are forced to survive so
+    decimation never bridges across a ring boundary; ring membership
+    for the "keep >= 3" rule comes from `searchsorted` against
+    *ring_ends* rather than a Python loop over rings -- the Florida
+    Keys #44 cell carries 3,322 island rings in one row."""
+    n = xs.shape[0]
+    ring_ends = np.asarray(ring_ends, dtype=np.int64)
+    if n == 0 or ring_ends.size == 0:
+        return (xs[:0], ys[:0], ring_ends[:0])
+    ring_starts = np.concatenate(([0], ring_ends[:-1]))
+
+    px = np.round(xs).astype(np.int64)
+    py = np.round(ys).astype(np.int64)
+
+    is_ring_start = np.zeros(n, dtype=bool)
+    is_ring_start[ring_starts] = True
+
+    changed = np.ones(n, dtype=bool)
+    changed[1:] = (px[1:] != px[:-1]) | (py[1:] != py[:-1])
+    keep = changed | is_ring_start
+
+    idx = np.arange(n)
+    ring_id = np.searchsorted(ring_ends, idx, side="right")
+
+    counts = np.bincount(ring_id[keep], minlength=ring_ends.size)
+    good_ring = counts >= 3
+    keep &= good_ring[ring_id]
+
+    new_ring_ends = np.cumsum(counts[good_ring])
+    return xs[keep], ys[keep], new_ring_ends
 
 
 def _palette(elev_ft):
@@ -66,19 +116,45 @@ class TerrainLayer(MapLayer):
     _SNAP_FRAC = 0.15
     #: rendered image pixels per screen pixel (1 = exact; <1 = softer/faster)
     _RES = 1.0
-    #: at/below this range the full water overlay draws (ocean coastline + all
-    #: lakes). Above it, the ocean is dropped (terrain void-water still shows
-    #: oceans) and only large inland lakes -- Great Lakes scale -- draw, for
-    #: orientation. Uncapped, _draw_water dominated the worker at wide zoom
-    #: (2.8 s @ 800 NM, 15 s @ 2500) -- the ocean coastline is never size-
-    #: filtered. map_wide_range_perf_plan.md.
-    _WATER_FULL_MAX_NM = 300.0
-    #: above _WATER_FULL_MAX_NM the lake size floor scales with range (bbox
-    #: diagonal deg = range_nm * this, clamped to _WATER_WIDE_DIAG_MAX) so the
-    #: drawn-poly count stays bounded (~dozens) as you zoom out -- only
-    #: progressively larger bodies survive, and the Great Lakes (6-8 deg) always
-    #: do. This DB tags everything kind='water' with no elev, so SIZE is the
-    #: only discriminator (map_wide_range_perf_plan.md).
+    #: at/below this NOMINAL (pilot-facing, widget.range_nm) range the full
+    #: water overlay draws (ocean coastline + all lakes). Above it, the ocean
+    #: is dropped (terrain void-water still shows oceans) and only large
+    #: inland lakes -- Great Lakes scale -- draw, for orientation.
+    #:
+    #: Compared against the NOMINAL range on purpose (AER-1149) -- the query
+    #: window the water overlay actually reads is the rotated viewport's
+    #: half-diagonal, oversized 1.25x, which runs 1.47x-2.43x nominal
+    #: depending on widget aspect. A window-range comparison made the full/
+    #: wide split a function of screen geometry: the same 160 NM ladder top
+    #: stayed full-detail on a portrait widget and silently dropped the
+    #: coastline on a landscape one. The nominal range is a fixed property
+    #: of what the pilot chose; every shipped screen now means the same
+    #: thing at the same range_nm.
+    #:
+    #: 160 NM is the range ladder's own shipped/default maximum
+    #: (MovingMap.range_ladder, _range_bounds clamps range_nm to it) --
+    #: measured against the published water-na (2026q2r6) pack at every
+    #: shipped widget aspect, full overlay at 160 NM nominal costs at most
+    #: 120,576 vertices (Raleigh, 800x480), a 20% margin under the 150k
+    #: budget. The same scene climbs past budget (~150,600) once nominal
+    #: range reaches ~179 NM on that aspect, and an uncapped nominal range
+    #: still reproduces the original blow-up this constant exists to avoid
+    #: (12.1M vertices decoded, 15 s query, at 450 NM). So the ocean-drop
+    #: still earns its keep above the ladder -- it just has to fire on the
+    #: ladder's own units, not a geometry-inflated proxy for them. Held at
+    #: the ladder's actual maximum, with no headroom borrowed from the
+    #: untested margin above it: a future ladder stop past 160 NM falls
+    #: through to wide mode by design until it is measured too.
+    _WATER_FULL_MAX_NM = 160.0
+    #: above _WATER_FULL_MAX_NM the lake size floor scales with the QUERY
+    #: window range (bbox diagonal deg = window_range_nm * this, clamped to
+    #: _WATER_WIDE_DIAG_MAX) so the drawn-poly count stays bounded (~dozens)
+    #: as you zoom out -- only progressively larger bodies survive, and the
+    #: Great Lakes (6-8 deg) always do. This DB tags everything kind='water'
+    #: with no elev, so SIZE is the only discriminator
+    #: (map_wide_range_perf_plan.md). Unlike the full/wide gate above, this
+    #: shaping is legitimately about the rendered image's footprint, not the
+    #: pilot's selection, so it stays keyed on the window range.
     _WATER_WIDE_DIAG_PER_NM = 0.001
     _WATER_WIDE_DIAG_MAX = 3.0
 
@@ -86,16 +162,23 @@ class TerrainLayer(MapLayer):
         super(TerrainLayer, self).__init__()
         self._cache = None          # TileCache
         self._mode = "relief"
-        self._img = None            # (QImage, key)
+        self._img = None            # (QImage, key, meta)
+        self._history = RenderHistory()   # MP13: recent images, pinch-out
         self._job = None            # latest requested key
         self._worker = None
         self._lock = threading.Lock()
         self._alt_ft = 0.0
         self._water = None          # WaterDB (set in configure)
+        # G12 (#135): map_style nav_only renders WATER ONLY -- no relief,
+        # land left transparent so the widget's plain background shows.
+        self._flat = False
+        self._water_rgba = STANDARD_PALETTE["water"]
 
     def configure(self, owner):
         tile_path = str(getattr(owner, "tile_path", "") or "")
         self._mode = str(getattr(owner, "terrain_mode", "relief"))
+        self._flat = map_style(owner) == "nav_only"
+        self._water_rgba = palette(owner)["water"]
         if tile_path:
             from pathlib import Path
             from pyefis.instruments.ai.svs import TileCache
@@ -125,47 +208,46 @@ class TerrainLayer(MapLayer):
         # tint). Keying on it in relief mode forced a full re-render
         # every 500 ft of climb/descent for an identical image (#89).
         alt_band = (round(self._alt_ft / 500.0)
-                    if self._mode == "caution" else 0)
+                    if self._mode == "caution" and not self._flat else 0)
         return (round(x.lat0 * M_PER_DEG_LAT / snap),
                 round(x.lon0 * M_PER_DEG_LAT / snap),
-                round(x.range_nm, 2), round(x.w), round(x.h),
-                self._mode, alt_band)
+                range_bucket(x.range_nm), round(x.w), round(x.cover_h), round(x.range_px),
+                "flat" if self._flat else self._mode, alt_band)
+
+    def _has_source(self):
+        """Something to draw: tiles, or (nav_only) a water pack alone --
+        nav_only needs no terrain pack to show coastline."""
+        if self._cache is not None:
+            return True
+        return (self._flat and self._water is not None
+                and bool(getattr(self._water, "ready", False)))
+
+    def is_settled(self, x):
+        if not self._has_source():
+            return True
+        key = self._key(x)
+        with self._lock:
+            img = self._img
+        return img is not None and img[1] == key
 
     def paint(self, p, x):
-        if self._cache is None:
+        if not self._has_source():
             return
         self._alt_ft = float(getattr(self._owner, "_alt_ft", 0.0) or 0.0)
         key = self._key(x)
         with self._lock:
             img = self._img
             have = img is not None and img[1] == key
-        if not have:
+        if not have and not getattr(x, "defer_render", False):
             self._request(key, x)
-        if img is None:
-            return
-        qimg, _, meta = img[0], img[1], img[2]
-        # meta: (centre lat, lon, metres/px of the image)
-        clat, clon, mpp = meta
-        c = x.to_screen(clat, clon)
-        scale = (1.0 / mpp) / x._px_per_m   # image px per screen px inverse
-        p.save()
-        p.translate(c)
-        if x.rot:
-            # to_screen applies R(+rot) to world EN vectors; carrying a
-            # NORTH-UP image onto that screen therefore needs the
-            # painter rotated by -rot (QPainter.rotate is clockwise,
-            # y-down). +rot painted the terrain 2*track degrees off --
-            # a coastline reads as mirrored on east/west tracks (#90).
-            p.rotate(-math.degrees(x.rot))
-        s = mpp * x._px_per_m               # screen px per image px
-        w = qimg.width() * s
-        h = qimg.height() * s
-        p.drawImage(QRectF(-w / 2.0, -h / 2.0, w, h), qimg)
-        p.restore()
+        # A hard black/blue nav_only coastline shows the window image's
+        # pixel steps (up to ~2 screen px each) that relief texture hides;
+        # the relief blit stays nearest-neighbour (G12).
+        paint_window_images(p, x, img, self._history, key, smooth=self._flat)
 
     # --- async build --------------------------------------------------------
     def _request(self, key, x):
-        job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy)
+        job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.cover_h, x.range_px)
         with self._lock:
             # Same window already queued/in flight: do NOT refresh the
             # job. The tuple carries the raw (unsnapped) pose, so each
@@ -176,6 +258,9 @@ class TerrainLayer(MapLayer):
             if self._job is not None and self._job[0] == key:
                 return
             self._job = job
+            perf = getattr(self._owner, "perf", None)
+            if perf is not None:
+                perf.layer(self.id).jobs_requested += 1
             if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._worker_loop, name="map-terrain",
@@ -183,7 +268,6 @@ class TerrainLayer(MapLayer):
                 self._worker.start()
 
     def _worker_loop(self):
-        import time
         last = None
         while True:
             with self._lock:
@@ -191,44 +275,79 @@ class TerrainLayer(MapLayer):
             if job is None or job == last:
                 time.sleep(0.05)
                 continue
-            try:
-                img, meta = self._render(job)
-                with self._lock:
-                    if self._job == job:      # latest wins
-                        self._img = (img, job[0], meta)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "map terrain render failed")
-                with self._lock:
-                    if self._job == job:
-                        self._job = None   # let the next paint re-request
+            self._process_job(job)
             last = job
             try:
                 self._owner.update()
             except RuntimeError:
                 return                        # widget destroyed
 
-    def _render(self, job):
-        key, lat0, lon0, range_nm, w, h, cy = job
+    def _process_job(self, job):
+        """Render *job* and publish it unconditionally -- MP6
+        instrumentation around the newest-wins publish rule (AER-588):
+        paint() already blits a stale image by its own meta and
+        re-requests on key mismatch, so a finished render is always
+        used even if a newer job replaced ``_job`` while it ran. That
+        race is still counted as ``jobs_superseded`` (published, but
+        already stale by the time it landed)."""
+        perf = getattr(self._owner, "perf", None)
+        ls = perf.layer(self.id) if perf is not None else None
+        if ls is not None:
+            ls.jobs_started += 1
+        t0 = time.perf_counter()
+        try:
+            img, meta = self._render(job)
+            ms = (time.perf_counter() - t0) * 1000.0
+            with self._lock:
+                superseded = self._job != job
+                self._img = (img, job[0], meta)
+            self._history.add(self._img)
+            if ls is not None:
+                ls.record_render_ms(ms)
+                ls.jobs_published += 1
+                if superseded:
+                    ls.jobs_superseded += 1
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map terrain render failed")
+            with self._lock:
+                if self._job == job:
+                    self._job = None   # let the next paint re-request
+
+    def _window(self, job):
+        """Window image geometry for *job*: ``(n, mpp, lat_cos, lats,
+        lons)`` -- shared by the relief and the flat (nav_only) render so
+        the two register identically."""
+        key, lat0, lon0, range_nm, w, cover_h, range_px = job
         # Cover the rotated viewport: half-diagonal in metres, oversize.
-        px_per_m = max(1.0, cy) / max(1.0, range_nm * 1852.0)
-        half_diag_m = 0.5 * math.hypot(w, h) / px_per_m * 1.25
-        res = max(1.0, px_per_m / self._RES)   # px per metre of image
+        px_per_m = max(1.0, range_px) / max(1.0, range_nm * 1852.0)
+        half_diag_m = 0.5 * math.hypot(w, cover_h) / px_per_m * 1.25
         n = int(min(1024, max(64, 2 * half_diag_m * px_per_m * self._RES)))
         mpp = 2 * half_diag_m / n              # metres per image pixel
-        # Pick the mip whose pitch best matches mpp (native ~30-93 m). The
-        # ceiling is the deepest pyramid level a terrain pack ships
-        # (docs/terrain_mip_pyramid.md); high-range views select coarse levels.
         lat_cos = math.cos(math.radians(lat0))
         idx = np.arange(n, dtype=np.float64) - (n - 1) / 2.0
         lats = lat0 + (-idx * mpp) / M_PER_DEG_LAT      # row 0 = north
         lons = lon0 + (idx * mpp) / (M_PER_DEG_LAT * lat_cos)
+        return n, mpp, lat_cos, lats, lons
+
+    def _sample_window(self, lat0, lon0, mpp, lats, lons):
+        # Pick the mip whose pitch best matches mpp (native ~30-93 m). The
+        # ceiling is the deepest pyramid level a terrain pack ships
+        # (docs/terrain_mip_pyramid.md); high-range views select coarse levels.
         tile = self._cache.get(int(math.floor(lat0)), int(math.floor(lon0)))
         native = M_PER_DEG_LAT / ((tile.shape[0] - 1) if tile is not None
                                   else 1200)
         mip = max(0, min(6, int(round(math.log2(max(1.0, mpp / native))))))
-        elev_m, water = self._sample(lats, lons, mip)
+        return self._sample(lats, lons, mip)
+
+    def _render(self, job):
+        if self._flat:
+            return self._render_flat(job)
+        key, lat0, lon0, range_nm, w, cover_h, range_px = job
+        n, mpp, lat_cos, lats, lons = self._window(job)
+        elev_m, water, mask_hit = self._sample_window(lat0, lon0, mpp,
+                                                      lats, lons)
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
         if self._mode == "caution":
@@ -251,52 +370,216 @@ class TerrainLayer(MapLayer):
         rgbx[..., 1] = g
         rgbx[..., 2] = b
         rgbx[..., 3] = 255
-        qimg = QImage(rgbx.data, n, n, 4 * n,
-                      QImage.Format.Format_RGBX8888).copy()
-        if self._water is not None and self._water.ready:
-            self._draw_water(qimg, lat0, lon0, mpp, n, lat_cos)
+        qimg = self._water_overlay(rgbx, QImage.Format.Format_RGBX8888,
+                                   lat0, lon0, mpp, n, lat_cos, range_nm,
+                                   mask_hit)
         return qimg, (lat0, lon0, mpp)
 
-    def _draw_water(self, qimg, lat0, lon0, mpp, n, lat_cos):
-        """Rasterize water-pack polygons (lakes + coastline) into the
-        north-up window image -- on the worker thread, so per-frame
-        cost is zero: the paint path still blits one image (#91).
-        Painted AFTER the caution tint on purpose: water is not a
-        TAWS threat surface. The elevation-derived water (void-tile
-        ocean) stays underneath as the backstop."""
+    def _render_flat(self, job):
+        """G12 (#135) nav_only: the same window, the same water sources
+        (tile void/sea level, the pack's .wmask, the water-pack polygons
+        under the same range gate) as the relief render, but land is left
+        fully transparent and water is the palette's flat fill -- no
+        hypsometric colour, no hillshade, no caution tint. With no tile
+        pack the polygons alone draw (the reader-fallback path)."""
+        key, lat0, lon0, range_nm, w, cover_h, range_px = job
+        n, mpp, lat_cos, lats, lons = self._window(job)
+        if self._cache is not None:
+            _elev, water, mask_hit = self._sample_window(lat0, lon0, mpp,
+                                                         lats, lons)
+        else:
+            water = np.zeros((n, n), dtype=bool)
+            mask_hit = False
+        rgba = np.zeros((n, n, 4), np.uint8)
+        rgba[water] = self._water_rgba
+        qimg = self._water_overlay(rgba, QImage.Format.Format_RGBA8888,
+                                   lat0, lon0, mpp, n, lat_cos, range_nm,
+                                   mask_hit)
+        return qimg, (lat0, lon0, mpp)
+
+    def _water_overlay(self, rgbx, fmt, lat0, lon0, mpp, n, lat_cos,
+                       range_nm, mask_hit):
+        """Rasterize the water-pack polygons into *rgbx* (or the QImage
+        built from it, ``water_raster: qt``) and return the QImage."""
+        have_water = self._water is not None and self._water.ready
+        # MP10c (brief section 4, Track 2): once the pack ships a water
+        # mask at the chosen mip, it is already baked into `water` above
+        # (a nearest-neighbour gather -- one memmap slice, not a per-frame
+        # polygon rasterize) -- the crisp WaterDB polygon overlay only
+        # earns its keep close-in, where shoreline detail actually shows
+        # on screen. `water_polygon_max_nm` (default 20 NM, Bill approved
+        # 2026-09-06) is compared against the pilot's NOMINAL range_nm,
+        # same convention as `_WATER_FULL_MAX_NM` above. An older pack
+        # with no mask (`mask_hit` False) always draws polygons -- reader
+        # fallback, unchanged behaviour.
+        water_polygon_max_nm = float(
+            getattr(self._owner, "water_polygon_max_nm", 20.0) or 20.0)
+        draw_polygons = have_water and (
+            range_nm <= water_polygon_max_nm or not mask_hit)
+        # MP5: numpy is the default -- the mask lands directly on rgbx
+        # BEFORE the QImage exists, after the caution tint (water is
+        # not a TAWS surface). `water_raster: qt` keeps the legacy
+        # QPointF/QPolygonF/drawPath path for one release of A/B (brief
+        # section 4 MP5 guardrail).
+        raster_mode = str(getattr(self._owner, "water_raster", "numpy")
+                          or "numpy")
+        if draw_polygons and raster_mode != "qt":
+            self._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, range_nm)
+        qimg = QImage(rgbx.data, n, n, 4 * n, fmt).copy()
+        if draw_polygons and raster_mode == "qt":
+            self._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, range_nm)
+        return qimg
+
+    def _draw_water_numpy(self, rgbx, lat0, lon0, mpp, n, lat_cos,
+                          nominal_range_nm):
+        """MP5 (brief section 4): numpy even-odd scanline fill, replacing
+        the Qt QPointF/QPolygonF/drawPath path. Every polygon in range is
+        collected first, its rings kept grouped; ONE raster.fill_union()
+        call then applies even-odd within each polygon (island holes,
+        #44) and unions the polygons, so a pixel two polygons both cover
+        stays water (AER-4596: OSM ocean-cell seams, NE/OSM duplicate
+        lakes). Mutates *rgbx* in place; the caller builds the QImage
+        from it afterwards, so this never constructs a QPointF/QPolygonF
+        and touches the raster only once.
+
+        *nominal_range_nm* is the widget's own ``range_nm`` (what the pilot
+        selected), NOT the query window computed below -- see
+        ``_WATER_FULL_MAX_NM`` (AER-1149) for why the full/wide gate has to
+        use the former."""
         half_px = (n - 1) / 2.0
-        range_nm = (half_px * mpp) / 1852.0
+        window_range_nm = (half_px * mpp) / 1852.0
+        wide = nominal_range_nm > self._WATER_FULL_MAX_NM
+        min_diag = (min(self._WATER_WIDE_DIAG_MAX,
+                        window_range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
+                    else 3.0 * mpp / M_PER_DEG_LAT)
+        px_per_deg_lat = M_PER_DEG_LAT / mpp
+        px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
+        n_polys = 0
+        n_polys_after = 0
+        n_verts = 0
+        n_verts_after = 0
+        polygons = []
+        try:
+            for poly in self._water.polygons_in_range(
+                    lat0, lon0, window_range_nm, min_bbox_diag_deg=min_diag,
+                    drop_ocean=wide):
+                n_polys += 1
+                v = np.asarray(poly.vertices, dtype=np.float64)
+                n_verts += v.shape[0]
+                if v.shape[0] == 0:
+                    continue
+                xs = (v[:, 1] - lon0) * px_per_deg_lon + half_px
+                ys = (lat0 - v[:, 0]) * px_per_deg_lat + half_px
+                poly_rings = getattr(poly, "rings", None)
+                ring_ends = (np.asarray(poly_rings, dtype=np.int64)
+                             if poly_rings
+                             else np.array([v.shape[0]], dtype=np.int64))
+                xs, ys, ring_ends = _decimate_to_pixel_grid(
+                    xs, ys, ring_ends)
+                n_verts_after += xs.shape[0]
+                if xs.shape[0] == 0:
+                    continue
+                n_polys_after += 1
+                rings = []
+                start = 0
+                for end in ring_ends.tolist():
+                    if end - start >= 3:
+                        rings.append(np.stack(
+                            (xs[start:end], ys[start:end]), axis=1))
+                    start = end
+                if rings:
+                    polygons.append(rings)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map water rasterize failed")
+            polygons = []
+        if polygons:
+            mask = raster.fill_union(polygons, n)
+            # One uint32 store per pixel through a view of the same bytes:
+            # ~40x cheaper than rgbx[mask] = (r, g, b, x) fancy indexing,
+            # which cost ~45 ms on a 1024^2 window once a lake that used to
+            # cancel to land (AER-4596) filled the whole image.
+            water_px = np.array(self._water_rgba, np.uint8).view(np.uint32)
+            rgbx.view(np.uint32)[..., 0][mask] = water_px[0]
+        perf = getattr(self._owner, "perf", None)
+        if perf is not None:
+            perf.water.record(n_polys, n_verts, n_polys_after,
+                               n_verts_after, 0)
+
+    def _draw_water_qt(self, qimg, lat0, lon0, mpp, n, lat_cos,
+                       nominal_range_nm):
+        """Legacy per-vertex QPointF/QPolygonF/drawPath rasterizer, kept
+        behind ``water_raster: qt`` for one release of A/B against MP5's
+        numpy path (brief section 4 MP5 guardrail). Rasterize water-pack
+        polygons (lakes + coastline) into the north-up window image --
+        on the worker thread, so per-frame cost is zero: the paint path
+        still blits one image (#91). Painted AFTER the caution tint on
+        purpose: water is not a TAWS threat surface. The
+        elevation-derived water (void-tile ocean) stays underneath as
+        the backstop.
+
+        *nominal_range_nm* is the widget's own ``range_nm``, not the query
+        window computed below -- see ``_WATER_FULL_MAX_NM`` (AER-1149)."""
+        half_px = (n - 1) / 2.0
+        window_range_nm = (half_px * mpp) / 1852.0
         # Wide zoom: drop the ocean coastline (terrain void-water already shows
         # oceans) and keep only large inland lakes -- the Great Lakes etc. --
         # for orientation. The never-size-filtered coastline is what dominated
-        # the worker (2.8 s @ 800 NM). Close in: full overlay, sub-3-px pieces
-        # skipped before the BLOB decode.
-        wide = range_nm > self._WATER_FULL_MAX_NM
+        # the worker (2.8 s @ 800 NM pre-MP4/MP5). Close in: full overlay,
+        # sub-3-px pieces skipped before the BLOB decode. Gated on the
+        # NOMINAL range (AER-1149) so the split doesn't move with widget
+        # aspect ratio.
+        wide = nominal_range_nm > self._WATER_FULL_MAX_NM
         min_diag = (min(self._WATER_WIDE_DIAG_MAX,
-                        range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
+                        window_range_nm * self._WATER_WIDE_DIAG_PER_NM) if wide
                     else 3.0 * mpp / M_PER_DEG_LAT)
         px_per_deg_lat = M_PER_DEG_LAT / mpp
         px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
         p = QPainter(qimg)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(QColor(60, 110, 160)))
+        p.setBrush(QBrush(QColor(*self._water_rgba)))
+        # MP6 counters: polygons/vertices before vs after MP4's per-pixel
+        # decimation, and the QPointF count actually constructed (0 once
+        # MP5 replaces this with the numpy scanline fill) -- brief
+        # section 4.
+        n_polys = 0
+        n_polys_after = 0
+        n_verts = 0
+        n_verts_after = 0
+        n_qpointf = 0
         try:
             for poly in self._water.polygons_in_range(
-                    lat0, lon0, range_nm, min_bbox_diag_deg=min_diag,
+                    lat0, lon0, window_range_nm, min_bbox_diag_deg=min_diag,
                     drop_ocean=wide):
+                n_polys += 1
                 # Vectorised deg->px projection (#125): vertices arrive
                 # as an (n, 2) ndarray, so the per-vertex Python
                 # arithmetic (the measured hot line here) collapses to
                 # two array ops; only the QPointF construction remains
                 # per-vertex.
                 v = np.asarray(poly.vertices, dtype=np.float64)
+                n_verts += v.shape[0]
                 if v.shape[0] == 0:
                     continue
-                xs = ((v[:, 1] - lon0) * px_per_deg_lon + half_px).tolist()
-                ys = ((lat0 - v[:, 0]) * px_per_deg_lat + half_px).tolist()
-                pts = [QPointF(x, y) for x, y in zip(xs, ys)]
+                xs = (v[:, 1] - lon0) * px_per_deg_lon + half_px
+                ys = (lat0 - v[:, 0]) * px_per_deg_lat + half_px
                 rings = getattr(poly, "rings", None)
+                ring_ends = (np.asarray(rings, dtype=np.int64) if rings
+                             else np.array([v.shape[0]], dtype=np.int64))
+                # MP4: drop vertices that round to the same image pixel
+                # as the previous kept vertex, per ring; a ring that
+                # decimates below 3 vertices is dropped outright (#98,
+                # brief section 4 MP4).
+                xs, ys, ring_ends = _decimate_to_pixel_grid(
+                    xs, ys, ring_ends)
+                n_verts_after += xs.shape[0]
+                if xs.shape[0] == 0:
+                    continue
+                n_polys_after += 1
+                pts = [QPointF(x, y) for x, y in zip(xs.tolist(), ys.tolist())]
+                n_qpointf += len(pts)
                 if rings:
                     # Multi-ring row (outer + island holes, #44):
                     # even-odd fill leaves the hole rings — islands —
@@ -305,7 +588,7 @@ class TerrainLayer(MapLayer):
                     path = QPainterPath()
                     path.setFillRule(Qt.FillRule.OddEvenFill)
                     start = 0
-                    for end in rings:
+                    for end in ring_ends.tolist():
                         ring_pts = pts[start:end]
                         if len(ring_pts) >= 3:
                             path.addPolygon(QPolygonF(ring_pts))
@@ -320,6 +603,26 @@ class TerrainLayer(MapLayer):
                 "map water rasterize failed")
         finally:
             p.end()
+        perf = getattr(self._owner, "perf", None)
+        if perf is not None:
+            perf.water.record(n_polys, n_verts, n_polys_after,
+                               n_verts_after, n_qpointf)
+
+    def elevation_ft(self, lat, lon):
+        """FP10 map pointer: terrain elevation in feet at one point, or None
+        when this layer has no tiles there (no tile path, a void, water --
+        water has no elevation the pointer should claim). One bilinear at
+        the finest level; called on a tap, never per frame."""
+        if self._cache is None:
+            return None
+        try:
+            elev_m, water, _hit = self._sample(
+                np.array([float(lat)]), np.array([float(lon)]), 0)
+        except Exception:
+            return None
+        if bool(water[0, 0]):
+            return None
+        return float(elev_m[0, 0]) * 3.28084
 
     def _sample(self, lats, lons, mip):
         """Vectorised elevation sampling straight off the TileCache.
@@ -334,12 +637,26 @@ class TerrainLayer(MapLayer):
 
         Wide-range fast path: when a coarse mosaic exists for this mip level, the
         whole window is one memmap slice + one bilinear -- no per-degree file
-        opens (the measured cold-I/O bottleneck; map_wide_range_perf_plan.md)."""
+        opens (the measured cold-I/O bottleneck; map_wide_range_perf_plan.md).
+
+        Returns ``(elev, water, mask_hit)``. MP10c (brief section 4, Track 2):
+        ``water`` also carries the ``.wmask`` pyramid, gathered NEAREST-
+        NEIGHBOUR (not bilinear -- it is a boolean coverage bit, not a
+        continuous field) on the exact same row/col indices the elevation
+        bilinear already computed above. ``mask_hit`` reports whether any
+        real mask was found for this window (as opposed to every touched
+        tile/mosaic level lacking a ``.wmask`` sibling); ``_render`` uses it
+        to decide whether the polygon overlay is still needed as the only
+        source of truth for this pack edition."""
         mos = (self._cache.get_mosaic(mip)
                if hasattr(self._cache, "get_mosaic") else None)
         if mos is not None:
-            return self._sample_mosaic(lats, lons, mos)
+            mmask = (self._cache.get_mosaic_mask(mip)
+                     if hasattr(self._cache, "get_mosaic_mask") else None)
+            return self._sample_mosaic(lats, lons, mos, mmask)
         elev = np.full((lats.size, lons.size), -9999.0, dtype=np.float32)
+        mask_grid = np.zeros((lats.size, lons.size), dtype=bool)
+        mask_hit = False
         tl = np.floor(lats).astype(np.int32)   # per-row tile latitude
         tn = np.floor(lons).astype(np.int32)   # per-col tile longitude
         for la in np.unique(tl):
@@ -360,22 +677,35 @@ class TerrainLayer(MapLayer):
                 c0 = np.floor(cf).astype(np.int32)
                 dr = (rf - r0).astype(np.float32)[:, None]
                 dc = (cf - c0).astype(np.float32)[None, :]
-                r0 = r0[:, None]
-                c0 = c0[None, :]
+                r0b = r0[:, None]
+                c0b = c0[None, :]
                 elev[np.ix_(rsel, csel)] = (
-                    t[r0, c0] * (1 - dr) * (1 - dc)
-                    + t[r0, c0 + 1] * (1 - dr) * dc
-                    + t[r0 + 1, c0] * dr * (1 - dc)
-                    + t[r0 + 1, c0 + 1] * dr * dc)
-        water = (elev < -4500.0) | (elev == 0.0)
-        return np.where(water, 0.0, elev), water
+                    t[r0b, c0b] * (1 - dr) * (1 - dc)
+                    + t[r0b, c0b + 1] * (1 - dr) * dc
+                    + t[r0b + 1, c0b] * dr * (1 - dc)
+                    + t[r0b + 1, c0b + 1] * dr * dc)
+                m = (self._cache.get_mask(int(la), int(lo), mip)
+                     if hasattr(self._cache, "get_mask") else None)
+                if m is not None:
+                    mask_hit = True
+                    rn = np.clip(np.round(rf).astype(np.int32), 0, nn - 1)
+                    cn = np.clip(np.round(cf).astype(np.int32), 0, nn - 1)
+                    mask_grid[np.ix_(rsel, csel)] = m[np.ix_(rn, cn)]
+        water = (elev < -4500.0) | (elev == 0.0) | mask_grid
+        return np.where(water, 0.0, elev), water, mask_hit
 
-    def _sample_mosaic(self, lats, lons, mos):
+    def _sample_mosaic(self, lats, lons, mos, mask=None):
         """One vectorised bilinear off the memory-mapped coarse mosaic -- the
         wide-range fast path. No per-tile file opens and no Python tile loop:
         the north-up window is separable, so row/col indices are computed on the
         1-D axes and a single fancy-index gather pages in just the touched span
-        of the one mmap (map_wide_range_perf_plan.md)."""
+        of the one mmap (map_wide_range_perf_plan.md).
+
+        *mask*, when given (``TileCache.get_mosaic_mask``'s result), is
+        gathered NEAREST-NEIGHBOUR on the same ``rf_raw``/``cf_raw`` this
+        method already computes for the elevation bilinear (MP10c) -- OOB
+        cells are excluded from the mask gather the same way they already
+        force ``water`` via the elevation ``oob`` term below."""
         arr, meta = mos
         spd = meta["spd"]
         R = meta["rows"]
@@ -397,4 +727,10 @@ class TerrainLayer(MapLayer):
         elev = (v00 * (1 - dr) * (1 - dc) + v01 * (1 - dr) * dc
                 + v10 * dr * (1 - dc) + v11 * dr * dc)
         water = (elev < -4500.0) | (elev == 0.0) | oob
-        return np.where(water, 0.0, elev), water
+        mask_hit = mask is not None
+        if mask_hit:
+            rn = np.clip(np.round(rf_raw).astype(np.int64), 0, R - 1)
+            cn = np.clip(np.round(cf_raw).astype(np.int64), 0, C - 1)
+            gathered = mask[np.ix_(rn, cn)]
+            water = water | (gathered & ~oob)
+        return np.where(water, 0.0, elev), water, mask_hit

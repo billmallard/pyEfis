@@ -26,9 +26,45 @@ from pyefis import common
 import pyavtools.fix as fix
 from pyefis import common
 from pyefis.instruments import helpers
+from pyefis.instruments import edit_focus
+from pyefis import display_metrics
 
 # TODO: Add CDI and Glide Slope indicators and tick marks but make them
 #       configurable.
+
+#: Gap held between the compass rose and the widget edge, in px. Named because
+#: the drop-shadow clearance below has to know how much room already exists
+#: before reserving any more (pyEfis#158) -- the two must not drift apart.
+ROSE_EDGE_MARGIN = 5.0
+#: Width of the rose's rim glow, as a fraction of the rose's own radius --
+#: about 10 px at the panel sizes this instrument is flown at. Deliberately NOT
+#: helpers.SHADOW_BLUR_RATIO: that one is a fraction of the label font, which
+#: is right for the readout boxes (they are font-sized) and wrong for the rose
+#: (it is widget-sized). See the reservation in resizeEvent.
+ROSE_GLOW_WIDTH_RATIO = 0.06
+#: Peak opacity of the rim glow, at the disc's own edge, fading to nothing over
+#: ROSE_GLOW_WIDTH_RATIO by helpers.RIM_GLOW_FALLOFF. Kept separate from
+#: helpers.SHADOW_ALPHA, which the readout boxes share: those are small shapes
+#: read at close range, the rose is a large disc read at a glance, and the two
+#: do not want the same strength.
+ROSE_SHADOW_ALPHA = 0.45
+#: Knob steps for the HDG / CRS readouts (pyEfis #309): inner ring fine, outer
+#: ring coarse, in degrees.
+EDIT_FINE_DEG = 1
+EDIT_COARSE_DEG = 10
+#: Smallest touch target for an editable readout, in millimetres on the glass
+#: (half an inch, a gloved fingertip). A drawn box smaller than this is grown
+#: to it for hit-testing only.
+EDIT_TOUCH_MM = 12.7
+#: The FIX key the CRS readout edits for each NAVSRC (0=NAV1, 1=NAV2). GPS (2)
+#: has no entry: its course is the active flight-plan leg (GPSCRS), not
+#: pilot-set. COURSE itself is never written -- it is the output of
+#: fix-gateway's NAVSRC select (connections/compute.yaml), which would
+#: overwrite a direct write on its next run.
+CRS_EDIT_KEYS = {0: "NAV1CRS", 1: "NAV2CRS"}
+#: Bearing TO the station for each NAVSRC: what a push on CRS centres the CDI
+#: on (course = bearing to station gives a centred needle with TO).
+CRS_CENTRE_KEYS = {0: "VOR1BRG", 1: "VOR2BRG"}
 
 
 class HSI(QGraphicsView):
@@ -103,10 +139,11 @@ class HSI(QGraphicsView):
         self.orientation = "heading_up"
         # HSI bearing pointers (P5b.2): two RMI-style needles (BRG1/BRG2), each
         # pointing to a station/waypoint, source-selected via BRG1SRC/BRG2SRC
-        # (0=VOR1, 1=VOR2, 2=GPS). Off by default (not every panel has a bearing
-        # source). bearing_color is the generic fallback; a needle is coloured by
-        # its source (magenta GPS / green VOR, HSI-COLOR-001/-002) when the source
-        # is known.
+        # (0=VOR1, 1=VOR2, 2=GPS). bearingN_enabled is the layout switch that
+        # makes a pointer available at all (not every panel has a bearing
+        # source). Every needle is drawn in bearing_color (cyan) whatever its
+        # source: source colour belongs to the CDI alone (HSI-COLOR-001,
+        # HSIBRG1), so a bearing needle never reads as a second course pointer.
         self.bearing1_enabled = False
         self.bearing2_enabled = False
         self.bearing_color = "#00ffff"
@@ -195,6 +232,16 @@ class HSI(QGraphicsView):
         except Exception:
             self.hdgbugdb = None
 
+        # Touch-select + knob edit of the HDG and CRS readouts (pyEfis #309):
+        # touching one gives it edit focus through the screen's
+        # EncoderController (pyEfis #308). On by default; a panel opts out.
+        self.touch_edit = True
+        self.enc_has_outer = False
+        self._edit_field = None     # "hdg" | "crs" while one holds focus
+        self._edit_pending = None   # the field a touch is asking to focus
+        self._edit_item = None      # the FIX item the focused field writes
+        self._edit_rects = {}       # field -> (box, marks rect, marks bounds)
+
         # GPS ground track (TRACK) + ground speed (GS) for the track diamond.
         # Subscribe always (the marker is drawn only when enabled); guarded so a
         # database without these keys can't break construction -- the diamond
@@ -257,6 +304,18 @@ class HSI(QGraphicsView):
             self.gsvdb.valueChanged[float].connect(self.setGsv)
         except Exception:
             self.gsvdb = None
+        # Lateral guidance validity for the selected source (CDIV: 1 = the radio
+        # is receiving lateral guidance, 0 = none). A localizer tuned but not
+        # received otherwise draws a centred bar from no signal (fix-gateway#20);
+        # CDIV=0 removes the bar and raises the NAV flag. Defensive, like GSV;
+        # absent -> the CDI shows on its own quality, as on an older gateway.
+        self._cdiv = None
+        try:
+            self.cdivdb = fix.db.get_item("CDIV")
+            self._cdiv = self.cdivdb.value
+            self.cdivdb.valueChanged[float].connect(self.setCdiv)
+        except Exception:
+            self.cdivdb = None
         # VOR TO/FROM for the selected source (TOFROM: 0=off/flag, 1=TO, 2=FROM).
         # Drawn as a triangle on the course line; hidden when 0 (LOC/GPS or no
         # signal). Defensive; absent -> not shown.
@@ -278,6 +337,12 @@ class HSI(QGraphicsView):
         self._brgBad = {1: True, 2: True}
         self._brgFail = {1: True, 2: True}
         self._brgSrc = {1: None, 2: None}
+        # Pilot's run-time selection (HSIBRG1): an available pointer is Off
+        # until the pilot steps it on with the BRG tab or its corner label,
+        # Garmin-style. Held here, not on the bus: whether this display draws
+        # a needle is presentation, and BRGnSRC keeps meaning "which source".
+        self._brgOn = {1: False, 2: False}
+        self._brg_tab_rects = {}
         self.brgdb = {1: None, 2: None}
         self.brgsrcdb = {1: None, 2: None}
         for _n in (1, 2):
@@ -328,7 +393,7 @@ class HSI(QGraphicsView):
         self.scene = QGraphicsScene(0, 0, self.width(), self.height())
         self.cx = self.width() / 2.0
         self.cy = self.height() / 2.0
-        self.r = self.height() / 2.0 - 5.0
+        self.r = self.height() / 2.0 - ROSE_EDGE_MARGIN
         # Readout gutter (P5a iter4b): layouts that place a single sectioned
         # readout panel OUTSIDE the rose shrink + shift the rose to open room.
         # Everything downstream derives from cx/cy/r, so the whole instrument
@@ -337,20 +402,35 @@ class HSI(QGraphicsView):
         _rl = getattr(self, "readout_layout", "top_panel")
         if _rl in ("top_panel", "split"):
             self._gutter = self.height() * 0.16
-            self.r = min(self.width(), self.height() - self._gutter) / 2.0 - 5.0
+            self.r = (min(self.width(), self.height() - self._gutter) / 2.0
+                      - ROSE_EDGE_MARGIN)
             self.cy = self._gutter + (self.height() - self._gutter) / 2.0
-        # Reserve clearance for the rose drop shadow (AER-392): the disc sat
-        # only 5px from the widget edge, nowhere near enough room for a
-        # blurred halo to resolve without hard-clipping against the widget
-        # bounds (gotcha #2). Shrinking the rose itself when the shadow is on
-        # -- instead of clamping the blur radius after the fact -- guarantees
-        # the halo always has the room bake_blurred_silhouette/the drop-shadow
-        # effect actually needs (SHADOW_CANVAS_PAD_RATIO), at the cost of a
-        # slightly smaller rose. No-op (0px) when shadows are off.
-        self._rose_shadow_blur = 0.0
+        # Reserve clearance for the rose's rim glow (AER-392, corrected for
+        # pyEfis#158, then re-cut as a gradient here). The history is worth
+        # keeping, because both mistakes are easy to make again:
+        #
+        #  * the blur came from self.fontSize. SHADOW_BLUR_RATIO is calibrated
+        #    for the readout boxes, whose size genuinely tracks the label font.
+        #    The rose does not: it is a ~160px-radius disc sized by the widget.
+        #    A font-derived blur came out at ~1.75px, which cannot read against
+        #    a shape that large -- and was still invisible at 8x the font.
+        #  * the clearance reserved was blur * SHADOW_CANVAS_PAD_RATIO, the
+        #    BAKE CANVAS pad (room for a Gaussian to resolve before the QImage
+        #    edge), not anything the glow could use on screen. That surrendered
+        #    5.2px of radius -- 6.3% of the rose's AREA -- and ignored the
+        #    ROSE_EDGE_MARGIN already in hand. It was the only visible effect
+        #    of ticking the option.
+        #
+        # The glow is now a radial gradient rather than a blurred bake, so its
+        # width is exact: ROSE_GLOW_WIDTH_RATIO IS how far it reaches, with no
+        # Gaussian tail to estimate. Reserve only the part ROSE_EDGE_MARGIN
+        # does not already cover -- 0px when shadows are off, and typically
+        # still 0px when they are on, since the margin absorbs a ~5px glow at
+        # normal panel sizes.
+        self._rose_glow_width = 0.0
         if getattr(self, "shadow_enabled", False):
-            self._rose_shadow_blur = self.fontSize * helpers.SHADOW_BLUR_RATIO
-            self.r -= self._rose_shadow_blur * helpers.SHADOW_CANVAS_PAD_RATIO
+            self._rose_glow_width = self.r * ROSE_GLOW_WIDTH_RATIO
+            self.r -= max(0.0, self._rose_glow_width - ROSE_EDGE_MARGIN)
         self.cdippw = self.r * 0.5
         self.gsipph = self.r * 0.5
 
@@ -363,38 +443,55 @@ class HSI(QGraphicsView):
         if _op > 0.0:
             _disc = QColor(self.bg_color)
             _disc.setAlphaF(_op)
-            # Rose drop shadow (AER-439 rewrite of Option 2, AER-392): a
-            # QGraphicsDropShadowEffect draws the item's own source (here,
-            # the disc's OWN possibly-translucent fill) back on top of an
-            # unpunched blurred halo at zero offset -- Qt's compositor never
-            # removes the shape's own footprint from its own shadow layer,
-            # so on anything less than fully opaque that halo reads straight
-            # through and tints the whole disc interior. Same defect class,
-            # same fix as AER-415's `bake_blurred_silhouette` punch-out --
-            # bake the disc's halo with that already-punched primitive and
-            # add it as its own scene item strictly BEHIND the disc fill
-            # (z=-2 vs the fill's z=-1) instead of attaching a
-            # QGraphicsDropShadowEffect to the fill item itself. Both are
-            # captured for free by the existing rose bake (_rose_image --
-            # rendered once per resize, then pre-rotated and cached by
-            # _rotated_rose_image). Zero offset matters here specifically:
-            # the disc is circular and the bake gets ROTATED per heading, so
-            # a symmetric halo is the only shadow that looks identical at
-            # every heading (gotcha #1) -- an offset one would make the
-            # implied light source appear to orbit as the card turns.
+            # Rose rim glow (AER-392 -> AER-439 -> pyEfis#158 -> here). A
+            # symmetric, zero-offset black halo around the disc: it reads as a
+            # drop shadow cast from an infinitely distant light source, which
+            # is the intended look. It is also the ONLY shadow that can be
+            # correct here, because this item is captured by the rose bake
+            # (_rose_image, then pre-rotated per heading by
+            # _rotated_rose_image) -- an offset one would make the implied
+            # light appear to orbit as the card turns (AER-392 gotcha #1).
+            #
+            # Drawn as a radial gradient rather than a blurred silhouette
+            # bake. The bake could not hit a stated width or opacity: a
+            # Gaussian step edge lands at only ~50% of its fill alpha at the
+            # shape's edge and trails off far past the nominal blur radius, so
+            # the glow came out simultaneously too faint and too diffuse to
+            # read (pyEfis#158 follow-up -- it measured ~6% mean contrast and
+            # was reported invisible on the bench display). A gradient states
+            # the profile outright: ROSE_SHADOW_ALPHA at the disc edge, zero
+            # at ROSE_GLOW_WIDTH_RATIO out, shaped by helpers.RIM_GLOW_FALLOFF
+            # -- and costs no blur pass.
+            #
+            # Still its own scene item strictly BEHIND the disc fill (z=-2 vs
+            # the fill's z=-1), never a QGraphicsDropShadowEffect on the fill
+            # item: Qt's effect draws the item's own possibly-translucent
+            # source back over an unpunched halo, which tints the disc
+            # interior (AER-439).
             if getattr(self, "shadow_enabled", False):
-                _diameter = int(math.ceil(self.r * 2.0))
-
-                def _paint_disc(p, _d=_diameter):
-                    p.setPen(Qt.PenStyle.NoPen)
-                    p.setBrush(QBrush(QColor(Qt.GlobalColor.black)))
-                    p.drawEllipse(0, 0, _d, _d)
-
-                _halo, _pad = helpers.bake_blurred_silhouette(
-                    _diameter, _diameter, _paint_disc, self._rose_shadow_blur)
-                _haloitem = self.scene.addPixmap(QPixmap.fromImage(_halo))
-                _haloitem.setPos(self.cx - self.r - _pad, self.cy - self.r - _pad)
-                _haloitem.setZValue(-2)
+                _centre = QPointF(self.cx, self.cy)
+                _outer = self.r + self._rose_glow_width
+                _grad = QRadialGradient(_centre, _outer)
+                _edge = self.r / _outer          # the disc's edge, in gradient units
+                for _t, _frac in helpers.RIM_GLOW_FALLOFF:
+                    _col = QColor(helpers.SHADOW_COLOR)
+                    _col.setAlphaF(ROSE_SHADOW_ALPHA * _frac)
+                    _grad.setColorAt(_edge + (1.0 - _edge) * _t, _col)
+                # Paint the RING only, never the interior. The disc's fill is
+                # translucent at any bg_opacity below 100, so a glow painted
+                # under the whole disc reads straight through and tints the
+                # rose interior -- the defect AER-415 fixed by punching the
+                # shape out of its own baked halo. Clipping to an annulus is
+                # the same guarantee, stated geometrically: there is nothing
+                # inside self.r to read through.
+                _ring = QPainterPath()
+                _ring.addEllipse(_centre, _outer, _outer)
+                _hole = QPainterPath()
+                _hole.addEllipse(_centre, self.r, self.r)
+                _glowitem = self.scene.addPath(_ring.subtracted(_hole),
+                                               QPen(Qt.PenStyle.NoPen),
+                                               QBrush(_grad))
+                _glowitem.setZValue(-2)
             _bgitem = self.scene.addEllipse(
                 self.cx - self.r, self.cy - self.r, self.r * 2.0, self.r * 2.0,
                 QPen(Qt.PenStyle.NoPen), QBrush(_disc))
@@ -419,6 +516,11 @@ class HSI(QGraphicsView):
         # fail/opacity contract the tests assert -- but hidden during the rose
         # bake so only the upright paintEvent numerals show (Bill 2026-08-02).
         self._rose_labels = []
+        # The previous scene, and every label item in it, was freed when
+        # self.scene was replaced above. Keeping those items let changeFail()
+        # touch freed objects: a second resize, then any fail-flag change,
+        # segfaulted the process (G66).
+        self.labels = []
 
         for count in range(0, 360, 5):
             angle = (count) * math.pi / 180.0
@@ -612,6 +714,10 @@ class HSI(QGraphicsView):
             self._hdgBug = common.bounds(0, 360, value)
             if self.hdg_bug_item is not None:
                 self.hdg_bug_item.setPolygon(self._hdg_bug_polygon())
+            # The HDG readout shows this value too, so a knob step (or any
+            # other writer) repaints it now, not on the next heading change.
+            if self.isVisible():
+                self.update()
 
     def _track_diamond_polygon(self):
         # Small diamond on the rose face near the outer edge, rotated to the GPS
@@ -822,7 +928,8 @@ class HSI(QGraphicsView):
         # Bearing pointers (P5b.2): RMI needles to the selected stations, drawn
         # BEFORE the course/CDI assembly so the deviation bar is never overridden
         # (visually separated by draw order, hsi_widget_spec sec 6.8). Each shows
-        # only when valid (heading + its own BRGn); source-coloured.
+        # only when the pilot has it on and it is valid (heading + its own
+        # BRGn); cyan whatever the source.
         for _n in (1, 2):
             if self._bearing_visible(_n):
                 self._draw_bearing_needle(c, _n)
@@ -845,11 +952,10 @@ class HSI(QGraphicsView):
 
             ext = self.r - self.fontSize * 2.0
             bar = self.cdippw
-            self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad)
-            self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
-                and not (self._GsiOld or self._GsiBad or self._GsiFail)
+            self._showCDI = self._cdi_shown()
+            self._showGSI = self._gs_expected() and not self._gs_flag_shown()
 
-            if self.cdi_enabled:
+            if self.cdi_enabled and self._course_valid():
                 # Lateral deviation scale dots (white) along the lateral axis.
                 c.setPen(QPen(QColor(self.fg_color)))
                 c.setBrush(QBrush(QColor(self.fg_color)))
@@ -918,10 +1024,10 @@ class HSI(QGraphicsView):
                 lf = QFont(self.font_family)
                 lf.setPixelSize(int(self.fontSize))
                 c.setFont(lf)
-                lx = qRound(self.width() * 0.03)
-                ly = qRound(self.fontSize * 1.2)
-                c.drawText(lx, ly, label)
                 fm = c.fontMetrics()
+                lx = qRound(self.width() * 0.03)
+                ly = self._source_label_baseline(fm)
+                c.drawText(lx, ly, label)
                 pad = int(self.fontSize * 0.5)
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2*pad,
@@ -929,23 +1035,16 @@ class HSI(QGraphicsView):
 
         # Per-pointer bearing-source labels (P5b.2), mirroring the tappable
         # nav-source annunciation: pointer 1 bottom-left, pointer 2 bottom-right,
-        # source-coloured, tapping cycles BRGnSRC. A trailing "X" annunciates an
-        # invalid selected source (the pointer's own BRGn old/bad/fail), the
+        # cyan like the needles, tapping steps the pointer Off -> sources -> Off
+        # (_cycle_bearing_src; "1 OFF" where no BRG tab carries Off). A
+        # trailing "X" annunciates an invalid selected source (the pointer's own BRGn old/bad/fail), the
         # §7 under-specified surface (source-selector requirement candidate --
         # routed through instrument_verification, not authored here).
         self._brg_label_rect = {1: None, 2: None}
         for _n in (1, 2):
-            if not getattr(self, "bearing%d_enabled" % _n, False):
-                continue
-            if self.brgdb[_n] is None and self.brgsrcdb[_n] is None:
-                continue
-            txt = self._bearing_src_label(_n)
+            txt, invalid = self._bearing_corner_label(_n)
             if not txt:
                 continue
-            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
-                       or self._brgBad[_n] or self._brgFail[_n])
-            if invalid:
-                txt = txt + " X"
             lf = QFont(self.font_family)
             lf.setPixelSize(int(self.fontSize * 0.85))
             c.setFont(lf)
@@ -954,7 +1053,7 @@ class HSI(QGraphicsView):
             th = fm.height()
             _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
             c.setPen(QPen(_bc))
-            ly = qRound(self.height() - self.fontSize * 0.5)
+            ly = self._bearing_label_baseline(fm)
             if _n == 1:
                 lx = qRound(self.width() * 0.03)
             else:
@@ -967,21 +1066,20 @@ class HSI(QGraphicsView):
         # Warning flags (AC 25-11B: warnings red). A flag positively annunciates
         # an invalid signal, distinct from merely hiding an element -- see
         # hsi_widget_spec.md sec 7.1. Heading (compass) flag: HEAD invalid.
-        self._showHdgFlag = self._HeadFail or self._HeadBad
+        # HDG sits inside the card, upper right (the conventional HSI place). At
+        # the top centre the readout panels, drawn later, painted over it.
+        self._showHdgFlag = self._hdg_flag_shown()
         if self._showHdgFlag:
-            self._draw_flag(c, "HDG", self.cx, self.fontSize * 1.1)
-        # NAV (lateral) flag: selected lateral source invalid. The CDI bar is
-        # already removed by _showCDI; the flag positively annunciates the loss.
-        self._showNavFlag = self._CdiFail or self._CdiBad
+            self._draw_flag(c, "HDG", self.cx + self.r * 0.42, self.cy - self.r * 0.5)
+        # NAV (lateral) flag: every reason the CDI bar is removed (see
+        # _nav_flag_shown); the flag positively annunciates the loss.
+        self._showNavFlag = self._nav_flag_shown()
         if self._showNavFlag:
             self._draw_flag(c, "NAV", self.cx - self.r * 0.4, self.cy)
-        # GS flag: glideslope expected (present per GSV) but its signal is
-        # unreliable (bad/failed). The diamond (_showGSI) already excludes bad/fail,
-        # so the diamond and this flag are mutually exclusive. Distinct from 'no GS
-        # present' (GSV<0.5), where the scale is simply absent -- no flag.
-        self._showGsFlag = (self.gsi_enabled
-                            and self._gsv is not None and self._gsv >= 0.5
-                            and (self._GsiFail or self._GsiBad))
+        # GS flag: every reason the GS diamond is removed while a glideslope is
+        # expected, so the diamond and this flag are mutually exclusive. Distinct
+        # from 'no GS present' (GSV<0.5), where the scale is simply absent.
+        self._showGsFlag = self._gs_flag_shown()
         if self._showGsFlag:
             self._draw_flag(c, "GS", self.cx + self.r * 0.72, self.cy)
 
@@ -1074,6 +1172,7 @@ class HSI(QGraphicsView):
         c.drawText(QRectF(x, vy, bw, vh),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
                    value)
+        return box
 
     def _draw_readouts(self, c):
         """Integral readout boxes: actual heading (HEAD), selected heading
@@ -1081,6 +1180,8 @@ class HSI(QGraphicsView):
         config-selectable via readout_layout so the configurator can offer
         vendor-style presets (Bill 2026-08-02)."""
         layout = getattr(self, "readout_layout", "garmin")
+        self._edit_rects = {}
+        self._brg_tab_rects = {}
         if layout == "none":
             return
 
@@ -1091,7 +1192,7 @@ class HSI(QGraphicsView):
                 return "---°"
 
         hdg = _deg(self._heading)                                  # actual
-        crs = _deg(self._courseSelect)                             # selected course
+        crs = _deg(self._crs_display())                            # selected course
         sel = _deg(getattr(self, "_hdgBug", 0.0) or 0.0)          # selected heading (bug)
         white = QColor(self.fg_color)
         cyan = QColor(getattr(self, "heading_bug_color", "#00ffff"))
@@ -1112,19 +1213,45 @@ class HSI(QGraphicsView):
             # top, next) is what defines the crisp shared edge, so there is no
             # separate seam/stroke to align by hand (pyEfis#140).
             self._draw_source_tab(c, px, py, ph)
+            self._draw_bearing_tab(c, px + pw, py, ph)
             self._draw_readout_panel(c, px, py, pw, ph, "h",
                 [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
+            # Inside the sectioned panel the focus ring hugs the cell, so it
+            # cannot cross into the neighbouring cell or the source tab.
+            for field, i in (("hdg", 0), ("crs", 2)):
+                cell = QRectF(px + pw * i / 3.0, py, pw / 3.0, ph)
+                self._edit_rects[field] = (
+                    cell, edit_focus.inset_for_marks(cell), cell)
         elif layout == "corners":
             # selected-heading (cyan) top-left, course (source) top-right; actual
             # heading read from the rose.
-            self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
-            self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
+            hbox = self._draw_readout_box(c, m, m, "lt", "HDG", sel, cyan)
+            cbox = self._draw_readout_box(c, W - m, m, "rt", "CRS", crs, crscol)
+            self._set_box_edit_rects(hbox, cbox)
         elif layout == "split":
             # Actual-heading box ABOVE the rose (top gutter, outside), course +
             # selected heading in the bottom corners (Bill 2026-08-02).
             self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, white)
-            self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
-            self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
+            cbox = self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
+            hbox = self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
+            self._set_box_edit_rects(hbox, cbox)
+        self._draw_edit_marks(c)
+
+    def _set_box_edit_rects(self, hbox, cbox):
+        # A free-standing box: the ring goes OUTSIDE its (cyan / source-
+        # coloured) border, kept inside the widget.
+        bounds = QRectF(self.rect())
+        self._edit_rects["hdg"] = (hbox, hbox, bounds)
+        self._edit_rects["crs"] = (cbox, cbox, bounds)
+
+    def _draw_edit_marks(self, c):
+        """The shared focus ring + edit icon (pyEfis #308) on each editable
+        readout: ring and icon on the focused one, the dim at-rest icon on the
+        others. A readout that cannot be edited now (CRS on GPS) gets none."""
+        for field, (_box, marks, bounds) in self._edit_rects.items():
+            if self._field_editable(field):
+                edit_focus.draw_edit_marks(
+                    c, marks, self._edit_field == field, bounds=bounds)
 
     def _draw_readout_panel(self, c, x, y, w, h, orientation, segments):
         """One sectioned readout panel (P5a iter4b): a single rounded container
@@ -1135,7 +1262,9 @@ class HSI(QGraphicsView):
         # was established, and the tape readout boxes now draw through the same
         # primitive (P5c) so the two cannot drift.
         _panel_rect = QRectF(x, y, w, h)
-        _panel_radius = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        # Corner radius keyed to the panel's OWN height (AER-413), the one house
+        # token every readout box shares -- not to fontSize.
+        _panel_radius = h * helpers.READOUT_RADIUS_RATIO
         self._draw_readout_shadow(c, _panel_rect, _panel_radius)
         _pen, _brush = helpers.draw_readout_panel(
             c, _panel_rect, _panel_radius,
@@ -1167,18 +1296,36 @@ class HSI(QGraphicsView):
             c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
                        int(Qt.AlignmentFlag.AlignCenter), value)
 
+    #: Every label _source_label() can produce (GPS, VOR/LOC/VLOC x NAV1/NAV2)
+    #: -- the full candidate set the constant tab width is measured against,
+    #: so the tab neither breathes as the source cycles nor special-cases the
+    #: slot digit (pyEfis#148).
+    _SOURCE_TAB_LABELS = ("GPS", "VOR1", "VOR2", "LOC1", "LOC2", "VLOC1", "VLOC2")
+
     def _draw_source_tab(self, c, px, py, ph):
         """Nav-source annunciation as a coloured tab hanging off the left edge
         of the HDG | MAG | CRS panel, `readout_layout: top_panel` only
         (pyEfis#140). Fill = active source colour (magenta GPS / green VLOC,
-        `_source_color()`); text white, centred both axes. Height is the
-        panel height less both corner radii -- the straight run of the
-        panel's left edge -- so it sits a few pixels shorter than the panel
-        top and bottom, which is what reads as a tab rather than a bolted-on
-        box. Left corners rounded on the shared READOUT_RADIUS_RATIO token
-        (clamped to half the tab height); right edge square and flush at
-        `px`. The whole tab rect becomes the tap target (_source_label_rect;
-        mousePressEvent cycles NAVSRC unchanged).
+        `_source_color()`), always at full brightness -- it IS the source
+        annunciation (HSI-COLOR-001) and must stay legible at a glance. Label
+        is a darkened tint of that same fill (pyEfis#147): `vloc_color`/
+        `course_color` are config-selectable, so a hardcoded label colour
+        would go unreadable for a custom source colour the same way white on
+        the stock green/magenta measured 1.37:1 / 3.14:1 -- both WCAG AA
+        fails. helpers.darken_to_contrast() walks the fill's own hue/sat down
+        in HSV value until it clears helpers.SOURCE_LABEL_MIN_CONTRAST
+        against the (undarkened) fill, so any config colour lands on an
+        AA-clearing label automatically. Width is a CONSTANT -- the widest of
+        _SOURCE_TAB_LABELS -- rather than tracking the current label, so the
+        tab doesn't breathe as the source cycles; centring (AlignCenter
+        below) falls out of that for free. Height is the panel height less
+        both corner radii -- the straight run of the panel's left edge -- so
+        it sits a few pixels shorter than the panel top and bottom, which is
+        what reads as a tab rather than a bolted-on box. Left corners rounded
+        on the shared READOUT_RADIUS_RATIO token (clamped to half the tab
+        height); right edge square and flush at `px`. The whole tab rect
+        becomes the tap target (_source_label_rect; mousePressEvent cycles
+        NAVSRC unchanged).
 
         Fit is not guaranteed at every shipped font_percent -- see
         docs/hsi_widget_spec.md sec 7.4. The panel is never moved or resized
@@ -1189,7 +1336,10 @@ class HSI(QGraphicsView):
         label = self._source_label()
         if not label:
             return
-        rr = self.fontSize * helpers.READOUT_RADIUS_RATIO
+        # Same corner radius the panel itself uses (_draw_readout_panel keys it
+        # to the panel's own height, AER-413), so the tab's left corners match
+        # the panel's and `th` is the straight run of the panel's left edge.
+        rr = ph * helpers.READOUT_RADIUS_RATIO
         th = ph - 2.0 * rr
         if th <= 0:
             return
@@ -1199,7 +1349,8 @@ class HSI(QGraphicsView):
         c.setFont(lf)
         fm = c.fontMetrics()
         pad = self.fontSize * 0.35
-        tab_w = fm.horizontalAdvance(label) + 2.0 * pad
+        tab_w = max(fm.horizontalAdvance(candidate)
+                    for candidate in self._SOURCE_TAB_LABELS) + 2.0 * pad
         top = py + rr
         right = px
         left = right - tab_w
@@ -1217,14 +1368,149 @@ class HSI(QGraphicsView):
         path.arcTo(left, top + th - tab_r * 2.0, tab_r * 2.0, tab_r * 2.0, 180, 90)
         path.lineTo(right + overlap, top + th)
         path.closeSubpath()
+        fill = self._source_color() or QColor(self.course_color)
         c.setPen(Qt.PenStyle.NoPen)
-        c.setBrush(QBrush(self._source_color() or QColor(self.course_color)))
+        c.setBrush(QBrush(fill))
         c.drawPath(path)
 
-        c.setPen(QPen(QColor(Qt.GlobalColor.white)))
+        c.setPen(QPen(helpers.darken_to_contrast(fill)))
         c.drawText(QRectF(left, top, tab_w, th),
                    int(Qt.AlignmentFlag.AlignCenter), label)
         self._source_label_rect = (left, top, tab_w, th)
+
+    #: Every label a BRG tab row can show, for its constant width (as
+    #: _SOURCE_TAB_LABELS): "BRG OFF"/"BRG1 GPS" with one pointer available,
+    #: "BRG1 OFF"/"BRG2 VOR1" per row with both.
+    _BEARING_TAB_LABELS = ("BRG OFF", "BRG1 OFF", "BRG1 VOR1", "BRG1 VOR2",
+                           "BRG2 VOR1", "BRG2 VOR2")
+
+    def _bearing_tab_label(self, n, single):
+        """Text of pointer n's row on the BRG tab: "BRG OFF" / "BRG1 VOR1".
+        With a single row the Off text drops the digit -- there is only one
+        pointer it can mean."""
+        if not self._bearing_selected(n):
+            return "BRG OFF" if single else "BRG%d OFF" % n
+        name = {0: "VOR1", 1: "VOR2", 2: "GPS"}[self._brg_src_index(n)]
+        return "BRG%d %s" % (n, name)
+
+    def _draw_bearing_tab(self, c, px, py, ph):
+        """Bearing-pointer selector (HSIBRG1): a cyan tab hanging off the RIGHT
+        edge of the HDG | MAG | CRS panel, the mirror of the nav-source tab on
+        its left (_draw_source_tab), `readout_layout: top_panel` only. Drawn
+        only when bearing1_enabled or bearing2_enabled makes a pointer
+        available; one row per available pointer, stacked when both are, each
+        row its own tap target (_brg_tab_rects; a tap steps that pointer Off ->
+        each source not the CDI's -> Off). A row whose needle is on is filled
+        cyan with a darkened label (helpers.darken_to_contrast, as the source
+        tab); an Off row is the readout panel's dark fill with a cyan label, so
+        "a needle is on the rose" reads from the fill as well as the text.
+        `px` is the panel's right edge; the panel border, drawn after this,
+        owns the shared edge. Same fit caveat as the source tab (spec 7.4)."""
+        self._brg_tab_rects = {}
+        rows = [n for n in (1, 2) if self._bearing_selectable(n)]
+        if not rows:
+            return
+        rr = ph * helpers.READOUT_RADIUS_RATIO
+        th = ph - 2.0 * rr
+        if th <= 0:
+            return
+        tab_r = min(rr, th / 2.0)
+        rh = th / len(rows)
+        lf = QFont(self.font_family)
+        lf.setBold(True)
+        pad = self.fontSize * 0.35
+        # The labels are longer than the source tab's, so the font shrinks to
+        # the room beside the panel (down to 9 px) rather than run off the
+        # widget's right edge.
+        room = self.width() - px - self.fontSize * 0.25 - 2.0 * pad
+        size = max(9, int(min(self.fontSize * 0.8, rh * 0.75)))
+        while True:
+            lf.setPixelSize(size)
+            c.setFont(lf)
+            fm = c.fontMetrics()
+            text_w = max(fm.horizontalAdvance(candidate)
+                         for candidate in self._BEARING_TAB_LABELS)
+            if text_w <= room or size <= 9:
+                break
+            size -= 1
+        tab_w = text_w + 2.0 * pad
+        top = py + rr
+        left = px
+        right = left + tab_w
+
+        overlap = max(1.0, self.fontSize * helpers.READOUT_PEN_RATIO * 0.5)
+        path = QPainterPath()
+        path.moveTo(left - overlap, top)
+        path.lineTo(right - tab_r, top)
+        path.arcTo(right - tab_r * 2.0, top, tab_r * 2.0, tab_r * 2.0, 90, -90)
+        path.lineTo(right, top + th - tab_r)
+        path.arcTo(right - tab_r * 2.0, top + th - tab_r * 2.0,
+                   tab_r * 2.0, tab_r * 2.0, 0, -90)
+        path.lineTo(left - overlap, top + th)
+        path.closeSubpath()
+        # The outline leaves the shared edge to the panel's own border.
+        edge = QPainterPath()
+        edge.moveTo(left, top)
+        edge.lineTo(right - tab_r, top)
+        edge.arcTo(right - tab_r * 2.0, top, tab_r * 2.0, tab_r * 2.0, 90, -90)
+        edge.lineTo(right, top + th - tab_r)
+        edge.arcTo(right - tab_r * 2.0, top + th - tab_r * 2.0,
+                   tab_r * 2.0, tab_r * 2.0, 0, -90)
+        edge.lineTo(left, top + th)
+
+        cyan = QColor(self.bearing_color)
+        dark = QColor(0, 0, 0)
+        dark.setAlphaF(0.55)
+        single = len(rows) == 1
+        c.save()
+        for i, n in enumerate(rows):
+            row = QRectF(left - overlap, top + rh * i, tab_w + overlap, rh)
+            on = self._bearing_selected(n)
+            c.setClipRect(row)
+            c.setClipPath(path, Qt.ClipOperation.IntersectClip)
+            c.setPen(Qt.PenStyle.NoPen)
+            c.setBrush(QBrush(cyan if on else dark))
+            c.drawPath(path)
+            c.setClipping(False)
+            c.setPen(QPen(helpers.darken_to_contrast(cyan) if on else cyan))
+            c.drawText(QRectF(left, top + rh * i, tab_w, rh),
+                       int(Qt.AlignmentFlag.AlignCenter),
+                       self._bearing_tab_label(n, single))
+            self._brg_tab_rects[n] = (left, top + rh * i, tab_w, rh)
+        c.restore()
+        # Outline in cyan so an all-Off tab still reads as a control on the
+        # map, and a hairline between two rows that share a fill.
+        c.setBrush(Qt.BrushStyle.NoBrush)
+        c.setPen(QPen(cyan, max(1.0, self.fontSize * helpers.READOUT_PEN_RATIO)))
+        c.drawPath(edge)
+        if not single:
+            c.drawLine(QLineF(left, top + rh, right, top + rh))
+
+    def _readout_box_reach(self):
+        """How far a free-standing readout box (``_draw_readout_box``) reaches
+        in from the top or bottom edge: its margin plus its height."""
+        return self.fontSize * 0.5 + self.fontSize * 2.4
+
+    def _source_label_baseline(self, fm):
+        """Baseline of the plain nav-source label (top-left). In ``corners``
+        the HDG box owns the top-left corner, and the label used to sit under
+        it -- hidden, with its tap target covering most of the box -- so there
+        it moves down to clear the box."""
+        if getattr(self, "readout_layout", "top_panel") == "corners":
+            pad = int(self.fontSize * 0.5)
+            return qRound(self._readout_box_reach() + self.fontSize * 0.15
+                          + pad + fm.ascent())
+        return qRound(self.fontSize * 1.2)
+
+    def _bearing_label_baseline(self, fm):
+        """Baseline of the bearing-source labels (bottom corners). In
+        ``split`` the CRS and HDG boxes own those corners, so the labels move
+        up to clear them, for the same reason as the source label."""
+        if getattr(self, "readout_layout", "top_panel") == "split":
+            pad = int(self.fontSize * 0.5)
+            return qRound(self.height() - self._readout_box_reach()
+                          - self.fontSize * 0.15 - pad - fm.descent())
+        return qRound(self.height() - self.fontSize * 0.5)
 
     def _draw_flag(self, c, text, x, y):
         """Draw a red boxed warning flag centred at (x, y) (AC 25-11B: warnings
@@ -1329,6 +1615,13 @@ class HSI(QGraphicsView):
     def setNavsrc(self, value):
         if value != self._navsrc:
             self._navsrc = value
+            # A bearing pointer on the CDI's new source would repeat it.
+            self._drop_bearings_on_cdi_source()
+            # The CRS readout edits a per-source key (NAV1CRS / NAV2CRS), and
+            # none at all on GPS: a source change ends a CRS edit rather than
+            # leaving the knob on a key the readout no longer shows.
+            if self._edit_field == "crs":
+                self._release_edit_focus()
             # Recolour the course pointer now; the CDI/GSI recolour on next paint.
             if getattr(self, "course_pointer", None) is not None:
                 _cp = self._course_pointer_color()
@@ -1348,6 +1641,52 @@ class HSI(QGraphicsView):
             self._gsv = value
             if self.isVisible():
                 self.update()
+
+    def setCdiv(self, value):
+        if value != self._cdiv:
+            self._cdiv = value
+            if self.isVisible():
+                self.update()
+
+    def _course_valid(self):
+        # A bad or failed COURSE has no direction to draw: the course pointer,
+        # the deviation scale rotated to it and the CRS readout all go, rather
+        # than showing the failed value (000) as a selected course (G66).
+        return not (self._CourseBad or self._CourseFail)
+
+    def _cdi_shown(self):
+        # The deviation bar draws only on a usable lateral signal against a
+        # usable course. Fail is tested as well as old/bad: the NAV flag shows
+        # on fail, and the bar is gone whenever NAV shows, so a fail-only CDI
+        # can no longer leave a centred "on course" bar under the flag (G66).
+        return self.cdi_enabled and self._course_valid() \
+            and not (self._CdiOld or self._CdiBad or self._CdiFail) \
+            and not self._no_lateral_signal()
+
+    # Failure flags (Bill, 2026-11-08): the HSI never tells the pilot about a
+    # failure only by taking a symbol away. Each flag covers every reason its
+    # symbols are removed, on the rose and the arc alike.
+    def _hdg_flag_shown(self):
+        return self._HeadFail or self._HeadBad
+
+    def _nav_flag_shown(self):
+        # Every reason _cdi_shown() drops the bar: CDI stale, invalid or failed,
+        # no lateral signal (CDIV = 0), or no valid COURSE to draw it against.
+        return self.cdi_enabled and (
+            self._CdiOld or self._CdiBad or self._CdiFail
+            or self._no_lateral_signal() or not self._course_valid())
+
+    def _gs_expected(self):
+        # GSV absent (an older gateway) leaves the GS on its own quality.
+        return self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5)
+
+    def _gs_flag_shown(self):
+        return self._gs_expected() \
+            and (self._GsiOld or self._GsiBad or self._GsiFail)
+
+    def _no_lateral_signal(self):
+        # CDIV published and 0: the selected radio receives no lateral guidance.
+        return self._cdiv is not None and self._cdiv < 0.5
 
     def setTofrom(self, value):
         if value != self._tofrom:
@@ -1381,6 +1720,7 @@ class HSI(QGraphicsView):
     def _setBrgSrc(self, n, value):
         if value != self._brgSrc[n]:
             self._brgSrc[n] = value
+            self._drop_bearings_on_cdi_source()
             if self.isVisible():
                 self.update()
 
@@ -1390,24 +1730,60 @@ class HSI(QGraphicsView):
         return (self._brg[n] - self._heading) % 360.0
 
     def _bearing_color(self, n):
-        """Source colour for pointer n (HSI-COLOR-001/-002): magenta for GPS,
-        green (vloc_color) for a VOR, the generic bearing_color when the source
-        is unknown."""
-        src = self._brgSrc[n]
-        if src is None:
-            return QColor(self.bearing_color)
-        s = int(round(src))
-        if s == 2:                                  # GPS
-            return QColor(self.course_color)
-        if s in (0, 1):                             # VOR1 / VOR2
-            return QColor(self.vloc_color)
+        """Pointer n's colour: bearing_color (cyan) whatever the source. Source
+        colour (magenta GPS / green VLOC) is the CDI's alone (HSI-COLOR-001);
+        a GPS bearing needle in magenta read as the course pointer drawn twice
+        (HSIBRG1). Pointer 1 vs 2 is told apart by shape (single / double bar)
+        and by its label, never by colour (HSI-COLOR-002)."""
         return QColor(self.bearing_color)
 
+    def _brg_src_index(self, n):
+        """Pointer n's BRGnSRC as 0/1/2 (VOR1/VOR2/GPS), or None if unknown."""
+        src = self._brgSrc[n]
+        if src is None:
+            return None
+        s = int(round(src))
+        return s if s in (0, 1, 2) else None
+
+    def _cdi_src_index(self):
+        """NAVSRC as the matching BRGnSRC index: NAV1 = VOR1 (0), NAV2 = VOR2
+        (1), GPS = GPS (2) -- the two selectors share their numbering."""
+        if self._navsrc is None:
+            return None
+        s = int(round(self._navsrc))
+        return s if s in (0, 1, 2) else None
+
+    def _bearing_selectable(self, n):
+        """Pointer n can be stepped on at run time: the layout enables it and
+        its BRGnSRC key exists to carry the chosen source."""
+        return bool(getattr(self, "bearing%d_enabled" % n, False)) \
+            and self.brgsrcdb[n] is not None
+
+    def _bearing_selected(self, n):
+        """The pilot has pointer n on, on a source other than the CDI's. A
+        pointer on the CDI's own source is never drawn: it would repeat the
+        course pointer (Bill, 2026-11-12, HSIBRG1)."""
+        if not self._bearing_selectable(n) or not self._brgOn[n]:
+            return False
+        s = self._brg_src_index(n)
+        return s is not None and s != self._cdi_src_index()
+
+    def _drop_bearings_on_cdi_source(self):
+        """Turn Off any pointer whose source has become the CDI's (a NAVSRC
+        change, or BRGnSRC written elsewhere). Off rather than merely hidden,
+        so the BRG tab never reads OFF over a needle that comes back later."""
+        cdi = self._cdi_src_index()
+        for _n in (1, 2):
+            if self._brgOn[_n] and cdi is not None \
+                    and self._brg_src_index(_n) == cdi:
+                self._brgOn[_n] = False
+
     def _bearing_visible(self, n):
-        """A bearing needle shows only when enabled, its key exists, the heading
-        is valid (HSI-ANN-001 -- a bearing is heading-referenced), and its own
-        BRGn is valid (HSI-FAIL-001)."""
-        if not getattr(self, "bearing%d_enabled" % n, False):
+        """A bearing needle shows only when the pilot has it on (enabled by the
+        layout, stepped on, not on the CDI's source), its key exists, the
+        heading is valid (HSI-ANN-001 -- a bearing is heading-referenced), and
+        its own BRGn is valid (HSI-FAIL-001)."""
+        if not self._bearing_selected(n):
             return False
         if self.brgdb[n] is None:
             return False
@@ -1421,7 +1797,7 @@ class HSI(QGraphicsView):
         """Draw the RMI bearing needle for pointer n in viewport space, rotated
         to (BRGn - heading). Head (arrowhead) points at the station; a centre gap
         keeps the ownship symbol clear; the tail is the reciprocal. Pointer 1 is
-        a single bar, pointer 2 a double bar (classic RMI). Source-coloured."""
+        a single bar, pointer 2 a double bar (classic RMI). Cyan."""
         color = self._bearing_color(n)
         ang = self._bearing_angle_deg(n) * math.pi / 180.0
         ca = math.cos(ang)
@@ -1458,6 +1834,31 @@ class HSI(QGraphicsView):
         if not name:
             return ""
         return "%d %s" % (n, name)
+
+    def _bearing_corner_label(self, n):
+        """(text, invalid) for pointer n's bottom-corner label, or ("", False)
+        when none is drawn. A pointer that is on carries its source ("1 GPS"),
+        with a trailing "X" when its BRGn is invalid. An Off pointer shows
+        "1 OFF" as the tap target only where there is no BRG tab; under
+        `top_panel` the tab carries Off and the corner stays clear."""
+        if not self._bearing_selectable(n):
+            return "", False
+        if not self._bearing_selected(n):
+            if getattr(self, "readout_layout", "top_panel") == "top_panel":
+                return "", False
+            return "%d OFF" % n, False
+        txt = self._bearing_src_label(n)
+        if not txt:
+            return "", False
+        invalid = (self.brgdb[n] is None or self._brgOld[n]
+                   or self._brgBad[n] or self._brgFail[n])
+        return (txt + " X" if invalid else txt), invalid
+
+    def _bearing_cycle(self):
+        """Pointer sources a tap steps through, in order: VOR1, VOR2, GPS,
+        less the CDI's own (it would repeat the course pointer)."""
+        cdi = self._cdi_src_index()
+        return [s for s in (0, 1, 2) if s != cdi]
 
     # -- Arc orientation mode (P5b.3) --------------------------------------
     # The forward heading sector (+/- ARC_HALF_DEG, so 120 deg total) is spread
@@ -1610,9 +2011,8 @@ class HSI(QGraphicsView):
             if self._bearing_visible(_n):
                 self._draw_arc_bearing_needle(c, _n, cx, own_y)
 
-        self._showCDI = self.cdi_enabled and not (self._CdiOld or self._CdiBad)
-        self._showGSI = self.gsi_enabled and (self._gsv is None or self._gsv >= 0.5) \
-            and not (self._GsiOld or self._GsiBad or self._GsiFail)
+        self._showCDI = self._cdi_shown()
+        self._showGSI = self._gs_expected() and not self._gs_flag_shown()
         if self.cdi_enabled or self.gsi_enabled:
             self._draw_arc_course(c, cx, own_y)
 
@@ -1642,14 +2042,13 @@ class HSI(QGraphicsView):
         self._draw_readouts(c)
 
         # 8. Warning flags (same rules as the rose path).
-        self._showHdgFlag = self._HeadFail or self._HeadBad
+        self._showHdgFlag = self._hdg_flag_shown()
         if self._showHdgFlag:
             self._draw_flag(c, "HDG", cx, top_y)
-        self._showNavFlag = self._CdiFail or self._CdiBad
+        self._showNavFlag = self._nav_flag_shown()
         if self._showNavFlag:
             self._draw_flag(c, "NAV", cx, own_y - self.fontSize * 2.0)
-        self._showGsFlag = (self.gsi_enabled and self._gsv is not None
-                            and self._gsv >= 0.5 and (self._GsiFail or self._GsiBad))
+        self._showGsFlag = self._gs_flag_shown()
         if self._showGsFlag:
             self._draw_flag(c, "GS", self.width() - self.fontSize * 1.5, own_y)
 
@@ -1688,7 +2087,8 @@ class HSI(QGraphicsView):
         Course-bound by decision, not by default -- see pyEfis#133; a
         screen-fixed lateral scale is the Navigation Display idiom and belongs
         on the moving-map ND mode (pyEfis#134), not here."""
-        if self.cdi_enabled and self._arc_in_sector(self._courseSelect):
+        if self.cdi_enabled and self._course_valid() \
+                and self._arc_in_sector(self._courseSelect):
             bx, by = self._arc_band_point(self._courseSelect)
             dx = bx - ox; dy = by - oy
             dl = math.hypot(dx, dy) or 1.0
@@ -1759,53 +2159,70 @@ class HSI(QGraphicsView):
             if label:
                 c.setPen(QPen(self._source_color() or QColor(self.course_color)))
                 lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize))
-                c.setFont(lf)
-                lx = qRound(self.width() * 0.03); ly = qRound(self.fontSize * 1.2)
+                c.setFont(lf); fm = c.fontMetrics()
+                lx = qRound(self.width() * 0.03); ly = self._source_label_baseline(fm)
                 c.drawText(lx, ly, label)
-                fm = c.fontMetrics(); pad = int(self.fontSize * 0.5)
+                pad = int(self.fontSize * 0.5)
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2 * pad,
                                            fm.height() + 2 * pad)
         self._brg_label_rect = {1: None, 2: None}
         for _n in (1, 2):
-            if not getattr(self, "bearing%d_enabled" % _n, False):
+            txt, invalid = self._bearing_corner_label(_n)
+            if not txt:
                 continue
-            if self.brgdb[_n] is None and self.brgsrcdb[_n] is None:
-                continue
-            invalid = (self.brgdb[_n] is None or self._brgOld[_n]
-                       or self._brgBad[_n] or self._brgFail[_n])
             # A valid pointer clipped outside the forward sector draws no
             # needle (_draw_arc_bearing_needle); its label must not outlive
             # it, or the annunciation reads as "on screen" when it is not.
             # Invalid pointers keep the label regardless of sector -- the
             # failure is real regardless of where the stale bearing points.
-            if not invalid and not self._arc_in_sector(self._brg[_n]):
+            # An Off pointer's label is a control, not a needle's annunciation.
+            if self._bearing_selected(_n) and not invalid \
+                    and not self._arc_in_sector(self._brg[_n]):
                 continue
-            txt = self._bearing_src_label(_n)
-            if not txt:
-                continue
-            if invalid:
-                txt = txt + " X"
             lf = QFont(self.font_family); lf.setPixelSize(int(self.fontSize * 0.85))
             c.setFont(lf); fm = c.fontMetrics()
             tw = fm.horizontalAdvance(txt); th = fm.height()
             _bc = QColor(255, 150, 0) if invalid else self._bearing_color(_n)
             c.setPen(QPen(_bc))
-            ly = qRound(self.height() - self.fontSize * 0.5)
+            ly = self._bearing_label_baseline(fm)
             lx = qRound(self.width() * 0.03) if _n == 1 else qRound(self.width() * 0.97 - tw)
             c.drawText(lx, ly, txt)
             pad = int(self.fontSize * 0.5)
             self._brg_label_rect[_n] = (lx - pad, ly - fm.ascent() - pad,
                                         tw + 2 * pad, th + 2 * pad)
 
+    @staticmethod
+    def _send_key(key, value):
+        """Set a FIX key and send it to fix-gateway. fix.db.set_value() alone
+        only changes pyEfis's local copy (pyEfis #294): the source taps looked
+        right on the glass while the gateway's select never re-routed."""
+        item = fix.db.get_item(key)
+        item.value = value
+        item.output_value()
+
     def _cycle_bearing_src(self, n):
-        """Cycle pointer n's source selector VOR1 -> VOR2 -> GPS -> VOR1
-        (BRGnSRC 0/1/2), writing the FIX key so the fix-gateway select re-routes
-        the canonical BRGn (one-key-one-writer)."""
-        if self.brgsrcdb[n] is None:
+        """Step pointer n Off -> each source that is not the CDI's (VOR1, VOR2,
+        GPS order) -> Off (HSIBRG1). A source step writes BRGnSRC, so the
+        fix-gateway select re-routes the canonical BRGn (one-key-one-writer);
+        Off is this display's own state and leaves BRGnSRC as it was."""
+        if not self._bearing_selectable(n):
             return
-        cur = int(round(self._brgSrc[n])) if self._brgSrc[n] is not None else 2
-        fix.db.set_value("BRG%dSRC" % n, float((cur + 1) % 3))
+        cycle = self._bearing_cycle()
+        if self._bearing_selected(n):
+            i = cycle.index(self._brg_src_index(n)) + 1
+        else:
+            i = 0
+        if i >= len(cycle):
+            self._brgOn[n] = False
+        else:
+            self._brgOn[n] = True
+            if self._brg_src_index(n) != cycle[i]:
+                self._send_key("BRG%dSRC" % n, float(cycle[i]))
+                # Track the write at once; the item's own valueChanged lands
+                # the same value through _setBrgSrc.
+                self._brgSrc[n] = float(cycle[i])
+        self.update()
 
     def mousePressEvent(self, event):
         # Tapping the nav-source annunciation cycles the source: GPS -> NAV1 ->
@@ -1815,21 +2232,220 @@ class HSI(QGraphicsView):
             px, py = event.pos().x(), event.pos().y()
             if r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]:
                 cur = int(round(self._navsrc)) if self._navsrc is not None else 2
-                fix.db.set_value("NAVSRC", float((cur + 1) % 3))
+                self._send_key("NAVSRC", float((cur + 1) % 3))
                 event.accept()
                 return
-        # Tapping a bearing-source label cycles that pointer's source (mirrors
-        # the nav-source tap; BRGnSRC 0->1->2->0).
-        br = getattr(self, "_brg_label_rect", None) or {}
+        # Tapping a BRG tab row or a bearing-source label steps that pointer
+        # Off -> each source not the CDI's -> Off (_cycle_bearing_src).
         px, py = event.pos().x(), event.pos().y()
-        for _n in (1, 2):
-            rr = br.get(_n)
-            if rr is not None and rr[0] <= px <= rr[0] + rr[2] \
-                    and rr[1] <= py <= rr[1] + rr[3]:
-                self._cycle_bearing_src(_n)
+        for rects in (getattr(self, "_brg_tab_rects", None) or {},
+                      getattr(self, "_brg_label_rect", None) or {}):
+            for _n in (1, 2):
+                rr = rects.get(_n)
+                if rr is not None and rr[0] <= px <= rr[0] + rr[2] \
+                        and rr[1] <= py <= rr[1] + rr[3]:
+                    self._cycle_bearing_src(_n)
+                    event.accept()
+                    return
+        # Touching the HDG or CRS readout gives it edit focus for the knob
+        # (pyEfis #309). Checked after the source taps above, so those keep
+        # working exactly as before wherever they overlap.
+        field = self._edit_field_at(event.position())
+        if field is not None:
+            ctl = self._encoder_controller()
+            if ctl is not None:
+                self._edit_pending = field
+                try:
+                    ctl.touch_focus(self)
+                finally:
+                    self._edit_pending = None
                 event.accept()
                 return
         super(HSI, self).mousePressEvent(event)
+
+    # --- touch-select + knob edit: HDG -> HEADBUG, CRS -> NAV1CRS/NAV2CRS ----
+    # (pyEfis #309). The screen's EncoderController owns focus, the timeout and
+    # the knob routing (pyEfis #308); this widget answers its enc_* calls for
+    # whichever readout was touched. Every step is written straight to the
+    # bus, the way a heading or OBS knob moves the bug as it turns, so a
+    # timeout ends the edit and keeps the value -- there is nothing to revert.
+
+    def _fix_item(self, key):
+        if not key:
+            return None
+        try:
+            return fix.db.get_item(key)
+        except Exception:
+            return None
+
+    def _navsrc_index(self):
+        if self._navsrc is None:
+            return None
+        try:
+            return int(round(self._navsrc))
+        except (TypeError, ValueError):
+            return None
+
+    def _edit_key(self, field):
+        """The FIX key a readout writes, or None when it is not editable now:
+        CRS has no key on a GPS source (or with no NAVSRC)."""
+        if field == "hdg":
+            return "HEADBUG" if self.hdgbugdb is not None else None
+        if field == "crs":
+            return CRS_EDIT_KEYS.get(self._navsrc_index())
+        return None
+
+    def _field_editable(self, field):
+        if not getattr(self, "touch_edit", False):
+            return False
+        return self._fix_item(self._edit_key(field)) is not None
+
+    def _crs_display(self):
+        """The course the CRS readout shows. While CRS is being edited that is
+        the edited key itself: COURSE only follows it after fix-gateway's
+        select runs, and the knob has to answer at once."""
+        if self._edit_field == "crs" and self._edit_item is not None:
+            return self._edit_item.value
+        if not self._course_valid():
+            return None                   # dashed: "---°"
+        return self._courseSelect
+
+    def _min_touch_px(self):
+        main = getattr(getattr(self, "myparent", None), "parent", None)
+        try:
+            qscreen = self.screen()
+        except Exception:
+            qscreen = None
+        try:
+            return display_metrics.mm_to_px(
+                EDIT_TOUCH_MM, getattr(main, "screenWidth", None),
+                getattr(main, "screenHeight", None),
+                getattr(main, "screenDiagonalInches", None), qscreen)
+        except Exception:
+            return display_metrics.mm_to_px(EDIT_TOUCH_MM)
+
+    def _touch_rect(self, box):
+        """``box`` grown to the gloved-finger minimum (hit-testing only)."""
+        m = self._min_touch_px()
+        dx = max(0.0, (m - box.width()) / 2.0)
+        dy = max(0.0, (m - box.height()) / 2.0)
+        return QRectF(box).adjusted(-dx, -dy, dx, dy)
+
+    def _edit_field_at(self, pos):
+        """The editable readout under ``pos`` (viewport coordinates), or None.
+        Where two grown targets overlap, the nearer box centre wins."""
+        best = None
+        for field, (box, _marks, _bounds) in self._edit_rects.items():
+            if not self._field_editable(field):
+                continue
+            if not self._touch_rect(box).contains(QPointF(pos)):
+                continue
+            d = QLineF(box.center(), QPointF(pos)).length()
+            if best is None or d < best[0]:
+                best = (d, field)
+        return best[1] if best else None
+
+    def edit_focus_hit(self, global_pos):
+        """EncoderController.focus_hit: is a press on the focused readout? A
+        press anywhere else -- including the other readout -- releases focus,
+        and the press then reaches mousePressEvent, which may refocus."""
+        if self._edit_field is None:
+            return False
+        try:
+            local = self.viewport().mapFromGlobal(QPointF(global_pos))
+        except (AttributeError, RuntimeError):
+            return False
+        return self._edit_field_at(local) == self._edit_field
+
+    def _encoder_controller(self):
+        w = self.parent()
+        while w is not None:
+            ctl = getattr(w, "encoder_controller", None)
+            if ctl is not None:
+                return ctl
+            w = w.parent()
+        return None
+
+    def _release_edit_focus(self):
+        ctl = self._encoder_controller()
+        if ctl is not None and ctl.focused_instrument() is self:
+            ctl.release_focus()
+        else:
+            self.enc_highlight(False)
+
+    def enc_select(self):
+        field = self._edit_pending
+        if not self._field_editable(field):
+            return False
+        self._edit_field = field
+        self._edit_item = self._fix_item(self._edit_key(field))
+        self.update()
+        return True
+
+    def enc_highlight(self, onoff):
+        if not onoff:
+            self._edit_field = None
+            self._edit_item = None
+            self.update()
+
+    def enc_changed(self, steps):
+        return self._edit_step(steps * EDIT_FINE_DEG)
+
+    def enc_outer_changed(self, steps):
+        return self._edit_step(steps * EDIT_COARSE_DEG)
+
+    def _edit_step(self, delta):
+        item = self._edit_item
+        if self._edit_field is None or item is None:
+            return False
+        # Step from the whole degree the readout shows, wrapping through 360.
+        try:
+            cur = int(round(float(item.value or 0.0)))
+        except (TypeError, ValueError):
+            cur = 0
+        self._write_edit((cur + int(delta)) % 360)
+        return True
+
+    def _write_edit(self, value):
+        """Write the focused key and send it to fix-gateway. A local
+        ``value`` assignment alone never leaves pyEfis (pyEfis #294)."""
+        item = self._edit_item
+        item.value = float(value)
+        item.output_value()
+        self.update()
+
+    def enc_clicked(self):
+        """Push. HDG: sync the bug to the current heading. CRS: centre the
+        CDI with a TO indication by setting the course to the bearing to the
+        station. Where the push cannot act -- heading invalid, a localizer, or
+        no valid bearing -- it ends the edit instead."""
+        if self._edit_field == "hdg":
+            if self._HeadFail or self._HeadBad:
+                return False
+            self._write_edit(int(round(float(self._heading or 0.0))) % 360)
+            return True
+        if self._edit_field == "crs":
+            brg = self._station_bearing()
+            if brg is None:
+                return False
+            self._write_edit(int(round(brg)) % 360)
+            return True
+        return False
+
+    def _station_bearing(self):
+        """Bearing TO the selected VOR (VOR1BRG / VOR2BRG), or None when there
+        is none to centre on: no key, a flagged value, or a localizer (its
+        course is fixed by the runway, not set by the OBS)."""
+        nt = None if self._navtype is None else int(round(self._navtype))
+        if nt in (2, 3):
+            return None
+        item = self._fix_item(CRS_CENTRE_KEYS.get(self._navsrc_index()))
+        if item is None or item.old or item.bad or item.fail:
+            return None
+        try:
+            return float(item.value)
+        except (TypeError, ValueError):
+            return None
 
     def _source_label(self):
         """Nav-source annunciation text: "GPS" for a GPS source, "VOR{n}" /
@@ -1853,11 +2469,15 @@ class HSI(QGraphicsView):
 
     def setCourseBad(self,bad):
         self._CourseBad = bad
+        if self.isVisible():
+            self.update()
 
     def setCourseFail(self,fail):
         if fail != self._CourseFail:
             self._CourseFail = fail
             self.changeFail()
+            if self.isVisible():
+                self.update()
 
     def getCdi(self):
         return self._courseDeviation
@@ -1885,6 +2505,8 @@ class HSI(QGraphicsView):
             if fail != self._CdiFail:
                 self._CdiFail = fail
                 self.changeFail()
+                if self.isVisible():
+                    self.update()
 
 
     cdi = property(getCdi, setCdi)
@@ -1931,7 +2553,7 @@ class HSI(QGraphicsView):
 
 
 class HeadingDisplay(QWidget):
-    def __init__(self, parent=None, fg_color="#aaaaaa", bg_color="#000000", bg_opacity=100, font_family="DejaVu Sans Condensed" ):
+    def __init__(self, parent=None, fg_color="#ffffff", bg_color="#000000", bg_opacity=100, font_family="DejaVu Sans Condensed" ):
         super(HeadingDisplay, self).__init__(parent)
         self.font_family = font_family
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)

@@ -193,7 +193,9 @@ Present: attitude, pitch ladder, bank scale + standard-rate markers, slip/skid b
 aircraft symbol + FPM, `fail_scene` ("XXX") on failure, `old`/`bad` grey, SVS UNAVAIL.
 **Done:** excessive-bank (A.2.5) + excessive-sideslip (A.2.6) amber cautions;
 **recovery chevrons (A.2.2)** — amber chevrons to the nearest horizon past the unusual
-pitch thresholds; **de-clutter (p.47)** — removes non-essential overlays at an unusual
+pitch thresholds, OR'd with the true horizon line scrolling off-scale (AC 23.1311-1C
+8.5(b), derived live from `horizon_position`/`pitchDegreesShown`, not a fixed angle);
+**de-clutter (p.47)** — removes non-essential overlays at an unusual
 attitude, keeps the recovery cues. **Data-blocked (the only remaining gap):**
 pitch-limit / stall-margin (A.2.4) needs an `AOA`/stall-margin key fix-gateway does not
 publish yet.
@@ -266,9 +268,8 @@ marking. Governing "glance-readable, no misleading info" per §2.
 **pyEfis status.** `Altimeter_Tape` ships the moving-scale tape + fixed pointer + quality-
 aware digital read-out (the §17.8 format). **Done:** distinct **500/1,000-ft** tick tiers
 (AL-MARK-001) and the **6-second altitude trend** (AL-TREND-001, cyan; ALT-default so the
-shared VS tape stays quiet). **Data-blocked (the only remaining gap):** the **altitude
-reference bug** (AL-BUG-001) waits on a selected-altitude key from fix-gateway, like the
-AI's AOA-blocked pitch-limit (§5.2 A.2.4).
+shared VS tape stays quiet), and the **altitude reference bug** (AL-BUG-001) on `ALTSEL`,
+with a touch-settable selected-altitude box at the top of the tape (pyEfis #310).
 
 ### 6.4 pyEfis status
 

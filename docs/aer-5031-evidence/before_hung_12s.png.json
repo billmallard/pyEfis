@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "9a681de",
+ "run": "AER-5031 bench session, ffmpeg x11grab, cert1_capture.sh before",
+ "device": "Beelink bench (xcb)",
+ "sha256": "656e71a527ebae006b68f518740416d84230c896809150fb94d5acb64fdfc352",
+ "created_utc": "2026-11-07T19:33:17Z"
+}

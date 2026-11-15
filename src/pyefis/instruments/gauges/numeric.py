@@ -26,6 +26,8 @@ class NumericDisplay(AbstractGauge):
     """Represents a simple numeric display type gauge.  The benefit of using this
        over a normal text display is that this will change colors properly when
        limits are reached or when failures occur"""
+    draws_edit_marks = True
+
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
         super(NumericDisplay, self).__init__(parent)
         self.font_family = font_family
@@ -92,3 +94,5 @@ class NumericDisplay(AbstractGauge):
                 pen.setColor(self.textColor)
                 p.setPen(pen)
             p.drawText(self.unitsTextRect, self.units, opt)
+
+        self.paint_edit_marks(p)

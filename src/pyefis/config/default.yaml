@@ -45,6 +45,12 @@ hooks:
   #   module: user.hooks.composite
 
 
+# Demo kiosk: follow the gateway demo source's page and lock what a
+# show-floor visitor must not change. See docs/wiki, "Demo kiosk".
+#kiosk:
+#  enabled: true
+#  idle_return_s: 60
+
 # Logging configuration - See Python logging.config module documenation
 logging:
   include: LOGGING_CONFIG

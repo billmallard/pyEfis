@@ -1,7 +1,57 @@
 # Open GCU — control head for pyEfis (design)
 
-Status: DRAFT v1 (2026-07-03). Home: pyEfis docs for now; parts of this
+Status: DRAFT v1 (2026-07-03), amended 2026-10-26 by the focus-ownership
+decision below (pyEfis #308). Home: pyEfis docs for now; parts of this
 contract belong in fix-gateway once implementation starts.
+
+## 0. Decision (2026-10-26, pyEfis #308): who owns edit focus
+
+**pyEfis owns edit focus for the values it displays.** It does not wait for a
+fix-gateway `gcu` mapper. This amends section 3 ("Written ONLY by the mapper")
+and section 4 for the PFD.
+
+- **Why.** Touch-select is a pyEfis event. A tap lands on a widget, and the
+  widget is the only thing that knows which value it hit. Sending that tap out
+  to a mapper over the bus and back would add a round trip, plus a failure mode
+  where the knob is armed but the screen does not show it. pyEfis already
+  routes its knob to "the instrument in control" (`EncoderController`, the
+  `enc_*` protocol), so focus already exists there. A touch is a second way
+  into that same state.
+- **What pyEfis implements (TK1).** `pyefis.instruments.edit_focus` holds the
+  panel-wide single focus. A touch or a knob push claims it, and only one value
+  on the panel holds it at a time. The inner knob gives fine steps, the outer
+  ring (`encoder_outer`) coarse steps, and push runs the value's action. Focus
+  clears after `encoder_timeout` (default 10 s; the TTL in section 3), on a
+  touch anywhere else, or on a screen change. The visual language is a cyan
+  ring outset from the value plus a 10 px circular-arrow icon, drawn by one
+  shared helper (`draw_edit_marks`).
+- **The mouse as the knob (TK7, pyEfis #321).** A bench or desktop unit with a
+  mouse and no encoder can still edit a focused value. While a value has
+  focus, and only with the pointer over it, the wheel is the inner knob (one
+  step per 120-unit notch, wheel up = increase, no acceleration), Shift + wheel
+  or a horizontal wheel is the outer ring, and a middle-click is the push.
+  The `edit_focus` filter routes these into the same `EncoderController` path
+  as an encoder step, so the timeout restarts the same way; the ENC FIX keys
+  are not written. Anywhere else the wheel passes through, so the moving map
+  keeps its wheel zoom. With nothing focused the wheel does nothing, as
+  before; it never selects a value.
+- **`GCUSEL` becomes an annunciation output, not the source of truth.** If and
+  when `GCUSEL` is added, pyEfis may *publish* its focused target there so
+  other displays (the GCU faceplate) can annunciate it. pyEfis remains the one
+  writer for PFD focus. Not implemented in TK1: the key does not exist in
+  fix-gateway yet.
+- **Left to the GCU work.** Reconciling this with the mapper's own focus
+  machine (the unmerged `origin/gcu` branch in fix-gateway) is open. The likely
+  shape: the mapper owns focus only for targets that no pyEfis display is
+  editing, or it forwards its function buttons to pyEfis as focus requests.
+  The bar either way is that two writers never fight over `GCUSEL`
+  (one-key/one-writer).
+- **Colour check.** Section 3 suggests cyan. The HSI's selected-heading readout
+  box is already cyan-bordered and its heading bug is cyan, so a cyan *recolour*
+  or a ring drawn on the box edge would be invisible there. The focus ring is
+  therefore **outset from the value with a gap**, and it reads as a second,
+  separate outline even around a cyan box. The colour stays a one-line change
+  (`edit_focus.FOCUS_COLOR`) if the glass says otherwise.
 
 ## 1. Purpose
 
@@ -71,12 +121,12 @@ and the mapper consumes it (encoder keys are relative by convention).
 | `BARO` | exists (`ahrs.yaml`) | inHg; fine 0.01, coarse 0.1 |
 | `HEADBUG` | exists (`ahrs.yaml`) | degrees; wraps 0-359 (see `changeValueWrap`) |
 | `COURSE` | exists (`ahrs.yaml`) | degrees; wraps; proven via X-Plane RREF work |
-| `ALTSEL` | **to add** | selected altitude / altitude bug, ft; fine 100, coarse 1000. Add to `custom.yaml` first, upstream later |
+| `ALTSEL` | exists (`gcu.yaml`, fix-gateway #90) | selected altitude / altitude bug, ft; fine 100, coarse 1000. CAN-FIX 461 Selected Altitude matches it (DINT ft, -1000 to 60000). pyEfis also writes it from the tape box (#310) |
 | COM/NAV freqs | later | `com_radio.yaml` already defines radio keys; phase 3 |
 
 ### Edit focus (the one genuinely new idea)
 
-- `GCUSEL` (**to add**, string): the currently focused edit target —
+- `GCUSEL` (exists, `gcu.yaml`, fix-gateway #90; string): the currently focused edit target —
   `"BARO" | "HDG" | "CRS" | "ALT" | "NONE"` (extensible). Written ONLY by
   the mapper. TTL/auto-revert to `NONE` after ~10 s idle (mapper-enforced),
   so a bumped knob hours later doesn't silently retune something.
@@ -152,8 +202,11 @@ Deliberately NO direct pyEfis coupling.
 
 ## 7. Phases + acceptance
 
-- **P0 — contract:** this doc; add `ALTSEL` + `GCUSEL` to fix-gateway
-  custom.yaml. Accept: keys visible in netfix.
+- **P0 — contract:** this doc; add `ALTSEL` + `GCUSEL` to fix-gateway.
+  Accept: keys visible in netfix. *(Done. They first went into
+  `custom.yaml`, which an update never replaces once a user has edited
+  it, so older installs had to add them by hand. fix-gateway #90 moved
+  them to the shipped `database/gcu.yaml`.)*
 - **P1 — Octavi bridge + mapper:** daemon + `gcu` plugin; drive
   BARO/HEADBUG/COURSE/ALTSEL from the Octavi against X-Plane + main PFD.
   Accept: all four set-points editable by feel; focus annunciated on the
@@ -168,10 +221,13 @@ Deliberately NO direct pyEfis coupling.
 
 ## 8. Open questions
 
-- `ALTSEL` naming vs any emerging upstream convention (check canfix spec
-  for an existing selected-altitude parameter before inventing).
-- Focus annunciation on instruments: widget option (`gcusel_highlight`) vs
-  a generic screenbuilder decoration.
+- ~~`ALTSEL` naming vs any emerging upstream convention.~~ Resolved: CAN-FIX
+  already defines 461 Selected Altitude, which matches `ALTSEL`'s type and
+  range. fix-gateway's CAN-FIX map does not carry it yet. That mapping belongs
+  in fix-gateway, not in a second key.
+- ~~Focus annunciation on instruments: widget option (`gcusel_highlight`) vs
+  a generic screenbuilder decoration.~~ Resolved by section 0: a shared
+  drawing helper (`edit_focus.draw_edit_marks`) that each widget calls.
 - Does the GCU faceplate need its own encoder-editable fields (touch +
   knob), or is it display/softkeys only? (v1: display + softkeys only.)
 - Multi-GCU (two seats) — out of scope for v1; contract doesn't preclude.

@@ -28,6 +28,14 @@ v1 scope (see pyEfis#131 "Open questions -- RESOLVED"):
     last-selected tab (no runtime persistence);
   * a tab_section cannot be nested inside another tab_section.
 
+Encoder: each tab page inherits the enclosing screen's ``encoder`` /
+``encoder_button`` / ``encoder_outer`` / ``encoder_timeout`` keys, so an
+``encoder_order`` instrument inside a tab is driven by the screen's knob. Without this a page
+config carried only ``layout`` + ``instruments``, the page's encoder keys were
+None, and its controller silently never connected (AER-810). Every page
+connects to the same keys, but ``EncoderController`` ignores input while its
+page is not visible, so only the shown tab responds.
+
 Each tab's nested ``instruments:`` list is built through the exact same
 ``Screen`` (screenbuilder.py) that a top-level screen uses -- the tab content
 widget below *is* a ``Screen`` instance, constructed from an explicit config
@@ -39,7 +47,10 @@ nothing tab_section-specific about how a tab's contents get built or resized.
 
 import logging
 
+from PyQt6.QtGui import QFont, QFontInfo
 from PyQt6.QtWidgets import QWidget, QTabBar, QStackedWidget
+
+from pyefis.instruments.helpers import font_scale
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +60,28 @@ logger = logging.getLogger(__name__)
 _EMPTY_TAB_LABEL = "Tab 1"
 _EMPTY_TAB_LAYOUT = {"rows": 1, "columns": 1}
 
+# tab_position -> QTabBar.Shape. West/East also rotate the tab labels
+# vertically -- a side effect of the shape, not something set separately.
+_TAB_BAR_SHAPE = {
+    "top": QTabBar.Shape.RoundedNorth,
+    "bottom": QTabBar.Shape.RoundedSouth,
+    "left": QTabBar.Shape.RoundedWest,
+    "right": QTabBar.Shape.RoundedEast,
+}
+
+# Legibility floor for a scaled tab label. The bar is sized from its own
+# sizeHint(), so a label at the floor still fits its tab -- the floor only
+# stops a small Font size from shrinking the text past readable (pyEfis #223).
+_MIN_TAB_LABEL_PX = 8
+
 
 class TabSection(QWidget):
     """Container instrument: an ordered set of named tabs, each a nested
     ``Screen`` built from its own ``layout``/``instruments`` config, laid out
     against this widget's own box rather than the enclosing screen's."""
 
-    def __init__(self, screen, tabs=None, default_tab=0, font_family=None):
+    def __init__(self, screen, tabs=None, default_tab=0, font_family=None,
+                 font_percent=None):
         super().__init__(screen)
         # Deferred import: screenbuilder.py imports screenbuilder_factory,
         # which imports this module to bind build_tab_section -- importing
@@ -63,10 +89,19 @@ class TabSection(QWidget):
         from pyefis.screens.screenbuilder import Screen as ScreenBuilder
 
         self._font_family = font_family
+        self._fg_color = None
+        self._bg_color = None
+        self.tab_position = "top"
         self._pages = []
         self.tab_bar = QTabBar(self)
         self.tab_bar.setExpanding(False)
         self.tab_bar.setDrawBase(True)
+        if font_family:
+            font = QFont(self.tab_bar.font())
+            font.setFamily(font_family)
+            self.tab_bar.setFont(font)
+        # The inherited label size, before any Font size scaling.
+        self._base_font = QFont(self.tab_bar.font())
         self.stack = QStackedWidget(self)
 
         config_parent = screen.parent
@@ -79,11 +114,15 @@ class TabSection(QWidget):
                 "layout": tab.get("layout", _EMPTY_TAB_LAYOUT),
                 "instruments": tab.get("instruments", []) or [],
             }
+            for key in ("encoder", "encoder_button", "encoder_outer",
+                        "encoder_timeout"):
+                page_config[key] = screen.get_config_item(key)
             page = ScreenBuilder(parent=config_parent, config=page_config)
             self.stack.addWidget(page)  # reparents page's Qt widget to stack
             self._pages.append(page)
 
         self.default_tab = default_tab
+        self.font_percent = font_percent
         self._show_tab(default_tab if 0 <= default_tab < len(self._pages) else 0)
         self.tab_bar.currentChanged.connect(self._show_tab)
 
@@ -95,18 +134,129 @@ class TabSection(QWidget):
         self.tab_bar.blockSignals(False)
         self.stack.setCurrentIndex(index)
 
+    def show_tab_containing(self, widget):
+        """Show the tab whose page holds *widget*. Returns False if no page
+        of this section is an ancestor of it."""
+        for i in range(self.stack.count()):
+            page = self.stack.widget(i)
+            if page is widget or page.isAncestorOf(widget):
+                self._show_tab(i)
+                return True
+        return False
+
+    def show_tab_labelled(self, label):
+        """Show the tab labelled *label* (case-insensitive). Returns False
+        if this section has none. DEMO4: the kiosk's DEMOPAGE names a tab
+        by the label the attendee sees."""
+        want = str(label).strip().lower()
+        for i in range(self.tab_bar.count()):
+            if self.tab_bar.tabText(i).strip().lower() == want:
+                self._show_tab(i)
+                return True
+        return False
+
+    @property
+    def font_percent(self):
+        return self._font_percent
+
+    @font_percent.setter
+    def font_percent(self, value):
+        """Font size scales the tab LABELS only, as a multiplier on the
+        inherited label size -- not a fraction of this widget's height, which
+        is the whole container and would give huge labels (pyEfis #223).
+        Unset keeps today's size. A property so the apply_options setattr
+        after construction relayouts too: the bar is sized from sizeHint()."""
+        self._font_percent = value
+        font = QFont(self._base_font)
+        scale = font_scale(value)
+        if scale != 1.0:
+            font.setPixelSize(
+                max(_MIN_TAB_LABEL_PX, round(self._base_label_px() * scale)))
+        self.tab_bar.setFont(font)
+        self._layout_pages()
+
+    def _base_label_px(self):
+        """The inherited label size in pixels: the resolved size if the font
+        system reports one, else the requested size (a point size converted
+        at this widget's DPI), else a nominal 12 px."""
+        font = self._base_font
+        for px in (QFontInfo(font).pixelSize(), font.pixelSize()):
+            if px > 0:
+                return px
+        if font.pointSizeF() > 0:
+            return font.pointSizeF() * self.logicalDpiY() / 72.0
+        return 12
+
+    @property
+    def fg_color(self):
+        return self._fg_color
+
+    @fg_color.setter
+    def fg_color(self, value):
+        self._fg_color = value
+        self._apply_tab_bar_style()
+
+    @property
+    def bg_color(self):
+        return self._bg_color
+
+    @bg_color.setter
+    def bg_color(self, value):
+        self._bg_color = value
+        self._apply_tab_bar_style()
+
+    def _apply_tab_bar_style(self):
+        """Panel-designer override on top of the inherited (screenbuilder.py
+        central-palette) legibility floor. Unset (None, the default) means
+        no override -- the tab bar keeps reading the inherited palette."""
+        rules = []
+        if self._fg_color:
+            rules.append(f"color: {self._fg_color};")
+        if self._bg_color:
+            rules.append(f"background: {self._bg_color};")
+        self.tab_bar.setStyleSheet(
+            "QTabBar::tab { %s }" % " ".join(rules) if rules else ""
+        )
+
     def _layout_pages(self):
         """Position the tab bar + content area against THIS widget's own
-        box, then size every page (current tab or not) to that content
-        area -- the coordinate-space recursion pyEfis#131 calls out as the
-        real lift: a tab's instruments are laid out against the container's
-        box, never the enclosing screen's."""
-        bar_height = self.tab_bar.sizeHint().height()
-        self.tab_bar.setGeometry(0, 0, self.width(), bar_height)
-        content_height = max(0, self.height() - bar_height)
-        self.stack.setGeometry(0, bar_height, self.width(), content_height)
+        box, on whichever edge ``tab_position`` names, then size every page
+        (current tab or not) to that content area -- the coordinate-space
+        recursion pyEfis#131 calls out as the real lift: a tab's instruments
+        are laid out against the container's box, never the enclosing
+        screen's.
+
+        West/East bars are sized off ``sizeHint().width()`` -- rotating the
+        bar to a side shape rotates the tab labels too, but Qt keeps
+        reporting the bar's "thickness" (the dimension we need to reserve)
+        on the width axis of its sizeHint, not the height."""
+        tab_position = self.tab_position if self.tab_position in _TAB_BAR_SHAPE \
+            else "top"
+        self.tab_bar.setShape(_TAB_BAR_SHAPE[tab_position])
+        if tab_position in ("top", "bottom"):
+            bar_size = self.tab_bar.sizeHint().height()
+            content_w = self.width()
+            content_h = max(0, self.height() - bar_size)
+            if tab_position == "top":
+                bar_geom = (0, 0, self.width(), bar_size)
+                stack_geom = (0, bar_size, content_w, content_h)
+            else:
+                bar_geom = (0, content_h, self.width(), bar_size)
+                stack_geom = (0, 0, content_w, content_h)
+        else:
+            bar_size = self.tab_bar.sizeHint().width()
+            content_w = max(0, self.width() - bar_size)
+            content_h = self.height()
+            if tab_position == "left":
+                bar_geom = (0, 0, bar_size, self.height())
+                stack_geom = (bar_size, 0, content_w, content_h)
+            else:
+                bar_geom = (content_w, 0, bar_size, self.height())
+                stack_geom = (0, 0, content_w, content_h)
+        self.tab_bar.setGeometry(*bar_geom)
+        self.stack.setGeometry(*stack_geom)
         for page in self._pages:
-            page.setGeometry(0, 0, self.width(), content_height)
+            page.setGeometry(0, 0, content_w, content_h)
 
     def initScreen(self):
         """Called by the enclosing Screen's grid_layout(), right after this
@@ -133,3 +283,16 @@ class TabSection(QWidget):
                 logger.exception("tab_section: error closing a tab page")
         if event is not None:
             super().closeEvent(event)
+
+
+def reveal(widget):
+    """Bring *widget* on screen by switching every enclosing ``TabSection``
+    (nested ones included) to the tab that holds it. A widget not inside any
+    tab section is left alone. FP10: the map banner's Info and Create WPT
+    open pages on a flight_plan instrument that is usually on another tab of
+    the same section (the Beelink bench's Map / Flight Plan tabs)."""
+    w = widget.parentWidget() if widget is not None else None
+    while w is not None:
+        if isinstance(w, TabSection):
+            w.show_tab_containing(widget)
+        w = w.parentWidget()

@@ -1,0 +1,9 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "818116eb",
+ "run": "local: tools/render_nd_evidence.py --width 650 --height 1000 --font B612 --mode ctr --out out/panel",
+ "device": "AZW MINI S (offscreen)",
+ "sha256": "91cabbf77fe593347bc5f32c48a41ec52e49e9929859fc5a5a967c25dbcfa933",
+ "created_utc": "2026-11-09T21:48:09Z",
+ "commit_note": "rendered from `git archive 818116eb` in ~/bench-scratch/aer-5262/branch (no .git there, so the live lookup read \"unknown\")"
+}

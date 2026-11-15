@@ -1,0 +1,6 @@
+14:48:38 1_dto_page {'FPLSTATE': '0', 'DTOID': 'RZS', 'FPLCMD': '1 DTO', 'WPNAME': '', 'FPLCRS': '0.0', 'COURSE': '0.0', 'LAT': '34.4262', 'LONG': '-119.8415'}
+14:48:40 2_select_a_waypoint {'FPLSTATE': '0', 'DTOID': 'RZS', 'FPLCMD': '1 DTO', 'WPNAME': '', 'FPLCRS': '0.0', 'COURSE': '0.0', 'LAT': '34.4262', 'LONG': '-119.8415'}
+14:48:43 3_typed_rz {'FPLSTATE': '0', 'DTOID': 'RZS', 'FPLCMD': '1 DTO', 'WPNAME': '', 'FPLCRS': '0.0', 'COURSE': '0.0', 'LAT': '34.4262', 'LONG': '-119.8415'}
+14:48:47 4_dto_active_fplpage {'FPLSTATE': '2', 'DTOID': 'RZS', 'FPLCMD': '2 DTO', 'WPNAME': '', 'FPLCRS': '0.0', 'COURSE': '0.0', 'LAT': '34.4262', 'LONG': '-119.8415'}
+14:48:51 5_dto_active_fplpage_plus3s {'FPLSTATE': '2', 'DTOID': 'RZS', 'FPLCMD': '2 DTO', 'WPNAME': '', 'FPLCRS': '0.0', 'COURSE': '0.0', 'LAT': '34.4262', 'LONG': '-119.8415'}
+14:48:59 6_restored {'FPLSTATE': '2', 'DTOID': 'RZS', 'FPLCMD': '3 DTOX', 'WPNAME': '', 'FPLCRS': '0.0', 'COURSE': '0.0', 'LAT': '34.392858', 'LONG': '-119.841493'}

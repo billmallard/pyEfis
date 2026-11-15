@@ -34,8 +34,10 @@ import logging
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QProcess, qRound
+from PyQt6.QtCore import Qt, QEvent, QTimer, QRectF, QProcess, qRound
 from PyQt6.QtGui import QColor, QFont, QPainter
+from pyefis import kiosk
+from pyefis.instruments.helpers import font_scale
 from PyQt6.QtWidgets import (QWidget, QPushButton, QCheckBox, QScrollArea,
                              QVBoxLayout, QHBoxLayout, QLabel)
 
@@ -63,6 +65,10 @@ _BTN_STYLE = (
 
 _SEV_RANK = {"none": 0, "white": 1, "amber": 2}
 
+# `pyefis-data update` exit code when the software notice is not accepted
+# (mirrors pyefis_data.cli.NOTICE_RC). Nothing was installed.
+NOTICE_RC = 3
+
 
 def load_status(status_path):
     """Read the updater's status JSON. Returns the parsed dict, or None on any
@@ -72,6 +78,46 @@ def load_status(status_path):
         return json.loads(Path(os.path.expanduser(str(status_path))).read_text("utf-8"))
     except Exception:
         return None
+
+
+def panel_change(status):
+    """The pending ``panel_change`` block a config pull wrote into status.json
+    (CERT17; contract: makerplane-data ``docs/panel_change_cue.md``), or None
+    when nothing is waiting. Read defensively, like the rest of the file: a
+    missing key, a non-dict block or ``pending`` anything but true means no
+    banner. Independent of ``ok`` -- config-pull may write a status.json with
+    ``"ok": false`` and no packs, and the cue still shows."""
+    if not isinstance(status, dict):
+        return None
+    block = status.get("panel_change")
+    if not isinstance(block, dict) or block.get("pending") is not True:
+        return None
+    return block
+
+
+def _panel_hash(block):
+    """The full config hash to acknowledge, or None when the block has none."""
+    h = block.get("config_hash")
+    return h if isinstance(h, str) and h else None
+
+
+def panel_change_text(block):
+    """(title, body) for the panel-change banner. The wording is the proposal
+    in panel_change_cue.md, "Proposed cue"."""
+    title = ("PANEL CHANGED" if block.get("trigger") == "manual"
+             else "PANEL CHANGED AT BOOT")
+    ver = block.get("config_version")
+    what = f"Config v{ver}" if ver is not None else "A new config"
+    changed = block.get("changed")
+    when = ""
+    if isinstance(changed, str) and len(changed) >= 16:
+        # 2026-11-12T14:03:22Z -> 2026-11-12 14:03Z
+        when = f" {changed[:10]} {changed[11:16]}Z"
+    h = _panel_hash(block)
+    tag = f", hash {h[:12]}" if h else ""
+    body = (f"{what} installed{when}{tag}. Check every instrument shows the "
+            "right source before flight.")
+    return title, body
 
 
 def _parse_json(text):
@@ -115,6 +161,7 @@ def fmt_bytes(n):
 _KIND_GROUP = {
     "navdata": "Navigation Data", "obstacles": "Navigation Data",
     "cifp": "Navigation Data", "airports": "Navigation Data",
+    "procedures": "Navigation Data",
     "water": "Water", "highways": "Roads",
     "terrain": "Terrain", "charts": "Charts",
 }
@@ -470,12 +517,87 @@ class PackPicker(QWidget):
             self._chooser = None
 
 
+class NoticeAccept(QWidget):
+    """Full-screen software notice shown when ``update`` refuses because the
+    notice has not been accepted (``notice_required``). The text is the
+    updater's, shown in full; Accept re-runs the install with
+    ``--accept-notice``, which records that this screen displayed it and the
+    user accepted. Only ever reached from the picker, i.e. on the ground.
+
+    Callbacks: ``on_accept()``, ``on_decline()``."""
+
+    def __init__(self, parent=None, *, notice="", font_family="DejaVu Sans Condensed",
+                 on_accept=None, on_decline=None):
+        super().__init__(parent)
+        self.font_family = font_family
+        self._on_accept = on_accept or (lambda: None)
+        self._on_decline = on_decline or (lambda: None)
+        # Opaque, like PackPicker: nothing behind may bleed through the text.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background:#0B1015;")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(40, 24, 40, 20)
+        outer.setSpacing(16)
+        title = QLabel("Software notice")
+        title.setStyleSheet("color:#EEEEEE;")
+        title.setFont(self._f(22, bold=True))
+        outer.addWidget(title)
+        self.text_label = QLabel(notice)
+        self.text_label.setStyleSheet("color:#EEEEEE;")
+        self.text_label.setFont(self._f(21))
+        self.text_label.setWordWrap(True)
+        outer.addWidget(self.text_label)
+        sub = QLabel("Accept to continue the install. Decline installs nothing.")
+        sub.setStyleSheet("color:#8FA0AB;")
+        sub.setFont(self._f(15))
+        sub.setWordWrap(True)
+        outer.addWidget(sub)
+        outer.addStretch(1)
+        foot = QHBoxLayout()
+        self.btn_decline = QPushButton("Decline")
+        self.btn_accept = QPushButton("Accept")
+        for b in (self.btn_decline, self.btn_accept):
+            b.setStyleSheet(_BTN_STYLE)
+            b.setFont(self._f(18))
+            b.setMinimumSize(170, 54)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_decline.clicked.connect(lambda: self._on_decline())
+        self.btn_accept.clicked.connect(lambda: self._on_accept())
+        foot.addWidget(self.btn_decline)
+        foot.addStretch(1)
+        foot.addWidget(self.btn_accept)
+        outer.addLayout(foot)
+        if parent is not None:
+            # Track the host's size without the host having to know about us.
+            parent.installEventFilter(self)
+            self.setGeometry(0, 0, parent.width(), parent.height())
+
+    def _f(self, px, bold=False):
+        f = QFont(self.font_family)
+        f.setPixelSize(px)
+        f.setBold(bold)
+        return f
+
+    def eventFilter(self, obj, event):
+        if obj is self.parent() and event.type() == QEvent.Type.Resize:
+            self.setGeometry(0, 0, obj.width(), obj.height())
+        return False
+
+
 class DataStatus(QWidget):
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  status_path=DEFAULT_STATUS_PATH, continue_screen="PFD",
-                 update_command="pyefis-data"):
+                 update_command="pyefis-data", about_screen="About",
+                 font_percent=None):
         super().__init__(parent)
         self.font_family = font_family
+        self.about_screen = about_screen
+        # Font size: a multiplier on the region-derived text sizes set in
+        # resizeEvent (pyEfis #231). Only text scales; rows, columns and the
+        # button rects stay where they are, and every text draw is clipped to
+        # its rect, so a large value clips rather than overlapping.
+        self.font_percent = font_percent
         self.status_path = Path(os.path.expanduser(status_path))
         self.continue_screen = continue_screen
         self.update_command = update_command
@@ -492,19 +614,39 @@ class DataStatus(QWidget):
         self._source = None
         self._prog = None             # install progress: {index,total,name,pct}
         self._canceling = False       # True between Cancel tap and process exit
+        # Software-notice gate: the `notice_required` event of a refused
+        # install, the args to re-run on Accept, and the overlay showing it.
+        self._notice = None
+        self._install_args = None
+        self.notice_panel = None
+        # Panel-change cue (CERT17): the hash Acknowledge was pressed for, so
+        # the result can tell "a newer change arrived" from "not recorded".
+        self._ack_hash = None
+        self._banner_rect = QRectF()
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
+        # The always-reachable notice screen (BACKLOG L4).
+        self.btn_about = QPushButton("About", self)
         # Cancel button for the install/progress (busy) screen, so a long
         # transfer never traps the user. Hidden except in busy mode.
         self.btn_cancel_dl = QPushButton("Cancel", self)
         self.btn_cancel_dl.clicked.connect(self._cancel_download)
         self.btn_cancel_dl.setVisible(False)
-        for b in (self.btn_continue, self.btn_update, self.btn_cancel_dl):
+        # Acknowledge for the panel-change banner. Shown only while a change is
+        # pending; Continue stays available regardless.
+        self.btn_ack = QPushButton("Acknowledge", self)
+        self.btn_ack.clicked.connect(self._on_ack)
+        self.btn_ack.setVisible(False)
+        for b in (self.btn_continue, self.btn_update, self.btn_about,
+                  self.btn_cancel_dl, self.btn_ack):
             b.setStyleSheet(_BTN_STYLE)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_continue.clicked.connect(self._on_continue)
         self.btn_update.clicked.connect(self._on_update)
+        # DEMO4: a demo kiosk's packs are frozen before the show (brief 4).
+        self.btn_update.setEnabled(not kiosk.locked())
+        self.btn_about.clicked.connect(self._on_about)
 
         # Refresh periodically so a USB import (handled by the updater's udev
         # hook) or a background timer update shows up without interaction.
@@ -516,6 +658,7 @@ class DataStatus(QWidget):
     # --- data ---
     def reload(self):
         self.status = load_status(self.status_path)   # construct-never-raises
+        self._sync_visibility()
         self.update()
 
     def showEvent(self, event):
@@ -532,6 +675,47 @@ class DataStatus(QWidget):
             except Exception as e:
                 log.warning("Continue action failed: %s", e)
         log.info("Continue pressed (no HMI action available)")
+
+    def _on_about(self):
+        from pyefis import hmi
+        if getattr(hmi, "actions", None) is not None:
+            try:
+                hmi.actions.trigger("show screen", self.about_screen)
+            except Exception as e:
+                log.warning("About action failed: %s", e)
+
+    def _on_ack(self):
+        """Acknowledge the panel change on the banner. Passes the full hash of
+        the change displayed, so panel-ack refuses (exit 2) if a later pull has
+        installed a different config since."""
+        block = panel_change(self.status)
+        h = _panel_hash(block) if block else None
+        if h is None or self._proc is not None or self.mode != "status":
+            return
+        self._ack_hash = h
+        self.btn_ack.setEnabled(False)
+        self.message = "Recording acknowledgement…"
+        self.update()
+        self._run(["panel-ack", "--yes", "--hash", h, "--json"], self._after_ack)
+
+    def _after_ack(self, code, out):
+        shown, self._ack_hash = self._ack_hash, None
+        self.reload()                 # panel-ack rewrote status.json
+        block = panel_change(self.status)
+        now = _panel_hash(block) if block else None
+        if now is not None and now != shown:
+            # Exit 2: the installed config is no longer the one shown. The
+            # reload above put the newer change on the banner.
+            self.message = ("A newer panel change was installed. Check it, then "
+                            "acknowledge again.")
+        elif code == 0 and now is None:
+            self.message = "Panel change acknowledged."
+        else:
+            # Exit 2 with the same change still installed: the record could
+            # not be written.
+            self.message = "Couldn't record the acknowledgement. Try again."
+        self._sync_visibility()
+        self.update()
 
     # --- subprocess plumbing ---
     def _run(self, args, on_finish, on_line=None):
@@ -588,7 +772,8 @@ class DataStatus(QWidget):
         self._close_picker()
         self.mode = "status"
         self.message = message
-        self.btn_update.setEnabled(True)
+        self.btn_update.setEnabled(not kiosk.locked())
+        self._ack_hash = None
         self._sync_visibility()
         self.update()
 
@@ -596,7 +781,7 @@ class DataStatus(QWidget):
     def _on_update(self):
         """Tapping Update no longer blindly runs an OTA update; it first asks
         what sources are available, then shows the pack picker."""
-        if self._proc is not None or self.mode != "status":
+        if self._proc is not None or self.mode != "status" or kiosk.locked():
             return
         self.message = "Checking for updates…"
         self.btn_update.setEnabled(False)
@@ -696,6 +881,11 @@ class DataStatus(QWidget):
             args += ["--source", self._source]
         if chosen_root:                          # picker storage chooser changed it
             args += ["--root", chosen_root]
+        self._start_install(args)
+
+    def _start_install(self, args):
+        self._notice = None
+        self._install_args = args
         self._run(args, self._after_install, on_line=self._on_progress_line)
 
     def _on_progress_line(self, line):
@@ -718,6 +908,9 @@ class DataStatus(QWidget):
             if self._prog is None:
                 self._prog = {"total": 0, "index": 0, "name": ""}
             self._prog["pct"] = ev.get("pct")
+        elif kind == "notice_required":
+            self._notice = ev                     # acted on when the run exits
+            return
         else:
             return
         if self.mode == "busy":
@@ -764,15 +957,58 @@ class DataStatus(QWidget):
                 else:
                     self._fail("Update canceled — your data is unchanged.")
                 return
+        if code == NOTICE_RC and (self._notice or {}).get("notice"):
+            self._show_notice(self._notice["notice"])
+            return
         self._close_picker()
         self.mode = "status"
         self._prog = None
-        self.btn_update.setEnabled(True)
+        self.btn_update.setEnabled(not kiosk.locked())
         self.message = ("Update complete." if code == 0 else
                         "Update finished with problems — your previous data is "
                         "still in place. See the rows above.")
         self._sync_visibility()
         self.reload()                 # the updater also rewrote status.json
+
+    def _show_notice(self, text):
+        """The updater refused: nothing was installed. Show its notice in full
+        over the (hidden) picker; the selection survives for the re-run."""
+        self._close_notice()
+        self.notice_panel = NoticeAccept(
+            self, notice=text, font_family=self.font_family,
+            on_accept=self._accept_notice, on_decline=self._decline_notice)
+        self.mode = "notice"
+        self.message = ""
+        self._prog = None
+        self._sync_visibility()
+        self.notice_panel.show()
+        self.notice_panel.raise_()
+        self.update()
+
+    def _accept_notice(self):
+        """Re-run the same install, telling the updater this screen showed the
+        full notice and the user accepted (it records that, then installs)."""
+        if self._proc is not None or self._install_args is None:
+            return
+        args = list(self._install_args)
+        if "--accept-notice" not in args:
+            args.append("--accept-notice")
+        self._close_notice()
+        self.mode = "busy"
+        self.message = "Installing… large packs can take several minutes."
+        self._sync_visibility()
+        self.update()
+        self._start_install(args)
+
+    def _decline_notice(self):
+        self._close_notice()
+        self._fail("Notice not accepted — nothing was installed.")
+
+    def _close_notice(self):
+        if self.notice_panel is not None:
+            self.notice_panel.hide()
+            self.notice_panel.deleteLater()
+            self.notice_panel = None
 
     def _close_picker(self):
         if self.picker is not None:
@@ -787,7 +1023,12 @@ class DataStatus(QWidget):
         status_mode = self.mode == "status"
         self.btn_continue.setVisible(status_mode)
         self.btn_update.setVisible(status_mode)
+        self.btn_about.setVisible(status_mode)
         self.btn_cancel_dl.setVisible(self.mode == "busy")
+        block = panel_change(self.status)
+        self.btn_ack.setVisible(status_mode and block is not None)
+        self.btn_ack.setEnabled(block is not None and _panel_hash(block) is not None
+                                and self._ack_hash is None)
         if self.mode == "busy":
             self.btn_cancel_dl.raise_()
         if self.picker is not None:
@@ -798,23 +1039,36 @@ class DataStatus(QWidget):
     def resizeEvent(self, event):
         w, h = self.width(), self.height()
         self.row_h = max(16, qRound(h * 0.055))
+        scale = font_scale(self.font_percent)
         self.font = QFont(self.font_family)
-        self.font.setPixelSize(qRound(self.row_h * 0.62))
+        self.font.setPixelSize(max(1, qRound(self.row_h * 0.62 * scale)))
         self.title_font = QFont(self.font_family)
-        self.title_font.setPixelSize(qRound(self.row_h * 0.85))
-        self.font.setPixelSize(qRound(self.row_h * 0.62))
+        self.title_font.setPixelSize(max(1, qRound(self.row_h * 0.85 * scale)))
 
         bw, bh = qRound(w * 0.22), qRound(h * 0.10)
         by = h - bh - qRound(h * 0.05)
         self.btn_continue.setGeometry(qRound(w * 0.10), by, bw, bh)
         self.btn_update.setGeometry(qRound(w * 0.68), by, bw, bh)
+        self.btn_about.setGeometry((w - bw) // 2, by, bw, bh)
         f = QFont(self.font_family)
-        f.setPixelSize(qRound(bh * 0.4))
+        f.setPixelSize(max(1, qRound(bh * 0.4 * scale)))
         self.btn_continue.setFont(f)
         self.btn_update.setFont(f)
+        self.btn_about.setFont(f)
         # Cancel sits centred below the progress bar in the busy screen.
         self.btn_cancel_dl.setGeometry((w - bw) // 2, qRound(h * 0.62), bw, bh)
         self.btn_cancel_dl.setFont(f)
+        # Panel-change banner: under the title, above the pack list (title at
+        # 0.10h + 1.8 rows, as in paintEvent). Acknowledge sits at its right.
+        x = qRound(w * 0.10)
+        top = qRound(h * 0.10) + qRound(self.row_h * 1.8)
+        self._banner_rect = QRectF(x, top, w - 2 * x, self.row_h * 4.2)
+        aw, ah = qRound(w * 0.18), qRound(self.row_h * 1.8)
+        self.btn_ack.setGeometry(qRound(self._banner_rect.right()) - aw - qRound(self.row_h * 0.4),
+                                 qRound(self._banner_rect.center().y()) - ah // 2, aw, ah)
+        af = QFont(self.font_family)
+        af.setPixelSize(max(1, qRound(ah * 0.4 * scale)))
+        self.btn_ack.setFont(af)
         if self.picker is not None:
             self.picker.setGeometry(0, 0, w, h)
 
@@ -885,6 +1139,10 @@ class DataStatus(QWidget):
                        f"catalog {gen[:10]}")
         y += qRound(self.row_h * 1.8)
 
+        block = panel_change(self.status)
+        if block is not None:
+            y = self._paint_banner(p, block)
+
         p.setFont(self.font)
         if not self.status or not self.status.get("ok"):
             p.setPen(SEVERITY_COLORS["white"])
@@ -908,6 +1166,32 @@ class DataStatus(QWidget):
             p.setPen(SEVERITY_COLORS["white"])
             p.drawText(QRectF(x, h * 0.74, w - 2 * x, self.row_h), flags, self.message)
 
+    def _paint_banner(self, p, block):
+        """Amber panel-change banner (CERT17). Returns the y the pack list
+        starts at below it."""
+        r = self._banner_rect
+        amber = SEVERITY_COLORS["amber"]
+        p.setPen(amber)
+        p.setBrush(QColor(amber.red(), amber.green(), amber.blue(), 40))
+        p.drawRoundedRect(r, 6, 6)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        title, body = panel_change_text(block)
+        pad = self.row_h * 0.4
+        text_w = self.btn_ack.x() - r.x() - 2 * pad
+        bold = QFont(self.font)
+        bold.setBold(True)
+        p.setFont(bold)
+        p.drawText(QRectF(r.x() + pad, r.y() + pad * 0.5, text_w, self.row_h),
+                   int(Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft
+                       | Qt.AlignmentFlag.AlignVCenter), title)
+        p.setFont(self.font)
+        p.setPen(SEVERITY_COLORS["white"])
+        p.drawText(QRectF(r.x() + pad, r.y() + pad * 0.5 + self.row_h, text_w,
+                          r.height() - self.row_h - pad),
+                   int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft
+                       | Qt.AlignmentFlag.AlignTop), body)
+        return qRound(r.bottom() + self.row_h * 0.6)
+
 
 class DataAnnunciation(QWidget):
     """A small, persistent 'DATA' flag for the flight (PFD) view.
@@ -919,9 +1203,15 @@ class DataAnnunciation(QWidget):
     """
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
-                 status_path=DEFAULT_STATUS_PATH, target_screen="DataStatus"):
+                 status_path=DEFAULT_STATUS_PATH, target_screen="DataStatus",
+                 font_percent=None):
         super().__init__(parent)
         self.font_family = font_family
+        # Font size: a multiplier on the height-derived flag text (pyEfis
+        # #232). The 8 px legibility floor stays; "DATA" is drawn clipped to
+        # the flag's rect, so text at the floor in a tiny flag truncates
+        # rather than spilling over the PFD around it.
+        self.font_percent = font_percent
         self.status_path = os.path.expanduser(status_path)
         self.target_screen = target_screen
         self.status = None
@@ -950,7 +1240,8 @@ class DataAnnunciation(QWidget):
 
     def resizeEvent(self, event):
         self.font = QFont(self.font_family)
-        self.font.setPixelSize(max(8, qRound(self.height() * 0.7)))
+        self.font.setPixelSize(
+            max(8, qRound(self.height() * 0.7 * font_scale(self.font_percent))))
 
     def paintEvent(self, event):
         sev = worst_severity(self.status)

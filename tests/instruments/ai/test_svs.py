@@ -9,6 +9,7 @@ import math
 import struct
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -19,7 +20,6 @@ from pyefis.instruments.ai.svs import (
     tile_name, load_tile, elevation_at,
     COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
     SRTM3_SAMPLES, SRTM3_VOID, _WATER_SENTINEL,
-    POLAR_DEFAULTS,
 )
 from pyefis.instruments.ai import AI
 
@@ -155,6 +155,59 @@ class TestTileCache:
 
 
 # ---------------------------------------------------------------------------
+# _sample_elevations tile dedup (AER-621 perf fix): the tile-coordinate
+# dedup used to call np.unique(..., axis=0), which profiled 30x+ slower
+# than a packed-scalar 1-D np.unique for the same handful of distinct
+# tiles -- it dominated the highways worker's wall time on the LOS
+# sample grid. These pin the CORRECTNESS of the packed-int replacement
+# (every point still samples from its own tile, across tile and
+# hemisphere boundaries), not just its speed.
+# ---------------------------------------------------------------------------
+
+class TestSampleElevationsTileDedup:
+    def test_points_across_two_tiles_sample_correct_tile(self, tmp_path):
+        _make_tile_dir(tmp_path, 32, -97, elevation=1000)
+        _make_tile_dir(tmp_path, 33, -97, elevation=2000)
+        root = tmp_path / "srtm3"
+        r = SVSRenderer({"tile_path": str(root)})
+        assert r.cache is not None
+        lat_grid = np.array([[32.5, 33.5]])
+        lon_grid = np.array([[-96.5, -96.5]])
+        elev_m, is_water = r._sample_elevations(lat_grid, lon_grid)
+        assert abs(float(elev_m[0, 0]) - 1000.0) < 1.0
+        assert abs(float(elev_m[0, 1]) - 2000.0) < 1.0
+        assert not is_water[0, 0] and not is_water[0, 1]
+
+    def test_negative_longitude_tiles_pack_and_unpack_correctly(
+            self, tmp_path):
+        # Negative lon (western hemisphere) exercises the packing
+        # offset -- a regression here would have shown up as scrambled
+        # (lat, lon) tile keys west of the prime meridian.
+        _make_tile_dir(tmp_path, 32, -118, elevation=300)
+        _make_tile_dir(tmp_path, 32, -117, elevation=900)
+        root = tmp_path / "srtm3"
+        r = SVSRenderer({"tile_path": str(root)})
+        lat_grid = np.array([[32.5, 32.5]])
+        lon_grid = np.array([[-117.5, -116.5]])
+        elev_m, _ = r._sample_elevations(lat_grid, lon_grid)
+        assert abs(float(elev_m[0, 0]) - 300.0) < 1.0
+        assert abs(float(elev_m[0, 1]) - 900.0) < 1.0
+
+    def test_many_duplicate_points_same_tile_still_correct(self, tmp_path):
+        # A grid that repeats the same handful of tile keys thousands of
+        # times (the LOS sample-grid shape that motivated the fix).
+        _make_tile_dir(tmp_path, 32, -97, elevation=555)
+        root = tmp_path / "srtm3"
+        r = SVSRenderer({"tile_path": str(root)})
+        rng = np.random.default_rng(0)
+        lat_grid = 32.0 + rng.random((500, 23)) * 0.9
+        lon_grid = -97.0 + rng.random((500, 23)) * 0.9
+        elev_m, is_water = r._sample_elevations(lat_grid, lon_grid)
+        assert np.all(np.abs(elev_m - 555.0) < 1.0)
+        assert not is_water.any()
+
+
+# ---------------------------------------------------------------------------
 # SVSRenderer configuration
 # ---------------------------------------------------------------------------
 
@@ -198,9 +251,186 @@ class TestSVSRendererConfig:
         assert r._clearance_color(-50)  == COLOR_CONFLICT
 
 
+class TestTerrainPalette:
+    """Issue #394: the `palette` SVS option (configurator `svs_palette`)
+    recolours the five clearance bands on the OpenGL path. Before the fix
+    the terrain fragment shader hard-coded the stock colours and the
+    chosen palette reached no draw path at all."""
+
+    @staticmethod
+    def _rgb01(qcolors):
+        return tuple((c.redF(), c.greenF(), c.blueF()) for c in qcolors)
+
+    @pytest.mark.parametrize("name", ["clearance", "subdued",
+                                      "high_contrast"])
+    def test_palette_rgb01_matches_palettes_table(self, name):
+        from pyefis.instruments.ai.svs import _PALETTES
+        r = SVSRenderer({"enabled": True, "palette": name})
+        assert r.palette_rgb01() == self._rgb01(_PALETTES[name])
+
+    def test_default_and_unknown_palette_are_stock(self):
+        from pyefis.instruments.ai.svs import COLOR_WATER
+        stock = self._rgb01((COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING,
+                             COLOR_CONFLICT, COLOR_WATER))
+        assert SVSRenderer({"enabled": True}).palette_rgb01() == stock
+        assert SVSRenderer({"enabled": True,
+                            "palette": "nonsense"}).palette_rgb01() == stock
+
+    def test_non_stock_palettes_change_every_band(self):
+        stock = SVSRenderer({"enabled": True}).palette_rgb01()
+        for name in ("subdued", "high_contrast"):
+            bands = SVSRenderer({"enabled": True,
+                                 "palette": name}).palette_rgb01()
+            for i, (got, base) in enumerate(zip(bands, stock)):
+                assert got != base, f"{name} band {i} equals stock"
+
+    def test_terrain_shader_takes_bands_as_uniforms(self):
+        """The fragment shader must read the band colours from uniforms,
+        not compile-time constants, or no palette can reach the glass."""
+        import re
+        from pyefis.instruments.ai.svs_gl import (_FRAG_BODY,
+                                                  _PALETTE_UNIFORMS)
+        for name in _PALETTE_UNIFORMS:
+            assert re.search(rf"uniform\s+vec3\s+{name}\s*;", _FRAG_BODY), name
+            assert not re.search(rf"const\s+vec3\s+{name}\b", _FRAG_BODY)
+            # ...and the shader actually uses it.
+            assert re.search(rf"base\s*=\s*{name}\s*;", _FRAG_BODY), name
+
+    @pytest.mark.parametrize("name", ["clearance", "subdued",
+                                      "high_contrast"])
+    def test_gl_uploads_selected_palette(self, name):
+        """GL-free: the per-frame upload hands the selected palette to the
+        COLOR_* uniform locations resolved at link time."""
+        from pyefis.instruments.ai.svs import _PALETTES
+        from pyefis.instruments.ai.svs_gl import (SVSGLRenderer,
+                                                  _PALETTE_UNIFORMS)
+        r = SVSRenderer({"enabled": True, "palette": name})
+        gl = SVSGLRenderer(r)
+        gl._u = {u: 40 + i for i, u in enumerate(_PALETTE_UNIFORMS)}
+        prog = mock.Mock()
+        gl._set_palette_uniforms(prog)
+        got = {c.args[0]: c.args[1:] for c in
+               prog.setUniformValue.call_args_list}
+        want = dict(zip(gl._u.values(), self._rgb01(_PALETTES[name])))
+        assert got == want
+
+    def test_gl_render_recolours_terrain(self, tmp_path):
+        """Real GL: the same flat CAUTION-band scene renders in each
+        palette's caution colour. Skips without a GL context (CI)."""
+        from PyQt6.QtGui import QImage
+        root = _make_tile_dir(tmp_path, 32, -97, elevation=500)
+        px = {}
+        for name in ("clearance", "subdued", "high_contrast"):
+            r = SVSRenderer({
+                "enabled": True, "tile_path": str(root),
+                "renderer": "opengl", "palette": name,
+                "range_nm": 30, "auto_range": False,
+                "terrain_texture": 0.0, "terrain_grid": 0.0,
+            })
+            img = QImage(400, 300, QImage.Format.Format_RGB32)
+            img.fill(0x000000)
+            painter = QPainter(img)
+            try:
+                # 500 m terrain = 1640 ft; 2400 ft MSL -> ~760 ft clearance,
+                # inside the 500..1000 ft CAUTION band.
+                r.draw(painter, 400, 300, 32.5, -96.5, 2400.0,
+                       -10.0, 0.0, 0.0, 12.0)
+            finally:
+                painter.end()
+            if r.gl_failed or r._gl_draw_failures or r._gl_renderer is None:
+                pytest.skip("no GL context in this environment")
+            px[name] = img.pixelColor(200, 280).getRgb()[:3]
+        assert px["subdued"] != px["clearance"]
+        assert px["high_contrast"] != px["clearance"]
+        # high_contrast caution (245,190,0) is brighter than stock
+        # (180,130,0), subdued (120,95,15) darker, in red and green.
+        for ch in (0, 1):
+            assert px["subdued"][ch] < px["clearance"][ch] \
+                < px["high_contrast"][ch], px
+
+
+class TestSVSPerfLogForce:
+    """AER-1976: svs_capture.py's --perf-log forces one summary report so a
+    single-shot capture (which typically settles well under the profiler's
+    own 2s REPORT_INTERVAL_S) still prints highways.worker_ms. Pin the
+    force path here, GL-free, on `_SVSPerfLog` itself -- see
+    tests/tools/test_svs_capture.py for the CLI-parsing half."""
+
+    def test_disabled_profiler_never_reports_even_when_forced(self):
+        r = SVSRenderer({"perf_log": False})
+        assert r._perf.enabled is False
+        assert r._perf.maybe_report(force=True) is False
+
+    def test_unforced_report_waits_for_the_interval(self, caplog):
+        r = SVSRenderer({"perf_log": True})
+        r._perf.add_ns("highways.worker_ms", 12_000_000)  # 12ms, 1 call
+        with caplog.at_level("INFO"):
+            reported = r._perf.maybe_report()
+        assert reported is False
+        assert not caplog.records
+
+    def test_forced_report_bypasses_the_interval_and_logs_the_metric(self, caplog):
+        r = SVSRenderer({"perf_log": True})
+        r._perf.add_ns("highways.worker_ms", 12_000_000)  # 12ms, 1 call
+        with caplog.at_level("INFO"):
+            reported = r._perf.maybe_report(force=True)
+        assert reported is True
+        assert any("highways.worker_ms" in rec.getMessage()
+                    for rec in caplog.records)
+
+    def test_forced_report_still_resets_the_accumulator(self, caplog):
+        # A forced report must not leave stale timings to double-count into
+        # the next natural (unforced) report.
+        r = SVSRenderer({"perf_log": True})
+        r._perf.add_ns("highways.worker_ms", 12_000_000)
+        with caplog.at_level("INFO"):
+            r._perf.maybe_report(force=True)
+        assert r._perf._accum == {}
+        assert r._perf._count == {}
+
+
 # ---------------------------------------------------------------------------
 # AI widget integration
 # ---------------------------------------------------------------------------
+
+
+def _build_tessellated_single_ring_db(tmp_path, n_verts=40):
+    """#100 fixture: one single-ring ``lake`` row (no ``rings`` blob)
+    carrying stored fan triangles over ``n_verts`` vertices on a circle
+    around (24.5, -81.7) — the shape the builder emits for every
+    single-ring row, but denser than the reader caps under test."""
+    import math
+    import sqlite3
+    import struct
+    from pyefis.instruments.ai.water_db import encode_vertices
+    verts = [(24.5 + 0.2 * math.sin(2 * math.pi * k / n_verts),
+              -81.7 + 0.2 * math.cos(2 * math.pi * k / n_verts))
+             for k in range(n_verts)]
+    tris = []
+    for k in range(1, n_verts - 1):
+        tris += [0, k, k + 1]
+    path = tmp_path / "water.sqlite"
+    con = sqlite3.connect(str(path))
+    con.execute("""
+        CREATE TABLE water_polygons (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            min_lat   REAL NOT NULL, max_lat   REAL NOT NULL,
+            min_lon   REAL NOT NULL, max_lon   REAL NOT NULL,
+            kind      TEXT NOT NULL, elev_ft   REAL,
+            vertices  BLOB NOT NULL, triangles BLOB, rings BLOB)
+    """)
+    con.execute(
+        "INSERT INTO water_polygons "
+        "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+        " vertices, triangles, rings) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (24.3, 24.7, -81.9, -81.5, "lake", 0.0,
+         encode_vertices(verts), struct.pack(f"<{len(tris)}H", *tris),
+         None))
+    con.commit()
+    con.close()
+    return path, verts, tris
+
 
 class TestAISVSIntegration:
     def test_ai_svs_none_by_default(self, fix, qtbot):
@@ -344,6 +574,49 @@ class TestAISVSIntegration:
         widget.show()
         qtbot.waitExposed(widget)
         widget.paintEvent(QPaintEvent(widget.rect()))
+
+    def test_svs_item_rebuild_survives_attr_clobber(self, fix, qtbot, tmp_path):
+        """AER-1713: when the old SVS item's C++ object has been destroyed
+        (resizeEvent's own comment: "seen on eglfs (Pi), where fullscreen
+        startup produces extra resize events with the old scene destroyed in
+        between"), _attach_svs_item_if_ready has to rebuild the wrapper. If
+        it rebuilds around self.svs (which the screenbuilder commonly
+        clobbers to the raw config dict, as in the clobber tests above)
+        instead of the live renderer, the new item's paint() reads `.ready`
+        off a dict and raises; Qt swallows exceptions from paint(), so every
+        SVS layer silently stops drawing after the very next rebuild."""
+        from PyQt6 import sip
+
+        root = _make_tile_dir(tmp_path, 32, -97)
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(400, 300)
+        cfg = {"enabled": True, "tile_path": str(root)}
+        widget.set_svs_config(cfg)
+        widget.show()
+        qtbot.waitExposed(widget)
+        real_renderer = widget._svs_renderer
+        assert isinstance(real_renderer, SVSRenderer)
+
+        # The screenbuilder clobber: self.svs becomes the config dict.
+        widget.svs = cfg
+        old_item = widget._svs_item
+
+        # Simulate the old item's C++ object being destroyed with its scene
+        # (the eglfs/Pi race resizeEvent's own comment documents) so the
+        # rebuild path in _attach_svs_item_if_ready is exercised directly.
+        sip.delete(old_item)
+        with pytest.raises(RuntimeError):
+            old_item.scene()  # confirms the old wrapper really is gone
+
+        widget._attach_svs_item_if_ready()
+
+        new_item = widget._svs_item
+        assert new_item is not old_item
+        assert new_item._renderer is real_renderer          # not the dict
+        assert isinstance(new_item._renderer, SVSRenderer)
+        assert new_item._renderer.ready                     # no AttributeError
+        widget.paintEvent(QPaintEvent(widget.rect()))        # still paints
 
     def test_ai_construction_tolerates_missing_fpm_key(self, fix, qtbot,
                                                       monkeypatch, caplog):
@@ -530,9 +803,41 @@ class TestWaterDB:
         polys = list(db.polygons_in_range(24.5, -81.7, 60.0))
         assert len(polys) == 1
         poly = polys[0]
-        assert poly.rings == [4, 8]
+        assert poly.rings == (4, 8)
         assert len(poly.vertices) == 8
         assert np.array_equal(poly.outer_vertices, outer)
+
+    def test_single_ring_tessellated_row_skips_redecimation(
+            self, tmp_path):
+        """#100: a single-ring row with stored triangles is never
+        stride-decimated on load, even when it has more vertices than
+        the reader's cap — the stored indices address the full array,
+        so decimating the vertices alone would leave them dangling."""
+        from pyefis.instruments.ai.water_db import WaterDB
+        path, verts, tris = _build_tessellated_single_ring_db(tmp_path)
+        db = WaterDB(path, max_vertices=16)
+        polys = list(db.polygons_in_range(24.5, -81.7, 60.0))
+        assert len(polys) == 1
+        poly = polys[0]
+        assert poly.rings is None
+        assert len(poly.vertices) == len(verts)
+        assert poly.triangles == tuple(tris)
+        assert max(poly.triangles) < len(poly.vertices)
+
+    def test_untessellated_row_still_decimated_to_cap(self, tmp_path):
+        """#100 keeps the load cap for legacy rows without stored
+        triangles — the only rows it can apply to safely."""
+        import math
+        from pyefis.instruments.ai.water_db import WaterDB
+        verts = [(24.5 + 0.2 * math.sin(2 * math.pi * k / 40),
+                  -81.7 + 0.2 * math.cos(2 * math.pi * k / 40))
+                 for k in range(40)]
+        path = self._build_db(tmp_path, [("lake", 0.0, verts)])
+        db = WaterDB(path, max_vertices=16)
+        polys = list(db.polygons_in_range(24.5, -81.7, 60.0))
+        assert len(polys) == 1
+        assert polys[0].triangles is None
+        assert len(polys[0].vertices) == 16
 
     def test_pre_rings_db_reads_with_rings_none(self, tmp_path):
         """A pre-#44 database (no rings column) stays readable; every
@@ -594,6 +899,152 @@ class TestWaterDB:
         p2 = list(db.polygons_in_range(34.005, -120.0, 30.0))[0]
         assert p2 is p1
         assert len(db._poly_cache) == 1
+
+    def _build_multiring_db(self, tmp_path, extra_rows=()):
+        """One multi-ring lake row (outer ring + island hole, with
+        triangles + rings blobs) plus any *extra_rows* -- each a
+        ``(kind, elev_ft, verts, min_lat, max_lat, min_lon, max_lon)``
+        tuple for a single-ring row. Returns (path, outer, hole)."""
+        import sqlite3
+        import struct
+        from pyefis.instruments.ai.water_db import encode_vertices
+        outer = [(24.0, -82.5), (25.0, -82.5),
+                 (25.0, -81.0), (24.0, -81.0)]
+        hole = [(24.5, -81.8), (24.5, -81.7),
+                (24.6, -81.7), (24.6, -81.8)]
+        tris = struct.pack("<6H", 0, 1, 2, 0, 2, 3)
+        rings = struct.pack("<2H", 4, 8)
+        path = tmp_path / "water.sqlite"
+        con = sqlite3.connect(str(path))
+        con.execute("""
+            CREATE TABLE water_polygons (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                min_lat   REAL NOT NULL, max_lat   REAL NOT NULL,
+                min_lon   REAL NOT NULL, max_lon   REAL NOT NULL,
+                kind      TEXT NOT NULL, elev_ft   REAL,
+                vertices  BLOB NOT NULL, triangles BLOB, rings BLOB)
+        """)
+        con.execute(
+            "INSERT INTO water_polygons "
+            "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+            " vertices, triangles, rings) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (24.0, 25.0, -82.5, -81.0, "lake", 10.0,
+             encode_vertices(outer + hole), tris, rings))
+        for kind, elev_ft, verts, min_lat, max_lat, min_lon, max_lon in \
+                extra_rows:
+            con.execute(
+                "INSERT INTO water_polygons "
+                "(min_lat, max_lat, min_lon, max_lon, kind, elev_ft, "
+                " vertices) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (min_lat, max_lat, min_lon, max_lon, kind, elev_ft,
+                 encode_vertices(verts)))
+        con.commit()
+        con.close()
+        return path, outer, hole
+
+    def test_mutating_yielded_polygon_fails_loudly_and_leaves_cache_intact(
+            self, tmp_path):
+        """AER-1093 (the AER-1091 fault class): a consumer that mutates
+        a yielded WaterPolygon -- by reference (field reassignment) or
+        in place (vertices/triangles/rings) -- must fail loudly instead
+        of silently corrupting the shared cache entry. Regardless of
+        whether the mutation is attempted, a later collect cycle over
+        the same window must see geometry identical to a freshly
+        constructed, cache-cold WaterDB -- B11's missing "output
+        identical to the uncached path" half of the DoD."""
+        import dataclasses
+        from pyefis.instruments.ai.water_db import WaterDB
+        path, outer, hole = self._build_multiring_db(tmp_path)
+
+        db = WaterDB(path, max_vertices=6)
+        poly = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+
+        # Field reassignment: WaterPolygon is a frozen dataclass.
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            poly.elev_ft = 999.0
+
+        # In-place vertex write: vertices is a read-only ndarray.
+        with pytest.raises(ValueError):
+            poly.vertices[0, 0] = 999.0
+
+        # triangles/rings are tuples: neither item assignment nor
+        # .append (a consumer treating them as the old list type) works.
+        with pytest.raises(TypeError):
+            poly.triangles[0] = 999
+        with pytest.raises(AttributeError):
+            poly.triangles.append(999)
+        with pytest.raises(TypeError):
+            poly.rings[0] = 999
+        with pytest.raises(AttributeError):
+            poly.rings.append(999)
+
+        # None of the above landed (they all raised before mutating
+        # anything) -- confirm the shared cache entry is still exactly
+        # what a cache-cold WaterDB over the same window decodes.
+        again = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+        cold = WaterDB(path, max_vertices=6)
+        fresh = list(cold.polygons_in_range(24.5, -81.7, 60.0))[0]
+        assert again.elev_ft == fresh.elev_ft == 10.0
+        assert np.array_equal(again.vertices, fresh.vertices)
+        assert again.triangles == fresh.triangles
+        assert again.rings == fresh.rings
+
+    def test_repeated_overlapping_window_queries_decode_each_row_once(
+            self, tmp_path, monkeypatch):
+        """B11's missing decode-count spy: N ``polygons_in_range`` calls
+        over an overlapping moving window must decode a given row
+        exactly once -- the whole point of the #124 cache."""
+        from pyefis.instruments.ai import water_db as water_db_mod
+        from pyefis.instruments.ai.water_db import WaterDB
+        path = self._build_db(tmp_path, [
+            ("ocean", None, [(34.0, -120.5), (34.0, -119.5),
+                             (34.5, -119.5), (34.5, -120.5)]),
+        ])
+        calls = []
+        orig = water_db_mod._decode_vertices
+
+        def _spy(*a, **kw):
+            calls.append(1)
+            return orig(*a, **kw)
+
+        monkeypatch.setattr(water_db_mod, "_decode_vertices", _spy)
+        db = WaterDB(path)
+        positions = [(34.40, -119.80), (34.41, -119.79),
+                     (34.39, -119.81), (34.40, -119.80),
+                     (34.42, -119.78)]
+        for lat, lon in positions:
+            list(db.polygons_in_range(lat, lon, 30.0))
+        assert len(calls) == 1
+
+    def test_polygon_cache_eviction_redecodes_full_multiring_geometry(
+            self, tmp_path):
+        """Extends test_polygon_cache_evicts_lru_on_vertex_budget past
+        elev_ft (B11): after an evict-and-re-decode cycle, a MULTI-RING
+        row (rings + triangles + the uint16/uint32 dtype rule) must
+        come back with vertices/triangles/rings identical to the
+        pre-eviction decode, not just a matching elev_ft."""
+        from pyefis.instruments.ai.water_db import WaterDB
+        path, outer, hole = self._build_multiring_db(tmp_path, extra_rows=[
+            ("lake", 20.0,
+             [(44.0, -120.5), (44.0, -119.5),
+              (44.5, -119.5), (44.5, -120.5)],
+             44.0, 44.5, -120.5, -119.5),
+        ])
+
+        # Budget holds exactly the 8-vertex multi-ring row; querying the
+        # second (4-vertex) polygon pushes it over budget and evicts
+        # the multi-ring row (LRU-first).
+        db = WaterDB(path, max_vertices=6, cache_vertex_budget=8)
+        poly1 = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+        list(db.polygons_in_range(44.2, -120.0, 30.0))    # evicts poly1
+        poly1_again = list(db.polygons_in_range(24.5, -81.7, 60.0))[0]
+
+        assert poly1_again is not poly1        # actually re-decoded
+        assert np.array_equal(poly1_again.vertices, poly1.vertices)
+        assert poly1_again.triangles == poly1.triangles
+        assert poly1_again.rings == poly1.rings
+        assert poly1_again.elev_ft == poly1.elev_ft
 
 
 class TestSVSWaterRendering:
@@ -729,7 +1180,7 @@ class TestSVSWaterRendering:
             "enabled": True, "tile_path": str(root),
             "water_db_path": str(path),
         })
-        tris = r._collect_water_sync(24.5, -81.7, 30.0)
+        tris = r._collect_water_sync(24.5, -81.7, 5000.0, 30.0)
         assert tris is not None
         # Every emitted vertex comes from the outer ring; the hole's
         # vertices never appear in the fan. (Coordinates ride through
@@ -740,6 +1191,57 @@ class TestSVSWaterRendering:
         hole_set = {(round(la, 3), round(lo, 3)) for la, lo in hole}
         assert emitted <= outer_set
         assert not (emitted & hole_set)
+
+
+    def test_collect_water_dense_single_ring_has_no_degenerate_triangles(
+            self, tmp_path):
+        """#100 regression: a reader cap below the pack's build cap
+        (16, the schema minimum for ``water_max_vertices``, against a
+        40-vertex tessellated row) must not collapse triangles to zero
+        area. Before the fix the vertices were stride-decimated to 16
+        while the stored indices still addressed 40, and the collector's
+        clip folded every out-of-range triangle onto vertex 15."""
+        path, verts, tris = _build_tessellated_single_ring_db(tmp_path)
+        root = _make_tile_dir(tmp_path, 24, -82, elevation=0)
+        r = SVSRenderer({
+            "enabled": True, "tile_path": str(root),
+            "water_db_path": str(path), "water_max_vertices": 16,
+        })
+        out = r._collect_water_sync(24.5, -81.7, 5000.0, 30.0)
+        assert out is not None
+        t = out[:, :2].astype(np.float64).reshape(-1, 3, 2)
+        a, b, c = t[:, 0], t[:, 1], t[:, 2]
+        area2 = np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                       - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0]))
+        assert t.shape[0] == len(tris) // 3
+        assert int(np.count_nonzero(area2 < 1e-9)) == 0
+        assert r._water_index_warned is False
+
+    def test_collect_water_warns_once_on_index_past_vertices(self, caplog):
+        """#100: a row whose triangle indices run past its vertex array
+        is reported ONCE, naming the row id and both counts, instead of
+        being clipped silently into zero-area triangles."""
+        import logging
+        square = [(39.00, -107.00), (39.00, -106.99),
+                  (39.01, -106.99), (39.01, -107.00)]
+        bad = _StubWaterPolygon(square, [0, 1, 2, 0, 2, 7])
+        bad.id = 4242
+        r = SVSRenderer({})
+        r.water_db = _StubWaterDB([bad, bad])
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        r._los_masked_batch = (
+            lambda ac_lat, ac_lon, ac_alt, t_lats, t_lons, t_alts, lc:
+            np.zeros(len(t_lats), dtype=bool))
+        with caplog.at_level(logging.WARNING,
+                             logger="pyefis.instruments.ai.svs"):
+            r._collect_water_sync(39.0, -107.0, 12000.0, 10.0)
+            r._collect_water_sync(39.0, -107.0, 12000.0, 10.0)
+        hits = [rec.getMessage() for rec in caplog.records
+                if "triangle index" in rec.getMessage()]
+        assert len(hits) == 1
+        assert "id=4242" in hits[0]
+        assert "index 7" in hits[0] and "only 4 vertices" in hits[0]
 
 
 class TestSVSGLFallback:
@@ -970,13 +1472,109 @@ class TestSVSGLFallback:
 
 
 # ---------------------------------------------------------------------------
+# Water terrain occlusion (issue #102 -- the missing twin of #73)
+# ---------------------------------------------------------------------------
+
+class _StubWaterPolygon:
+    def __init__(self, vertices, triangles, is_ocean=True, elev_ft=None):
+        self.vertices = vertices
+        self.triangles = triangles
+        self.is_ocean = is_ocean
+        self.elev_ft = elev_ft
+        self.rings = None
+
+
+class _StubWaterDB:
+    ready = True
+
+    def __init__(self, polygons):
+        self._polygons = polygons
+
+    def polygons_in_range(self, ac_lat, ac_lon, range_nm,
+                          min_bbox_diag_deg=None):
+        return list(self._polygons)
+
+
+class TestWaterOcclusion:
+    """Issue #102: a water triangle behind a ridge (no line of sight) must
+    be DROPPED, not painted through the near slope -- the SVS overlay pass
+    disables depth testing before this draw, so with no masking a lake or
+    river triangle projects onto its pixels regardless of what terrain is
+    in front of it. Verifies the per-triangle LOS filtering in
+    ``_collect_water_sync``: a triangle is emitted only where ALL THREE
+    vertices have a clear line of sight. Unlike a highway polyline (which
+    can end a segment exactly at the ridge line and resume beyond it), a
+    triangle straddling a ridge has no correct partial fill, so occlusion
+    of ANY one vertex drops the whole triangle. The LOS math itself
+    (``_los_masked_batch``) is stubbed so triangle-selection logic is
+    tested deterministically without terrain tiles."""
+
+    AC_LAT, AC_LON, AC_ALT = 39.0, -107.0, 12000.0
+    # A small square lake split into two triangles across a shared
+    # diagonal (vertices 0 and 2), so masking a non-shared vertex (1 or 3)
+    # drops only the triangle that owns it, while masking a shared vertex
+    # (0 or 2) drops both.
+    SQUARE = [(39.00, -107.00), (39.00, -106.99),
+              (39.01, -106.99), (39.01, -107.00)]
+    TRIS = [0, 1, 2, 0, 2, 3]
+
+    def _renderer(self, masked_verts):
+        r = SVSRenderer({})
+        r.water_db = _StubWaterDB(
+            [_StubWaterPolygon(self.SQUARE, self.TRIS, is_ocean=True)])
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+
+        def _batch(ac_lat, ac_lon, ac_alt, t_lats, t_lons, t_alts, lat_cos):
+            return np.array(
+                [(round(float(la), 5), round(float(lo), 5)) in masked_verts
+                 for la, lo in zip(t_lats, t_lons)], dtype=bool)
+        r._los_masked_batch = _batch
+        return r
+
+    def test_all_visible_keeps_every_triangle(self):
+        tris = self._renderer(set())._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is not None
+        assert tris.shape[0] == 6   # 2 triangles * 3 vertices
+
+    def test_occluded_vertex_drops_only_the_triangle_containing_it(self):
+        # vertex 1 (39.00, -106.99) belongs only to triangle (0, 1, 2).
+        masked = {(39.00, -106.99)}
+        tris = self._renderer(masked)._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is not None
+        assert tris.shape[0] == 3   # only triangle (0, 2, 3) survives
+        surviving = {(round(float(la), 2), round(float(lo), 2))
+                     for la, lo in tris[:, :2]}
+        assert (39.00, -106.99) not in surviving
+        assert surviving == {(39.00, -107.00), (39.01, -106.99),
+                             (39.01, -107.00)}
+
+    def test_occluded_shared_vertex_drops_both_triangles_sharing_it(self):
+        # vertex 2 (39.01, -106.99) is shared by both triangles.
+        masked = {(39.01, -106.99)}
+        tris = self._renderer(masked)._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is None
+
+    def test_all_occluded_returns_none(self):
+        masked = {(round(la, 5), round(lo, 5)) for la, lo in self.SQUARE}
+        tris = self._renderer(masked)._collect_water_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
+        assert tris is None
+
+
+# ---------------------------------------------------------------------------
 # Highway terrain occlusion (issue #73)
 # ---------------------------------------------------------------------------
 
 class _StubPolyline:
-    def __init__(self, vertices, fclass="motorway"):
+    def __init__(self, vertices, fclass="motorway", flags=0, ref=None):
         self.vertices = np.asarray(vertices, dtype=np.float64)
         self.fclass = fclass
+        self.flags = flags
+        self.ref = ref
 
 
 class _StubHighwayDB:
@@ -992,15 +1590,21 @@ class _StubHighwayDB:
 class TestHighwayOcclusion:
     """Issue #73: a road behind a ridge (no line of sight) must be DROPPED, not
     drawn over the near slope (the SVS has no depth test). Verifies the
-    per-vertex LOS filtering in ``_collect_highways_sync`` — a GL_LINES pair is
-    emitted only where both endpoints are visible. The LOS math itself
-    (``_los_masked``) is stubbed so the segment-selection logic is tested
-    deterministically without terrain tiles."""
+    per-vertex LOS filtering in ``_collect_highways_sync`` — a segment's
+    casing/fill quad is emitted only where both endpoints are visible (RD1,
+    issue #161: the output is now two GL_TRIANGLES arrays, not a GL_LINES
+    pair, but "occluded vertex drops its segments" is unchanged). The LOS
+    math itself (``_los_masked``) is stubbed so the segment-selection logic
+    is tested deterministically without terrain tiles."""
 
     AC_LAT, AC_LON, AC_ALT = 39.0, -107.0, 12000.0
     # five vertices marching north, ~0.6 NM apart, midpoint within HWY_NEAR_NM
     # so no LOD decimation kicks in.
     VERTS = [(39.00 + 0.01 * i, -107.0) for i in range(5)]
+    # Huge pixels_per_deg so the RD1 screen-space width floor never
+    # overrides the class width — these tests are about LOS segment
+    # selection, not ribbon geometry (see test_road_ribbon.py for that).
+    PPD = 1_000_000.0
 
     def _renderer(self, los_fn):
         r = SVSRenderer({})
@@ -1017,29 +1621,40 @@ class TestHighwayOcclusion:
                              float(al), lat_cos))
                  for la, lo, al in zip(t_lats, t_lons, t_alts)], dtype=bool)
         r._los_masked_batch = _batch
+        # Disable subdivision so the vertex set matches VERTS exactly --
+        # subdivision itself is covered by test_road_ribbon.py.
+        r._road_subdivide_m = 1e9
         return r
 
     def test_occluded_middle_segment_dropped(self):
         # mask only the middle vertex (lat 39.02) -> a ridge hides it
         masked = lambda *a: 39.015 < a[3] < 39.025
-        arr = self._renderer(masked)._collect_highways_sync(
-            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
-        assert arr is not None
-        # segments (v0,v1) and (v3,v4) survive; both touching v2 are gone
-        assert arr.shape[0] == 4
-        lats = {round(float(x), 2) for x in arr[:, 0]}
+        casing, fill = self._renderer(masked)._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert fill is not None
+        # segments (v0,v1) and (v3,v4) survive; both touching v2 are gone.
+        # 6 vertices (2 triangles) per surviving segment.
+        assert fill.shape[0] == 2 * 6
+        assert casing.shape[0] == fill.shape[0]
+        # The ribbon is a straight north-south line, so mitre offsets are
+        # purely east-west -- every corner's latitude still matches its
+        # source vertex's latitude exactly.
+        lats = {round(float(x), 2) for x in fill[:, 0]}
         assert 39.02 not in lats                 # the occluded vertex
         assert {39.00, 39.01, 39.03, 39.04} <= lats
 
     def test_all_visible_keeps_every_segment(self):
-        arr = self._renderer(lambda *a: False)._collect_highways_sync(
-            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
-        assert arr.shape[0] == 2 * (len(self.VERTS) - 1)   # 4 segments -> 8 verts
+        casing, fill = self._renderer(
+            lambda *a: False)._collect_highways_sync(
+                self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        n_segments = len(self.VERTS) - 1
+        assert fill.shape[0] == 6 * n_segments
+        assert casing.shape[0] == 6 * n_segments
 
     def test_all_occluded_returns_none(self):
-        arr = self._renderer(lambda *a: True)._collect_highways_sync(
-            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0)
-        assert arr is None
+        result = self._renderer(lambda *a: True)._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert result is None
 
     def test_los_batch_masks_behind_ridge(self):
         """_los_masked_batch (issue #74) — the vectorised LOS that replaced
@@ -1060,3 +1675,411 @@ class TestHighwayOcclusion:
         masked = r._los_masked_batch(39.0, -107.0, 500.0,
                                      t_lats, t_lons, t_alts, lat_cos)
         assert list(map(bool, masked)) == [False, True, False]
+
+
+# ---------------------------------------------------------------------------
+# Tunnel/bridge flags (RD3a, AER-640)
+# ---------------------------------------------------------------------------
+
+class TestTunnelBridgeFlags:
+    """A tunnel is underground -- it never becomes a ribbon at all. A
+    bridge is a straight span between piers -- it must not be
+    subdivided (subdividing and draping each new vertex to the sampled
+    terrain elevation would sink the deck into the valley/river it
+    spans). Both come from ``HighwayLine.flags`` (highway_db.FLAG_*),
+    which is ``0`` on an old pack -- see TestHighwayOcclusion for the
+    LOS-masking tests this class doesn't repeat."""
+
+    AC_LAT, AC_LON, AC_ALT = 39.0, -107.0, 12000.0
+    # ~1.1 NM apart -> long enough to subdivide at the default 150 m.
+    VERTS = [(39.00, -107.0), (39.02, -107.0)]
+    PPD = 1_000_000.0
+
+    def _renderer(self, polylines):
+        r = SVSRenderer({})
+        r.highway_db = _StubHighwayDB(polylines)
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        r._los_masked_batch = (
+            lambda ac_lat, ac_lon, ac_alt, t_lats, t_lons, t_alts, lat_cos:
+            np.zeros(len(t_lats), dtype=bool))          # nothing occluded
+        return r
+
+    def test_tunnel_polyline_yields_no_vertices(self):
+        from pyefis.instruments.ai.highway_db import FLAG_TUNNEL
+        r = self._renderer(
+            [_StubPolyline(self.VERTS, flags=FLAG_TUNNEL)])
+        result = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert result is None
+
+    def test_tunnel_dropped_but_sibling_road_still_drawn(self):
+        from pyefis.instruments.ai.highway_db import FLAG_TUNNEL
+        other = [(39.00, -106.9), (39.02, -106.9)]
+        r = self._renderer([
+            _StubPolyline(self.VERTS, flags=FLAG_TUNNEL),
+            _StubPolyline(other, flags=0),
+        ])
+        casing, fill = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        assert fill is not None
+        # every surviving vertex belongs to the non-tunnel polyline (allow
+        # the ribbon's own lateral half-width offset, well under 1e-3 deg)
+        assert np.allclose(fill[:, 1], -106.9, atol=1e-3)
+
+    def test_bridge_is_not_subdivided(self):
+        from pyefis.instruments.ai.highway_db import FLAG_BRIDGE
+        r = self._renderer([_StubPolyline(self.VERTS, flags=FLAG_BRIDGE)])
+        casing, fill = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        # unsubdivided: exactly one segment (2 vertices) -> 2 triangles
+        assert fill.shape[0] == 6
+        assert casing.shape[0] == 6
+
+    def test_plain_road_of_same_length_is_subdivided(self):
+        r = self._renderer([_StubPolyline(self.VERTS, flags=0)])
+        casing, fill = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        # same geometry, no bridge flag -> more than one segment survives
+        assert fill.shape[0] > 6
+
+    def test_bridge_and_tunnel_bits_are_independent(self):
+        from pyefis.instruments.ai.highway_db import (
+            FLAG_BRIDGE, FLAG_TUNNEL)
+        r = self._renderer(
+            [_StubPolyline(self.VERTS, flags=FLAG_BRIDGE | FLAG_TUNNEL)])
+        result = r._collect_highways_sync(
+            self.AC_LAT, self.AC_LON, self.AC_ALT, 10.0, self.PPD)
+        # tunnel wins -- dropped entirely regardless of the bridge bit
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Collect-cache key stability under range/position noise (AER-678).
+#
+# Seven collectors (runway polygons/markings, airports, water, highways,
+# obstacles, flags) share one cache-key idiom keyed on coarsened aircraft
+# position + range_nm, where the position step ITSELF is derived from
+# range_nm. Feeding that idiom a raw, continuously-varying auto-range
+# reading made the position-quantization grid move independently of the
+# aircraft's actual position -- a cache key that changes as a function of
+# something other than the thing it is caching is self-invalidating, and
+# with all eight collectors sharing the pattern they went hot together
+# (measured: frame.gap_between_svs collapsed from ~25 ms to ~699 ms/call
+# under a moving-position drive, with frame.svs_total unchanged at ~6 ms --
+# the renderer was starved, not slow). NOTE: that 698.78 ms/call figure, and
+# the "vibrating under motion" framing, were later found to be contaminated
+# by an unrelated demo plugin driving the bench (see AER-677/AER-678 review
+# thread) -- the mechanism below is real and independently reproduced by
+# tools/bench_svs_collect_churn.py's synthetic drive, but Bill's reported
+# fault was a config issue, not this one.
+#
+# The fix is _update_collect_range_nm (a Schmitt-trigger bucket) feeding
+# the shared _collect_key builder for cache-key purposes ONLY -- it must
+# never be handed to the renderer as the rendered terrain extent (see
+# TestAutoRangeRenderedExtent below; a first version of this fix did
+# exactly that and silently overrode a user's configured range_nm). These
+# tests pin the invariant that regressed, not just "N tests pass" on it.
+# ---------------------------------------------------------------------------
+
+class TestCollectRangeHysteresis:
+    AC_LAT, AC_LON = 39.0, -107.0
+
+    def _renderer(self, **config):
+        r = SVSRenderer(dict(config))
+        # Flat, zero-elevation ground under the aircraft so agl_ft ==
+        # ac_alt_ft exactly -- makes the horizon-range formula in
+        # _auto_range_nm fully predictable from ac_alt_ft alone.
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        return r
+
+    @staticmethod
+    def _agl_for_horizon_range(range_nm: float) -> float:
+        """Inverse of the horizon_range = 1.22 * sqrt(agl_ft) formula in
+        _auto_range_nm -- the AGL (here == MSL, flat ground) that makes
+        the RAW auto-range land at ``range_nm``."""
+        return (range_nm / 1.22) ** 2
+
+    def test_range_bucket_stable_for_noise_straddling_a_boundary(self):
+        # Bucket edges sit at 2.5, 7.5, 12.5, ... (round(x/5)*5). 22.5 is
+        # the edge between the 20 and 25 buckets -- pick AGL values just
+        # either side of it, simulating sensor/demo-animation jitter, and
+        # confirm the bucketed range stashed for collector cache keys
+        # does not flip between them the way naive round(range_nm/5)*5
+        # would on every other call. _auto_range_nm's RETURN value (the
+        # rendered extent) is deliberately NOT asserted here -- it is
+        # supposed to track the raw AGL continuously; see
+        # TestAutoRangeRenderedExtent.
+        r = self._renderer()
+        agl_below = self._agl_for_horizon_range(22.49)
+        agl_above = self._agl_for_horizon_range(22.51)
+        seen = set()
+        for i in range(20):
+            agl = agl_below if i % 2 == 0 else agl_above
+            r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+            seen.add(r._collect_range_nm)
+        assert len(seen) == 1, (
+            f"collect-key range bucket chattered across a boundary: {seen}")
+
+    def test_collect_key_stable_for_stationary_aircraft_under_alt_jitter(
+            self):
+        # The reported anomaly directly: position pinned, only altitude
+        # varies by a small amount (altimeter/ADC-scale noise, not a
+        # real climb) around the same 22.5 NM boundary as above -- the
+        # assembled collect key for every sample must be identical,
+        # because a stationary aircraft's collector inputs have not
+        # actually changed. +-10 ft of AGL jitter swings the raw
+        # horizon_range by well under 1 NM, safely inside the
+        # hysteresis dead zone (+-4 NM) on either side of the boundary.
+        r = self._renderer()
+        base_agl = self._agl_for_horizon_range(22.5)
+        rng = np.random.default_rng(0)
+        keys = set()
+        for _ in range(50):
+            agl = base_agl + float(rng.uniform(-10.0, 10.0))
+            r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+            keys.add(r._collect_key(self.AC_LAT, self.AC_LON,
+                                     r._collect_range_nm))
+        assert len(keys) == 1, (
+            f"collect key chattered for a stationary aircraft: {keys}")
+
+    def test_range_bucket_does_track_a_real_altitude_change(self):
+        # The hysteresis must not wedge the bucket permanently -- a
+        # genuine, sustained altitude change well past the dead zone
+        # still moves it.
+        r = self._renderer()
+        r._auto_range_nm(
+            self.AC_LAT, self.AC_LON, self._agl_for_horizon_range(10.0))
+        low = r._collect_range_nm
+        r._auto_range_nm(
+            self.AC_LAT, self.AC_LON, self._agl_for_horizon_range(45.0))
+        high = r._collect_range_nm
+        assert low != high
+
+    def test_key_change_rate_bounded_for_moving_aircraft_at_cruise(self):
+        # A moving aircraft at a fixed altitude/range (no range-bucket
+        # noise in play) must still see its collect key roll over at a
+        # bounded rate tied to actual distance travelled -- the fix must
+        # not (over-)throttle real position-based invalidation. At 40
+        # NM range the position step is max(0.01, 40/2000) = 0.02 deg
+        # ~= 1.2 NM, so covering 30 NM of straight-line flight should
+        # produce on the order of 30 / 1.2 ~= 25 key changes, not one
+        # per sample (250 samples) and not zero.
+        r = self._renderer()
+        agl = self._agl_for_horizon_range(40.0)
+        r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+        range_nm = r._collect_range_nm
+        lat_per_nm = 1.0 / 60.0
+        n_samples = 250
+        track_nm = 30.0
+        last_key = None
+        changes = 0
+        for i in range(n_samples):
+            lat = self.AC_LAT + (i / (n_samples - 1)) * track_nm * lat_per_nm
+            key = r._collect_key(lat, self.AC_LON, range_nm)
+            if key != last_key:
+                changes += 1
+                last_key = key
+        assert 5 <= changes <= 60, (
+            f"key changed {changes} times over {track_nm} NM "
+            f"({n_samples} samples) -- expected a bounded rate tied to "
+            f"actual distance, not per-sample or never")
+
+    def test_airports_key_domain_unaffected_by_auto_range_bucket_churn(
+            self):
+        # The airports collector keys off self.range_nm (a static config
+        # value), not the auto-scaled render range -- it must NOT share
+        # _collect_range_nm's hysteresis state, or two unrelated range
+        # domains updating the same bucket would thrash against each
+        # other every frame (flagged in AER-678 review as a hazard of a
+        # more aggressive fix shape). Drive the auto-range bucket through
+        # several different values and confirm the airports-domain key
+        # (built from the untouched self.range_nm) never moves.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        keys = set()
+        for horizon_nm in (8.0, 15.0, 22.5, 30.0, 45.0):
+            r._auto_range_nm(
+                self.AC_LAT, self.AC_LON,
+                self._agl_for_horizon_range(horizon_nm))
+            keys.add(r._collect_key(self.AC_LAT, self.AC_LON, r.range_nm))
+        assert len(keys) == 1, (
+            f"airports key moved with the unrelated auto-range bucket: "
+            f"{keys}")
+
+
+# ---------------------------------------------------------------------------
+# _auto_range_nm's return value is the RENDERED terrain extent, not just a
+# cache-key input (AER-678 review finding). It feeds straight into
+# SVSGLRenderer.draw's far edge, so it must track the raw, continuous
+# AGL-derived range -- an earlier version of the AER-678 fix ran this
+# return value through the same hysteresis bucket used for collector cache
+# keys, which silently overrode auto_range=False's configured range_nm
+# (8 NM in -> 10 NM rendered) and made the far edge pop in 5 NM steps
+# under climb instead of scaling smoothly. These tests pin the return
+# value directly against the un-bucketed formula so a regression fails
+# loudly instead of only showing up as a visual artifact on the bench.
+# ---------------------------------------------------------------------------
+
+class TestAutoRangeRenderedExtent:
+    AC_LAT, AC_LON = 39.0, -107.0
+
+    def _renderer(self, **config):
+        r = SVSRenderer(dict(config))
+        r._sample_elevations = lambda lat_g, lon_g: (
+            np.zeros_like(lat_g, dtype=np.float32), None)
+        return r
+
+    def test_returns_raw_value_not_the_bucket(self):
+        # horizon_range for this AGL is exactly 22.5 NM -- a bucket edge,
+        # nowhere near a 5 NM multiple. The rendered extent must be the
+        # raw 22.5, not a bucketed 20.0 or 25.0.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        agl_ft = (22.5 / 1.22) ** 2
+        rendered = r._auto_range_nm(self.AC_LAT, self.AC_LON, agl_ft)
+        assert rendered == pytest.approx(22.5, abs=1e-6)
+        # The bucket, meanwhile, IS quantized -- that's a separate value.
+        assert r._collect_range_nm != pytest.approx(22.5, abs=1e-6)
+
+    def test_configured_range_not_overridden_when_auto_range_disabled(self):
+        # A user who turns auto-range off gets exactly the range_nm they
+        # configured -- not the nearest 5 NM bucket.
+        for configured in (3.0, 8.0, 12.0, 22.0):
+            r = self._renderer(range_nm=configured, auto_range=False)
+            rendered = r._auto_range_nm(self.AC_LAT, self.AC_LON, 5000.0)
+            assert rendered == pytest.approx(configured), (
+                f"configured range_nm={configured} rendered as "
+                f"{rendered} instead")
+
+    def test_min_range_nm_floor_is_exact(self):
+        # At very low AGL the horizon range collapses below the
+        # configured floor -- the floor itself must not get bucketed.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        rendered = r._auto_range_nm(self.AC_LAT, self.AC_LON, 1.0)
+        assert rendered == pytest.approx(8.0)
+
+    def test_rendered_extent_varies_smoothly_through_a_bucket_edge(self):
+        # Climbing steadily through a bucket boundary must not make the
+        # rendered far edge jump in a 5 NM step -- each successive sample
+        # should differ from the last by a small amount tied to the AGL
+        # step, not by a whole bucket width.
+        r = self._renderer(range_nm=50, auto_range=True, min_range_nm=8.0)
+        agls = [((20.0 + 0.1 * i) / 1.22) ** 2 for i in range(60)]
+        rendered = [r._auto_range_nm(self.AC_LAT, self.AC_LON, agl)
+                    for agl in agls]
+        deltas = [abs(b - a) for a, b in zip(rendered, rendered[1:])]
+        assert max(deltas) < 1.0, (
+            f"rendered extent jumped {max(deltas):.2f} NM between "
+            f"consecutive samples -- expected smooth tracking, not a "
+            f"bucket-sized step: {rendered}")
+
+
+class TestAsyncCollectorWakesFrameClock:
+    """AER-1714: on a stationary aircraft, an async overlay collector
+    (water/highways, or anything routed through _async_cache -- airports,
+    obstacles) finishes on a background worker and parks its result in
+    *_result / _async_state. With the pose completely unchanged nothing
+    else marks the frame dirty, so the frame clock's early-out
+    (ai_widget._frame_tick) never promotes or paints it -- the bug
+    reported live on the Pi 5 (water/roads/obstacles/airports never
+    appearing until the position was nudged). consume_async_dirty() is
+    the wake signal each worker sets on completion; these tests drive the
+    real worker methods synchronously so they exercise the actual
+    completion path, not a stand-in for it."""
+
+    def test_async_cache_worker_sets_and_clears_dirty_flag(self):
+        # Covers both "airports" and "obstacles", which share _async_cache.
+        r = SVSRenderer({})
+        assert r.consume_async_dirty() is False
+        r._async_cache("obstacles", ("key",), lambda: {"result": True})
+        worker = r._async_state["obstacles"]["worker"]
+        assert worker is not None
+        worker.join(timeout=2.0)
+        assert not worker.is_alive()
+        assert r.consume_async_dirty() is True
+        # Consuming clears it -- it doesn't get stuck permanently true and
+        # force a repaint on every subsequent tick.
+        assert r.consume_async_dirty() is False
+
+    def test_water_worker_sets_dirty_flag_even_with_no_result(self):
+        # A worker landing "nothing in range" is still a real completion --
+        # it must wake the UI just as much as a non-empty result would (a
+        # water/road/obstacle set draining to empty also needs to paint).
+        r = SVSRenderer({})
+        r.water_db = _StubWaterDB([])
+        assert r.consume_async_dirty() is False
+        r._collect_slot.acquire()  # the real caller holds this before spawning
+        r._water_collect_worker(("key",), 39.0, -107.0, 12000.0, 10.0)
+        assert r._water_result == (("key",), None)
+        assert r.consume_async_dirty() is True
+
+    def test_highway_worker_sets_dirty_flag_even_with_no_result(self):
+        r = SVSRenderer({})
+        r.highway_db = _StubHighwayDB([])
+        assert r.consume_async_dirty() is False
+        r._collect_slot.acquire()  # the real caller holds this before spawning
+        r._hwy_collect_worker(("key",), 39.0, -107.0, 12000.0, 10.0, 1000.0)
+        assert r._hwy_result == (("key",), None)
+        assert r.consume_async_dirty() is True
+
+    def test_frame_tick_wakes_and_paints_on_a_stationary_aircraft(
+            self, fix, qtbot):
+        """The end-to-end regression: pose held completely fixed, a
+        collector finishes in the background, and the AI widget's frame
+        clock must still wake up and repaint. Fails against pre-fix code
+        because nothing sets _frame_dirty when the worker lands its
+        result, so _frame_tick's early-out never lets the redraw happen."""
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(240, 220)
+        widget.show()
+        qtbot.waitExposed(widget)
+        widget.set_svs_config({"enabled": True})
+        widget.svs.highway_db = _StubHighwayDB([])
+
+        # Settle the frame clock completely: pose fixed, nothing dirty --
+        # the parked-aircraft steady state.
+        widget._frame_dirty = True
+        widget._frame_tick()
+        widget.redraw = mock.Mock()
+        widget.update = mock.Mock()
+        widget._frame_dirty = False
+
+        # The highway collector finishes on its worker thread while the
+        # aircraft position hasn't moved at all.
+        widget.svs._collect_slot.acquire()
+        widget.svs._hwy_collect_worker(
+            ("k1",), widget._svs_lat, widget._svs_lon, widget._svs_alt,
+            widget.svs.range_nm, 1000.0)
+
+        # Nothing about the pose changed -- only the landed async result
+        # should wake the frame clock.
+        widget._frame_tick()
+        widget.redraw.assert_called_once_with()
+        widget.update.assert_called_once_with()
+
+        # And it doesn't loop forever redrawing once the wake is consumed.
+        widget._frame_tick()
+        assert widget.redraw.call_count == 1
+
+    def test_frame_tick_stays_quiet_with_no_pending_async_result(
+            self, fix, qtbot):
+        """Baseline: with the pose unchanged and no collector result
+        pending, the frame clock must NOT repaint -- the fix must not
+        degrade into an unconditional per-tick redraw."""
+        widget = AI()
+        qtbot.addWidget(widget)
+        widget.resize(240, 220)
+        widget.show()
+        qtbot.waitExposed(widget)
+        widget.set_svs_config({"enabled": True})
+
+        widget._frame_dirty = True
+        widget._frame_tick()
+        widget.redraw = mock.Mock()
+        widget.update = mock.Mock()
+        widget._frame_dirty = False
+
+        widget._frame_tick()
+        widget.redraw.assert_not_called()
+        widget.update.assert_not_called()

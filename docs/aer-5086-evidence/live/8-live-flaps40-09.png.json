@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "ef48024",
+ "run": "AER-5086 bench session, Beelink (tools/onspeed_sim.py profile -> fix-gateway onspeed plugin; docs/aer-5086-evidence/session.sh)",
+ "device": "Beelink bench, Intel ADL-N iGPU (X11/xcb; ffmpeg x11grab of the live glass)",
+ "sha256": "62ddc272422c43711ab1b7f15bc8b1eaf310e47b4b30ee2273aa60a0e565406c",
+ "created_utc": "2026-11-08T07:20:38Z"
+}

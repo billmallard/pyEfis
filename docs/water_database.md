@@ -213,15 +213,23 @@ svs:
     ...
     water_db_path: /home/wpballard/pyEfis/water/water_capped.sqlite
     water_max_vertices: 32          # optional, defaults to 32
-    svs_perf_log: true              # optional, default false
+    perf_log: true                  # optional, default false
 ```
+
+`water_max_vertices` stride-decimates only legacy rows that carry no
+stored `triangles`. A tessellated row (every row a current
+`tools/build_water_db.py` emits) keeps its build-time geometry whatever
+the reader cap, because its triangle indices address the full stored
+vertex array (#100); the builder's `--max-vertices` is the bound for
+those rows. If a row's indices still run past its vertex count, the SVS
+logs one warning naming the row id and both counts.
 
 WaterDB construction is "missing file means disabled" — there is no
 fatal failure if the path is wrong, just no water overlay.
 
 ## Perf notes (KSBA flight test, 2026-06-02)
 
-Profiler (svs_perf_log: true) at KSBA looking out over the Pacific
+Profiler (perf_log: true) at KSBA looking out over the Pacific
 on the GL renderer tier with the FULL un-decimated 1.45 GB OSM DB:
 
 | segment | per-frame | % budget |

@@ -102,7 +102,7 @@ class NumericalDisplay(QGraphicsView):
         panel_h = font_height * _READOUT_PANEL_H
         top = (self.h - panel_h) / 2.0
         text_top = (self.h - font_height) / 2.0
-        radius = font_height * helpers.TAPE_READOUT_RADIUS_RATIO
+        radius = panel_h * helpers.READOUT_RADIUS_RATIO
         rect_pen, rect_brush = helpers.readout_panel_pen_brush(
             QColor(Qt.GlobalColor.white), border_width
         )
@@ -110,6 +110,9 @@ class NumericalDisplay(QGraphicsView):
         self.readout_rect = QRectF(
             inset, top, max(1.0, self.w - border_width), panel_h
         )
+        #: Published for tests: the corner radius is READOUT_RADIUS_RATIO of the
+        #: panel's own height, the same invariant the HSI panel uses (AER-413).
+        self.readout_radius = radius
         panel = QPainterPath()
         panel.addRoundedRect(self.readout_rect, radius, radius)
         self.scene.addPath(panel, rect_pen, rect_brush)
@@ -177,7 +180,25 @@ class NumericalDisplay(QGraphicsView):
             self.old_text.hide()
         """
 
+        # A caller (e.g. Altimeter_Tape/Airspeed_Tape's resizeEvent) may have
+        # set _bad/_old/_fail before this first resizeEvent ran -- the guards
+        # in redraw()/flagDisplay()/setFail() no-op until the scene exists, so
+        # apply the current state now that it does.
+        if self._fail:
+            self.setScene(self.fail_scene)
+        else:
+            self.flagDisplay()
+
     def redraw(self):
+        if not hasattr(self, "pre_scroll_text"):
+            # The scene (pre_scroll_text, scrolling_area, ...) is built lazily
+            # in resizeEvent. QWidget.resize() does not guarantee a synchronous
+            # resizeEvent before the widget has a native window/is shown, so a
+            # caller (e.g. Altimeter_Tape.resizeEvent) can set .value right
+            # after construction, before the first real resizeEvent has run.
+            # Nothing to draw yet -- the first resizeEvent applies the current
+            # value/flags to the freshly built scene.
+            return
         prevalue = int(self._value / (10**self.scroll_decimal))
         scroll_value = self._value - (prevalue * (10**self.scroll_decimal))
         if self.scroll_decimal > 1:
@@ -207,6 +228,12 @@ class NumericalDisplay(QGraphicsView):
     value = property(getValue, setValue)
 
     def flagDisplay(self):
+        if not hasattr(self, "pre_scroll_text"):
+            # Same lazy-scene guard as redraw() -- see comment there. Setters
+            # (setBad/setOld/setFail) can fire before the first resizeEvent;
+            # the pending resizeEvent already applies the current flags when
+            # it builds pre_scroll_text (see the bad/old check there).
+            return
         if self._bad or self._old or self._fail:
             self.pre_scroll_text.setText("")
             self.scrolling_area.hide()
@@ -249,6 +276,11 @@ class NumericalDisplay(QGraphicsView):
     def setFail(self, b):
         if self._fail != b:
             self._fail = b
+            if not hasattr(self, "pre_scroll_text"):
+                # Same lazy-scene guard as redraw()/flagDisplay() -- self.scene
+                # and self.fail_scene are also built in the pending resizeEvent,
+                # which applies self._fail when it runs.
+                return
             if b:
                 self.setScene(self.fail_scene)
             else:

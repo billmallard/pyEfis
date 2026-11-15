@@ -1,8 +1,8 @@
 from unittest import mock
 
 import pytest
-from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QPaintEvent
+from PyQt6.QtCore import QPointF, QSize
+from PyQt6.QtGui import QPaintEvent, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView
 
 from pyefis.instruments import ai
@@ -40,13 +40,10 @@ def test_ai_horizon_position(fix, qtbot):
     # Default: centred -> zero offset, so the plain AI is unchanged.
     assert widget.horizon_position == 50
     assert widget._horizon_offset_px() == 0.0
-    assert widget._horizon_offset_deg() == 0.0
 
-    # Raised to two-thirds up: a positive screen offset (fraction of height)
-    # and a height-independent look-down angle (fraction of the pitch FOV).
+    # Raised to two-thirds up: a positive screen offset (fraction of height).
     widget.horizon_position = 67
     assert round(widget._horizon_offset_px(), 3) == round(0.17 * widget.height(), 3)
-    assert round(widget._horizon_offset_deg(), 3) == round(0.17 * widget.pitchDegreesShown, 3)
     # redraw applies it without error at a banked, raised attitude.
     widget._rollAngle = 25
     widget._pitchAngle = 5
@@ -148,6 +145,31 @@ def test_ai_resize_with_gray_quality_and_custom_bank_radius(fix, qtbot):
     assert widget.bankAngleRadius == 42
     assert widget.getAIOld() is True
     assert widget.getAIBad() is True
+
+
+def test_ai_bank_angle_radius_tracks_latest_resize(fix, qtbot):
+    """AER-1785: the auto-calculated bankAngleRadius must track the
+    CURRENT height on every resizeEvent, not freeze at whatever height the
+    FIRST resizeEvent happened to see. A windowed top-level on eglfs gets
+    exactly two resizeEvents before it settles -- one at the requested
+    --width/--height, a second when the (window-manager-less) platform
+    forces the window fullscreen -- and the previous `if self.
+    bankAngleRadius is None` guard latched the radius from the first,
+    leaving the bank cluster sized as if the output were still that
+    earlier, usually smaller, height. An explicit config/YAML override
+    (test_ai_resize_with_gray_quality_and_custom_bank_radius, above) must
+    still stick across resizes; only the unset default must keep tracking."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    qtbot.addWidget(widget)
+
+    widget.resize(800, 600)
+    widget.resizeEvent(QResizeEvent(QSize(800, 600), QSize(0, 0)))
+    assert widget.bankAngleRadius == pytest.approx(600 / 3)
+
+    widget.resize(1920, 1200)
+    widget.resizeEvent(QResizeEvent(QSize(1920, 1200), QSize(800, 600)))
+    assert widget.bankAngleRadius == pytest.approx(1200 / 3)
 
 
 def test_ai_resize_can_skip_unmatched_minor_ticks(fix, qtbot):
@@ -339,6 +361,47 @@ def test_ai_paint_caps_standard_rate_bank_marker_angle(fix, qtbot):
     assert widget._tas == 10000
 
 
+@pytest.mark.parametrize("tas, expected", [
+    (90, 13.888),    # trainer cruise: well under the cap
+    (120, 18.246),
+    (169, 24.905),   # just under 25: standard rate reaches 25 at ~170 KTAS
+    (171, 25.0),     # just over: held at the cap
+    (400, 25.0),
+])
+def test_ai_standard_rate_bank_follows_tas_then_caps_at_25(fix, qtbot, tas, expected):
+    # AER-5149 / ATT1: the diamonds sit at atan(TAS/364), the 3 deg/s bank,
+    # until that passes bankAngleMaximum (AIM 5-3-8 holding bank), then hold.
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    widget.setTrueAirspeed(tas)
+
+    assert widget.standard_rate_bank_deg() == pytest.approx(expected, abs=0.01)
+
+
+def test_ai_standard_rate_cap_moves_with_max_indicated_bank(fix, qtbot):
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    widget.setTrueAirspeed(400)
+    widget.bankAngleMaximum = 30
+
+    assert widget.standard_rate_bank_deg() == pytest.approx(30.0)
+    widget.setTrueAirspeed(150)
+    assert widget.standard_rate_bank_deg() == pytest.approx(22.396, abs=0.01)
+
+
+def test_ai_paint_places_standard_rate_marks_from_the_capped_bank(fix, qtbot):
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.setTrueAirspeed(400)
+
+    with mock.patch.object(widget, "standard_rate_bank_deg",
+                           wraps=widget.standard_rate_bank_deg) as srb:
+        widget.paintEvent(event)
+
+    srb.assert_called()
+
+
 def test_fd_target_resize_and_update(qtbot):
     center = QPointF(100, 120)
     widget = ai.FDTarget(center, pixelsPerDeg=5)
@@ -408,8 +471,7 @@ def test_fpm_solution_independent_of_optional_vpath(fix, qtbot):
 # Passing tests verify shipped behaviour. The xfail(strict) tests are the
 # executable gap tracker for the unimplemented recovery/envelope alerts: they
 # fail today and flip the run red when the alert is implemented, forcing removal
-# of the marker. AI-LIM-001 stays xfail until fix-gateway publishes AOA / stall
-# margin. Spec sec 5 carries the case<->requirement map.
+# of the marker. Spec sec 5 carries the case<->requirement map.
 # =============================================================================
 
 
@@ -472,6 +534,32 @@ def test_ai_cat_recovery_chevrons_at_extreme_pitch(fix, qtbot):
     assert widget._show_recovery_chevrons is True
 
 
+def test_ai_cat_recovery_chevrons_at_horizon_off_scale(fix, qtbot):
+    """AER-1805: the chevron trigger must track where the horizon line
+    actually leaves the glass, not just the fixed AC 25-11B constants. At
+    the shipped bench config (pitchDegreesShown=50, horizon_position=68 --
+    AER-1973 moved pitchDegreesShown 30 -> 50, see
+    tests/instruments/ai/test_horizon_off_scale.py) the horizon is
+    off-scale by -16.0 deg -- well inside the old -20 deg constant -- and
+    the chevrons must already be up."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.horizon_position = 68
+
+    widget.pitchAngle = -16.0         # horizon just off the top edge
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is True
+
+    widget.pitchAngle = -18           # deep in the constant-only gap
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is True
+
+    widget.pitchAngle = -5            # horizon still on-glass, no cue due
+    widget.paintEvent(event)
+    assert widget._show_recovery_chevrons is False
+
+
 def test_ai_cat_excessive_bank_annunciation(fix, qtbot):
     """AI-TC-102 | AI-BANK-001 | Beyond the excessive-bank threshold (before stall buffet)
     the AI annunciates excessive bank (amber bank scale). AC 25-11B App A A.2.5 (p.70)."""
@@ -481,9 +569,69 @@ def test_ai_cat_excessive_bank_annunciation(fix, qtbot):
     widget.rollAngle = 20            # normal bank -> no caution
     widget.paintEvent(event)
     assert widget._excessive_bank is False
-    widget.rollAngle = 60            # steep bank -> caution
+    widget.rollAngle = 62            # past the 60 deg default -> caution
     widget.paintEvent(event)
     assert widget._excessive_bank is True
+
+
+@pytest.mark.parametrize("roll", [-60, -55, -50, -45, -40, 40, 45, 50, 55, 60])
+def test_excessive_bank_default_clears_training_steep_turns(fix, qtbot, roll):
+    """AER-5149 | AI-BANK-001 | The default excessive-bank threshold is 60 deg
+    (Bill, 2026-11-07), so a Private (45 +/-5) or Commercial (50 +/-5) steep
+    turn, either direction, never lights the caution. At the old default (45)
+    every roll here past 45 cautioned."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    assert widget.excessiveBankDeg == 60
+    widget.rollAngle = roll
+    widget.paintEvent(event)
+    assert widget._excessive_bank is False
+
+
+@pytest.mark.parametrize("roll", [-61, 61])
+def test_excessive_bank_default_cautions_past_60(fix, qtbot, roll):
+    """AER-5149 | AI-BANK-001 | Past the 60 deg default the caution engages,
+    either direction."""
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.rollAngle = roll
+    widget.paintEvent(event)
+    assert widget._excessive_bank is True
+
+
+def test_excessive_bank_threshold_is_a_config_setting(fix, qtbot):
+    """AER-5149 | The threshold is an aircraft setting: a configured value --
+    including a quoted string, as the configurator writes scalars -- moves
+    the caution, and stays an int (the attribute type the coercion keys on)."""
+    from pyefis.screens.screenbuilder_options import _coerce_to_attr_type
+    _reset_ai_items(fix)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.excessiveBankDeg = _coerce_to_attr_type(
+        widget, "excessiveBankDeg", "50")
+    assert widget.excessiveBankDeg == 50
+    assert type(widget.excessiveBankDeg) is int
+    widget.rollAngle = 49
+    widget.paintEvent(event)
+    assert widget._excessive_bank is False
+    widget.rollAngle = 51
+    widget.paintEvent(event)
+    assert widget._excessive_bank is True
+
+
+def test_excessive_bank_prop_matches_widget_and_sits_below_declutter():
+    """AER-5149 | The configurator Prop exists on both attitude types with the
+    widget's default, and its range cannot put the caution past the 65 deg
+    unusual-attitude de-clutter (the caution must come first)."""
+    from pyefis.screens.screenbuilder_factory import REGISTRY
+    for t in ("atitude_indicator", "virtual_vfr"):
+        props = {p.name: p for p in REGISTRY[t].properties}
+        prop = props["excessiveBankDeg"]
+        assert prop.default == 60
+        assert prop.maximum <= 65
+        assert prop.minimum >= 30
 
 
 def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
@@ -509,9 +657,10 @@ def test_ai_cat_declutter_at_unusual_attitude(fix, qtbot):
     widget.paintEvent(event)
     assert widget._decluttered is True
 
-    # A normal steep turn (excessive-bank caution) is NOT yet the unusual-attitude
-    # regime -- the display stays fully cluttered so the pilot keeps all cues.
-    widget.rollAngle = 50
+    # A bank past the excessive-bank caution (60 default) is NOT yet the
+    # unusual-attitude regime (65) -- the display stays fully cluttered so
+    # the pilot keeps all cues.
+    widget.rollAngle = 62
     widget.paintEvent(event)
     assert widget._excessive_bank is True
     assert widget._decluttered is False
@@ -531,15 +680,107 @@ def test_ai_cat_excessive_sideslip_annunciation(fix, qtbot):
     assert widget._excessive_slip is True
 
 
-@pytest.mark.xfail(strict=True, reason="AI-LIM-001 data-blocked: no AOA / stall-margin key yet")
+def _define_aoa(fix, aoa=4.0, warn=13.5, old=False, bad=False, fail=False):
+    """AOA as fix-gateway's ahrs.yaml defines it (aux Warn = the stall-warning
+    AOA, published by the onspeed plugin). The fixture does not define it."""
+    fix.db.define_item("AOA", "Angle of attack", "float", -180.0, 180.0, "deg",
+                       300, "Min,Max,0g,Warn,Stall")
+    item = fix.db.get_item("AOA")
+    item.value = aoa
+    item.set_aux_value("Warn", warn)
+    item.old = old
+    item.bad = bad
+    item.fail = fail
+    return item
+
+
 def test_ai_cat_pitch_limit_indication(fix, qtbot):
     """AI-TC-105 | AI-LIM-001 | Approaching stall AOA the AI must show a pitch-limit
-    indication. AC 25-11B App A A.2.4 (p.70). Data-blocked: fix-gateway publishes no AOA /
-    stall-margin key yet (OnSpeed/AOA path). Contract: w._show_pitch_limit."""
+    indication. AC 25-11B App A A.2.4 (p.70). Margin = AOA.Warn - AOA (fix-gateway
+    onspeed plugin); the marker shows once the margin is inside
+    pitchLimitShowMarginDeg. Contract: w._show_pitch_limit."""
+    _reset_ai_items(fix)
+    aoa = _define_aoa(fix, aoa=3.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+
+    widget.paintEvent(event)                 # cruise: 10.5 deg of margin -> no cue
+    assert widget._pitch_limit_margin == pytest.approx(10.5)
+    assert widget._show_pitch_limit is False
+
+    aoa.value = 9.0                          # approach: 4.5 deg of margin -> cue
+    widget.paintEvent(event)
+    assert widget._pitch_limit_margin == pytest.approx(4.5)
+    assert widget._show_pitch_limit is True
+
+    aoa.value = 14.0                         # past the warning AOA -> still shown
+    widget.paintEvent(event)
+    assert widget._pitch_limit_margin == pytest.approx(-0.5)
+    assert widget._show_pitch_limit is True
+
+    aoa.set_aux_value("Warn", 11.5)          # flaps out: lower warning AOA moves it
+    aoa.value = 9.0
+    widget.paintEvent(event)
+    assert widget._pitch_limit_margin == pytest.approx(2.5)
+
+
+@pytest.mark.parametrize("flag", ["old", "bad", "fail"])
+def test_ai_pitch_limit_hidden_on_degraded_aoa(fix, qtbot, flag):
+    """AI-LIM-001: no marker from an AOA that is old, bad or failed -- a stall
+    margin from a stale or untrusted AOA is misleading. The onspeed plugin
+    publishes AOA bad below its mute airspeed, so this is also the taxi case.
+    The marker returns when the flag clears."""
+    _reset_ai_items(fix)
+    aoa = _define_aoa(fix, aoa=10.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is True
+
+    setattr(aoa, flag, True)
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is False
+    assert widget._pitch_limit_margin is None
+
+    setattr(aoa, flag, False)
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is True
+
+
+def test_ai_pitch_limit_hidden_without_warn_setpoint(fix, qtbot):
+    """AI-LIM-001: AOA.Warn None (the plugin clears it when the box's setpoints
+    are out of order) means there is no warning AOA to measure to -- no marker,
+    even with a good AOA."""
+    _reset_ai_items(fix)
+    aoa = _define_aoa(fix, aoa=10.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    aoa.set_aux_value("Warn", "None")        # as the client applies a cleared aux
+    widget.paintEvent(event)
+    assert widget._show_pitch_limit is False
+    assert widget._pitch_limit_margin is None
+
+
+def test_ai_pitch_limit_disabled_without_aoa_key(fix, qtbot):
+    """Graceful FIX-key init: no AOA key in the database leaves the indicator
+    off rather than raising."""
     _reset_ai_items(fix)
     widget = ai.AI()
     event = _show_ai(qtbot, widget)
     widget.paintEvent(event)
+    assert widget._show_pitch_limit is False
+
+
+def test_ai_pitch_limit_survives_declutter(fix, qtbot):
+    """Stall margin is recovery information: at an unusual attitude the
+    de-clutter keeps the pitch-limit marker (AI-DCL-001 scope)."""
+    _reset_ai_items(fix)
+    _define_aoa(fix, aoa=12.0, warn=13.5)
+    widget = ai.AI()
+    event = _show_ai(qtbot, widget)
+    widget.pitchAngle = 45
+    widget.paintEvent(event)
+    assert widget._decluttered is True
     assert widget._show_pitch_limit is True
 
 

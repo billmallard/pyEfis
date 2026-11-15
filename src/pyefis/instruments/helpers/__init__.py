@@ -4,6 +4,25 @@ from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import *
 
+
+def font_scale(font_percent):
+    """The common Font size option read as a multiplier on a widget's own
+    built-in text size (pyEfis #223, #229-#233; the #219 flight_plan shape).
+
+    The value arrives already normalised to a fraction by
+    ``screenbuilder_preferences.normalize_font_percent`` on both paths (the
+    builder and ``apply_options``), so it is NOT normalised again here: that
+    would turn a hand-written 150 (1.5 after normalising) into 1.5%. Unset,
+    zero, negative, non-finite or non-numeric means 1.0 -- today's size."""
+    try:
+        scale = float(font_percent)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(scale) or scale <= 0:
+        return 1.0
+    return scale
+
+
 #: Shared readout-panel design tokens.
 #:
 #: The HSI's integral readout panel (P5a) established the house look for a
@@ -20,38 +39,36 @@ from PyQt6.QtGui import *
 #: even over a fully-lit sky (see tests/instruments/test_readout_panel.py).
 READOUT_FILL_ALPHA = 0.62
 READOUT_BORDER_ALPHA = 0.85
-#: Corner radius and border width, both as a fraction of the readout's font
-#: size, so the panel scales with the instrument instead of with the screen.
-#: This is the HSI's own token (its top_panel readout uses it directly against
-#: `self.fontSize`) -- do not repoint the tape boxes at it, see
-#: TAPE_READOUT_RADIUS_RATIO below.
-READOUT_RADIUS_RATIO = 0.35
-READOUT_PEN_RATIO = 0.06
-#: Tape readout box (airspeed/altitude) corner radius, as a fraction of the
-#: box's OWN base quantity: `font_height`, the fitted digit glyph height in
-#: NumericalDisplay (panel height there is 1.20 * font_height). This is a
-#: separate token from READOUT_RADIUS_RATIO on purpose (AER-386, Bill
-#: 2026-08-27: "the roundedness of the airspeed and altitude boxes is too
-#: much"): READOUT_RADIUS_RATIO is keyed to the HSI's `fontSize`, a different
-#: base quantity, and the tape box is much shorter relative to its own font
-#: than the HSI panel is to its own fontSize -- reusing 0.35 against
-#: font_height ate ~29% of the tape box's height (near the geometric max
-#: before QPainter clamps a rounded rect to a full stadium/pill -- confirmed
-#: by rendering, see below) versus ~14.5% for the HSI's panel.
+#: Corner radius of a rounded readout container, as a fraction of the
+#: container's OWN panel height -- so every readout box in the house style gets
+#: the same corner from ONE number, with no per-widget arithmetic: the HSI's
+#: HDG|MAG|CRS panel, the airspeed/altitude tape boxes, the airspeed TAS box,
+#: and any future rounded container (the nav-source tab, #143). Keyed to panel
+#: HEIGHT -- not to a font size, and not to a panel-height multiplier -- on
+#: purpose (AER-386/AER-413; Bill 2026-08-27: "we will likely be using it some
+#: more").
 #:
-#: Calibrated by rendering both at the sizes they occupy on a real PFD
-#: (virtual_vfr.yaml's grid, at 1920x1080): the HSI top_panel panel there is
-#: 950x950 (font_percent 0.05 -> fontSize 48 -> radius 48*0.35 = 16.8px,
-#: 14.5% of its 115.52px panel height). Reusing that ABSOLUTE 16.8px on the
-#: tape box (font_percent 0.25/0.24 -> font_height 22.0, panel height
-#: 1.20*22.0 = 26.4px) exceeds half the panel height, so QPainter clamps it to
-#: a full pill -- visually indistinguishable from the too-round original and
-#: not a fix (rendered and compared to confirm). Matching the HSI's
-#: *proportion* instead -- radius = 14.5% of panel height = 0.145 * 26.4 =
-#: 3.84px -- reads as the same restrained, boxy corner as the HSI. As a
-#: fraction of font_height that is 3.84 / 22.0 = 0.1745, rounded to 0.17
-#: (3.74px at that font_height).
-TAPE_READOUT_RADIUS_RATIO = 0.17
+#: Why height, and why 0.145 -- the derivation is kept because it is the reason
+#: absolute-pixel matching fails. Calibrated by rendering both containers at
+#: the sizes they occupy on a real PFD (virtual_vfr.yaml's grid, at 1920x1080):
+#: the HSI top_panel panel there is 950x950 (font_percent 0.05 -> fontSize 48),
+#: and its sectioned readout panel is 115.52px tall with a 16.8px corner --
+#: 16.8 / 115.52 = 0.145 of its own height. Reusing that ABSOLUTE 16.8px on the
+#: much shorter tape box (font_percent 0.25/0.24 -> font_height 22.0, panel
+#: height 1.20 * 22.0 = 26.4px) exceeds half the panel height, so QPainter
+#: clamps it to a full pill -- visually indistinguishable from the too-round
+#: original and not a fix (rendered and compared to confirm). Matching the
+#: HSI's *proportion* instead -- 0.145 * 26.4 = 3.84px -- reads as the same
+#: restrained, boxy corner as the HSI.
+#:
+#: The earlier TAPE_READOUT_RADIUS_RATIO folded the 1.20 panel-height
+#: multiplier (_READOUT_PANEL_H in NumericalDisplay) into the token: 0.145 *
+#: 1.20 = 0.174 against font_height. Keying to panel height directly means a
+#: change to that multiplier moves the panel and its corner together instead of
+#: silently breaking the HSI match -- pinned by test_readout_panel.py (AER-413).
+READOUT_RADIUS_RATIO = 0.145
+#: Border width as a fraction of the readout's font size.
+READOUT_PEN_RATIO = 0.06
 
 
 def readout_panel_pen_brush(border_color, pen_width=1.0,
@@ -86,12 +103,129 @@ def draw_readout_panel(painter, rect, radius, border_color, pen_width=1.0,
     return pen, brush
 
 
+#: Failed-tape look (CERT1a, AER-5178). A tape whose data has failed used to
+#: show its failure only as a small red XXX in the readout box while the scale,
+#: the coloured bands and the trend vector kept drawing, and those can still be
+#: read as live. The glass convention is a large red X across the whole failed
+#: tape. The scale is also removed, so nothing under the X looks like a
+#: reading (Bill's pick of the two looks, AER-5178).
+FAILED_TAPE_X_COLOR = QColor(255, 0, 0)
+#: X stroke width as a fraction of the tape's narrow side.
+FAILED_TAPE_X_PEN_RATIO = 0.06
+
+
+def draw_failed_tape_x(painter, rect):
+    """Draw the failed-tape red X corner to corner across `rect`.
+
+    The stroke is inset by half its width so the line ends stay inside the
+    tape. Painter state is saved and restored.
+    """
+    rect = QRectF(rect)
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    pen_w = max(3.0, min(rect.width(), rect.height()) * FAILED_TAPE_X_PEN_RATIO)
+    r = rect.adjusted(pen_w / 2, pen_w / 2, -pen_w / 2, -pen_w / 2)
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(FAILED_TAPE_X_COLOR, pen_w)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.drawLine(r.topLeft(), r.bottomRight())
+    painter.drawLine(r.bottomLeft(), r.topRight())
+    painter.restore()
+
+
+#: Suspect-tape look (CERT1b, AER-5269). A `bad` key is suspect, not absent:
+#: its source still sends a value but has flagged it as untrustworthy. So the
+#: tape keeps its scale and an amber frame marks it as a caution, unlike the
+#: red X of a failed or expired (`old`) key (Bill's ruling, 2026-11-09).
+SUSPECT_TAPE_COLOR = QColor(255, 176, 0)
+#: Frame stroke width as a fraction of the tape's narrow side.
+SUSPECT_TAPE_PEN_RATIO = 0.04
+
+
+def tape_invalid(item):
+    """True when a tape's key must not be read at all: failed, or expired
+    (`old`: its time-to-live ran out with the gateway still running, so the
+    value is frozen at the last one received). Both get the failed-tape look
+    (CERT1b; `old` used to blank only the readout digits)."""
+    return bool(item.fail or item.old)
+
+
+def draw_suspect_tape_frame(painter, rect):
+    """Draw the suspect-tape amber frame just inside `rect`.
+
+    Painter state is saved and restored."""
+    rect = QRectF(rect)
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    pen_w = max(2.0, min(rect.width(), rect.height()) * SUSPECT_TAPE_PEN_RATIO)
+    r = rect.adjusted(pen_w / 2, pen_w / 2, -pen_w / 2, -pen_w / 2)
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(SUSPECT_TAPE_COLOR, pen_w)
+    pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRect(r)
+    painter.restore()
+
+
+#: WCAG 2.x contrast floor for text/label colour derived from a bright,
+#: config-selectable fill (AER-473 / pyEfis#147). Named so a caller can cite
+#: the standard being met rather than a bare number, and so the target can be
+#: tightened/loosened in one place.
+SOURCE_LABEL_MIN_CONTRAST = 4.5
+
+
+def _srgb_to_linear(channel):
+    c = channel / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(rgb):
+    r, g, b = (_srgb_to_linear(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(fg_color, bg_color):
+    """WCAG 2.x contrast ratio between two QColor-able values."""
+    fg, bg = QColor(fg_color), QColor(bg_color)
+    l1 = _relative_luminance((fg.red(), fg.green(), fg.blue()))
+    l2 = _relative_luminance((bg.red(), bg.green(), bg.blue()))
+    if l1 < l2:
+        l1, l2 = l2, l1
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+def darken_to_contrast(color, target_ratio=SOURCE_LABEL_MIN_CONTRAST, step=0.01):
+    """Darken `color` (same hue/saturation) until its contrast against its
+    OWN original value clears `target_ratio`, without changing hue.
+
+    Built for a label drawn in a darkened tint of the same bright fill it
+    sits on (the nav-source tab, AER-473): the fill IS the background, so
+    darkening always increases contrast monotonically down to black. Walks
+    HSV value down in `step` increments rather than solving analytically --
+    the contrast formula isn't trivially invertible through sRGB gamma, and a
+    coarse deterministic walk is easier to reason about than a solver here.
+    """
+    bg = QColor(color)
+    h, s, v, a = bg.getHsvF()
+    vv = v
+    while vv > 0.0:
+        candidate = QColor.fromHsvF(h, s, vv, a)
+        if contrast_ratio(candidate, bg) >= target_ratio:
+            return candidate
+        vv -= step
+    return QColor.fromHsvF(h, s, 0.0, a)
+
+
 #: Shared static-element drop-shadow tokens (AER-392 / pyEfis#142).
 #:
 #: A soft drop shadow under a static instrument element (the HSI rose, the
 #: readout panel, and -- once #140 lands -- the nav-source tab) reads as a
-#: house depth treatment, same precedent as READOUT_RADIUS_RATIO/
-#: TAPE_READOUT_RADIUS_RATIO above. Config-gated per widget (default OFF);
+#: house depth treatment, same precedent as READOUT_RADIUS_RATIO above.
+#: Config-gated per widget (default OFF);
 #: these tokens are only the shared LOOK, not the per-frame cost decision --
 #: see bake_blurred_silhouette() below for how it is applied without paying
 #: per-frame blur cost.
@@ -129,8 +263,26 @@ SHADOW_BLUR_RATIO = 0.12
 #: of the blur radius, reserved on every side: both for the bake canvas
 #: itself (see bake_blurred_silhouette) and for callers deciding how much
 #: on-screen clearance a shadow needs before it is safe to draw at all
-#: (see the HSI's rose-radius reservation and its readout-panel margin cap).
+#: (see the HSI's readout-panel margin cap).
 SHADOW_CANVAS_PAD_RATIO = 3.0
+#: Alpha profile of a rim glow, as (distance across the glow band, fraction of
+#: peak alpha). Distance 0.0 is the shape's own edge, 1.0 is the outer limit of
+#: the glow. A rim glow is a symmetric, zero-offset halo -- it reads as a drop
+#: shadow cast by a light source at infinite distance, which is the intended
+#: look for the HSI rose (an offset shadow could not be, since the rose bake
+#: is rotated per heading; AER-392 gotcha #1).
+#:
+#: Why a gradient and not a blur (pyEfis#158 follow-up): blurring a filled
+#: silhouette and punching the shape back out gives no direct control over
+#: either the glow's width or its peak opacity. A Gaussian step edge lands at
+#: only ~50% of the fill alpha right at the shape's edge, and its tail runs far
+#: wider than the nominal blur radius -- so the rose's halo came out both too
+#: faint and too diffuse to read as a shadow. Stating the profile outright
+#: makes both properties exact and costs no blur pass.
+#:
+#: Eased rather than linear so the outer limit fades out instead of ending on
+#: a visible edge.
+RIM_GLOW_FALLOFF = ((0.0, 1.0), (0.35, 0.55), (0.65, 0.25), (1.0, 0.0))
 
 
 def bake_blurred_silhouette(width, height, paint_shape, blur_radius,

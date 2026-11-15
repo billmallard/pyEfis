@@ -226,6 +226,31 @@ def test_aux_flags_colors_and_unit_switching(gauge, fix):
     assert widget.unitsOverride == "A"
 
 
+def test_set_units_by_unit_name(gauge, fix):
+    # AER-3916: a unit group can be put in a named unit, not only toggled, so
+    # the boot-time preferences default (and a button) can select it directly.
+    hmi.initialize({})
+    widget = gauge
+    widget.dbkey = "NUMOK"
+    widget.conversionFunction1 = lambda value: value
+    widget.conversionFunction2 = lambda value: value / 2
+    widget.unitsOverride1 = "inHg"
+    widget.unitsOverride2 = "hPa"
+    widget.unitGroup = "Pressure"
+    widget.setUnitSwitching()
+    widget.setUnits("Pressure:hPa")
+    assert widget.unitsOverride == "hPa"
+    assert widget.value == fix.db.get_item("NUMOK").value / 2
+    widget.setUnits("Pressure:HPA")          # idempotent, case-insensitive
+    assert widget.unitsOverride == "hPa"
+    widget.setUnits("Pressure:toggle")       # toggle still works from unit 2
+    assert widget.unitsOverride == "inHg"
+    widget.setUnits("Pressure:inhg")
+    assert widget.unitsOverride == "inHg"
+    widget.setUnits("Pressure:mmHg")         # unknown name: no change
+    assert widget.unitsOverride == "inHg"
+
+
 def test_encoder_highlight_simple_selection_and_realtime(gauge, fix):
     widget = gauge
     widget.dbkey = "NUMOK"

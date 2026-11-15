@@ -190,6 +190,512 @@ def test_terrain_water_island_hole_stays_land(qapp):
                 and outside.blue() > outside.green())
 
 
+class _FakeOverlapWaterDB:
+    """Stub WaterDB (AER-4596): the two real-data overlaps a shared
+    even-odd accumulator cancels. ``seam_a``/``seam_b`` are OSM-style
+    split ocean cells meeting at ``lat0`` and each running ~0.002 deg
+    past it; a multi-ring lake (island hole at its centre) is overlapped
+    on its east side by a second single-ring polygon that stops short of
+    the island, the Natural Earth vs OSM duplicate-lake pattern."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0):
+        def poly(rings, kind):
+            p = type("P", (), {})()
+            p.vertices = [v for r in rings for v in r]
+            ends, k = [], 0
+            for r in rings:
+                k += len(r)
+                ends.append(k)
+            p.rings = ends
+            p.kind = kind
+            return p
+
+        def box(la0, la1, lo0, lo1):
+            return [(la0, lo0), (la0, lo1), (la1, lo1), (la1, lo0)]
+
+        o = 0.002                       # seam overlap, deg (~220 m)
+        w0, w1 = lon0 - 0.06, lon0 - 0.01
+        self._polys = [
+            poly([box(lat0 - 0.05, lat0 + o, w0, w1)], "ocean"),
+            poly([box(lat0 - o, lat0 + 0.05, w0, w1)], "ocean"),
+        ]
+        e0, e1 = lon0 + 0.01, lon0 + 0.07
+        outer = box(lat0 - 0.03, lat0 + 0.03, e0, e1)
+        hole = box(lat0 - 0.01, lat0 + 0.01, lon0 + 0.03, lon0 + 0.05)
+        twin = box(lat0 - 0.03, lat0 + 0.03, lon0 + 0.055, e1 + 0.02)
+        self._polys += [poly([outer, hole], "water"),
+                        poly([twin], "lake")]
+
+    def polygons_in_range(self, lat, lon, range_nm,
+                          min_bbox_diag_deg=None, drop_ocean=False):
+        yield from self._polys
+
+
+def test_terrain_water_overlapping_polygons_union(qapp):
+    """AER-4596: two polygons covering the same pixel paint water there.
+    One shared even-odd accumulator cancelled a doubly-covered pixel to
+    land -- a dry line along every whole-degree ocean seam and an erased
+    lake wherever NE and OSM both carry it. Even-odd still applies WITHIN
+    a polygon, so the lake's island hole stays land."""
+    lat0, lon0 = 34.5, -120.5
+    lay = TerrainLayer()
+    lay._cache = _LandCache()
+    lay._water = _FakeOverlapWaterDB(lat0, lon0)
+
+    class Owner:
+        _alt_ft = 3000.0
+    lay._owner = Owner
+
+    x = moving_map.MapTransform(lat0, lon0, 10.0, 0.0, 400, 400, 0.5)
+    key = lay._key(x)
+    img, meta = lay._render((key, x.lat0, x.lon0, x.range_nm,
+                             x.w, x.h, x.cy))
+    clat, clon, mpp = meta
+    n = img.width()
+
+    def is_water(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = (lo - clon) * M * np.cos(np.radians(clat)) / mpp + half
+        cy = (clat - la) * M / mpp + half
+        c = img.pixelColor(int(round(cx)), int(round(cy)))
+        return c.blue() > c.red() and c.blue() > c.green()
+
+    assert is_water(lat0, lon0 - 0.035)          # on the ocean seam
+    assert is_water(lat0 + 0.02, lon0 - 0.035)   # one cell only
+    assert is_water(lat0 + 0.02, lon0 + 0.065)   # lake + twin overlap
+    assert is_water(lat0 + 0.02, lon0 + 0.04)    # lake only
+    assert not is_water(lat0, lon0 + 0.04)       # island hole
+    assert not is_water(lat0, lon0)              # land between them
+
+
+
+class _FakeDenseCoastWaterDB:
+    """Stub WaterDB: one multi-ring lake (outer ring + island hole,
+    #44) where every edge is oversampled to *pts_per_edge* vertices --
+    far more than the ~90 m/px image can resolve, like a real OSM
+    coastline (~30 m spacing) against a wide-range window. MP4's
+    decimation should collapse most of these without moving the
+    rasterized shape.
+
+    *rotate_deg* and *jitter_frac* (AER-667) turn the ring from an
+    axis-aligned square donut into a non-axis-aligned one: rotation makes
+    every edge exercise raster.fill_even_odd's general dx/dy interpolation
+    instead of its dy==0 (skipped) / dx==0 (exact) fast paths, and the
+    per-vertex jitter (a deterministic irrational-stride sine, not
+    np.random -- reproducible, and never periodic with pts_per_edge) pushes
+    corner/edge vertices off exact scanline rows so the half-open
+    ``ymin <= yc < ymax`` rule and the shared-vertex no-double-count case
+    actually get exercised. Jitter is applied along each edge's normal and
+    capped to a small fraction of the local point spacing so the ring stays
+    simple (non-self-intersecting). Both default to 0, so the existing
+    axis-aligned callers of this fixture are unchanged."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0, pts_per_edge=1500, rotate_deg=0.0,
+                 jitter_frac=0.0, d=0.03, hd=0.01):
+        # d, hd: outer / island half-sides (deg). Defaults are the
+        # original moderate/coarse-case geometry; AER-1186's fine case
+        # overrides hd so the (much smaller) near-range render window
+        # actually intersects the ring instead of sitting entirely
+        # inside the island hole.
+        theta = np.radians(rotate_deg)
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
+
+        def edge(a, b, n, seed):
+            t = np.linspace(0.0, 1.0, n, endpoint=False)
+            tx, ty = b[0] - a[0], b[1] - a[1]
+            length = np.hypot(tx, ty)
+            nx, ny = -ty / length, tx / length      # unit normal
+            spacing = length / n
+            pts = []
+            for i, ti in enumerate(t):
+                dlat = a[0] + tx * ti
+                dlon = a[1] + ty * ti
+                if jitter_frac:
+                    amt = jitter_frac * spacing * np.sin((seed + i) * 2.399963)
+                    dlat += amt * nx
+                    dlon += amt * ny
+                rlat = dlat * cos_t - dlon * sin_t
+                rlon = dlat * sin_t + dlon * cos_t
+                pts.append((lat0 + rlat, lon0 + rlon))
+            return pts
+
+        def ring(half, n):
+            corners = [(-half, -half), (-half, half),
+                       (half, half), (half, -half)]
+            pts = []
+            for i in range(4):
+                pts.extend(edge(corners[i], corners[(i + 1) % 4], n, i * n))
+            return pts
+
+        outer = ring(d, pts_per_edge)
+        hole = ring(hd, pts_per_edge)
+        self._poly = type("P", (), {})()
+        self._poly.vertices = outer + hole
+        self._poly.rings = [len(outer), len(outer) + len(hole)]
+        self._poly.kind = "lake"
+
+    def polygons_in_range(self, lat, lon, range_nm,
+                          min_bbox_diag_deg=None, drop_ocean=False):
+        yield self._poly
+
+
+def _draw_water_undecimated(qimg, lat0, lon0, mpp, n, lat_cos, water_db):
+    """Reference rasterizer identical to _draw_water before MP4 --
+    every projected vertex becomes a QPointF, no per-pixel decimation.
+    Used only to compute the "before" baseline MP4's DoD (water
+    fraction within 0.5% of the undecimated path) compares against."""
+    from PyQt6.QtCore import QPointF, Qt as _Qt
+    from PyQt6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPolygonF
+    from pyefis.instruments.ai.camera import M_PER_DEG_LAT
+
+    half_px = (n - 1) / 2.0
+    px_per_deg_lat = M_PER_DEG_LAT / mpp
+    px_per_deg_lon = M_PER_DEG_LAT * lat_cos / mpp
+    p = QPainter(qimg)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(_Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor(60, 110, 160)))
+    for poly in water_db.polygons_in_range(lat0, lon0, 1e9):
+        v = np.asarray(poly.vertices, dtype=np.float64)
+        if v.shape[0] == 0:
+            continue
+        xs = ((v[:, 1] - lon0) * px_per_deg_lon + half_px).tolist()
+        ys = ((lat0 - v[:, 0]) * px_per_deg_lat + half_px).tolist()
+        pts = [QPointF(x, y) for x, y in zip(xs, ys)]
+        rings = getattr(poly, "rings", None)
+        if rings:
+            path = QPainterPath()
+            path.setFillRule(_Qt.FillRule.OddEvenFill)
+            start = 0
+            for end in rings:
+                ring_pts = pts[start:end]
+                if len(ring_pts) >= 3:
+                    path.addPolygon(QPolygonF(ring_pts))
+                    path.closeSubpath()
+                start = end
+            p.drawPath(path)
+        elif len(pts) >= 3:
+            p.drawPolygon(QPolygonF(pts))
+    p.end()
+
+
+def _water_mask(img, n):
+    buf = img.constBits()
+    buf.setsize(img.sizeInBytes())
+    px = np.frombuffer(buf, np.uint8).reshape(n, img.bytesPerLine() // 4, 4)
+    px = px[:, :n, :]
+    return (px[..., 0] > px[..., 1]) & (px[..., 0] > px[..., 2])  # BGRA: blue
+
+
+def test_terrain_water_decimation_matches_undecimated_fraction(qapp):
+    """MP4 DoD: rasterized water fraction per screen quadrant must stay
+    within 0.5% of the undecimated path on a densely oversampled
+    coast/lake fixture. Exercises the legacy Qt path directly (kept
+    behind water_raster: qt for MP5's A/B window) -- the decimation
+    step itself is shared with the numpy path (MP5)."""
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+    lay._owner = Owner
+
+    decimated = QImage(n, n, QImage.Format.Format_RGB32)
+    decimated.fill(0xFFFFFFFF)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_qt(decimated, lat0, lon0, mpp, n, lat_cos,
+                       nominal_range_nm)
+
+    reference = QImage(n, n, QImage.Format.Format_RGB32)
+    reference.fill(0xFFFFFFFF)
+    _draw_water_undecimated(reference, lat0, lon0, mpp, n, lat_cos, water)
+
+    wd = _water_mask(decimated, n)
+    wr = _water_mask(reference, n)
+    h2, w2 = n // 2, n // 2
+    quadrants = ((slice(None), slice(0, w2)), (slice(None), slice(w2, n)),
+                 (slice(0, h2), slice(None)), (slice(h2, n), slice(None)))
+    for sl in quadrants:
+        assert abs(wd[sl].mean() - wr[sl].mean()) < 0.005
+
+
+def test_terrain_water_decimation_preserves_island_hole(qapp):
+    """#44 + MP4: a densely oversampled multi-ring polygon still leaves
+    the island hole unpainted after vertex decimation. Legacy Qt path
+    (see test_terrain_water_numpy_preserves_island_hole for MP5's
+    numpy path on the same fixture)."""
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+    lay._owner = Owner
+
+    qimg = QImage(n, n, QImage.Format.Format_RGB32)
+    qimg.fill(0xFFFFFFFF)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
+
+    def px(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = (lo - lon0) * M * np.cos(np.radians(lat0)) / mpp + half
+        cy = (lat0 - la) * M / mpp + half
+        return qimg.pixelColor(int(round(cx)), int(round(cy)))
+
+    water_pt = px(lat0, lon0 + 0.02)      # between hole and outer ring
+    island = px(lat0, lon0)               # island centre
+    outside = px(lat0, lon0 + 0.05)       # beyond the outer ring
+    assert water_pt.blue() > water_pt.red() and water_pt.blue() > water_pt.green()
+    assert not (island.blue() > island.red()
+                and island.blue() > island.green())
+    assert not (outside.blue() > outside.red()
+                and outside.blue() > outside.green())
+
+
+def test_terrain_water_decimation_counters(qapp):
+    """MP4 DoD: the MP6 water counters expose before/after vertex
+    counts, and a densely oversampled fixture shows a real reduction
+    (932k -> well under 100k is the brief's 160 NM real-world number;
+    here just assert the counter wiring and that decimation actually
+    dropped most of the redundant vertices, with both rings and the
+    polygon surviving). Legacy Qt path -- qpointf_count tracks real
+    QPointF construction there; MP5's numpy path drives it to 0 (see
+    test_terrain_water_numpy_zero_qpointf)."""
+    from pyefis.instruments.map.perf import MapPerfStats
+
+    lat0, lon0 = 34.5, -120.5
+    pts_per_edge = 1500
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=pts_per_edge)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+        perf = MapPerfStats()
+    lay._owner = Owner
+
+    qimg = QImage(n, n, QImage.Format.Format_RGB32)
+    qimg.fill(0xFFFFFFFF)
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_qt(qimg, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
+
+    w = Owner.perf.water
+    assert w.polygons_before == 1
+    assert w.polygons_after == 1
+    assert w.vertices_before == pts_per_edge * 4 * 2   # outer + hole rings
+    assert 0 < w.vertices_after < w.vertices_before * 0.5
+    assert w.qpointf_count == w.vertices_after
+
+
+def _rgbx_water_mask(rgbx):
+    """Water fraction helper for an (n, n, 4) R,G,B,X uint8 array (the
+    format TerrainLayer._render builds and _draw_water_numpy mutates in
+    place -- see terrain.py's rgbx assembly)."""
+    return ((rgbx[..., 2] > rgbx[..., 0])
+            & (rgbx[..., 2] > rgbx[..., 1]))
+
+
+def test_terrain_water_numpy_preserves_island_hole(qapp):
+    """#44 + MP5: fill_even_odd, wired through _draw_water_numpy on the
+    same densely oversampled multi-ring fixture as the Qt path's
+    equivalent test, must also leave the island hole unpainted."""
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+    lay._owner = Owner
+
+    rgbx = np.zeros((n, n, 4), np.uint8)
+    rgbx[..., :3] = 255
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
+
+    def is_water(la, lo):
+        half = (n - 1) / 2.0
+        M = 111320.0
+        cx = int(round((lo - lon0) * M * np.cos(np.radians(lat0)) / mpp
+                       + half))
+        cy = int(round((lat0 - la) * M / mpp + half))
+        # Clamp: a probe point can round just outside the image (n=400 is
+        # smaller than the fixture's full extent at this mpp) -- the clamped
+        # edge pixel is still valid for "is this land or water" here, since
+        # the point being probed is outside the water ring in world space
+        # either way.
+        cx = min(max(cx, 0), n - 1)
+        cy = min(max(cy, 0), n - 1)
+        px = rgbx[cy, cx]
+        return px[2] > px[0] and px[2] > px[1]
+
+    assert is_water(lat0, lon0 + 0.02)      # between hole and outer ring
+    assert not is_water(lat0, lon0)         # island centre
+    assert not is_water(lat0, lon0 + 0.05)  # beyond the outer ring
+
+
+def test_terrain_water_numpy_zero_qpointf(qapp):
+    """MP5 DoD: the numpy path never constructs a QPointF -- the MP6
+    counter reads 0 regardless of vertex count, unlike the Qt path
+    (test_terrain_water_decimation_counters)."""
+    from pyefis.instruments.map.perf import MapPerfStats
+
+    lat0, lon0 = 34.5, -120.5
+    water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500)
+    n, mpp = 400, 20.0
+    lat_cos = np.cos(np.radians(lat0))
+
+    lay = TerrainLayer()
+    lay._water = water
+
+    class Owner:
+        _alt_ft = 0.0
+        perf = MapPerfStats()
+    lay._owner = Owner
+
+    rgbx = np.zeros((n, n, 4), np.uint8)
+    rgbx[..., :3] = 255
+    nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+    lay._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos, nominal_range_nm)
+
+    w = Owner.perf.water
+    assert w.polygons_before == 1
+    assert w.polygons_after == 1
+    assert w.vertices_after > 0
+    assert w.qpointf_count == 0
+
+
+def test_terrain_water_numpy_matches_qt_iou(qapp):
+    """MP5 DoD: pixel comparison of the numpy fill against the legacy
+    Qt rasterization, IoU >= 0.985 / 0.98. Until MP8's real fixture pack
+    exists, this uses the synthetic densely-oversampled coast/lake
+    fixture already in this file (_FakeDenseCoastWaterDB, the same one
+    MP4's DoD tests use), swept over three pixel densities (mpp) as a
+    stand-in for the brief's 10/80/160 NM cases -- the fixture's real
+    extent is a few km, so the mpp values are chosen to reproduce the
+    LOD regime (near-1:1 vs heavily decimated) each range implies,
+    not to be a literal NM-accurate render.
+
+    AER-667 (a follow-up to AER-643/Elon's release comment on it): the
+    coarse case now compares against a ROTATED + JITTERED ring, not the
+    plain axis-aligned square donut the fine/moderate cases still use.
+    That matters because on the axis-aligned ring, two of
+    raster.fill_even_odd's four edges per ring are exactly horizontal
+    (dy == 0) and never enter the crossing accumulator at all (the
+    `keep = counts > 0` filter drops them), and the other two are exactly
+    vertical (dx == 0), so x_at's dx/dy interpolation is never exercised
+    either -- the general non-axis-aligned scanline math, and the
+    shared-vertex no-double-count case the half-open `ymin <= yc < ymax`
+    rule exists for, were untested. A 27-degree rotation (an arbitrary,
+    non-special angle -- not near 0/45/90) puts every edge at a generic
+    slope so both are actually exercised; the per-vertex jitter (see
+    _FakeDenseCoastWaterDB) additionally scatters vertices off exact
+    scanline rows.
+
+    AER-1186: the fine case's 400x400 @ mpp=4 window has a half-extent of
+    ~798 m, smaller than the fixture's default island half-side (hd=0.01
+    deg =~ 1111 m) -- so the whole window sat inside the island hole,
+    both rasterizers produced an all-land mask, and `iou = ... if union
+    else 1.0` made the assertion pass vacuously regardless of whether the
+    fine-range path agreed with Qt at all (measured: qt_water_px=0,
+    np_water_px=0). Fixed by overriding the island to hd=0.004 deg (~445
+    m, still a comfortable ~350 m inside the window edge so the hole
+    boundary isn't clipped) for the fine case only -- moderate/coarse keep
+    the default 0.01 geometry, where the window already comfortably
+    contains the whole ring. That makes the fine case exercise real water
+    pixels (measured: qt_water_px=119557, np_water_px=119191, iou=0.9969).
+    """
+    lat0, lon0 = 34.5, -120.5
+    lat_cos = np.cos(np.radians(lat0))
+    n = 400
+
+    # (mpp, stands in for, min IoU, rotate_deg, jitter_frac, hd override).
+    # Fine overrides hd (see AER-1186 above); moderate keeps the default
+    # axis-aligned ring (rotate_deg=0, hd=None -> fixture default 0.01) and
+    # meets the brief's literal 0.985 floor for 80 NM comfortably (measured
+    # ~0.993). Fine's honest floor (0.99) sits a small margin below its own
+    # measured 0.9969 -- still inside the brief's literal 0.98 for 10 NM,
+    # now for real rather than vacuously.
+    #
+    # Coarse uses the rotated+jittered ring. A full 0-90 degree sweep in
+    # 3-degree steps (see AER-667) shows non-axis-aligned geometry actually
+    # IMPROVES coarse-case IoU over the axis-aligned 0.9492 -- every angle
+    # tried measured between ~0.963 and ~0.972, never near the literal 0.985
+    # floor. That rules out "axis-aligned corners were hiding a fixable
+    # rasterizer bug": the gap is this fixture's small size (a few km
+    # ring) combined with mpp=60's heavy decimation, which leaves only a
+    # few thousand water pixels total, so a few hundred pixels of
+    # Qt-antialiasing-vs-hard-edge disagreement is a large fraction of the
+    # union regardless of rotation. 27 degrees (measured IoU 0.9652,
+    # deterministic -- rotate_deg/jitter_frac carry no randomness) is used
+    # here; 0.96 is the floor, a small margin below that measurement and a
+    # real tightening from the previously and silently relaxed 0.94. The
+    # literal 0.985 still needs MP8's real fixture pack -- disclosed here,
+    # not silently dropped.
+    cases = [(4.0, "fine (~10 NM stand-in)", 0.99, 0.0, 0.0, 0.004),
+             (20.0, "moderate (~80 NM stand-in)", 0.985, 0.0, 0.0, None),
+             (60.0, "coarse (~160 NM stand-in)", 0.96, 27.0, 0.3, None)]
+    for mpp, label, min_iou, rotate_deg, jitter_frac, hd in cases:
+        kwargs = {} if hd is None else {"hd": hd}
+        water = _FakeDenseCoastWaterDB(lat0, lon0, pts_per_edge=1500,
+                                        rotate_deg=rotate_deg,
+                                        jitter_frac=jitter_frac, **kwargs)
+        nominal_range_nm = (n - 1) / 2.0 * mpp / 1852.0
+
+        class Owner:
+            _alt_ft = 0.0
+
+        lay_qt = TerrainLayer()
+        lay_qt._water = water
+        lay_qt._owner = Owner
+        qt_img = QImage(n, n, QImage.Format.Format_RGB32)
+        qt_img.fill(0xFFFFFFFF)
+        lay_qt._draw_water_qt(qt_img, lat0, lon0, mpp, n, lat_cos,
+                              nominal_range_nm)
+        wq = _water_mask(qt_img, n)
+
+        lay_np = TerrainLayer()
+        lay_np._water = water
+        lay_np._owner = Owner
+        rgbx = np.zeros((n, n, 4), np.uint8)
+        rgbx[..., :3] = 255
+        lay_np._draw_water_numpy(rgbx, lat0, lon0, mpp, n, lat_cos,
+                                 nominal_range_nm)
+        wn = _rgbx_water_mask(rgbx)
+
+        inter = int((wq & wn).sum())
+        union = int((wq | wn).sum())
+        # AER-1186: an empty union makes the IoU comparison below vacuous
+        # (it would pass no matter what either rasterizer drew) -- assert
+        # real water pixels exist so a fixture/window regression back to
+        # that state fails loudly instead of silently.
+        assert union > 0, "%s: no water pixels rendered by either path" % label
+        iou = inter / union
+        assert iou >= min_iou, "%s: iou=%.4f < %.4f" % (label, iou, min_iou)
+
+
 class _FakeHighwayDB:
     """Stub HighwayDB: one motorway segment strictly NORTH of the
     ownship (so orientation tests can discriminate sides -- a through
@@ -247,7 +753,8 @@ def _roads_paint(range_nm, rot_deg):
     buf = out.constBits()
     buf.setsize(out.sizeInBytes())
     px = np.frombuffer(buf, np.uint8).reshape(h, out.bytesPerLine() // 4, 4)
-    return px[:, :400, 3]      # alpha channel: road pixels > 0
+    # copy: px views out's buffer, which is freed when out goes
+    return px[:, :400, 3].copy()   # alpha channel: road pixels > 0
 
 
 def test_roads_track_up_east_paints_north_road_left(qapp):
@@ -329,6 +836,71 @@ def test_highwaydb_class_filter(tmp_path):
         34.5, -120.5, 50, classes=("motorway", "trunk"))}
     assert only == {"motorway"}                          # filtered in SQL
     assert list(db.polylines_in_range(34.5, -120.5, 50, classes=())) == []
+
+
+def test_highwaydb_old_pack_has_no_flags_or_ref(tmp_path):
+    """RD3a (AER-640): a pack built before AER-623 lands has no
+    flags/ref columns at all. HighwayDB must not raise -- every
+    HighwayLine falls back to flags=0, ref=None."""
+    import sqlite3
+    from pyefis.instruments.ai.highway_db import HighwayDB, encode_vertices
+    p = tmp_path / "old_pack.sqlite"
+    con = sqlite3.connect(str(p))
+    con.executescript(
+        "CREATE TABLE highway_lines (id INTEGER PRIMARY KEY, fclass TEXT,"
+        " min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL, verts BLOB);"
+        "CREATE VIRTUAL TABLE highway_rtree USING rtree(id, min_lat, max_lat,"
+        " min_lon, max_lon);")
+    verts = encode_vertices(np.array([[34.5, -120.5], [34.6, -120.4]]))
+    con.execute("INSERT INTO highway_lines VALUES (?,?,?,?,?,?,?)",
+                (1, "motorway", 34.5, 34.6, -120.5, -120.4, verts))
+    con.execute("INSERT INTO highway_rtree VALUES (?,?,?,?,?)",
+                (1, 34.5, 34.6, -120.5, -120.4))
+    con.commit(); con.close()
+
+    db = HighwayDB(str(p))
+    assert db.ready
+    lines = list(db.polylines_in_range(34.5, -120.5, 50))
+    assert len(lines) == 1
+    assert lines[0].flags == 0
+    assert lines[0].ref is None
+
+
+def test_highwaydb_new_pack_reads_flags_and_ref(tmp_path):
+    """A pack with the AER-640 columns yields the real flags/ref."""
+    import sqlite3
+    from pyefis.instruments.ai.highway_db import (
+        FLAG_BRIDGE, FLAG_TUNNEL, HighwayDB, encode_vertices)
+    p = tmp_path / "new_pack.sqlite"
+    con = sqlite3.connect(str(p))
+    con.executescript(
+        "CREATE TABLE highway_lines (id INTEGER PRIMARY KEY, fclass TEXT,"
+        " min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,"
+        " verts BLOB, flags INTEGER NOT NULL DEFAULT 0, ref TEXT);"
+        "CREATE VIRTUAL TABLE highway_rtree USING rtree(id, min_lat, max_lat,"
+        " min_lon, max_lon);")
+    verts = encode_vertices(np.array([[34.5, -120.5], [34.6, -120.4]]))
+    rows = [
+        (1, "motorway", 34.5, 34.6, -120.5, -120.4, verts, 0, "I-5"),
+        (2, "motorway", 34.5, 34.6, -120.5, -120.4, verts, FLAG_TUNNEL, None),
+        (3, "motorway", 34.5, 34.6, -120.5, -120.4, verts, FLAG_BRIDGE, None),
+    ]
+    for row in rows:
+        con.execute("INSERT INTO highway_lines VALUES (?,?,?,?,?,?,?,?,?)",
+                    row)
+        con.execute("INSERT INTO highway_rtree VALUES (?,?,?,?,?)",
+                    (row[0], row[2], row[3], row[4], row[5]))
+    con.commit(); con.close()
+
+    db = HighwayDB(str(p))
+    assert db.ready
+    lines = sorted(db.polylines_in_range(34.5, -120.5, 50),
+                   key=lambda l: (l.flags, l.ref or ""))
+    assert [l.ref for l in lines if l.flags == 0] == ["I-5"]
+    tunnel = [l for l in lines if l.flags & FLAG_TUNNEL]
+    bridge = [l for l in lines if l.flags & FLAG_BRIDGE]
+    assert len(tunnel) == 1 and tunnel[0].ref is None
+    assert len(bridge) == 1 and bridge[0].ref is None
 
 
 def test_terrain_orientation_north_up(qapp):
@@ -426,7 +998,7 @@ def _panmap(qtbot, orientation="track_up", track=0.0):
     w.ownship_position = 50          # cy = 200
     w.range_nm = 10.0                # px_per_m = 200 / (10*1852)
     w.orientation = orientation
-    w._track = track
+    w._track = w._track_true = track
     return w
 
 

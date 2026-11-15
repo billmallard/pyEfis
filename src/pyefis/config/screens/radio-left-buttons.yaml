@@ -3,7 +3,6 @@
 # development on this feature will continue
 RADIO:
   include:
-  - screens/virtualvfr_db.yaml
   - HMI_ENCODER_BUTTONS
   module: pyefis.screens.screenbuilder
   title: Radio Screen

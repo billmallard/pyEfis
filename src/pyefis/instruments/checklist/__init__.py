@@ -55,6 +55,7 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
 from pyefis import hmi
+from pyefis.instruments.helpers import font_scale
 
 logger = logging.getLogger(__name__)
 
@@ -276,10 +277,13 @@ class Checklist(QWidget):
     :class:`ChecklistModel` wired to the encoder and the HMI action hub."""
 
     def __init__(self, parent=None, checklists=None,
-                 font_family="DejaVu Sans Condensed"):
+                 font_family="DejaVu Sans Condensed", font_percent=None):
         super().__init__(parent)
         self.parent = parent
         self.font_family = font_family
+        # Font size: a multiplier on the line pitch, which the text size is
+        # derived from (pyEfis #233). See _paint for the floor.
+        self.font_percent = font_percent
         # apply="attr" appearance defaults (kept in lockstep with the
         # InstrumentSpec Props -- the registry gate asserts these match).
         self.hmi_group = ""
@@ -402,9 +406,9 @@ class Checklist(QWidget):
                                     w, h)
                 return
 
-            line_h = max(12.0, h / 16.0)
+            line_h, text_px = self._line_metrics(h)
             font = QFont(self.font_family)
-            font.setPixelSize(max(8, int(line_h * 0.7)))
+            font.setPixelSize(text_px)
             p.setFont(font)
 
             # Header: title in the category colour + progress.
@@ -455,6 +459,18 @@ class Checklist(QWidget):
         finally:
             p.end()
 
+    def _line_metrics(self, h):
+        """(line pitch, text pixel size) for a pane ``h`` px tall.
+
+        Font size scales the line pitch and the text with it, so the layout
+        responds: a larger size shows fewer lines (the row walk stops at the
+        bottom edge), a smaller one more (pyEfis #233). The 12 px pitch floor
+        is the legibility floor; at it the text is 8 px, still inside its row,
+        so a pane small enough to hit the floor shows fewer rows instead of
+        overlapping ones. The text is always 0.7 of the pitch, for any scale."""
+        line_h = max(12.0, h / 16.0 * font_scale(self.font_percent))
+        return line_h, max(8, int(line_h * 0.7))
+
     def _draw_item(self, p, rect, entry, is_current):
         acked = entry["acked"]
         if is_current:
@@ -477,10 +493,9 @@ class Checklist(QWidget):
                                  | Qt.AlignmentFlag.AlignVCenter),
                        entry["response"] + " ")
 
-    @staticmethod
-    def _draw_centered(p, text, color, w, h):
+    def _draw_centered(self, p, text, color, w, h):
         font = QFont()
-        font.setPixelSize(max(10, int(h / 12)))
+        font.setPixelSize(max(10, int(h / 12 * font_scale(self.font_percent))))
         p.setFont(font)
         p.setPen(QPen(color))
         p.drawText(QRectF(0, 0, w, h),

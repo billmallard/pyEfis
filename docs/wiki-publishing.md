@@ -13,7 +13,8 @@ docs/wiki/            one .md per wiki page (GitHub-wiki naming, hyphenated)
   _Sidebar.md         wiki navigation
   Concepts.md, Widgets-*.md, Screens-*.md, Pilots-Guide.md, ...
 docs/images/          shared images (referenced as ../images/NAME.png)
-tools/sync_wiki.sh    the mirror script
+.github/workflows/wiki-sync.yml   publishes the wiki on every merge to dev
+tools/sync_wiki.sh    local preview of the mirror (does not push)
 ```
 
 **Authoring rules** (so the mirror is lossless):
@@ -22,23 +23,36 @@ tools/sync_wiki.sh    the mirror script
   (These resolve in the wiki. In the repo file view they are not clickable,
   which is acceptable — the repo copy is the source, the wiki is the rendered
   product.)
-- Reference images as `../images/NAME.png`. The mirror copies `docs/images/`
-  into the wiki and rewrites the path to `images/NAME.png`.
+- Reference images as `../images/NAME.png` (a subdirectory is fine:
+  `../images/nav_status/NAME.png`). The mirror publishes each referenced
+  `docs/images/` file to the wiki and rewrites the path to `images/NAME.png`.
 - `Home.md`, `_Sidebar.md`, `_Footer.md` are GitHub-wiki special pages.
 
 ## Mirroring
 
 The GitHub wiki is a separate git repo: `git@github.com:billmallard/pyEfis.wiki.git`
-(HTTPS: `https://github.com/billmallard/pyEfis.wiki.git`). It must be created
-once (open the repo's **Wiki** tab and add any page) before it can be cloned.
+(HTTPS: `https://github.com/billmallard/pyEfis.wiki.git`).
+
+**Publishing is automatic.** `.github/workflows/wiki-sync.yml` runs on every push
+to `dev` that touches `docs/wiki/`, `docs/images/` or the workflow itself, and on
+demand (Actions tab, *wiki-sync*, *Run workflow*). It stages the pages with the
+rewrites above, adds the images they reference, and mirrors the result onto the
+wiki with `rsync --delete`. Renaming or deleting a page here renames or deletes it
+on the wiki, and **direct wiki edits are overwritten** on the next run. Review
+happens in the PR that changes `docs/wiki/`. The job runs only in
+`billmallard/pyEfis`, so it never publishes upstream's wiki.
+
+The workflow pushes with the built-in `GITHUB_TOKEN`. If a run fails with 403 on
+push, that token cannot write the wiki: add a `WIKI_TOKEN` repository secret (a
+fine-grained token with Contents read/write on this repo) and re-run.
+
+To preview the mirror locally without publishing:
 
 ```bash
 # from the pyEfis repo root
 tools/sync_wiki.sh                       # clones/updates ../pyEfis.wiki, copies pages+images
-cd ../pyEfis.wiki
-git diff                                 # review
-git add -A && git commit -m "Sync manual from docs/wiki" && git push
+cd ../pyEfis.wiki && git diff            # review; do not push -- the workflow publishes
 ```
 
-The script **does not push** — it stages the mirror in a local clone for you to
-review and push. Publishing is an outward-facing action and is left to a human.
+`tools/sync_wiki.sh` copies only the top-level `docs/images/` files and never
+deletes, so its preview can differ slightly from what the workflow publishes.

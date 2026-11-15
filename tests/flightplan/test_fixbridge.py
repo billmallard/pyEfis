@@ -1,0 +1,487 @@
+#  SPDX-License-Identifier: GPL-2.0-or-later
+"""Tests for pyefis.flightplan.fixbridge -- FP4 (billmallard/pyEfis#183).
+
+Uses the repo's ``fix`` pytest fixture (``conftest.py``, the mock FIX
+database also used by ``tests/instruments/hsi/test_hsi.py``) and defines the
+Appendix A flight-plan keys on it directly, since FP1 (fix-gateway) is a
+separate repo and its ``database/flightplan.yaml`` is not part of this
+fixture.
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from pyefis.flightplan import fixbridge, model
+
+
+# DB_Item's min/max setters do `self.dtype(x)` with no ValueError guard for
+# None on int/float (str(None) and bool(None) are harmless; int(None) and
+# float(None) raise TypeError) -- so int/float keys need real numeric bounds,
+# unlike the bool/str `None, None` convention conftest.py uses elsewhere.
+_WIDE_BOUNDS = {"float": (-1e9, 1e9), "int": (-1_000_000, 1_000_000),
+                "bool": (None, None), "str": (None, None)}
+
+
+def _define(fix, key, dtype, value):
+    mn, mx = _WIDE_BOUNDS[dtype]
+    fix.db.define_item(key, key, dtype, mn, mx, "", 0, "")
+    fix.db.set_value(key, value)
+    fix.db.get_item(key).bad = False
+    fix.db.get_item(key).fail = False
+
+
+_ENGINE_DTYPES = {
+    "FPLSTATE": "int", "FPLACTLEG": "int", "FPLPHASE": "str", "FPLAPR": "int",
+    "FPLINTEG": "bool", "CDISCALE": "float", "FPLCRS": "float", "FPLXTK": "float",
+    "FPLCDI": "float", "FPLTF": "int", "FPLFRLAT": "float", "FPLFRLON": "float",
+    "WPNAME": "str", "WPLAT": "float", "WPLON": "float", "WPFROM": "str",
+    "WPNEXT": "str", "WPDIS": "float", "WPETE": "int", "FPLREMDIS": "float",
+    "FPLREMETE": "int", "FPLALERT": "bool", "GPSSRC": "int",
+    "FPLACTSEG": "int", "FPLSEGREM": "float",
+}
+_ENGINE_DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "str": ""}
+
+
+def _define_all_fp1_keys(fix):
+    """Defines the full PA3 route block (all ``MAX_SLOTS`` slots), staging,
+    command and engine-output keys on the fixture's mock FIX database."""
+    for key, dtype, blank in fixbridge.route_key_specs():
+        _define(fix, key, dtype, blank)
+    for key, dtype in _ENGINE_DTYPES.items():
+        _define(fix, key, dtype, _ENGINE_DEFAULTS[dtype])
+
+
+def _plan(n):
+    return model.FlightPlan(name="TEST", waypoints=[
+        model.Waypoint(id=f"WP{i:02d}", type="fix", lat=float(i), lon=float(i))
+        for i in range(n)
+    ])
+
+
+# ---------------------------------------------------------------------------
+# available
+# ---------------------------------------------------------------------------
+def test_available_false_with_no_keys_and_nothing_raises(fix):
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.available is False
+    # every method must be a safe no-op, never raise
+    bridge.publish(_plan(3))
+    bridge.stage_direct_to(model.Waypoint(id="X", type="fix", lat=0, lon=0))
+    assert bridge.command("ACT", 1) is None
+    assert bridge.read_route() is None
+    assert bridge.read_engine() is None
+
+
+def test_available_true_with_all_fp1_keys_defined(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.available is True
+
+
+def test_available_false_when_only_the_old_fp1_role_key_is_defined(fix):
+    """AER-1709 regression: a PA3 gateway has no FPLfROLE -- probing for it
+    (instead of FPLfFLAGS) is exactly the bug that pinned ``available`` to
+    False against every current gateway."""
+    for n in range(1, fixbridge.MAX_SLOTS + 1):
+        _define(fix, f"FPL{n}ID", "str", "")
+        _define(fix, f"FPL{n}LAT", "float", 0.0)
+        _define(fix, f"FPL{n}LON", "float", 0.0)
+        _define(fix, f"FPL{n}TYPE", "int", 0)
+        _define(fix, f"FPL{n}ROLE", "int", 0)  # the old FP1 spelling, not FLAGS
+    _define(fix, "FPLCOUNT", "int", 0)
+    _define(fix, "FPLNAME", "str", "")
+    _define(fix, "FPLSEQ", "int", 0)
+    _define(fix, "DTOID", "str", "")
+    _define(fix, "DTOLAT", "float", 0.0)
+    _define(fix, "DTOLON", "float", 0.0)
+    _define(fix, "DTOTYPE", "int", 0)
+    _define(fix, "FPLCMD", "str", "")
+    _define(fix, "FPLCMDACK", "int", 0)
+    _define(fix, "FPLMSG", "str", "")
+    for key, dtype in _ENGINE_DTYPES.items():
+        _define(fix, key, dtype, _ENGINE_DEFAULTS[dtype])
+
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.available is False
+
+
+def test_max_slots_is_100():
+    assert fixbridge.MAX_SLOTS == 100
+
+
+def test_probe_keys_match_current_flightplan_yaml_contract():
+    """Frozen against fix-gateway database/flightplan.yaml as of PA3
+    (fix-gateway#27, commit 125884b, 2026-09-18 -- Bill's decision 1). If the
+    next contract revision renames or adds a block-level key, this test --
+    and ``_slot_keys``/``_probe_keys`` -- must move together, or this catches
+    the drift before a bench does."""
+    probed = set(fixbridge._probe_keys())
+    for suffix in ("ID", "LAT", "LON", "TYPE", "FLAGS"):
+        assert f"FPL1{suffix}" in probed
+        assert f"FPL{fixbridge.MAX_SLOTS}{suffix}" in probed
+    # the key PA3 deleted must never be probed again
+    assert "FPL1ROLE" not in probed
+    assert f"FPL{fixbridge.MAX_SLOTS}ROLE" not in probed
+
+
+# ---------------------------------------------------------------------------
+# publish
+# ---------------------------------------------------------------------------
+def _sent(fix):
+    """Keys pyEfis actually queued for the gateway, in send order. The mock
+    client's sendqueue is a MagicMock; each put() is one ``KEY;value;flags``
+    line from ``DB_Item.output_value()``."""
+    out = []
+    for call in fix.db.clientthread.sendqueue.put.call_args_list:
+        line = call.args[0].decode()
+        key, value, _flags = line.rstrip("\n").split(";")
+        out.append((key, value))
+    return out
+
+
+def test_publish_writes_slots_in_order_and_seq_last(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    fix.db.clientthread.sendqueue.reset_mock()
+
+    bridge.publish(_plan(2))
+    order = [key for key, _v in _sent(fix)]
+
+    # On the wire, not just in pyEfis's local copy: every field of slot 1,
+    # then of slot 2, then the segment table rows, then the counts (RS1
+    # writer order: FPLSEGCNT and FPLCOUNT after the rows), name, approach
+    # type and cycle, then seq last.
+    slot = [name for name, _, _ in fixbridge.SLOT_FIELDS]
+    row = [name for name, _, _ in fixbridge.SEGMENT_FIELDS]
+    assert slot == ["ID", "LAT", "LON", "TYPE", "PT", "CRS", "DST", "ALT", "SPD", "SGI",
+                    "FLAGS", "CTRLAT", "CTRLON", "TURN"]
+    assert order == (
+        [f"FPL1{f}" for f in slot] + [f"FPL2{f}" for f in slot]
+        + [f"FPLS1{f}" for f in row] + [f"FPLS2{f}" for f in row]
+        + ["FPLSEGCNT", "FPLCOUNT", "FPLNAME", "FPLAPRTYPE", "FPLDBCYC", "FPLSEQ"])
+    assert fix.db.get_item("FPL1ID").value == "WP00"
+    assert fix.db.get_item("FPL2ID").value == "WP01"
+    assert fix.db.get_item("FPLCOUNT").value == 2
+    assert fix.db.get_item("FPLNAME").value == "TEST"
+    assert fix.db.get_item("FPLSEQ").value == 1
+
+
+def test_publish_bumps_seq_by_one_each_time(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(_plan(1))
+    bridge.publish(_plan(1))
+    assert fix.db.get_item("FPLSEQ").value == 2
+
+
+def test_publish_blanks_trailing_slots_on_shrink(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(_plan(20))
+    assert fix.db.get_item("FPL20ID").value == "WP19"
+
+    bridge.publish(_plan(3))
+    assert fix.db.get_item("FPLCOUNT").value == 3
+    assert fix.db.get_item("FPLSEGCNT").value == 3
+    for n in range(4, 21):
+        for name, _dtype, blank in fixbridge.SLOT_FIELDS:
+            assert fix.db.get_item(f"FPL{n}{name}").value == blank, \
+                f"slot {n} {name} not blanked"
+        for name, _dtype, blank in fixbridge.SEGMENT_FIELDS:
+            assert fix.db.get_item(f"FPLS{n}{name}").value == blank, \
+                f"segment row {n} {name} not blanked"
+    # untouched, in-use slots survive
+    assert fix.db.get_item("FPL1ID").value == "WP00"
+    assert fix.db.get_item("FPL3ID").value == "WP02"
+
+
+def test_publish_writes_role_and_type_codes(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    plan = model.FlightPlan(name="APR", waypoints=[
+        model.Waypoint(id="ZUMAB", type="fix", lat=1.0, lon=2.0, role="faf"),
+        model.Waypoint(id="RW30", type="map", lat=3.0, lon=4.0, role="map"),
+    ])
+    bridge.publish(plan)
+    assert fix.db.get_item("FPL1TYPE").value == 4  # fix
+    assert fix.db.get_item("FPL1FLAGS").value == 0x04  # faf bit
+    assert fix.db.get_item("FPL2TYPE").value == 6  # map
+    assert fix.db.get_item("FPL2FLAGS").value == 0x08  # map bit
+
+
+def test_publish_faf_does_not_collide_with_iaf_bit(fix):
+    """AER-1709: PA3's bit positions do not match the old scalar enum (faf
+    was scalar 2, IAF's bit is 0x02) -- a naive rename would silently turn a
+    published FAF into an IAF on the wire."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(model.FlightPlan(name="APR", waypoints=[
+        model.Waypoint(id="ZUMAB", type="fix", lat=1.0, lon=2.0, role="faf"),
+    ]))
+    flags = fix.db.get_item("FPL1FLAGS").value
+    assert flags & 0x04  # FAF bit set
+    assert not flags & 0x02  # IAF bit must not be set
+
+
+def test_role_round_trips_through_publish_and_read_route(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    plan = model.FlightPlan(name="APR", waypoints=[
+        model.Waypoint(id="ZUMAB", type="fix", lat=1.0, lon=2.0, role="faf"),
+        model.Waypoint(id="IPOSA", type="fix", lat=1.5, lon=2.5, role="iaf"),
+    ])
+    bridge.publish(plan)
+    route = bridge.read_route()
+    assert route.waypoints[0].role == "faf"
+    assert route.waypoints[1].role == "iaf"
+
+
+# ---------------------------------------------------------------------------
+# stage_direct_to
+# ---------------------------------------------------------------------------
+def test_publish_values_reach_the_gateway(fix):
+    """AER-810 bench: the editor showed three waypoints while fixgw held one,
+    because set_value() never left pyEfis. Every bridge write must be sent."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    fix.db.clientthread.sendqueue.reset_mock()
+    bridge.publish(_plan(2))
+    sent = dict(_sent(fix))
+    assert sent["FPL1ID"] == "WP00"
+    assert sent["FPL2ID"] == "WP01"
+    assert sent["FPLCOUNT"] == "2"
+    assert sent["FPLNAME"] == "TEST"
+    assert sent["FPLSEQ"] == "1"
+
+
+def test_command_and_direct_to_reach_the_gateway(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    fix.db.clientthread.sendqueue.reset_mock()
+    bridge.stage_direct_to(model.Waypoint(id="RZS", type="vor", lat=34.02, lon=-119.55))
+    bridge.command("DTO")
+    sent = _sent(fix)
+    assert [k for k, _v in sent] == ["DTOID", "DTOLAT", "DTOLON", "DTOTYPE", "FPLCMD"]
+    assert dict(sent)["DTOID"] == "RZS"
+    assert dict(sent)["FPLCMD"] == "1 DTO"
+
+
+def test_stage_direct_to_writes_dto_keys(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.stage_direct_to(model.Waypoint(id="RZS", type="vor", lat=34.02, lon=-119.55))
+    assert fix.db.get_item("DTOID").value == "RZS"
+    assert fix.db.get_item("DTOLAT").value == pytest.approx(34.02)
+    assert fix.db.get_item("DTOLON").value == pytest.approx(-119.55)
+    assert fix.db.get_item("DTOTYPE").value == 2  # vor
+
+
+# ---------------------------------------------------------------------------
+# command / ack
+# ---------------------------------------------------------------------------
+def test_command_seq_increments_and_writes_fplcmd(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    seq1 = bridge.command("ACT", 3)
+    assert seq1 == 1
+    assert fix.db.get_item("FPLCMD").value == "1 ACT 3"
+    seq2 = bridge.command("SUSP")
+    assert seq2 == 2
+    assert fix.db.get_item("FPLCMD").value == "2 SUSP"
+
+
+def test_command_ack_callback_fires_ok_true_on_positive_ack(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    results = []
+    seq = bridge.command("ACT", 1, on_ack=lambda s, ok, msg: results.append((s, ok, msg)))
+    fix.db.get_item("FPLMSG").value = ""
+    fix.db.set_value("FPLCMDACK", seq)
+    assert results == [(seq, True, "")]
+
+
+def test_command_ack_callback_fires_ok_false_on_negative_ack(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    results = []
+    seq = bridge.command("ACT", 99, on_ack=lambda s, ok, msg: results.append((s, ok, msg)))
+    fix.db.get_item("FPLMSG").value = "BAD SLOT"
+    fix.db.set_value("FPLCMDACK", -seq)
+    assert results == [(seq, False, "BAD SLOT")]
+
+
+def test_command_returns_none_and_no_ack_when_unavailable(fix):
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.available is False
+    called = []
+    seq = bridge.command("ACT", 1, on_ack=lambda *a: called.append(a))
+    assert seq is None
+    assert called == []
+
+
+# ---------------------------------------------------------------------------
+# ActivePlan read-back
+# ---------------------------------------------------------------------------
+def test_listener_fires_on_fplseq_change(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    calls = []
+    bridge.add_listener(lambda: calls.append(1))
+    bridge.publish(_plan(1))
+    assert len(calls) >= 1
+
+
+def test_listener_fires_on_engine_output_change(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    calls = []
+    bridge.add_listener(lambda: calls.append(1))
+    fix.db.set_value("FPLSTATE", 1)
+    assert len(calls) >= 1
+
+
+def test_read_route_reflects_published_plan(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(_plan(2))
+    route = bridge.read_route()
+    assert route.name == "TEST"
+    assert route.seq == 1
+    assert [s.id for s in route.waypoints] == ["WP00", "WP01"]
+    assert route.waypoints[0].type == "fix"
+
+
+def _wp(ident, lat, lon):
+    return model.Waypoint(id=ident, type="fix", lat=lat, lon=lon)
+
+
+ROUTE_327 = [_wp("KSBA", 34.426, -119.840), _wp("GVO", 34.531, -120.091),
+             _wp("RZS", 34.509, -119.771), _wp("KSMX", 34.899, -120.458)]
+
+
+def test_unnamed_plan_name_follows_each_append(fix):
+    """pyEfis #327: the editor appends one waypoint at a time and re-reads
+    the plan from the bus after each publish. The first publish wrote the
+    default "KSBA-KSBA" to FPLNAME; reading that back as an explicit name
+    froze it there for the whole route."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    plan = model.FlightPlan()
+    names = []
+    for wp in ROUTE_327:
+        plan.insert_after(plan.count - 1, wp)
+        bridge.publish(plan)
+        plan = bridge.read_plan()
+        names.append(fix.db.get_item("FPLNAME").value)
+        assert plan.name == ""
+    assert names == ["KSBA-KSBA", "KSBA-GVO", "KSBA-RZS", "KSBA-KSMX"]
+    assert bridge.read_route().name == "KSBA-KSMX"
+
+
+def test_pilot_name_survives_the_bus_and_later_edits(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    plan = model.FlightPlan(name="COAST RUN", waypoints=ROUTE_327[:2])
+    bridge.publish(plan)
+    plan = bridge.read_plan()
+    assert plan.name == "COAST RUN"
+    plan.insert_after(plan.count - 1, ROUTE_327[3])
+    bridge.publish(plan)
+    assert bridge.read_plan().name == "COAST RUN"
+    assert fix.db.get_item("FPLNAME").value == "COAST RUN"
+
+
+def test_route_to_plan_reads_default_name_as_unnamed():
+    """A restarted display (no in-process state) sees the same thing: the
+    rule is the bus name against the bus slots, nothing remembered."""
+    slots = [fixbridge.RouteSlot(id=w.id, lat=w.lat, lon=w.lon, type="fix", role="none")
+             for w in ROUTE_327[:2]]
+    auto = fixbridge.RouteBlock(name="KSBA-GVO", seq=1, waypoints=slots, segments=[])
+    stale = fixbridge.RouteBlock(name="KSBA-KSBA", seq=1, waypoints=slots, segments=[])
+    assert fixbridge.route_to_plan(auto).name == ""
+    assert fixbridge.route_to_plan(auto).default_name() == "KSBA-GVO"
+    # A name that is not this slot set's default (here the stale value an
+    # older display published) is kept: it cannot be told from a pilot name.
+    assert fixbridge.route_to_plan(stale).name == "KSBA-KSBA"
+
+
+def test_read_engine_reports_values_and_quality(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    fix.db.set_value("FPLCRS", 313.13)
+    fix.db.get_item("FPLCRS").bad = True
+    engine = bridge.read_engine()
+    assert engine["FPLCRS"].value == pytest.approx(313.13)
+    assert engine["FPLCRS"].bad is True
+
+
+# ---------------------------------------------------------------------------
+# Optional engine outputs (FPLSUSPMAP, G49): read when present, never probed
+# ---------------------------------------------------------------------------
+def test_older_gateway_without_fplsuspmap_stays_available_and_omits_it(fix):
+    _define_all_fp1_keys(fix)   # the base contract, no FPLSUSPMAP
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.available is True
+    assert "FPLSUSPMAP" not in bridge.read_engine()
+
+
+def test_fplsuspmap_is_read_and_watched_when_the_gateway_has_it(fix):
+    _define_all_fp1_keys(fix)
+    _define(fix, "FPLSUSPMAP", "int", 0)
+    bridge = fixbridge.FixBridge(fix)
+    calls = []
+    bridge.add_listener(lambda: calls.append(1))
+    fix.db.set_value("FPLSUSPMAP", 1)
+    assert calls, "a change of FPLSUSPMAP alone must repaint the FPL page"
+    assert bridge.read_engine()["FPLSUSPMAP"].value == 1
+
+
+def test_read_direct_to_none_when_unavailable(fix):
+    bridge = fixbridge.FixBridge(fix)
+    assert bridge.read_direct_to() is None
+
+
+def test_read_direct_to_reflects_staged_point(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.stage_direct_to(model.Waypoint(id="RZS", type="vor", lat=34.02, lon=-119.55))
+    dto = bridge.read_direct_to()
+    assert dto.id == "RZS"
+    assert dto.lat == pytest.approx(34.02)
+    assert dto.lon == pytest.approx(-119.55)
+    assert dto.type == "vor"
+
+
+# ---------------------------------------------------------------------------
+# Qt-free (static -- fixbridge legitimately depends on pyavtools.fix, which
+# is itself Qt-based, so the sys.modules check test_model.py/test_catalog.py
+# use would fail for the wrong reason; this checks fixbridge.py's own source
+# never imports PyQt6/PyQt5 directly).
+# ---------------------------------------------------------------------------
+def test_package_source_never_imports_qt_directly():
+    pkg_dir = Path(__file__).resolve().parents[2] / "src" / "pyefis" / "flightplan"
+    offenders = []
+    for path in pkg_dir.glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("import PyQt") or stripped.startswith("from PyQt"):
+                offenders.append(f"{path.name}:{lineno}: {stripped}")
+    assert offenders == [], "flightplan package must not import Qt directly:\n" + "\n".join(offenders)
+
+
+def test_two_bridges_never_reuse_a_command_seq(fix):
+    """FP10: the map and the FPL page each own a FixBridge, and both write
+    FPLCMD. Appendix C: strictly increasing per session -- the second writer
+    continues from the bus."""
+    _define_all_fp1_keys(fix)
+    fpl = fixbridge.FixBridge(fix)
+    mapb = fixbridge.FixBridge(fix)
+    assert fpl.command("SUSP") == 1
+    assert mapb.command("DTO") == 2
+    assert fpl.command("RESUME") == 3
+    fix.db.set_value("FPLCMDACK", -9)      # another display got to 9
+    assert mapb.command("DTOX") == 10

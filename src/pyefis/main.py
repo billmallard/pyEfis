@@ -51,8 +51,10 @@ if "pyAvMap" not in ''.join(sys.path):
 import pyavtools.fix as fix
 
 import pyefis.hooks as hooks
+import pyefis.fix_watchdog as fix_watchdog
 import pyefis.hmi as hmi
 import pyefis.gui as gui
+import pyefis.kiosk as kiosk
 
 
 config_filename = "default.yaml"
@@ -224,6 +226,14 @@ def main():
     fix.initialize(config)
     pyefis_ver = fix.db.get_item('PYEFIS_VERSION')
 
+    # CERT1: a gateway that hangs with the socket open must not leave the
+    # last values on the glass as good.  Never let it stop the display.
+    try:
+        link_watchdog = fix_watchdog.start(fix.db, config.get("main") or {})
+    except Exception:
+        log.critical("FIX link watchdog failed to start", exc_info=True)
+        link_watchdog = None
+
     hmi.initialize(config)
 
     if 'FMS' in config:
@@ -231,12 +241,34 @@ def main():
         fms = importlib.import_module ("FixIntf")
         fms.start(config["FMS"]["aircraft_config"])
 
-    gui.initialize(config,config_path,preferences)
+    # DEMO4: the kiosk lock is read by instruments as they build and paint.
+    kiosk.configure(config.get("kiosk"))
+
+    try:
+        gui.initialize(config,config_path,preferences)
+    except Exception:
+        # fix.initialize()/hmi.initialize() above have already started
+        # non-daemon background threads that block forever waiting on the
+        # FIX bus. If we let this exception unwind normally, the main
+        # thread dies but those threads keep the process alive (0% CPU,
+        # stuck in the interpreter's non-daemon-thread join at shutdown) --
+        # a permanently black display that no supervisor can see or
+        # restart. os._exit() skips that join and kills the process
+        # outright so systemd's Restart=always can actually fire.
+        log.critical("Fatal error initializing GUI - exiting", exc_info=True)
+        os._exit(1)
 
     # Do this after the widgets subscribe to the item
     pyefis_ver.value = __version__
 
-    if "keybindings" in config:
+    # DEMO4: the DEMO marking on every install, the page follower in kiosk
+    # mode. After the screens and the startup notice, so it stacks on top.
+    kiosk.initialize(gui.mainWindow, fix, gui.screens)
+
+    # A kiosk has no keyboard, and a key must not reach exit (brief 6.2).
+    if "keybindings" in config and kiosk.locked():
+        log.info("kiosk: keybindings not loaded")
+    elif "keybindings" in config:
         hmi.keys.initialize(gui.mainWindow, config["keybindings"])
     hooks.initialize(config['hooks'])
 
@@ -244,6 +276,23 @@ def main():
     # Signal-handler runs in the main thread but outside the Qt event loop,
     # so calling QWidget.grab() directly from inside the handler is unsafe.
     # The signal just flips a flag; a QTimer in Qt's loop does the real work.
+    #
+    # AER-2002: on the Pi 5 (eglfs), grabbing a window that contains a
+    # QOpenGLWidget (the SVS AI viewport) forces Qt's internal GL-widget
+    # grab path (an FBO resize/readback it owns, not something pyEfis code
+    # can hook into or retry). The Pi's CMA pool is chronically ~0 free in
+    # steady state (confirmed live: CmaTotal 65536 kB, CmaFree 16 kB with no
+    # screenshot involved) -- corroborated independently by
+    # /tmp/svs_gl_failure.log entries from days before this issue showing
+    # the V3D driver returning a genuine GL_OUT_OF_MEMORY with no screenshot
+    # anywhere near them. Any extra GL allocation on this box is a coin
+    # flip, and Qt's own grab path has no failure recovery: a failed
+    # allocation there leaves the widget's surface black with no exception
+    # pyEfis can catch, unlike svs.py's own draw() errors (which retry and
+    # fall back to the brown "SVS UNAVAIL" ground). There is no safe way to
+    # make that Qt-internal path GL-safe from here, so skip it entirely
+    # under eglfs rather than gamble with the live display.
+    _is_eglfs = app.platformName() == "eglfs"
     import signal as _signal_mod
     from PyQt6.QtCore import QTimer as _QTimer
     _screenshot_pending = [False]
@@ -253,6 +302,12 @@ def main():
         if not _screenshot_pending[0]:
             return
         _screenshot_pending[0] = False
+        if _is_eglfs:
+            log.warning(
+                "SIGUSR1 screenshot skipped: eglfs platform (AER-2002 -- "
+                "grabbing the SVS QOpenGLWidget here can black it out "
+                "until restart, see pyEfis/CLAUDE.md)")
+            return
         try:
             target = gui.mainWindow if gui.mainWindow else app.primaryScreen()
             pix = target.grab() if hasattr(target, "grab") \
@@ -267,7 +322,12 @@ def main():
         _screenshot_timer.setInterval(100)
         _screenshot_timer.timeout.connect(_maybe_screenshot)
         _screenshot_timer.start()
-        log.info("SIGUSR1 -> /tmp/pyefis_screenshot.png handler armed")
+        if _is_eglfs:
+            log.info(
+                "SIGUSR1 handler armed (eglfs: screenshot disabled, "
+                "AER-2002 -- see pyEfis/CLAUDE.md)")
+        else:
+            log.info("SIGUSR1 -> /tmp/pyefis_screenshot.png handler armed")
     except Exception as e:
         log.warning(f"could not install SIGUSR1 screenshot handler: {e}")
 
@@ -275,6 +335,8 @@ def main():
     result = app.exec()
 
     # Clean up and get out
+    if link_watchdog is not None:
+        link_watchdog.stop()
     fix.stop()
     if 'FMS' in config:
         fms.stop()

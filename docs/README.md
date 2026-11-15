@@ -25,6 +25,7 @@ Live workstream state lives outside the repo in the workspace ledger
 | [instrument_spec.md](instrument_spec.md) | Instrument definition specification (active pilot) |
 | [adding_an_instrument.md](adding_an_instrument.md) | How-to: add/change an instrument + its configurator twin without drift |
 | [checklist_widget.md](checklist_widget.md) | Interactive checklist instrument (CAP-115 Phase 1): inline config, encoder + HMI control |
+| [flight_plan_widget.md](flight_plan_widget.md) | `flight_plan` instrument (FP5a): FPL/Entry pages, on-screen keypad, touch; DTO/Catalog/WPT Info + keyboard (FP5b) and encoder (FP5c) still open |
 | [screenbuilder.md](screenbuilder.md) | Screen YAML / screenbuilder reference (upstream-origin) |
 | [requirements.md](requirements.md) | pyEfis display requirements (upstream-origin) |
 | [wiki/Headless-Linux-Appliance.md](wiki/Headless-Linux-Appliance.md) | x86-64 headless Linux source install + boot-to-EFIS kiosk notes/gotchas (eglfs-vs-wheel, X/xcb, systemd) — published to the wiki |
@@ -60,8 +61,10 @@ specs with requirement IDs: [ai](ai_widget_spec.md) ·
 | [map_wide_range_perf_plan.md](map_wide_range_perf_plan.md) | PLAN 2026-07-10 — largely executed by the mosaic/mip work; reconcile before acting |
 | [gcu_design.md](gcu_design.md) | DRAFT — open GCU control head (parked) |
 | [instrument_bugs_design.md](instrument_bugs_design.md) | DRAFT — selected-value bug markers (companion to GCU) |
+| [fix_dynamic_list_spec.md](fix_dynamic_list_spec.md) | SPEC 2026-10-31 -- dynamic lists over FIX (closes #52): indexed key blocks, block vs slot commit; route restated, ADS-B traffic (`TFCk*`, GDL90 0x14) defined. Writer and #53 layer not yet built |
 | [fixgw_canaerospace_in_spec.md](fixgw_canaerospace_in_spec.md) | Spec, future work (untracked; out of landing scope) |
 | [fixgw_dronecan_in_spec.md](fixgw_dronecan_in_spec.md) | Spec, future work (untracked; out of landing scope) |
+| [fixgw_onspeed_in_spec.md](fixgw_onspeed_in_spec.md) | Spec, ready to implement (AER-4329) -- OnSpeed serial-in -> `AOA`/`AOA.Warn`; unblocks AI-LIM-001 |
 | [SVS_QUICKSTART.md](SVS_QUICKSTART.md) | WIP quickstart (untracked) |
 | [moving_map_spec.md](moving_map_spec.md) | Spec — NOTE: its "development not started" header is stale; Phases A–D shipped and are flying |
 

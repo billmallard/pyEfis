@@ -1,0 +1,41 @@
+# Place this in /etc/systemd/system/ (this is a SYSTEM unit, not a user
+# unit -- see makerplane/processes/bench_deploy.md: "fixgw.service and
+# svs-capture.service are SYSTEM units").
+#
+# The service itself is tools/capture_service.py in this checkout -- see
+# that file's module docstring for the full HTTP contract and env vars.
+#
+# Edit the paths below (User=, WorkingDirectory=, ExecStart=) to match your
+# environment. CAPTURE_TOKEN_FILE must exist and be readable by User= before
+# the service starts.
+#
+# Enable it:
+#    sudo systemctl enable svs-capture.service
+# Start it:
+#    sudo systemctl start svs-capture.service
+#
+# Disable it:
+#    sudo systemctl disable svs-capture.service
+# Stop it:
+#    sudo systemctl stop svs-capture.service
+#
+# A `git pull --ff-only` in this checkout (e.g. via bench-deploy.sh) updates
+# tools/capture_service.py on disk; restart the service to pick it up.
+#
+[Unit]
+Description=svs-capture (SVS/moving-map render-tier HTTP capability for QA)
+After=network.target
+
+[Service]
+Type=exec
+Restart=always
+RestartSec=1s
+User=pyefis
+WorkingDirectory=/home/pyefis/src/pyEfis
+Environment=CAPTURE_TOKEN_FILE=/home/pyefis/.capture-token
+Environment=CAPTURE_PYTHON=/home/pyefis/pyefis-venv/bin/python
+Environment=CAPTURE_DISPLAY=:0
+ExecStart=/home/pyefis/pyefis-venv/bin/python /home/pyefis/src/pyEfis/tools/capture_service.py
+
+[Install]
+WantedBy=multi-user.target

@@ -205,14 +205,14 @@ def test_action_catalogue_matches_hmi_registry(qtbot, hmi_actions):
     assert {"set bg color", "set fg color", "set text"} <= catalogue
 
 
-def test_virtual_vfr_dbkeys_use_course_not_head():
-    """Regression (#46): the virtual_vfr record must list the FIX keys the
-    widget actually consumes. VirtualVfr subscribes to COURSE for its heading
-    item (keyed internally as 'HEAD'); the default previously listed HEAD, a key
-    the widget never reads."""
+def test_virtual_vfr_dbkeys_are_the_keys_the_widget_reads():
+    """The virtual_vfr record lists the FIX keys the widget consumes: the
+    attitude keys plus LAT/LONG/ALT for the SVS camera. COURSE went with the
+    legacy CIFP overlay, its only reader (VVFR1, AER-5417); HEAD was never
+    read (#46)."""
     dbkeys = factory.REGISTRY["virtual_vfr"].dbkeys
-    assert "COURSE" in dbkeys, "virtual_vfr must declare the COURSE key it reads"
-    assert "HEAD" not in dbkeys, "virtual_vfr reads COURSE, not HEAD"
+    assert set(dbkeys) == {"PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "ALT"}
+    assert "COURSE" not in dbkeys and "HEAD" not in dbkeys
 
 
 def test_data_status_is_hidden_from_the_palette():

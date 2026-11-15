@@ -1,0 +1,502 @@
+# Flight plan widget
+
+Status: ACTIVE (FP5c, 2026-10-05) — touch, physical keyboard and encoder.
+All five pages (FPL, Entry, Direct To, Catalog, WPT Info), the
+physical-keyboard input path and the encoder path are live. Full plan:
+`makerplane/briefs/flight_plan_plan.md` section 3.4-3.5; tracking epic
+pyEfis#181; the data layer is pyEfis#183 (AER-804), FP5a is pyEfis#185
+(AER-805), FP5b is pyEfis#187 (AER-807), FP5c is pyEfis#188 (AER-810).
+
+## Data layer (`src/pyefis/flightplan/`)
+
+Qt-free (no `PyQt6` import anywhere in the package — the instrument (FP5a)
+and the map layer (FP6) wrap these plain-Python classes in Qt signals
+themselves). Every DB-backed object is construct-never-raises with
+`.available`/`.ready` reporting the actual state.
+
+- **`geo.py`** (FP3, extended FP4) — spherical-earth bearing, distance,
+  cross-track and along-track distance (`R = 3440.065` nm). Matches the
+  formulas fix-gateway's `flightplan` engine (FP2) uses, asserted against the
+  same reference-fixture table in both repos so the two implementations
+  cannot drift apart.
+- **`waypoints.py`** (FP3) — `WaypointIndex`: in-memory identifier index over
+  the on-device `airports.sqlite`/`navaids.sqlite` packs, FastFind (`prefix`),
+  `nearest`, plus `UserWaypointStore` and `RecentList`.
+- **`airways.py`** (PA2, procedures epic) — `AirwayGraph`: lookup + expansion
+  over the `procedures` pack's `airways`/`airway_legs` tables. `expand()`
+  emits `type="fix"` legs, each carrying the MEA of the airway leg that ends
+  at it as its packed altitude constraint (`"+7000"`); `cycle(ident)` reports
+  the AIRAC cycle an airway was built from.
+- **`procedures.py`** (PA5, procedures epic) — `ProcedureIndex`: lookup over
+  the same pack's `procedures`/`transitions`/`legs` tables (departures,
+  arrivals, approaches) by airport/kind/runway/transition. Query-only — it
+  does not assemble a transition into a flyable leg sequence (PA7/PA9, needs
+  the PA3 leg model) and does not enforce the whole-procedure-rejection
+  guardrail (the engine, PA4). Wired into this widget via the
+  `procedures_db_path` option and `_ensure_procedure_index()`, lazily, the
+  same pattern as `nasr_db_path`/`navaid_db_path` -> `_ensure_waypoint_index`
+  — PA7's PROC page is the first real consumer.
+- **`proc_load.py`** (PA7, procedures epic) — turns a `ProcedureIndex`
+  selection into route segments and places them in a plan. `assemble()`
+  returns one `departure`/`arrival` segment, or an `approach` segment and its
+  `missed` segment. Every leg keeps its path terminator (guardrail 1: an `FC`
+  reaches the engine, which refuses the route whole); IAF/FAF/MAP/MAHP come
+  from the pack's flags as roles and every slot gets `0x20` (from a coded
+  procedure). A leg with no fix (`CA`, `VA`) gets an empty ident and a point
+  2 nm along its course from the fix before it; a time-coded hold becomes a
+  distance at `hold_speed_kt`, because the bus carries no leg time; an `RF`
+  centre and radius come from the pack, an `AF` centre from its navaid, and a
+  value the data lacks is left empty for the engine to refuse. `insert()`
+  places the block in the guide's order (departure after the departure
+  airport, arrival before the approach, approach before a trailing
+  destination airport) and replaces the loaded one of that kind. Where it
+  meets the route at the same fix, the fix is kept once: a plain waypoint
+  there is dropped, a procedure's leading `IF` is merged into the procedure
+  before it (and `remove()` puts it back). Two slots at one fix are a
+  zero-length leg, which the engine flies as course 000 until it sequences.
+- **`model.py`** (FP4, RS2) — `Waypoint`, `Segment` and `FlightPlan`, the
+  editor's working copy of a route. A route is an ordered list of segments
+  (RS2, billmallard/pyEfis#305, route segments brief section 4): a plain
+  waypoint is a one-leg `waypoint` segment, an airway is one `airway`
+  segment holding every fix from its entry to its exit inclusive, and the
+  procedure kinds (`departure`/`arrival`/`approach`/`missed`) are reserved for
+  PA7. A segment's `entry`/`exit` are its first and last legs, so they can
+  never disagree with them. `waypoints` is the derived flat view (a tuple;
+  every pre-RS2 reader keeps working). Each `Waypoint` carries the PA3 leg
+  fields (`pt`, coded `crs`, `dst`, packed `alt` constraint, `spd`, non-role
+  `flags`, arc centre, `turn`). Edits mutate in place (the editor commits
+  every edit immediately, per section 3.4): `insert_before`/`insert_after`/
+  `remove` on flat indices (landing inside an airway cuts it in two; a
+  remnant too short to be an airway becomes a plain waypoint — no leg is ever
+  orphaned), and the segment operations `insert_airway`, `remove_segment`
+  (an airway leaves its entry fix behind — the undo of `insert_airway`),
+  `change_exit`, `change_entry` and `split_at`. `invert(graph)` returns a new
+  plan: segments and legs reversed, roles cleared, each airway's entry and
+  exit swapped with the one-way direction check re-run — a reversal across a
+  one-way leg, or any airway with no pack to check it against, is refused
+  with the reason; a procedure segment comes back as plain waypoints.
+  `set_role()` (at most one FAF and one MAP, the MAP must follow the FAF),
+  `approach()`, `leg(i)`/`cumulative(i)`/`total_nm` (the FPL page's
+  DTK/DIS/CUM columns), and `to_json()`/`from_json()` for the `"mp-route/2"`
+  schema (segments, each airway with its AIRAC cycle), preserving any field
+  neither this version nor the schema currently knows about. `"mp-route/1"`
+  (Appendix B of the brief) still loads, as plain waypoints, and is
+  rewritten as v2 on the next save.
+- **`catalog.py`** (FP4) — `Catalog(dir)` over
+  `<userdir>/routes/<slug>.json` (atomic tmp-file + `os.replace` writes):
+  `list`/`load`/`save`/`delete`/`copy`/`invert`. Slugs beginning `managed_`
+  are reserved for configurator-delivered routes (FP9) and are read-only on
+  the device. `invert()` returns the inverted plan without persisting it —
+  "the stored plan is unchanged" (GNX guide 3-36); `copy()` is the catalog
+  write that duplicates a stored route under a new name. `load(slug, graph)`
+  re-expands every airway whose stored cycle differs from the installed
+  pack's: a changed fix list is applied and reported in `plan.notices`
+  ("V27 changed since this plan was saved (...)"), and an airway the new data
+  can no longer expand keeps its stored fixes with a notice. The plan always
+  loads (route segments brief guardrail 3); the FPL page shows the notices.
+- **`fixbridge.py`** (FP4, RS2) — `FixBridge(fix_module)` wraps
+  `pyavtools.fix`: `publish(plan)` writes every slot field (`ID`/`LAT`/`LON`/
+  `TYPE`/`PT`/`CRS`/`DST`/`ALT`/`SPD`/`SGI`/`FLAGS`/`CTRLAT`/`CTRLON`/`TURN`)
+  and the RS1 segment table (`FPLS<k>KIND`/`ID`/`ENT`/`EXT`/`FIRST`/`LAST`),
+  blanking whatever a shorter previous plan left behind, then
+  `FPLSEGCNT`/`FPLCOUNT`/`FPLNAME`/`FPLDBCYC`, then `FPLSEQ` last.
+  `FPLfCRS` is magnetic: a leg with no coded course gets the great-circle
+  course into its fix plus the current `MAGVAR` (MAG = TRUE + VAR, the
+  engine's own conversion). `FPLDBCYC` carries the airways' AIRAC cycle so a
+  reader gets it back. `read_plan()` rebuilds a `FlightPlan`, segments and
+  all, from the bus alone; a table that does not describe the slots (which
+  the engine would reject anyway) reads as plain waypoints with a log line.
+  Also `stage_direct_to(wp)`, `command(verb, arg, on_ack)` (writes `FPLCMD`,
+  delivers the `FPLCMDACK`/`FPLMSG` answer to a plain callback), and
+  `read_route()`/`read_engine()` plus `add_listener()` for the bus-driven
+  read-back (fires on `FPLSEQ` or any engine-output change). `available` is
+  False — every method a no-op — if the gateway does not define the route
+  block, including the RS1 segment table (fix-gateway#40).
+  `route_key_specs()` lists every key it writes, for test doubles.
+
+## FIX keys
+
+See the *Flight plan* section of
+[FIX-Database-Keys](wiki/FIX-Database-Keys.md) for the key table; the
+authoritative registry (types, ranges, CAN-FIX IDs) lives in fix-gateway.
+
+## The `flight_plan` instrument (FP5a/b)
+
+`type: flight_plan`, category `navigation`. An app-like instrument (the
+`checklist` precedent, [checklist_widget.md](checklist_widget.md)): a working
+copy of a `flightplan.model.FlightPlan` that commits through
+`flightplan.fixbridge.FixBridge.publish` after every edit, then re-reads the
+bus (`FixBridge.read_plan()`/`read_engine()`) so a second display agrees —
+the bus is the truth, segments included (RS2).
+When `FixBridge.available` is False (the gateway does not define the FP1
+keys), the instrument annunciates `FPL: GATEWAY KEYS MISSING` and the pages
+render read-only — it never raises.
+
+**A route the engine refused is never listed as the plan** (G61, pyEfis #380).
+The engine can refuse a commit (an unsupported leg, incomplete Tier-2 data, a
+bad segment table). When it does, the refused route stays in the slots, the
+engine keeps flying the route it had, `FPLLDSEQ` keeps that route's `FPLSEQ`,
+and the reason goes to `FPLMSG`. The page takes the slots as the plan only
+when `FPLLDSEQ` equals `FPLSEQ`. While a commit is still unanswered, the page
+stays as it is, so the pilot's own edit does not flicker on every keystroke. An
+`FPLMSG` write, or `commit_answer_ms` (2 s) with no answer at all, marks the
+commit refused. The page then shows the last plan it saw loaded (an empty list
+if it has seen none this session) and a red strip above the soft keys:
+`EDIT REFUSED: <reason>`, or `NO ENGINE ANSWER` if nothing came back.
+The reason is the engine's `FPLMSG` code in plain words, naming the waypoint
+the code names (G61a, `pyefis/flightplan/refusal.py`): `BADTURN RF RFFIX` reads
+`ARC AT RFFIX: NO TURN DIRECTION`, `UNSUPP FC GVO` reads
+`CAN'T FLY FC LEG AT GVO`, and a segment-table code reads
+`ROUTE TABLE ERROR AT V27 (ENTRY FIX)`. A code the display has no words for
+(an engine newer than the display) shows as it came. The moving map's
+`REJECTED:` toast for a refused command uses the same words.
+`tests/flightplan/test_refusal.py` reads the engine's source (CI checks out
+fix-gateway `dev`) and fails when the engine can publish a code with no words.
+**Edit draft** puts the refused route back on the page as a draft
+(`DRAFT - NOT LOADED: <reason>`, no active-leg colour). Its edits commit as
+usual, a refusal of one keeps the pilot in the draft, and **Flown plan** goes
+back to the flown plan. The first commit the engine loads clears the strip and
+the draft. A gateway without `FPLLDSEQ` keeps the behaviour from before the key.
+An `FPLMSG` that answers a command (a refused DTO) can land while a commit is
+pending, and it then flags that commit until `FPLLDSEQ` arrives.
+
+### Pages
+
+- **FPL** (default) — header: route name, `FPLREMDIS`/`FPLREMETE`, a state
+  badge (LEG/DIRECT/SUSP from `FPLSTATE`), approach state
+  (APR ARM/LNAV/MISSED from `FPLAPR`) and `LOI` (`FPLINTEG` false). List: type
+  a column-header strip (WPT / SEGMENT and the column names), then per row a
+  type icon, ident (+ role abbreviation IAF/FAF/MAP/MAHP when set) and the
+  `columns` option's data columns. DTK and DIS are the leg **into** the row's
+  fix -- the leg you fly to reach it -- and DTK is **magnetic** (great-circle
+  course + `MAGVAR`, or the coded course), the same number the bridge
+  publishes as that slot's `FPLfCRS` and the engine flies as `FPLCRS`; the
+  first fix has none. CUM is the distance from the first fix (all from
+  `flightplan.geo`; ETE from `WPETE` on the active row only; ETA not yet
+  computed). RS3 changed DTK/DIS from the leg leaving the fix, in true. The TO row
+  (`FPLACTLEG`) is `active_color`, earlier rows `past_color`, later rows
+  `future_color`. Tapping a row opens a menu: Insert Before, Insert After,
+  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`),
+  Direct To (stages + `DTO k`), WPT Info (full detail, see below), Set Role
+  (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
+  MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
+  Direct To (the DTO page), PROC (the PROC page, PA7), Catalog (the Catalog
+  page), Menu (Invert, Store,
+  Clear, Suspend/Resume, CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
+  Delete both confirm and both reset the working plan; a distinct "Delete"
+  semantic can be added if the guide's usage turns out to need one).
+  Result and error messages (STORED, NO AIRWAYS AT x, ROUTE FULL, ...) show
+  as a toast that clears itself after `TOAST_MS` (4 s; each new message
+  restarts it) or on the next tap anywhere on the page (pyEfis #323).
+- **Scrolling the list** (PA15, AER-2087) — rows keep their physical height
+  (`row_height_mm`) however long the route; a route taller than the pane
+  scrolls under a finger instead of shrinking every row. A press on the list
+  is not a tap until the finger lifts: if it moves 3 mm (`DRAG_THRESHOLD_MM`,
+  sideways included) it becomes a drag and the row it started on is NOT
+  selected. Lifting while still moving flings the list (speed from the last
+  0.1 s, exponential decay, capped), clamped at both ends; a press during a
+  fling only stops it. A mouse wheel scrolls one row per notch. A thin bar
+  down the right edge shows where the visible rows sit, only when the list
+  overflows. When the active leg changes the list scrolls to show it with its
+  FROM row above, unless the pilot scrolled in the last 20 s
+  (`SCROLL_HOLD_S`), in which case it waits for the hold to run out. Soft
+  keys, menus and every other tap target still fire on press. Rows scrolled
+  out of view keep their place in the encoder ring, and turning the knob onto
+  one scrolls it into view.
+- **Load Airway** (PA6, AER-1605, brief section 3.5) — offers every airway
+  through the tapped fix (`AirwayGraph.airways_through_fix`, PA2), then an
+  exit fix from that airway's ordered points, each annotated with its
+  published MEA/ceiling when the pack carries one; `FlightPlan.insert_airway`
+  makes the tapped fix and the expansion one `airway` segment (RS2). An
+  `AirwayError` (unknown airway, a fix not on
+  it, a one-way violation) or a route already too close to `MAX_WAYPOINTS`
+  for the whole segment leaves the plan untouched and shows the reason —
+  never a partial airway. The airway is on the bus as a segment-table row, so
+  it survives a pyEfis restart, shows on a second display, inverts (Menu >
+  Invert re-runs the one-way check, and refuses with the reason) and
+  stores/loads. Before RS2 it was a display-only tag re-attached after every
+  read-back by guessing, which lost it in all four cases.
+- **Airway segment rows** (RS3, AER-3792, `route_segments_plan.md` section 6)
+  -- the entry fix stays its own row; every leg inside the airway is ONE
+  two-line segment row: a route glyph, the ident in bold with
+  "entry → exit", and beneath it "N fixes  MEA m" (N counts the entry; m is
+  the highest leg minimum). DTK is blank (an airway changes course), DIS is
+  the airway's own length and CUM runs to its exit. While the active leg is
+  inside the airway, its working rows nest under it, indented one icon
+  column on a grey tree line: the FROM fix (`past_color`, "(from)"), the
+  active TO fix and the next fix; the fixes still ahead fold into
+  "+ N more ▸", which opens Show Fixes. Fixes already passed before FROM are
+  not repeated. Tapping the segment row opens the **segment menu**: Change
+  Exit / Change Entry (the airway's other fixes through the same picker as
+  Load Airway; `FlightPlan.change_exit`/`change_entry` re-expand the same
+  segment), Show Fixes, Activate to <entry> (`ACT` on the entry slot) and
+  Remove Airway (`remove_segment`, which leaves the entry fix). **Show
+  Fixes** is a read-only sheet of every fix with the magnetic course,
+  distance and MEA of the leg into it; tapping a fix (there, or a nested
+  working row) offers Direct To, Activate Leg and WPT Info for that one fix.
+  Renders: `docs/images/rs3_fpl_segments/` (`tools/render_fpl_segments.py`).
+- **Procedure segment rows** (PA7) -- a loaded departure, arrival, approach
+  and missed approach are each one segment row, the same two-line row as an
+  airway, except that the block's first fix is inside it (there is no plain
+  entry row: the leg into that fix is the procedure's). Line 1 is the name
+  (`ILS07.VECTORS`, `FLOUT5.RW07.VTU`), line 2 the kind and
+  "first → last", across the row. A leg with no fix is named by what ends
+  it (`075° TO +700`, `HDG 255°`). The active leg opens the block into
+  working rows exactly as in an airway. The segment menu offers Show Fixes
+  (course, distance and the coded altitude constraint into each leg),
+  Activate to the first fix, Select <kind> (the PROC page for that kind) and
+  Remove <kind>; the approach and its missed approach go together. A leg with
+  no fix offers only Activate Leg in its one-fix menu.
+- **PROC** (PA7, billmallard/pyEfis#238; guide pp. 3-64 to 3-75) -- tabs
+  Departure / Arrival / Approach, then one key per field showing the choice,
+  or underscores until it is made: Airport (opens the Entry page filtered to
+  airports, Nearest tab; picking one comes back here), the procedure, and
+  Runway and Transition in the order the issue gives: departure -> runway ->
+  transition, arrival -> transition -> runway, approach -> transition
+  (including `VECTORS`, the final alone). A single choice is taken without
+  asking. The airport offered is the plan's first waypoint for a departure
+  and its last airport for an arrival or approach, else the nearest airport.
+  Below the keys: what is loaded of this kind, a refusal or the page's
+  message, and a preview of every leg the selection loads (ident, role, path
+  terminator, constraint; the missed approach in cyan). Footer: **Load**
+  (replaces a loaded procedure of the kind, then opens the FPL page, as the
+  guide does) and **Remove** (the whole block). The page refuses what it
+  cannot assemble with the reason (`SELECT RUNWAY`, `CLEAR THE FAF/MAP ON
+  RZS BEFORE LOADING AN APPROACH`, `ROUTE FULL`); a procedure the engine
+  refuses is reported from `FPLMSG` by the FPL page's refusal strip (G61),
+  and the PROC page shows the same line. Expired data is never refused here
+  (guardrail 3); annunciating it is PA9's.
+- **Entry** (Add/Insert) — an ident field with FastFind: typed characters
+  white, the predicted suffix (nearest match by distance from a mode-dependent
+  reference point — the aircraft when appending to an empty plan, the last
+  waypoint when appending, the midpoint of the neighbours when inserting)
+  cyan; "NO MATCHES"/"DUPLICATE FOUND" annunciations; a top-5 suggestion
+  strip; tabs Recent/Nearest/FPL/User with a type filter
+  (All/Apt/VOR/NDB/Fix/User) — the User tab has a "+ CREATE USER WAYPOINT"
+  row (below) above its list; an on-screen keypad (A-Z, 0-9, Backspace,
+  Clear, Enter — the `keypad` option, default true).
+- **Direct To (DTO)** (FP5b, brief 3.5 item 3) — tabs **Waypoint** (the same
+  ident field/suggestion-strip/keypad as Entry, bound in direct-to mode),
+  **FPL** (the active plan's waypoints), **NRST APT** (`WaypointIndex.nearest`
+  filtered to airports — nearest first within 200 nm, up to 25, with bearing,
+  distance and longest runway). Tapping a row in FPL/NRST APT selects it as
+  the pending target (highlighted cyan); typing an ident on the Waypoint tab
+  and pressing Enter activates immediately. The footer button reads
+  **Activate** (stages `DTO*` then issues `DTO <k>` for an FPL-tab target,
+  plain `DTO` otherwise) or **Remove** (issues `DTOX`) whenever a direct-to is
+  already active (`FPLSTATE` = DIRECT) — this takes priority over whatever
+  tab/target is showing. Either action returns to the FPL page.
+- **Catalog** (FP5b, brief 3.5 item 4) — `Catalog.list()`, nearest-modified
+  first, each row showing name, distance to the route's first waypoint from
+  present position (cached per slug/mtime), waypoint count and comment; a
+  lock glyph marks `managed_` (configurator-owned) routes. Tapping a row opens
+  Activate / Invert & Activate / Edit / Copy / Delete (Edit and Delete are
+  omitted for `managed_` rows — refused per `catalog.py`); Activate and Invert
+  & Activate confirm first when the working plan has unsaved edits
+  (`_plan_dirty` and non-empty). Edit loads the stored route into the working
+  copy **without** publishing it to the bus — Store (FPL page Menu) writes it
+  back; nothing else touches the live route until the next edit commits.
+  Copy prompts for a new name via the generic modal keypad and writes a new
+  slug, leaving the original untouched — including for `managed_` sources,
+  since only the write side is refused. Footer: New (clears the working plan,
+  same unsaved-edit confirm) and Delete All (confirms once, skips and reports
+  any `managed_` entries).
+- **WPT Info** (FP5b, brief 3.5 item 5) — resolves the tapped waypoint through
+  `WaypointIndex.lookup` for the richer record (elevation, frequency) when one
+  exists; shows ident/type, name, lat/lon as DD MM.MM, elevation/frequency
+  where known, and bearing/distance from present position, refreshed at 1 Hz
+  by a `QTimer` while the page is open. User waypoints (`type == "user"`) get
+  Edit (comment, lat, lon via the generic modal — ident rename is not
+  supported, `UserWaypointStore.edit` has no id parameter) and Delete, refused
+  with the guide's message while the ident is in the active plan
+  (`WaypointInUseError`).
+
+### The generic modal (Catalog Copy, user waypoints)
+
+A small reusable keypad overlay (`_modal_open`/`_modal_key`/`_modal_enter`/
+`_modal_do_cancel`) drives every free-text or lat/lon prompt that isn't the
+Entry/DTO ident field: Catalog Copy's new-name prompt, and the user-waypoint
+create/edit wizard (ident -> comment -> lat -> lon, chained via each step's
+`on_enter` callback). Numeric mode swaps the A-Z keypad rows for digits,
+`.`/`-` and N/S/E/W; lat/lon parsing/formatting is decimal degrees with a
+hemisphere suffix (e.g. `34.4262N`), not the WPT Info display's DD MM.MM —
+entry and display are deliberately different representations of the same
+value.
+
+### Physical keyboard (FP5b)
+
+While the `keyboard` option is true and an ident-entry surface is open (the
+Entry page, the DTO page's Waypoint tab, or the generic modal), the widget
+takes Qt focus (`setFocusPolicy(StrongFocus)` always; `setFocus()`/
+`clearFocus()` each paint, tracked by `_keyboard_active()`) and its
+`keyPressEvent` consumes A-Z/0-9 (uppercased), Backspace, Enter/Return,
+Escape (cancel), Up/Down (moves a selection cursor over the suggestion strip
+or duplicate chooser; Enter then picks it), Tab (cycles the current page's
+sub-tabs), and `.`/`-`. Every other key — and every key while no entry
+surface is open — is left un-accepted (`event.ignore()` +
+`super().keyPressEvent(event)`) so Qt's normal propagation carries it to
+`gui.py`'s `keyPress` signal and `hmi/keys.py` bindings exactly as before this
+instrument existed. **A bound HMI key that collides with A-Z while an entry
+surface is open is shadowed by the field** — e.g. a keybinding on plain `D`
+will not fire while the Entry/DTO ident field has focus; rebind such keys
+with a modifier, or accept the shadowing while that page is open.
+
+### Encoder (FP5c)
+
+The instrument takes the screen encoder through the standard `enc_*`
+protocol (`screens/screenbuilder_encoder.py`): give it an `encoder_order`
+option on a screen that names `encoder` / `encoder_button` FIX keys (inside a
+`tab_section` tab it inherits the screen's keys -- docs/screenbuilder.md). Turning
+the knob moves the screen-level highlight onto it (an orange outline round
+the whole instrument); a push takes control; it keeps control until a long
+push backs out of the FPL page or the screen's `encoder_timeout` (default
+10 s of no knob activity) expires.
+
+**What the knob walks.** Inside the instrument the knob moves a focus box
+(orange) over a ring built from the same per-frame tap targets touch uses —
+everything tappable on the topmost layer, in paint order. So the ring on the
+FPL page is the waypoint rows then the soft keys; on an open menu or confirm
+box it is only that box (never the dimmed page behind it); and a control
+added for touch later is reachable by knob with no extra code. The ring wraps.
+Scrollable menus keep their ▲/▼ rows as ring entries — push one to page the
+list. The FPL list's rows are all in the ring, scrolled out of view or not; the
+list scrolls to keep the focused row on screen (PA15).
+
+| Where | Turn | Push | Long push (>= 600 ms) |
+|-------|------|------|------------------------|
+| FPL page, nothing focused (on entry) | focus the first row / last soft key | open Direct To with the active waypoint pre-selected and **Activate** focused, so a second push activates it (guide 3-45) | release the knob to the screen |
+| FPL page, a row or soft key focused | next/previous element (the ring includes "nothing focused") | open the row menu / press the soft key | release the knob to the screen |
+| Any menu, picker, confirm box, WPT Info | next/previous item | choose it | close it (one level) |
+| Ident field (Entry page, DTO Waypoint tab) | scroll the character under the cursor through `A`-`Z`, `0`-`9`, space | **with an outer ring:** Enter, taking the FastFind prediction. **One knob only:** a character under the cursor means keep it and advance; a blank under the cursor means accept, taking the prediction. Either way, with nothing typed yet the push leaves the field and walks the page (suggestions, tabs, rows, X) | cancel the page (as Escape) |
+| Entry / DTO / Catalog page, field not being edited | next/previous element | choose it (push the field to edit it again) | leave the page |
+
+Focus defaults when a surface opens: the FPL page starts with nothing
+focused; the Entry page and the DTO Waypoint tab start editing the field;
+the DTO page starts on **Activate** when it already has a target, else on the
+first row; a confirm box starts on **No**; every other menu starts on its
+first item. The on-screen keypad is left out of the ring while the field has
+the knob — the knob replaces it. Turning onto space and pushing is the same
+as pushing on a blank: the ident set has no spaces, so a space means "nothing
+here".
+
+**Long push.** `abstract.py` has no long-press convention to inherit, so the
+threshold is the instrument's `enc_long_press_ms` (600 ms,
+`ENC_LONG_PRESS_MS`). Long push is opt-in at the controller: an instrument
+in control that defines `enc_long_clicked()` and a positive
+`enc_long_press_ms` gets its pushes on *release* (`enc_clicked()`) or when
+the hold reaches the threshold (`enc_long_clicked()`, from a timer, without
+waiting for release). Every other instrument keeps the original act-on-press
+behaviour.
+
+**Outer ring.** The guide's knob table (1-11..1-13) is a dual concentric:
+outer = field/cursor, inner = character/list. When the screen names
+`encoder_outer` (the stock `hmi/encoder_input.yaml` sets `ENC4`, the
+Knobster's outer ring), the outer ring moves the cursor along the ident
+field: left to fix an earlier character, right as far as the blank after
+the last one. A push on the field is then always Enter. Off the field, the
+outer ring walks the focus ring like the inner one. Only the last character
+can be turned to blank (which deletes it); any character with others after
+it skips the blank, so a full spin never cuts off the rest of the ident.
+Without `encoder_outer`, the one-knob fallback in the table applies: push
+advances the cursor. That fallback is what produced KDFW when Bill meant
+KDAL on the 2026-10-10 bench run: a push on the blank after `KD` accepted
+the prediction.
+
+### HMI verbs
+
+Registered in `hmi/actionclass.py` and `editor/schema.py` `_ACTIONS`. The
+argument is `"<payload> [group]"`: an optional trailing word names the target
+instrument's `hmi_group` (blank = every `flight_plan` instrument on the
+screen, the `checklist` broadcast precedent).
+
+| Verb | Payload |
+|------|---------|
+| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc` open those pages |
+| `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
+
+### From the moving map (FP10)
+
+The moving map's tap banner (`docs/moving_map_spec.md` section 7.1) edits
+the plan two ways:
+
+- **Direct To and Insert go over the bus**, not through this widget. The
+  map holds its own `FixBridge`: Direct To stages `DTO*` and issues `DTO`;
+  Insert reads the plan, inserts, and publishes. This widget re-reads the
+  plan on the `FPLSEQ` change like any second display. Both bridges write
+  `FPLCMD`, so `FixBridge.command` takes the next seq from the highest one
+  on the bus (the last `FPLCMD` and `FPLCMDACK`), not from a private
+  counter: Appendix C's "strictly increasing per session" holds with two
+  writers, and neither answers the other's ack.
+- **Create WPT and Info open pages here**, through two in-process HMI
+  signals, `flightplanCreateWaypoint` (payload `(lat, lon)`) and
+  `flightplanWptInfo` (payload a `flightplan.waypoints.Waypoint`). Every
+  `flight_plan` instrument on the screen receives them (no `hmi_group`
+  filter). Each closes whatever menu or page is open, then opens the page:
+  - Create WPT: the Entry page on the User tab with the user-waypoint form
+    up, LAT and LON prefilled from the map pointer instead of the aircraft
+    position. Once saved, the waypoint is in the User list to add.
+  - Info: WPT Info over the FPL page.
+
+  Then `tab_section.reveal()` switches any enclosing tab section to the
+  tab holding this widget, so a Flight Plan tab behind the Map tab comes
+  forward. A `flight_plan` instrument on a different *screen* is not
+  shown; that would need a `tap_screen`-style option, which FP10 does not
+  add.
+
+  These are not screen-YAML verbs (not in `signalMap` or `_ACTIONS`):
+  their payload is a waypoint or a position, which a button cannot express.
+
+### Options (`InstrumentSpec` Props)
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `flightplan_dir` | `""` | directory for stored routes/user waypoints/recent list; blank disables catalog Store and the Recent/User tabs |
+| `nasr_db_path` | `""` | `airports.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
+| `navaid_db_path` | `""` | `navaids.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
+| `procedures_db_path` | `""` | the `procedures` pack: airways (PA2) and the PROC page (PA5/PA7) |
+| `hold_speed_kt` | `90` | speed a time-coded hold's leg is converted to a distance at (one minute at 90 kt = 1.5 nm), since the bus carries no leg time |
+| `columns` | `"DTK,DIS,CUM"` | comma-separated FPL page columns; choices DTK, DIS, CUM, ETE, ETA |
+| `keypad` | `true` | show the on-screen keypad on the Entry/DTO Waypoint pages and the generic modal |
+| `keyboard` | `false` | let a physical keyboard drive an open ident-entry surface (see above) |
+| `default_page` | `"fpl"` | page shown when the instrument first paints (`fpl`\|`entry`) |
+| `hmi_group` | `""` | HMI verb targeting (see above) |
+| `active_color` | `#ff00ff` | active (TO) leg row colour |
+| `future_color` | `#ffffff` | upcoming leg row colour |
+| `past_color` | `#808080` | already-flown leg row colour |
+
+**Text size.** The common `font_percent` option (schema `common_options`, not
+redeclared as a Prop — [instrument_spec.md](instrument_spec.md)) is honoured,
+but for this widget it scales the built-in text sizes (`0.8` or `80` = 80%,
+unset = 100%) rather than being a fraction of the widget's height: every font
+here is already sized from its own header/row/footer/box. Independently, in a
+pane taller than it is wide every font is also scaled by width/height
+(`_FONT_FIT_ASPECT = 1.0`), because the text rects are width fractions and Qt
+does not clip overflowing text — a ~657x1003 tab otherwise overlaps its
+header and footer labels. Square and landscape panes are unaffected. Only
+fonts scale; layout and tap targets never do. Evidence:
+[images/fp_font_scale](images/fp_font_scale/README.md).
+
+### Stock screen
+
+`config/screens/flightplan.yaml` (`SCREEN_FLIGHTPLAN`): `moving_map` on the
+left, `flight_plan` on the right, at the shipped 110x200 grid. A corner button
+(`buttons/screen-flightplan-pfd.yaml`) on both PFD and FLIGHTPLAN toggles
+between them (the `screen-map-pfd.yaml` `SCREEN`-toggle pattern), so the bench
+boots into something testable.
+
+### Configurator twin
+
+The widget is app-like; per the brief, a static palette SVG twin (the
+`checklist` precedent — no dedicated `build*` render in `editor.html`) plus
+curated schema metadata is acceptable. `tools/build_editor_assets.py` picks
+`flight_plan` up automatically once registered; the R2 upload and any
+configurator-side twin work live in `makerplane-data` and are out of this PR's
+repo boundary (see the PR description).
+
+## Encoder catalogue (#97)
+
+pyEfis#97 (exporting per-instrument encoder options and a capability
+catalogue to the schema) has not landed. When it does, `flight_plan` gets its
+catalogue row and an `encoder_order` Prop in whichever of the two PRs merges
+second; until then `encoder_order` is honoured from screen YAML exactly as
+for every other encoder instrument (`screenbuilder_options.apply_options`).

@@ -60,7 +60,7 @@ Switch screens with the on-screen button / configured control.
   (X-Plane HSI, etc.) CDI/TO-FROM behave sensibly.
 - [ ] **C2. Moving map** — if a map screen is configured, terrain/airports/
   navaids/airways layers render and pan; range/orientation controls respond.
-  **Requires the fix-gateway map-control keys** (MAPRANGE/MAPORIENT/MAPTERRAIN)
+  **Requires the fix-gateway map-control keys** (MAPRANGE/MAPORIENT/MAPTERRAIN/MAPNDMODE)
   — without them the controls no-op (note this rather than failing C2).
 - [ ] **C3. Synthetic Vision (SVS)** — **off by default.** To test: on a
   GPU-capable device with terrain data, set `enabled: true` in the `svs:` block

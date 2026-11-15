@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "981ee0e5",
+ "run": "AER-5088 G59: dev fce470c1 (left) vs branch 981ee0e5 (right), render_route_drawn_once_evidence.py offscreen",
+ "device": "Beelink bench (offscreen, bench fonts and packs)",
+ "sha256": "b32ba2f71d6ba89dc9ba2c754b8fdca0e48a46d42c6909f7a6a62532dea6ed51",
+ "created_utc": "2026-11-08T07:11:43Z"
+}

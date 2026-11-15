@@ -61,7 +61,7 @@ class VerticalBar(AbstractGauge):
             if self._normalizeMode: return
             self._normalizeMode = True
             self._oldpencolor = self.pen_good_color
-            self.penGoodColor = self.normalizePenColor
+            self.pen_good_color = self.normalizePenColor
             self.normalizeReference = self.value
         else:
             self._normalizeMode = False
@@ -162,7 +162,7 @@ class VerticalBar(AbstractGauge):
 
     def paintEvent(self, event):
         if self.highlight_key:
-            if self._highlightValue == self._rawValue:
+            if self.highlightValid and self._highlightValue == self._rawValue:
                 self.highlight = True
             else:
                 self.highlight = False

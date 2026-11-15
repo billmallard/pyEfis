@@ -1,0 +1,15 @@
+fixgw=3169578 pyefis=3226977 pyEfis_head=5854923 branch=aer-5178/cert1a-failed-tape-x
+23:04:19 grabbed 1_live fac4bd8deb5e 6d8f30fb3dba
+23:04:21 grabbed 2_live_b 8abc36057fcf d73ef3b43bf6
+23:04:21 SIGSTOP fixgw
+23:04:24 grabbed 3_stopped_1s d34e99d76faa 61e090638cf1
+23:04:29 grabbed 4_stopped_6s 61e090638cf1 61e090638cf1
+23:04:36 grabbed 5_stopped_12s 61e090638cf1 61e090638cf1
+23:04:36 SIGCONT fixgw
+23:04:41 grabbed 6_resumed_4s d56cfef030b7 5d992d4ec078
+PITCH 3.0
+ROLL -19.84
+ALT 4502.57
+IAS 110.0
+Nov 08 23:04:23 beelinkpyefis xinit[3226977]: ERROR:20261108-23:04:23:pyefis.fix_watchdog - No frame from FIX gateway for 2.0 s: marking all data failed
+Nov 08 23:04:36 beelinkpyefis xinit[3226977]: WARNING:20261108-23:04:36:pyefis.fix_watchdog - FIX gateway answering again: re-reading 3131 items

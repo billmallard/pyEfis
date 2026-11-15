@@ -1,0 +1,18 @@
+{
+  "scenes": {
+    "key_west": {
+      "bytes": 34482134,
+      "lat": 24.55,
+      "lon": -81.78,
+      "sha256": "de1fa2959dc9b2f9f83244118e085e51e898eeadb39652c37ffe11da177cc663",
+      "url": "https://github.com/billmallard/pyEfis/releases/download/perf-fixtures-2026-09/key_west.tar.gz"
+    },
+    "raleigh": {
+      "bytes": 83891162,
+      "lat": 35.8,
+      "lon": -78.8,
+      "sha256": "249d4d2b861729ed404568f1139cd09f85aeaa263c5ebd7c88284965465f81a4",
+      "url": "https://github.com/billmallard/pyEfis/releases/download/perf-fixtures-2026-09/raleigh.tar.gz"
+    }
+  }
+}

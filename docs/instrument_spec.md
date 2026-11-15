@@ -85,7 +85,7 @@ InstrumentSpec(
 ```python
 Prop(
     name:     str,    # YAML option key AND the widget attribute it maps to
-    kind:     str,    # string|number|integer|boolean|enum|color|fixkey
+    kind:     str,    # string|number|integer|boolean|enum|color|fixkey|aircraft_ref
     default:  Any = None,
     label:    str = "",
     enum:     list | None = None,   # required when kind="enum"
@@ -93,11 +93,22 @@ Prop(
     required: bool = False,
     help:     str = "",
     apply:    str = "attr",  # how it reaches the widget (see §6)
+    bindable: Binding | None = None,
+    token:    str = "",      # kind="color" only: the semantic colour token
+    source:   str = "",      # kind="aircraft_ref" only: the profile collection
+    multi:    bool = False,  # kind="aircraft_ref" only: a list of ids
+    resolves: dict | None = None,  # kind="aircraft_ref" only: {option: item field}
 )
 ```
 
 `name` is **both** the YAML option key and the widget attribute, so a property
 maps 1:1 to widget state. `kind` selects the editor input control.
+
+`token` names the theme token a colour prop reads (vocabulary in
+`pyefis/screens/color_tokens.py`, style contract section 6). The prop's
+`default` stays the literal and must equal the token's built-in value, which
+`tests/screens/test_color_tokens.py` enforces. A colour option may hold a token
+name instead of a literal; see the Preferences & Styling wiki page.
 
 ### `FixValue` — one category-2 value (documentation + future FIX editor)
 
@@ -225,6 +236,20 @@ name the widget never reads is a silent no-op — the check fails it).
 | `enum` | select | `enum=[...]` required; `default` must be in it |
 | `color` | colour picker | hex `#rrggbb` |
 | `fixkey` | text input (FIX key) | becomes a key-picker once the FIX editor exists |
+| `aircraft_ref` | picker over an aircraft-profile collection | `source=` required; see below |
+
+An `aircraft_ref` property references an item on the aircraft profile -- a
+fuel tank today, a checklist later (makerplane-data
+`docs/fuel_provider_model.md` section 5). The panel stores only the item's id
+(`tank: tk_19c2`). When the configurator serves a config it resolves the id
+against the active profile and writes the options named in `resolves` -- for
+the gauges' `tank`, `{"dbkey": "slot_key", "name": "label"}` becomes
+`dbkey: FUELQ3` and `name: L TIP` -- and drops the reference. A tank gone from
+the profile is served `unbound: true`. The kind has no default, is always
+`apply="special"`, and every `resolves` key must be another property of the
+same record. A reference that reaches the device unresolved is logged and
+ignored by the screen builder. The schema field carries `source`, `multi` and
+`resolves`.
 
 Common options (`font_family`, `font_percent`) are added to every instrument by
 the schema's `common_options` block — do not redeclare them per record.

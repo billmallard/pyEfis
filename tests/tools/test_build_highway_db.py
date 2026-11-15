@@ -60,6 +60,26 @@ def _write_roads(tmp_path, shapes, stem="roads", fields=("fclass",)):
     return str(shp) + ".shp"
 
 
+def _write_roads_with_attrs(tmp_path, rows, stem="roads"):
+    """Write a synthetic Geofabrik-style roads shapefile carrying the
+    ``tunnel``/``bridge``/``ref`` fields the real ``gis_osm_roads_free_1``
+    layer has (RD3a, AER-640). ``rows`` is a list of dicts with keys
+    ``fclass``, ``parts`` (a list of (lat, lon) lists), and optionally
+    ``tunnel``/``bridge`` (Geofabrik ``"T"``/``"F"`` strings) and ``ref``."""
+    shp = tmp_path / stem
+    w = shapefile.Writer(str(shp), shapeType=shapefile.POLYLINE)
+    w.field("fclass", "C")
+    w.field("ref", "C")
+    w.field("bridge", "C")
+    w.field("tunnel", "C")
+    for row in rows:
+        w.line([[(lon, lat) for lat, lon in part] for part in row["parts"]])
+        w.record(row["fclass"], row.get("ref", ""),
+                  row.get("bridge", "F"), row.get("tunnel", "F"))
+    w.close()
+    return str(shp) + ".shp"
+
+
 def _write_empty_roads(tmp_path, stem="empty"):
     """Write a valid but EMPTY roads shapefile (0 shapes) -- what an empty
     Geofabrik state extract looks like once it reaches the builder."""
@@ -169,3 +189,73 @@ class TestHappyPath:
         assert con.execute(
             "SELECT fclass FROM highway_lines").fetchone()[0] == "motorway"
         con.close()
+
+
+class TestTunnelBridgeRef:
+    """RD3a (AER-640): the builder writes a ``flags`` bitmask (bit 0
+    tunnel, bit 1 bridge) and a ``ref`` column from the Geofabrik
+    ``tunnel``/``bridge``/``ref`` fields."""
+
+    def _row(self, tmp_path, monkeypatch, row, stem="roads"):
+        shp = _write_roads_with_attrs(tmp_path, [row], stem=stem)
+        dest = tmp_path / f"{stem}.sqlite"
+        _build(tmp_path, monkeypatch, shp, dest)
+        con = sqlite3.connect(str(dest))
+        rec = con.execute(
+            "SELECT flags, ref FROM highway_lines").fetchone()
+        con.close()
+        return rec
+
+    def test_plain_way_has_no_flags_and_no_ref(self, tmp_path, monkeypatch):
+        flags, ref = self._row(tmp_path, monkeypatch,
+                                {"fclass": "motorway", "parts": [ROAD]})
+        assert flags == 0
+        assert ref is None
+
+    def test_tunnel_sets_bit0(self, tmp_path, monkeypatch):
+        flags, ref = self._row(tmp_path, monkeypatch, {
+            "fclass": "motorway", "parts": [ROAD], "tunnel": "T"},
+            stem="tunnel")
+        assert flags == bh.FLAG_TUNNEL
+        assert flags & bh.FLAG_BRIDGE == 0
+
+    def test_bridge_sets_bit1(self, tmp_path, monkeypatch):
+        flags, ref = self._row(tmp_path, monkeypatch, {
+            "fclass": "motorway", "parts": [ROAD], "bridge": "T"},
+            stem="bridge")
+        assert flags == bh.FLAG_BRIDGE
+        assert flags & bh.FLAG_TUNNEL == 0
+
+    def test_tunnel_and_bridge_both_set(self, tmp_path, monkeypatch):
+        # Doesn't occur on real data, but the bits are independent.
+        flags, ref = self._row(tmp_path, monkeypatch, {
+            "fclass": "motorway", "parts": [ROAD],
+            "tunnel": "T", "bridge": "T"}, stem="both")
+        assert flags == (bh.FLAG_TUNNEL | bh.FLAG_BRIDGE)
+
+    def test_ref_is_carried(self, tmp_path, monkeypatch):
+        flags, ref = self._row(tmp_path, monkeypatch, {
+            "fclass": "motorway", "parts": [ROAD], "ref": "I-70"},
+            stem="ref")
+        assert ref == "I-70"
+
+    def test_blank_ref_stored_as_null(self, tmp_path, monkeypatch):
+        flags, ref = self._row(tmp_path, monkeypatch,
+                                {"fclass": "motorway", "parts": [ROAD]},
+                                stem="blankref")
+        assert ref is None
+
+    def test_shapefile_without_attr_fields_still_builds(
+            self, tmp_path, monkeypatch):
+        # A layer that never had tunnel/bridge/ref (e.g. an older
+        # extract) must still build -- every row falls back to
+        # flags=0, ref=NULL rather than raising.
+        shp = _write_roads(tmp_path, [("motorway", [ROAD])], stem="noattrs")
+        dest = tmp_path / "noattrs.sqlite"
+        _build(tmp_path, monkeypatch, shp, dest)
+        con = sqlite3.connect(str(dest))
+        flags, ref = con.execute(
+            "SELECT flags, ref FROM highway_lines").fetchone()
+        con.close()
+        assert flags == 0
+        assert ref is None

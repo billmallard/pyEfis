@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "51ec454-dirty",
+ "run": "local: tools/render_nd_evidence.py --width 800 --height 480 --font B612 --out out/hw",
+ "device": "AZW MINI S (offscreen)",
+ "sha256": "949c996397b3f4dc0c8f45edf8abd86396ac4014028bb9bb6f32499db1f95e0e",
+ "created_utc": "2026-11-09T21:51:24Z"
+}

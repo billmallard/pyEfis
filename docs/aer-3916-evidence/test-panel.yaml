@@ -1,0 +1,256 @@
+main:
+  screenWidth: 1920
+  screenHeight: 1080
+  defaultScreen: PANEL
+  screenDiagonalInches: 21.5
+screens:
+  PANEL:
+    module: pyefis.screens.screenbuilder
+    title: PANEL
+    layout:
+      rows: 110
+      columns: 200
+    instruments:
+      - type: virtual_vfr
+        row: 0
+        column: 0
+        span:
+          rows: 110
+          columns: 130
+        options:
+          horizon_position: '68'
+          aircraft_symbol: garmin
+          svs_enabled: true
+          svs_palette: clearance
+          svs_clearance_green_ft: 2500
+          svs_clearance_yellow_ft: 1500
+          pitchDegreesShown: 40
+          visiblePitchAngle: '8'
+          numberedDiv: '5'
+          horizon_heading_marks: true
+          horizon_heading_label_interval: '30'
+          font_family: B612
+          pitchOpacity: 2
+          svs_earth_curvature: false
+          svs_haze: true
+          svs_haze_distance_nm: 32
+          svs_terrain_fill: true
+          symbol_scale: 0.6
+          bank_position: 63
+          pitch_ladder_avoid_bank: true
+          bank_radius: 25
+          svs_highway_db_path: /data/makerplane-data/highways/current/highways.sqlite
+          svs_water_db_path: /data/makerplane-data/water/current/water.sqlite
+          svs_dof_db_path: /data/makerplane-data/obstacles/current/obstacles.sqlite
+          svs_tile_path: /data/makerplane-data/terrain/tiles
+      - type: altimeter_tape
+        row: 6
+        column: 105
+        span:
+          rows: 60
+          columns: 12
+        options:
+          font_family: B612
+          numeric_box: true
+          edge_fade: true
+      - type: numeric_display
+        row: 67
+        column: 103
+        span:
+          rows: 5
+          columns: 18
+        options:
+          font_family: B612
+          font_mask: "0000.00 hPa"
+          dbkey: BARO
+          decimal_places: 2
+          pressure: true
+          show_units: true
+          encoder_order: 200079
+          encoder_set_real_time: true
+          encoder_multiplier: 0.01
+      - type: airspeed_tape
+        row: 6
+        column: 15
+        span:
+          rows: 60
+          columns: 12
+        options:
+          font_family: B612
+          show_tas: false
+          edge_fade: true
+      - type: horizontal_situation_indicator
+        row: 65
+        column: 38
+        span:
+          rows: 41
+          columns: 55
+        options:
+          font_family: B612
+          bg_opacity: '30'
+          heading_bug_enabled: true
+          needle_width: '2'
+          track_indicator_enabled: true
+          track_min_speed: '20'
+          orientation: heading_up
+          bearing1_enabled: true
+          bearing2_enabled: true
+          depth_rings: false
+          shadow_enabled: true
+          readout_layout: top_panel
+      - type: altimeter_trend_tape
+        row: 14
+        column: 117
+        span:
+          rows: 40
+          columns: 7
+        options:
+          font_family: B612
+          maxvs: '2000'
+          minorDiv: '200'
+          bg_opacity: '30'
+          numberedDiv: '400'
+      - type: wind_display
+        row: 68
+        column: 15
+        span:
+          rows: 10
+          columns: 13
+        options:
+          font_family: B612
+          font_percent: 0.7
+      - type: tab_section
+        row: 0
+        column: 130.5
+        span:
+          rows: 110
+          columns: 69
+        options:
+          font_family: B612
+          tab_position: top
+          font_percent: 0.2
+        tabs:
+          - label: Map
+            layout:
+              rows: 110
+              columns: 200
+            instruments:
+              - type: moving_map
+                row: 0
+                column: 2
+                span:
+                  rows: 106
+                  columns: 196
+                options:
+                  font_family: B612
+                  orientation: north_up
+                  tile_path: /data/makerplane-data/terrain/tiles
+                  nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
+                  navaid_db_path: /data/makerplane-data/navaids/current/navaids.sqlite
+                  water_db_path: /data/makerplane-data/water/current/water.sqlite
+                  water_max_vertices: 1024
+                  highway_db_path: /data/makerplane-data/highways/current/highways.sqlite
+                  range_ladder: 2,10,50,200,500,2000
+                  font_percent: 0.2
+                  layer_airways: true
+                  layer_fixes: true
+                  terrain_mode: relief
+          - label: Flight Plan
+            layout:
+              rows: 110
+              columns: 200
+            instruments:
+              - type: flight_plan
+                row: 1
+                column: 2
+                span:
+                  rows: 105
+                  columns: 196
+                options:
+                  font_percent: 0.8
+                  nasr_db_path: /data/makerplane-data/navdata/current/airports.sqlite
+                  navaid_db_path: /data/makerplane-data/navaids/current/navaids.sqlite
+                  flightplan_dir: ~/makerplane/pyefis/flightplans
+                  keyboard: true
+          - label: Engine
+            layout:
+              rows: 110
+              columns: 200
+            instruments:
+              - type: vertical_bar_gauge
+                row: 1.3
+                column: 5.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: CHT11
+                  name: '1'
+              - type: vertical_bar_gauge
+                row: 1.3
+                column: 55.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: CHT12
+                  name: '2'
+              - type: vertical_bar_gauge
+                row: 1.3
+                column: 105.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: CHT13
+                  name: '3'
+              - type: vertical_bar_gauge
+                row: 1.3
+                column: 155.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: CHT14
+                  name: '4'
+              - type: vertical_bar_gauge
+                row: 32.8
+                column: 5.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: EGT11
+                  name: '1'
+              - type: vertical_bar_gauge
+                row: 32.8
+                column: 55.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: EGT12
+                  name: '2'
+              - type: vertical_bar_gauge
+                row: 32.8
+                column: 105.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: EGT13
+                  name: '3'
+              - type: vertical_bar_gauge
+                row: 32.8
+                column: 155.6
+                span:
+                  rows: 29
+                  columns: 39
+                options:
+                  dbkey: EGT14
+                  name: '4'
+          - label: Radio
+            layout:
+              rows: 110
+              columns: 200
+            instruments: []

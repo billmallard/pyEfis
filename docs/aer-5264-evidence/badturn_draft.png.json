@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "1686423a",
+ "run": "AER-5264: docs/aer-5264-evidence/render_refusal_reasons.py, Beelink bench-scratch (offscreen, bench fonts)",
+ "device": "Beelink bench (offscreen)",
+ "sha256": "216ff281cd3184db75bc33b9eda73198241f02583f32111329e66a1119e4eef7",
+ "created_utc": "2026-11-09T21:47:38Z"
+}

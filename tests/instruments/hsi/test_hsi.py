@@ -2,13 +2,13 @@ import math
 from unittest import mock
 
 import pytest
-from PyQt6.QtCore import Qt, QRectF, qRound
-from PyQt6.QtGui import QColor, QPaintEvent, QPen
+from PyQt6.QtCore import Qt, QPointF, QRectF, qRound
+from PyQt6.QtGui import QColor, QImage, QPaintEvent, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QApplication, QGraphicsEllipseItem, QGraphicsPixmapItem,
+    QApplication, QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsPixmapItem,
 )
 
-from pyefis.instruments import hsi
+from pyefis.instruments import helpers, hsi
 from tests.utils import track_calls
 
 
@@ -164,7 +164,7 @@ def test_hsi_cdi_gsi_old_tracks_oldchanged_not_failchanged(fix, qtbot):
     widget.cdidb.badChanged.emit(False)
     widget.gsidb.oldChanged.emit(False)
     widget.gsidb.badChanged.emit(False)
-    widget._GsiFail = False
+    widget._CdiFail = widget._GsiFail = False
 
     assert widget._CdiOld is False and widget._CdiBad is False
     assert widget._GsiOld is False and widget._GsiBad is False
@@ -186,7 +186,7 @@ def test_hsi_gsi_hidden_when_no_glideslope(fix, qtbot):
     widget.resize(200, 200)
     widget.show()
     qtbot.waitExposed(widget)
-    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
+    widget._CdiOld = widget._CdiBad = widget._CdiFail = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
 
     widget.setGsv(1)
     widget.paintEvent(QPaintEvent(widget.rect()))
@@ -209,13 +209,18 @@ def test_hsi_source_label_tap_cycles_navsrc(fix, qtbot, monkeypatch):
     widget.resize(200, 200)
     widget.show()
     qtbot.waitExposed(widget)
+    fix.db.define_item("NAVSRC", "NAVSRC", "float", 0.0, 3.0, "", 0, "")
     widget.navsrcdb = object()             # simulate a panel with a nav source
     widget._navsrc = 2                      # GPS
     widget.paintEvent(QPaintEvent(widget.rect()))   # sets the tap rect
     assert widget._source_label_rect is not None
 
+    # Record what is queued for fix-gateway, not the local value: a local
+    # set_value() never left pyEfis (pyEfis #294), and a test patched on it
+    # passed while the bench gateway never saw a tap (AER-5548).
     written = []
-    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: written.append(
+        tuple(b.decode().split(";")[:2])))
 
     class _P:
         def __init__(s, x, y): s._x, s._y = x, y
@@ -229,7 +234,7 @@ def test_hsi_source_label_tap_cycles_navsrc(fix, qtbot, monkeypatch):
 
     r = widget._source_label_rect
     widget.mousePressEvent(_Ev(r[0] + r[2] // 2, r[1] + r[3] // 2))   # inside label
-    assert written == [("NAVSRC", 0.0)]    # GPS(2) -> NAV1(0)
+    assert written == [("NAVSRC", "0.0")]  # GPS(2) -> NAV1(0)
 
 
 def test_hsi_enabled_cdi_gsi_state_and_paint_paths(fix, qtbot):
@@ -473,7 +478,7 @@ def test_hsi_cat_all_valid_shows_both_needles(fix, qtbot):
     """HSI-TC-001 | HSI-FAIL-001 (happy path) | Every deviation signal valid and a
     glideslope present -> both the CDI and GS needles are shown."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
-    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = w._GsiFail = False
+    w._CdiOld = w._CdiBad = w._CdiFail = w._GsiOld = w._GsiBad = w._GsiFail = False
     w.setGsv(1)
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showCDI is True
@@ -507,7 +512,7 @@ def test_hsi_cat_gs_absent_when_gsv_zero(fix, qtbot):
     absent, lateral CDI unaffected. The 'no GS present' branch, distinct from GS-lost
     (HSI-TC-103)."""
     w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
-    w._CdiOld = w._CdiBad = w._GsiOld = w._GsiBad = w._GsiFail = False
+    w._CdiOld = w._CdiBad = w._CdiFail = w._GsiOld = w._GsiBad = w._GsiFail = False
     w.setGsv(0)
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showGSI is False
@@ -518,7 +523,7 @@ def test_hsi_cat_cdi_full_scale_boundary(fix, qtbot):
     """HSI-TC-060 | HSI-DEV-001 (edge) | The normalized CDI at +/-1.0 full-scale (and 0)
     paints without error and stays shown; the source owns full-scale (spec sec 4.2)."""
     w = _mk_hsi(qtbot, cdi_enabled=True)
-    w._CdiOld = w._CdiBad = False
+    w._CdiOld = w._CdiBad = w._CdiFail = False
     for dev in (1.0, -1.0, 0.0):
         w.setCdi(dev)
         w.paintEvent(QPaintEvent(w.rect()))
@@ -569,6 +574,297 @@ def test_hsi_cat_nav_flag_on_cdi_invalid(fix, qtbot):
     w.paintEvent(QPaintEvent(w.rect()))
     assert w._showNavFlag is True
     assert w._showCDI is False        # flag + remove the deviation bar
+
+
+def test_hsi_cat_nav_flag_on_no_lateral_signal(fix, qtbot):
+    """HSI-TC-104 | HSI-ANN-002 (no-signal case) | A localizer tuned but not received
+    (CDIV=0, fix-gateway#20) removes the CDI bar and shows the NAV flag, instead of a
+    centred bar from no signal. CDIV=1 shows the bar on its own quality; an absent
+    CDIV (older gateway) leaves the CDI exactly as before."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    assert w.cdivdb is None and w._cdiv is None       # the fixture has no CDIV key
+    w._CdiOld = w._CdiBad = w._CdiFail = False
+    w.setCdi(0.0)                                     # the centred bar from #20
+
+    w.paintEvent(QPaintEvent(w.rect()))               # absent -> own quality
+    assert w._showCDI is True and w._showNavFlag is False
+
+    w.setCdiv(0)                                      # tuned, not received
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False
+    assert w._showNavFlag is True
+
+    w.setCdiv(1)                                      # receiving
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is True and w._showNavFlag is False
+
+    w.setCdiv(0)
+    w.setTofrom(1)                                    # no TO/FROM without a signal
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False
+
+
+def _count_colour(img, colour, xs, ys, tol=60):
+    """Pixels in the box xs x ys within `tol` (summed RGB distance) of colour."""
+    n = 0
+    for y in ys:
+        for x in xs:
+            p = img.pixelColor(x, y)
+            if (abs(p.red() - colour.red()) + abs(p.green() - colour.green())
+                    + abs(p.blue() - colour.blue())) < tol:
+                n += 1
+    return n
+
+
+def _mk_course_hsi(qtbot, orientation="heading_up"):
+    """A CDI-enabled HSI on heading 000, course 000, centred CDI, every signal
+    valid: the course pointer runs straight up through the centre and the
+    deviation bar sits on it."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.orientation = orientation
+    w._heading = 0.0
+    w._courseSelect = 0.0
+    w._courseDeviation = 0.0
+    w._CdiOld = w._CdiBad = w._CdiFail = False
+    w._CourseOld = w._CourseBad = w._CourseFail = False
+    return w
+
+
+def _rose_bar_pixels(w):
+    # The bar's own span along the pointer axis: the pointer head and tail stop
+    # at +/-bar, so only the deviation bar is drawn in this box.
+    img = w.viewport().grab().toImage()
+    xs = range(int(w.cx) - 3, int(w.cx) + 4)
+    ys = range(int(w.cy - w.cdippw * 0.8), int(w.cy + w.cdippw * 0.8))
+    return _count_colour(img, QColor(w._course_pointer_color()), xs, ys)
+
+
+def _rose_pointer_head_pixels(w):
+    img = w.viewport().grab().toImage()
+    ext = w.r - w.fontSize * 2.0
+    xs = range(int(w.cx) - 3, int(w.cx) + 4)
+    ys = range(int(w.cy - ext), int(w.cy - w.cdippw * 1.2))
+    return _count_colour(img, QColor(w._course_pointer_color()), xs, ys)
+
+
+def test_hsi_g66_fail_only_cdi_removes_bar_under_nav_flag(fix, qtbot):
+    """G66 (pyEfis#392) | HSI-ANN-002 + HSI-FAIL-001 (CDI fail) | A fail-only CDI
+    (bad false, fail true -- the flight-plan engine failing GPS guidance on
+    stale LAT/LONG) raises the NAV flag, and the bar is gone whenever NAV shows:
+    no centred "on course" bar at the failed value of 0 under the flag. TO/FROM
+    goes with it. The course pointer itself stays: COURSE is still valid."""
+    w = _mk_course_hsi(qtbot)
+    w.setTofrom(1)
+    assert _rose_bar_pixels(w) > 0                    # control: valid -> bar drawn
+    assert w._showCDI is True and w._showNavFlag is False
+
+    w.setCdiFail(True)                                # bad stays False
+    assert w._CdiBad is False
+    assert _rose_bar_pixels(w) == 0
+    assert w._showCDI is False and w._showNavFlag is True
+    assert _rose_pointer_head_pixels(w) > 0           # course pointer unaffected
+
+
+def test_hsi_g66_arc_fail_only_cdi_removes_bar(fix, qtbot):
+    """G66 | the arc paint path applies the same rule: on a fail-only CDI the
+    arc draws the course pointer shaft but no deviation bar."""
+    w = _mk_course_hsi(qtbot, orientation="arc")
+    ox, oy = w._arc_params()[0], w._arc_params()[2]
+
+    def lines_drawn():
+        w.paintEvent(QPaintEvent(w.rect()))           # sets _showCDI, NAV flag
+        painter = mock.Mock()
+        w._draw_arc_course(painter, ox, oy)
+        return len(painter.drawLine.call_args_list)
+
+    assert lines_drawn() == 2                         # pointer shaft + bar
+    w.setCdiFail(True)
+    assert lines_drawn() == 1                         # shaft only
+    assert w._showCDI is False and w._showNavFlag is True
+
+
+@pytest.mark.parametrize("flag", ["bad", "fail"])
+def test_hsi_g66_invalid_course_hides_pointer_bar_and_dashes_crs(fix, qtbot, flag):
+    """G66 | HSI-FAIL-001 (COURSE bad/fail) | A bad or failed COURSE has no
+    direction: the course pointer and the bar rotated to it are not drawn at the
+    failed value (000), and the CRS readout shows dashes instead of "000"."""
+    w = _mk_course_hsi(qtbot)
+    panels = []
+    w._draw_readout_panel = lambda c, *a: panels.append(a[-1])
+    assert _rose_pointer_head_pixels(w) > 0 and _rose_bar_pixels(w) > 0
+    assert panels[-1][2][:2] == ("CRS", "000°")
+
+    getattr(w, "setCourseBad" if flag == "bad" else "setCourseFail")(True)
+    assert _rose_pointer_head_pixels(w) == 0
+    assert _rose_bar_pixels(w) == 0
+    assert w._showCDI is False
+    assert panels[-1][2][:2] == ("CRS", "---°")
+
+    w.orientation = "arc"
+    ox, oy = w._arc_params()[0], w._arc_params()[2]
+    w.paintEvent(QPaintEvent(w.rect()))
+    painter = mock.Mock()
+    w._draw_arc_course(painter, ox, oy)
+    assert painter.drawLine.call_count == 0 and painter.drawPolygon.call_count == 0
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("flag", ["bad", "fail"])
+def test_hsi_g66_invalid_course_raises_nav_flag(fix, qtbot, orientation, flag):
+    """G66 rework (Bill, 2026-11-08) | HSI-ANN-002 | A bad or failed COURSE
+    removes the pointer and the bar, so it raises the NAV flag: the CRS dashes
+    alone do not say why the pointer is gone."""
+    w = _mk_course_hsi(qtbot, orientation=orientation)
+    w.setCdiv(1)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showNavFlag is False                    # control: all valid
+    getattr(w, "setCourseBad" if flag == "bad" else "setCourseFail")(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False and w._showNavFlag is True
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_g66_stale_cdi_raises_nav_flag(fix, qtbot, orientation):
+    """G66 rework | A stale CDI removed the bar with no flag. It now raises NAV."""
+    w = _mk_course_hsi(qtbot, orientation=orientation)
+    w.setCdiOld(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False and w._showNavFlag is True
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("gsv", [None, 1])
+@pytest.mark.parametrize("flag", ["old", "bad", "fail"])
+def test_hsi_g66_lost_glideslope_raises_gs_flag(fix, qtbot, orientation, gsv, flag):
+    """G66 rework | HSI-ANN-003 | A stale, invalid or failed GSI with a
+    glideslope expected removes the diamond and raises the GS flag. That holds
+    with GSV absent (an older gateway) too, where the diamond already showed on
+    its own quality but the flag needed GSV."""
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w.orientation = orientation
+    w._GsiOld = w._GsiBad = w._GsiFail = False
+    w._gsv = gsv
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showGSI is True and w._showGsFlag is False
+    setattr(w, {"old": "_GsiOld", "bad": "_GsiBad", "fail": "_GsiFail"}[flag], True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showGSI is False and w._showGsFlag is True
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("flag", ["bad", "fail"])
+def test_hsi_g66_failed_heading_raises_hdg_flag(fix, qtbot, orientation, flag):
+    """G66 rework | HSI-ANN-001 | A bad or failed HEAD raises the HDG flag on
+    both layouts."""
+    w = _mk_course_hsi(qtbot, orientation=orientation)
+    w._HeadOld = w._HeadBad = w._HeadFail = False
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showHdgFlag is False
+    if flag == "bad":
+        w.setHeadBad(True)
+    else:
+        w.setHeadFail(True)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showHdgFlag is True
+
+
+def test_hsi_g66_fail_change_after_a_second_resize_does_not_crash(fix, qtbot):
+    """G66 | Every resize builds a new scene and frees the old one, but the
+    label items stayed in self.labels; the next fail-flag change called
+    setOpacity on freed items and segfaulted the whole process. Only the
+    current scene's labels remain."""
+    w = _mk_course_hsi(qtbot)
+    first = len(w.labels)
+    w.resize(320, 300)
+    qtbot.wait(10)
+    assert len(w.labels) == first
+    w.setHeadFail(not w._HeadFail)                    # used to segfault here
+    w.setCdiFail(not w._CdiFail)
+    assert all(l.scene() is w.scene for l in w.labels)
+
+
+@pytest.mark.parametrize("layout", ["top_panel", "corners", "split"])
+def test_hsi_g66_rose_hdg_flag_clear_of_the_readouts(fix, qtbot, layout):
+    """G66 rework | HSI-ANN-001 | The rose HDG flag was drawn at the top centre,
+    where the readout panels (painted after the flags) covered it. It now sits
+    inside the card, clear of every readout box in every layout."""
+    w = _mk_course_hsi(qtbot)
+    w.readout_layout = layout
+    w.resize(301, 300)                                # real resize: re-lay the rose
+    qtbot.wait(10)
+    w.setHeadFail(True)
+    spots = []
+    real = w._draw_flag
+    w._draw_flag = lambda c, text, x, y: (spots.append((text, x, y)),
+                                          real(c, text, x, y))
+    w.paintEvent(QPaintEvent(w.rect()))
+    (x, y), = [(x, y) for t, x, y in spots if t == "HDG"]
+    assert math.hypot(x - w.cx, y - w.cy) < w.r * 0.8        # inside the card
+    for field, rects in w._edit_rects.items():
+        box = QRectF(rects[0])
+        assert not box.adjusted(-w.fontSize, -w.fontSize,
+                                w.fontSize, w.fontSize).contains(QPointF(x, y)), field
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_g66_no_symbol_removed_without_its_flag(fix, qtbot, orientation):
+    """G66 rework invariant | Over every combination of CDI, COURSE, CDIV, GSI
+    and GSV quality, the deviation bar is never removed without the NAV flag,
+    and an expected GS diamond never without the GS flag."""
+    import itertools
+    w = _mk_hsi(qtbot, cdi_enabled=True, gsi_enabled=True)
+    w.orientation = orientation
+    states = {"valid": (False, False, False), "old": (True, False, False),
+              "bad": (False, True, False), "fail": (False, False, True)}
+    for cdi, crs, cdiv, gsi, gsv in itertools.product(
+            states, ("valid", "bad", "fail"), (None, 0, 1), states, (None, 0, 1)):
+        w._CdiOld, w._CdiBad, w._CdiFail = states[cdi]
+        w._CourseBad, w._CourseFail = crs == "bad", crs == "fail"
+        w._cdiv, w._gsv = cdiv, gsv
+        w._GsiOld, w._GsiBad, w._GsiFail = states[gsi]
+        w.paintEvent(QPaintEvent(w.rect()))
+        assert w._showCDI or w._showNavFlag
+        assert not (w._showCDI and w._showNavFlag)
+        if gsv is None or gsv >= 0.5:
+            assert w._showGSI or w._showGsFlag
+            assert not (w._showGSI and w._showGsFlag)
+        else:
+            assert not w._showGSI and not w._showGsFlag
+
+
+def test_hsi_g66_cdi_and_course_quality_setters_repaint(fix, qtbot):
+    """G66 | a quality change alone (value unchanged) must repaint: the NAV flag
+    and the bar removal otherwise wait for the next unrelated update."""
+    w = _mk_course_hsi(qtbot)
+    for setter in ("setCdiFail", "setCourseBad", "setCourseFail"):
+        w.update = mock.Mock()
+        getattr(w, setter)(True)
+        assert w.update.called, setter
+
+
+def test_hsi_cdiv_read_from_the_fix_key(fix, qtbot):
+    """The widget reads a published CDIV at construction and follows its changes."""
+    fix.db.define_item("CDIV", "CDI valid", "float", 0, 1, "", 2000, "")
+    fix.db.set_value("CDIV", 0.0)
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    assert w.cdivdb is not None and w._cdiv == 0.0
+    fix.db.set_value("CDIV", 1.0)
+    assert w._cdiv == 1.0
+    fix.db.set_value("CDIV", 0.0)
+    assert w._cdiv == 0.0
+
+
+def test_hsi_arc_layout_gates_cdi_on_cdiv(fix, qtbot):
+    """The arc (ND-style) paint path applies the same CDIV gate as the rose."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.orientation = "arc"
+    w._CdiOld = w._CdiBad = w._CdiFail = False
+    w.setCdiv(0)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is False and w._showNavFlag is True
+    w.setCdiv(1)
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._showCDI is True and w._showNavFlag is False
 
 
 def test_hsi_cat_gs_flag_on_gs_lost(fix, qtbot):
@@ -711,9 +1007,12 @@ def test_bearing_visibility_gated_by_enable_heading_and_quality(fix, qtbot):
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
     widget.bearing1_enabled = True
-    # good state -> visible
     widget._HeadFail = widget._HeadBad = False
     widget._brgOld[1] = widget._brgBad[1] = widget._brgFail[1] = False
+    # available but not stepped on: Off is the default (HSIBRG1)
+    assert widget._bearing_visible(1) is False
+    widget._brgOn[1] = True
+    # good state -> visible
     assert widget._bearing_visible(1) is True
     # disabled -> hidden
     widget.bearing1_enabled = False
@@ -737,33 +1036,100 @@ def test_bearing_visibility_gated_by_enable_heading_and_quality(fix, qtbot):
     assert widget._bearing_visible(2) is False
 
 
-def test_bearing_color_follows_source(fix, qtbot):
+@pytest.mark.parametrize("src", [0.0, 1.0, 2.0, None])
+def test_bearing_color_is_cyan_whatever_the_source(fix, qtbot, src):
+    """HSIBRG1: source colour is the CDI's alone (HSI-COLOR-001). A GPS
+    bearing needle used to take the course pointer's magenta and read as the
+    course pointer drawn twice; every needle is now bearing_color (cyan)."""
     _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=20.0, src2=0.0)
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
-    widget._brgSrc[1] = 2.0                       # GPS -> magenta (course_color)
-    assert widget._bearing_color(1) == QColor(widget.course_color)
-    widget._brgSrc[1] = 0.0                       # VOR1 -> green (vloc_color)
-    assert widget._bearing_color(1) == QColor(widget.vloc_color)
-    widget._brgSrc[1] = 1.0                       # VOR2 -> green
-    assert widget._bearing_color(1) == QColor(widget.vloc_color)
-    widget._brgSrc[1] = None                      # unknown -> generic bearing_color
+    widget._brgSrc[1] = src
     assert widget._bearing_color(1) == QColor(widget.bearing_color)
+    assert widget._bearing_color(1) == QColor("#00ffff")
+    assert widget._bearing_color(1) != QColor(widget.course_color)
+    assert widget._bearing_color(1) != QColor(widget.vloc_color)
 
 
-def test_bearing_source_cycle_writes_key(fix, qtbot):
+@pytest.mark.parametrize("navsrc, cycle", [
+    (None, [0.0, 1.0, 2.0]),     # no NAVSRC: every source
+    (2.0, [0.0, 1.0]),           # CDI on GPS: VOR1, VOR2
+    (0.0, [1.0, 2.0]),           # CDI on NAV1: VOR2, GPS
+    (1.0, [0.0, 2.0]),           # CDI on NAV2: VOR1, GPS
+])
+def test_bearing_cycle_steps_off_sources_off_skipping_the_cdi(fix, qtbot, navsrc, cycle):
+    """A tap steps a pointer Off -> each source that is not the CDI's -> Off.
+    A source step writes BRGnSRC; Off is the display's own state and leaves
+    BRGnSRC alone."""
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.bearing1_enabled = True
+    widget._navsrc = navsrc
+    assert widget._bearing_selected(1) is False             # Off by default
+    seen = []
+    for _ in cycle:
+        widget._cycle_bearing_src(1)
+        assert widget._bearing_selected(1) is True
+        seen.append(fix.db.get_item("BRG1SRC").value)
+    assert seen == cycle
+    widget._cycle_bearing_src(1)                            # past the last -> Off
+    assert widget._bearing_selected(1) is False
+    assert fix.db.get_item("BRG1SRC").value == cycle[-1]    # untouched by Off
+    widget._cycle_bearing_src(1)                            # and round again
+    assert widget._bearing_selected(1) is True
+    assert fix.db.get_item("BRG1SRC").value == cycle[0]
+
+
+def test_bearing_cycle_needs_the_layout_switch_and_the_key(fix, qtbot):
+    """bearingN_enabled is the layout switch that makes a pointer available
+    at all; without it, or without BRGnSRC to carry the source, a tap does
+    nothing."""
     _define_bearing_keys(fix, brg1=10.0, src1=0.0)
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
-    widget._brgSrc[1] = 0.0
-    widget._cycle_bearing_src(1)                  # VOR1 -> VOR2
-    assert fix.db.get_item("BRG1SRC").value == 1.0
-    widget._brgSrc[1] = 1.0
-    widget._cycle_bearing_src(1)                  # VOR2 -> GPS
-    assert fix.db.get_item("BRG1SRC").value == 2.0
-    widget._brgSrc[1] = 2.0
-    widget._cycle_bearing_src(1)                  # GPS -> VOR1 (wrap)
-    assert fix.db.get_item("BRG1SRC").value == 0.0
+    widget._cycle_bearing_src(1)
+    assert widget._brgOn[1] is False
+    widget.bearing2_enabled = True                 # BRG2SRC never defined
+    widget._cycle_bearing_src(2)
+    assert widget._brgOn[2] is False
+
+
+@pytest.mark.parametrize("navsrc", [0.0, 1.0, 2.0])
+def test_bearing_on_the_cdi_source_is_never_drawn(fix, qtbot, navsrc):
+    """Bill's rule (HSIBRG1): no needle repeats the CDI. A pointer whose
+    source becomes NAVSRC -- by a NAVSRC change or by BRGnSRC written
+    elsewhere -- is turned Off, not just hidden, so it does not come back
+    unasked when the CDI source moves on."""
+    _define_bearing_keys(fix, brg1=10.0, src1=navsrc)
+    widget = hsi.HSI(font_percent=0.1)
+    qtbot.addWidget(widget)
+    widget.bearing1_enabled = True
+    widget._HeadFail = widget._HeadBad = False
+    widget._brgOld[1] = widget._brgBad[1] = widget._brgFail[1] = False
+    widget._brgSrc[1] = navsrc
+    other = (navsrc + 1.0) % 3.0
+    widget.setNavsrc(other)
+    widget._brgOn[1] = True
+    assert widget._bearing_visible(1) is True
+    # the CDI moves onto the pointer's source
+    widget.setNavsrc(navsrc)
+    assert widget._bearing_visible(1) is False
+    assert widget._brgOn[1] is False
+    widget.setNavsrc(other)                        # moving away does not revive it
+    assert widget._bearing_visible(1) is False
+    # the pointer's source is written onto the CDI's from elsewhere
+    widget._brgSrc[1] = (other + 1.0) % 3.0
+    widget._brgOn[1] = True
+    assert widget._bearing_visible(1) is True
+    widget._setBrgSrc(1, other)
+    assert widget._bearing_visible(1) is False
+    assert widget._brgOn[1] is False
+    # and the draw rule holds on its own, whatever path set the state
+    widget._brgOn[1] = True
+    widget._brgSrc[1] = navsrc
+    widget._navsrc = navsrc
+    assert widget._bearing_visible(1) is False
 
 
 def test_bearing_source_label_text(fix, qtbot):
@@ -794,6 +1160,7 @@ def test_bearing_enabled_paint_never_raises_with_keys(fix, qtbot):
     widget._HeadFail = widget._HeadBad = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgOn[n] = True
     event = QPaintEvent(widget.rect())
     widget.paintEvent(event)                       # must not raise
     assert widget._bearing_visible(1) is True
@@ -904,7 +1271,7 @@ def test_arc_paint_never_raises_full_panel(fix, qtbot):
     widget.show()
     qtbot.waitExposed(widget)
     widget._HeadFail = widget._HeadBad = False
-    widget._CdiOld = widget._CdiBad = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
+    widget._CdiOld = widget._CdiBad = widget._CdiFail = widget._GsiOld = widget._GsiBad = widget._GsiFail = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
     widget.setGsv(1)
@@ -947,6 +1314,7 @@ def test_arc_forward_clip_hides_rear_bearing(fix, qtbot):
     widget._HeadFail = widget._HeadBad = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgOn[n] = True
     widget._heading = 0.0
     assert widget._arc_in_sector(widget._brg[1]) is True     # 10 deg ahead
     assert widget._arc_in_sector(widget._brg[2]) is False    # 180 behind
@@ -1012,6 +1380,7 @@ def test_arc_bearing_label_hidden_when_pointer_clipped_out_of_sector(fix, qtbot)
     widget._HeadFail = widget._HeadBad = False
     for n in (1, 2):
         widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgOn[n] = True
     widget._heading = 0.0
     assert widget._arc_in_sector(widget._brg[1]) is True      # pointer 1: on screen
     assert widget._arc_in_sector(widget._brg[2]) is False     # pointer 2: clipped, valid data
@@ -1036,6 +1405,7 @@ def test_arc_bearing_label_stays_when_invalid_regardless_of_sector(fix, qtbot):
     widget.show()
     qtbot.waitExposed(widget)
     widget._heading = 0.0
+    widget._brgOn[1] = True
     widget._brgOld[1] = True                          # stale -- invalid
     assert widget._arc_in_sector(widget._brg[1]) is False
 
@@ -1074,7 +1444,8 @@ def _expected_tab_rect(widget):
     pw = widget.fontSize * 12.5
     px = W / 2.0 - pw / 2.0
     py = (g - ph) / 2.0
-    rr = widget.fontSize * helpers.READOUT_RADIUS_RATIO
+    # Corner radius is keyed to the panel's OWN height (AER-413), not fontSize.
+    rr = ph * helpers.READOUT_RADIUS_RATIO
     top = py + rr
     height = ph - 2.0 * rr
     return px, top, height
@@ -1135,18 +1506,72 @@ def test_hsi_non_top_panel_layouts_keep_floating_label(fix, qtbot, layout):
     assert r[0] == expected_x
 
 
+def _corner_box(w, h_anchor, v_anchor):
+    """The rect _draw_readout_box draws for a corner box (same formula)."""
+    m = w.fontSize * 0.5
+    bw, bh = w.fontSize * 3.6, w.fontSize * 2.4
+    x = m if h_anchor == "l" else w.width() - m - bw
+    y = m if v_anchor == "t" else w.height() - m - bh
+    return QRectF(x, y, bw, bh)
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_corners_source_label_is_not_hidden_under_the_hdg_box(fix, qtbot, orientation):
+    """In corners the HDG box owns the top-left corner. The plain source
+    label used to be drawn underneath it, hidden, with its tap target over
+    most of the box; it now sits below the box."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.readout_layout = "corners"
+    widget.orientation = orientation
+    widget.navsrcdb = object()
+    widget._navsrc = 2
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    label = QRectF(*widget._source_label_rect)
+    box = _corner_box(widget, "l", "t")
+    assert not label.intersects(box)
+    assert label.top() >= box.bottom()
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_hsi_split_bearing_labels_are_not_hidden_under_the_bottom_boxes(fix, qtbot, orientation):
+    """In split the CRS and HDG boxes own the bottom corners; the bearing-
+    source labels now sit above them instead of underneath."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.readout_layout = "split"
+    widget.orientation = orientation
+    for n in (1, 2):
+        setattr(widget, "bearing%d_enabled" % n, True)
+        widget.brgdb[n] = object()
+        widget.brgsrcdb[n] = object()
+        widget._brgOn[n] = True
+        widget._brg[n] = 0.0
+        widget._brgOld[n] = widget._brgBad[n] = widget._brgFail[n] = False
+        widget._brgSrc[n] = 0
+    widget._HeadFail = widget._HeadBad = widget._HeadOld = False
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    for n, h_anchor in ((1, "l"), (2, "r")):
+        assert widget._brg_label_rect[n] is not None
+        label = QRectF(*widget._brg_label_rect[n])
+        assert not label.intersects(_corner_box(widget, h_anchor, "b")), n
+
+
 def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
     """pyEfis#140 acceptance #5: the whole tab rect (not just the glyphs) is
     the tap target, and mousePressEvent still cycles NAVSRC unchanged."""
     widget = _mk_hsi(qtbot, font_percent=0.08)
+    fix.db.define_item("NAVSRC", "NAVSRC", "float", 0.0, 3.0, "", 0, "")
     widget.navsrcdb = object()
     widget._navsrc = 2                               # GPS
     widget.paintEvent(QPaintEvent(widget.rect()))
     r = widget._source_label_rect
     assert r is not None
 
+    # Record what is queued for fix-gateway, not the local value: a local
+    # set_value() never left pyEfis (pyEfis #294), and a test patched on it
+    # passed while the bench gateway never saw a tap (AER-5548).
     written = []
-    monkeypatch.setattr(hsi.fix.db, "set_value", lambda k, v: written.append((k, v)))
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: written.append(
+        tuple(b.decode().split(";")[:2])))
 
     class _P:
         def __init__(s, x, y): s._x, s._y = x, y
@@ -1160,27 +1585,239 @@ def test_hsi_source_tab_tap_target_is_whole_tab(fix, qtbot, monkeypatch):
 
     # A point near the tab's rounded-left edge (not just its text glyphs).
     widget.mousePressEvent(_Ev(r[0] + 2, r[1] + r[3] / 2))
-    assert written == [("NAVSRC", 0.0)]
+    assert written == [("NAVSRC", "0.0")]
 
 
-def test_hsi_source_tab_white_on_source_colour_contrast(fix, qtbot):
-    """pyEfis#140 acceptance #9: MEASURE (not just assert-pass) the white-on-
-    magenta and white-on-green ratios against the WCAG 4.5:1 floor, the same
-    pattern tests/instruments/test_readout_panel.py uses for the translucent
-    readout fill. Both measure poor per the #140 fit/contrast note in
-    docs/hsi_widget_spec.md sec 7.4 -- white text stands (Bill's call); if this
-    is ever fixed, it will be via a darker fill, and this test's numbers are
-    the ones that should move. Locked as a value assertion (not just `< 4.5`)
-    so a silent fill-colour change gets caught here first."""
+def _painted_source_label_pen(widget, px, py, ph):
+    """Drive HSI._draw_source_tab directly against a real QPainter (needed for
+    real fontMetrics(), unlike the bare mock.Mock() used for _draw_arc_course
+    elsewhere in this file) and return the pen colour it left set -- drawText
+    for the label is the method's last painter call, so painter.pen() after
+    the call is exactly the label colour it used."""
+    image = QImage(400, 400, QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        widget._draw_source_tab(painter, px, py, ph)
+        return QColor(painter.pen().color())
+    finally:
+        painter.end()
+
+
+def test_hsi_source_tab_label_colour_is_derived_and_clears_wcag_floor(fix, qtbot):
+    """pyEfis#147 (AER-473): white-on-source-colour used to measure 3.14:1
+    (GPS/magenta) and 1.37:1 (VLOC/green) -- both WCAG AA fails, previously
+    accepted as "Bill's call" pending a fix (superseded #140-era test). The
+    label is now darkened from the tab's own fill via
+    helpers.darken_to_contrast(), independently reproduced here, so both
+    stock colours clear helpers.SOURCE_LABEL_MIN_CONTRAST (4.5:1)."""
+    from pyefis.instruments import helpers
     widget = _mk_hsi(qtbot, font_percent=0.08)
-    white = (255, 255, 255)
-    magenta = QColor(widget.course_color).getRgb()[:3]
-    green = QColor(widget.vloc_color).getRgb()[:3]
-    gps_contrast = _wcag_contrast(white, magenta)
-    vloc_contrast = _wcag_contrast(white, green)
-    assert gps_contrast == pytest.approx(3.14, abs=0.02)
-    assert vloc_contrast == pytest.approx(1.37, abs=0.02)
-    assert gps_contrast < 4.5 and vloc_contrast < 4.5      # both fail the floor
+    px, top, height = _expected_tab_rect(widget)
+
+    for fill_hex, navsrc, navtype in (
+        (widget.course_color, 2, None),      # GPS
+        (widget.vloc_color, 0, None),        # VLOC1
+    ):
+        widget._navsrc, widget._navtype = navsrc, navtype
+        painted = _painted_source_label_pen(widget, px, top, height)
+        fill = QColor(fill_hex)
+        expected = helpers.darken_to_contrast(fill)
+        assert painted.getRgb()[:3] == expected.getRgb()[:3]
+        assert painted.getRgb()[:3] != (255, 255, 255)     # no longer hardcoded white
+        contrast = _wcag_contrast(painted.getRgb()[:3], fill.getRgb()[:3])
+        assert contrast >= helpers.SOURCE_LABEL_MIN_CONTRAST
+
+
+def test_hsi_source_tab_label_colour_tracks_custom_source_colour(fix, qtbot):
+    """The derivation must be parametric, not two hardcoded dark hexes --
+    vloc_color/course_color are config-selectable (pyEfis#147 anchor #1), so a
+    custom source colour must still clear the same WCAG floor."""
+    from pyefis.instruments import helpers
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget.vloc_color = "#00ccff"
+    px, top, height = _expected_tab_rect(widget)
+    widget._navsrc, widget._navtype = 0, None
+    painted = _painted_source_label_pen(widget, px, top, height)
+    fill = QColor(widget.vloc_color)
+    assert _wcag_contrast(painted.getRgb()[:3], fill.getRgb()[:3]) >= helpers.SOURCE_LABEL_MIN_CONTRAST
+
+
+def test_hsi_source_tab_fill_is_not_darkened(fix, qtbot):
+    """HSI-COLOR-001: darkening is for the LABEL only -- the fill (the source
+    annunciation itself) must stay at the configured, full-brightness colour
+    so it still reads at a glance."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    widget._navsrc, widget._navtype = 2, None          # GPS
+    assert widget._source_color() == QColor(widget.course_color)
+
+
+def test_hsi_source_tab_width_is_constant_across_labels(fix, qtbot):
+    """pyEfis#148 (AER-473): tab width must not track the current label -- it
+    is the widest of GPS/VOR{n}/LOC{n}/VLOC{n} at the tab font, so the tab
+    doesn't breathe as NAVSRC cycles and the label centring falls out for
+    free (drawText already uses AlignCenter into (left, top, tab_w, th))."""
+    widget = _mk_hsi(qtbot, font_percent=0.08)
+    px, top, height = _expected_tab_rect(widget)
+
+    def tab_width(navsrc, navtype=None):
+        widget._navsrc, widget._navtype = navsrc, navtype
+        image = QImage(400, 400, QImage.Format.Format_ARGB32)
+        painter = QPainter(image)
+        try:
+            widget._draw_source_tab(painter, px, top, height)
+        finally:
+            painter.end()
+        return widget._source_label_rect[2]
+
+    widths = {
+        "GPS": tab_width(2),
+        "VOR1": tab_width(0, 1),
+        "LOC1": tab_width(0, 2),
+        "VLOC1": tab_width(0, None),
+        "VLOC2": tab_width(1, None),
+    }
+    assert len(set(widths.values())) == 1, widths
+
+
+# --- BRG tab: bearing-pointer selector on the panel's right edge (HSIBRG1) ---
+
+class _TapPos:
+    def __init__(self, x, y): self._x, self._y = x, y
+    def x(self): return self._x
+    def y(self): return self._y
+
+
+class _Tap:
+    def __init__(self, x, y): self._p = _TapPos(x, y)
+    def pos(self): return self._p
+    def position(self): return QPointF(self._p.x(), self._p.y())
+    def accept(self): pass
+
+
+def _mk_brg_hsi(qtbot, fix, pointers=(1,), **kw):
+    _define_bearing_keys(fix, brg1=10.0, src1=2.0, brg2=20.0, src2=0.0)
+    widget = _mk_hsi(qtbot, font_percent=0.05, **kw)
+    for n in pointers:
+        setattr(widget, "bearing%d_enabled" % n, True)
+    widget._HeadFail = widget._HeadBad = widget._HeadOld = False
+    widget.navsrcdb = object()
+    widget._navsrc = 2                               # CDI on GPS
+    return widget
+
+
+def _tap_rect(widget, rect):
+    x, y, w, h = rect
+    widget.mousePressEvent(_Tap(x + w * 0.9, y + h * 0.5))
+
+
+def test_brg_tab_only_when_a_pointer_is_available(fix, qtbot):
+    widget = _mk_brg_hsi(qtbot, fix, pointers=())
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._brg_tab_rects == {}
+    widget.bearing1_enabled = True
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert list(widget._brg_tab_rects) == [1]
+    widget.bearing2_enabled = True
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert list(widget._brg_tab_rects) == [1, 2]
+    widget.readout_layout = "corners"                 # no top panel, no tab
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._brg_tab_rects == {}
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+def test_brg_tab_mirrors_the_source_tab_on_the_right(fix, qtbot, orientation):
+    """Same top and height as the nav-source tab, left edge flush with the
+    panel's right edge; two pointers split that height into two rows."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1, 2))
+    widget.orientation = orientation
+    widget.resize(600, 400)
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    px, top, height = _expected_tab_rect(widget)
+    pw = widget.fontSize * 12.5
+    r1 = widget._brg_tab_rects[1]
+    r2 = widget._brg_tab_rects[2]
+    assert r1[0] == pytest.approx(px + pw) == r2[0]
+    assert r1[1] == pytest.approx(top)
+    assert r1[3] + r2[3] == pytest.approx(height)
+    assert r2[1] == pytest.approx(top + r1[3])
+    assert r1[0] + r1[2] <= widget.width()           # inside the widget
+
+
+def test_brg_tab_labels(fix, qtbot):
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1,))
+    assert widget._bearing_tab_label(1, True) == "BRG OFF"
+    widget._cycle_bearing_src(1)
+    assert widget._bearing_tab_label(1, True) == "BRG1 VOR1"
+    widget.bearing2_enabled = True
+    assert widget._bearing_tab_label(2, False) == "BRG2 OFF"
+    widget._navsrc = 0.0                                  # CDI on NAV1
+    widget._brgOn[2] = True
+    widget._brgSrc[2] = 2.0
+    assert widget._bearing_tab_label(2, False) == "BRG2 GPS"
+
+
+def test_brg_tab_tap_steps_that_rows_pointer(fix, qtbot, monkeypatch):
+    """Each row is its own tap target: tapping row 2 steps pointer 2 only.
+    A source step reaches fix-gateway (queued), not just the local copy."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1, 2))
+    sent = []
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: sent.append(
+        tuple(b.decode().split(";")[:2])))
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    _tap_rect(widget, widget._brg_tab_rects[2])
+    assert widget._brgOn == {1: False, 2: True}
+    assert fix.db.get_item("BRG2SRC").value == 0.0       # VOR1 (CDI is GPS)
+    assert sent == []                                     # already VOR1
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    _tap_rect(widget, widget._brg_tab_rects[1])
+    assert widget._brgOn == {1: True, 2: True}
+    assert fix.db.get_item("BRG1SRC").value == 0.0
+    assert sent == [("BRG1SRC", "0.0")]                   # GPS -> VOR1, sent
+    for _ in range(2):                                    # VOR2, then Off
+        widget.paintEvent(QPaintEvent(widget.rect()))
+        _tap_rect(widget, widget._brg_tab_rects[1])
+    assert widget._brgOn == {1: False, 2: True}
+
+
+def test_brg_corner_labels_with_and_without_the_tab(fix, qtbot):
+    """Under top_panel the tab carries Off and a corner label only names an
+    on pointer's source; without the top panel an Off pointer keeps a "1 OFF"
+    corner label, which takes the tap."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1,))
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._brg_label_rect[1] is None
+    _tap_rect(widget, widget._brg_tab_rects[1])
+    widget.paintEvent(QPaintEvent(widget.rect()))
+    assert widget._bearing_corner_label(1) == ("1 VOR1", False)
+    assert widget._brg_label_rect[1] is not None
+    widget._brgOn[1] = False
+    for layout in ("corners", "split", "none"):
+        widget.readout_layout = layout
+        widget.paintEvent(QPaintEvent(widget.rect()))
+        assert widget._bearing_corner_label(1) == ("1 OFF", False)
+        _tap_rect(widget, widget._brg_label_rect[1])
+        assert widget._brgOn[1] is True, layout
+        widget._brgOn[1] = False
+
+
+def test_brg_needle_paint_uses_cyan_on_a_gps_cdi(fix, qtbot):
+    """The case Bill reported: CDI on GPS with a GPS bearing pointer drew two
+    magenta pointers at the waypoint. Now that pointer cannot be on; a VOR1
+    pointer beside the GPS CDI paints in cyan, and no bearing pen is magenta."""
+    widget = _mk_brg_hsi(qtbot, fix, pointers=(1,), cdi_enabled=True)
+    widget.source_auto_color = True
+    widget._brgOld[1] = widget._brgBad[1] = widget._brgFail[1] = False
+    widget._brgSrc[1] = 2.0
+    widget._brgOn[1] = True
+    widget._drop_bearings_on_cdi_source()
+    assert widget._bearing_visible(1) is False
+    widget._cycle_bearing_src(1)                          # -> VOR1
+    assert widget._bearing_visible(1) is True
+    painter = mock.MagicMock()
+    widget._draw_bearing_needle(painter, 1)
+    pens = [call.args[0].color() for call in painter.setPen.call_args_list]
+    assert pens and all(c == QColor("#00ffff") for c in pens)
 
 
 # --------------------------------------------------------------------------
@@ -1194,19 +1831,16 @@ def test_shadow_disabled_by_default(fix, qtbot):
     widget.resize(300, 300)
     widget.show()
     qtbot.waitExposed(widget)
-    assert widget._rose_shadow_blur == 0.0
+    assert widget._rose_glow_width == 0.0
     widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
 
 
-def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
-    """Enabling the shadow shrinks the rose (clearance for the halo, gotcha
-    #2) and bakes the halo via helpers.bake_blurred_silhouette (AER-439 --
-    replaced a QGraphicsDropShadowEffect attached directly to the disc item,
-    which had no way to punch its own shape back out of its own shadow, see
-    test_shadow_rose_disc_translucent_fill_unchanged_by_shadow below) as its
-    OWN scene item strictly behind the disc fill: z=-2 for the halo vs z=-1
-    for the disc, so the disc's own fill is never composited over its own
-    unpunched shadow."""
+def test_shadow_draws_the_glow_ring_behind_the_disc(fix, qtbot):
+    """The glow is its OWN scene item strictly behind the disc fill: z=-2 for
+    the glow vs z=-1 for the disc, never a QGraphicsDropShadowEffect attached
+    to the disc item (AER-439 -- Qt's effect draws the item's own source back
+    over an unpunched halo, so it tints a translucent disc; see
+    test_shadow_rose_disc_translucent_fill_unchanged_by_shadow below)."""
     plain = hsi.HSI()
     qtbot.addWidget(plain)
     plain.resize(400, 400)
@@ -1220,8 +1854,7 @@ def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
     shadowed.show()
     qtbot.waitExposed(shadowed)
 
-    assert shadowed._rose_shadow_blur > 0.0
-    assert shadowed.r < plain.r                       # room reserved for the halo
+    assert shadowed._rose_glow_width > 0.0
 
     bgitems = [i for i in shadowed.scene.items()
                if isinstance(i, QGraphicsEllipseItem)]
@@ -1229,14 +1862,172 @@ def test_shadow_reserves_rose_margin_and_bakes_halo_behind_disc(fix, qtbot):
     assert bgitems[0].graphicsEffect() is None         # no per-item Qt effect anymore
     assert bgitems[0].zValue() == -1
 
-    haloitems = [i for i in shadowed.scene.items()
-                 if isinstance(i, QGraphicsPixmapItem)]
-    assert haloitems, "expected a baked halo pixmap item behind the disc"
-    assert haloitems[0].zValue() < bgitems[0].zValue()
+    glowitems = [i for i in shadowed.scene.items()
+                 if isinstance(i, QGraphicsPathItem)]
+    assert glowitems, "expected the rim-glow ring item behind the disc"
+    assert glowitems[0].zValue() < bgitems[0].zValue()
 
-    plain_haloitems = [i for i in plain.scene.items()
-                       if isinstance(i, QGraphicsPixmapItem)]
-    assert not plain_haloitems, "no halo item should exist with shadows off"
+    plain_glowitems = [i for i in plain.scene.items()
+                       if isinstance(i, QGraphicsPathItem)]
+    assert not plain_glowitems, "no glow item should exist with shadows off"
+
+
+def test_rim_glow_costs_no_radius_while_it_fits_the_edge_margin(fix, qtbot,
+                                                                monkeypatch):
+    """A glow narrower than ROSE_EDGE_MARGIN is free: the gap the rose already
+    holds to the widget edge absorbs it, so the rose keeps its full radius.
+
+    This is the pyEfis#158 guarantee, and it is what makes the reservation
+    HONEST -- the rose gives up radius only when the glow genuinely has
+    nowhere else to go, never as a fixed tax on enabling the option (the old
+    code charged blur * SHADOW_CANVAS_PAD_RATIO unconditionally, 6.3% of the
+    rose's area, for a halo nobody could see)."""
+    monkeypatch.setattr(hsi, "ROSE_GLOW_WIDTH_RATIO", 0.02)
+
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(400, 400)
+    plain.show()
+    qtbot.waitExposed(plain)
+
+    shadowed = hsi.HSI()
+    qtbot.addWidget(shadowed)
+    shadowed.shadow_enabled = True
+    shadowed.resize(400, 400)
+    shadowed.show()
+    qtbot.waitExposed(shadowed)
+
+    assert 0.0 < shadowed._rose_glow_width <= hsi.ROSE_EDGE_MARGIN
+    assert shadowed.r == plain.r
+
+
+def test_shipped_rim_glow_width_is_wider_than_the_edge_margin(fix, qtbot):
+    """The width actually shipped (ROSE_GLOW_WIDTH_RATIO, ~10px at panel
+    scale) is DELIBERATELY wider than ROSE_EDGE_MARGIN, so it does cost the
+    rose some radius -- a trade Bill accepted on the bench display, not an
+    oversight. Pinned so that reading the two constants together cannot
+    silently become a no-op again: if someone narrows the glow back under the
+    margin, the sizing tests above still describe the truth but this one says
+    the shipped look changed.
+
+    At real panel geometry the rose is edge-constrained, so a wider glow
+    cannot extend outward -- it grows inward and both widths end at the same
+    outer edge. That is the whole content of the trade."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(528, 402)                    # the HSI's real size on the panel
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    assert widget._rose_glow_width > hsi.ROSE_EDGE_MARGIN
+    # ...and the reservation it triggers is exactly the overflow, no more.
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(528, 402)
+    plain.show()
+    qtbot.waitExposed(plain)
+    overflow = widget._rose_glow_width - hsi.ROSE_EDGE_MARGIN
+    assert widget.r == pytest.approx(plain.r - overflow)
+    # Both roses' glows still end at the same outer edge -- the rose is
+    # edge-constrained, so widening only moves the glow's INNER limit.
+    assert widget.r + widget._rose_glow_width == pytest.approx(
+        plain.r + hsi.ROSE_EDGE_MARGIN)
+
+
+def test_rim_glow_is_a_ring_that_never_covers_the_disc_interior(fix, qtbot):
+    """The glow is clipped to an annulus, so the AER-415 guarantee holds
+    geometrically rather than by punching a baked silhouette: there is simply
+    nothing inside self.r for a translucent disc fill to read through. Assert
+    it on the path's own geometry -- a filled circle here would tint the whole
+    rose at any bg_opacity below 100."""
+    widget = hsi.HSI()
+    qtbot.addWidget(widget)
+    widget.shadow_enabled = True
+    widget.resize(400, 400)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+    glow = [i for i in widget.scene.items()
+            if isinstance(i, QGraphicsPathItem)][0]
+    path = glow.path()
+    # Dead centre and most of the way to the rim must both be OUTSIDE the ring.
+    assert not path.contains(QPointF(widget.cx, widget.cy))
+    assert not path.contains(QPointF(widget.cx + widget.r * 0.9, widget.cy))
+    # A point just past the disc edge must be INSIDE it.
+    assert path.contains(
+        QPointF(widget.cx + widget.r + widget._rose_glow_width * 0.5, widget.cy))
+
+
+def test_rim_glow_width_scales_with_the_rose_not_the_label_font(fix, qtbot):
+    """pyEfis#158 root cause: the rose blur was self.fontSize *
+    SHADOW_BLUR_RATIO. That ratio is calibrated for the readout boxes, whose
+    geometry really is font-derived; the rose is a widget-sized disc, so a
+    font-derived blur came out around 1.75px against a ~160px radius and was
+    invisible (<=1.7/255 outside the disc, and still invisible at 8x the
+    font). Blur must track the rose's radius and ignore the label font."""
+    big_font = hsi.HSI()
+    qtbot.addWidget(big_font)
+    big_font.shadow_enabled = True
+    big_font.font_percent = 0.08
+    big_font.resize(400, 400)
+    big_font.show()
+    qtbot.waitExposed(big_font)
+
+    small_font = hsi.HSI()
+    qtbot.addWidget(small_font)
+    small_font.shadow_enabled = True
+    small_font.font_percent = 0.02
+    small_font.resize(400, 400)
+    small_font.show()
+    qtbot.waitExposed(small_font)
+
+    # Same widget size, 4x the font: the glow must not move.
+    assert big_font.fontSize != small_font.fontSize
+    assert big_font._rose_glow_width == small_font._rose_glow_width
+    # The width is taken from the rose radius BEFORE the clearance reservation
+    # subtracts from it, so reconstruct that radius rather than asserting
+    # against the final one -- at the shipped width the two differ.
+    reserved = max(0.0, big_font._rose_glow_width - hsi.ROSE_EDGE_MARGIN)
+    assert big_font._rose_glow_width == pytest.approx(
+        (big_font.r + reserved) * hsi.ROSE_GLOW_WIDTH_RATIO)
+
+    # ...and it must scale with the rose itself.
+    larger = hsi.HSI()
+    qtbot.addWidget(larger)
+    larger.shadow_enabled = True
+    larger.font_percent = 0.02
+    larger.resize(800, 800)
+    larger.show()
+    qtbot.waitExposed(larger)
+    assert larger._rose_glow_width > small_font._rose_glow_width
+
+
+def test_shadow_reserves_only_the_overflow_past_the_edge_margin(fix, qtbot):
+    """When the rose is large enough that its glow outgrows ROSE_EDGE_MARGIN,
+    the reservation is exactly the overflow -- and no more. The glow's width is
+    now literal (a gradient stop, not a Gaussian tail), so the reservation is
+    simply the part the margin cannot absorb. Guards the pyEfis#158 3x
+    over-reservation from coming back via SHADOW_CANVAS_PAD_RATIO."""
+    plain = hsi.HSI()
+    qtbot.addWidget(plain)
+    plain.resize(800, 800)
+    plain.show()
+    qtbot.waitExposed(plain)
+
+    shadowed = hsi.HSI()
+    qtbot.addWidget(shadowed)
+    shadowed.shadow_enabled = True
+    shadowed.resize(800, 800)
+    shadowed.show()
+    qtbot.waitExposed(shadowed)
+
+    width = plain.r * hsi.ROSE_GLOW_WIDTH_RATIO
+    overflow = width - hsi.ROSE_EDGE_MARGIN
+    assert overflow > 0, "pick a size where the glow actually outgrows the margin"
+    assert shadowed.r == pytest.approx(plain.r - overflow)
+    # Strictly cheaper than the pre-#158 reservation it replaces.
+    assert shadowed.r > plain.r - width * helpers.SHADOW_CANVAS_PAD_RATIO
 
 
 def test_shadow_rose_disc_translucent_fill_unchanged_by_shadow(fix, qtbot):
@@ -1293,9 +2084,13 @@ def test_shadow_rose_halo_is_radially_symmetric(fix, qtbot, monkeypatch):
     heavy vignette); scaled up here via monkeypatch purely so the halo is
     a few pixels wide and trivially sampled -- the symmetry property being
     tested does not depend on the exact ratio.
+
+    pyEfis#158 moved the knob: the rose sizes its halo from its own radius
+    (ROSE_GLOW_WIDTH_RATIO), not from the label font, so scaling
+    helpers.SHADOW_BLUR_RATIO here no longer widens it -- that patch was
+    silently inert and left this sampling the steep edge of a ~2px halo.
     """
-    from pyefis.instruments import helpers
-    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+    monkeypatch.setattr(hsi, "ROSE_GLOW_WIDTH_RATIO", 0.5)
 
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
@@ -1307,7 +2102,7 @@ def test_shadow_rose_halo_is_radially_symmetric(fix, qtbot, monkeypatch):
     img = widget._rose_image()                        # unrotated 2x bake
     ss = 2
     cx, cy = widget.cx * ss, widget.cy * ss
-    sample_r = widget.r * ss + widget._rose_shadow_blur * ss * 0.15
+    sample_r = widget.r * ss + widget._rose_glow_width * ss * 0.15
 
     alphas = []
     for deg in range(0, 360, 15):
@@ -1324,9 +2119,9 @@ def test_shadow_rotated_rose_matches_unrotated_in_halo_band(fix, qtbot, monkeypa
     """Direct two-heading check: the pre-rotated rose blit (what paintEvent
     actually draws) sampled in the halo band is the same at two headings
     45+ degrees apart -- the light does not appear to move. Blur scaled up
-    for the same reason as the symmetry test above."""
-    from pyefis.instruments import helpers
-    monkeypatch.setattr(helpers, "SHADOW_BLUR_RATIO", 0.5)
+    via the rose's own ratio, for the same reason as the symmetry test
+    above (and see its note on pyEfis#158 moving that knob)."""
+    monkeypatch.setattr(hsi, "ROSE_GLOW_WIDTH_RATIO", 0.5)
 
     widget = hsi.HSI(font_percent=0.1)
     qtbot.addWidget(widget)
@@ -1335,7 +2130,7 @@ def test_shadow_rotated_rose_matches_unrotated_in_halo_band(fix, qtbot, monkeypa
     widget.show()
     qtbot.waitExposed(widget)
 
-    sample_r = widget.r + widget._rose_shadow_blur * 0.25
+    sample_r = widget.r + widget._rose_glow_width * 0.25
 
     def halo_alphas(heading):
         widget._heading = heading

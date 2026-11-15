@@ -21,12 +21,17 @@ from PyQt6.QtWidgets import *
 import pyavtools.fix as fix
 import pyefis.hmi as hmi
 from pyefis import common
+from pyefis.instruments import edit_focus
 
 def drawCircle(p, x, y, r, start, end):
     rect = QRectF(x - r, y - r, r * 2, r * 2)
     p.drawArc(rect, qRound(start * 16), qRound(end * 16))
 
 class AbstractGauge(QWidget):
+    # A subclass whose paintEvent calls paint_edit_marks() shows edit focus
+    # with the shared ring + icon (pyEfis #308) instead of the orange text.
+    draws_edit_marks = False
+
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
         super(AbstractGauge, self).__init__(parent)
         self.font_family = font_family
@@ -47,6 +52,9 @@ class AbstractGauge(QWidget):
         self._dbkey = None
         self.highlight_key = None
         self._highlightValue = 0.0
+        # False while the highlight key is old, bad or failed: the highlight
+        # is dropped, not greyed (CERT2c, Bill 2026-11-09).
+        self.highlightValid = True
         self._value = 0.0
         self._rawValue = 0.0
         self.peakValue = 0.0
@@ -54,6 +62,10 @@ class AbstractGauge(QWidget):
         self.fail = False
         self.bad = False
         self.old = False
+        # True when the configurator found nothing for this gauge to bind to
+        # (a removed tank): no FIX key, the failed-sensor look and its last
+        # label (FUEL1 brief section 5, decision D3). See setUnbound().
+        self.unbound = False
         self.annunciate = False
         self.highlight = False
         self.peakMode = False
@@ -68,6 +80,11 @@ class AbstractGauge(QWidget):
         self.encoder_selected = False
         self.encoder_set_real_time = False 
         self.encoder_set_value = None # None until user has selected a value.
+        # Touch-select + knob-edit (pyEfis #308): touching the gauge takes edit
+        # focus; the outer ring steps encoder_multiplier * encoder_coarse_multiplier.
+        self.touch_edit = False
+        self.encoder_coarse_multiplier = 10
+        self.enc_has_outer = False
  
         self.encoder_num_mask = False # defines what digits can be set ie 000.0000
         self.encoder_num_mask_blank_character = " "
@@ -178,7 +195,10 @@ class AbstractGauge(QWidget):
                     # Return normal value
                     return self.encoder_num_string
             elif self.encoder_selected:
-                # Return normal value
+                # Return normal value, in the same field width as at rest so
+                # the digits do not jump when an edit starts.
+                if self.font_mask != None:
+                    return '{0:{1}.{2}f}'.format(float(self.encoder_set_value), len(self.font_mask), self.decimal_places)
                 return '{0:.{1}f}'.format(float(self.encoder_set_value), self.decimal_places)
             else:
                 # return properly formatted value
@@ -193,10 +213,29 @@ class AbstractGauge(QWidget):
         self._highlightValue = value
         self.update()
 
+    def highlightFlags(self, *args):
+        # Read the configured key rather than trusting the signal argument, so
+        # a key that was swapped out by setupGauge cannot drive the state.
+        item = fix.db.get_item(self.highlight_key)
+        self.highlightValid = not (item.old or item.bad or item.fail)
+        self.update()
+
     def getDbkey(self):
         return self._dbkey
 
+    def setUnbound(self):
+        """Show this gauge as bound to nothing: value text ``xxx``, the bar
+        held at 0 and the bad colour set, with its ``name``. It never calls
+        ``fix.db.get_item``, so a stale reference cannot stop the EFIS
+        booting, and nothing can clear the fail state later."""
+        self.unbound = True
+        self.fail = True
+        self._value = 0.0
+        self.setColors()
+
     def setDbkey(self, key):
+        if self.unbound:
+            return
         item = fix.db.get_item(key)
         item.auxChanged.connect(self.setAuxData)
         item.reportReceived.connect(self.setupGauge)
@@ -237,6 +276,8 @@ class AbstractGauge(QWidget):
     # This should get called when the gauge is created and then again
     # anytime a new report of the db item is recieved from the server
     def setupGauge(self):
+        if self.unbound:
+            return
         item = fix.db.get_item(self.dbkey)
         # min and max should always be set for FIX Gateway data.
         if item.min: self.lowRange = self.conversionFunction(item.min)
@@ -285,6 +326,15 @@ class AbstractGauge(QWidget):
                 highlightItem.valueChanged[float].connect(self.setHighlightValue)
             elif highlightItem.dtype == int:
                 highlightItem.valueChanged[int].connect(self.setHighlightValue)
+
+            for signal in (highlightItem.oldChanged, highlightItem.badChanged,
+                           highlightItem.failChanged):
+                try:
+                    signal.disconnect(self.highlightFlags)
+                except:
+                    pass # Not connected on the first setup
+                signal.connect(self.highlightFlags)
+            self.highlightFlags()
 
         if self.encoder_num_mask and self.encoder_num_enforce_multiplier:
             # We only need to re-calculate if the range changed
@@ -379,6 +429,8 @@ class AbstractGauge(QWidget):
         self.update()
 
     def setUnits(self, args):
+        if self.unbound:
+            return
         x = args.split(':')
         command = x[1].lower()
         names = x[0].split(',')
@@ -393,13 +445,22 @@ class AbstractGauge(QWidget):
                     self.unitsOverride = self.unitsOverride1
                     self.conversionFunction = self.conversionFunction1
                     self.__currentUnits = 1
+            elif command == str(self.unitsOverride1).lower():
+                self.unitsOverride = self.unitsOverride1
+                self.conversionFunction = self.conversionFunction1
+                self.__currentUnits = 1
+            elif command == str(self.unitsOverride2).lower():
+                self.unitsOverride = self.unitsOverride2
+                self.conversionFunction = self.conversionFunction2
+                self.__currentUnits = 2
             self.setAuxData(item.aux) # Trigger conversion for aux data
             self.value = item.value # Trigger the conversion for value
 
 
     # This instrument is selectable
     def enc_selectable(self):
-        return True
+        # An unbound gauge has no key to edit.
+        return not self.unbound
 
 
     # Highlight this instrument to show it is the current selection
@@ -428,6 +489,10 @@ class AbstractGauge(QWidget):
 
     def enc_select(self):
         # Called when the user selects to interact with this item
+        if self.draws_edit_marks:
+            # The focus ring + icon mark the edit; drop the orange walk colour.
+            self.selectColor = None
+            self.setColors()
         self.encoder_item = fix.db.get_item(self.encoder_set_key)
         # Save current value so it can be reverted
         self.encoder_start_value = self.value #encoder_item.value
@@ -476,17 +541,55 @@ class AbstractGauge(QWidget):
             self.update()
             return True
         else:
-            # Set the value
-            if self.clipping:
-                self.encoder_set_value = common.bounds(self.lowRange, self.highRange, self.encoder_set_value + (self.encoder_multiplier * data))
-            else:
-                self.encoder_set_value = self.encoder_set_value + (self.encoder_multiplier * data)
-            self.update()
-            if self.encoder_set_real_time:
-                self.encoder_item.value = self.encoder_set_value
-                # output the value to fix gateway
-                self.encoder_item.output_value()
-            return True
+            return self._encoder_step(self.encoder_multiplier * data)
+
+    def _encoder_step(self, delta):
+        # Set the value
+        if self.clipping:
+            self.encoder_set_value = common.bounds(self.lowRange, self.highRange, self.encoder_set_value + delta)
+        else:
+            self.encoder_set_value = self.encoder_set_value + delta
+        self.update()
+        if self.encoder_set_real_time:
+            self.encoder_item.value = self.encoder_set_value
+            # output the value to fix gateway
+            self.encoder_item.output_value()
+        return True
+
+    def enc_outer_changed(self, data):
+        # Outer ring = coarse step. In digit-mask mode it moves through the
+        # digit choices exactly as the inner knob does.
+        if self.encoder_num_mask:
+            return self.enc_changed(data)
+        return self._encoder_step(
+            self.encoder_multiplier * self.encoder_coarse_multiplier * data)
+
+    def mousePressEvent(self, event):
+        if self.touch_edit and self.encoder_set_key:
+            ctl = self._encoder_controller()
+            if ctl is not None:
+                ctl.touch_focus(self)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def _encoder_controller(self):
+        w = self.parent()
+        while w is not None:
+            ctl = getattr(w, "encoder_controller", None)
+            if ctl is not None:
+                return ctl
+            w = w.parent()
+        return None
+
+    def paint_edit_marks(self, painter):
+        """The shared focus ring + icon (or the at-rest hint) for this gauge;
+        call at the end of paintEvent."""
+        if not (self.touch_edit or self.encoder_selected):
+            return
+        edit_focus.draw_edit_marks(
+            painter, edit_focus.inset_for_marks(self.rect()),
+            focused=self.encoder_selected, bounds=QRectF(self.rect()))
 
     def enc_clicked(self):
         if self.encoder_num_mask:

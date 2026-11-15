@@ -57,9 +57,21 @@ from PyQt6.QtOpenGL import (  # noqa: E402
 
 from pyefis.instruments.ai.camera import (  # noqa: E402
     view_projection, M_PER_DEG_LAT, M_PER_FT, EARTH_CURVATURE,
+    TERRAIN_HFOV_PITCH_DEG,
 )
 
 log = logging.getLogger(__name__)
+
+# Terrain horizontal FOV is pinned to this pitchDegreesShown-equivalent,
+# independent of the AI widget's actual (live) pitchDegreesShown. AER-1799
+# settled the terrain HFOV at pitchDegreesShown=30 on a 5:3 panel (50 deg,
+# matching the Garmin GI-275 / G1000-class SVS field of view); AER-1806 added
+# the camera.view_projection(pixels_per_deg_h=...) hook precisely so a later
+# pitchDegreesShown change (AER-1973: 30 -> 50, widening the pitch ladder's
+# vertical gain) does not also widen the terrain picture horizontally. Do not
+# derive this from the AI widget's live pitchDegreesShown. The value lives in
+# camera.py so the AI widget's horizontal symbology can share it (#304).
+_TERRAIN_HFOV_PITCH_DEG = TERRAIN_HFOV_PITCH_DEG
 
 
 # Shader source bodies — the #version header gets prepended at compile
@@ -203,6 +215,11 @@ void main() {
 }
 """
 
+# Terrain fragment-shader palette uniforms, in SVSRenderer.palette_rgb01()
+# order (safe, caution, warning, conflict, water).
+_PALETTE_UNIFORMS = ("COLOR_SAFE", "COLOR_CAUTION", "COLOR_WARNING",
+                     "COLOR_CONFLICT", "COLOR_WATER")
+
 _FRAG_BODY = """
 in float v_clearance_ft;
 in float v_intensity;
@@ -221,12 +238,14 @@ uniform float u_grid_amp;        // world-grid darkening, 0 = off
 uniform float u_ac_alt_ft;       // aircraft altitude (shared w/ vertex)
 uniform float u_haze_inv;        // 1 / haze_distance_m, or 0 = off
 
-// Match the CPU tier's COLOR_* constants in svs.py.
-const vec3 COLOR_SAFE     = vec3(0.0,   0.392, 0.0  );  // (  0, 100,   0)
-const vec3 COLOR_CAUTION  = vec3(0.706, 0.510, 0.0  );  // (180, 130,   0)
-const vec3 COLOR_WARNING  = vec3(0.784, 0.157, 0.0  );  // (200,  40,   0)
-const vec3 COLOR_CONFLICT = vec3(0.706, 0.0,   0.706);  // (180,   0, 180)
-const vec3 COLOR_WATER    = vec3(0.078, 0.314, 0.588);  // ( 20,  80, 150)
+// Clearance-band colours of the selected terrain palette (svs.py
+// _PALETTES, chosen by the `palette` SVS option; issue #394). Uploaded
+// every frame from SVSRenderer.palette_rgb01().
+uniform vec3 COLOR_SAFE;
+uniform vec3 COLOR_CAUTION;
+uniform vec3 COLOR_WARNING;
+uniform vec3 COLOR_CONFLICT;
+uniform vec3 COLOR_WATER;
 
 // Washed-out horizon tone the haze fades toward — keyed to the AI's
 // sky gradient at the horizon so far terrain melts into the sky.
@@ -675,7 +694,8 @@ class SVSGLRenderer:
     # ------------------------------------------------------------------
     def draw(self, painter, w, h, ac_lat, ac_lon, ac_alt_ft,
              pitch_deg, roll_deg, heading_deg, pixels_per_deg,
-             range_nm=None, device_pixel_ratio=1.0):
+             range_nm=None, device_pixel_ratio=1.0, roll_pivot_px=0.0,
+             lens_shift_px=0.0):
         """Render terrain + overlays directly into the painter's GL
         surface between begin/endNativePainting. Requires the AI view
         to carry a QOpenGLWidget viewport; raises when no GL context
@@ -709,7 +729,8 @@ class SVSGLRenderer:
             self._ensure_heightmap(ac_lat, ac_lon)
             self._update_camera(w, h, ac_lat, ac_lon, ac_alt_ft,
                                 pitch_deg, roll_deg, heading_deg,
-                                pixels_per_deg)
+                                pixels_per_deg, roll_pivot_px,
+                                lens_shift_px)
             # Qt leaves the GL viewport undefined inside native
             # painting; set it to the full backing store (device
             # pixels, hence the DPR scale).
@@ -767,7 +788,8 @@ class SVSGLRenderer:
     # Internals
     # ------------------------------------------------------------------
     def _update_camera(self, w, h, ac_lat, ac_lon, ac_alt_ft,
-                       pitch_deg, roll_deg, heading_deg, pixels_per_deg):
+                       pitch_deg, roll_deg, heading_deg, pixels_per_deg,
+                       roll_pivot_px=0.0, lens_shift_px=0.0):
         """Build the per-frame unified camera (P3): aircraft ENU
         position relative to the heightmap patch origin, the 4x4
         view-projection matrix, and the ENU conversion factors used
@@ -778,8 +800,17 @@ class SVSGLRenderer:
         ac_e = (ac_lon - o_lon) * M_PER_DEG_LAT * lat_cos
         ac_n = (ac_lat - o_lat) * M_PER_DEG_LAT
         ac_u = ac_alt_ft * M_PER_FT
+        # Pin the terrain's horizontal scale to _TERRAIN_HFOV_PITCH_DEG
+        # rather than the live pixels_per_deg (AER-1973) -- see the
+        # constant's comment. Vertical scale (pixels_per_deg) stays tied
+        # to the AI's live pitchDegreesShown so terrain stays registered
+        # with the pitch ladder.
+        pixels_per_deg_h = h / _TERRAIN_HFOV_PITCH_DEG
         vp = view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg,
-                             roll_deg, pixels_per_deg, w, h)
+                             roll_deg, pixels_per_deg, w, h,
+                             pixels_per_deg_h=pixels_per_deg_h,
+                             roll_pivot_px=roll_pivot_px,
+                             lens_shift_px=lens_shift_px)
         self._frame_vp = QMatrix4x4(*[float(x) for x in vp.ravel()])
         self._frame_ac_e = ac_e
         self._frame_ac_n = ac_n
@@ -854,6 +885,7 @@ class SVSGLRenderer:
                     self._u["u_green_ft"], float(p.green_ft))
                 self._program.setUniformValue(
                     self._u["u_yellow_ft"], float(p.yellow_ft))
+                self._set_palette_uniforms(self._program)
                 near = self._near_airport(ac_lat, ac_lon)
                 self._program.setUniformValue(
                     self._u["u_near_airport"], 1.0 if near else 0.0)
@@ -1425,32 +1457,45 @@ class SVSGLRenderer:
                 with p._perf.time("water"):
                     with p._perf.time("water.collect"):
                         tris = p._collect_water_triangles(
-                            ac_lat, ac_lon, range_nm)
+                            ac_lat, ac_lon, ac_alt_ft, range_nm)
                     if tris is not None and tris.size > 0:
-                        # COLOR_WATER from svs.py = (20, 80, 150).
-                        color = (20 / 255.0, 80 / 255.0,
-                                 150 / 255.0, 1.0)
+                        # The palette's water band, so polygon water
+                        # matches void/ocean terrain cells.
+                        color = (*p.palette_rgb01()[4], 1.0)
                         with p._perf.time("water.gl_draw"):
                             self._draw_overlay_cached(
                                 "water", tris, color,
                                 gl.GL_TRIANGLES, fog_strength=1.0)
 
-            # Highways (issue #35): decimated OSM motorway/trunk
-            # polylines draped at terrain elevation. Ground features:
-            # full haze, drawn between water and the symbology layers.
+            # Highways (issue #35, extruded to true-scale ribbons for
+            # RD1 / issue #161): decimated OSM motorway/trunk polylines
+            # draped at terrain elevation, drawn as a dark casing then a
+            # slightly lighter fill (both GL_TRIANGLES) instead of a 1 px
+            # hairline — road_color/road_casing_color are a step apart on
+            # purpose (AER-637), close enough to read as one ribbon.
+            # Ground features: full haze, drawn between water and the
+            # symbology layers.
             if (getattr(p, "highway_db", None) is not None
                     and p.highway_db.ready
                     and range_nm is not None):
                 with p._perf.time("highways"):
                     with p._perf.time("highways.collect"):
                         hwy = p._collect_highways(
-                            ac_lat, ac_lon, ac_alt_ft, range_nm)
-                    if hwy is not None and hwy.size:
+                            ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            pixels_per_deg)
+                    if hwy is not None:
+                        casing, fill = hwy
                         with p._perf.time("highways.gl_draw"):
-                            self._draw_overlay_cached(
-                                "highways", hwy,
-                                (0.10, 0.10, 0.10, 1.0),
-                                gl.GL_LINES, fog_strength=1.0)
+                            if casing is not None and casing.size:
+                                self._draw_overlay_cached(
+                                    "highways_casing", casing,
+                                    p._road_casing_color,
+                                    gl.GL_TRIANGLES, fog_strength=1.0)
+                            if fill is not None and fill.size:
+                                self._draw_overlay_cached(
+                                    "highways", fill,
+                                    p._road_color,
+                                    gl.GL_TRIANGLES, fog_strength=1.0)
 
             # Obstacles: world-scaled FAA-symbol billboards (the
             # Garmin/ForeFlight SVS convention) — one screen-facing
@@ -1562,6 +1607,24 @@ class SVSGLRenderer:
                                     pixels_per_deg)
                         finally:
                             prog.bind()
+
+            # PAPI (CIFP1): real installed boxes only, at the published
+            # glide path angle. The red/white split follows altitude, so
+            # this is the one overlay drawn uncached -- a few quads. No
+            # haze: the lights read through it, as real ones do.
+            if (getattr(p, "airport_db", None) is not None
+                    and p.airport_db.ready
+                    and getattr(p, "papi_enabled", False)):
+                with p._perf.time("papi"):
+                    papi = p._collect_papi(ac_lat, ac_lon, ac_alt_ft,
+                                           heading_deg, pixels_per_deg)
+                    if papi is not None:
+                        self._draw_overlay_primitive(
+                            papi["red"], (1.0, 0.12, 0.12, 1.0),
+                            gl.GL_TRIANGLES)
+                        self._draw_overlay_primitive(
+                            papi["white"], (1.0, 1.0, 1.0, 1.0),
+                            gl.GL_TRIANGLES)
 
             # Phase 5 — airport flags + identifier text. Pole =
             # GL_LINES, flag rectangle = yellow triangles, identifier
@@ -1701,12 +1764,19 @@ class SVSGLRenderer:
                      "u_heightmap",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
                      "u_apt_gate_ft", "u_safe_grad", "u_tex_amp",
-                     "u_grid_amp"):
+                     "u_grid_amp") + _PALETTE_UNIFORMS:
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)
             self._u[name] = loc
         self._program = prog
+
+    def _set_palette_uniforms(self, prog):
+        """Upload the selected terrain palette's band colours to the
+        fragment shader's COLOR_* uniforms (issue #394)."""
+        for name, rgb in zip(_PALETTE_UNIFORMS,
+                             self._parent.palette_rgb01()):
+            prog.setUniformValue(self._u[name], *rgb)
 
     def _ensure_mesh(self):
         if self._vao is not None:
