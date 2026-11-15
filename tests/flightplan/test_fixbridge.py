@@ -8,8 +8,10 @@ separate repo and its ``database/flightplan.yaml`` is not part of this
 fixture.
 """
 
+import gc
 import subprocess
 import sys
+import weakref
 from pathlib import Path
 
 import pytest
@@ -485,3 +487,83 @@ def test_two_bridges_never_reuse_a_command_seq(fix):
     assert fpl.command("RESUME") == 3
     fix.db.set_value("FPLCMDACK", -9)      # another display got to 9
     assert mapb.command("DTOX") == 10
+
+
+def test_keyed_listener_gets_the_written_key(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    keys, plain = [], []
+    bridge.add_listener(keys.append, keyed=True)
+    bridge.add_listener(lambda: plain.append(1))
+
+    fix.db.set_value("WPDIS", 3.0)
+    fix.db.set_value("FPLSTATE", 1)
+
+    assert keys == ["WPDIS", "FPLSTATE"]
+    assert plain == [1, 1]
+
+
+def test_staging_a_direct_to_notifies_with_its_keys(fix):
+    """The map draws the staged point (off-route direct-to)."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    keys = []
+    bridge.add_listener(keys.append, keyed=True)
+
+    bridge.stage_direct_to(model.Waypoint(id="RZS", type="vor", lat=34.02, lon=-119.55))
+
+    assert set(keys) == {"DTOID", "DTOLAT", "DTOLON", "DTOTYPE"}
+
+
+def test_a_dropped_bridge_stops_notifying(fix):
+    """The item signals hold a bridge's slots weakly: a bridge nobody keeps
+    (a rebuilt widget, a second writer) neither stays alive nor keeps
+    calling its listeners."""
+    _define_all_fp1_keys(fix)
+    calls = []
+    bridge = fixbridge.FixBridge(fix)
+    bridge.add_listener(lambda: calls.append(1))
+    ref = weakref.ref(bridge)
+    del bridge
+    gc.collect()
+
+    fix.db.set_value("WPDIS", 3.0)
+
+    assert ref() is None
+    assert calls == []
+
+
+def test_each_item_is_looked_up_in_the_database_once(fix, monkeypatch):
+    """get_item() takes a lock and waits on the init event every call; the
+    bridge keeps the item (pyavtools never replaces one)."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(_plan(3))
+    calls = []
+    get_item = fix.db.get_item
+    monkeypatch.setattr(fix.db, "get_item", lambda key, *a, **k: (calls.append(key), get_item(key, *a, **k))[1])
+
+    first = bridge.read_route()
+    looked_up = len(calls)
+    second = bridge.read_route()
+
+    assert first == second
+    assert len(calls) == looked_up
+    assert len(calls) == len(set(calls))
+
+
+def test_a_new_database_object_is_looked_up_again(fix):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.read_route()
+
+    class DB:
+        def get_item(self, key):
+            raise KeyError(key)
+
+    real = bridge._fix.db
+    bridge._fix.db = DB()
+    with pytest.raises(KeyError):
+        bridge.read_route()
+    bridge._fix.db = real
+    assert bridge.read_route() is not None
