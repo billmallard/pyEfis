@@ -33,9 +33,18 @@ import pyavtools.scheduler as scheduler
 screens = []
 
 # The nav-data management screen is always loaded, independent of the screen
-# set in config (a panel/config push can drop it), but never booted: it is a
-# click-through. See _ensure_data_status_screen().
+# set in config (a panel/config push can drop it). It boots only when the
+# aircraft is known to be on the ground (BACKLOG BOOT1); see
+# _ensure_data_status_screen() and _boot_on_ground().
 DATA_STATUS_SCREEN = "DataStatus"
+# How long boot waits for a valid airspeed before giving up and booting the
+# flight screen (BOOT1). The gateway answers the initial reads within
+# milliseconds when the sensor is live, so this is only spent when IAS is
+# missing or flagged -- the case that must not read as "on the ground".
+BOOT_GROUND_WAIT_S = 3.0
+# After IAS first reads valid and slow, let the other initial reads (GS, the
+# Vgnd aux) land before deciding, so a moving GPS is not missed by a race.
+BOOT_GROUND_SETTLE_S = 0.25
 # Built-in About/System screen (BACKLOG L4); see _ensure_about_screen().
 ABOUT_SCREEN = "About"
 
@@ -246,20 +255,23 @@ def setDefaultScreen(s):
 
 
 def _ensure_data_status_screen(config, configured_default):
-    """Keep the nav-data management screen loaded, and boot the flight screen.
+    """Keep the nav-data management screen loaded; return the flight screen.
 
-    The data-status screen used to be forced as the boot screen. It is a
-    click-through, and pyEfis can restart in flight, so it no longer boots
-    (BACKLOG L3): the flight screen boots directly and the startup notice is a
-    banner drawn over it (``pyefis.startup_notice``).
+    pyEfis can restart in flight, so the data-status screen is never booted
+    blindly (BACKLOG L3). Whether it boots at all is decided separately by
+    ``_boot_on_ground`` (BACKLOG BOOT1): on the ground it is shown first, as in
+    a normal start sequence; moving, or with airspeed unknown, the flight
+    screen this function returns boots directly. Either way the startup notice
+    is a banner drawn over whichever screen boots (``pyefis.startup_notice``).
 
-    The screen is still guaranteed present -- the bundled definition is injected
-    if a config push dropped it -- because the PFD data annunciation opens it,
-    and its Continue button is pointed at the configured default flight screen.
-    Returns the screen to boot. A configured default of DataStatus itself, or of
+    The screen is guaranteed present -- the bundled definition is injected if a
+    config push dropped it -- because the PFD data annunciation opens it, and
+    its Continue button is pointed at the configured default flight screen.
+    Returns the flight screen. A configured default of DataStatus itself, or of
     a screen that is not loaded, is replaced by its Continue target, or failing
-    that the first other screen, so no config boots to the click-through. Any failure falls back to
-    ``configured_default`` so boot never breaks."""
+    that the first other screen, so the flight screen is never the
+    click-through. Any failure falls back to ``configured_default`` so boot
+    never breaks."""
     try:
         name = DATA_STATUS_SCREEN
         scr_config = config.setdefault("screens", {}).get(name)
@@ -298,13 +310,148 @@ def _ensure_data_status_screen(config, configured_default):
             for inst in scr_config.get("instruments", []):
                 if inst.get("type") == "data_status":
                     inst.setdefault("options", {})["continue_screen"] = boot
-        log.info("data-status: booting %s (data status reachable from the "
-                 "annunciation)", boot)
+        log.info("data-status: flight screen is %s", boot)
         return boot
     except Exception as e:
         log.error("data-status: could not set up the built-in screen "
                   "(%s); using the configured default", e)
         return configured_default
+
+
+def _valid(item):
+    return not (item.bad or item.fail or item.old)
+
+
+def _ground_state(db):
+    """Classify the aircraft for the boot screen choice (BACKLOG BOOT1).
+
+    Returns ``"ground"`` only when IAS is valid (not bad, failed or old) and
+    below ``IAS.Vgnd``, the aircraft's on-ground IAS limit. Returns
+    ``"moving"`` when IAS is at or above it, when valid GPS groundspeed is at
+    or above it (a blocked pitot in flight reads slow), or when the IAS key or
+    its Vgnd aux is not defined at all -- a failed sensor must never read as
+    "on the ground". Returns None while it cannot tell yet: IAS flagged, or
+    the Vgnd value not read; the caller's wait turns that into the flight
+    screen.
+
+    The groundspeed figure is Vgnd itself: it is the aircraft's own "may be on
+    the ground" speed, above any taxi speed. GS is used only to force the
+    flight screen, never to declare the aircraft on the ground -- AC 20-165B
+    3.10.2 Note 1 warns that a groundspeed threshold alone gives false
+    air-ground status, so it may only bias toward the safe side."""
+    try:
+        ias = db.get_item("IAS", wait=False)
+    except Exception:
+        return "moving"
+    if "Vgnd" not in ias.get_aux_list():
+        return "moving"
+    vgnd = ias.get_aux_value("Vgnd")
+    if vgnd is None:
+        return None
+    vgnd = float(vgnd)
+    try:
+        gs = db.get_item("GS", wait=False)
+    except Exception:
+        gs = None
+    if gs is not None and _valid(gs) and float(gs.value) >= vgnd:
+        return "moving"
+    if not _valid(ias):
+        return None
+    return "moving" if float(ias.value) >= vgnd else "ground"
+
+
+def _boot_on_ground(wait_s=BOOT_GROUND_WAIT_S, settle_s=BOOT_GROUND_SETTLE_S,
+                    clock=time.monotonic, sleep=time.sleep):
+    """True when the data-status screen should boot (BACKLOG BOOT1).
+
+    Polls ``_ground_state`` until it is known. "moving" returns False at once;
+    "ground" must hold for ``settle_s`` so the GS and Vgnd initial reads have
+    landed; still unknown after ``wait_s`` returns False. Every failure path,
+    including an exception, falls toward the flight screen."""
+    try:
+        deadline = clock() + wait_s
+        settled_at = None
+        while True:
+            state = _ground_state(fix.db)
+            if state == "moving":
+                log.info("boot: aircraft moving; booting the flight screen")
+                return False
+            if state == "ground":
+                if settled_at is None:
+                    settled_at = clock() + settle_s
+                elif clock() >= settled_at:
+                    log.info("boot: on the ground; booting data status")
+                    return True
+            else:
+                settled_at = None
+                if clock() >= deadline:
+                    log.warning("boot: no valid airspeed within %.1f s; "
+                                "booting the flight screen", wait_s)
+                    return False
+            sleep(0.05)
+    except Exception as e:
+        log.error("boot: ground check failed (%s); booting the flight "
+                  "screen", e)
+        return False
+
+
+class _GroundBootWatch(QObject):
+    """Leave the boot data-status screen when the aircraft moves (BOOT1).
+
+    Taxi-out and takeoff never need Continue: as soon as ``_ground_state``
+    reads "moving" while the boot data-status screen shows, the flight screen
+    replaces it. The watch ends the first time that screen is left, so opening
+    data status later from the annunciation is never cut short."""
+
+    _SIGNALS = ("valueChanged", "auxChanged", "oldChanged", "badChanged",
+                "failChanged")
+
+    def __init__(self, window, flight_screen):
+        super().__init__(window)
+        self.window = window
+        self.flight_screen = flight_screen
+        self.active = True
+        self._items = []
+        for key in ("IAS", "GS"):
+            try:
+                item = fix.db.get_item(key, wait=False)
+            except Exception:
+                continue
+            for name in self._SIGNALS:
+                self._signal(item, name).connect(self.check)
+            self._items.append(item)
+
+    @staticmethod
+    def _signal(item, name):
+        sig = getattr(item, name)
+        return sig[float] if name == "valueChanged" else sig
+
+    def stop(self):
+        self.active = False
+        for item in self._items:
+            for name in self._SIGNALS:
+                try:
+                    self._signal(item, name).disconnect(self.check)
+                except (TypeError, RuntimeError):
+                    pass
+        self._items = []
+
+    def check(self, *args):
+        if not self.active:
+            return
+        running = self.window.running_screen
+        if running is None or screens[running].name != DATA_STATUS_SCREEN:
+            self.stop()
+            return
+        try:
+            moving = _ground_state(fix.db) == "moving"
+        except Exception:
+            return
+        if moving:
+            log.info("boot: aircraft moving; leaving data status for %s",
+                     self.flight_screen)
+            self.stop()
+            self.window.showScreen(self.flight_screen)
 
 
 def _ensure_about_screen(config):
@@ -355,14 +502,25 @@ def initialize(config, config_path, preferences):
     except KeyError:
         d = 0
 
-    # The flight screen boots directly -- nothing blocking at boot, because
-    # pyEfis can restart in flight. The nav-data screen stays loaded (the
-    # annunciation opens it) with its Continue sent to the configured default.
-    boot = _ensure_data_status_screen(config, d)
+    # Data status boots only on the ground (valid IAS below IAS.Vgnd, GPS not
+    # moving); otherwise the flight screen boots directly, because pyEfis can
+    # restart in flight (BACKLOG L3, BOOT1). The nav-data screen stays loaded
+    # (the annunciation opens it) with its Continue sent to the flight screen.
+    flight = _ensure_data_status_screen(config, d)
+    on_ground = (flight != DATA_STATUS_SCREEN
+                 and DATA_STATUS_SCREEN in [s.name for s in screens]
+                 and _boot_on_ground())
+    boot = DATA_STATUS_SCREEN if on_ground else flight
+    # bench-deploy.sh reads this line to report the booted screen.
+    log.info("data-status: booting %s (%s)", boot,
+             "on the ground; Continue goes to %s" % flight if on_ground
+             else "data status reachable from the annunciation")
     setDefaultScreen(boot)
     _ensure_about_screen(config)
 
     mainWindow = Main(config, config_path, preferences)
+    mainWindow.groundBootWatch = (_GroundBootWatch(mainWindow, flight)
+                                  if on_ground else None)
     hmi.actions.showNextScreen.connect(mainWindow.showNextScreen)
     hmi.actions.showPrevScreen.connect(mainWindow.showPrevScreen)
     hmi.actions.showScreen.connect(mainWindow.showScreen)
@@ -392,7 +550,7 @@ def initialize(config, config_path, preferences):
         mainWindow.height = int(config["main"]["screenHeight"])
         mainWindow.show()
 
-    # Startup notice over the live flight screen: self-dismissing, transparent
+    # Startup notice over whichever screen booted: self-dismissing, transparent
     # to touch, never a modal (BACKLOG L3). Built after every other child so it
     # stacks on top.
     mainWindow.startupNotice = startup_notice.show_banner(mainWindow)

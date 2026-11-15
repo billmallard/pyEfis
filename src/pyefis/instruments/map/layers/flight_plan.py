@@ -16,6 +16,17 @@
 #  detect the thread mismatch and queue the call, which a raw callable in
 #  FixBridge's listener list cannot do.
 #
+#  A notification is not a repaint. The engine rewrites every output each
+#  guidance cycle (25 keys at 5 Hz by default), and most of them -- the
+#  distance and time readouts -- are nothing this layer draws. The layer
+#  compares what it does draw from (_draw_signature) and only on a change
+#  asks its owner for a frame, through the owner's frame clock
+#  (MovingMap.request_frame) rather than update(): update() per write
+#  repainted the whole map, every enabled layer included, once per engine
+#  cycle. The clock is the map's own and this layer exists only inside a
+#  map, so nothing here depends on any other instrument being on the
+#  screen; an owner without a frame clock gets update().
+#
 #  Great-circle legs are drawn as straight screen segments with no
 #  subdivision. Verified numerically against MapTransform.to_screen: for a
 #  leg near the edge of the widest shipped range (160 NM), the chord-vs-
@@ -114,9 +125,25 @@ _STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
               "vector": Qt.PenStyle.DotLine}
 
 
+# The engine outputs this layer draws from. A change of any of them (value,
+# or the fail/bad flag the builders test) is a new picture; a write of any
+# other engine output is not. A key the layer starts reading joins this
+# list (tests/instruments/test_map_flight_plan_repaint.py scans for it).
+_DRAW_KEYS = ("FPLSTATE", "FPLACTLEG", "FPLACTSEG", "FPLAPR", "FPLPHASE",
+              "FPLFRLAT", "FPLFRLON", "WPLAT", "WPLON", "FPLCRS", "FPLLDSEQ")
+
+
 def _engine_val(engine, key, default=None):
     item = engine.get(key)
     return default if item is None else item.value
+
+
+def _extension_drawn(state, apr):
+    """The gate build_extension applies: the only time FPLCRS is drawn."""
+    try:
+        return int(state or 0) == _STATE_SUSP and int(apr or 0) == _APR_LNAV
+    except (TypeError, ValueError):
+        return False
 
 
 def _off_route_direct(engine):
@@ -514,16 +541,20 @@ class _Snapshot:
 class _BridgeRelay(QObject):
     """Marshals a FixBridge listener callback onto the GUI thread (see the
     module docstring): ``owner`` is the MovingMap widget, so this relay
-    lives on its thread; Qt auto-queues ``changed -> owner.update`` when
-    ``changed`` is emitted from a foreign thread."""
+    lives on its thread; Qt auto-queues ``changed -> _deliver`` when
+    ``changed`` is emitted from a foreign thread.
+
+    *on_change* re-collects and returns False when nothing the layer draws
+    changed; anything else asks ``owner`` for a frame -- through its frame
+    clock (``request_frame``) when it has one, else ``update()``."""
 
     changed = pyqtSignal()
 
     def __init__(self, owner, on_change=None):
         super().__init__(owner)
+        self._owner = owner
         self._on_change = on_change
         self.changed.connect(self._deliver)
-        self.changed.connect(owner.update)
 
     def on_bridge_change(self):
         self.changed.emit()
@@ -532,8 +563,13 @@ class _BridgeRelay(QObject):
     def _deliver(self):
         # On the GUI thread (this relay's affinity): the layer re-collects
         # here, between frames, never inside paint().
-        if self._on_change is not None:
-            self._on_change()
+        if self._on_change is not None and self._on_change() is False:
+            return
+        request = getattr(self._owner, "request_frame", None)
+        if request is not None:
+            request()
+        else:
+            self._owner.update()
 
 
 @register_layer
@@ -549,28 +585,64 @@ class FlightPlanLayer(MapLayer):
         self._bridge = None
         self._relay = None
         self._snapshot = None
+        self._drawn_sig = None
 
     def configure(self, owner):
         self._owner = owner
         self._bridge = fp_fixbridge.FixBridge(pyavtools_fix)
         if self._bridge.available:
-            self._relay = _BridgeRelay(owner, self._collect_now)
+            self._relay = _BridgeRelay(owner, self._on_bridge_change)
             self._bridge.add_listener(self._relay.on_bridge_change)
             self.collect(None)
+            self._drawn_sig = self._draw_signature()
 
-    def _collect_now(self):
+    def _on_bridge_change(self):
+        """A bus notification, on the GUI thread: re-collect, and say
+        whether a frame is wanted -- False when nothing this layer draws
+        changed, or the layer is switched off."""
         self.collect(None)
+        sig = self._draw_signature()
+        if sig == self._drawn_sig:
+            return False
+        self._drawn_sig = sig
+        return bool(self.enabled)
+
+    def _draw_signature(self):
+        """Everything paint() draws from, as a comparable tuple: the route
+        snapshot and its turns, the engine outputs in ``_DRAW_KEYS`` with
+        the flags the builders test, and the staged direct-to point. Read
+        straight from the bus items; this runs on every engine output
+        write, so it builds no engine dict."""
+        get = self._bridge._get
+        vals = {}
+        for key in _DRAW_KEYS:
+            try:
+                item = get(key)
+            except KeyError:
+                vals[key] = None
+            else:
+                vals[key] = (item.value, bool(item.fail), bool(item.bad))
+        state, apr, crs = vals["FPLSTATE"], vals["FPLAPR"], vals["FPLCRS"]
+        if crs is not None:
+            # The desired track moves every cycle in flight and is drawn
+            # only as the extension past the MAP (build_extension).
+            if _extension_drawn(state and state[0], apr and apr[0]):
+                try:
+                    crs = (round(float(crs[0]), 1),) + crs[1:]
+                except (TypeError, ValueError):
+                    pass
+            else:
+                crs = None
+            vals["FPLCRS"] = crs
+        dto = self._bridge.read_direct_to()
+        snap = self._snapshot
+        return (None if snap is None else (snap.key, snap.loaded, snap.turn_key),
+                tuple(vals[key] for key in _DRAW_KEYS),
+                None if dto is None else (dto.id, dto.lat, dto.lon, dto.type))
 
     def _route_key(self):
-        get = self._bridge._get
-        try:
-            ld = get("FPLLDSEQ").value
-        except KeyError:
-            ld = None
         magvar = self._bridge.magvar_or_none()
-        return (int(get("FPLSEQ").value), int(get("FPLCOUNT").value),
-                int(get("FPLSEGCNT").value), ld,
-                None if magvar is None else round(magvar, 1))
+        return self._bridge.route_key() + (None if magvar is None else round(magvar, 1),)
 
     def _turn_key(self, count, engine):
         """What the fly-by turns (TURN3) are drawn from: FPLfTA, and the

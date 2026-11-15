@@ -16,6 +16,7 @@ import pyavtools.fix as fix
 
 from pyefis import display_metrics
 from pyefis import hmi
+from pyefis import kiosk
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import refusal as fp_refusal
@@ -524,12 +525,21 @@ class MovingMap(LiveBindingMixin, QWidget):
         than reaching back into the widget."""
         return self._gesture_active or self._settle_timer.isActive()
 
+    def request_frame(self):
+        """Ask the frame clock for a repaint on its next tick. For a caller
+        that changes what the map draws at a rate it does not control (a
+        layer fed from the bus): any number of requests between two ticks
+        cost one repaint, where ``update()`` per request repaints the whole
+        map at the caller's rate."""
+        self._frame_dirty = True
+
     def _frame_tick(self):
         """Repaint at most at the clock rate, and only when the pose
         changed enough to move pixels: position by ~half a screen px,
         track by 0.25 deg (rotation), altitude by 100 ft (caution tint),
-        or a gesture call (zoom_by/pan_by/rotate_by, MP3) marked a frame
-        dirty. Explicit UI actions (range, orientation, layer toggles)
+        or a gesture call (zoom_by/pan_by/rotate_by, MP3) or a layer
+        (request_frame) marked a frame dirty. Explicit UI actions (range,
+        orientation, layer toggles)
         and async layer completions still call update() directly."""
         if not self.isVisible():
             return
@@ -1034,6 +1044,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         """Stage ``DTO*`` for the object (or ``MAPWPT`` at the pointer) and
         issue ``DTO``. A plan waypoint is matched to its slot by the engine
         (Appendix C: ident and position within 0.001 deg)."""
+        if kiosk.locked():
+            return
         wp = self.pointer_waypoint()
         if wp is None:
             return
@@ -1049,6 +1061,8 @@ class MovingMap(LiveBindingMixin, QWidget):
         """Insert into the plan on the bus at the leg nearest the pointer
         (append when it has no leg yet) and publish -- every flight_plan
         instrument re-reads it on ``FPLSEQ``."""
+        if kiosk.locked():
+            return
         wp = self.pointer_waypoint()
         if wp is None:
             return
@@ -1076,6 +1090,8 @@ class MovingMap(LiveBindingMixin, QWidget):
     def banner_create_wpt(self):
         """Open the flight_plan instrument's user-waypoint form, prefilled
         with the pointer position."""
+        if kiosk.locked():
+            return
         p = self._pointer
         if p is None:
             return
@@ -1652,6 +1668,9 @@ class MovingMap(LiveBindingMixin, QWidget):
                 ("CREATE WPT", self.banner_create_wpt, True, 1.25),
                 ("INFO", self.banner_info, True, 0.85),
                 ("X", self.clear_pointer, True, 0.6))
+        if kiosk.locked():
+            # DEMO4: a demo kiosk keeps the read-only keys only (brief 6.2).
+            keys = tuple(k for k in keys if k[0] in ("INFO", "X"))
         total = sum(k[3] for k in keys)
         gap = pad
         unit = (tw - gap * (len(keys) - 1)) / total

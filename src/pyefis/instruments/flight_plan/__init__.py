@@ -67,6 +67,7 @@ from PyQt6.QtWidgets import QWidget
 
 from pyavtools import fix
 from pyefis import hmi
+from pyefis import kiosk
 from pyefis.flightplan import airac as fp_airac
 from pyefis.flightplan import airways as fp_airways
 from pyefis.flightplan import catalog as fp_catalog
@@ -127,6 +128,11 @@ TOAST_MS = 4000
 # cycle -- FPLLDSEQ when it loads the route, FPLMSG when it refuses it -- so
 # this only fires when no answer arrives at all.
 COMMIT_ANSWER_MS = 2000
+# The route is read when FPLSEQ / FPLLDSEQ / the counts change, not on every
+# engine output write. This is how often, at most, a write also checks the
+# slots on the bus against the route last read, so a slot value that arrived
+# after the key still reaches the page (FlightPlan._route_drifted).
+ROUTE_VERIFY_S = 1.0
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
 
@@ -375,6 +381,16 @@ class FlightPlan(QWidget):
         self._draft_open = False
         self._pending_seq = None
         self._seen_seq = None
+        # FixBridge.route_key() at the last plan sync: the bridge notifies
+        # on every engine output write, and only a change of this is a
+        # reason to read the route again (_on_bridge_change). _synced_route
+        # is the route block read then; _route_drifted() checks the bus
+        # against it at most every route_verify_s.
+        self._synced_route_key = None
+        self._synced_route = None
+        self.route_verify_s = ROUTE_VERIFY_S
+        self._route_checked_at = 0.0
+        self._clock = time.monotonic
         self._commit_timer = QTimer(self)
         self._commit_timer.setSingleShot(True)
         self._commit_timer.timeout.connect(self._on_commit_timeout)
@@ -434,6 +450,9 @@ class FlightPlan(QWidget):
         group = parts[1] if len(parts) > 1 else ""
         if not self._targeted(group):
             return
+        if kiosk.locked() and page != "fpl":
+            # DEMO4: every other page edits the plan or the catalog.
+            return
         if page == "fpl":
             self._row_menu_index = None
             self._seg_menu = None
@@ -486,6 +505,8 @@ class FlightPlan(QWidget):
         with LAT/LON prefilled from the map pointer *pos* ``(lat, lon)``,
         opened where it always lives -- over the Entry page's User tab, so
         the new waypoint is listed there to add once it is saved."""
+        if kiosk.locked():
+            return
         try:
             lat, lon = float(pos[0]), float(pos[1])
         except (TypeError, ValueError, IndexError):
@@ -500,7 +521,7 @@ class FlightPlan(QWidget):
         parts = str(arg or "").split(None, 1)
         ident = parts[0] if parts else ""
         group = parts[1] if len(parts) > 1 else ""
-        if not self._targeted(group):
+        if not self._targeted(group) or kiosk.locked():
             return
         if not ident:
             self._footer_direct_to()
@@ -530,9 +551,16 @@ class FlightPlan(QWidget):
         looks -- puts the flown plan back on the page and keeps the refused
         route as a draft. A gateway without ``FPLLDSEQ`` keeps the
         behaviour from before the key."""
-        plan = self._bridge.read_plan()
-        if plan is None:
+        # The key before the route: a commit landing between the two reads
+        # leaves a key older than the route, and its own notification then
+        # syncs again.
+        self._synced_route_key = self._bridge.route_key()
+        route = self._bridge.read_route()
+        if route is None:
             return
+        self._synced_route = route
+        self._route_checked_at = self._clock()
+        plan = fp_fixbridge.route_to_plan(route)
         seq = int(self._bridge._get("FPLSEQ").value)
         first_look, self._seen_seq = self._seen_seq is None, seq
         loaded = self._loaded_seq()
@@ -624,9 +652,33 @@ class FlightPlan(QWidget):
         self._engine = self._bridge.read_engine() or {}
 
     def _on_bridge_change(self):
-        self._sync_plan_from_bridge()
+        """A write of ``FPLSEQ`` or of an engine output. The engine rewrites
+        every output each guidance cycle, so this runs some 25 times a
+        cycle: the engine values are taken every time, the route only when
+        it or the engine's answer to it changed (``route_key``). Reading
+        the route on every call cost a FIX lookup per slot field plus a
+        deep copy of the plan, on the GUI thread, for each widget loaded --
+        and put the bus route back over a catalog "Edit" working copy the
+        pilot had not committed yet."""
+        if (self._bridge.route_key() != self._synced_route_key
+                or self._route_drifted()):
+            self._sync_plan_from_bridge()
         self._sync_engine_from_bridge()
         self.update()
+
+    def _route_drifted(self):
+        """True when the slots on the bus no longer match the route last
+        synced although ``route_key`` has not moved: slot values that
+        arrived after the key (a gateway reconnect re-sending the database
+        in its own order), or a writer that did not write ``FPLSEQ`` last.
+        Reading the route on every notification used to hide both within
+        one engine cycle; this looks at most every ``route_verify_s``, so
+        the page still converges on the bus without the per-write cost."""
+        now = self._clock()
+        if now - self._route_checked_at < self.route_verify_s:
+            return False
+        self._route_checked_at = now
+        return self._bridge.read_route() != self._synced_route
 
     def _commit(self):
         if self._bridge.available:
@@ -2155,7 +2207,7 @@ class FlightPlan(QWidget):
     # highlight between instruments; a push on this one calls enc_select and
     # from then on every turn/push lands here until a method returns False.
     def enc_selectable(self):
-        return True
+        return not kiosk.locked()
 
     def enc_highlight(self, onoff):
         self._enc_highlighted = bool(onoff)
@@ -2771,7 +2823,7 @@ class FlightPlan(QWidget):
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             w, h = self.width(), self.height()
             p.fillRect(0, 0, w, h, QColor("#000000"))
-            page = self._page if self._bridge.available else "fpl"
+            page = self._page if self._editable() else "fpl"
             if page == "entry":
                 self._paint_entry(p, w, h)
             elif page == "dto":
@@ -2794,8 +2846,15 @@ class FlightPlan(QWidget):
             self.clearFocus()
 
     # -- FPL page --------------------------------------------------------------
+    def _editable(self):
+        """The plan can be edited here: the gateway's keys are present and
+        this is not a demo kiosk (DEMO4: the FPL page is read-only there,
+        so an attendee's edit never disagrees with the demo's route)."""
+        return self._bridge.available and not kiosk.locked()
+
     def _paint_fpl(self, p, w, h):
-        interactive = self._bridge.available
+        bus = self._bridge.available
+        interactive = self._editable()
         # 2.0 because this header draws TWO lines -- name/badge/remaining in
         # the top half, approach state or the gateway warning in the bottom --
         # so it is worth two rows. The footer is a soft-key touch row: 1.3
@@ -2806,11 +2865,11 @@ class FlightPlan(QWidget):
         # Suspended at the MAP (G49): the alert takes a soft-key-high strip
         # above the footer, and the list lays out above it so the active leg
         # and the missed approach fixes stay visible.
-        banner_h = footer_h if interactive and self._suspended_at_map() else 0
+        banner_h = footer_h if bus and self._suspended_at_map() else 0
         # A refused commit (G61): its strip sits above that one.
-        refusal_h = footer_h if interactive and self._plan_refused() else 0
+        refusal_h = footer_h if bus and self._plan_refused() else 0
 
-        self._paint_header(p, w, header_h, interactive)
+        self._paint_header(p, w, header_h, bus)
         self._paint_list(p, w, header_h, h - footer_h - banner_h - refusal_h,
                          self._row_h_cap(), interactive)
         self._paint_footer(p, w, h - footer_h, footer_h, interactive)
@@ -2822,11 +2881,12 @@ class FlightPlan(QWidget):
             # The list under an overlay neither scrolls nor takes a press.
             self._list_view = None
         if banner_h:
-            # Under an overlay it is drawn (and dimmed) but not tappable.
-            self._paint_map_susp_banner(p, w, h - footer_h, banner_h, not overlay_open)
+            # Under an overlay, or read-only, it is drawn but not tappable.
+            self._paint_map_susp_banner(p, w, h - footer_h, banner_h,
+                                        interactive and not overlay_open)
         if refusal_h:
             self._paint_refusal_banner(p, w, h - footer_h - banner_h, refusal_h,
-                                       not overlay_open)
+                                       interactive and not overlay_open)
 
         if self._row_menu_index is not None:
             self._paint_row_menu(p, w, h)
@@ -3291,7 +3351,8 @@ class FlightPlan(QWidget):
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(footer_h * 0.34), 9))
         p.setFont(f)
-        p.setPen(QPen(QColor("#ffffff")))
+        # Read-only in a demo kiosk (DEMO4): the soft keys are greyed out.
+        p.setPen(QPen(QColor("#555555" if kiosk.locked() else "#ffffff")))
         for i, label in enumerate(labels):
             x = i * seg
             p.drawText(QRectF(x, top, seg, footer_h), Qt.AlignmentFlag.AlignCenter, label)
@@ -3663,7 +3724,7 @@ class FlightPlan(QWidget):
 
         footer_top = box_y + box_h * 0.8
         footer_h = box_h * 0.2
-        if wp.type == "user":
+        if wp.type == "user" and not kiosk.locked():
             seg = box_w / 3.0
             edit_rect = (box_x, footer_top, seg, footer_h)
             p.setPen(QPen(QColor("#00ffff")))
