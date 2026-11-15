@@ -85,3 +85,28 @@ DARTS); the box flies what it loaded (FIM, DARTS). On the Beelink,
 leg (slice A: the `VA`, then RESUME), logs the bus at 2 Hz and grabs the
 panel on each event. Its start actions were rehearsed against the live
 engine with a synthetic position (`--dry A|B|C`) before arming.
+
+## Night 1 (2026-11-15 05:00-06:30Z): what flew
+
+All three sessions finished `complete`. The follower recognised each one,
+found the PROC-page route still on the bus, and ACTed the slice's leg
+(`data/night1_events.txt`). The playback fixture is in fix-gateway
+`tests/sim/fixtures/pa14_*` and its replay test is
+`tests/sim/test_pa14_xplane_replay.py`.
+
+| Frame | What it shows |
+|---|---|
+| `n1a_va_*` | Slice A, live X-Plane: `ACT 2` puts the box on FLOUT5's `VA`. SUSP, VECTORS, course 000. |
+| `n1a_resume_cf_flout_map` | RESUME 6 s later: `RESUME NAV -> FLOUT`, course 197.0 against X-Plane's 196.96. |
+| `n1a_seq_vtu` | FLOUT -> VTU, 0.2 s from X-Plane's own switch. |
+| `n1a_end_still_to_vtu` | **pyEfis #474 in flight.** Taken as the session ended, after X-Plane quit (SVS unavailable): the box is still TO VTU. X-Plane flew the 135-degree turn at VTU and switched to HENER at t = 1484 s. The engine never sequenced, because the route carries VTU twice. With the duplicate removed, the same trajectory sequences 5 s after X-Plane (fix-gateway replay). |
+| `n1b_seq_ohigh`, `n1b_seq_canyn_star` | Slice B: V485 into FERN7. Each sequence comes 5-6 s after X-Plane's (X-Plane switches about 0.2 nm early, XPB-001). |
+| `n1b_apr_armed_fim` | APR ARM as the box nears FIM, 30 nm from KSMO. |
+| `n1b_seq_darts_approach` | The STAR hands into the approach: FIM -> DARTS (RNAV21.VECTORS active). X-Plane went to VNY, the STAR's common route the pack dropped (AER-5611). The box is up to 0.74 nm off X-Plane's path on this leg. |
+
+**Slice C's approach frames are not used.** Between 06:01 and 06:17Z, two
+other agents' followers took this session for their own and restarted fixgw
+six times (thread comment, 2026-11-15 10:35Z). The engine's ramp, MAP
+suspend and missed approach are proven on X-Plane's truth through the
+replay test. Slice C is queued again (session `400e386d7193`, night of
+2026-11-15) for clean frames on the glass.

@@ -168,6 +168,7 @@ class Follower:
         self.xp = XPlaneProbe()
         self.done = set()
         self.saved_src = None
+        self.started = False
         self.route = json.load(open(ROUTE))
 
     def log(self, *x):
@@ -287,7 +288,9 @@ class Follower:
                         ramp.add(thr)
                         self.log(f"{k} CDISCALE", scale, "<=", thr, "WPDIS", v["WPDIS"], "WPNAME", v["WPNAME"])
                         self.grab_later(f"{k}_scale_{thr}", 0.5)
-                if v["FPLSUSPMAP"] == "1" and "susp" not in ramp:
+                # only the real MAP suspend of this slice: a suspend left on the bus
+                # from before the slice's ACT fired this early on night 1 (slice A)
+                if v["FPLSUSPMAP"] == "1" and "susp" not in ramp and self.started and actid == "RW21":
                     ramp.add("susp")
                     threading.Thread(target=self.fly_missed, args=(k,), daemon=True).start()
                 time.sleep(max(0.0, 0.5 - (time.time() - t)))
@@ -318,6 +321,7 @@ class Follower:
         return None
 
     def start_actions(self, sl):
+        self.started = False
         self.ensure_route()
         if self.saved_src is None:
             self.saved_src = {x: self.c.read(x)[0] for x in ("GPSSRC", "NAVSRC")}
@@ -353,6 +357,7 @@ class Follower:
                 break
         self.log(f"{sl['k']} guidance", "LIVE" if fl_[3:4] == "0" else "FAILED", "FPLCRS", v_, fl_,
                  "WPNAME", self.c.read("WPNAME")[0], "GPS_FIX_TYPE", self.c.read("GPS_FIX_TYPE"))
+        self.started = True
         self.grab(f"{sl['k']}_start")
 
     def fly_slice(self, sl, pos):
