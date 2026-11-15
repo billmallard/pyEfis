@@ -163,6 +163,8 @@ def restore(found, ours_count, ours_segs, snap):
     c.write("GPSSRC", int(float(found["GPSSRC"] or 0)))
     if slots and found["FPLSTATE"] not in ("0", "0.0", "") and int(float(found["FPLACTLEG"] or 0)) > 0:
         fplcmd("ACT %d" % int(float(found["FPLACTLEG"])))
+        if found["FPLSTATE"] in ("3", "3.0"):  # found suspended: put it back suspended
+            fplcmd("SUSP")
     tap(TAB_FPL if FOUND_TAB == "fpl" else TAB_MAP)
     time.sleep(1)
     log("restored", found_state())
