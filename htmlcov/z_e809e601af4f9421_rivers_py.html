@@ -55,8 +55,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">14 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">14<span class="text"> run</span></button>
+            <span class="text">17 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">17<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_e809e601af4f9421_roads_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-14 18:26 +0000
+            created at 2026-11-15 18:48 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -105,17 +105,22 @@
     <p class="run"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t">    <span class="nam">_DB_OPTION</span> <span class="op">=</span> <span class="str">&quot;river_db_path&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t">    <span class="nam">_COLOR_OPTION</span> <span class="op">=</span> <span class="str">&quot;river_color&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">    <span class="nam">_DEFAULT_COLOR</span> <span class="op">=</span> <span class="str">&quot;#4a6d8c&quot;</span>  <span class="com"># muted water blue</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">    <span class="nam">_EXPAND_LINKS</span> <span class="op">=</span> <span class="key">False</span>       <span class="com"># waterways have no _link ramps</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">    <span class="com"># LOD bands (max range NM -&gt; waterway classes). Major rivers persist to</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">    <span class="com"># wider range; canals/streams only close in. Keep in sync with</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">    <span class="com"># tools/build_highway_db.py PRESETS[&quot;rivers&quot;].</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="nam">_BAND_BASE</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">        <span class="op">(</span><span class="num">8.0</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;river&quot;</span><span class="op">,</span> <span class="str">&quot;canal&quot;</span><span class="op">,</span> <span class="str">&quot;stream&quot;</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">        <span class="op">(</span><span class="num">25.0</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;river&quot;</span><span class="op">,</span> <span class="str">&quot;canal&quot;</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">        <span class="op">(</span><span class="num">60.0</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;river&quot;</span><span class="op">,</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">    <span class="nam">_TIER</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;river&quot;</span><span class="op">:</span> <span class="num">0</span><span class="op">,</span> <span class="str">&quot;canal&quot;</span><span class="op">:</span> <span class="num">1</span><span class="op">,</span> <span class="str">&quot;stream&quot;</span><span class="op">:</span> <span class="num">2</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">    <span class="nam">_PALETTE_DEFAULT_KEY</span> <span class="op">=</span> <span class="str">&quot;river_default&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">    <span class="nam">_EXPAND_LINKS</span> <span class="op">=</span> <span class="key">False</span>       <span class="com"># waterways have no _link ramps</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">    <span class="com"># RD2&#x27;s true-scale roads do not apply: the class width table is roads</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">    <span class="com"># only, and a river keeps its tier pen and no casing at every range.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">    <span class="nam">_CASING_OPTION</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="nam">_WIDTH_M</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="com"># LOD bands (max range NM -&gt; waterway classes). Major rivers persist to</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">    <span class="com"># wider range; canals/streams only close in. Keep in sync with</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">    <span class="com"># tools/build_highway_db.py PRESETS[&quot;rivers&quot;].</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">    <span class="nam">_BAND_BASE</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">        <span class="op">(</span><span class="num">8.0</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;river&quot;</span><span class="op">,</span> <span class="str">&quot;canal&quot;</span><span class="op">,</span> <span class="str">&quot;stream&quot;</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">        <span class="op">(</span><span class="num">25.0</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;river&quot;</span><span class="op">,</span> <span class="str">&quot;canal&quot;</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">        <span class="op">(</span><span class="num">60.0</span><span class="op">,</span> <span class="op">(</span><span class="str">&quot;river&quot;</span><span class="op">,</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">    <span class="nam">_TIER</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;river&quot;</span><span class="op">:</span> <span class="num">0</span><span class="op">,</span> <span class="str">&quot;canal&quot;</span><span class="op">:</span> <span class="num">1</span><span class="op">,</span> <span class="str">&quot;stream&quot;</span><span class="op">:</span> <span class="num">2</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -125,7 +130,7 @@
             <a class="nav" href="z_e809e601af4f9421_roads_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.3">coverage.py v7.17.3</a>,
-            created at 2026-11-14 18:26 +0000
+            created at 2026-11-15 18:48 +0000
         </p>
     </div>
 </footer>
