@@ -19,7 +19,7 @@ screens with sample data.
 
 | Name | File | What it is |
 |---|---|---|
-| `DataStatus` | `screens/datastatus.yaml` | The navdata status screen; see [Data Status, Updates and Notices](Data-Status-Updates-and-Notices). Loaded, never booted. |
+| `DataStatus` | `screens/datastatus.yaml` | The navdata status screen; see [Data Status, Updates and Notices](Data-Status-Updates-and-Notices). Boots on the ground; see that page. |
 | `PFD` | `screens/pfd.yaml` | The stock primary flight display. The default boot screen (`defaultScreen: PFD` in `main/default.yaml`). |
 | `PFD_AI_ONLY` | `screens/pfd_ai_only.yaml` | The attitude bundle across the full width, with no engine or radio column. |
 | `RADIO` | `screens/radio.yaml` | Radio tuning. |

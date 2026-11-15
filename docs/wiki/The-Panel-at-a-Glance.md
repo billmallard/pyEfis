@@ -9,7 +9,7 @@ knob. The instruments each have their own page, linked below.
 > instruments, not in place of them. It shows what fix-gateway feeds it. When
 > a source is lost it flags the value, but it cannot invent data.
 
-![The bench panel climbing out on the missed approach at about 95 kt and 640 ft/min: synthetic vision with the airspeed tape, altitude tape and VSI, the wind readout, the HSI bottom centre, and the tab column on the right showing the moving map](../images/panel/bench_panel_climb.png)
+![The bench panel climbing out on the missed approach at about 94 kt and 720 ft/min: synthetic vision with the airspeed tape, altitude tape and VSI, the wind readout, the HSI bottom centre, and the tab column on the right showing the moving map](../images/panel/bench_panel_climb.png)
 
 ## What is where
 
@@ -29,13 +29,16 @@ position and option is yours to set in the
 
 ## Start-up
 
-pyEFIS opens straight on its boot screen, the one marked as the default in the
-configurator. A strip across the bottom reads *"pyEfis is experimental software
+On the ground, pyEFIS opens on the
+[Data Status](Data-Status-Updates-and-Notices) screen; **Continue** takes you to
+the flight screen, the one marked as the default in the configurator. If the
+aircraft is moving, or airspeed is not valid, it opens straight on the flight
+screen. A strip across the bottom reads *"pyEfis is experimental software
 for Experimental / Amateur-Built aircraft. It is not certified. It is provided
 as-is with no warranty, and any use of it is at your own risk."* It needs no
 tap. Touches pass through it to the instruments, and it clears by itself: after
 8 seconds once the notice has been accepted on this install, after 20 seconds
-if not. Nothing at start-up waits for a tap, so a restart in flight puts you
+if not. In flight nothing at start-up waits for a tap, so a restart puts you
 back on the instruments at once. How the notice is accepted is on
 [Data Status, Updates and Notices](Data-Status-Updates-and-Notices#the-software-notice-at-start-up).
 

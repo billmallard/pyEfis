@@ -11,7 +11,7 @@ terrain is `atitude_indicator`.
 > standby attitude, airspeed and altitude instruments: ones that share no
 > sensor, computer, software, power source or display with pyEFIS.
 
-![The bench in a left turn in the WINCH hold, over the sea at about 4,000 ft: pitch ladder and bank scale tilted, the garmin aircraft symbol, standard-rate marks on the bank arc, the coastline and terrain beyond, and the 33 heading mark on the horizon](../images/attitude/bench_turn_over_water.png)
+![The bench in a right turn entering the WINCH hold, over the sea at about 3,900 ft: pitch ladder and bank scale tilted, the garmin aircraft symbol, standard-rate marks on the bank arc, and the coastline and terrain beyond](../images/attitude/bench_turn_over_water.png)
 
 ## Reading it
 
@@ -107,7 +107,7 @@ against groundspeed). Sideways, it shows drift: track against heading.
 
 The terrain ahead is coloured by how far it is below you.
 
-![The bench on the RNAV 30 approach to KSMX at about 2,200 ft: most of the terrain ahead is red, because the bench panel sets its warning band to 1,500 ft of clearance. Airport flags for L52 and SMX stand on the horizon](../images/attitude/bench_terrain_clearance.png)
+![The bench on the RNAV 30 approach to KSMX at about 2,130 ft: most of the terrain ahead is red, because the bench panel sets its warning band to 1,500 ft of clearance. Airport flags for L52 and SMX stand on the horizon](../images/attitude/bench_terrain_clearance.png)
 
 | Colour | Terrain is |
 |---|---|
@@ -126,7 +126,7 @@ elevation is drawn green, so a normal approach does not paint the whole pattern
 red. Terrain higher than that keeps its amber and red, and magenta always
 shows.
 
-![The bench near the missed approach point at KSMX, descending through about 1,150 ft: within 5 nm of the field the low terrain is green, the runway is drawn to true size, and a road runs across the foreground](../images/attitude/bench_final_runway.png)
+![The bench at the missed approach point at KSMX, at about 1,000 ft: within 5 nm of the field the low terrain is green, and runway 30 is drawn to true size beneath, its numbers and threshold bars in the foreground](../images/attitude/bench_final_runway.png)
 
 **What else is drawn**, each from its own navdata pack:
 

@@ -712,3 +712,74 @@ def test_health_reports_whether_the_bench_lock_is_held(bench_lock_service):
     assert "AER-2658" in held["bench_lock_holder"]
     assert held["bench_lock"] == str(lock)
     assert free["bench_lock_held"] is False
+
+
+# -- /bench/map input validation (AER-5743) ------------------------------
+#
+# CodeQL flagged the bench/map argv and its X-Bench-Map-Argv echo as built
+# from request values. The service runs no shell, but a path carrying CR/LF
+# split the response header, and a leading "-" made a path a harness option.
+
+
+def test_bench_map_default_argv_is_unchanged(capture_service):
+    argv = capture_service.build_bench_map_argv({}, "/tmp/out.json")
+    opts = dict(zip(argv[2::2], argv[3::2]))
+    assert argv[:2] == [capture_service.PYTHON, capture_service.BENCH_MAP_TOOL]
+    assert opts["--scenario"] == "all"
+    assert opts["--range-ladder"] == "2,5,10,20,40,80,160"
+    assert opts["--water-raster"] == "numpy"
+    assert opts["--tile-path"] == capture_service.TILES
+    assert opts["--highway-db"] == ""
+    assert opts["--out"] == "/tmp/out.json"
+
+
+def test_bench_map_range_ladder_is_reserialized_from_numbers(capture_service):
+    argv = capture_service.build_bench_map_argv(
+        {"range_ladder": "2, 5.5,10,"}, "/tmp/out.json")
+    assert argv[argv.index("--range-ladder") + 1] == "2,5.5,10"
+
+
+@pytest.mark.parametrize("field, value", [
+    ("scenario", "pan; reboot"),
+    ("water_raster", "numpy\r\nX-Evil: 1"),
+    ("range_ladder", "2,5,--out=/etc/passwd"),
+    ("range_ladder", "0,5"),
+    ("range_ladder", ""),
+    ("tile_path", "/data/tiles\r\nX-Evil: 1"),
+    ("highway_db", "--out=/etc/passwd"),
+    ("dof_db", "/data/dof\x00.sqlite"),
+])
+def test_bench_map_rejects_unsafe_values(capture_service, field, value):
+    with pytest.raises(ValueError):
+        capture_service.build_bench_map_argv({field: value}, "/tmp/out.json")
+
+
+class _RecordingRun(_FakeRun):
+    """A _FakeRun that also keeps the subprocess.run keyword arguments."""
+
+    def __call__(self, argv, **kwargs):
+        self.kwargs = kwargs
+        return super().__call__(argv, **kwargs)
+
+
+def test_bench_map_crlf_path_is_a_400_and_never_runs(monkeypatch, tmp_path):
+    mod = _load_capture_service(monkeypatch, tmp_path)
+    fake = _fake_subprocess(mod, monkeypatch, _FakeRun(payload=b"{}"))
+    with _posting(mod) as post:
+        code, hdrs, body = post(
+            "/bench/map", {"scenario": "pan",
+                           "tile_path": "/data/tiles\r\nX-Evil: 1"})
+    assert code == 400, body
+    assert "X-Evil" not in hdrs
+    assert fake.calls == 0
+
+
+def test_bench_map_runs_the_pinned_interpreter_without_a_shell(monkeypatch, tmp_path):
+    mod = _load_capture_service(monkeypatch, tmp_path)
+    fake = _fake_subprocess(mod, monkeypatch, _RecordingRun(payload=b"{}"))
+    with _posting(mod) as post:
+        code, hdrs, body = post("/bench/map", {"scenario": "pan"})
+    assert code == 200, body
+    assert fake.kwargs["executable"] == mod.PYTHON
+    assert fake.kwargs["shell"] is False
+    assert "--scenario pan" in hdrs["X-Bench-Map-Argv"]

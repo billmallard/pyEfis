@@ -209,11 +209,15 @@ Notes:
   boot is clean (`NRestarts=0`).
 
 ### Which screen it boots to
-pyEFIS boots to the screen named by `defaultScreen:` in `main/default.yaml`
-(`PFD` as shipped). It never boots to the Data Status screen: if
-`defaultScreen` names it, or names a screen that is not loaded, pyEFIS boots
-to the Data Status screen's Continue target (or the first other screen)
-instead. A panel pulled from the configurator
+On the ground (valid airspeed below `IAS.Vgnd`, GPS not moving) pyEFIS boots
+to the Data Status screen, whose Continue goes to the flight screen. Moving,
+or with airspeed invalid or `IAS.Vgnd` unset, it boots straight to the flight
+screen; see
+[Data Status, Updates and Notices](Data-Status-Updates-and-Notices). The
+flight screen is the one named by `defaultScreen:` in `main/default.yaml`
+(`PFD` as shipped). If `defaultScreen` names the Data Status screen, or a
+screen that is not loaded, the flight screen is the Data Status screen's
+Continue target (or the first other screen) instead. A panel pulled from the configurator
 takes the `defaultScreen` name, so the device boots to it. See
 [Setting Up a Device](Setting-Up-a-Device#7-boot-to-the-efis).
 
