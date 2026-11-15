@@ -1,0 +1,7 @@
+smoke 2026-11-12T15:39:17.870172624Z pyefis_head=405cab7b pyefis_pid=3642037 env= opts=
+base1 2026-11-12T15:39:40.920481193Z pyefis_head=405cab7b pyefis_pid=3642037 env= opts=
+nogl1 2026-11-12T15:42:50.748845681Z pyefis_head=405cab7b pyefis_pid=3642037 env= opts=--no-gl
+win1 2026-11-12T15:46:00.727920523Z pyefis_head=405cab7b pyefis_pid=3642037 env= opts=--windowed
+dbl1 2026-11-12T15:58:18.081971246Z pyefis_head=405cab7b pyefis_pid=3642037 env= opts=--double=8
+big1 2026-11-12T16:01:27.988703911Z pyefis_head=405cab7b pyefis_pid=3642037 env=BIGREC=1  opts=
+bigdbl1 2026-11-12T16:04:37.771565729Z pyefis_head=405cab7b pyefis_pid=3642037 env=BIGREC=1  opts=--double=8

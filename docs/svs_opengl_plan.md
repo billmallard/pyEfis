@@ -94,9 +94,13 @@ bottleneck at much larger viewports.
 
 * **Polar grid topology, identical to CPU**. The `(n_range, n_az)` fan with
   the radial warp stays the same. Builds once at renderer init (or when
-  config changes) as an indexed triangle list and uploaded to a VBO. Re-uses
-  the existing `radial_warp`, `n_range`, `n_az`, `fov_deg`, `r_min_nm` config
-  keys.
+  config changes) as an indexed triangle list and uploaded to a VBO. This
+  plan originally called for reusing the `radial_warp`, `n_range`, `n_az`,
+  `fov_deg`, `r_min_nm` config keys — as shipped, none of them are read
+  (confirmed AER-1478; deleted from `SVSRenderer` in svs.py). The mesh
+  resolution ended up fixed, and azimuthal extent is set by the AI
+  viewport's aspect ratio, not a `fov_deg` knob — see "Azimuthal Extent
+  (HFOV)" in docs/svs_rendering.md.
 
 * **Elevation as a heightmap texture, not vertex attribute**. We pack the
   SRTM3 tiles overlapping the current aircraft position into a single 2-D

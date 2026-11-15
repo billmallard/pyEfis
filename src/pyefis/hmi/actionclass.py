@@ -18,8 +18,11 @@ import logging
 from PyQt6.QtCore import pyqtSignal, pyqtBoundSignal
 from PyQt6.QtWidgets import QWidget
 
+from pyefis import kiosk
 from pyefis.hmi import functions
 from .menu import activateMenu
+
+log = logging.getLogger(__name__)
 
 
 class ActionClass(QWidget):
@@ -45,6 +48,21 @@ class ActionClass(QWidget):
     checklistNextList = pyqtSignal(object)
     checklistPrevList = pyqtSignal(object)
     checklistReset = pyqtSignal(object)
+    # Flight-plan instrument actions (FP5a). The argument is "<payload> [group]":
+    # payload is a page name (flightplanPage) or a waypoint ident
+    # (flightplanDirectTo, blank = open the Entry page instead); the optional
+    # trailing word is the target instrument's `hmi_group`, blank/absent = every
+    # flight_plan instrument on the screen (the checklist broadcast precedent).
+    flightplanPage = pyqtSignal(object)
+    flightplanDirectTo = pyqtSignal(object)
+    # Moving-map banner -> flight_plan instrument (FP10, billmallard/pyEfis#186).
+    # In-process only, deliberately NOT in signalMap: the payload is a
+    # flightplan.waypoints.Waypoint (Info) or a (lat, lon) tuple (Create WPT),
+    # which a screen YAML button cannot express. Every flight_plan instrument
+    # on the screen receives it and shows the page, switching its tab_section
+    # tab if it is on a hidden one.
+    flightplanWptInfo = pyqtSignal(object)
+    flightplanCreateWaypoint = pyqtSignal(object)
 
     def __init__(self):
         super(ActionClass, self).__init__()
@@ -71,12 +89,19 @@ class ActionClass(QWidget):
             "checklist next list": self.checklistNextList,
             "checklist previous list": self.checklistPrevList,
             "checklist reset": self.checklistReset,
+            "flightplan page": self.flightplanPage,
+            "flightplan direct to": self.flightplanDirectTo,
             "exit": self.doExit,
             "evaluate": eval,
         }
 
     def trigger(self, action, argument=""):
         a = self.signalMap[action.lower()]
+        # DEMO4: a demo kiosk refuses the actions that leave the app or run
+        # arbitrary code (makerplane/briefs/demo_mode_redesign.md 6.2).
+        if not kiosk.action_allowed(action):
+            log.warning("kiosk: action %r refused", action)
+            return
         if isinstance(a, pyqtBoundSignal):
             a.emit(argument)
         else:  # It's not a signal so assume it's a function

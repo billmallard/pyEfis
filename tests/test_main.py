@@ -18,6 +18,10 @@ class FakeApp:
     # stand-in needs a no-op class-level setAttribute.
     setAttribute = staticmethod(lambda *args, **kwargs: None)
 
+    # Default matches the Beelink (X11); AER-2002 tests override this to
+    # "eglfs" to exercise the Pi 5 SIGUSR1-screenshot-skip path.
+    platformName = staticmethod(lambda: "xcb")
+
     def __init__(self, argv):
         self.argv = argv
         self.exec = mock.Mock(return_value=7)
@@ -133,6 +137,65 @@ def test_main_with_config_file_runs_startup_and_shutdown(
     main_module.hooks.initialize.assert_called_once_with(config["hooks"])
     main_module.fix.stop.assert_called_once_with()
     patched_runtime.fms.stop.assert_called_once_with()
+
+
+def test_main_in_kiosk_mode_loads_no_keybindings(
+    monkeypatch, config_files, patched_runtime
+):
+    # DEMO4: a demo kiosk has no keyboard, and a key must not reach exit
+    config_file, _preferences_file = config_files
+    config = {"hooks": {}, "keybindings": [{"key": "Q", "action": "exit"}],
+              "kiosk": {"enabled": True}}
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value=config))
+    monkeypatch.setattr(main_module.kiosk, "initialize", mock.Mock())
+    try:
+        with pytest.raises(SystemExit):
+            main_module.main()
+        assert main_module.kiosk.locked()
+        main_module.hmi.keys.initialize.assert_not_called()
+        main_module.kiosk.initialize.assert_called_once_with(
+            main_module.gui.mainWindow, main_module.fix, main_module.gui.screens)
+    finally:
+        main_module.kiosk.configure(None)
+
+
+def test_main_sigusr1_screenshot_disabled_on_eglfs(
+    monkeypatch, config_files, patched_runtime, caplog
+):
+    # AER-2002: on the Pi 5 (eglfs), grabbing the SVS QOpenGLWidget can
+    # black out the live SVS until restart. main() must recognize the
+    # eglfs platform and arm the SIGUSR1 handler in skip mode instead of
+    # its normal grab-and-save mode.
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(FakeApp, "platformName", staticmethod(lambda: "eglfs"))
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value={"hooks": {}}))
+
+    with caplog.at_level("INFO"):
+        with pytest.raises(SystemExit):
+            main_module.main()
+
+    messages = "\n".join(r.message for r in caplog.records)
+    assert "SIGUSR1 handler armed (eglfs: screenshot disabled, AER-2002" in messages
+    assert "SIGUSR1 -> /tmp/pyefis_screenshot.png handler armed" not in messages
+
+
+def test_main_sigusr1_screenshot_armed_normally_off_eglfs(
+    monkeypatch, config_files, patched_runtime, caplog
+):
+    # Companion to the eglfs test above: confirm the Beelink (X11) path is
+    # unchanged -- the normal grab-and-save handler still arms.
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value={"hooks": {}}))
+
+    with caplog.at_level("INFO"):
+        with pytest.raises(SystemExit):
+            main_module.main()
+
+    messages = "\n".join(r.message for r in caplog.records)
+    assert "SIGUSR1 -> /tmp/pyefis_screenshot.png handler armed" in messages
 
 
 def test_main_config_search_checks_multiple_paths_before_match(
@@ -339,6 +402,31 @@ def test_main_systemd_continues_when_auto_start_is_enabled(
     assert exc.value.code == 7
     main_module.os._exit.assert_not_called()
     main_module.fix.initialize.assert_called_once_with(config)
+
+
+def test_main_exits_process_when_gui_initialize_fails(
+    monkeypatch, config_files, patched_runtime
+):
+    # fix.initialize()/hmi.initialize() have already started non-daemon
+    # background threads by the time gui.initialize() runs; if that failure
+    # were allowed to unwind as a normal exception, those threads would
+    # keep the process alive forever (AER-762). main() must instead force
+    # an immediate process exit so a supervisor sees the death and can act.
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value={"hooks": {}}))
+    monkeypatch.setattr(
+        main_module.gui, "initialize", mock.Mock(side_effect=RuntimeError("no display"))
+    )
+    monkeypatch.setattr(main_module.os, "_exit", mock.Mock(side_effect=SystemExit(1)))
+
+    with pytest.raises(SystemExit) as exc:
+        main_module.main()
+
+    assert exc.value.code == 1
+    main_module.os._exit.assert_called_once_with(1)
+    # app.exec() must never be reached once GUI init has failed terminally.
+    assert FakeApp.instances[0].exec.called is False
 
 
 def test_create_config_dir_copies_new_changed_and_user_modified_files(

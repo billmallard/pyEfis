@@ -1,0 +1,2 @@
+start 2026-11-12T16:25:01.226817540Z stack_head=6f8c227d pyefis=3768693 env=QT_QPA_PLATFORM=xcb  load=0.18 0.44 0.50
+end 2026-11-12T16:28:11.635627238Z stack_head=6f8c227d pyefis=3768693 env=QT_QPA_PLATFORM=xcb  load=1.46 0.89 0.67

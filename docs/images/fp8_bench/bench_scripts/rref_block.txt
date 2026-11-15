@@ -1,0 +1,19 @@
+        # AER-809 FP8 SESSION-ONLY (2026-10-28): X-Plane's DATA rows are not
+        # reaching this bench (tcpdump: RREF replies only), so position and
+        # attitude ride the working RREF channel instead. REVERT after the FP8
+        # flight: restore xplane.yaml.bak-aer809-session-*.
+        LAT:     sim/flightmodel/position/latitude
+        LONG:    sim/flightmodel/position/longitude
+        ALT:     [sim/flightmodel/position/elevation, 3.28084]
+        AGL:     [sim/flightmodel/position/y_agl, 3.28084]
+        GS:      [sim/flightmodel/position/groundspeed, 1.943844]
+        IAS:     sim/flightmodel/position/indicated_airspeed
+        TAS:     [sim/flightmodel/position/true_airspeed, 1.943844]
+        VS:      sim/flightmodel/position/vh_ind_fpm
+        PITCH:   sim/flightmodel/position/theta
+        ROLL:    sim/flightmodel/position/phi
+        HEAD:    sim/flightmodel/position/mag_psi
+        MAGVAR:  sim/flightmodel/position/magnetic_variation
+        TRACK:   sim/flightmodel/position/hpath
+        AOA:     sim/flightmodel/position/alpha
+        VPATH:   sim/flightmodel/position/vpath

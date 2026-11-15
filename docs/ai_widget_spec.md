@@ -21,14 +21,22 @@ margin, excessive bank/sideslip). This spec holds it to that bar and tracks the 
 ladder). Already present:
 
 - **Attitude** — pitch ladder + roll from `PITCH`/`ROLL`; `pitchDegreesShown` FOV;
-  raised-horizon option (`horizon_position`) for the SVS.
-- **Bank** — a moving bank scale + standard-rate-turn markers, clamped at
-  `bankAngleMaximum` (25°).
+  raised-horizon option (`horizon_position`) for the SVS. With SVS configured the
+  ladder scale is the terrain camera's tangent, `ppd * deg(tan(e))` for a rung `e`
+  degrees off the boresight, so the zero-pitch line, every rung, the FPM, the horizon
+  heading ticks and the pitch-limit cue register with the terrain at any pitch
+  (AC 23-26 3.c, AC 20-167B 4.3.2.5.3; AER-5125). Without SVS the ladder is linear.
+- **Bank** — a moving bank scale + standard-rate-turn markers at
+  `standard_rate_bank_deg()`: atan(TAS/364), the 3°/s bank, clamped at
+  `bankAngleMaximum` (25°). The clamp is the bank to fly (AIM 5-3-8: 3°/s,
+  30°, or 25° with a flight director, whichever is least), reached at about
+  170 KTAS; pinned by `test_ai_standard_rate_*` (AER-5149).
 - **Slip/skid ball** — from `ALAT` (lateral acceleration).
 - **Aircraft symbol** + **Flight Path Marker** (FPM, gated below `_FPM_MIN_GS_KT`, #70).
 - **Failure annunciation** — `setFail(fail, item)` swaps to a `fail_scene` that shows
   **"XXX"** (attitude removed); `old`/`bad` grey the sky/land; **SVS UNAVAIL**
-  annunciates when GL is absent.
+  annunciates when GL is absent, or when `LAT`/`LONG` is old, bad or failed (the
+  terrain is removed, AER-4243).
 - **P4 frame clock** — setters store state + mark `_frame_dirty`; `_frame_tick`
   repaints.
 
@@ -39,11 +47,14 @@ ladder). Already present:
 | `PITCH`, `ROLL` | attitude | AHRS |
 | `ALAT` | slip/skid ball (lateral accel) | AHRS |
 | `TAS` | standard-rate bank marker | ADC |
+| `BANKBUG` | target-bank bug (AI-BUG-001); 0 = off, missing = no bug and no touch edit | the pilot, through pyEfis (touch + knob) |
 | `VS`,`GS`,`TRACK`,`HEAD`,`VPATH` | FPM solution | GPS/AHRS |
-| **`AOA` / stall-margin** | **pitch-limit (AI-LIM-001) — not yet published by fix-gateway** | AOA vane / OnSpeed (future) |
+| `LAT`,`LONG`,`ALT` | SVS camera position; `LAT`/`LONG` quality gates the terrain (AI-SVS-001) | GPS / ADC |
+| `AOA` + aux `AOA.Warn` | pitch-limit (AI-LIM-001): margin = `AOA.Warn - AOA`; `AOA` old/bad/fail or `AOA.Warn` None removes the marker | fix-gateway `onspeed` plugin ([`fixgw_onspeed_in_spec.md`](fixgw_onspeed_in_spec.md)) |
 
 Quality is tracked per key in `_AIOld`/`_AIBad`/`_AIFail` (`PITCH`/`ROLL`/`ALAT`/`TAS`);
-`getAIFail()`/`getAIOld()`/`getAIBad()` aggregate.
+`getAIFail()`/`getAIOld()`/`getAIBad()` aggregate. `AOA` quality is tracked separately
+(`_aoa_flags`) and gates only the pitch-limit marker.
 
 ## 4. Flags, alerts, and recovery annunciation (requirements)
 
@@ -60,24 +71,52 @@ test catalog (§5). **Status** is the widget as of this writing.
 |----|-------------|---------|-------------------|------|--------|
 | **AI-ANN-001** | Attitude-fail annunciation | `PITCH`/`ROLL` fail | Remove attitude; show a clear fail display ("XXX") | Table 4-1 p.27; §25.1301 | **DONE** — `fail_scene` |
 | **AI-FAIL-001** | Degraded (stale/invalid) attitude greyed | `PITCH`/`ROLL`/`ALAT`/`TAS` old or bad | Grey sky/land | widget convention; AC 25-11B §4.2 | **DONE** |
+| **AI-SVS-001** | No synthetic terrain without a valid position | `LAT`/`LONG` old, bad or fail | Remove the terrain, brown attitude ground, amber **SVS UNAVAIL**; restore when both are valid | widget convention (same state as a GL failure); `svs_rendering.md` failure policy | **DONE** — `_svs_position_valid` |
 | **AI-SLIP-001** | Sideslip shown (slip/skid ball) | `ALAT` | Ball deflects with lateral accel | App A §A.2.6 p.70 | **DONE** |
-| **AI-CHEV-001** | Unusual-attitude **recovery chevrons** | pitch beyond the unusual-attitude threshold | Large chevrons pointing to the nearest horizon, enabling recovery < 1 s | App A §A.2.2 p.70 | **DONE** — amber chevrons, `_draw_recovery_chevrons` |
+| **AI-CHEV-001** | Unusual-attitude **recovery chevrons** | pitch beyond the unusual-attitude threshold, OR the true horizon line off-scale | Large chevrons pointing to the nearest horizon, enabling recovery < 1 s | App A §A.2.2 p.70; AC 23.1311-1C 8.5(b) | **DONE** — amber chevrons, `_draw_recovery_chevrons` |
 | **AI-BANK-001** | **Excessive-bank** annunciation | roll beyond threshold (before stall buffet) | Salient bank alert (amber/red) | App A §A.2.5 p.70 | **DONE** — amber bank scale |
 | **AI-DCL-001** | **De-clutter** at unusual attitude | unusual attitude | Remove non-essential overlays, retain recovery info | AC 25-11B p.47; §A.2 | **DONE** — `_decluttered` suppresses FPM / standard-rate diamonds / horizon heading scale |
 | **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **DONE** — amber ball |
-| **AI-LIM-001** | **Pitch-limit / stall-margin** indication | approaching stall AOA | Pitch-limit marker on the ladder | App A §A.2.4 p.70 | **GAP — data-blocked** (no `AOA`/stall-margin key yet; OnSpeed/AOA path) |
+| **AI-LIM-001** | **Pitch-limit / stall-margin** indication | approaching stall AOA | Pitch-limit marker `AOA.Warn - AOA` deg above the aircraft symbol | App A §A.2.4 p.70 | **DONE** — `_draw_pitch_limit` (AER-5086); look pending Bill's call on the PR renders |
+| **AI-BUG-001** | **Target-bank bug** (ATT1, AER-5149) | `BANKBUG` > 0 | Cyan arrow at ±`BANKBUG` outside the bank scale and a ±`bankBugTolerance` band over it, rolling with the scale, so on target the fixed pointer sits inside the band; hidden by the de-clutter; greyed when old/bad, absent when failed. Touch the scale + knob: 5° detents, 0 to 60 or `excessiveBankDeg` if lower | ACS steep turns (Private 45° ±5°, Commercial 50° ±5°) | **DONE** — `_draw_bank_bug`, `bank_bug_step` |
 
 **Thresholds.** "Unusual attitude" follows common EFIS/Part 25 convention — all
 configurable attributes:
 - **Recovery chevrons + de-clutter** engage on pitch **> +30° / < −20°**
-  (`unusualPitchHighDeg` / `unusualPitchLowDeg`); de-clutter *also* engages on a steep
-  bank **> 65°** (`unusualBankDeg`), past the excessive-bank caution — the
-  unusual-attitude regime, not a normal steep turn.
-- **Excessive-bank caution** (amber bank scale) engages earlier, at bank **> 45°**
-  (`excessiveBankDeg`); a 45–65° steep turn shows the caution but stays fully cluttered
-  so the pilot keeps all cues.
+  (`unusualPitchHighDeg` / `unusualPitchLowDeg`) **OR** the pitch=0 horizon line having
+  scrolled fully off the top/bottom of the viewport (`_horizon_off_glass`,
+  AC 23.1311-1C 8.5(b), AER-1805). The two are independent and both earn their place: the
+  constants are a regime cue (an extreme attitude in its own right, whatever the display
+  shows), and the geometric term is derived live from `horizon_position` /
+  `pitchDegreesShown` (`_horizon_exit_pitch`) so a raised horizon can't lose the horizon
+  reference well inside the fixed constants without a cue — the defect this closed. De-
+  clutter *also* engages on a steep bank **> 65°** (`unusualBankDeg`), past the
+  excessive-bank caution — the unusual-attitude regime, not a normal steep turn.
+- **Excessive-bank caution** (amber bank scale) engages earlier, at bank **> 60°** by
+  default (`excessiveBankDeg`, a per-aircraft configurator setting, 30 to 65). The 60°
+  default (Bill, 2026-11-07, AER-5149) clears the ACS steep turns -- Private 45° ±5°,
+  Commercial 50° ±5° -- so the manoeuvre being practised is not cautioned, and sits at
+  the 14 CFR 91.307 aerobatic-flight bank. It was 45°, which lit the caution through a
+  Private steep turn. A 60–65° bank shows the caution but stays fully cluttered so the
+  pilot keeps all cues.
+- **Pitch-limit marker** (AI-LIM-001): the margin to the stall-warning AOA is
+  `AOA.Warn - AOA` deg. Because AOA and pitch move together at a constant flight path, the
+  marker is drawn that far above the aircraft symbol at the ladder scale, which is
+  `PITCH + margin` on the ladder wings level. AOA is measured in the aircraft's plane of
+  symmetry, the screen vertical, so the marker stays upright in a bank rather than rolling
+  with the ladder. It is two bars either side of the symbol, each with three ticks rising
+  outboard. It is amber while there is margin left and red at or past the warning AOA
+  (margin <= 0, the marker then on or below the symbol). It shows only once the margin is
+  inside **8°** (`pitchLimitShowMarginDeg`), so cruise carries no cue. It is clamped to the
+  glass. It survives the de-clutter, because stall margin is recovery information. There is
+  no marker when `AOA` is old, bad or failed (the onspeed plugin publishes AOA bad below its
+  mute airspeed), when `AOA.Warn` is None, or when the `AOA` key is missing.
 
-The thresholds are pinned here and in the test catalog (AI-TC-101/103).
+The thresholds are pinned here and in the test catalog (AI-TC-101/103), and the pure
+horizon-exit geometry is pinned closed-form in
+[`tests/instruments/ai/test_horizon_off_scale.py`](../tests/instruments/ai/test_horizon_off_scale.py)
+(no rendering — `(pitchDegreesShown, horizon_position, pitch) -> (horizon on/off glass,
+chevrons on/off)`).
 
 ## 5. Test cases
 
@@ -85,18 +124,20 @@ The executable catalog is in
 [`tests/instruments/ai/test_ai.py`](../tests/instruments/ai/test_ai.py), keyed to the §4
 IDs. Passing tests verify shipped behaviour; `xfail(strict)` tests are the **gap
 tracker** — each flips the run red when its alert is implemented, forcing the marker's
-removal. `AI-LIM-001` stays `xfail` until an `AOA`/stall-margin key exists.
+removal. No `xfail` remains: `AI-LIM-001` left it with AER-5086.
 
 | AI-TC | Requirement | Test (`test_ai_cat_…`) | Status |
 |-------|-------------|------------------------|--------|
 | 001 | AI-ANN-001 | `attitude_fail_shows_fail_scene` | pass |
 | 002 | AI-FAIL-001 | `degraded_attitude_stays_greyed` | pass |
 | 003 | AI-SLIP-001 | `slip_ball_tracks_lateral_accel` | pass |
-| 101 | **AI-CHEV-001** | `recovery_chevrons_at_extreme_pitch` | pass |
+| 004 | AI-SVS-001 | `test_svs_position_quality.py` (drives LAT/LONG old/bad/fail through the fix item) | pass |
+| 101 | **AI-CHEV-001** | `recovery_chevrons_at_extreme_pitch`, `recovery_chevrons_at_horizon_off_scale` | pass |
 | 102 | **AI-BANK-001** | `excessive_bank_annunciation` | pass |
 | 103 | **AI-DCL-001** | `declutter_at_unusual_attitude` | pass |
 | 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | pass |
-| 105 | **AI-LIM-001** | `pitch_limit_indication` | xfail — data-blocked |
+| 105 | **AI-LIM-001** | `pitch_limit_indication`; `test_ai_pitch_limit_hidden_on_degraded_aoa`, `_hidden_without_warn_setpoint`, `_disabled_without_aoa_key`, `_survives_declutter` | pass |
+| 106 | **AI-BUG-001** | `test_bank_bug.py` (band under the pointer inside tolerance, outside it off target, de-clutter, knob detents and cap, touch focus, missing key) | pass |
 
 ## 6. Conventions and standards basis
 
@@ -109,8 +150,8 @@ a safety benefit); never copy a vendor's *expression*.
 
 ## 7. Open items
 
-- Publish an `AOA`/stall-margin key from fix-gateway (unblocks AI-LIM-001 — the last AI
-  gap).
+- **Pitch-limit look (Bill's call, AER-5086).** Shape, colours, the 8 deg show threshold
+  and the upright-in-a-bank choice are proposals shown in `docs/aer-5086-evidence/`.
 - **De-clutter scope (decided):** AI-DCL-001 suppresses the AI's own non-essential 2D
   symbology (FPM, standard-rate turn diamonds, horizon heading scale) and retains all
   recovery-critical symbology (attitude, pitch ladder, bank scale + pointer, slip/skid

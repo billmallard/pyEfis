@@ -23,6 +23,14 @@ arterials, not just interstates); ``--classes`` overrides:
 
 Requires pyshp (like build_water_db.py). Data (c) OpenStreetMap
 contributors, ODbL.
+
+RD3a (AER-640): also carries OSM ``tunnel``/``bridge``/``ref`` per way when
+the input shapefile has those fields (the Geofabrik roads layer does; the
+rivers layer doesn't) -- packed into a ``flags`` bitmask
+(``FLAG_TUNNEL``/``FLAG_BRIDGE``) plus a ``ref`` text column, so the SVS can
+drop tunnel segments and skip subdividing bridges instead of draping both to
+the terrain underneath. A shapefile without those fields still builds; every
+row just gets ``flags=0, ref=NULL``.
 """
 
 import argparse
@@ -33,7 +41,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from pyefis.instruments.ai.highway_db import encode_vertices  # noqa: E402
+from pyefis.instruments.ai.highway_db import (  # noqa: E402
+    FLAG_BRIDGE, FLAG_TUNNEL, encode_vertices)
 
 # Class presets by data layer. Roads carry primary/secondary now (not just the
 # motorway/trunk interstates) so the moving-map roads layer can add arterials
@@ -53,12 +62,26 @@ CREATE TABLE IF NOT EXISTS highway_lines (
     id INTEGER PRIMARY KEY,
     fclass TEXT NOT NULL,
     min_lat REAL, max_lat REAL, min_lon REAL, max_lon REAL,
-    verts BLOB NOT NULL
+    verts BLOB NOT NULL,
+    flags INTEGER NOT NULL DEFAULT 0,
+    ref TEXT
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS highway_rtree USING rtree(
     id, min_lat, max_lat, min_lon, max_lon
 );
 """
+
+# Geofabrik-style boolean field values ("T"/"F" in the roads_free layer,
+# but tolerate the "1"/"0" / "yes" spellings other extracts use).
+_TRUTHY = {"T", "1", "TRUE", "YES"}
+
+
+def _truthy(value) -> bool:
+    return value is not None and str(value).strip().upper() in _TRUTHY
+
+
+def _field_index(fields: list[str], name: str):
+    return fields.index(name) if name in fields else None
 
 
 def prepare_dest(dest: str, overwrite: bool) -> Path:
@@ -187,11 +210,24 @@ def main():
         sf = shapefile.Reader(shp)
         fields = [f[0] for f in sf.fields[1:]]
         fclass_i = fields.index("fclass")
+        tunnel_i = _field_index(fields, "tunnel")
+        bridge_i = _field_index(fields, "bridge")
+        ref_i = _field_index(fields, "ref")
         for sr in sf.iterShapeRecords():
             total += 1
             fclass = sr.record[fclass_i]
             if fclass not in classes:
                 continue
+            flags = 0
+            if tunnel_i is not None and _truthy(sr.record[tunnel_i]):
+                flags |= FLAG_TUNNEL
+            if bridge_i is not None and _truthy(sr.record[bridge_i]):
+                flags |= FLAG_BRIDGE
+            ref = None
+            if ref_i is not None:
+                r = sr.record[ref_i]
+                if r is not None and str(r).strip():
+                    ref = str(r).strip()
             # shapefile points are (lon, lat); split multi-part lines
             pts = np.asarray(sr.shape.points, dtype=np.float64)
             parts = list(sr.shape.parts) + [len(pts)]
@@ -204,11 +240,11 @@ def main():
                 con.execute(
                     "INSERT INTO highway_lines "
                     "(id, fclass, min_lat, max_lat, min_lon, max_lon,"
-                    " verts) VALUES (?,?,?,?,?,?,?)",
+                    " verts, flags, ref) VALUES (?,?,?,?,?,?,?,?,?)",
                     (next_id, fclass,
                      float(latlon[:, 0].min()), float(latlon[:, 0].max()),
                      float(latlon[:, 1].min()), float(latlon[:, 1].max()),
-                     encode_vertices(latlon)))
+                     encode_vertices(latlon), flags, ref))
                 con.execute(
                     "INSERT INTO highway_rtree VALUES (?,?,?,?,?)",
                     (next_id,

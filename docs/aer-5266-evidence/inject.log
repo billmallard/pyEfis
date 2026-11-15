@@ -1,0 +1,8 @@
+selftest ok: G§2.2.4 heartbeat and G§3.5.2 traffic vectors match
+t=  0.0s sent 6 reports
+t=  5.0s sent 6 reports
+t= 10.1s sent 6 reports
+t= 15.1s sent 6 reports
+t= 20.1s sent 5 reports (stale stopped)
+t= 25.2s sent 5 reports (stale stopped)
+t= 30.2s sent 5 reports (stale stopped)

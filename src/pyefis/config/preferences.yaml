@@ -71,6 +71,20 @@ styles:
     ghost:
       font_ghost_mask: "~~~~~~"
 
+  # Colour tokens per style (style contract, CAP-121). Any colour option may
+  # name a token instead of a literal -- fg_color: ink.primary and
+  # fg_color: "#ffffff" are both legal. A style below sets token values; a
+  # widget colour nothing else sets then takes its token's value from the
+  # active styles. With no block here every widget keeps its own default, and
+  # each token's built-in value already equals the defaults of the props that
+  # read it. nav.* and state.* are fixed in every theme: a block that sets one
+  # is ignored. The vocabulary lives in pyefis/screens/color_tokens.py.
+  # colors:
+  #   basic:
+  #     surface.base: "#000000"
+  #     ink.primary: "#ffffff"
+  #     accent: "#00ffff"
+
 
 # Here you can enable or disble individual controls or gauges
 # 
@@ -85,7 +99,7 @@ enabled:
   TRIM_CONTROLS: false
   WIND_DISPLAY: false
   PRESSURE_DISPLAY: false
-  BARO_CONTROLS: true
+  BARO_CONTROLS: true  # older screens' Baro: readout + buttons; stock screens draw the box on the altimeter tape (#311)
   VSI_BALL: false
   VSI_TAPE: true
   AUTO_PILOT: true
@@ -103,6 +117,12 @@ enabled:
   CYLINDER_4: true
   DIMMER: false
   BUTTONS: true  # enabled/disable navigation buttons
+
+# Starting unit for each unit group (Temperature, Pressure, Altitude).
+# Without an entry an instrument starts in its first unit (F, inHg, Ft).
+# The configurator sets Pressure from the aircraft's altimeter-setting units.
+#units:
+#  Pressure: hPa
 
 # Here you can define what include files are used to render some
 # portion of the screen so you can customize as needed easily
@@ -131,6 +151,7 @@ includes:
   SCREEN_EMS: screens/ems.yaml               # screens/ems-portrait.yaml
   SCREEN_EMS2: screens/ems2.yaml             # screens/ems2-portrait.yaml
   SCREEN_DATA_STATUS: screens/datastatus.yaml  # navigation-data currency (boot screen)
+  SCREEN_FLIGHTPLAN: screens/flightplan.yaml   # flight_plan instrument stock screen (FP5a)
   # Include file for logging configuration
   LOGGING_CONFIG: logging/stderr-info.yaml
   # File that defines what lists are included in the radio listbox
@@ -288,24 +309,24 @@ gauges:
     dbkey: FUELQT
 
   BAR4:
-    name: "Left"
+    name: "Tank 1"
     dbkey: FUELQ1
     decimal_places: 1
   BAR5:
-    name: "Center"
+    name: "Tank 2"
     decimal_places: 1
     dbkey: FUELQ2
     styles: 
       dseg:
         font_mask: "0000"
         units_font_mask: '~~'
-        name_font_mask: '~~~~~'
+        name_font_mask: '~~~~~~'
       ghost:
         font_ghost_mask: "~~~~~"
         units_font_ghost_mask: "~~"
-        name_font_ghost_mask: '~~~~~'
+        name_font_ghost_mask: '~~~~~~'
   BAR6:
-    name: "Right"
+    name: "Tank 3"
     decimal_places: 1
     dbkey: FUELQ3
 
@@ -461,7 +482,7 @@ gauges:
 #            line_width_percent: 0.7
 #            text_gap: 8
   BAR19:
-    name: "Left"
+    name: "Tank 1"
     dbkey: FUELQ1
     decPlaces: 0
     show_units: false
@@ -471,7 +492,7 @@ gauges:
     small_font_percent: 0.060
 
   BAR20:
-    name: "Center"
+    name: "Tank 2"
     dbkey: FUELQ2
     decPlaces: 0
     show_units: false
@@ -481,8 +502,8 @@ gauges:
     small_font_percent: 0.060
 
   BAR21:
-    name: "Right"
-    dbkey: FUELQ1
+    name: "Tank 3"
+    dbkey: FUELQ3
     decPlaces: 0
     show_units: false
     bar_width_percent: 0.5
@@ -504,28 +525,15 @@ gauges:
     decimal_places: 0
     dbkey: MAP1
 
-  BAR23:
-    name: IT
-    decimal_places: 0
-    dbkey: MAP1
+  # BAR23-25 (IT, AFR, EGO) removed (AER-5179): fix-gateway defines no key
+  # for any of them, and all three were bound to MAP1.
 
-  BAR24:
-    name: AFR
-    decimal_places: 0
-    dbkey: MAP1
-
-  BAR25:
-    name: EGO
-    decimal_places: 0
-    dbkey: MAP1
-
-  BAR26:
-    name: MAP
-    decimal_places: 0
-    dbkey: MAP1
+  # BAR26 (a second MAP on MAP1) removed (AER-5321): the EMS Engine group
+  # showed it beside BAR22.
 
   BAR27:
-    name: IAT
+    # Reads CAT, cabin air temperature (AER-5321). Was labelled "IAT".
+    name: CAT
     decimal_places: 0
     dbkey: CAT
     temperature: true

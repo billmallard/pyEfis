@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "648964d",
+ "run": "local: PYTHONPATH=src python3 docs/aer-4460-evidence/render_range_rings.py docs/aer-4460-evidence (AER-4460, sandbox, DejaVu Sans)",
+ "device": "Linux x86_64 (offscreen)",
+ "sha256": "f23dc6c5a9be44f35ce44e707a69955701d16526b77b56ee682f562c6d4be172",
+ "created_utc": "2026-10-31T23:28:46Z"
+}

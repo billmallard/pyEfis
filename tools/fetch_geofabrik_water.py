@@ -442,6 +442,13 @@ def main():
                    help="passthrough to build_water_db.py: keep only "
                         "these OSM fclass values (e.g. water "
                         "reservoir). Omit to keep all.")
+    p.add_argument("--large-ring-cap", type=int, default=0,
+                   help="passthrough to build_water_db.py: size-scaled "
+                        "cap for large inland rings (AER-4669). Default 0 "
+                        "keeps every ring at --max-vertices.")
+    p.add_argument("--large-ring-area-km2", type=float, default=None,
+                   help="passthrough to build_water_db.py: ring area "
+                        "above which --large-ring-cap scales the cap.")
     p.add_argument("--build-only", action="store_true",
                    help="skip download/extract; only run the build "
                         "step using whatever shapefiles are already "
@@ -559,6 +566,10 @@ def main():
         cmd += ["--min-area-km2", str(args.min_area_km2)]
     if args.keep_fclass:
         cmd += ["--keep-fclass", *args.keep_fclass]
+    if args.large_ring_cap > 0:
+        cmd += ["--large-ring-cap", str(args.large_ring_cap)]
+        if args.large_ring_area_km2 is not None:
+            cmd += ["--large-ring-area-km2", str(args.large_ring_area_km2)]
     if args.ocean_shp:
         cmd += ["--ocean", args.ocean_shp]
     if args.ne_lakes:

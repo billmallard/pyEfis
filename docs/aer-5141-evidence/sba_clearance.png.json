@@ -1,0 +1,19 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "unknown",
+ "run": "local: palcap.py --offscreen --out out/sba_clearance.png --lat 34.33 --lon -119.90 --alt 3000 --heading 10 --pitch -4 --range 20 --timeout 150 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --terrain-only",
+ "device": "AZW MINI S",
+ "sha256": "dd43650e1904cb0651666c4846e10d78ea3acb4f4f188fd629ac73e4bf3477b5",
+ "created_utc": "2026-11-08T15:44:40Z",
+ "pyefis_rev": "unknown",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  800,
+  600
+ ],
+ "actual_size": [
+  800,
+  600
+ ],
+ "argv": "palcap.py --offscreen --out out/sba_clearance.png --lat 34.33 --lon -119.90 --alt 3000 --heading 10 --pitch -4 --range 20 --timeout 150 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --terrain-only"
+}

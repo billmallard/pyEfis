@@ -1,0 +1,13 @@
+fixgw=2977837 pyefis=3015777 pyEfis_head=9a681de branch=dev
+19:18:15 grabbed 1_live
+19:18:18 grabbed 2_live_b
+19:18:18 SIGSTOP fixgw
+19:18:21 grabbed 3_stopped_1s
+19:18:27 grabbed 4_stopped_6s
+19:18:34 grabbed 5_stopped_12s
+19:18:34 SIGCONT fixgw
+19:18:39 grabbed 6_resumed_4s
+PITCH 3.0
+ROLL -3.88
+ALT 4472.53
+IAS 110.0

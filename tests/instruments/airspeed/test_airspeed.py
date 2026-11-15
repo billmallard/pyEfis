@@ -226,6 +226,14 @@ def _rect_rgb(widget):
             for it in widget.scene.items() if isinstance(it, QGraphicsRectItem)]
 
 
+def _green_rect(widget):
+    """Scene rect of the single green normal-operating arc, found by colour."""
+    greens = [it for it in widget.scene.items() if isinstance(it, QGraphicsRectItem)
+              and it.brush().color().getRgb()[:3] == (0, 155, 0)]
+    assert len(greens) == 1
+    return greens[0].sceneBoundingRect()
+
+
 def _tape_y(widget, v):
     """The tape's own speed -> scene-y mapping."""
     tape_start = widget.max * widget.pph + widget.height() / 2
@@ -259,6 +267,27 @@ def test_as_cat_conventional_vspeed_arcs(fix, qtbot):
                  if isinstance(it, QGraphicsLineItem)
                  and it.pen().color().getRgb()[:3] == (255, 0, 0)]
     assert red_lines
+
+
+def test_as_cat_green_arc_starts_at_vs1(fix, qtbot):
+    """AS-TC-004 | AS-MARK-001 | The green normal-operating arc runs from VS1 (the IAS aux
+    "Vs", clean stall) up to VNO, not from VS0. sec 23.1545(b)(3); pyEfis #396."""
+    assert fix.db.get_item("IAS").get_aux_value("Vs") == 45   # fixture: Vs=45, Vs0=40
+    widget = _show_tape(qtbot)
+    r = _green_rect(widget)
+    assert r.bottom() == pytest.approx(_tape_y(widget, 45), abs=1)    # from VS1
+    assert r.top() == pytest.approx(_tape_y(widget, widget.Vno), abs=1)  # up to VNO
+
+
+def test_as_cat_green_arc_falls_back_to_vs0_without_vs(fix, qtbot):
+    """AS-TC-005 | AS-MARK-001 | With "Vs" unset the green arc's lower edge falls back to
+    VS0 rather than running down to 0. pyEfis #396."""
+    fix.db.get_item("IAS").set_aux_value("Vs", None)
+    widget = _show_tape(qtbot)
+    assert widget.Vs == 0
+    r = _green_rect(widget)
+    assert r.bottom() == pytest.approx(_tape_y(widget, 40), abs=1)    # VS0
+    assert r.top() == pytest.approx(_tape_y(widget, widget.Vno), abs=1)
 
 
 def test_as_cat_airspeed_invalid_annunciation(fix, qtbot):
@@ -298,3 +327,76 @@ def test_as_cat_high_speed_red_band(fix, qtbot):
     r = band.sceneBoundingRect()
     assert r.bottom() == pytest.approx(_tape_y(widget, widget.Vne), abs=3)  # from VNE
     assert r.top() == pytest.approx(0, abs=3)                               # up to tape top
+
+
+# --- CERT1d: Airspeed_Box quality flags and the failed-IAS rule for TAS -----
+
+def _show_box(qtbot, mode):
+    hmi.initialize({})
+    widget = airspeed.Airspeed_Box()
+    qtbot.addWidget(widget)
+    widget.resize(50, 50)
+    widget.show()
+    widget.setMode(mode)
+    return widget
+
+
+@pytest.mark.parametrize("mode,key", [(0, "TAS"), (1, "GS"), (2, "IAS")])
+@pytest.mark.parametrize("flag,text", [("fail", "XXX"), ("old", ""), ("bad", "")])
+def test_airspeed_box_flag_change_with_steady_value(fix, qtbot, mode, key, flag, text):
+    """CERT1d: a flag that changes while the value holds steady repaints the
+    box at once, and clearing it brings the number back."""
+    fix.db.set_value(key, 97)
+    widget = _show_box(qtbot, mode)
+    assert widget.valueText == "97"
+    widget.update = mock.Mock()
+    setattr(fix.db.get_item(key), flag, True)
+    assert widget.valueText == text
+    widget.update.assert_called()
+    setattr(fix.db.get_item(key), flag, False)
+    assert widget.valueText == "97"
+
+
+@pytest.mark.parametrize("flag", ["fail", "old"])
+def test_airspeed_box_no_tas_under_failed_or_old_ias(fix, qtbot, flag):
+    """CERT1d: in TAS mode the box shows no TAS under a failed or expired IAS,
+    the tape's TAS-box rule (CERT1b), and the number returns with IAS."""
+    fix.db.set_value("TAS", 120)
+    widget = _show_box(qtbot, 0)
+    assert widget.valueText == "120"
+    setattr(fix.db.get_item("IAS"), flag, True)
+    assert widget.valueText == "---"
+    fix.db.set_value("TAS", 121)
+    assert widget.valueText == "---"
+    setattr(fix.db.get_item("IAS"), flag, False)
+    assert widget.valueText == "121"
+
+
+def test_airspeed_box_tas_rule_scope(fix, qtbot):
+    """CERT1d: a suspect (bad) IAS does not blank TAS, as on the tape; GS does
+    not come off the pitot and keeps its number under a failed IAS; a failed
+    TAS itself still reads XXX."""
+    fix.db.set_value("TAS", 120)
+    fix.db.set_value("GS", 130)
+    widget = _show_box(qtbot, 0)
+    fix.db.get_item("IAS").bad = True
+    assert widget.valueText == "120"
+    fix.db.get_item("IAS").bad = False
+    fix.db.get_item("IAS").fail = True
+    widget.setMode(1)
+    assert widget.valueText == "130"
+    widget.setMode(0)
+    assert widget.valueText == "---"
+    fix.db.get_item("TAS").fail = True
+    assert widget.valueText == "XXX"
+
+
+def test_airspeed_box_constructed_under_failed_key(fix, qtbot):
+    """CERT1d: a box built while its key is already failed starts at XXX,
+    not at the frozen number."""
+    fix.db.set_value("TAS", 120)
+    fix.db.get_item("TAS").fail = True
+    hmi.initialize({})
+    widget = airspeed.Airspeed_Box()
+    qtbot.addWidget(widget)
+    assert widget.valueText == "XXX"

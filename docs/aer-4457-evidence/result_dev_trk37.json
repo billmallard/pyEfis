@@ -1,0 +1,35 @@
+{
+ "rev": "eed5e72c",
+ "w": 650,
+ "h": 1040,
+ "lat": 35.8,
+ "lon": -78.8,
+ "frames": [
+  {
+   "range_nm": 15.16,
+   "png": "frame_15nm.png",
+   "dark_fraction": 0.0445
+  },
+  {
+   "range_nm": 25.2,
+   "png": "frame_25nm.png",
+   "dark_fraction": 0.4754
+  },
+  {
+   "range_nm": 35.36,
+   "png": "frame_35nm.png",
+   "dark_fraction": 0.709
+  },
+  {
+   "range_nm": 40.0,
+   "png": "frame_40nm.png",
+   "dark_fraction": 0.7686
+  }
+ ],
+ "paint_ms": {
+  "p50": 11.396810412406921,
+  "p95": 15.039317309856415,
+  "max": 16.90616738051176,
+  "n": 39
+ }
+}

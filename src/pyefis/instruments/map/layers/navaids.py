@@ -12,14 +12,18 @@
 import math
 import sqlite3
 import threading
+import time
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
 
-from pyefis.instruments.map.layers import MapLayer, register_layer
+from pyefis.flightplan.waypoints import Waypoint
+from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
+                                           hit_distance, mark_drawn, qcolor,
+                                           range_bucket, register_layer)
 
-BLUE = QColor(70, 110, 200)
-DARKBLUE = QColor(40, 60, 130)
+BLUE = qcolor(STANDARD_PALETTE["navaid"])
+DARKBLUE = qcolor(STANDARD_PALETTE["fix"])
 
 
 class _DbLayer(MapLayer):
@@ -42,7 +46,15 @@ class _DbLayer(MapLayer):
     def _key(self, x):
         snap = max(1.0, x.range_nm * self._SNAP_FRAC)
         return (round(x.lat0 * 60.0 / snap), round(x.lon0 * 60.0 / snap),
-                round(x.range_nm, 1))
+                range_bucket(x.range_nm))
+
+    def is_settled(self, x):
+        if not self._path or x.range_nm > self._MAX_RANGE:
+            return True
+        key = self._key(x)
+        with self._lock:
+            snap = self._snap
+        return snap is not None and snap[0] == key
 
     def _snapshot(self, x, max_range):
         if not self._path or x.range_nm > max_range:
@@ -52,12 +64,17 @@ class _DbLayer(MapLayer):
             snap = self._snap
             if snap is not None and snap[0] == key:
                 return snap[1]
+            if getattr(x, "defer_render", False):
+                return snap[1] if snap else None
             # Don't refresh an in-flight job for the same window: the
             # tuple carries the raw pose, so a same-key repost makes
             # the worker's latest-wins check discard the finished
             # snapshot every time the aircraft is moving (#89).
             if self._job is None or self._job[0] != key:
                 self._job = (key, x.lat0, x.lon0, x.range_nm)
+                perf = getattr(self._owner, "perf", None)
+                if perf is not None:
+                    perf.layer(self.id).jobs_requested += 1
             if self._worker is None:
                 self._worker = threading.Thread(
                     target=self._worker_loop,
@@ -65,8 +82,16 @@ class _DbLayer(MapLayer):
                 self._worker.start()
         return snap[1] if snap else None
 
+    def _painted_rows(self, x):
+        """FP10 hit-test: the rows the last ``paint()`` drew from, under
+        the same range gate -- never a new query."""
+        if not self._path or x.range_nm > self._MAX_RANGE:
+            return []
+        with self._lock:
+            snap = self._snap
+        return snap[1] if snap else []
+
     def _worker_loop(self):
-        import time
         last = None
         con = None
         while True:
@@ -75,25 +100,47 @@ class _DbLayer(MapLayer):
             if job is None or job == last:
                 time.sleep(0.05)
                 continue
-            try:
-                if con is None:
-                    con = sqlite3.connect(self._path)
-                rows = self._query(con, *job[1:])
-                with self._lock:
-                    if self._job == job:
-                        self._snap = (job[0], rows)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "map %s collect failed", self.id)
-                with self._lock:
-                    if self._job == job:
-                        self._job = None   # let the next paint re-request
+            con = self._process_job(job, con)
             last = job
             try:
                 self._owner.update()
             except RuntimeError:
                 return
+
+    def _process_job(self, job, con):
+        """MP6 instrumentation around the same latest-wins collect/publish
+        the other layers use (AER-588): a finished collect is always
+        published, even if a newer job replaced ``_job`` while it ran --
+        see terrain.py's ``_process_job`` for the rationale. That race is
+        still counted as ``jobs_superseded`` (published, but already
+        stale by the time it landed). Returns the sqlite connection so
+        the loop can keep reusing it."""
+        perf = getattr(self._owner, "perf", None)
+        ls = perf.layer(self.id) if perf is not None else None
+        if ls is not None:
+            ls.jobs_started += 1
+        t0 = time.perf_counter()
+        try:
+            if con is None:
+                con = sqlite3.connect(self._path)
+            rows = self._query(con, *job[1:])
+            ms = (time.perf_counter() - t0) * 1000.0
+            with self._lock:
+                superseded = self._job != job
+                self._snap = (job[0], rows)
+            if ls is not None:
+                ls.record_render_ms(ms)
+                ls.jobs_published += 1
+                if superseded:
+                    ls.jobs_superseded += 1
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "map %s collect failed", self.id)
+            with self._lock:
+                if self._job == job:
+                    self._job = None   # let the next paint re-request
+        return con
 
     @staticmethod
     def _bbox(lat0, lon0, range_nm):
@@ -108,6 +155,7 @@ class NavaidsLayer(_DbLayer):
     label = "Navaids"
     z = 40
     default_on = True
+    _MAX_RANGE = 160.0
 
     def _query(self, con, lat0, lon0, range_nm):
         a, b, c, d = self._bbox(lat0, lon0, range_nm)
@@ -116,8 +164,19 @@ class NavaidsLayer(_DbLayer):
             "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
             (a, b, c, d)).fetchall()
 
+    def hit(self, x, px, py, tol_px):
+        out = []
+        for nid, ntype, freq, lat, lon in self._painted_rows(x):
+            d = hit_distance(x, lat, lon, px, py, tol_px)
+            if d is not None and nid:
+                # Same type rule as flightplan.waypoints.WaypointIndex.
+                wtype = "ndb" if "NDB" in (ntype or "").upper() else "vor"
+                out.append((d, Waypoint(id=nid, type=wtype, lat=lat, lon=lon,
+                                        freq=freq or None)))
+        return out
+
     def paint(self, p, x):
-        rows = self._snapshot(x, 160.0)
+        rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
             return
         r = max(5.0, min(12.0, x.w * 0.014))
@@ -125,17 +184,18 @@ class NavaidsLayer(_DbLayer):
         f.setPixelSize(max(8, int(x.w * 0.022)))
         p.setFont(f)
         show_freq = x.range_nm <= 40
+        blue = qcolor(getattr(x, "palette", STANDARD_PALETTE)["navaid"])
         for nid, ntype, freq, lat, lon in rows:
             c = x.to_screen(lat, lon)
             if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
                 continue
-            pen = QPen(BLUE)
+            pen = QPen(blue)
             pen.setWidthF(max(1.2, r * 0.18))
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
             t = (ntype or "").upper()
             if "NDB" in t:
-                p.setPen(QPen(BLUE, 1))
+                p.setPen(QPen(blue, 1))
                 for ring, npts in ((r * 0.55, 8), (r, 12)):
                     for i in range(npts):
                         ang = 2 * math.pi * i / npts
@@ -143,7 +203,7 @@ class NavaidsLayer(_DbLayer):
                             QPointF(c.x() + ring * math.cos(ang),
                                     c.y() + ring * math.sin(ang)),
                             r * 0.07, r * 0.07)
-                p.setBrush(QBrush(BLUE))
+                p.setBrush(QBrush(blue))
                 p.drawEllipse(c, r * 0.14, r * 0.14)
             else:
                 # VOR family: hexagon + centre dot.
@@ -152,13 +212,14 @@ class NavaidsLayer(_DbLayer):
                             c.y() + r * math.sin(math.radians(a2)))
                     for a2 in range(0, 360, 60)])
                 p.drawPolygon(hexa)
-                p.setBrush(QBrush(BLUE))
+                p.setBrush(QBrush(blue))
                 p.drawEllipse(c, r * 0.14, r * 0.14)
             label = nid + ((" " + freq) if (show_freq and freq) else "")
             p.setPen(QPen(QColor(220, 230, 255)))
             p.drawText(QRectF(c.x() - 70, c.y() + r + 1, 140,
                               f.pixelSize() + 4),
                        Qt.AlignmentFlag.AlignHCenter, label)
+            mark_drawn(x, nid, c, c.y() + r + 1 + f.pixelSize() + 4, True)
 
 
 @register_layer
@@ -167,6 +228,7 @@ class FixesLayer(_DbLayer):
     label = "Waypoints"
     z = 38
     default_on = False
+    _MAX_RANGE = 20.0           # range-gated: fixes are dense
 
     def _query(self, con, lat0, lon0, range_nm):
         a, b, c, d = self._bbox(lat0, lon0, range_nm)
@@ -175,8 +237,16 @@ class FixesLayer(_DbLayer):
             "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
             "LIMIT 400", (a, b, c, d)).fetchall()
 
+    def hit(self, x, px, py, tol_px):
+        out = []
+        for fid, lat, lon in self._painted_rows(x):
+            d = hit_distance(x, lat, lon, px, py, tol_px)
+            if d is not None and fid:
+                out.append((d, Waypoint(id=fid, type="fix", lat=lat, lon=lon)))
+        return out
+
     def paint(self, p, x):
-        rows = self._snapshot(x, 20.0)     # range-gated: fixes are dense
+        rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
             return
         s = max(3.0, x.w * 0.008)
@@ -184,11 +254,13 @@ class FixesLayer(_DbLayer):
         f.setPixelSize(max(7, int(x.w * 0.018)))
         p.setFont(f)
         p.setBrush(Qt.BrushStyle.NoBrush)
+        pal = getattr(x, "palette", STANDARD_PALETTE)
+        fix_pen = QPen(qcolor(pal["fix"]), pal["fix_width"])
         for fid, lat, lon in rows:
             c = x.to_screen(lat, lon)
             if not (0 < c.x() < x.w and 0 < c.y() < x.h):
                 continue
-            p.setPen(QPen(DARKBLUE, 1.2))
+            p.setPen(fix_pen)
             p.drawPolygon(QPolygonF([
                 QPointF(c.x(), c.y() - s),
                 QPointF(c.x() + s * 0.87, c.y() + s * 0.5),
@@ -197,6 +269,7 @@ class FixesLayer(_DbLayer):
             p.drawText(QRectF(c.x() - 50, c.y() + s + 1, 100,
                               f.pixelSize() + 4),
                        Qt.AlignmentFlag.AlignHCenter, fid)
+            mark_drawn(x, fid, c, c.y() + s + 1 + f.pixelSize() + 4, True)
 
 
 @register_layer
@@ -205,6 +278,7 @@ class AirwaysLayer(_DbLayer):
     label = "Airways"
     z = 25
     default_on = False
+    _MAX_RANGE = 160.0
 
     def _query(self, con, lat0, lon0, range_nm):
         a, b, c, d = self._bbox(lat0, lon0, range_nm)
@@ -215,10 +289,10 @@ class AirwaysLayer(_DbLayer):
             (a, b, c, d, a, b, c, d)).fetchall()
 
     def paint(self, p, x):
-        rows = self._snapshot(x, 160.0)
+        rows = self._snapshot(x, self._MAX_RANGE)
         if not rows:
             return
-        pen = QPen(QColor(90, 130, 210, 170))
+        pen = QPen(qcolor(getattr(x, "palette", STANDARD_PALETTE)["airway"]))
         pen.setWidthF(max(1.0, x.w * 0.003))
         f = QFont(x.font_family)
         f.setPixelSize(max(7, int(x.w * 0.018)))

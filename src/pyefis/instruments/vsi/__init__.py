@@ -265,26 +265,25 @@ class VSI_PFD(QWidget):
         # Draw the Black Background
         p.fillRect(0, 0, w, h, QColor(0,0,0,40))
 
-        # Insert Background
-        p.drawPixmap(0, 0, self.background)
-
         # VS-invalid annunciation (AC 25-11B Table 4-6: loss / misleading
         # vertical speed = Major). On fail remove the moving dot and show a red
         # X so a frozen dot cannot be read as a valid vertical speed; on old/bad
         # grey the dot instead of magenta. Same fail/old/bad convention the VSI
-        # dial and tape already follow.
-        if self.item.fail:
-            pen = QPen(QColor(Qt.GlobalColor.red))
-            pen.setWidth(max(2, int(w * 0.08)))
-            p.setPen(pen)
-            m = w * 0.30
-            cx, cy = w / 2.0, h / 2.0
-            p.drawLine(QPointF(cx - m, cy - m), QPointF(cx + m, cy + m))
-            p.drawLine(QPointF(cx - m, cy + m), QPointF(cx + m, cy - m))
+        # dial and tape already follow. CERT1a: the X spans the whole tape and
+        # the scale is blanked, like the airspeed and altitude tapes. CERT1b:
+        # an expired (old) VS is frozen at its last value, so it gets the X
+        # too (it used to grey the dot and leave it at the frozen rate); a
+        # suspect (bad) VS keeps its dot, amber, inside an amber frame.
+        if helpers.tape_invalid(self.item):
+            helpers.draw_failed_tape_x(p, QRectF(0, 0, w, h))
             return
 
-        dot_color = (QColor(Qt.GlobalColor.gray)
-                     if (self.item.old or self.item.bad)
+        # Insert Background
+        p.drawPixmap(0, 0, self.background)
+        if self.item.bad:
+            helpers.draw_suspect_tape_frame(p, QRectF(0, 0, w, h))
+
+        dot_color = (QColor(helpers.SUSPECT_TAPE_COLOR) if self.item.bad
                      else QColor(Qt.GlobalColor.magenta))
 
         #p.drawEllipse(QPointF(w+4, h/2), 4.0, 4.0)
@@ -325,6 +324,18 @@ class VSI_PFD(QWidget):
 
 
 class AS_Trend_Tape(QGraphicsView):
+    """Vertical bar showing the rate of change of IAS, in kt/s.
+
+    Subscribes to the IAS FIX item itself (G74 / pyEfis #403: it used to
+    connect nothing, so a placed tape sat frozen at zero). The rate is the
+    IAS change across the last ``trend_window`` seconds; the bar grows up
+    from the centre line when accelerating and down when decelerating,
+    reaching the top/bottom edge at ``max_rate`` kt/s. IAS only emits on a
+    change, so a periodic sample keeps the window moving while IAS holds
+    and lets an old acceleration age out. The bar is withheld while IAS is
+    bad, failed or old rather than drawn from data we do not trust.
+    """
+
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
         super(AS_Trend_Tape, self).__init__(parent)
         self.setStyleSheet("border: 0px")
@@ -333,66 +344,98 @@ class AS_Trend_Tape(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._airspeed = 0
-        self._airspeed_diff = 0
-        self._airspeed_trend = []
-        self.freq = 10
+        self.trend_window = 3.0     # seconds of IAS history the rate spans
+        self.max_rate = 5.0         # kt/s at full scale (bar meets the edge)
+        self.sample_period = 0.1    # seconds between samples while IAS holds
+        self._clock = time.monotonic
+        self._history = []          # (time, ias) pairs inside the window
+        self._rate = 0.0
+        self.scene = None
+
+        self.item = fix.db.get_item("IAS")
+        self._airspeed = self.item.value
+        self._bad = self.item.bad
+        self._old = self.item.old
+        self._fail = self.item.fail
+        self.item.valueChanged[float].connect(self.setAS_Trend)
+        self.item.badChanged[bool].connect(self.setBad)
+        self.item.oldChanged[bool].connect(self.setOld)
+        self.item.failChanged[bool].connect(self.setFail)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._sample)
+        self._timer.start(int(self.sample_period * 1000))
 
     def resizeEvent(self, event):
         w = self.width()
         h = self.height()
-        self.pph = 10
         self.zeroPen = QPen(QColor(Qt.GlobalColor.white))
         self.zeroPen.setWidth(4)
-
         self.scene = QGraphicsScene(0, 0, w, h)
-
-        self.scene.addRect(0, 0, w, h,
-                           QPen(QColor(Qt.GlobalColor.black)), QBrush(QColor(Qt.GlobalColor.black)))
-
-        self.scene.addLine(0, h / 2,
-                           w, h / 2,
-                           self.zeroPen)
-
         self.setScene(self.scene)
+        self.redraw()
 
     def redraw(self):
+        if self.scene is None:
+            return
+        w = self.width()
+        h = self.height()
         self.scene.clear()
-        self.scene.addRect(0, 0, self.width(), self.height(),
+        self.scene.addRect(0, 0, w, h,
                            QPen(QColor(Qt.GlobalColor.black)), QBrush(QColor(Qt.GlobalColor.black)))
+        self.scene.addLine(0, h / 2, w, h / 2, self.zeroPen)
+        self.centerOn(self.scene.width() / 2, h / 2)
 
-        self.scene.addLine(0, self.height() / 2,
-                           self.width(), self.height() / 2,
-                           self.zeroPen)
-
-        self.centerOn(self.scene.width() / 2,
-                      self.height() / 2)
-
-        self._airspeed_diff = (sum(self._airspeed_trend) / len(
-                               self._airspeed_trend)) * 60
-
-        self.scene.addRect(self.width() / 2, self.height() / 2,
-                           self.width() / 2 + 5,
-                           self._airspeed_diff * -self.pph,
+        # Options arrive by setattr and may be quoted YAML scalars.
+        max_rate = float(self.max_rate)
+        if self._bad or self._fail or self._old or max_rate <= 0:
+            return
+        frac = max(-1.0, min(1.0, self._rate / max_rate))
+        bar = frac * h / 2
+        if bar == 0:
+            return
+        # QGraphicsScene.addRect wants a positive height: anchor the rect at
+        # its top edge, above the centre line when accelerating.
+        top = h / 2 - max(bar, 0)
+        self.scene.addRect(w / 2, top, w / 2 - 1, abs(bar),
                            QPen(QColor(Qt.GlobalColor.white)), QBrush(QColor(Qt.GlobalColor.white)))
 
-        self.setScene(self.scene)
+    def _record(self, airspeed):
+        now = self._clock()
+        self._history.append((now, airspeed))
+        cutoff = now - float(self.trend_window)
+        while len(self._history) > 1 and self._history[0][0] < cutoff:
+            self._history.pop(0)
+        t0, v0 = self._history[0]
+        t1, v1 = self._history[-1]
+        dt = t1 - t0
+        self._rate = (v1 - v0) / dt if dt >= 0.1 else 0.0
+        self.redraw()
+
+    def _sample(self):
+        # IAS holding steady emits no valueChanged; sample it anyway.
+        self._record(self._airspeed)
+
+    def getAS_Trend(self):
+        return self._rate
 
     def setAS_Trend(self, airspeed):
-        if airspeed != self._airspeed:
-            if len(self._airspeed_trend) == self.freq:
-                del self._airspeed_trend[0]
-            self._airspeed_trend.append(airspeed - self._airspeed)
-            self._airspeed = airspeed
-            self.redraw()
-        elif airspeed == self._airspeed:
-            if len(self._airspeed_trend) == self.freq:
-                del self._airspeed_trend[0]
-            self._airspeed_trend.append(airspeed - self._airspeed)
-            self._airspeed = airspeed
-            self.redraw()
+        self._airspeed = airspeed
+        self._record(airspeed)
 
-    altimeter = property(setAS_Trend)
+    airspeed = property(getAS_Trend, setAS_Trend)
+
+    def setBad(self, bad):
+        self._bad = bad
+        self.redraw()
+
+    def setOld(self, old):
+        self._old = old
+        self.redraw()
+
+    def setFail(self, fail):
+        self._fail = fail
+        self.redraw()
 
 
 class Alt_Trend_Tape(QGraphicsView):
@@ -482,17 +525,23 @@ class Alt_Trend_Tape(QGraphicsView):
         self.pph = float(remaining_height) / (maxvs * 2)
 
         tapePen = QPen(QColor(Qt.GlobalColor.white))
+        # The graduations, hidden as one under a failed VS (CERT1a).
+        self._scale_items = []
         for i in range(maxvs, -maxvs - 1, -minor):
             y = self.y_offset(i)
             if i % numbered == 0:
-                self.scene.addLine(w_2 + 5, y, w, y, tapePen)
+                self._scale_items.append(
+                    self.scene.addLine(w_2 + 5, y, w, y, tapePen))
                 t = self.scene.addText(str(int(i / 100)))
                 t.setFont(f)
                 t.setDefaultTextColor(QColor(Qt.GlobalColor.white))
                 t.setX(0)
                 t.setY(y - t.boundingRect().height() / 2)
+                self._scale_items.append(t)
             else:
-                self.scene.addLine(w_2 + 10, y, w, y, tapePen)
+                self._scale_items.append(
+                    self.scene.addLine(w_2 + 10, y, w, y, tapePen))
+        self._apply_fail_look()
         self.setScene(self.scene)
         if not self._signals_connected:
             # resizeEvent fires repeatedly; connect the FIX signals once.
@@ -524,7 +573,7 @@ class Alt_Trend_Tape(QGraphicsView):
             top = self.zero_y
             bottom = y
         height = bottom - top
-        if self._fail:
+        if self._invalid():
             if self.indicator_line is not None:
                 self.scene.removeItem(self.indicator_line)
                 self.indicator_line = None
@@ -544,13 +593,10 @@ class Alt_Trend_Tape(QGraphicsView):
     vs = property(setVs)
 
     def setVsText(self):
-        if self._fail:
+        if self._invalid():
             self.vstext.setPlainText("XXX")
             self.vstext.setDefaultTextColor (QColor(Qt.GlobalColor.red))
         elif self._bad:
-            self.vstext.setPlainText("")
-            self.vstext.setDefaultTextColor (QColor(255, 150, 0))
-        elif self._old:
             self.vstext.setPlainText("")
             self.vstext.setDefaultTextColor (QColor(255, 150, 0))
         else:
@@ -562,7 +608,8 @@ class Alt_Trend_Tape(QGraphicsView):
     def setBad(self, b):
         if self._bad != b:
             self._bad = b
-            self.redraw()
+            self._redraw_now()
+            self.viewport().update()
     bad = property(getBad, setBad)
 
     def getOld(self):
@@ -570,7 +617,9 @@ class Alt_Trend_Tape(QGraphicsView):
     def setOld(self, b):
         if self._old != b:
             self._old = b
-            self.redraw()
+            self._apply_fail_look()
+            self._redraw_now()
+            self.viewport().update()
     old = property(getOld, setOld)
 
     def getFail(self):
@@ -578,5 +627,47 @@ class Alt_Trend_Tape(QGraphicsView):
     def setFail(self, b):
         if self._fail != b:
             self._fail = b
-            self.redraw()
+            self._apply_fail_look()
+            self._redraw_now()
+            self.viewport().update()
     fail = property(getFail, setFail)
+
+    def _redraw_now(self):
+        """A quality-flag change bypasses redraw()'s update_period rate limit.
+        Rate-limited, a flag change landing inside the window was dropped, and
+        with a steady VS no later update came: the readout stayed XXX after the
+        gateway recovered, or kept the last value on onset (CERT1a bench)."""
+        self.last_update_time = 0
+        self.redraw()
+
+    def _invalid(self):
+        """Failed, or expired (old): the VS must not be read (CERT1b)."""
+        return bool(self._fail or self._old)
+
+    def _apply_fail_look(self):
+        """CERT1a: blank the graduations and the VS bar under a failed VS.
+        The header (the "VSI" label and the red XXX readout) and the face stay.
+        CERT1b: the same under an expired (old) VS."""
+        hide = self._invalid()
+        for it in getattr(self, "_scale_items", ()):
+            it.setVisible(not hide)
+        if self.indicator_line is not None:
+            self.indicator_line.setVisible(not hide)
+
+    def paintEvent(self, event):
+        super(Alt_Trend_Tape, self).paintEvent(event)
+        invalid = self._invalid()
+        if not (invalid or self._bad) or not hasattr(self, "top_margin"):
+            return
+        # CERT1a: the red X spans the scale below the header. CERT1b: a
+        # suspect (bad) VS frames that same area in amber instead.
+        h = self.viewport().height()
+        top = min(float(self.top_margin), float(h))
+        rect = QRectF(0, top, self.viewport().width() - self.RIGHT_MARGIN,
+                      h - top)
+        p = QPainter(self.viewport())
+        if invalid:
+            helpers.draw_failed_tape_x(p, rect)
+        else:
+            helpers.draw_suspect_tape_frame(p, rect)
+        p.end()

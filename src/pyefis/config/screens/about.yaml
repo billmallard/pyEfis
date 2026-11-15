@@ -1,0 +1,22 @@
+# About / System screen (BACKLOG L4).
+#
+# The pyEfis notice, the software version, and the notice carried by each
+# installed data pack. Built-in: gui loads this bundled definition when a
+# config does not define an "About" screen, so it is always reachable (the
+# About button on the Data Status screen, or screen cycling) with no reboot.
+About:
+  module: pyefis.screens.screenbuilder
+  title: About
+  layout:
+    rows: 100
+    columns: 100
+  instruments:
+    - type: about
+      row: 0
+      column: 0
+      span:
+        rows: 100
+        columns: 100
+      options:
+        back_screen: DataStatus
+        # status_path defaults to ~/.makerplane/pyefis/status.json

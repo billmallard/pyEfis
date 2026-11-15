@@ -23,7 +23,10 @@ from pyefis.instruments import airspeed
 from pyefis.instruments import altimeter
 from pyefis.instruments import button
 from pyefis.instruments import checklist
+from pyefis.instruments import flight_plan
+from pyefis.instruments import nav_status
 from pyefis.instruments import data_status
+from pyefis.instruments import about
 from pyefis.instruments import gauges
 from pyefis.instruments import hsi
 from pyefis.instruments import listbox
@@ -33,7 +36,6 @@ from pyefis.instruments import tc
 from pyefis.instruments import vsi
 from pyefis.instruments import weston
 from pyefis.instruments import wind
-from pyefis.instruments.ai.VirtualVfr import VirtualVfr
 from pyefis.screens.instrument_spec import (
     Binding, ContainerSlot, InstrumentSpec, Prop, FixValue)
 
@@ -76,7 +78,9 @@ def build_altimeter_tape(
     kwargs = {}
     for k in ("dbkey", "maxalt", "majorDiv", "minorDiv", "total_decimals",
               "font_mask", "round_to", "numeric_box", "font_scale",
-              "show_trend", "trend_lookahead"):
+              "show_trend", "trend_lookahead", "show_baro", "altsel_box",
+              "alt_bug_enabled", "alt_bug_color", "alt_bug_alert_color",
+              "alt_bug_dbkey"):
         if k in opts:
             kwargs[k] = opts[k]
     return altimeter.Altimeter_Tape(
@@ -99,21 +103,32 @@ def build_atitude_indicator(
     return widget
 
 
+def _build_svs_cfg(opts):
+    """Merge the legacy nested ``svs:`` dict with the flat ``svs_*`` editor
+    options (svs_<key> -> <key>). Pulled out of build_virtual_vfr so a test
+    can walk the declared svs_* prop table and confirm the stripped name it
+    produces here is the same name svs.py's config.get() actually reads --
+    see AER-680 (svs_perf_log was declared/documented but read unstripped)."""
+    svs_cfg = dict(opts.get("svs") or {})
+    svs_cfg.update({k[4:]: v for k, v in opts.items() if k.startswith("svs_")})
+    return svs_cfg
+
+
 def build_virtual_vfr(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = config.get("options", {}) or {}
-    widget = VirtualVfr(screen, font_percent=font_percent, font_family=font_family)
-    # VirtualVfr inherits set_svs_config from AI; SVS config flows through
-    # the same way regardless of which widget type the screen uses.
+    # VVFR1 (AER-5417): the legacy CIFP screen-space overlay (VirtualVfr.py)
+    # is gone; virtual_vfr is the attitude widget plus synthetic vision. The
+    # type name stays because shipped screens and user configs name it.
+    widget = ai.AI(screen, font_percent=font_percent, font_family=font_family)
     widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
     widget.symbol_color = opts.get("symbol_color", "yellow")
     # SVS config: the legacy nested `svs:` dict, overlaid with the flat svs_*
     # editor options (svs_<key> -> <key>). Only configure SVS when it is
     # actually enabled (or a legacy block is present), so panels that don't use
     # synthetic vision are untouched.
-    svs_cfg = dict(opts.get("svs") or {})
-    svs_cfg.update({k[4:]: v for k, v in opts.items() if k.startswith("svs_")})
+    svs_cfg = _build_svs_cfg(opts)
     if opts.get("svs") or svs_cfg.get("enabled"):
         widget.set_svs_config(svs_cfg)
     return widget
@@ -127,11 +142,13 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
             screen,
             config_file=os.path.join(screen.parent.config_path, opts["config"]),
             font_family=font_family,
+            font_percent=font_percent,
         )
     # Inline: the instrument's options ARE the button definition (authored in the
     # configurator). Needs at least a dbkey to bind to.
     if opts.get("dbkey"):
-        return button.Button(screen, config=dict(opts), font_family=font_family)
+        return button.Button(screen, config=dict(opts), font_family=font_family,
+                             font_percent=font_percent)
     raise ValueError(
         "button needs options: either 'config:' (an external YAML) or inline "
         "fields including 'dbkey:'")
@@ -147,6 +164,7 @@ def build_tab_section(
         tabs=config.get("tabs") or [],
         default_tab=opts.get("default_tab", 0),
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 
@@ -163,21 +181,39 @@ def build_data_status(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = (config or {}).get("options", {}) or {}
-    kwargs = {"parent": screen, "font_family": font_family}
+    kwargs = {"parent": screen, "font_family": font_family,
+              "font_percent": font_percent}
     if "status_path" in opts:
         kwargs["status_path"] = opts["status_path"]
     if "continue_screen" in opts:
         kwargs["continue_screen"] = opts["continue_screen"]
     if "update_command" in opts:
         kwargs["update_command"] = opts["update_command"]
+    if "about_screen" in opts:
+        kwargs["about_screen"] = opts["about_screen"]
     return data_status.DataStatus(**kwargs)
+
+
+def build_about(
+    screen, config, font_percent=None, font_family=None, replace=None
+):
+    opts = (config or {}).get("options", {}) or {}
+    kwargs = {"parent": screen, "font_family": font_family}
+    if "status_path" in opts:
+        kwargs["status_path"] = opts["status_path"]
+    if "back_screen" in opts:
+        kwargs["back_screen"] = opts["back_screen"]
+    if "ack_path" in opts:
+        kwargs["ack_path"] = opts["ack_path"]
+    return about.AboutSystem(**kwargs)
 
 
 def build_data_annunciation(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
     opts = (config or {}).get("options", {}) or {}
-    kwargs = {"parent": screen, "font_family": font_family}
+    kwargs = {"parent": screen, "font_family": font_family,
+              "font_percent": font_percent}
     if "status_path" in opts:
         kwargs["status_path"] = opts["status_path"]
     if "target_screen" in opts:
@@ -191,6 +227,7 @@ def build_listbox(screen, config, font_percent=None, font_family=None, replace=N
         lists=config["options"]["lists"],
         replace=replace,
         font_family=font_family,
+        font_percent=font_percent,
     )
 
 
@@ -204,8 +241,25 @@ def build_checklist(screen, config, font_percent=None, font_family=None, replace
         screen,
         checklists=opts.get("checklists"),
         font_family=font_family,
+        font_percent=font_percent,
     )
 
+
+def build_flight_plan(screen, config, font_percent=None, font_family=None, replace=None):
+    # font_percent is the common option (already normalised to a fraction by
+    # screenbuilder_preferences). The widget reads it as a multiplier on its
+    # built-in text sizes, not a fraction of its height -- see
+    # FlightPlan._font_scale.
+    return flight_plan.FlightPlan(screen, font_family=font_family,
+                                  font_percent=font_percent)
+
+
+
+def build_nav_status(screen, config, font_percent=None, font_family=None, replace=None):
+    # font_percent is a multiplier on the chip's height-derived text size, the
+    # same reading build_flight_plan gives it.
+    return nav_status.NavStatus(screen, font_family=font_family,
+                                font_percent=font_percent)
 
 # Every instrument type is migrated -- these legacy lookup tables are populated
 # entirely from REGISTRY by the fold-back below. They remain (empty here) for
@@ -257,7 +311,7 @@ def _ai_overlay_props():
     its default matches the widget. The tick-width / bank-size knobs only take
     effect when tick_autoscale is off (otherwise they scale with the font)."""
     return [
-        Prop("pitchDegreesShown", "number", default=30,
+        Prop("pitchDegreesShown", "number", default=50,
              label="Pitch field of view (deg)",
              help="total vertical pitch span shown"),
         Prop("minorDiv", "integer", default=1, label="Minor division (deg)",
@@ -267,7 +321,7 @@ def _ai_overlay_props():
         Prop("numberedDiv", "integer", default=10,
              label="Numbered division (deg)",
              help="pitch interval at which ladder lines get a number"),
-        Prop("visiblePitchAngle", "integer", default=15,
+        Prop("visiblePitchAngle", "integer", default=25,
              label="Pitch label range (deg)",
              help="ladder marks fade out beyond this from current pitch"),
         Prop("pitchOpacity", "number", default=0.6, minimum=0.0, maximum=1.0,
@@ -299,6 +353,21 @@ def _ai_overlay_props():
         Prop("bankAngleMaximum", "integer", default=25,
              label="Max indicated bank (deg)",
              help="largest bank angle marked on the bank arc"),
+        Prop("excessiveBankDeg", "integer", default=60, minimum=30,
+             maximum=65, step=1, label="Excessive-bank caution (deg)",
+             help="the bank scale and pointer turn amber past this bank; "
+                  "set it above the steepest turn this aircraft is flown "
+                  "in on purpose (60 clears the 45 and 50 deg steep turns)"),
+        Prop("bankBugTolerance", "number", default=5, minimum=1, maximum=10,
+             step=1, label="Bank bug tolerance (+/- deg)",
+             help="half-width of the cyan band around the target-bank bug "
+                  "(BANKBUG); the ACS steep turns are flown to +/-5"),
+        Prop("touch_edit", "boolean", default=True,
+             label="Touch to set bank bug",
+             help="touch the bank scale, then turn the knob to set the "
+                  "target-bank bug (BANKBUG) in 5 deg steps, from off up to "
+                  "60 or the excessive-bank caution if lower; push or the "
+                  "timeout ends the edit"),
         Prop("bankMarkSize", "integer", default=10, label="Bank tick size (px)",
              help="length of the bank-arc ticks (auto-scale off)"),
         Prop("bank_position", "number", default=50, minimum=0, maximum=100,
@@ -330,7 +399,8 @@ def _ai_overlay_props():
              help="length of the horizon heading ticks (px)"),
         Prop("horizon_heading_color", "color", default="#ffffff",
              label="Heading mark colour",
-             help="colour of the horizon heading ticks and labels"),
+             help="colour of the horizon heading ticks and labels",
+             token="ink.primary"),
     ]
 
 
@@ -342,7 +412,9 @@ def _svs_props():
     dev = " (rendered on the device; not shown in the editor preview)"
     return [
         Prop("svs_enabled", "boolean", default=False, apply="special",
-             label="Synthetic vision enabled", help="master on/off" + dev),
+             label="Synthetic vision enabled",
+             help="master on/off" + dev + ". Off shows the plain "
+                  "sky/ground attitude view"),
         Prop("svs_tile_path", "string", default="", apply="special",
              label="Terrain tile path",
              help="SRTM3 HGT tile directory on the device"),
@@ -361,8 +433,6 @@ def _svs_props():
              help="green at/above this height over terrain"),
         Prop("svs_clearance_yellow_ft", "number", default=500, apply="special",
              label="Caution clearance (ft)", help="amber above this; red below"),
-        Prop("svs_terrain_fill", "boolean", default=True, apply="special",
-             label="Fill terrain", help="off = wireframe" + dev),
         Prop("svs_terrain_grid", "number", default=0.35, minimum=0.0, maximum=1.0,
              apply="special", label="Terrain grid", help=dev.strip()),
         Prop("svs_terrain_texture", "number", default=0.35, minimum=0.0,
@@ -385,6 +455,55 @@ def _svs_props():
         Prop("svs_highway_db_path", "string", default="", apply="special",
              label="Highway DB path",
              help="highway database on the device (optional)"),
+        # Road ribbons (RD1, issue #161): the highways overlay draws as an
+        # extruded true-scale casing + fill ribbon instead of a 1 px line.
+        # Defaults reproduce today's class/tier/20 NM behaviour -- these
+        # only change the look. Per-class width table (svs_road_widths_m,
+        # metres per OSM way) is config-only (a dict has no simple editor
+        # widget); see docs/wiki/Widgets-Attitude-and-SVS.md.
+        Prop("svs_road_color", "color", default="#535353", apply="special",
+             label="Road colour", help="ribbon fill colour" + dev),
+        Prop("svs_road_casing_color", "color", default="#4a4a4a",
+             apply="special", label="Road casing colour",
+             help="darker outline drawn under the fill" + dev),
+        Prop("svs_road_casing_m", "number", default=2.5, minimum=0.0,
+             maximum=20.0, apply="special", label="Road casing width (m)",
+             help="casing half-width add-on over the class width" + dev),
+        Prop("svs_road_min_px", "number", default=1.5, minimum=0.5,
+             maximum=10.0, step=0.1, apply="special",
+             label="Road minimum width (px)",
+             help="screen-space floor so distant ribbons never drop below "
+                  "this many pixels wide" + dev),
+        Prop("svs_road_subdivide_m", "number", default=150.0, minimum=20.0,
+             maximum=1000.0, apply="special",
+             label="Road subdivide length (m)",
+             help="segments longer than this, within subdivide range, are "
+                  "split so the ribbon follows rolling terrain" + dev),
+        Prop("svs_road_subdivide_nm", "number", default=4.0, minimum=0.0,
+             maximum=20.0, apply="special",
+             label="Road subdivide range (NM)",
+             help="subdivision only applies this close to the aircraft" +
+                  dev),
+        Prop("svs_road_lift_ft", "number", default=2.0, minimum=0.0,
+             maximum=50.0, apply="special", label="Road lift (ft)",
+             help="height above sampled terrain the ribbon is drawn at" +
+                  dev),
+        Prop("svs_road_max_vertices", "integer", default=400_000,
+             minimum=10_000, maximum=1_000_000, apply="special",
+             label="Road vertex cap",
+             help="hard cap on extruded vertices per array (casing/fill "
+                  "each); over the cap, far-tier ramps are dropped first, "
+                  "then far-tier trunks" + dev),
+        Prop("svs_papi", "boolean", default=True, apply="special",
+             label="PAPI lights",
+             help="draw the installed PAPI at its published glide path angle "
+                  "and side, from the NASR airports pack (only where one is "
+                  "installed)" + dev),
+        Prop("svs_perf_log", "boolean", default=False, apply="special",
+             label="Perf: log summary",
+             help="print an SVS per-frame profiler summary every 2s "
+                  "(collector/draw timings) to the log -- mirrors "
+                  "map_perf_log. Dev/bench diagnostic; off by default" + dev),
     ]
 
 
@@ -405,7 +524,8 @@ _register(InstrumentSpec(
                   "none hides the symbol (SVS-as-background) "
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
-             help="colour of the fixed aircraft reference symbol"),
+             help="colour of the fixed aircraft reference symbol",
+             token="nav.ownship"),
         Prop("symbol_scale", "number", default=1.0, minimum=0.3, maximum=3.0,
              step=0.05, label="Symbol scale",
              help="multiplies the reference symbol size -- wingspan and "
@@ -420,6 +540,16 @@ _register(InstrumentSpec(
     # editor preview reads like a real panel).
     preview={"pitch": -2.0, "roll": 4.0, "slip": 1.0},
 ))
+
+# Bind a gauge to a fuel tank on the aircraft profile (FUEL1 brief section 5).
+# The configurator resolves the stored tank id at serve time into the plain
+# `dbkey: FUELQ<slot>` and `name: <label>` options, so the widget is unchanged;
+# a tank removed from the profile is served `unbound: true` instead.
+def _tank_prop():
+    return Prop("tank", "aircraft_ref", source="aircraft.fuel.tanks",
+                resolves={"dbkey": "slot_key", "name": "label"},
+                label="Tank", help="Bind to a tank from the aircraft page")
+
 
 _register(InstrumentSpec(
     type="arc_gauge",
@@ -444,6 +574,7 @@ _register(InstrumentSpec(
         Prop("name_location", "enum", default="top", enum=["top", "right"],
              label="Name location",
              help="where the name label sits relative to the gauge"),
+        _tank_prop(),
     ],
     # The colour-band thresholds and the value range are FIX-database values
     # (item min/max + aux), set in fix-gateway, not in the panel editor (#64).
@@ -579,6 +710,30 @@ _register(InstrumentSpec(
              help="show the boxed numeric altitude over the tape"),
         Prop("font_scale", "number", default=1.0, label="Scale-number font scale", apply="special",
              help="multiplier on the tape scale-number font size"),
+        Prop("show_baro", "boolean", default=True, label="Baro setting box", apply="special",
+             help="touch-selectable altimeter setting box at the bottom of the "
+                  "tape (on for an ALT tape unless the screen has its own BARO "
+                  "readout; off for a VS tape)"),
+        # Selected altitude (pyEfis #310). Defaults follow the FIX key: on for
+        # an ALT tape, off for a VS tape (the two share this class).
+        Prop("altsel_box", "boolean", default=True,
+             label="Selected-altitude box", apply="special",
+             help="touch-settable ALTSEL box at the top of the tape "
+                  "(on for an ALT tape, off for a VS tape)"),
+        Prop("alt_bug_enabled", "boolean", default=True,
+             label="Altitude bug", apply="special",
+             help="draw the selected-altitude bug on the scale "
+                  "(follows the box unless set)"),
+        Prop("alt_bug_color", "color", default="#00ffff",
+             label="Altitude bug color", apply="special",
+             help="colour of the selected-altitude box text and bug"),
+        Prop("alt_bug_alert_color", "color", default="#ffb000",
+             label="Altitude alert color", apply="special",
+             help="box text and bug colour while fix-gateway flags an "
+                  "altitude deviation (the key's annunciate flag)"),
+        Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
+             label="Selected-altitude key", apply="special",
+             help="FIX key holding the selected altitude (default ALTSEL)"),
     ],
     preview={"value": 3500},
 ))
@@ -613,26 +768,31 @@ _register(InstrumentSpec(
         Prop("gsi_enabled", "boolean", default=True, label="Glideslope",
              help="show the vertical glideslope needle (GSI)"),
         Prop("fg_color", "color", default="#ffffff", label="Foreground",
-             help="compass card, ring and text colour"),
+             help="compass card, ring and text colour",
+             token="ink.primary"),
         Prop("bg_color", "color", default="#000000", label="Background",
-             help="compass-disc fill colour"),
+             help="compass-disc fill colour",
+             token="surface.base"),
         # Fills the compass disc (not the box); 0 = transparent over the SVS/PFD.
         _bg_opacity_prop(),
         Prop("needle_color", "color", default="#ffff00", label="Needle color",
-             help="colour of the CDI/GSI deviation needles"),
+             help="colour of the CDI/GSI deviation needles",
+             token="nav.ownship"),
         Prop("needle_width", "integer", default=3, minimum=1, maximum=10,
              step=1, label="Needle width",
              help="width of the CDI/GSI deviation needles (px)"),
         Prop("course_color", "color", default="#ff00ff",
              label="Course pointer color",
-             help="selected-course pointer (the magenta CRS triangle)"),
+             help="selected-course pointer (the magenta CRS triangle)",
+             token="nav.course"),
         Prop("source_auto_color", "boolean", default=True,
              label="Source auto-color",
              help="colour the course pointer and CDI by nav source -- magenta "
                   "for GPS, the VOR/LOC colour for a VOR/LOC source (from NAVSRC)"),
         Prop("vloc_color", "color", default="#00ff00", label="VOR/LOC color",
              help="course pointer / CDI colour for a VOR or localizer source "
-                  "when source auto-color is on"),
+                  "when source auto-color is on",
+             token="state.valid"),
         Prop("source_label_enabled", "boolean", default=True,
              label="Source label",
              help="show the nav-source annunciation (GPS / VLOC1 / VLOC2, or "
@@ -641,13 +801,22 @@ _register(InstrumentSpec(
              label="Heading bug",
              help="show the cyan heading bug at the selected heading (HEADBUG)"),
         Prop("heading_bug_color", "color", default="#00ffff",
-             label="Heading bug color", help="heading-bug colour"),
+             label="Heading bug color", help="heading-bug colour",
+             token="nav.reference"),
+        Prop("touch_edit", "boolean", default=True,
+             label="Touch to set HDG / CRS",
+             help="touch the HDG or CRS readout, then turn the knob to set it: "
+                  "HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the "
+                  "selected VLOC source (not editable on GPS). Inner ring 1 "
+                  "deg, outer ring 10 deg; push syncs HDG to the heading or "
+                  "centres the CDI on CRS"),
         Prop("track_indicator_enabled", "boolean", default=True,
              label="Track diamond",
              help="show the magenta GPS ground-track diamond (TRACK), "
                   "above the speed gate"),
         Prop("track_color", "color", default="#ff00ff",
-             label="Track diamond color", help="GPS ground-track diamond colour"),
+             label="Track diamond color", help="GPS ground-track diamond colour",
+             token="nav.course"),
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
              step=1, label="Track min speed (kt)",
              help="hide the track diamond below this groundspeed (kt)"),
@@ -685,17 +854,21 @@ _register(InstrumentSpec(
                   "decluttered of the rear rose)"),
         Prop("bearing1_enabled", "boolean", default=False,
              label="Bearing pointer 1",
-             help="show the single-bar RMI bearing needle (BRG1), pointing to "
-                  "the pointer-1 source (VOR1/VOR2/GPS via BRG1SRC)"),
+             help="make the single-bar RMI bearing needle (BRG1) available. "
+                  "It starts Off; the pilot steps it through each source that "
+                  "is not the CDI's (VOR1/VOR2/GPS via BRG1SRC) with the BRG "
+                  "tab or its corner label"),
         Prop("bearing2_enabled", "boolean", default=False,
              label="Bearing pointer 2",
-             help="show the double-bar RMI bearing needle (BRG2), pointing to "
-                  "the pointer-2 source (VOR1/VOR2/GPS via BRG2SRC)"),
+             help="make the double-bar RMI bearing needle (BRG2) available. "
+                  "It starts Off; the pilot steps it through each source that "
+                  "is not the CDI's (VOR1/VOR2/GPS via BRG2SRC) with the BRG "
+                  "tab or its corner label"),
         Prop("bearing_color", "color", default="#00ffff",
              label="Bearing pointer color",
-             help="generic bearing-needle colour used when the source is "
-                  "unknown; a needle with a known source is coloured by it "
-                  "(magenta GPS / green VOR)"),
+             help="colour of both bearing needles, their labels and the BRG "
+                  "tab, whatever the source (source colour is the CDI's)",
+             token="nav.reference"),
     ],
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
              "brg1": 30, "brg2": 250},
@@ -741,6 +914,7 @@ def _bar_gauge_props():
              help="append the FIX key's engineering units to the readout"),
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
+        _tank_prop(),
     ]
 
 
@@ -828,20 +1002,24 @@ _register(InstrumentSpec(
              maximum=100, step=1, label="Prefix font size (%)",
              help="prefix height as a percent of the widget height"),
         Prop("prefix_color", "color", default="#ffffff", label="Prefix colour",
-             help="colour of the prefix label"),
+             help="colour of the prefix label",
+             token="ink.secondary"),
         Prop("value_color", "color", default="#ffffff", label="Value colour",
-             help="colour of the data value (good/normal state)"),
+             help="colour of the data value (good/normal state)",
+             token="ink.primary"),
         # Optional visual box at the widget bounds (border + background); the box
         # size is the widget rect itself. border_width 0 + bg_opacity 0 = no box.
         Prop("border_color", "color", default="#ffffff", label="Border colour",
-             help="colour of the box border"),
+             help="colour of the box border",
+             token="line.border"),
         Prop("border_width", "integer", default=0, minimum=0, maximum=20, step=1,
              label="Border width (px)",
              help="box border thickness in pixels; 0 = no border"),
         Prop("border_opacity", "integer", default=100, minimum=0, maximum=100,
              step=1, label="Border opacity (%)", help="box border opacity"),
         Prop("bg_color", "color", default="#000000", label="Background colour",
-             help="box background fill colour"),
+             help="box background fill colour",
+             token="surface.base"),
         Prop("bg_opacity", "integer", default=0, minimum=0, maximum=100, step=1,
              label="Background opacity (%)",
              help="box background opacity; 0 = transparent (no fill)"),
@@ -912,7 +1090,8 @@ _register(InstrumentSpec(
              help="numbered graduation every N ft/min (labels print in "
                   "hundreds: 2400 ft/min prints as 24)"),
         Prop("bg_color", "color", default="#000000", label="Background",
-             help="tape face colour"),
+             help="tape face colour",
+             token="surface.base"),
         _bg_opacity_prop(),
     ],
 ))
@@ -924,11 +1103,12 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: moving_map.MovingMap(
                  screen, font_family=font_family)),
-    dbkeys=["LAT", "LONG", "TRACKM"],
+    dbkeys=["LAT", "LONG", "TRACKM", "TRACK"],
     properties=[
         Prop("range_nm", "number", default=10.0, minimum=1, maximum=500,
              label="Range (NM)",
-             help="distance from the ownship anchor to the top edge",
+             help="distance from the ownship anchor to the top edge (to "
+                  "the compass arc in ND mode)",
              bindable=Binding("index_ladder", key_option="range_key",
                               ladder_option="range_ladder")),
         Prop("range_key", "fixkey", default="",
@@ -939,6 +1119,16 @@ _register(InstrumentSpec(
         Prop("range_ladder", "string", default="2,5,10,20,40,80,160",
              label="Range ladder",
              help="comma list of ranges the range buttons step through"),
+        Prop("zoom_rail", "boolean", default=False,
+             label="Zoom rail",
+             help="one-finger range control under the status chip: a "
+                  "vertical rail with one detent per range ladder rung, "
+                  "zoom in at the top. Tap +/- to step one rung, tap the "
+                  "rail to jump to a rung, or drag the thumb. Its touch "
+                  "zone is 20 mm wide and claims every touch inside it"),
+        Prop("zoom_rail_side", "enum", default="left",
+             enum=["left", "right"], label="Zoom rail side",
+             help="map edge the zoom rail sits on"),
         Prop("orientation", "enum", default="track_up",
              enum=["track_up", "north_up"], label="Orientation",
              help="track-up rotates the world; north-up rotates ownship",
@@ -947,26 +1137,103 @@ _register(InstrumentSpec(
              label="Orientation control key",
              help="optional FIX key that switches orientation at runtime "
                   "(0=track_up, 1=north_up). Empty = fixed"),
+        Prop("nd_mode", "enum", default="off",
+             enum=["off", "expanded", "ctr"],
+             label="ND mode",
+             help="off = the plain moving map; expanded = Navigation "
+                  "Display EXPANDED MAP: track-up compass arc at the "
+                  "selected range, ownship low (82% down), corner data "
+                  "blocks and a vertical deviation scale from GSI/GSV at "
+                  "the right edge; ctr = CTR MAP: the same with a full "
+                  "compass rose and ownship at the centre. Overrides "
+                  "orientation and ownship position while on",
+             bindable=Binding("enum", key_option="nd_mode_key")),
+        Prop("nd_mode_key", "fixkey", default="",
+             label="ND mode control key",
+             help="optional FIX key that switches the ND mode at runtime "
+                  "(0=off, 1=expanded, 2=ctr). Empty = fixed"),
         Prop("touch_gestures", "boolean", default=True,
              label="Touch gestures",
              help="two-finger pinch=zoom, drag=pan, twist=rotate; mouse wheel "
-                  "zooms and left-drag pans / Shift-drag rotates on desktop, "
-                  "and a tap re-centres. Off = touch/wheel/drag input ignored"),
+                  "zooms and left-drag pans / Shift-drag rotates on desktop; "
+                  "a tap selects (map pointer, Direct To / Insert banner) and "
+                  "a double-tap or the CTR chip re-centres. Off = touch/wheel/"
+                  "drag/tap input ignored"),
         Prop("gesture_timeout", "number", default=30, minimum=0, maximum=600,
              label="Gesture auto-revert (s)",
              help="seconds after a two-finger pan/rotate before the view "
                   "re-locks to ownship and the configured orientation. "
-                  "0 = stay where left until a tap or an HMI recenter"),
+                  "0 = stay where left until a double-tap, the CTR chip or "
+                  "an HMI recenter"),
+        Prop("gesture_frame_rate", "number", default=30, minimum=10,
+             maximum=60, label="Gesture frame rate (Hz)",
+             help="repaint clock rate while a pinch/pan/rotate gesture is "
+                  "live (zoom_by/pan_by/rotate_by mark a frame dirty rather "
+                  "than repainting per event); the normal frame rate "
+                  "applies the rest of the time"),
+        Prop("pinch_rotate_threshold_deg", "number", default=15, minimum=0,
+             maximum=90, label="Pinch rotate threshold (deg)",
+             help="cumulative twist a pinch must reach before it rotates "
+                  "the view; below this a pinch is zoom-only, so a couple "
+                  "of degrees of finger wobble does not nudge orientation "
+                  "(#202)"),
+        Prop("pinch_pan_threshold_px", "number", default=20, minimum=0,
+             maximum=200, label="Pinch pan threshold (px)",
+             help="centroid movement (screen px) a pinch must reach before "
+                  "it pans the view; below this a pinch is zoom-only (#202)"),
         Prop("ownship_position", "number", default=50, minimum=0,
              maximum=100, label="Ownship position (%)",
              help="ownship anchor, percent up from the bottom "
                   "(30 = classic look-ahead offset)"),
         Prop("symbol_color", "color", default="#ffff00",
              label="Ownship colour",
-             help="colour of the top-down ownship symbol"),
+             help="colour of the top-down ownship symbol",
+             token="nav.ownship"),
+        Prop("map_style", "enum", default="standard",
+             enum=["standard", "nav_only"], label="Map style",
+             help="standard = terrain map; nav_only = terrain relief off "
+                  "(whatever layer_terrain says) and the nav layers "
+                  "repainted for a plain black background. Water follows "
+                  "layer_water, every other layer keeps its own switch"),
+        Prop("layer_water", "boolean", default=True,
+             label="Layer: water (nav_only)",
+             help="under map_style nav_only: lakes and coastline as a flat "
+                  "dark-blue fill, no relief. Under standard, water is part "
+                  "of the terrain image and this switch is not used"),
         Prop("layer_range_rings", "boolean", default=True,
              label="Layer: range rings",
-             help="concentric half/full range rings with labels"),
+             help="concentric range rings around ownship with distance "
+                  "labels (half and full range unless range ring "
+                  "fractions says otherwise)"),
+        Prop("range_ring_fractions", "string", default="0.5,1",
+             label="Range ring fractions",
+             help="comma list of ring radii as fractions of the current "
+                  "range (1 = the top edge). 0.5,1 = half and full range "
+                  "(ND convention); 0.25,0.5,0.75,1 = four even rings. "
+                  "Values outside 0-2 are ignored"),
+        Prop("range_ring_labels", "boolean", default=True,
+             label="Range ring labels",
+             help="print each ring's distance on the ring. The current "
+                  "range stays in the top-left status chip either way"),
+        Prop("range_ring_label_angle", "integer", default=0, minimum=0,
+             maximum=359, step=1, label="Range ring label position (deg)",
+             help="where the labels sit on each ring, clockwise from "
+                  "straight up on the screen: 0 = top, 90 = right, "
+                  "180 = bottom, 270 = left. Move it off a data block"),
+        Prop("range_ring_color", "color", default="#ffffff",
+             label="Range ring colour",
+             help="ring and ring-label colour"),
+        Prop("range_ring_opacity", "integer", default=55, minimum=0,
+             maximum=100, step=1, label="Range ring opacity (%)",
+             help="ring and ring-label opacity"),
+        Prop("range_ring_width", "number", default=0, minimum=0,
+             maximum=10, step=0.5, label="Range ring width (px)",
+             help="ring line width; 0 = auto (0.2% of the map width, at "
+                  "least 1 px)"),
+        Prop("range_ring_label_size", "integer", default=0, minimum=0,
+             maximum=48, step=1, label="Range ring label size (px)",
+             help="ring label font pixel size; 0 = auto (2.5% of the map "
+                  "width, at least 8 px)"),
         Prop("layer_terrain", "boolean", default=True,
              label="Layer: terrain",
              help="hillshaded hypsometric terrain relief"),
@@ -987,7 +1254,12 @@ _register(InstrumentSpec(
         Prop("road_color", "color", default="#c0c0c0",
              label="Road colour",
              help="road line colour (arterial classes draw thinner and "
-                  "slightly transparent)"),
+                  "slightly transparent)",
+             token="map.road"),
+        Prop("road_casing_color", "color", default="#5a5a5a",
+             label="Road casing colour",
+             help="outline drawn under a road once zoomed in far enough "
+                  "that it draws at its true width (a few NM and in)"),
         Prop("layer_rivers", "boolean", default=True,
              label="Layer: rivers",
              help="rivers/waterways as lines from the rivers pack (#92), "
@@ -1000,7 +1272,8 @@ _register(InstrumentSpec(
         Prop("river_color", "color", default="#4a6d8c",
              label="River colour",
              help="waterway line colour (smaller waterways draw thinner "
-                  "and slightly transparent)"),
+                  "and slightly transparent)",
+             token="map.water"),
         Prop("layer_airports", "boolean", default=True,
              label="Layer: airports",
              help="FAA sectional airport symbols with ident labels "
@@ -1023,6 +1296,17 @@ _register(InstrumentSpec(
              label="Navaid db path",
              help="navaids.sqlite (tools/build_navaid_db.py; on the Pi "
                   "/data/makerplane-data/navaids/current/navaids.sqlite)"),
+        Prop("layer_flight_plan", "boolean", default=True,
+             label="Layer: flight plan",
+             help="active route: past/active/future legs, waypoint symbols, "
+                  "direct-to and the suspended-at-MAP extended final course "
+                  "(FP6; no database, reads the FIX flight-plan bus)"),
+        Prop("layer_traffic", "boolean", default=True,
+             label="Layer: traffic",
+             help="ADS-B traffic from the FIX TFC block: relative altitude "
+                  "(needs PALT), trend arrow, alerted targets flash yellow, "
+                  "degraded targets drawn open, stale ones grey; TFC FAIL "
+                  "when a working receiver stops (no database)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = "
@@ -1037,6 +1321,26 @@ _register(InstrumentSpec(
              maximum=1024, step=16, label="Water vertex cap",
              help="per-polygon vertex cap for map water rasterization "
                   "(higher = more coastline/lake detail per rebuild)"),
+        Prop("water_raster", "enum", default="numpy",
+             enum=["numpy", "qt"], label="Water raster path",
+             help="numpy = vectorised even-odd scanline fill (MP5, "
+                  "default); qt = legacy per-vertex QPointF/QPolygonF/"
+                  "drawPath path, kept for one release of A/B"),
+        Prop("water_polygon_max_nm", "number", default=20.0, minimum=0,
+             maximum=320, step=5, label="Water polygon cutover (NM)",
+             help="above this range the crisp coastline/lake polygon "
+                  "overlay is skipped in favour of the terrain pack's "
+                  "water-mask channel (one gather, MP10c); packs with no "
+                  "mask at the chosen level always draw polygons"),
+        Prop("map_perf_log", "boolean", default=False,
+             label="Perf: log summary",
+             help="print a MapPerfStats summary every 2s (frames, paint "
+                  "ms p50/p95/max, per-layer job counts, water counts, "
+                  "settle latency, GUI-thread gap probe) -- mirrors "
+                  "svs_perf_log. Dev/bench diagnostic; off by default"),
+        Prop("map_perf_overlay", "boolean", default=False,
+             label="Perf: overlay chip",
+             help="draw a small on-screen perf stats chip (dev only)"),
     ],
 ))
 
@@ -1103,9 +1407,11 @@ _register(InstrumentSpec(
              help="backing touchscreen-button key (TSBTN...); the configurator "
                   "assigns it automatically"),
         Prop("bg_color", "color", default="#101418", apply="special",
-             label="Background colour", help="button fill colour"),
+             label="Background colour", help="button fill colour",
+             token="surface.raised"),
         Prop("fg_color", "color", default="#00ffff", apply="special",
-             label="Text colour", help="button label colour"),
+             label="Text colour", help="button label colour",
+             token="accent"),
         Prop("transparent", "boolean", default=False, apply="special",
              label="Transparent background",
              help="draw no fill so what is behind the button shows through"),
@@ -1157,21 +1463,149 @@ _register(InstrumentSpec(
              help="optional name so a Button's 'checklist ...' actions can "
                   "target this checklist; blank = every checklist on the screen"),
         Prop("text_color", "color", default="#ffffff", label="Item colour",
-             help="colour of an un-acknowledged item's challenge text"),
+             help="colour of an un-acknowledged item's challenge text",
+             token="ink.primary"),
         Prop("response_color", "color", default="#00ffff",
              label="Response colour",
-             help="colour of the challenge-response value (the right-hand text)"),
+             help="colour of the challenge-response value (the right-hand text)",
+             token="accent"),
         Prop("done_color", "color", default="#00ff00",
              label="Acknowledged colour",
-             help="colour of an item once it has been acknowledged"),
+             help="colour of an item once it has been acknowledged",
+             token="state.valid"),
         Prop("current_color", "color", default="#ffaa00",
              label="Current-row colour",
              help="highlight colour of the current row while the encoder is "
-                  "controlling the checklist"),
+                  "controlling the checklist",
+             token="state.caution"),
         Prop("section_color", "color", default="#aaaaaa",
              label="Section colour",
-             help="colour of section subheaders and the progress line"),
+             help="colour of section subheaders and the progress line",
+             token="ink.muted"),
     ],
+))
+
+# `flight_plan` (FP5a/b, billmallard/pyEfis#185, #187): an app-like
+# instrument, same "builds in isolation, construct-never-raises" shape as
+# checklist, but reads the FP1 route block via flightplan.fixbridge.FixBridge
+# instead of taking its state inline -- missing FIX keys just mean
+# `available=False` (annunciate, read-only), never a raise. Touch,
+# physical-keyboard and encoder (FP5c) input are all wired. `encoder_order`
+# is not declared as a Prop -- no encoder instrument declares it yet; it is
+# read straight from screen YAML (screenbuilder_options.apply_options) until
+# #97 exports encoder options to the schema.
+_register(InstrumentSpec(
+    type="flight_plan",
+    label="Flight Plan",
+    category="navigation",
+    builder=build_flight_plan,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=["FPLCOUNT", "FPLNAME", "FPLSEQ", "FPLSTATE", "FPLACTLEG", "FPLAPR",
+            "FPLINTEG"],
+    properties=[
+        Prop("flightplan_dir", "string", default="", label="Flight plan directory",
+             help="directory for stored routes/user waypoints/recent list "
+                  "(<dir>/routes/*.json, user_waypoints.json, recent.json); "
+                  "blank disables catalog Store and FastFind's Recent/User tabs"),
+        Prop("nasr_db_path", "string", default="", label="Airport db path",
+             help="NASR airports.sqlite for FastFind/nearest airport lookup "
+                  "(same path as the moving map's nasr_db_path)"),
+        Prop("navaid_db_path", "string", default="", label="Navaid db path",
+             help="navaids.sqlite for FastFind/nearest navaid and fix lookup "
+                  "(same path as the moving map's navaid_db_path)"),
+        Prop("procedures_db_path", "string", default="", label="Procedures db path",
+             help="procedures-conus.pack for SID/STAR/approach lookup (PA5; "
+                  "on the Pi /data/makerplane-data/procedures/current/"
+                  "procedures.sqlite)"),
+        Prop("hold_speed_kt", "number", default=90.0, minimum=40.0, maximum=250.0,
+             step=5.0, label="Hold speed (kt)",
+             help="speed a hold coded in minutes is turned into a distance at "
+                  "when the PROC page loads it (one minute at 90 kt = 1.5 nm); "
+                  "the bus carries no leg time"),
+        Prop("columns", "string", default="DTK,DIS,CUM", label="Columns",
+             help="comma-separated FPL page data columns, in order; choices "
+                  "DTK, DIS, CUM, ETE, ETA"),
+        Prop("keypad", "boolean", default=True, label="On-screen keypad",
+             help="show the gloved-finger on-screen keypad on the Entry/"
+                  "Direct To Waypoint pages and any text/lat-lon prompt"),
+        Prop("keyboard", "boolean", default=False, label="Physical keyboard",
+             help="let a physical keyboard drive an open ident-entry surface "
+                  "(Entry page, Direct To page's Waypoint tab, or a text/"
+                  "lat-lon prompt) while it is open"),
+        Prop("default_page", "enum", default="fpl", enum=["fpl", "entry"],
+             label="Default page", help="page shown when the instrument first "
+                  "paints"),
+        Prop("hmi_group", "string", default="", label="HMI group",
+             help="optional name so 'flightplan page'/'flightplan direct to' "
+                  "HMI actions can target this instrument; blank = every "
+                  "flight_plan instrument on the screen"),
+        Prop("active_color", "color", default="#ff00ff", label="Active leg colour",
+             help="colour of the active (TO) leg's row"),
+        Prop("future_color", "color", default="#ffffff", label="Future leg colour",
+             help="colour of upcoming (not yet flown) legs"),
+        Prop("past_color", "color", default="#808080", label="Past leg colour",
+             help="colour of already-flown legs"),
+        Prop("row_height_mm", "number", default=14.0, minimum=6.0, maximum=30.0,
+             step=0.5, label="List row height (mm)",
+             help="physical height of one flight-plan row on the glass. "
+                  "Geometry, not text size: it sets the row pitch, the type "
+                  "icon and the row font. A taller pane shows MORE legs at "
+                  "this height rather than fewer, larger ones. Needs "
+                  "screenDiagonalInches to be correct for the device."),
+    ],
+    preview={"name": "KSBA-GVO-KSMX",
+             "waypoints": [{"id": "KSBA"}, {"id": "GVO"}, {"id": "KSMX"}]},
+))
+
+# `nav_status` (FP7, billmallard/pyEfis#189): the GNX 375 from-to-next field
+# (guide 3-41/3-42) as a one-line chip -- WPFROM > WPNAME > WPNEXT, the
+# FPLSTATE badge, optional WPDIS/WPETE and FPLPHASE, the loaded procedure's
+# type and AIRAC cycle (amber EXPIRED once it has expired; PA9) and FPLTURN.
+# Reads engine outputs only; undefined keys read as absent (underscores), never
+# a raise. A tap fires
+# the `flightplan page fpl` HMI action (after `show screen <tap_screen>` when
+# set), so a PFD-corner chip can open the plan on the flight-plan screen.
+_register(InstrumentSpec(
+    type="nav_status",
+    label="Nav Status",
+    category="navigation",
+    builder=build_nav_status,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=["FPLSTATE", "FPLPHASE", "WPFROM", "WPNAME", "WPNEXT", "WPDIS",
+            "WPETE", "FPLAPRTYPE", "FPLDBCYC", "FPLTURN"],
+    properties=[
+        Prop("show_distance", "boolean", default=True, label="Show distance",
+             help="distance to the TO waypoint (WPDIS), nm"),
+        Prop("show_ete", "boolean", default=True, label="Show ETE",
+             help="time to the TO waypoint (WPETE), H:MM; '--:--' below 30 kt "
+                  "ground speed"),
+        Prop("show_phase", "boolean", default=True, label="Show phase",
+             help="flight phase / CDI scale annunciation (FPLPHASE): ENR, "
+                  "TERM, LNAV, ... green; LOI yellow"),
+        Prop("show_procedure", "boolean", default=True, label="Show procedure",
+             help="loaded approach type (FPLAPRTYPE) and AIRAC cycle "
+                  "(FPLDBCYC); the cycle and EXPIRED in amber once it has "
+                  "expired"),
+        Prop("show_turn", "boolean", default=True, label="Show turn",
+             help="TURN L / TURN R while the engine flies the coded turn that "
+                  "opens a DF leg (FPLTURN)"),
+        Prop("hmi_group", "string", default="", label="HMI group",
+             help="hmi_group of the flight_plan instrument a tap opens; blank "
+                  "= every flight_plan instrument"),
+        Prop("tap_screen", "string", default="", label="Tap screen",
+             help="screen to show before opening the FPL page on a tap (the "
+                  "screen holding the flight_plan instrument); blank = stay on "
+                  "this screen"),
+        Prop("active_color", "color", default="#ff00ff",
+             label="Active waypoint colour",
+             help="colour of the TO waypoint ident (WPNAME)"),
+        Prop("text_color", "color", default="#ffffff", label="Text colour",
+             help="colour of the FROM/NEXT idents, separators and data"),
+    ],
+    preview={"state": "LEG", "from": "KSBA", "to": "GVO", "next": "RZS",
+             "dis": "12.4 NM", "ete": "0:06", "phase": "TERM"},
 ))
 
 _register(InstrumentSpec(
@@ -1189,6 +1623,21 @@ _register(InstrumentSpec(
 ))
 
 _register(InstrumentSpec(
+    type="about",
+    label="About / System",
+    category="system",
+    builder=build_about,
+    builds_in_isolation=False,
+    # Built-in like data_status (gui injects the bundled About screen), so it
+    # is not a user-placed instrument.
+    hidden=True,
+    properties=[
+        Prop("back_screen", "string", default="DataStatus",
+             label="Back screen", help="screen the Back button returns to"),
+    ],
+))
+
+_register(InstrumentSpec(
     type="data_annunciation",
     label="Data Annunciation",
     category="system",
@@ -1202,11 +1651,9 @@ _register(InstrumentSpec(
     label="Virtual VFR / Synthetic Vision",
     category="attitude",
     builder=build_virtual_vfr,
-    # Deduped from the legacy default (which listed PITCH twice). The widget
-    # subscribes to COURSE, not HEAD, for its heading item (VirtualVfr.py --
-    # it keys the value internally under 'HEAD' but reads the COURSE FIX key);
-    # the default listed the wrong key (#46).
-    dbkeys=["PITCH", "LAT", "LONG", "COURSE", "ALT", "ROLL", "ALAT", "TAS"],
+    # The attitude keys plus the position keys the SVS camera reads. COURSE
+    # went with the legacy CIFP overlay (VVFR1, AER-5417), its only reader.
+    dbkeys=["PITCH", "LAT", "LONG", "ALT", "ROLL", "ALAT", "TAS"],
     svs_capable=True,
     offscreen_renderable=False,   # QOpenGLWidget SVS terrain; hangs offscreen
     builds_in_isolation=False,    # GL widget needs a real screen
@@ -1221,7 +1668,8 @@ _register(InstrumentSpec(
                   "none hides the symbol (SVS-as-background) "
                   "(g1000/gi275 remain accepted in YAML for back-compat)"),
         Prop("symbol_color", "color", default="#ffff00", label="Symbol colour",
-             help="colour of the fixed aircraft reference symbol"),
+             help="colour of the fixed aircraft reference symbol",
+             token="nav.ownship"),
         Prop("symbol_scale", "number", default=1.0, minimum=0.3, maximum=3.0,
              step=0.05, label="Symbol scale",
              help="multiplies the reference symbol size -- wingspan and "
@@ -1260,15 +1708,19 @@ _register(InstrumentSpec(
     # schema so panels that already place it still load and render.
     hidden=True,
     properties=[
-        # Default fg is light grey (#aaaaaa) -- the widget default was the
-        # darker Qt "gray" (#808080); aligned for readability + a matching
-        # editor default. font_size is intentionally NOT exposed: the widget
+        # Default fg is ink.primary (#ffffff), the colour of every other primary
+        # readout and of the value_text that replaces this widget (style
+        # contract S2). It was light grey (#aaaaaa) on ink.muted, a role for
+        # inactive text, while the shipped SVS include already overrode it to
+        # white. font_size is intentionally NOT exposed: the widget
         # recomputes it from the box size on resize (fit_to_mask), so it was a
         # no-op option. Use the common font_percent to scale instead.
-        Prop("fg_color", "color", default="#aaaaaa", label="Foreground",
-             help="heading-text colour"),
+        Prop("fg_color", "color", default="#ffffff", label="Foreground",
+             help="heading-text colour",
+             token="ink.primary"),
         Prop("bg_color", "color", default="#000000", label="Background",
-             help="background-box fill colour"),
+             help="background-box fill colour",
+             token="surface.base"),
         _bg_opacity_prop(),
     ],
 ))
@@ -1284,6 +1736,21 @@ _register(InstrumentSpec(
              help="tab index shown on screen load/power-up -- always this "
                   "fixed tab, never the last one selected (v1, see "
                   "pyEfis#131 open question 2)"),
+        Prop("tab_position", "enum", default="top",
+             enum=["top", "bottom", "left", "right"], label="Tab bar edge",
+             help="which edge of the container the tab bar sits on; "
+                  "left/right also rotate the tab labels"),
+        # Unset (None) means no override -- the tab bar reads the inherited
+        # central-palette legibility floor (screenbuilder.py Screen.__init__)
+        # instead. Consistent with how HSI/tapes expose fg_color/bg_color,
+        # except those always carry a concrete default; here None lets a
+        # panel differ from the floor only when it chooses to.
+        Prop("fg_color", "color", default=None, label="Tab bar foreground",
+             help="tab label colour; unset inherits the screen's legible "
+                  "default"),
+        Prop("bg_color", "color", default=None, label="Tab bar background",
+             help="tab bar fill colour; unset inherits the screen's "
+                  "legible default"),
     ],
     containers=[
         ContainerSlot(

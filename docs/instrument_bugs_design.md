@@ -61,6 +61,11 @@ Home: `src/pyefis/instruments/helpers/` (e.g. `bugs.py`).
    Matches the shipped `heading_bug_enabled` / `heading_bug_color` on
    the HSI.
 
+**Status (2026-10-26, pyEfis #310):** `helpers/bugs.py` exists with
+`BugBinding`, `clamp_to_span` and the tape-edge glyph `tape_bug_path`. The
+altimeter tape's `ALTSEL` bug is its first user. The HSI heading bug is not
+yet refactored onto it (build-order step 1 is still open).
+
 ## 4. What stays per-instrument
 
 **Placement.** Each instrument already owns its value→pixel math — the
@@ -79,25 +84,26 @@ set-point parameters, so FIX keys mirror them 1:1:
 | Bug | FIX key | Status | CAN-FIX parameter |
 |---|---|---|---|
 | Heading | `HEADBUG` | exists (`ahrs.yaml`) | **gap — no Selected Heading in the spec** (candidate addition via the canfix-spec fork) |
-| Course | `COURSE` | exists (`ahrs.yaml`) | 61 Selected Course |
-| Altitude | `ALTSEL` | exists (`custom.yaml`, GCU P0) | 65 Selected Altitude |
-| Airspeed (FLC) | `IASSEL` | **to add** (fix-gateway) | 64 Selected Airspeed |
-| Vertical speed | `VSSEL` | later | 63 Selected Vertical Speed |
-| Glidepath | — | later | 62 Selected Glidepath Angle |
+| Course | `COURSE` | exists (`ahrs.yaml`) | 457 (0x1C9) Selected Course |
+| Altitude | `ALTSEL` | exists (`gcu.yaml`, fix-gateway #90) | 461 (0x1CD) Selected Altitude |
+| Airspeed (FLC) | `IASSEL` | exists (`autopilot.yaml`, fix-gateway #172) | 460 (0x1CC) Selected Airspeed |
+| Vertical speed | `VSSEL` | exists (`autopilot.yaml`, fix-gateway #172) | 459 (0x1CB) Selected Vertical Speed |
+| Glidepath | — | later | 458 (0x1CA) Selected Glidepath Angle |
 
 Notes:
 
 - `ALTSEL` naming vs upstream (open question in `gcu_design.md` §8) is
-  resolved by alignment with CAN-FIX 65 Selected Altitude.
-- fix-gateway's `canfix/map.yaml` gets entries for 63/64/65 when the
-  bus actually carries them; keys work via netfix writers (GCU mapper,
+  resolved by alignment with CAN-FIX 461 Selected Altitude.
+- fix-gateway's `canfix/map.yaml` sends `ALTSEL` on 461 (fix-gateway
+  #90); 459/460 get entries when the bus actually carries them; keys work via netfix writers (GCU mapper,
   X-Plane datarefs) meanwhile.
 - One key, one writer: set-points are written on user action by the
   GCU mapper (or an AP); pyEfis touch/encoder edits coexist through the
   same keys. Displays never write bugs implicitly.
 - Autopilot *mode* annunciation (which target FLC/ALT-hold is actually
   flying) is a separate display concern on separate keys — not part of
-  the bug contract.
+  the bug contract. Those keys are fix-gateway `doc/autopilot_keys.md`
+  (AFC1), which also defines `VSSEL` and `IASSEL`.
 
 ## 6. Build order
 
@@ -107,7 +113,7 @@ Notes:
 2. **Altitude bug** on the altimeter tape against `ALTSEL` — first,
    because GCU P1 (Octavi bridge) gives it a live writer, so the
    interaction gets end-to-end feel-testing immediately.
-3. **Airspeed bug** against a new `IASSEL` (add key in fix-gateway).
+3. **Airspeed bug** against `IASSEL` (fix-gateway `autopilot.yaml`, #172).
 4. Configurator twins for each as they land; `value_text` readout
    chips where panels want numeric targets.
 

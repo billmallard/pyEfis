@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "unknown",
+ "run": "local: tools/render_track_evidence.py --width 650 --height 1000 --font B612 --out out/panel",
+ "device": "AZW MINI S (offscreen)",
+ "sha256": "7918ec5ef7734ca45358dfe4998943e5d8d061037eafc886ebdf748ab660048a",
+ "created_utc": "2026-11-12T14:09:33Z"
+}

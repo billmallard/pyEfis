@@ -1,0 +1,538 @@
+"""MP6: MapPerfStats counters + GUI-thread responsiveness probe
+(briefs/map_gesture_perf_plan.md section 4, pyEfis #98).
+
+Correctness/instrumentation only -- these tests assert the counters and
+the probe work, not that rendering changed (it hasn't: MP6 adds no
+raster change). ``_process_job`` is exercised directly (no background
+thread) so publish-vs-superseded is deterministic: the DoD only needs
+the accounting to be right, not a race against a real worker."""
+import sys
+import threading
+import time
+
+import numpy as np
+import pytest
+from PyQt6.QtGui import QPaintEvent
+
+from pyefis.instruments import map as moving_map
+from pyefis.instruments.map.layers import RangeRingsLayer
+from pyefis.instruments.map.layers.airports import AirportsLayer
+from pyefis.instruments.map.layers.navaids import NavaidsLayer
+from pyefis.instruments.map.layers.roads import RoadsLayer
+from pyefis.instruments.map.layers.terrain import TerrainLayer
+from pyefis.instruments.map.perf import (GuiProbe, MapPerfStats,
+                                         PROBE_GAP_WARN_MS)
+
+
+class _FakeCache:
+    """Uniform 500 m land tile cache; no mosaic/mip support, so
+    TerrainLayer._sample falls back to the per-tile path (same shape as
+    test_moving_map.py's _LandCache)."""
+
+    def get(self, la, lo):
+        return np.full((1201, 1201), 500.0, dtype=np.float32)
+
+
+class _FakeWaterDB:
+    """One square 4-vertex lake, east of centre -- enough to exercise
+    the water-path counters without a real WaterDB."""
+
+    ready = True
+
+    def __init__(self, lat0, lon0):
+        d = 0.01
+        clat, clon = lat0, lon0 + 0.05
+        self._poly = type("P", (), {})()
+        self._poly.vertices = [
+            (clat - d, clon - d), (clat - d, clon + d),
+            (clat + d, clon + d), (clat + d, clon - d)]
+
+    def polygons_in_range(self, lat, lon, range_nm,
+                          min_bbox_diag_deg=None, drop_ocean=False):
+        yield self._poly
+
+
+def _xform():
+    return moving_map.MapTransform(34.5, -120.5, 10.0, 0.0, 200, 200, 0.5)
+
+
+# --- LayerStats / WaterStats / _Ring -----------------------------------
+
+def test_layer_stats_records_render_ms_and_max():
+    from pyefis.instruments.map.perf import LayerStats
+    ls = LayerStats()
+    ls.record_render_ms(5.0)
+    ls.record_render_ms(2.0)
+    ls.record_render_ms(9.0)
+    assert ls.last_render_ms == 9.0
+    assert ls.max_render_ms == 9.0
+
+
+def test_map_perf_stats_layer_get_or_create_is_stable():
+    stats = MapPerfStats()
+    a = stats.layer("terrain")
+    b = stats.layer("terrain")
+    assert a is b
+    a.jobs_requested = 3
+    assert stats.layer("terrain").jobs_requested == 3
+
+
+def test_water_stats_record_round_trips():
+    from pyefis.instruments.map.perf import WaterStats
+    w = WaterStats()
+    w.record(5, 200, 5, 200, 200)
+    d = w.as_dict()
+    assert d["polygons_before"] == 5 and d["vertices_before"] == 200
+    assert d["qpointf_count"] == 200
+
+
+def test_map_perf_stats_snapshot_contains_every_counter():
+    """MP7 (briefs/map_gesture_perf_plan.md section 4): the gesture bench
+    harness's JSON output is this dict verbatim -- every field it reads
+    (layers by id, water, settle_latency_ms, probe) has to round-trip."""
+    stats = MapPerfStats()
+    stats.record_paint_ms(3.5)
+    stats.layer("terrain").jobs_requested += 2
+    stats.water.record(3, 40, 3, 40, 0)
+    stats.settle_latency_ms = 88.0
+    snap = stats.snapshot()
+    assert snap["frames_painted"] == 1
+    assert snap["paint_ms"]["count"] == 1
+    assert snap["layers"]["terrain"]["jobs_requested"] == 2
+    assert snap["water"]["vertices_before"] == 40
+    assert snap["settle_latency_ms"] == 88.0
+    assert "p50_ms" in snap["probe"]
+
+
+def test_map_perf_stats_summary_text_contains_key_fields():
+    stats = MapPerfStats()
+    stats.record_paint_ms(5.0)
+    stats.layer("terrain").jobs_requested += 1
+    text = stats.summary_text()
+    assert "frames" in text
+    assert "terrain" in text
+
+
+# --- is_settled ----------------------------------------------------------
+
+def test_range_rings_default_is_settled_true():
+    """Layers with no async render (brief: base contract) never block the
+    settle measurement."""
+    lay = RangeRingsLayer()
+    assert lay.is_settled(_xform()) is True
+
+
+def test_terrain_is_settled_true_when_layer_inactive():
+    lay = TerrainLayer()   # no tile_path configured -> self._cache is None
+    assert lay.is_settled(_xform()) is True
+
+
+def test_terrain_is_settled_false_until_cache_matches_key(qapp):
+    lay = TerrainLayer()
+    lay._cache = _FakeCache()
+
+    class Owner:
+        _alt_ft = 0.0
+    lay._owner = Owner
+    x = _xform()
+    assert lay.is_settled(x) is False    # nothing rendered yet
+    key = lay._key(x)
+    img, meta = lay._render((key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy))
+    lay._img = (img, key, meta)
+    assert lay.is_settled(x) is True
+
+
+# --- per-layer job lifecycle counters (terrain: image worker) -----------
+
+def test_terrain_process_job_publishes_and_counts(qapp):
+    lay = TerrainLayer()
+    lay._cache = _FakeCache()
+
+    class Owner:
+        _alt_ft = 0.0
+        perf = MapPerfStats()
+    lay._owner = Owner
+    x = _xform()
+    key = lay._key(x)
+    job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy)
+    lay._job = job
+    lay._process_job(job)
+
+    ls = Owner.perf.layer("terrain")
+    assert ls.jobs_started == 1
+    assert ls.jobs_published == 1
+    assert ls.jobs_superseded == 0
+    assert ls.last_render_ms >= 0.0
+    assert lay._img is not None and lay._img[1] == key
+
+
+def test_terrain_process_job_supersede_when_job_moves_on(qapp, monkeypatch):
+    """AER-588: a render that finishes after a newer job replaced
+    ``_job`` is still published (newest-wins) -- MP6 counts it as both
+    published and superseded, since it was already stale on arrival."""
+    lay = TerrainLayer()
+    lay._cache = _FakeCache()
+
+    class Owner:
+        _alt_ft = 0.0
+        perf = MapPerfStats()
+    lay._owner = Owner
+    x = _xform()
+    key = lay._key(x)
+    job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy)
+    lay._job = job
+
+    real_render = lay._render
+
+    def fake_render(j):
+        # Simulate a newer request arriving while this one "renders":
+        # any value that doesn't equal ``job`` triggers the supersede path.
+        lay._job = "a-newer-job-replaced-this-one"
+        return real_render(j)
+
+    monkeypatch.setattr(lay, "_render", fake_render)
+    lay._process_job(job)
+
+    ls = Owner.perf.layer("terrain")
+    assert ls.jobs_started == 1
+    assert ls.jobs_published == 1
+    assert ls.jobs_superseded == 1
+    assert lay._img is not None and lay._img[1] == key
+
+
+def test_terrain_request_counts_once_for_same_key_repost(qapp, qtbot):
+    """The #89 same-key dedup in ``_request`` must not double-count a
+    repost as a second ``jobs_requested``. Uses a real background worker
+    (unlike the ``_process_job`` tests above), so the owner needs a real
+    ``update()`` -- a bare stub makes the worker thread's completion
+    callback raise on a delayed background thread."""
+    lay = TerrainLayer()
+    lay._cache = _FakeCache()
+
+    class Owner:
+        _alt_ft = 0.0
+        perf = MapPerfStats()
+
+        def update(self):
+            pass
+    owner = Owner()
+    lay._owner = owner
+    x = _xform()
+    key = lay._key(x)
+    lay._request(key, x)
+    lay._request(key, x)
+    assert owner.perf.layer("terrain").jobs_requested == 1
+    qtbot.waitUntil(lambda: lay._img is not None, timeout=1000)
+
+
+# --- water-path counters (brief: polys/verts before+after, QPointF) -----
+
+def test_terrain_water_counters_recorded(qapp):
+    lat0, lon0 = 34.5, -120.5
+    lay = TerrainLayer()
+    lay._cache = _FakeCache()
+    lay._water = _FakeWaterDB(lat0, lon0)
+
+    class Owner:
+        _alt_ft = 3000.0
+        perf = MapPerfStats()
+    lay._owner = Owner
+    x = moving_map.MapTransform(lat0, lon0, 10.0, 0.0, 200, 200, 0.5)
+    key = lay._key(x)
+    lay._render((key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy))
+
+    w = Owner.perf.water
+    assert w.polygons_before == 1
+    assert w.vertices_before == 4
+    # MP4 decimation is a per-pixel dedup; this fixture's 4 corners are
+    # all on distinct pixels, so nothing collapses -- after == before.
+    # (test_moving_map.py's decimation-counters test exercises the case
+    # where vertices DO collapse.)
+    assert w.polygons_after == w.polygons_before
+    assert w.vertices_after == w.vertices_before
+    # MP5: water_raster defaults to numpy, which never constructs a
+    # QPointF (test_moving_map.py's test_terrain_water_decimation_counters
+    # exercises the legacy water_raster: qt path, where this is still 4).
+    assert w.qpointf_count == 0
+
+
+# --- roads / navaids / airports reuse the same accounting ---------------
+
+class _FakeHighwayDB:
+    ready = True
+
+    def polylines_in_range(self, lat, lon, range_nm, classes=None):
+        return iter(())
+
+
+def test_roads_process_job_publishes_and_counts(qapp):
+    lay = RoadsLayer()
+    lay._db = _FakeHighwayDB()
+
+    class Owner:
+        perf = MapPerfStats()
+    lay._owner = Owner
+    x = _xform()
+    key = lay._key(x)
+    job = (key, x.lat0, x.lon0, x.range_nm, x.w, x.h, x.cy)
+    lay._job = job
+    lay._process_job(job)
+
+    ls = Owner.perf.layer("roads")
+    assert ls.jobs_started == 1 and ls.jobs_published == 1
+    assert lay._img is not None
+
+
+def test_navaids_process_job_publish_and_supersede(qapp, monkeypatch):
+    lay = NavaidsLayer()
+
+    class Owner:
+        perf = MapPerfStats()
+    lay._owner = Owner
+    lay._path = "dummy"
+    x = _xform()
+    key = lay._key(x)
+    job = (key, x.lat0, x.lon0, x.range_nm)
+    monkeypatch.setattr(lay, "_query", lambda con, *a: [("V1", "VOR",
+                                                          "115.0", 34.5,
+                                                          -120.5)])
+
+    lay._job = job
+    con = lay._process_job(job, object())   # non-None con skips sqlite3.connect
+    ls = Owner.perf.layer("navaids")
+    assert ls.jobs_started == 1 and ls.jobs_published == 1
+    assert lay._snap[0] == key
+
+    # A second job that "moves on" during the query is still published
+    # (newest-wins, AER-588), but counted as superseded too.
+    key2 = (key[0] + 1, key[1], key[2])
+    job2 = (key2, x.lat0, x.lon0, x.range_nm)
+    lay._job = job2
+
+    def fake_query(c, *a):
+        lay._job = job    # a newer request replaced ours mid-collect
+        return [("V2", "VOR", "116.0", 34.6, -120.6)]
+
+    monkeypatch.setattr(lay, "_query", fake_query)
+    lay._process_job(job2, con)
+    assert ls.jobs_started == 2
+    assert ls.jobs_published == 2
+    assert ls.jobs_superseded == 1
+    assert lay._snap[0] == key2
+
+
+def test_airports_process_job_publish_and_supersede(qapp, monkeypatch):
+    lay = AirportsLayer()
+
+    class Owner:
+        perf = MapPerfStats()
+    lay._owner = Owner
+    x = _xform()
+    key = lay._key(x)
+    job = (key, x.lat0, x.lon0, x.range_nm)
+    lay._job = job
+    monkeypatch.setattr(lay, "_collect", lambda j: [{"icao": "KXXX"}])
+    lay._process_job(job)
+
+    ls = Owner.perf.layer("airports")
+    assert ls.jobs_started == 1 and ls.jobs_published == 1
+    assert lay._snap == (key, [{"icao": "KXXX"}])
+
+
+# --- MovingMap wiring: perf options default off, paint ms, settle -------
+
+def test_perf_options_default_off_and_probe_stopped(fix, qtbot):
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    assert w.map_perf_log is False
+    assert w.map_perf_overlay is False
+    assert w.perf.probe.running is False
+
+
+def test_map_perf_log_starts_and_stops_probe(fix, qtbot):
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.map_perf_log = True
+    assert w.perf.probe.running is True
+    w.map_perf_log = False
+    assert w.perf.probe.running is False
+
+
+def test_map_perf_overlay_also_starts_probe(fix, qtbot):
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.map_perf_overlay = True
+    assert w.perf.probe.running is True
+
+
+def test_paint_records_paint_ms_and_frame_count(fix, qtbot):
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.resize(200, 200)
+    w.show()
+    qtbot.waitExposed(w)
+    assert w.perf.frames_painted == 0
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w.perf.frames_painted == 1
+    p50, p95, mx, n = w.perf.paint_ms.stats()
+    assert n == 1 and mx >= 0.0
+
+
+def test_settle_latency_recorded_after_gesture_and_paint(fix, qtbot):
+    """DoD-adjacent: with no data paths configured every layer is
+    trivially settled (is_settled() short-circuits True), so one
+    gesture call + one paint is enough to measure a real, deterministic
+    settle latency end to end."""
+    w = moving_map.MovingMap()
+    qtbot.addWidget(w)
+    w.resize(300, 300)
+    w.show()
+    qtbot.waitExposed(w)
+    w.paintEvent(QPaintEvent(w.rect()))     # builds layers
+    w.perf.settle_latency_ms = None
+
+    w.rotate_by(5.0)
+    assert w._perf_settle_pending is True
+    w.paintEvent(QPaintEvent(w.rect()))
+    assert w._perf_settle_pending is False
+    assert w.perf.settle_latency_ms is not None
+    assert w.perf.settle_latency_ms >= 0.0
+
+
+# --- schema (mirrors gesture_frame_rate_in_schema) -----------------------
+
+def test_perf_options_in_schema():
+    from pyefis.editor import schema as sch
+    opts = sch.build_schema()["instruments"]["moving_map"]["options"]
+    assert "map_perf_log" in opts and opts["map_perf_log"]["default"] is False
+    assert ("map_perf_overlay" in opts
+            and opts["map_perf_overlay"]["default"] is False)
+
+
+# --- GuiProbe: the DoD's GIL-starvation detector -------------------------
+
+def test_gui_probe_reports_gap_when_gil_held(qtbot):
+    """DoD: probe reports > 50 ms gaps when a test thread holds the GIL
+    on purpose. ``sys.setswitchinterval`` is raised so a pure-Python
+    busy loop on another thread genuinely starves the GUI thread for the
+    duration -- the same failure class the brief measured from PyQt6's
+    QPointF/QPainter construction not releasing the GIL (section 1.3),
+    reproduced deterministically instead of via a slow real render."""
+    probe = GuiProbe(interval_ms=5)
+    probe.start(None)
+    qtbot.wait(50)
+
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1.0)
+    try:
+        def hog():
+            t0 = time.perf_counter()
+            x = 0
+            while time.perf_counter() - t0 < 0.25:
+                x += 1
+        th = threading.Thread(target=hog, daemon=True)
+        th.start()
+        qtbot.wait(400)
+        th.join()
+    finally:
+        sys.setswitchinterval(old_interval)
+    probe.stop()
+
+    stats = probe.stats()
+    assert stats["max_ms"] > PROBE_GAP_WARN_MS
+    assert stats["over_count"] >= 1
+
+
+# --- GuiProbe starved_ms/window_ms/ticks (AER-2240) ----------------------
+#
+# Section 5's "GUI-thread starved <= 10% of the gesture window" row was
+# gated on nothing -- the record had no way to express a ratio of two
+# wall-clock durations. These two tests pin the accounting so a later
+# edit that breaks it fails loudly instead of shipping a quiet drift in
+# what the ratio means.
+
+class _FakeClock:
+    """A monotonic nanosecond clock GuiProbe._tick's own
+    ``time.perf_counter_ns()`` call can be pointed at, so a test can feed
+    an exact, hand-computed gap sequence instead of racing real wall
+    time."""
+
+    def __init__(self):
+        self._ns = 0.0
+
+    def advance_ms(self, ms):
+        self._ns += ms * 1e6
+
+    def now_ns(self):
+        return self._ns
+
+
+def test_gui_probe_starved_and_window_match_hand_computed(monkeypatch):
+    """Pinning test #1 (AER-2240): feed ``_tick`` a synthetic gap
+    sequence -- including one gap under ``interval_ms`` -- and assert
+    ``starved_ms``/``window_ms``/``ticks`` equal the hand-computed
+    values exactly. ``starved_ms`` is a sum of ``max(0, gap -
+    interval_ms)`` terms, never a raw gap sum, so the under-interval gap
+    exercises the clamp: without it, a healthy gap would count as
+    negative starvation and understate the true fraction."""
+    probe = GuiProbe(interval_ms=10.0)
+    clock = _FakeClock()
+    monkeypatch.setattr(time, "perf_counter_ns", clock.now_ns)
+
+    probe._tick()   # establishes _last_ns; no gap yet, no tick counted
+    gaps_ms = [10.0, 15.0, 4.0, 60.0, 9.5]
+    for g in gaps_ms:
+        clock.advance_ms(g)
+        probe._tick()
+
+    stats = probe.stats()
+    expected_window = sum(gaps_ms)
+    expected_starved = sum(max(0.0, g - probe.interval_ms) for g in gaps_ms)
+    assert stats["ticks"] == len(gaps_ms)
+    assert stats["window_ms"] == pytest.approx(expected_window)
+    assert stats["starved_ms"] == pytest.approx(expected_starved)
+    # the 4.0 ms gap is under interval_ms=10.0 -- without the clamp this
+    # would push starved_ms below the value asserted above.
+    assert expected_starved < expected_window
+
+
+def test_gui_probe_windowed_fraction_survives_trailing_idle_padding(
+        monkeypatch):
+    """Pinning test #2 (AER-2240): a delta taken between a snapshot at
+    the interaction's start and one taken the moment it ends (the same
+    before/after pattern ``_delta_layers`` already uses for LayerStats)
+    must report the same starved fraction whether or not a long idle
+    hold follows -- exactly the pinch_out shape (a real gesture stall,
+    then 5 s of deliberate idle). The last assertion pins the failure
+    mode section 5's windowing exists to rule out: reading the fraction
+    off the WHOLE run instead dilutes a real stall as the pad grows."""
+    def measure(pad_ticks):
+        probe = GuiProbe(interval_ms=10.0)
+        clock = _FakeClock()
+        monkeypatch.setattr(time, "perf_counter_ns", clock.now_ns)
+        probe._tick()
+        before = probe.stats()
+        for g in (10.0, 10.0, 10.0, 10.0, 10.0, 600.0):
+            clock.advance_ms(g)
+            probe._tick()
+        after_interaction = probe.stats()
+        for _ in range(pad_ticks):
+            clock.advance_ms(10.0)
+            probe._tick()
+        whole_run = probe.stats()
+
+        def _fraction(a, b):
+            return ((b["starved_ms"] - a["starved_ms"])
+                    / (b["window_ms"] - a["window_ms"]))
+
+        return (_fraction(before, after_interaction),
+                _fraction(before, whole_run))
+
+    windowed_no_pad, whole_no_pad = measure(pad_ticks=0)
+    windowed_with_pad, whole_with_pad = measure(pad_ticks=500)
+
+    assert windowed_no_pad == pytest.approx(windowed_with_pad)
+    assert whole_with_pad < whole_no_pad, (
+        "appending idle padding after the interaction should dilute a "
+        "whole-run fraction -- if it doesn't, this test stopped "
+        "exercising the failure mode section 5 windowing exists to fix")

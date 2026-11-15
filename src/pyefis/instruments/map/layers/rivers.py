@@ -21,7 +21,12 @@ class RiversLayer(RoadsLayer):
     _DB_OPTION = "river_db_path"
     _COLOR_OPTION = "river_color"
     _DEFAULT_COLOR = "#4a6d8c"  # muted water blue
+    _PALETTE_DEFAULT_KEY = "river_default"
     _EXPAND_LINKS = False       # waterways have no _link ramps
+    # RD2's true-scale roads do not apply: the class width table is roads
+    # only, and a river keeps its tier pen and no casing at every range.
+    _CASING_OPTION = None
+    _WIDTH_M = None
 
     # LOD bands (max range NM -> waterway classes). Major rivers persist to
     # wider range; canals/streams only close in. Keep in sync with

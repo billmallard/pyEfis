@@ -71,6 +71,7 @@ watertools = [
 
 [project.scripts]
 pyefis = "pyefis.main:main"
+pyefis-accept-notice = "pyefis.install_ack:main"
 
 [project.urls]
 Homepage = "https://makerplane.org/"

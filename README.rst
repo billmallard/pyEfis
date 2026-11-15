@@ -1,7 +1,7 @@
 |Coverage Badge| |Website snapcraft.io| |candidate| |beta| |edge|
 
-.. |Coverage Badge| image:: https://raw.githubusercontent.com/makerplane/pyEfis/python-coverage-comment-action-data/badge.svg
-   :target: https://htmlpreview.github.io/?https://github.com/makerplane/pyEfis/blob/python-coverage-comment-action-data/htmlcov/index.html
+.. |Coverage Badge| image:: https://raw.githubusercontent.com/billmallard/pyEfis/python-coverage-comment-action-data/badge.svg
+   :target: https://htmlpreview.github.io/?https://github.com/billmallard/pyEfis/blob/python-coverage-comment-action-data/htmlcov/index.html
 
 .. |Website snapcraft.io| image:: https://snapcraft.io/pyefis/badge.svg
    :target: https://snapcraft.io/pyefis
@@ -18,6 +18,13 @@
 
 pyEfis
 ==================
+
+.. warning::
+
+   pyEfis is not certified, and it is not to be used as the sole source of
+   attitude information in instrument meteorological conditions. Fly with
+   independent standby attitude, airspeed and altitude instruments: ones that
+   share no sensor, computer, software, power source or display with pyEfis.
 
 Getting Started
 ---------------
@@ -75,31 +82,36 @@ is configured for.
 
 Controls
 
-'[' and ']' Keys changes the Altimeter Setting
+Default key bindings (``src/pyefis/config/keybindings/default.yaml``):
+
+'a' and 's' select the previous and next screen; 'p' shows the PFD.
 
 'm' Changes Airspeed mode from IAS , TAS, and GS
 
-'a' and 's' select the different screens.
+'1' to '4' set the EGT mode (normalize, peak, lean, reset peak).
 
-Virtual VFR
------------------------------
+'x' exits.
 
-In order to take advantage of virtual
-VFR chart object rendering, download the latest FAA CIFP file from here:
-https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/download/
+There is no key binding for the altimeter setting. Set it with the baro box at
+the bottom of the altimeter tape: touch it and turn the knob. See "Setting the
+altimeter (baro)" in docs/wiki/Pilots-Guide.md.
 
-Extract the FAACIFP18 file into the pyEfis/CIFP directory. Make note of the FAA
-disclaimers also in the zip file.
+Virtual VFR (removed)
+---------------------
 
-Create an index file:
-'''
-./MakeCIFPIndex.py CIFP/FAACIFP18
-'''
+The legacy Virtual VFR view -- the 2D runway outlines, airport labels and
+assumed-3-degree PAPI drawn from the raw FAA CIFP file -- has been removed
+(VVFR1). Synthetic Vision (below) replaces it: SVS draws airports, runways with
+surface markings, and a PAPI at the runway's **published** visual glide path
+angle (only where one is installed), all from the NASR airports pack the
+makerplane-data updater already installs. pyEfis no longer reads a CIFP file
+for the attitude display, so no CIFP download is needed for it.
 
-This creates an index.bin file in CIFP directory
-
-Update the config file [Screen.PFD] section dbpath and indexpath
-with the path names of the FAACIFP18 and index.bin files respectively.
+The ``virtual_vfr`` instrument type still works and is what the shipped screens
+use: it is the attitude indicator plus Synthetic Vision. With SVS off it shows
+the plain sky/ground attitude. A ``screens/virtualvfr_db.yaml`` include left in
+an older config still loads; the ``dbpath``, ``indexpath`` and ``metadata``
+keys it used to carry are ignored.
 
 Synthetic Vision (SVS)
 -----------------------------
@@ -108,6 +120,11 @@ The attitude / Virtual-VFR widget can render a GL-accelerated **Synthetic
 Vision** view: a perspective terrain picture with water, major roads,
 obstacles, and airports/runways drawn in 3D over the live attitude.
 
+.. image:: docs/images/svs-coastal.jpg
+   :alt: pyEfis Synthetic Vision over a coastline: terrain, ocean and the live attitude
+
+Development write-up: `pyEfis Synthetic Vision Now Hides Water Behind Ridges <https://aerocommons.org/articles/2026-11-04-pyefis-synthetic-vision-hides-water-behind-ridges/>`_ (aerocommons.org, 4 Nov 2026).
+
 * **Terrain** — elevation-shaded relief from SRTM / Copernicus GLO-30 tiles,
   drawn as a forward polar fan with distance-based level of detail.
 * **Water** — coastlines, lakes, and reservoirs (OpenStreetMap, ODbL).
@@ -115,10 +132,12 @@ obstacles, and airports/runways drawn in 3D over the live attitude.
   by lighting and conflict with the aircraft altitude.
 * **Airports & runways** — runway quads with FAA surface markings (threshold
   bars, centreline, designators, aiming point, TDZ) and identifier flags.
+* **PAPI** — the installed PAPI row, on the published side and visual glide
+  path angle from the NASR airports pack (``papi: false`` turns it off).
 * **Major roads** — OSM motorway / trunk overlays.
 
 Terrain and the chart databases are supplied by the companion
-`makerplane-data <https://github.com/makerplane/makerplane-data>`_
+`makerplane-data <https://github.com/billmallard/makerplane-data>`_
 navigation-data system — an over-the-air / USB updater that keeps signed
 terrain, airport, obstacle, water, and road packs current — or by
 user-supplied local files. A boot-time **Data Status** screen and a subtle
@@ -164,7 +183,9 @@ Suggested (full SVS unit)
   render SVS correctly but slowly.)
 * **Storage — an M.2 HAT + NVMe SSD is strongly preferred.** The
   navigation-data packs are large: terrain regions run tens of GB and a full
-  North-America terrain set is ~90 GB. Either use a large, high-quality
+  North-America terrain set is about 120 GB on disk (about 91 GB of GLO-30
+  tiles plus about 31 GB of mip pyramid; about 60 GB as a compressed
+  download). Either use a large, high-quality
   (A2-rated) microSD card, or — better — add an **M.2 HAT with an NVMe SSD**
   for the data store and keep the OS on the microSD. The reference unit boots
   from a 64 GB microSD and stores data on a ~500 GB NVMe SSD mounted at

@@ -27,6 +27,7 @@ SVS is disabled by default. Enable in screen YAML:
 import math
 import os
 import sqlite3
+import re
 import struct
 import threading
 import logging
@@ -37,7 +38,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Lightweight per-frame profiler. Each named segment accumulates wall-clock
 # time and a call count; once the report interval elapses we log a single
-# summary line and reset. Enabled via ``svs_perf_log: true`` in the SVS
+# summary line and reset. Enabled via ``perf_log: true`` in the SVS
 # config block; zero overhead when disabled (the methods check a flag
 # before doing any timing math).
 # ---------------------------------------------------------------------------
@@ -49,6 +50,13 @@ class _SVSPerfLog:
         self._accum: dict[str, int] = {}    # ns total since last report
         self._count: dict[str, int] = {}
         self._last_report = time.perf_counter() if enabled else 0.0
+        self._gauges: dict[str, float] = {}  # last-value counters (not ns)
+        # Every add_ns()/set_gauge() call used to come from the render
+        # thread only. RD1's highways.worker_ms/segments/vertices are
+        # recorded from the highway collect worker thread while the
+        # render thread concurrently reports/times -- guard the shared
+        # dicts so that isn't a data race.
+        self._lock = threading.Lock()
 
     def time(self, name: str):
         """Context manager that times the with-block and adds it to
@@ -60,32 +68,47 @@ class _SVSPerfLog:
     def add_ns(self, name: str, ns: int):
         if not self.enabled:
             return
-        self._accum[name] = self._accum.get(name, 0) + ns
-        self._count[name] = self._count.get(name, 0) + 1
+        with self._lock:
+            self._accum[name] = self._accum.get(name, 0) + ns
+            self._count[name] = self._count.get(name, 0) + 1
 
-    def maybe_report(self, extra_lines=None):
+    def set_gauge(self, name: str, value: float):
+        """Record a non-time count (e.g. ``highways.segments``) — the
+        most recent value is reported each interval, not a total."""
+        if not self.enabled:
+            return
+        with self._lock:
+            self._gauges[name] = value
+
+    def maybe_report(self, extra_lines=None, force: bool = False):
         if not self.enabled:
             return False
         now = time.perf_counter()
-        if now - self._last_report < self.REPORT_INTERVAL_S:
+        if not force and now - self._last_report < self.REPORT_INTERVAL_S:
             return False
         elapsed = now - self._last_report
+        with self._lock:
+            accum = dict(self._accum)
+            count = dict(self._count)
+            gauges = dict(self._gauges)
+            self._accum.clear()
+            self._count.clear()
         lines = [f"SVS perf (last {elapsed:.1f}s):"]
-        for name in sorted(self._accum, key=lambda k: -self._accum[k]):
-            n = self._count[name]
-            total_ms = self._accum[name] / 1e6
+        for name in sorted(accum, key=lambda k: -accum[k]):
+            n = count[name]
+            total_ms = accum[name] / 1e6
             per_call_ms = total_ms / n if n else 0
-            pct = 100.0 * (self._accum[name] / 1e9) / elapsed
+            pct = 100.0 * (accum[name] / 1e9) / elapsed
             lines.append(
                 f"  {name:<30} {n:>5} calls  "
                 f"{total_ms:>8.1f}ms total  "
                 f"{per_call_ms:>7.2f}ms/call  "
                 f"{pct:>5.1f}%")
+        for name in sorted(gauges):
+            lines.append(f"  {name:<30} {gauges[name]:>8.0f}")
         if extra_lines:
             lines.extend(extra_lines)
         log.info("\n".join(lines))
-        self._accum.clear()
-        self._count.clear()
         self._last_report = now
         return True
 
@@ -116,6 +139,9 @@ class _NoopTimer:
 import numpy as np
 from PyQt6.QtGui import QColor, QPainter
 
+from pyefis.instruments.ai import road_ribbon
+from pyefis.instruments.ai.highway_db import FLAG_BRIDGE, FLAG_TUNNEL
+
 log = logging.getLogger(__name__)
 
 # SRTM3 tile constants
@@ -133,7 +159,8 @@ COLOR_WATER     = QColor( 20,  80, 150)   # ocean blue  — SRTM void / open wat
 # the five clearance bands (safe, caution, warning, conflict, water).
 # "clearance" is the stock scheme (the module COLOR_* constants); the others
 # tune saturation / contrast. set_svs_config copies the chosen set onto the
-# instance (self.c_*); _clearance_color falls back to the module constants when
+# instance (self.c_*); palette_rgb01 hands them to the GL terrain shader as
+# its COLOR_* uniforms (issue #394), falling back to the module constants when
 # no palette was selected, so behaviour is identical unless a palette is named.
 _PALETTES = {
     "clearance": (COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
@@ -149,22 +176,6 @@ _PALETTES = {
 # never mistaken for water.
 _WATER_SENTINEL = -9999.0
 
-# Polar (range, azimuth) mesh defaults for the GL terrain renderer — a
-# forward-facing fan centred on the aircraft, with a radial warp that
-# concentrates samples near the aircraft (finer near, coarser far). See
-# docs/svs_rendering.md for the rationale.
-#
-# Cells = n_range × n_az. At the defaults below: 80 × 120 = 9,600 cells —
-# 42% fewer quads than cpu_dense (16k) but ~25% faster per frame and
-# noticeably crisper in the near-field thanks to the radial LOD. Tuned
-# from an A/B sweep at 39.20 N / 106.85 W, 12,000 ft, head 150°.
-POLAR_DEFAULTS = {
-    "n_range":     80,    # radial samples
-    "n_az":        120,   # azimuthal samples
-    "fov_deg":     140.0, # total forward field-of-view (±70°)
-    "radial_warp": 1.5,   # outer cell ~10× inner cell at default n_range
-    "r_min_nm":    0.05,  # epsilon at r=0 to avoid the singularity
-}
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +229,43 @@ def load_tile(tile_root: Path, lat: int, lon: int) -> np.ndarray | None:
         return None
 
 
+def _side_from_hgt_size(size: int) -> int | None:
+    """Grid side implied by an ``>i2`` HGT file's byte size, or ``None`` if
+    it is not a square tile. Mirrors ``build_water_masks.py``'s
+    ``_side_from_file`` -- the ``.wmask`` sibling carries no header of its
+    own, so its side is always read off the ``.hgt`` file next to it."""
+    n = int(round((size / 2) ** 0.5))
+    return n if n * n * 2 == size else None
+
+
+def load_mask(hgt_path: Path) -> np.ndarray | None:
+    """Load the row-packed 1-bit ``.wmask`` sibling of *hgt_path*
+    (``tools/build_water_masks.py``'s output), or ``None`` if it is
+    missing, malformed, or the sibling ``.hgt`` is unreadable -- an older
+    pack edition with no water-mask channel. No header on either file:
+    side is implied by the ``.hgt``'s byte size, packing is
+    ``np.packbits(mask, axis=1)`` (MSB-first, trailing zero-bit row
+    padding to a byte boundary, ``ceil(side/8)`` bytes/row)."""
+    wmask_path = hgt_path.with_suffix(".wmask")
+    if not wmask_path.exists():
+        return None
+    try:
+        side = _side_from_hgt_size(hgt_path.stat().st_size)
+        if side is None:
+            return None
+        row_bytes = -(-side // 8)          # ceil(side / 8)
+        data = np.fromfile(wmask_path, dtype=np.uint8)
+        if data.size != row_bytes * side:
+            log.warning(f"SVS: mask {wmask_path} size {data.size} != "
+                        f"expected {row_bytes * side} (side {side}); skipped")
+            return None
+        bits = np.unpackbits(data.reshape(side, row_bytes), axis=1)
+        return bits[:, :side].astype(bool)
+    except Exception as e:
+        log.warning(f"SVS: failed to load mask {wmask_path}: {e}")
+        return None
+
+
 def elevation_at(tile: np.ndarray, tile_lat: int, tile_lon: int,
                  lat: float, lon: float) -> float:
     """Bilinear interpolation of elevation at (lat, lon) from a loaded
@@ -257,6 +305,13 @@ class TileCache:
         # renders slice these instead of opening hundreds of per-degree files
         # (docs/map_wide_range_perf_plan.md). Lazily loaded, kept resident.
         self._mosaic: dict[int, object] = {}
+        # Water-mask pyramid (MP10c, briefs/map_gesture_perf_plan.md Track 2):
+        # co-registered with _mip/_mosaic at the same keys. A value of None
+        # is cached too (older pack edition with no .wmask sibling) so a
+        # missing mask is not re-probed on disk every render.
+        self._wmask: dict[tuple, np.ndarray | None] = {}
+        self._wmask_order: list[tuple] = []
+        self._mosaic_mask: dict[int, np.ndarray | None] = {}
 
     def get(self, lat: int, lon: int) -> np.ndarray | None:
         key = (lat, lon)
@@ -305,6 +360,68 @@ class TileCache:
                     evict = self._mip_order.pop(0)
                     del self._mip[evict]
         return tile
+
+    def get_mask(self, lat: int, lon: int, level: int) -> np.ndarray | None:
+        """Water-coverage bitmask for the same ``(lat, lon)`` mip tile
+        ``get_mip(lat, lon, level)`` reads, co-registered node-for-node
+        with its elevation grid. ``None`` below level 1 (MP10a builds
+        masks only for the downsampled pyramid, L=1..6 -- native tiles
+        have no ``.wmask``) or when this pack edition has no mask sibling
+        for that tile; callers fall back to the elevation-derived water
+        heuristic in that case, so an older pack keeps rendering exactly
+        as it did before this reader existed."""
+        if level <= 0:
+            return None
+        key = (lat, lon, level)
+        with self._lock:
+            if key in self._wmask:
+                self._wmask_order.remove(key)
+                self._wmask_order.append(key)
+                return self._wmask[key]
+        hgt_path = _hgt_path(self.tile_root / ".mip" / str(level), lat, lon)
+        mask = load_mask(hgt_path) if hgt_path is not None else None
+        with self._lock:
+            if key not in self._wmask:
+                self._wmask[key] = mask
+                self._wmask_order.append(key)
+                if len(self._wmask_order) > self._mip_max:
+                    evict = self._wmask_order.pop(0)
+                    del self._wmask[evict]
+        return mask
+
+    def get_mosaic_mask(self, level: int) -> np.ndarray | None:
+        """Water-coverage bitmask for the whole-extent mosaic at *level*,
+        or ``None`` if this pack edition has none -- co-registered
+        row/col with ``get_mosaic(level)``'s ``(memmap, meta)``, same
+        ``rows``/``cols``/``spd``/``lat_n``/``lon_w`` convention."""
+        with self._lock:
+            if level in self._mosaic_mask:
+                return self._mosaic_mask[level]
+        mdir = self.tile_root / ".mip" / "mosaic"
+        jp = mdir / f"L{level}.json"
+        val = None
+        if jp.exists():
+            try:
+                import json
+                meta = json.loads(jp.read_text())
+                wmask_path = jp.with_suffix(".wmask")
+                rows, cols = meta["rows"], meta["cols"]
+                row_bytes = -(-cols // 8)
+                data = np.fromfile(wmask_path, dtype=np.uint8)
+                if data.size == row_bytes * rows:
+                    bits = np.unpackbits(data.reshape(rows, row_bytes), axis=1)
+                    val = bits[:, :cols].astype(bool)
+                elif data.size:
+                    log.warning(f"SVS: mosaic mask L{level} size "
+                                f"{data.size} != expected "
+                                f"{row_bytes * rows}; skipped")
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                log.warning(f"SVS: mosaic mask L{level} unreadable: {e}")
+        with self._lock:
+            self._mosaic_mask[level] = val
+        return val
 
     def get_mosaic(self, level: int):
         """Coarse whole-extent mosaic for ``level``, or ``None`` if not built.
@@ -414,9 +531,9 @@ class SVSRenderer:
         tile_path         = config.get("tile_path", "")
         self.cache        = TileCache(Path(tile_path)) if tile_path else None
 
-        # Optional airport / runway database. NASR gives full
-        # CONUS coverage with widths/markings/displaced thresholds for
-        # Tier C rendering, CIFP gives coarser nationwide coverage.
+        # Optional airport / runway database: the NASR pack (plus any
+        # provider packs), with widths/markings/displaced thresholds for
+        # Tier C rendering.
         from pyefis.instruments.ai.airport_db import make_airport_db
         self.airport_db = make_airport_db(config)
         # Within this distance, runways render with painted surface markings
@@ -458,14 +575,47 @@ class SVSRenderer:
         # at 30 m spacing — finer detail than the cockpit display can
         # resolve at typical SVS ranges, and a real CPU bottleneck on
         # the Python projection loop. None = use WaterDB's default.
+        # Rows with stored triangles are exempt (#100) — the cap only
+        # applies to legacy untessellated packs.
         self.water_db = WaterDB(
             config.get("water_db_path", "") or None,
             max_vertices=config.get("water_max_vertices"))
+        # One-shot flag for the triangle/vertex mismatch warning in
+        # _collect_water_sync (#100).
+        self._water_index_warned = False
         # Major-highway polylines (issue #35) — OSM motorway/trunk
         # from tools/build_highway_db.py. Optional like everything.
         from pyefis.instruments.ai.highway_db import HighwayDB
         self.highway_db = HighwayDB(
             config.get("highway_db_path", "") or None)
+        # Road ribbon appearance (RD1, issue #161, brief section 3.1).
+        # Every default reproduces today's class/tier/20 NM behaviour —
+        # only the drawn shape changes, from a 1 px GL_LINES hairline to
+        # an extruded true-scale casing + fill ribbon. Editor-facing option
+        # names carry the "svs_road_*" prefix (screenbuilder_factory.py's
+        # _svs_props()); build_virtual_vfr strips "svs_" before this config
+        # dict is built (same convention as water_db_path/highway_db_path
+        # above), so the keys read here are unprefixed.
+        self._road_width_m = dict(road_ribbon.DEFAULT_WIDTH_M)
+        self._road_width_m.update(config.get("road_widths_m", {}) or {})
+        self._road_casing_m = float(
+            config.get("road_casing_m", road_ribbon.DEFAULT_CASING_M))
+        self._road_min_px = float(
+            config.get("road_min_px", road_ribbon.DEFAULT_MIN_PX))
+        self._road_subdivide_m = float(
+            config.get("road_subdivide_m", road_ribbon.DEFAULT_SUBDIVIDE_M))
+        self._road_subdivide_nm = float(
+            config.get("road_subdivide_nm",
+                      road_ribbon.DEFAULT_SUBDIVIDE_NM))
+        self._road_lift_ft = float(
+            config.get("road_lift_ft", road_ribbon.DEFAULT_LIFT_FT))
+        self._road_max_vertices = int(
+            config.get("road_max_vertices",
+                      road_ribbon.DEFAULT_MAX_VERTICES))
+        self._road_color = road_ribbon.hex_to_rgba01(
+            config.get("road_color", "#535353"))
+        self._road_casing_color = road_ribbon.hex_to_rgba01(
+            config.get("road_casing_color", "#4a4a4a"))
         self.green_ft     = float(config.get("clearance_green_ft",  1000))
         self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
         # Terrain colour palette: copy the named band colours onto the instance
@@ -474,9 +624,11 @@ class SVSRenderer:
                              _PALETTES["clearance"])
         (self.c_safe, self.c_caution, self.c_warning,
          self.c_conflict, self.c_water) = _pal
-        self.terrain_fill  = config.get("terrain_fill", True)
         self.auto_range    = config.get("auto_range", True)
         self.min_range_nm  = float(config.get("min_range_nm", 8.0))
+        # Hysteresis state for the collect-cache range bucket (AER-678).
+        # See _update_collect_range_nm.
+        self._collect_range_nm = None
 
         # OpenGL tier state — see docs/svs_opengl_plan.md. The renderer
         # is lazy-constructed inside draw(), so we can probe Qt's OpenGL
@@ -503,12 +655,12 @@ class SVSRenderer:
         # cached alongside the boolean; None when not near one.
         self._near_airport_elev_ft = None
 
-        # Per-frame profiler. ``svs_perf_log: true`` in the SVS config
+        # Per-frame profiler. ``perf_log: true`` in the SVS config
         # turns on a lightweight per-segment timing pass that prints a
         # summary line every couple of seconds. Off by default; zero
         # overhead when disabled.
         self._perf = _SVSPerfLog(
-            enabled=bool(config.get("svs_perf_log", False)))
+            enabled=bool(config.get("perf_log", False)))
         if self._perf.enabled:
             log.info("SVS perf logging enabled")
 
@@ -557,6 +709,15 @@ class SVSRenderer:
         self._collect_slot = threading.Lock()
         # Generic async cache slots (airports, obstacles, ...).
         self._async_state = {}
+        # Cross-thread wake signal (AER-1714). Every async collector below
+        # (water, highways, and anything routed through _async_cache) only
+        # ever gets consumed from the render thread's next draw pass. On a
+        # stationary aircraft nothing else schedules that next draw, so a
+        # worker's finished result sits parked in *_result/_async_state
+        # forever. Each worker sets this on completion; the host widget's
+        # frame clock consumes it (consume_async_dirty) to force the one
+        # more paint that actually promotes the result.
+        self._async_dirty = threading.Event()
         # Obstacle pole vertex cache (Phase 2). Same TTL strategy as
         # water; key includes altitude bucket because the
         # conflict-vs-lit grouping depends on aircraft altitude.
@@ -588,6 +749,15 @@ class SVSRenderer:
         # high and the horizon never dips. Config-gated for A/B.
         self.earth_curvature = bool(config.get("earth_curvature", True))
 
+        # PAPI (CIFP1 / CAP-123): drawn only at runway ends whose NASR
+        # record carries a PAPI (P2*/P4*) and a published visual glide
+        # path angle -- never the legacy VirtualVfr's assumed 3 degrees
+        # on every runway. papi_range_nm is the FAA's daytime visual range.
+        self.papi_enabled = bool(config.get("papi", True))
+        self.papi_range_nm = float(config.get("papi_range_nm", 5.0))
+        self._papi_cand_key = None
+        self._papi_cand = []
+
         # Clipmap terrain (P8 Track 1a): nested world-snapped grid
         # levels. cells = grid resolution per level; levels doubles
         # the spacing each ring out. Defaults cover ~120 km at the
@@ -595,20 +765,6 @@ class SVSRenderer:
         # spacing.
         self._clip_cells  = int(config.get("clipmap_cells", 64))
         self._clip_levels = int(config.get("clipmap_levels", 7))
-        # Legacy polar-fan parameters — accepted and retained for
-        # config compatibility (the Pi config sets n_range), no
-        # longer consulted by the renderer.
-        # Polar mesh parameters for the GL terrain fan.
-        self._n_range      = int(config.get("n_range",
-                                            POLAR_DEFAULTS["n_range"]))
-        self._n_az         = int(config.get("n_az",
-                                            POLAR_DEFAULTS["n_az"]))
-        self._fov_deg      = float(config.get("fov_deg",
-                                              POLAR_DEFAULTS["fov_deg"]))
-        self._radial_warp  = float(config.get("radial_warp",
-                                              POLAR_DEFAULTS["radial_warp"]))
-        self._r_min_nm     = float(config.get("r_min_nm",
-                                              POLAR_DEFAULTS["r_min_nm"]))
 
     @property
     def ready(self) -> bool:
@@ -619,7 +775,16 @@ class SVSRenderer:
         """Compute the effective rendered range in NM, scaling down from
         ``range_nm`` based on AGL and MSL when ``auto_range`` is on.
         Shared by the polar/CPU rasterisation path and the GL overlay
-        path so both honour the same auto-scale rule."""
+        path so both honour the same auto-scale rule.
+
+        Returns the RAW range — this is the actual terrain extent
+        drawn (svs_gl.draw's far edge), so it must track AGL
+        continuously with no hysteresis of its own; bucketing this
+        return value previously silently overrode a user's configured
+        range_nm/min_range_nm and made the rendered far edge pop in
+        5 NM steps under climb (AER-678 review). A hysteresis-smoothed
+        copy for collector cache keys only is stashed on
+        self._collect_range_nm as a side effect — see _collect_key."""
         _agl_elev, _ = self._sample_elevations(
             np.array([[ac_lat]]), np.array([[ac_lon]]))
         ac_ground_m = float(_agl_elev[0, 0])
@@ -635,9 +800,77 @@ class SVSRenderer:
             # when each polar quad was Python work; with the GPU
             # path the extra reach is essentially free.
             horizon_range = 1.22 * math.sqrt(max(0.0, agl_ft))
-            return min(self.range_nm,
-                       max(self.min_range_nm, horizon_range))
-        return self.range_nm
+            raw_range = min(self.range_nm,
+                            max(self.min_range_nm, horizon_range))
+        else:
+            raw_range = self.range_nm
+        self._update_collect_range_nm(raw_range)
+        return raw_range
+
+    # Hysteresis (Schmitt-trigger) bucketing for the collect-cache
+    # range term (AER-678 root cause). round(range_nm / STEP) * STEP
+    # alone still flips on every frame where the raw range hovers
+    # near a bucket edge, and because the SAME bucketed range also
+    # sets _collect_key's position-quantization step, one noisy
+    # reading invalidated every collector's cache together — the
+    # "vibrating" SVS under motion. The bucket only moves once the
+    # raw range has drifted HYSTERESIS_NM past the edge of its
+    # current bucket, not merely across the edge.
+    #
+    # This state has exactly one writer (_auto_range_nm, called once
+    # per frame from draw()) and must stay that way: it exists only
+    # to smooth the auto-scaled render range for the six collectors
+    # that key off it (runway polygons/markings, water, highways,
+    # obstacles, flags). The airports collector keys off self.range_nm
+    # instead (a static config value with no jitter to smooth) — do
+    # not route it through this bucket, or the two unrelated range
+    # domains will thrash the same state against each other every
+    # frame (AER-678 review).
+    _COLLECT_RANGE_STEP_NM = 5.0
+    _COLLECT_RANGE_HYSTERESIS_NM = 1.5
+
+    def _update_collect_range_nm(self, range_nm: float) -> float:
+        step = self._COLLECT_RANGE_STEP_NM
+        bucket = self._collect_range_nm
+        half = step / 2.0 + self._COLLECT_RANGE_HYSTERESIS_NM
+        if (bucket is None
+                or range_nm < bucket - half
+                or range_nm > bucket + half):
+            bucket = round(range_nm / step) * step
+            self._collect_range_nm = bucket
+        return bucket
+
+    def _collect_key(self, ac_lat, ac_lon, range_nm, *extra):
+        """Single cache-key builder shared by every SVS collector
+        (runway polygons/markings, airports, water, highways,
+        obstacles, flags). Coarsens aircraft position by a step
+        derived from ``range_nm`` so all eight independent per-
+        collector caches invalidate together, only on real movement
+        or a real range change — never on cache-key churn.
+
+        ``range_nm`` must already be jitter-free: pass
+        ``self._collect_range_nm`` (the hysteresis bucket stashed by
+        ``_auto_range_nm``) for the six auto-scaled collectors, or
+        ``self.range_nm`` for the airports collector, which is keyed
+        on the static configured range instead. Never pass the raw
+        per-frame auto-range value directly — the position step below
+        is derived from it, so an unsmoothed range reproduces AER-678
+        even if the range term in the key looks quantized."""
+        step = max(0.01, range_nm / 2000.0)
+        return (round(ac_lat / step) * step,
+                round(ac_lon / step) * step,
+                range_nm) + extra
+
+    def palette_rgb01(self):
+        """The selected palette's five band colours (safe, caution,
+        warning, conflict, water) as 0..1 RGB tuples -- the terrain
+        shader's COLOR_* uniforms (issue #394)."""
+        bands = (getattr(self, "c_safe", COLOR_SAFE),
+                 getattr(self, "c_caution", COLOR_CAUTION),
+                 getattr(self, "c_warning", COLOR_WARNING),
+                 getattr(self, "c_conflict", COLOR_CONFLICT),
+                 getattr(self, "c_water", COLOR_WATER))
+        return tuple((c.redF(), c.greenF(), c.blueF()) for c in bands)
 
     def _clearance_color(self, clearance_ft: float) -> QColor:
         # Use the selected palette's band colours; fall back to the module
@@ -653,7 +886,8 @@ class SVSRenderer:
     def draw(self, p: QPainter, w: int, h: int,
              ac_lat: float, ac_lon: float, ac_alt_ft: float,
              pitch_deg: float, roll_deg: float, heading_deg: float,
-             pixels_per_deg: float, device_pixel_ratio: float = 1.0):
+             pixels_per_deg: float, device_pixel_ratio: float = 1.0,
+             roll_pivot_px: float = 0.0, lens_shift_px: float = 0.0):
         """
         Draw the SVS terrain overlay onto the AI viewport.
 
@@ -711,7 +945,9 @@ class SVSRenderer:
                 self._gl_renderer.draw(
                     p, w, h, ac_lat, ac_lon, ac_alt_ft,
                     pitch_deg, roll_deg, heading_deg,
-                    pixels_per_deg, range_nm, device_pixel_ratio)
+                    pixels_per_deg, range_nm, device_pixel_ratio,
+                    roll_pivot_px=roll_pivot_px,
+                    lens_shift_px=lens_shift_px)
             # Terrain painted successfully — the AI may now show sky (not brown)
             # above the synthetic terrain.
             self.drew_terrain = True
@@ -781,10 +1017,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         lat_cos = math.cos(math.radians(ac_lat))
 
         if (self._runway_polys_cache is not None
@@ -1110,11 +1343,8 @@ class SVSRenderer:
                 or not self.airport_db.ready):
             return None
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0,
-               round(self.detail_distance_nm, 2))
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
+                                round(self.detail_distance_nm, 2))
         if (self._runway_markings_cache is not None
                 and self._runway_markings_cache_key == key):
             return self._runway_markings_cache
@@ -1360,8 +1590,7 @@ class SVSRenderer:
         # Position step scales with range (jet speeds crossed the old
         # fixed 0.6 NM step every ~6 s, rebuilding 100 NM datasets
         # whose content had barely changed).
-        step = max(0.01, self.range_nm / 2000.0)
-        key = (round(ac_lat / step) * step, round(ac_lon / step) * step)
+        key = self._collect_key(ac_lat, ac_lon, self.range_nm)
         return self._async_cache(
             "airports", key,
             lambda: list(self._airports_in_range(ac_lat, ac_lon))) or []
@@ -1389,6 +1618,7 @@ class SVSRenderer:
                         v = builder()
                         with st["lock"]:
                             st["res"] = (key, v)
+                        self._async_dirty.set()
                     except Exception:
                         log.warning("%s worker failed", name,
                                     exc_info=True)
@@ -1397,6 +1627,19 @@ class SVSRenderer:
                 st["worker"] = threading.Thread(target=run, daemon=True)
                 st["worker"].start()
             return st["val"]
+
+    def consume_async_dirty(self):
+        """Check-and-clear the AER-1714 wake signal.
+
+        True means an async collector worker (water, highways, or anything
+        routed through ``_async_cache`` — airports, obstacles) landed a
+        result since the last call. The host widget's frame clock uses this
+        to force one more paint even when the pose hasn't moved, which is
+        what actually promotes the parked result into the draw."""
+        if self._async_dirty.is_set():
+            self._async_dirty.clear()
+            return True
+        return False
 
     def _airports_in_range(self, ac_lat, ac_lon):
         """Yield ``(label, ref_lat, ref_lon, elev_ft, runways)`` records from
@@ -1420,6 +1663,10 @@ class SVSRenderer:
                     "thr2_marking": r.thr2_marking,
                     "thr1_displaced_ft": r.thr1_displaced_ft,
                     "thr2_displaced_ft": r.thr2_displaced_ft,
+                    "thr1_vgsi_type": getattr(r, "thr1_vgsi_type", None),
+                    "thr2_vgsi_type": getattr(r, "thr2_vgsi_type", None),
+                    "thr1_visual_gpa": getattr(r, "thr1_visual_gpa", None),
+                    "thr2_visual_gpa": getattr(r, "thr2_visual_gpa", None),
                 } for r in ap.runways]
                 yield label, ap.ref_lat, ap.ref_lon, ap.elev_ft, runways
 
@@ -1434,7 +1681,7 @@ class SVSRenderer:
     # threshold for visible churn is closer to range_nm * 0.1.
     _WATER_TRIS_CACHE_POS_STEP_DEG = 0.01
 
-    def _collect_water_triangles(self, ac_lat, ac_lon, range_nm):
+    def _collect_water_triangles(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
         """Collect every visible water polygon, look up its surface
         elevation, and expand its pre-tessellated triangles into a
         single Nx3 float32 numpy array of (lat, lon, elev_ft) vertex
@@ -1454,10 +1701,7 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         # Purely key-based: the key encodes coarsened position and
         # range, which fully determine the result — a TTL on top only
         # forced an identical rebuild every second, and the worker's
@@ -1485,22 +1729,23 @@ class SVSRenderer:
             if not busy and self._collect_slot.acquire(blocking=False):
                 self._water_worker = threading.Thread(
                     target=self._water_collect_worker,
-                    args=(key, ac_lat, ac_lon, range_nm),
+                    args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm),
                     daemon=True)
                 self._water_worker.start()
         return self._water_tris_cache
 
-    def _water_collect_worker(self, key, ac_lat, ac_lon, range_nm):
+    def _water_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm):
         try:
-            arr = self._collect_water_sync(ac_lat, ac_lon, range_nm)
+            arr = self._collect_water_sync(ac_lat, ac_lon, ac_alt_ft, range_nm)
             with self._water_worker_lock:
                 self._water_result = (key, arr)
+            self._async_dirty.set()
         except Exception:
             log.warning("water collect worker failed", exc_info=True)
         finally:
             self._collect_slot.release()
 
-    def _collect_water_sync(self, ac_lat, ac_lon, range_nm):
+    def _collect_water_sync(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
 
         # Sentinel mapped to sea level. Same convention the previous
         # CPU path used.
@@ -1599,9 +1844,22 @@ class SVSRenderer:
                 tri_idx[1::3] = np.arange(1, n_v - 1, dtype=np.int32)
                 tri_idx[2::3] = np.arange(2, n_v,     dtype=np.int32)
             else:
-                tri_idx = np.asarray(tri_idx, dtype=np.int32)
-            # Clip indices defensively; the build tool may emit one
-            # malformed entry on a tessellation edge case.
+                tri_idx = np.array(tri_idx, dtype=np.int32)
+                # An index past the vertex array means the row's
+                # triangles and vertices disagree (#100: a reader-side
+                # re-decimation, or a malformed build). Say so once,
+                # with enough to find the row, instead of letting the
+                # clip below silently render it as shattered water.
+                top = int(tri_idx.max()) if tri_idx.size else -1
+                if top >= n_v and not self._water_index_warned:
+                    self._water_index_warned = True
+                    log.warning(
+                        "SVS water: polygon id=%s has triangle index %d "
+                        "but only %d vertices; clipping (further rows "
+                        "not reported)",
+                        getattr(poly, "id", None), top, n_v)
+            # Clip indices defensively so a malformed row cannot index
+            # out of bounds.
             np.clip(tri_idx, 0, n_v - 1, out=tri_idx)
             verts_np = np.asarray(verts, dtype=np.float32)
             picked = verts_np[tri_idx]   # (n_idx, 2) — fancy indexing
@@ -1612,32 +1870,55 @@ class SVSRenderer:
 
         if not all_tris:
             return None
-        return np.concatenate(all_tris, axis=0)
+        verts = np.concatenate(all_tris, axis=0)
+
+        # Terrain line-of-sight masking (issue #102 -- the missing twin of
+        # the highway fix, issue #73/#74). The SVS overlay pass disables
+        # depth testing before this draw, so a water triangle behind a
+        # ridge would otherwise paint straight through the near slope
+        # regardless of what terrain is in front of it. Batch the same
+        # sight-line test highways use (_los_masked_batch) over every
+        # triangle vertex at once, then drop a triangle if ANY of its
+        # three vertices lacks a clear line of sight. Unlike a highway
+        # polyline (which can end a segment exactly at the ridge line and
+        # keep going beyond it), a triangle straddling a ridge has no
+        # correct partial fill, so the whole triangle goes rather than
+        # just the occluded vertex.
+        lat_cos = math.cos(math.radians(ac_lat))
+        masked = self._los_masked_batch(
+            ac_lat, ac_lon, ac_alt_ft,
+            verts[:, 0], verts[:, 1], verts[:, 2], lat_cos)
+        tri_ok = ~masked.reshape(-1, 3).any(axis=1)
+        if not tri_ok.any():
+            return None
+        return verts.reshape(-1, 3, 3)[tri_ok].reshape(-1, 3)
 
     # ------------------------------------------------------------------
-    # Highways (issue #35): decimated OSM polylines draped on the
-    # terrain — per-vertex SRTM elevation, expanded to GL_LINES pairs.
-    # Collected asynchronously (same pattern as water): the sqlite
-    # walk + elevation sampling never blocks a frame.
+    # Highways (issue #35, extruded to true-scale ribbons for RD1 /
+    # issue #161): decimated OSM polylines draped on the terrain,
+    # extruded into mitred casing + fill triangle lists (road_ribbon.py)
+    # instead of a 1 px GL_LINES hairline. Collected asynchronously
+    # (same pattern as water): the sqlite walk + elevation sampling +
+    # extrusion never blocks a frame.
     # ------------------------------------------------------------------
     _HWY_CACHE_TTL_S = 1.0
     _HWY_CACHE_POS_STEP_DEG = 0.01
 
-    def _collect_highways(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _collect_highways(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                          pixels_per_deg):
         if (getattr(self, "highway_db", None) is None
                 or not self.highway_db.ready):
             return None
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        # Position-only key. The LOS masking (#73) uses the CURRENT altitude when
+        # The LOS masking (#73) uses the CURRENT altitude when
         # the collection runs, and a moving aircraft already refreshes this on
         # position change (~1 s), so the occlusion stays current without an
         # altitude bucket. An altitude bucket here re-ran the costly query on
         # every 200 ft of descent -- a worker-thread burst that stalled the
-        # render loop on final approach (the #73 perf regression).
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0)
+        # render loop on final approach (the #73 perf regression). Screen-space
+        # width floor uses whatever pixels_per_deg the CURRENT collection sees
+        # for the same reason -- it changes only on a widget resize.
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
         # Purely key-based — see the water collector note.
         if (self._hwy_cache is not None
                 and self._hwy_cache_key == key):
@@ -1656,16 +1937,28 @@ class SVSRenderer:
             if not busy and self._collect_slot.acquire(blocking=False):
                 self._hwy_worker = threading.Thread(
                     target=self._hwy_collect_worker,
-                    args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm),
+                    args=(key, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                         pixels_per_deg),
                     daemon=True)
                 self._hwy_worker.start()
         return self._hwy_cache
 
-    def _hwy_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _hwy_collect_worker(self, key, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                            pixels_per_deg):
         try:
-            arr = self._collect_highways_sync(ac_lat, ac_lon, ac_alt_ft, range_nm)
+            t0 = time.perf_counter_ns()
+            result = self._collect_highways_sync(
+                ac_lat, ac_lon, ac_alt_ft, range_nm, pixels_per_deg)
+            self._perf.add_ns("highways.worker_ms",
+                              time.perf_counter_ns() - t0)
+            if self._perf.enabled:
+                fill = result[1] if result is not None else None
+                n_vertices = 0 if fill is None else int(fill.shape[0])
+                self._perf.set_gauge("highways.vertices", n_vertices)
+                self._perf.set_gauge("highways.segments", n_vertices / 6.0)
             with self._hwy_worker_lock:
-                self._hwy_result = (key, arr)
+                self._hwy_result = (key, result)
+            self._async_dirty.set()
         except Exception:
             log.warning("highway collect worker failed", exc_info=True)
         finally:
@@ -1679,29 +1972,68 @@ class SVSRenderer:
     _HWY_MAX_NM = 20.0
     _HWY_NEAR_NM = 8.0
 
-    def _collect_highways_sync(self, ac_lat, ac_lon, ac_alt_ft, range_nm):
+    def _collect_highways_sync(self, ac_lat, ac_lon, ac_alt_ft, range_nm,
+                               pixels_per_deg):
+        """Returns ``(casing_tris, fill_tris)`` — see
+        :func:`road_ribbon.extrude_ribbons` — or ``None`` when nothing
+        in range survives class/tier/LOS filtering."""
         rng = min(range_nm, self._HWY_MAX_NM)
         lat_cos = math.cos(math.radians(ac_lat))
         near_deg2 = (self._HWY_NEAR_NM / 60.0) ** 2
         lines = []
+        fclasses = []
+        is_far = []
+        is_bridge = []
         for hl in self.highway_db.polylines_in_range(
                 ac_lat, ac_lon, rng):
+            # RD3a (AER-640): a tunnel is underground -- draping it on the
+            # terrain surface (or through a ridge) is wrong at any LOD, so
+            # it never becomes a ribbon at all. flags is 0 on an old pack
+            # (HighwayDB fallback), so this is a no-op there.
+            if hl.flags & FLAG_TUNNEL:
+                continue
             v = hl.vertices
             if len(v) < 2:
                 continue
             mid = v[len(v) // 2]
             d2 = ((mid[0] - ac_lat) ** 2
                   + ((mid[1] - ac_lon) * lat_cos) ** 2)
-            if d2 > near_deg2:
+            far = d2 > near_deg2
+            if far:
                 if hl.fclass != "motorway":
                     continue
                 if len(v) > 3:
                     v = np.vstack([v[::2], v[-1:]])
             lines.append(v)
+            fclasses.append(hl.fclass)
+            is_far.append(far)
+            is_bridge.append(bool(hl.flags & FLAG_BRIDGE))
         if not lines:
             return None
-        # Batched SRTM elevation for every vertex of every polyline.
-        all_pts = np.concatenate(lines, axis=0)
+
+        # Subdivide long near-field segments so the ribbon follows rolling
+        # terrain (brief section 3.1), then apply the hard vertex-count
+        # cap by dropping whole far-tier polylines (links first, then
+        # trunks — never near-tier or motorway) before the expensive
+        # per-vertex elevation/LOS/extrusion work runs on them. Bridges are
+        # excluded from subdivision (AER-640) -- they're a straight span
+        # between piers, not terrain-following pavement.
+        all_pts, offsets = road_ribbon.subdivide_polylines(
+            lines, ac_lat, ac_lon,
+            subdivide_m=self._road_subdivide_m,
+            subdivide_nm=self._road_subdivide_nm,
+            no_subdivide=np.asarray(is_bridge, dtype=bool))
+        lengths = np.diff(offsets)
+        keep_mask = road_ribbon.trim_to_vertex_budget(
+            lengths, fclasses, np.asarray(is_far, dtype=bool),
+            self._road_max_vertices)
+        if not keep_mask.all():
+            all_pts, offsets, fclasses = road_ribbon.apply_keep_mask(
+                all_pts, offsets, fclasses, keep_mask)
+        if all_pts.shape[0] == 0:
+            return None
+
+        # Batched SRTM elevation for every (now denser) vertex.
         elev_m, _ = self._sample_elevations(
             all_pts[:, 0][None, :], all_pts[:, 1][None, :])
         elev_ft = (elev_m[0] * 3.28084).astype(np.float32)
@@ -1709,33 +2041,21 @@ class SVSRenderer:
         # vertex at once (issue #74): the per-vertex sight-line loop was the
         # biggest GIL-held burst on the highway worker at low altitude. With no
         # depth test a road behind a ridge would draw over the near slope, so a
-        # GL_LINES pair is emitted only where BOTH endpoints have a clear line
-        # of sight -- the road disappears behind a ridge and reappears beyond.
+        # segment is emitted only where BOTH endpoints have a clear line of
+        # sight -- the road disappears behind a ridge and reappears beyond.
         masked_all = self._los_masked_batch(
             ac_lat, ac_lon, ac_alt_ft,
             all_pts[:, 0], all_pts[:, 1], elev_ft, lat_cos)
         vis_all = ~masked_all
-        out = []
-        i = 0
-        for v in lines:
-            k = len(v)
-            seg = np.empty((k, 3), dtype=np.float32)
-            seg[:, 0:2] = v
-            seg[:, 2] = elev_ft[i:i + k]
-            vis = vis_all[i:i + k]
-            i += k
-            seg_ok = vis[:-1] & vis[1:]      # per-segment: both ends visible
-            if not seg_ok.any():
-                continue
-            starts = seg[:-1][seg_ok]
-            ends = seg[1:][seg_ok]
-            pairs = np.empty((2 * starts.shape[0], 3), dtype=np.float32)
-            pairs[0::2] = starts
-            pairs[1::2] = ends
-            out.append(pairs)
-        if not out:
+
+        casing, fill = road_ribbon.extrude_ribbons(
+            all_pts, offsets, fclasses, elev_ft, vis_all,
+            ac_lat, ac_lon, pixels_per_deg,
+            width_m=self._road_width_m, casing_m=self._road_casing_m,
+            min_px=self._road_min_px, lift_ft=self._road_lift_ft)
+        if fill is None:
             return None
-        return np.concatenate(out, axis=0)
+        return casing, fill
 
     # Obstacle color groups (RGBA in [0, 1]) — match the QPen colors
     # the CPU path used in pre-Phase-2 commits.
@@ -1770,11 +2090,8 @@ class SVSRenderer:
             return {}
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(ac_alt_ft / 200.0) * 200.0,  # 200 ft alt bucket
-               round(range_nm / 5.0) * 5.0)
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
+                                round(ac_alt_ft / 200.0) * 200.0)  # 200 ft alt bucket
         return self._async_cache(
             "obstacles", key,
             lambda: self._build_obstacles(
@@ -1915,6 +2232,157 @@ class SVSRenderer:
         return result
 
     # ------------------------------------------------------------------
+    # PAPI (CIFP1 / CAP-123, docs/svs_papi_plan.md). Replaces the legacy
+    # VirtualVfr PAPI, which painted four lights beside EVERY runway on an
+    # assumed 3-degree path. Here a row is drawn only where NASR says a
+    # PAPI is installed (vgsi_code P2L/P2R/P4L/P4R), on the published
+    # visual glide path angle, on the published side. Unit settings follow
+    # FAA AC 150/5340-30: a 4-box row is set at GPA +30', +10', -10', -30'
+    # from the runway outward, a 2-box row at +15' / -15'; a unit shows
+    # white when the eye is above its setting. The red/white split moves
+    # with altitude, so the row is rebuilt per frame -- only the candidate
+    # runway-end list is cached, and it is a handful of quads.
+    # ------------------------------------------------------------------
+    _PAPI_ALONG_FT = 1000.0     # box abeam the aiming point
+    _PAPI_EDGE_FT = 50.0        # inboard unit to runway edge (AC: 50 ft)
+    _PAPI_SPACING_FT = 30.0     # unit-to-unit spacing (AC: 20-30 ft)
+    _PAPI_LIGHT_FT = 6.0        # drawn light size at close range
+    _PAPI_LIGHT_PX = 6.0        # ...floored so the lights stay visible
+    _PAPI_SPACING_PX = 10.0     # far away, like the legacy fixed-pixel row
+    _PAPI_EDGE_PX = 6.0
+    _PAPI_AZIMUTH_DEG = 10.0    # PAPI horizontal coverage, each side of CL
+    _PAPI_RE = re.compile(r"^P([24])([LR])$")
+
+    @staticmethod
+    def _papi_settings(gpa_deg, n_boxes):
+        """Unit angle settings, inboard (nearest the runway) first."""
+        if n_boxes == 2:
+            return [gpa_deg + 0.25, gpa_deg - 0.25]
+        return [gpa_deg + 0.5, gpa_deg + 1.0 / 6.0,
+                gpa_deg - 1.0 / 6.0, gpa_deg - 0.5]
+
+    @classmethod
+    def _papi_red_count(cls, angle_deg, gpa_deg, n_boxes=4):
+        """How many units show red at ``angle_deg`` above the box. On the
+        published path a 4-box row reads 2 red / 2 white, a 2-box row
+        1 / 1; low adds red from the outboard unit inward."""
+        return sum(1 for s in cls._papi_settings(gpa_deg, n_boxes)
+                   if angle_deg < s)
+
+    def _papi_candidates(self, ac_lat, ac_lon):
+        """Runway ends near enough to matter that carry a PAPI with a
+        published angle. Rebuilt only when the airports list changes or
+        the aircraft crosses a collect-key step."""
+        airports = self._get_airports_cached(ac_lat, ac_lon)
+        key = self._collect_key(ac_lat, ac_lon, self.range_nm)
+        if (self._papi_cand_key is not None
+                and self._papi_cand_key[0] == key
+                and self._papi_cand_key[1] is airports):
+            return self._papi_cand
+        FT = 364491.0
+        reach_ft = (self.papi_range_nm + 3.0) * 6076.12
+        cands = []
+        for _label, _rl, _rn, _re, runways in airports:
+            for rwy in runways:
+                for i, j in ((1, 2), (2, 1)):
+                    m = self._PAPI_RE.match(
+                        (rwy.get(f"thr{i}_vgsi_type") or "").strip())
+                    gpa = rwy.get(f"thr{i}_visual_gpa")
+                    if m is None or not gpa or gpa <= 0:
+                        continue
+                    t_lat, t_lon = rwy[f"thr{i}_lat"], rwy[f"thr{i}_lon"]
+                    o_lat, o_lon = rwy[f"thr{j}_lat"], rwy[f"thr{j}_lon"]
+                    cos_t = math.cos(math.radians(t_lat))
+                    un = (o_lat - t_lat) * FT
+                    ue = (o_lon - t_lon) * FT * cos_t
+                    length = math.hypot(un, ue)
+                    if length < 1.0:
+                        continue
+                    un, ue = un / length, ue / length
+                    along = (float(rwy.get(f"thr{i}_displaced_ft") or 0.0)
+                             + min(self._PAPI_ALONG_FT, 0.3 * length))
+                    ref_lat = t_lat + un * along / FT
+                    ref_lon = t_lon + ue * along / (FT * cos_t)
+                    if math.hypot((ref_lat - ac_lat) * FT,
+                                  (ref_lon - ac_lon) * FT * cos_t) > reach_ft:
+                        continue
+                    # Outboard unit vector: left of the landing direction
+                    # for an "L" box, right for "R".
+                    if m.group(2) == "L":
+                        sn, se = ue, -un
+                    else:
+                        sn, se = -ue, un
+                    cands.append({
+                        "lat": ref_lat, "lon": ref_lon, "cos": cos_t,
+                        "elev": float(rwy.get(f"thr{i}_elev_ft") or 0.0),
+                        "un": un, "ue": ue, "sn": sn, "se": se,
+                        "hw": float(rwy.get("width_ft") or 100.0) / 2.0,
+                        "gpa": float(gpa), "n": int(m.group(1)),
+                    })
+        self._papi_cand = cands
+        self._papi_cand_key = (key, airports)
+        return cands
+
+    def _collect_papi(self, ac_lat, ac_lon, ac_alt_ft, heading_deg, ppd):
+        """Per-frame PAPI geometry: ``{"red": Nx3, "white": Nx3}`` world
+        triangles (either may be None), or None when no row is in view.
+
+        A row is drawn when the aircraft is within ``papi_range_nm`` of
+        the box, on the approach side and inside the PAPI's +/-10 degree
+        azimuth coverage, the box is ahead of the nose, and terrain does
+        not mask it."""
+        if (not self.papi_enabled or not ppd
+                or getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready):
+            return None
+        FT = 364491.0
+        DEG_PER_RAD = 57.29577951308232
+        range_ft = self.papi_range_nm * 6076.12
+        max_lat = math.tan(math.radians(self._PAPI_AZIMUTH_DEG))
+        red, white = [], []
+        for c in self._papi_candidates(ac_lat, ac_lon):
+            # Aircraft relative to the box, local feet (north, east).
+            n = (ac_lat - c["lat"]) * FT
+            e = (ac_lon - c["lon"]) * FT * c["cos"]
+            dist = math.hypot(n, e)
+            if dist > range_ft or dist < 1.0:
+                continue
+            along = -(n * c["un"] + e * c["ue"])
+            if along <= 0.0 or abs(e * c["un"] - n * c["ue"]) > along * max_lat:
+                continue
+            brg = math.degrees(math.atan2(-e, -n))
+            if heading_deg is not None and \
+                    abs((brg - heading_deg + 180.0) % 360.0 - 180.0) > 90.0:
+                continue
+            if self._los_masked(ac_lat, ac_lon, ac_alt_ft, c["lat"], c["lon"],
+                                c["elev"] + 10.0,
+                                math.cos(math.radians(ac_lat))):
+                continue
+            angle = math.degrees(math.atan2(ac_alt_ft - c["elev"], dist))
+            px_ft = dist / (DEG_PER_RAD * ppd)
+            size = max(self._PAPI_LIGHT_FT, self._PAPI_LIGHT_PX * px_ft)
+            spacing = max(self._PAPI_SPACING_FT, self._PAPI_SPACING_PX * px_ft)
+            inboard = c["hw"] + max(self._PAPI_EDGE_FT,
+                                    self._PAPI_EDGE_PX * px_ft)
+            half = size / 2.0
+            for k, setting in enumerate(self._papi_settings(c["gpa"], c["n"])):
+                off = inboard + k * spacing
+                verts = []
+                for dx, dz in ((-half, 0.0), (half, 0.0), (half, size),
+                               (-half, size)):
+                    o = off + dx
+                    verts.append((c["lat"] + c["sn"] * o / FT,
+                                  c["lon"] + c["se"] * o / (FT * c["cos"]),
+                                  c["elev"] + dz))
+                q0, q1, q2, q3 = verts
+                (white if angle >= setting else red).extend(
+                    (q0, q1, q2, q0, q2, q3))
+        if not red and not white:
+            return None
+        return {"red": np.asarray(red, dtype=np.float32) if red else None,
+                "white": np.asarray(white, dtype=np.float32) if white else None}
+
+    # ------------------------------------------------------------------
     # Phase 5: airport flags + identifier text on the GPU. The pole is
     # a world-space line segment; the flag rectangle and identifier
     # glyphs are distance-billboarded — sized in world units so they
@@ -1955,10 +2423,8 @@ class SVSRenderer:
             return None
 
         now = time.perf_counter()
-        step = max(0.01, range_nm / 2000.0)
-        key = (round(ac_lat / step) * step,
-               round(ac_lon / step) * step,
-               round(range_nm / 5.0) * 5.0, round(ppd, 1))
+        key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm,
+                                round(ppd, 1))
         if (self._flags_cache is not None
                 and self._flags_cache_key == key):
             return self._flags_cache
@@ -2113,10 +2579,20 @@ class SVSRenderer:
         tile_lat_grid = np.floor(lat_grid).astype(np.int32)
         tile_lon_grid = np.floor(lon_grid).astype(np.int32)
 
-        keys = np.unique(
-            np.stack([tile_lat_grid.ravel(), tile_lon_grid.ravel()], axis=1),
-            axis=0
-        )
+        # Dedup tile coordinates by packing (lat, lon) into one int64 and
+        # calling 1-D np.unique, NOT np.unique(..., axis=0): the axis=0 path
+        # takes a generic row-wise-compare sort that measured 30x+ slower
+        # here than the packed-scalar path for the same handful of distinct
+        # tiles (AER-621 baseline profiling — this dominated the highways
+        # worker's wall time on the LOS sample grid, ~350ms down to ~11ms
+        # at DFW-metro vertex counts). Offsets keep both fields non-negative
+        # (lat in [-90, 90], lon in [-180, 180]) so the packing is exact.
+        lat_off = tile_lat_grid.ravel().astype(np.int64) + 90
+        lon_off = tile_lon_grid.ravel().astype(np.int64) + 200
+        packed = lat_off * 401 + lon_off
+        uniq_packed = np.unique(packed)
+        keys = np.stack([(uniq_packed // 401) - 90,
+                          (uniq_packed % 401) - 200], axis=1)
 
         for tile_lat, tile_lon in keys:
             tile = self.cache.get(int(tile_lat), int(tile_lon))
@@ -2181,6 +2657,11 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             if self._renderer is None or not self._renderer.ready:
                 return
             ai = self._ai
+            # AER-4243: no terrain for a position that is old, bad or failed.
+            # Clear drew_terrain so the AI falls back to its brown ground.
+            if not ai._svs_position_valid():
+                self._renderer.drew_terrain = False
+                return
             vp = ai.viewport()
             ppd = getattr(ai, 'pixelsPerDeg',
                           vp.height() / ai.pitchDegreesShown)
@@ -2194,15 +2675,24 @@ def make_svs_item(renderer: "SVSRenderer", ai_widget):
             head_true = ai._fpm_head - getattr(ai, "_magvar", 0.0)
             # SVSRenderer.draw does its own save/resetTransform/restore so the
             # outer scene transform is preserved for the next item in z order.
-            # Depress the terrain camera by horizon_position's look-down angle
-            # so the terrain horizon rises to match the AI's raised reference
-            # (no-op when horizon_position == 50). Sign verified on the Pi --
-            # if the terrain horizon moves the wrong way, flip the subtraction.
-            pitch_for_svs = ai._pitchAngle - ai._horizon_offset_deg()
+            # Raise the terrain to the AI's raised reference with a lens
+            # shift of horizon_position's pixel offset, and give the
+            # camera the true pitch. The ladder puts zero pitch at
+            # offset_px - pitch * ppd; the shifted camera puts the
+            # horizon at offset_px - tan(pitch) (scaled to pixels), the
+            # same residual as at horizon_position 50. Depressing the camera by the offset
+            # as an angle sent the offset through the tangent as well,
+            # 1.2 deg off at 50/75 and pitch -10 (AER-5122). No-op when
+            # horizon_position == 50.
+            offset_px = ai._horizon_offset_px()
             self._renderer.draw(
                 painter, vp.width(), vp.height(),
                 ai._svs_lat, ai._svs_lon, ai._svs_alt,
-                pitch_for_svs, ai._rollAngle, head_true,
-                ppd, vp.devicePixelRatioF())
+                ai._pitchAngle, ai._rollAngle, head_true,
+                ppd, vp.devicePixelRatioF(),
+                # Roll the terrain about the same raised point the AI
+                # widget rolls its ladder about (redraw(), #304).
+                roll_pivot_px=offset_px,
+                lens_shift_px=offset_px)
 
     return _SVSGraphicsItem(renderer, ai_widget)

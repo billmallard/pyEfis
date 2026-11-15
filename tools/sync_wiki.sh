@@ -6,6 +6,9 @@
 # copies the pages and images, and rewrites links/image paths for the wiki.
 # Review the result and push it yourself (publishing is outward-facing).
 #
+# Publishing is now done by .github/workflows/wiki-sync.yml on every merge to
+# dev; use this script only to preview the mirror locally.
+#
 # Usage:
 #   tools/sync_wiki.sh [wiki-remote-url] [wiki-clone-dir]
 #

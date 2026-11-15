@@ -1,5 +1,19 @@
 ## Installing pyEFIS and FIX-Gateway
-The following instructions are specific to the latest 64bit Raspbian bullseye and may not work on other versions or operating systems.
+
+> **These snap instructions are out of date for this fork.** The `fixgateway`
+> and `pyefis` snaps are behind this repository and lack Synthetic Vision,
+> navigation-data currency and the other features added here. To run the
+> current code, install from source instead:
+>
+> - [docs/running_from_source.md](docs/running_from_source.md) - clone, venv,
+>   `[qt,svs]` extras, and running pyEfis against FIX-Gateway.
+> - [docs/wiki/Headless-Linux-Appliance.md](docs/wiki/Headless-Linux-Appliance.md) -
+>   turning a box with no desktop into a boot-to-EFIS appliance.
+>
+> The reference flight unit is a Raspberry Pi 5 running Raspberry Pi OS
+> (Debian 13 "trixie"), 64-bit, Python 3.13.
+
+The snap instructions below were written for 64-bit Raspbian bullseye and may not work on other versions or operating systems.
 
 ### Install the latest updates
 Open a terminal window and run:
@@ -140,9 +154,8 @@ If you are starting new or only have a single display just edit the `preferences
 For more information on how to customize the display see [Screen Builder Documentation](https://github.com/makerplane/pyEfis/blob/master/docs/screenbuilder.md)
 
 
-### Data needed for Virtual VFR
-The virtual VFR feature uses FAA CIFP data to display runways and glide slop indicators in the atitude indicator.<br>
-When using the snap installation method, outlined above, this data is automatically downloaded and periodically auto updated.
+### Data for Synthetic Vision
+The legacy Virtual VFR overlay, which read FAA CIFP data, has been removed. Synthetic Vision replaces it and uses the NASR airports pack from the makerplane-data updater, so the attitude display needs no CIFP download. See README.rst, "Virtual VFR (removed)".
 
 ### Important information:
 NOTE: Upon starting a folder named makerplane will be created in your home folder and default configs copied into that folder.<br>
@@ -165,7 +178,6 @@ Commands:
   * fixgateway: `fixgateway.server --config-file=$HOME/makerplane/fixgw/config/default.yaml --debug`
   * fixgateway client: `fixgateway.client`
   * running fixgateway in FDR playback mode: `sudo snap start fixgateway.daemon; fixgateway.server --playback-start-time 2024-07-13-18:51:10`
-  * CIFP index builder: `pyefis.makecifpindex`
 
 Installing pyefis, FAA CIFP data, and fixgateway updates:
 ```

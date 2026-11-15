@@ -98,7 +98,7 @@ def tessellate_polygon(vertices, ring_ends=None):
     # vertices BLOB length, so dense rows need no schema flag. The old
     # builder silently DROPPED all holes past the uint16 ceiling — a
     # dense cell like the lower Florida Keys (3,322 island rings) lost
-    # every island and #44 persisted there (oracle-gate residual B).
+    # every island, painting them as water (#44).
     return idx.astype(_index_dtype(len(vertices)))
 
 
@@ -267,22 +267,21 @@ def _ring_interior_points(ring, max_points=6):
     """Up to ``max_points`` points inside a (lat, lon) ring for the hole
     verifier. Two sources, and BOTH matter:
 
-    1. The ring **centroid** and an **across-the-ring midpoint** — the
-       exact two points the oracle (auspex.pack_check) probes with. These
+    1. The ring **centroid** and an **across-the-ring midpoint**. These
        are tested FIRST and unconditionally: a hole can be covered only in
-       a small region, and if the even-odd scanline below happens to
-       sample the dry part while the oracle's centroid lands on the fill,
-       the builder must still see the covered point or it ships the very
-       #44-class island the gate then flags. (An earlier version added
-       these only as a fallback when the scanline came up short, so a hole
-       with 3 dry scanline points but a covered centroid slipped through —
-       the builder caught 1/168 of the residual instead of all of it.)
+       a small region, and the scanline points below may all land on the
+       dry part of it while the fill sits under the centre. Probing the
+       centre every time keeps that partially covered hole from being
+       judged clean and shipped as a #44-class island painted as water.
+       (An earlier version added these only as a fallback when the
+       scanline came up short, so a hole with three dry scanline points
+       but a covered centre was missed.)
     2. Even-odd **scanline** midpoints for spatial coverage of larger,
        concave holes.
 
     The centroid/midpoint candidates are kept only if ``_point_in_ring``
-    places them inside — the same even-odd sense the oracle uses — so the
-    two agree on which holes are covered."""
+    places them inside (even-odd rule), so a concave ring whose centroid
+    falls outside it contributes no false probe."""
     n = len(ring)
     if n < 3:
         return []
@@ -367,8 +366,8 @@ def _triangle_cover_tester(vertices, tri_idx):
 
 def _covered_hole_indices(all_verts, ring_ends, tri_idx):
     """Indices (into the hole list) of hole rings whose interior is
-    covered by the row's fill triangles — the residual-A defect class
-    of #44: decimation can hand earcut a self-intersecting or outer-
+    covered by the row's fill triangles — a #44 defect class:
+    decimation can hand earcut a self-intersecting or outer-
     crossing hole, and earcut then fills it instead of subtracting
     it. Judged on the STORED rings and triangles, i.e. exactly what
     the renderer will draw."""
@@ -406,9 +405,8 @@ def _strip_hole_triangles(all_verts, ring_ends, tri_idx):
     with its neighbouring fill, and those triangles hold no interior point
     of the hole, so they survive. The earlier centroid-in-hole-only test
     missed a large triangle covering a small island (its centroid sits
-    outside the island), leaving ~0.02% of inland island interiors covered
-    at continental scale — the residual behind the #44/#103 "0 inland"
-    gate slip. Biased toward land — painting an island as water is the
+    outside the island), leaving some inland island interiors covered
+    (#44/#103). Biased toward land — painting an island as water is the
     dangerous direction for an EFIS (#44)."""
     v = np.asarray(all_verts, dtype=np.float64)
     t = np.asarray(tri_idx, dtype=np.int64).reshape(-1, 3)
@@ -501,8 +499,8 @@ def _distinct_ring_len(ring):
     vertices is a point or a line — zero area, no island to preserve — and
     such a ring must not be emitted as a hole: decimation can crush a
     sub-resolution islet down to two points, and the resulting degenerate
-    ring has no interior the verifier can probe, yet the pack-check oracle
-    still flags it (a residual behind the #44/#103 gate slip). Dropping it
+    ring has no interior the verifier can probe, so it can neither be
+    confirmed clear nor usefully subtracted (#44/#103). Dropping it
     fills that sub-40 m spot as water — the islet is below display
     resolution anyway."""
     if not ring:
@@ -516,8 +514,23 @@ def _distinct_ring_len(ring):
     return count
 
 
+def size_scaled_cap(base, area0_km2, max_cap):
+    """Per-ring cap that grows with the ring's own area (AER-4669): ``base``
+    below ``area0_km2``, then ``base * sqrt(area / area0_km2)`` -- vertices
+    in proportion to perimeter for a fixed shape -- up to ``max_cap``.
+    Returns a function of the SOURCE ring, for ``insert_polygon(cap_fn=)``."""
+    import math
+
+    def cap_fn(ring):
+        a = ring_area_km2(ring)
+        if a <= area0_km2:
+            return base
+        return int(min(max_cap, round(base * math.sqrt(a / area0_km2))))
+    return cap_fn
+
+
 def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
-                   holes=None, stats=None):
+                   holes=None, stats=None, cap_fn=None):
     """Insert one water polygon: ``vertices`` is the OUTER ring,
     ``holes`` an optional list of interior (island) rings subtracted
     from the fill. Returns False if the outer ring is degenerate.
@@ -527,18 +540,30 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
     per-ring decimation runs before earcut sees the rings, and an
     aggressively simplified ring can self-intersect or cross its outer
     ring — earcut then fills the hole instead of subtracting it
-    (oracle-gate residual A of #44: 54/770 hole interiors covered in
-    a Keys probe build). On a failed verification the decimation cap
+    (#44: seen on Florida Keys hole rings). On a failed verification the decimation cap
     escalates (doubling up to _MAX_ESCALATED_CAP, then the raw source
     rings); if the raw rings still fail, fill triangles whose centroid
     lands in a hole are stripped as a last resort — biased toward
     land, since painting an island as water is the dangerous direction
     for an EFIS. ``stats`` (a dict, optional) accumulates 'escalated'
-    / 'stripped' / 'unresolved' row counts for the caller's summary."""
+    / 'stripped' / 'unresolved' row counts for the caller's summary.
+
+    ``cap_fn`` (optional, ``size_scaled_cap``) raises the cap ring by ring
+    from the source ring's own area; escalation still doubles the base
+    cap, and each ring keeps the larger of the two."""
     if len(vertices) < 3:
         return False
     src_holes = [h for h in (holes or []) if _distinct_ring_len(h) >= 3]
     cap = max_vertices
+    if cap_fn is not None and cap is not None:
+        out_floor = cap_fn(vertices)
+        hole_floors = [cap_fn(h) for h in src_holes]
+    else:
+        out_floor = 0
+        hole_floors = [0] * len(src_holes)
+
+    def ring_cap(floor):
+        return None if cap is None else max(cap, floor)
     escalated = stripped = unresolved = False
     while True:
         # Decimate at build time so the BLOBs stored on disk are small.
@@ -548,8 +573,9 @@ def insert_polygon(con, kind, elev_ft, vertices, max_vertices=None,
         # than disk I/O. Multi-ring: the cap applies PER RING (outer and
         # each hole) — the reader skips its own decimation for multi-ring
         # rows, so the build-time cap is the only bound.
-        out_ring = _decimate(vertices, cap)
-        dec_holes = [h for h in (_decimate(h, cap) for h in src_holes)
+        out_ring = _decimate(vertices, ring_cap(out_floor))
+        dec_holes = [h for h in (_decimate(h, ring_cap(f))
+                                 for h, f in zip(src_holes, hole_floors))
                      if _distinct_ring_len(h) >= 3]
         all_verts = list(out_ring)
         ring_ends = [len(out_ring)]
@@ -647,7 +673,7 @@ def ring_area_km2(vertices):
 
 
 def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
-                     min_area_km2=0.0, keep_fclass=None):
+                     min_area_km2=0.0, keep_fclass=None, cap_fn=None):
     """Import every polygon from a shapefile into the water_polygons
     table. Multi-ring shapes are grouped by winding + containment
     (``group_rings``): one row per OUTER ring, with its interior (hole)
@@ -679,8 +705,10 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
     holes_kept = 0
     orphan_holes = 0
     hole_stats = {}
+    # Stream both branches: sf.shapes() materialises the whole file
+    # (9 GB peak on the 1.2 GB OSM ocean shapefile, AER-4689).
     records = sf.iterShapeRecords() if use_fclass else (
-        (shape, None) for shape in sf.shapes())
+        (shape, None) for shape in sf.iterShapes())
     for item in records:
         shape = item.shape if use_fclass else item[0]
         if use_fclass and item.record[fclass_idx] not in keep_fclass:
@@ -703,7 +731,7 @@ def import_shapefile(con, path, kind, max_vertices, elev_ft=None,
                 dropped += 1
                 continue
             if insert_polygon(con, kind, elev_ft, outer, max_vertices,
-                              holes=holes, stats=hole_stats):
+                              holes=holes, stats=hole_stats, cap_fn=cap_fn):
                 n += 1
                 holes_kept += len(holes)
     notes = []
@@ -887,8 +915,21 @@ def main():
                         "polygons are complex enough to use the cap; open ocean "
                         "simplifies to a few verts regardless, so matching the "
                         "inland cap is nearly free (~+10pct).")
+    p.add_argument("--large-ring-cap", type=int, default=0,
+                   help="size-scaled inland cap (AER-4669): a ring larger "
+                        "than --large-ring-area-km2 gets --max-vertices * "
+                        "sqrt(area / that area) vertices, up to this value. "
+                        "Applies to --lake/--river/--osm-water rings "
+                        "(outer and holes), never the ocean. Default 0 "
+                        "disables (every ring capped at --max-vertices).")
+    p.add_argument("--large-ring-area-km2", type=float, default=10.0,
+                   help="ring area (km^2) above which --large-ring-cap "
+                        "scales the cap. Default 10")
     args = p.parse_args()
     max_verts = args.max_vertices if args.max_vertices > 0 else None
+    cap_fn = (size_scaled_cap(max_verts, args.large_ring_area_km2,
+                              args.large_ring_cap)
+              if max_verts and args.large_ring_cap > max_verts else None)
     ov = args.ocean_max_vertices if args.ocean_max_vertices is not None else args.max_vertices
     ocean_verts = ov if ov > 0 else None
     min_area = args.min_area_km2
@@ -906,13 +947,16 @@ def main():
         total += import_shapefile(con, path, "ocean", ocean_verts)
     for path in args.lake:
         total += import_shapefile(con, path, "lake", max_verts,
-                                  min_area_km2=min_area, keep_fclass=keep_fclass)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass,
+                                  cap_fn=cap_fn)
     for path in args.river:
         total += import_shapefile(con, path, "river", max_verts,
-                                  min_area_km2=min_area, keep_fclass=keep_fclass)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass,
+                                  cap_fn=cap_fn)
     for path in args.osm_water:
         total += import_shapefile(con, path, "water", max_verts,
-                                  min_area_km2=min_area, keep_fclass=keep_fclass)
+                                  min_area_km2=min_area, keep_fclass=keep_fclass,
+                                  cap_fn=cap_fn)
     for path in args.text:
         total += import_text(con, path, max_verts)
     waterway_classes = (args.waterway_classes if args.waterway_classes
@@ -926,6 +970,9 @@ def main():
     con.close()
     filt = f", min-area={min_area} km^2" if min_area > 0 else ""
     ocn = f", ocean cap={ocean_verts}" if ocean_verts != max_verts else ""
+    if cap_fn is not None:
+        ocn += (f", large-ring cap={args.large_ring_cap} above "
+                f"{args.large_ring_area_km2} km^2")
     wline = f", {lines} waterway lines" if args.waterway else ""
     print(f"-> {out} ({total} polygons{wline}, "
           f"vertex cap={max_verts}{ocn}{filt})")

@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "d0b6ad1-dirty",
+ "run": "AER-5085 bench session, Beelink offscreen",
+ "device": "AZW MINI S (offscreen)",
+ "sha256": "eae51fa1acc9439697c282d5db87e303ddc30744393e821f5bd6edfda0c30c2d",
+ "created_utc": "2026-11-08T07:31:12Z"
+}

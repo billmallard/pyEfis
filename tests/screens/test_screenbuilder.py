@@ -10,14 +10,17 @@ All tests run in the offscreen Qt platform (no physical display required).
 The pyavtools.fix mock from conftest.py is used so no FIX server is needed.
 """
 import pytest
+import re
 import time
 from pathlib import Path
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QColor, QPalette, QPixmap
+from PyQt6.QtWidgets import QApplication, QTabBar, QWidget
 
 import pyefis.hmi as hmi
 from pyefis.screens import screenbuilder
+from pyefis.screens import screenbuilder_factory
 from pyefis.screens.screenbuilder import Screen
+from pyefis.instruments.ai import svs as svs_module
 
 
 # ── Minimal QWidget parent ────────────────────────────────────────────────────
@@ -466,6 +469,86 @@ class TestScreenBuilderInit:
 
         assert screen.instruments[0].active_list == "Radio"
         assert screen.instruments[0].rows > 0
+
+
+class TestScreenColorPalette:
+    """pyEfis#139 root cause (AER-664): Screen.__init__ hardcoded a black
+    screenColor and never set a foreground role, so any stock Qt control
+    relying on the inherited palette (rather than its own stylesheet) drew
+    invisible text. The fix reads screenColor from config and derives
+    WindowText/ButtonText/Button from it centrally."""
+
+    def test_default_screen_color_is_unchanged_black(self, fix, qtbot):
+        """No screenColor on the parent -> the historical (0, 0, 0) default,
+        so an existing panel with no configured screenColor is unchanged."""
+        screen = Screen(_TestParent(_config_with_instruments([])))
+        qtbot.addWidget(screen)
+
+        assert screen.screenColor == (0, 0, 0)
+        assert screen.palette().color(QPalette.ColorRole.Window) == QColor(0, 0, 0)
+
+    def test_default_black_background_gets_white_foreground(self, fix, qtbot):
+        """The legibility floor: black (or any dark) screenColor must not
+        leave WindowText/ButtonText at the invisible default."""
+        screen = Screen(_TestParent(_config_with_instruments([])))
+        qtbot.addWidget(screen)
+
+        palette = screen.palette()
+        assert palette.color(QPalette.ColorRole.WindowText) == QColor(255, 255, 255)
+        assert palette.color(QPalette.ColorRole.ButtonText) == QColor(255, 255, 255)
+
+    def test_screen_color_read_from_parent_config_string_form(self, fix, qtbot):
+        """main.screenColor is stored as the literal string "(r,g,b)" (see
+        config/main/default.yaml) -- Screen must parse that form, not just a
+        real tuple."""
+        parent = _TestParent(_config_with_instruments([]))
+        parent.screenColor = "(240, 240, 240)"
+        screen = Screen(parent)
+        qtbot.addWidget(screen)
+
+        assert screen.screenColor == (240, 240, 240)
+        palette = screen.palette()
+        assert palette.color(QPalette.ColorRole.Window) == QColor(240, 240, 240)
+        assert palette.color(QPalette.ColorRole.Button) == QColor(240, 240, 240)
+        # Light background -> black text/buttons, the other side of the
+        # legibility floor.
+        assert palette.color(QPalette.ColorRole.WindowText) == QColor(0, 0, 0)
+        assert palette.color(QPalette.ColorRole.ButtonText) == QColor(0, 0, 0)
+
+    def test_malformed_screen_color_falls_back_to_black(self, fix, qtbot):
+        parent = _TestParent(_config_with_instruments([]))
+        parent.screenColor = "not-a-color"
+        screen = Screen(parent)
+        qtbot.addWidget(screen)
+
+        assert screen.screenColor == (0, 0, 0)
+
+    def test_nested_tab_page_screen_inherits_the_same_screen_color(self, fix, qtbot):
+        """tab_section builds each tab's page as its own Screen, sharing the
+        SAME parent as the enclosing screen (config_parent = screen.parent)
+        -- the resolved screenColor must match, not silently fall back to
+        black for the nested case."""
+        parent = _TestParent(_config_with_instruments([
+            {
+                "type": "tab_section",
+                "row": 0, "column": 0,
+                "span": {"rows": 10, "columns": 10},
+                "options": {"default_tab": 0},
+                "tabs": [
+                    {"label": "A", "layout": {"rows": 1, "columns": 1},
+                     "instruments": []},
+                ],
+            },
+        ]))
+        parent.screenColor = "(240, 240, 240)"
+        screen = Screen(parent)
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+        screen.init_screen()
+
+        tab_section = screen.instruments[0]
+        page = tab_section._pages[0]
+        assert page.screenColor == (240, 240, 240)
 
 
 class TestScreenBuilderIncludes:
@@ -1308,6 +1391,63 @@ class TestScreenBuilderPreferencesAndOptions:
         assert widget.unitsOverride2 == unit2
         assert widget.conversionFunction2(1) == converted
 
+    @pytest.mark.parametrize(
+        "preferences,expected",
+        [
+            (None, "inHg"),                          # no units block: unit 1
+            ({"units": {"Pressure": "hPa"}}, "hPa"),
+            ({"units": {"Pressure": "HPA"}}, "hPa"),  # case-insensitive
+            ({"units": {"Pressure": "mmHg"}}, "inHg"),  # unknown: ignored
+            ({"units": {"Altitude": "M"}}, "inHg"),  # other group only
+            ({"units": None}, "inHg"),
+            ({"units": "hPa"}, "inHg"),               # malformed block
+        ],
+    )
+    def test_units_preference_sets_boot_unit(self, fix, qtbot, preferences, expected):
+        # AER-3916: the aircraft-level altimeter-setting unit arrives as
+        # preferences units.Pressure and every pressure instrument boots in it.
+        # pressure listed BEFORE dbkey: the default must not depend on order.
+        config = _config_with_instruments([
+            {
+                "type": "numeric_display",
+                "row": 0,
+                "column": 0,
+                "options": {"pressure": True, "dbkey": "NUMOK"},
+            }
+        ])
+        screen = Screen(_TestParent(config, preferences=preferences))
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+
+        screen.init_screen()
+
+        widget = screen.instruments[0]
+        assert widget.unitsOverride == expected
+        hpa = expected == "hPa"
+        assert widget.conversionFunction(1) == pytest.approx(
+            33.863889532610884 if hpa else 1)
+        # The runtime units button still flips it from either start.
+        hmi.actions.trigger("Set Instrument Units", "Pressure:Toggle")
+        assert widget.unitsOverride == ("inHg" if hpa else "hPa")
+
+    def test_units_preference_applies_to_altimeter_tape(self, fix, qtbot):
+        config = _config_with_instruments([
+            {
+                "type": "altimeter_tape",
+                "row": 0,
+                "column": 0,
+                "options": {"altitude": True},
+            }
+        ])
+        screen = Screen(_TestParent(
+            config, preferences={"units": {"Altitude": "M"}}))
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+
+        screen.init_screen()
+
+        assert screen.instruments[0].unitsOverride == "M"
+
     def test_dbkey_option_sets_plain_attribute_when_widget_has_no_setter(self, fix, qtbot):
         config = _config_with_instruments([
             {
@@ -1330,6 +1470,7 @@ class TestScreenBuilderPreferencesAndOptions:
         [
             (True, {}),
             ("hidden-option", {"hidden-option": False}),
+            ("not shown-option", {"shown-option": True}),
         ],
     )
     def test_option_disabled_widgets_are_hidden(
@@ -1352,6 +1493,29 @@ class TestScreenBuilderPreferencesAndOptions:
         screen.init_screen()
 
         assert screen.instruments[0].isHidden() is True
+
+    def test_option_disabled_not_flag_keeps_widget_when_flag_off(self, fix, qtbot):
+        """`options: {disabled: "not FLAG"}` on a plain instrument shows it
+        when FLAG is off, the same as a top-level or ganged `not FLAG`.
+        Before pyEfis #413 the whole string was looked up and raised KeyError."""
+        config = _config_with_instruments([
+            {
+                "type": "static_text",
+                "display_state": 2,
+                "row": 0,
+                "column": 0,
+                "options": {"text": "Shown", "disabled": "not hidden-option"},
+            }
+        ])
+        screen = Screen(
+            _TestParent(config, preferences={"enabled": {"hidden-option": False}})
+        )
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+
+        screen.init_screen()
+
+        assert screen.display_state_inst[2] == [0]
 
     def test_encoder_order_option_registers_selectable_instrument(self, fix, qtbot):
         config = _config_with_instruments([
@@ -1544,13 +1708,12 @@ class TestScreenBuilderPreferencesAndOptions:
         assert screen.get_instrument_defaults("heading_tape") == ["HEAD"]
         assert screen.get_instrument_defaults("turn_coordinator") == ["ROT", "ALAT"]
         assert screen.get_instrument_defaults("vsi_pfd") == ["VS"]
-        # virtual_vfr subscribes to COURSE (not HEAD) for its heading item;
-        # the default lists the keys the widget actually reads (#46).
+        # virtual_vfr: the attitude keys plus the SVS camera's position keys
+        # (COURSE went with the legacy CIFP overlay, VVFR1).
         assert screen.get_instrument_defaults("virtual_vfr") == [
             "PITCH",
             "LAT",
             "LONG",
-            "COURSE",
             "ALT",
             "ROLL",
             "ALAT",
@@ -2423,14 +2586,16 @@ class TestTabSection:
     are built through the exact same Screen/create_instrument() path a
     top-level screen uses, recursed against the container's own box."""
 
-    def _build(self, qtbot, tabs, default_tab=0):
+    def _build(self, qtbot, tabs, default_tab=0, options=None):
+        opts = {"default_tab": default_tab}
+        opts.update(options or {})
         config = _config_with_instruments([
             {
                 "type": "tab_section",
                 "row": 0,
                 "column": 0,
                 "span": {"rows": 10, "columns": 10},
-                "options": {"default_tab": default_tab},
+                "options": opts,
                 "tabs": tabs,
             },
         ])
@@ -2519,6 +2684,75 @@ class TestTabSection:
         tab_section = screen.instruments[0]
         assert tab_section.tab_bar.currentIndex() == 0
 
+    def _encoder_tabs(self):
+        listbox = {
+            "type": "listbox", "row": 0, "column": 0,
+            "options": {"encoder_order": 1,
+                        "lists": [{"name": "Radio",
+                                   "file": "tests/data/listbox/list1.yaml"}]},
+        }
+        return [
+            {"label": "A", "layout": {"rows": 4, "columns": 4},
+             "instruments": [dict(listbox)]},
+            {"label": "B", "layout": {"rows": 4, "columns": 4},
+             "instruments": [dict(listbox)]},
+        ]
+
+    def _build_with_encoder(self, qtbot, tabs):
+        config = _config_with_instruments([
+            {"type": "tab_section", "row": 0, "column": 0,
+             "span": {"rows": 10, "columns": 10},
+             "options": {"default_tab": 0}, "tabs": tabs},
+        ])
+        config["encoder"] = "INT"
+        config["encoder_button"] = "HIDEBUTTON"
+        config["encoder_outer"] = "INT"
+        config["encoder_timeout"] = 4000
+        screen = Screen(_TestParent(config, config_path="."))
+        qtbot.addWidget(screen)
+        screen.resize(800, 480)
+        screen.init_screen()
+        return screen
+
+    def test_tab_pages_inherit_the_screen_encoder_keys(self, fix, qtbot):
+        """AER-810: an encoder_order instrument inside a tab must be driven by
+        the screen's knob. Before, a page config had no encoder keys and its
+        controller never connected."""
+        screen = self._build_with_encoder(qtbot, self._encoder_tabs())
+        for page in screen.instruments[0]._pages:
+            assert page.encoder == "INT"
+            assert page.encoder_button == "HIDEBUTTON"
+            assert page.encoder_timeout == 4000
+            assert page.encoder_outer == "INT"
+            assert page.encoder_outer_input is not None
+            assert page.encoder_list_sorted == [0]
+            assert page.encoder_input is not None
+            assert page.encoder_button_input is not None
+
+    def test_only_the_visible_tab_takes_the_knob(self, fix, qtbot):
+        """Both pages connect to the same keys; the controller's isVisible()
+        guard keeps the hidden one out. Offscreen Qt reports every widget
+        hidden, so (as the other encoder tests here do) each page's
+        isVisible is pinned to the stack's current tab."""
+        screen = self._build_with_encoder(qtbot, self._encoder_tabs())
+        ts = screen.instruments[0]
+        shown, hidden = ts._pages
+        assert ts.stack.currentWidget() is shown
+        shown.isVisible = lambda: ts.stack.currentWidget() is shown
+        hidden.isVisible = lambda: ts.stack.currentWidget() is hidden
+        calls = {0: [], 1: []}
+        for n, page in enumerate((shown, hidden)):
+            page.instruments[0].enc_highlight = (
+                lambda on, n=n: calls[n].append(on))
+        fix.db.set_value("INT", 1)
+        assert calls[0] and calls[1] == []
+
+    def test_tab_pages_without_screen_encoder_stay_unconnected(self, fix, qtbot):
+        screen = self._build(qtbot, self._encoder_tabs())
+        for page in screen.instruments[0]._pages:
+            assert page.encoder is None
+            assert page.encoder_input is None
+
     def test_empty_tabs_list_gets_one_default_tab(self, fix, qtbot):
         """Never an unrenderable state: a container with no authored tabs
         still shows one placeholder tab (matches the configurator's
@@ -2550,3 +2784,229 @@ class TestTabSection:
         tab_section.closeEvent(None)
 
         assert closed == pages
+
+    def test_tab_label_is_actually_painted_pyefis_139(self, fix, qtbot):
+        """Regression for pyEfis#139: a tab page IS a Screen, so the old
+        hardcoded-black screenColor with no foreground role left the tab
+        bar's inherited WindowText the same colour as the Window it sits
+        on -- the label was present but invisible. Render the tab bar and
+        assert enough pixels differ sharply from the background, i.e. glyph
+        ink was actually painted, not merely the tab's own border/shadow
+        (the fusion style outlines each tab in a ~30/255 off-black shade
+        even with no fix at all -- a single differing pixel is that
+        border, not text, and would make this pass unconditionally)."""
+        screen = self._build(qtbot, [
+            {"label": "WWWWWW", "layout": {"rows": 1, "columns": 1},
+             "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+        bar = tab_section.tab_bar
+        bar.resize(max(bar.sizeHint().width(), 200), bar.sizeHint().height())
+
+        pixmap = QPixmap(bar.size())
+        pixmap.fill(QColor(0, 0, 0))
+        bar.render(pixmap)
+        image = pixmap.toImage()
+
+        background = image.pixelColor(1, 1)
+        mid_row = image.height() // 2
+        SHARP_DELTA = 100  # well above the ~30/255 border-shading artifact
+        glyph_pixels = sum(
+            1 for x in range(image.width())
+            if abs(image.pixelColor(x, mid_row).red() - background.red()) > SHARP_DELTA
+        )
+        assert glyph_pixels >= 5, (
+            "tab label was not painted distinctly from its background "
+            f"(only {glyph_pixels} sharply-differing pixels at the label's "
+            "mid-row)"
+        )
+
+    def test_font_family_is_applied_to_the_tab_bar(self, fix, qtbot):
+        """tab_section/__init__.py:65 assigned _font_family and read it
+        nowhere (AER-664 finding #2) -- the tab bar's QFont must actually
+        carry it."""
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        # Rebuild through create_instrument with an explicit font_family, the
+        # same path a real screen uses (screenbuilder_preferences reads it
+        # from options and passes it into every instrument builder).
+        config = screen.instrument_config[0]
+        config["options"]["font_family"] = "Liberation Mono"
+        tab_section = screenbuilder_factory.create_instrument(
+            screen, config, font_percent=None, font_family="Liberation Mono",
+        )
+        assert tab_section.tab_bar.font().family() == "Liberation Mono"
+
+    def test_fg_bg_color_override_the_inherited_default(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ], options={"fg_color": "#ff00ff", "bg_color": "#00ffff"})
+        tab_section = screen.instruments[0]
+
+        assert tab_section.fg_color == "#ff00ff"
+        assert tab_section.bg_color == "#00ffff"
+        style = tab_section.tab_bar.styleSheet()
+        assert "#ff00ff" in style
+        assert "#00ffff" in style
+
+    def test_fg_bg_color_unset_means_no_override(self, fix, qtbot):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+
+        assert tab_section.fg_color is None
+        assert tab_section.bg_color is None
+        assert tab_section.tab_bar.styleSheet() == ""
+
+    @pytest.mark.parametrize("position,shape", [
+        ("top", QTabBar.Shape.RoundedNorth),
+        ("bottom", QTabBar.Shape.RoundedSouth),
+        ("left", QTabBar.Shape.RoundedWest),
+        ("right", QTabBar.Shape.RoundedEast),
+    ])
+    def test_tab_position_places_the_bar_on_the_named_edge(
+        self, fix, qtbot, position, shape
+    ):
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ], options={"tab_position": position})
+        tab_section = screen.instruments[0]
+        bar = tab_section.tab_bar.geometry()
+        stack = tab_section.stack.geometry()
+        w, h = tab_section.width(), tab_section.height()
+
+        assert tab_section.tab_bar.shape() == shape
+        # The bar sits flush against its named edge, and the stack fills
+        # everything else -- together they exactly cover the container with
+        # no overlap.
+        if position == "top":
+            assert bar.left() == 0 and bar.top() == 0 and bar.width() == w
+            assert stack.top() == bar.height() and stack.height() == h - bar.height()
+        elif position == "bottom":
+            assert bar.left() == 0 and bar.width() == w
+            assert bar.top() == h - bar.height()
+            assert stack.top() == 0 and stack.height() == h - bar.height()
+        elif position == "left":
+            assert bar.left() == 0 and bar.top() == 0 and bar.height() == h
+            assert stack.left() == bar.width() and stack.width() == w - bar.width()
+        else:  # right
+            assert bar.top() == 0 and bar.height() == h
+            assert bar.left() == w - bar.width()
+            assert stack.left() == 0 and stack.width() == w - bar.width()
+
+    def test_default_tab_position_is_pixel_identical_to_pre_aer664_layout(
+        self, fix, qtbot
+    ):
+        """Guardrail: default top plus no colour override must reproduce
+        the exact geometry the container used before this feature existed."""
+        screen = self._build(qtbot, [
+            {"label": "A", "layout": {"rows": 1, "columns": 1}, "instruments": []},
+        ])
+        tab_section = screen.instruments[0]
+        bar_height = tab_section.tab_bar.sizeHint().height()
+
+        assert tab_section.tab_bar.geometry().getRect() == (
+            0, 0, tab_section.width(), bar_height)
+        assert tab_section.stack.geometry().getRect() == (
+            0, bar_height, tab_section.width(),
+            tab_section.height() - bar_height)
+
+
+# ── Flat svs_* editor props reach the renderer under the stripped name ────────
+#
+# AER-680: build_virtual_vfr strips the "svs_" prefix off every flat editor
+# prop before handing the dict to SVSRenderer (svs_range_nm -> range_nm).
+# svs_perf_log was declared/documented as a flat prop but svs.py kept reading
+# it WITH the prefix (config.get("svs_perf_log", ...)), so the prop silently
+# did nothing -- the only way to enable it was a literally double-prefixed
+# key inside the legacy nested `svs:` block. apply_options/set_svs_config
+# setattr raw and never flag an unknown key, so nothing else catches this
+# class of mismatch. This test walks the declared prop table so a future
+# rename on either side fails the build instead of surfacing on a bench
+# months later.
+
+class TestFlatSvsPropsReachRenderer:
+    def _svs_prop_names(self):
+        props = screenbuilder_factory.REGISTRY["virtual_vfr"].properties
+        names = [p.name for p in props if p.name.startswith("svs_")]
+        assert names, "virtual_vfr declared no svs_* props -- test is stale"
+        return names
+
+    def test_every_declared_prop_strips_to_a_key_svs_reads(self, qtbot):
+        source = Path(svs_module.__file__).read_text()
+        missing = []
+        for name in self._svs_prop_names():
+            stripped = name[len("svs_"):]
+            read_forms = (
+                f'config.get("{stripped}"', f"config.get('{stripped}'",
+                f'config["{stripped}"]', f"config['{stripped}']",
+            )
+            if not any(form in source for form in read_forms):
+                missing.append((name, stripped))
+        assert not missing, (
+            "these svs_* editor props strip to a key svs.py never reads "
+            f"(inert prop -- see AER-680): {missing}"
+        )
+
+    def test_build_svs_cfg_strips_prefix_for_every_declared_prop(self, qtbot):
+        # Cross-check the other half of the pipeline: the flat-options ->
+        # svs_cfg merge itself (screenbuilder_factory._build_svs_cfg) must
+        # actually strip each declared name, not just the well-behaved ones.
+        for name in self._svs_prop_names():
+            stripped = name[len("svs_"):]
+            sentinel = object()
+            cfg = screenbuilder_factory._build_svs_cfg({name: sentinel})
+            assert cfg.get(stripped) is sentinel, (
+                f"{name!r} did not arrive in svs_cfg as {stripped!r}"
+            )
+
+
+# ── Every config value svs.py stores is read back somewhere ───────────────────
+#
+# G70 / pyEfis #395: svs_terrain_fill ("off = wireframe") was declared, stripped
+# and read by svs.py -- so both AER-680 tests above passed -- but the stored
+# self.terrain_fill was never consulted again, and no wireframe path existed.
+# Turning the option off still drew filled terrain. The option was removed
+# (Bill's ruling, 2026-11-07). This test closes the remaining gap: every
+# attribute svs.py assigns from config.get() must be read back somewhere in
+# the package, either as an attribute access or through getattr().
+
+class TestSvsConfigAttributesAreUsed:
+    _ASSIGN = re.compile(r"self\.(\w+)\s*=\s*[^\n]*config\.get\(")
+
+    def test_every_config_attribute_is_read_somewhere(self, qtbot):
+        svs_src = Path(svs_module.__file__).read_text()
+        pkg = Path(svs_module.__file__).resolve().parents[2]
+        all_src = "\n".join(p.read_text() for p in pkg.rglob("*.py"))
+        attrs = self._ASSIGN.findall(svs_src)
+        assert attrs, "no config-assigned attributes found -- test is stale"
+        unused = []
+        for attr in set(attrs):
+            # The assignment itself is one `.attr`; a reader adds at least one
+            # more, or reaches it by name through getattr().
+            reads = len(re.findall(r"\." + attr + r"\b", all_src))
+            reads += len(re.findall(
+                r"getattr\([^)]*[\"']" + attr + r"[\"']", all_src))
+            if reads < 2:
+                unused.append(attr)
+        assert not unused, (
+            "svs.py stores these config values but nothing reads them "
+            f"(inert option -- see pyEfis #395): {sorted(unused)}"
+        )
+
+    def test_terrain_fill_is_not_offered(self, qtbot):
+        names = {p.name for p in
+                 screenbuilder_factory.REGISTRY["virtual_vfr"].properties}
+        assert "svs_terrain_fill" not in names
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_saved_screen_with_terrain_fill_still_loads(self, value, tmp_path,
+                                                     qtbot):
+        # A screen saved before the removal still carries the key, in either
+        # state. It must pass through and be ignored, not break the renderer.
+        cfg = screenbuilder_factory._build_svs_cfg(
+            {"svs_terrain_fill": value, "svs_tile_path": str(tmp_path)})
+        r = svs_module.SVSRenderer(cfg)
+        assert not hasattr(r, "terrain_fill")

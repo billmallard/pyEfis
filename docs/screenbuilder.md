@@ -14,6 +14,11 @@ dbkey: TSBTN{id}12
 ```
 In this example `nodeID: 1` would use key `TSBTN112` where `nodeID: 2` would use `TSBTN212`
 
+`editIconAtRest` (default `true`): every touch-editable value (see
+"Touch-select + knob edit" below) shows the edit icon dimmed while nothing has
+focus, so the pilot can see which values a touch will select. Set it to `false`
+to show the icon only on the focused value.
+
 ## Module name
 To use the screen builder you need to set the module to `module: pyefis.screens.screenbuilder`
 ```
@@ -422,6 +427,33 @@ To select the listbox rotate the encoder until the title of the listbox is orang
 ## arc_gauge, horizontal_bar_gauge, vertical_bar_gauge and numeric_display
 All four of these items behave the same, once you select an item by highlighting it and pressing the button the item will take control over the encoder. Rotating the encoder will change the value displayed on the screen. Once you have the desired setting press the button and the value will be saved to the dbkey and the screen will revert to its default state of nothing selected. If you decide to not change the value, do not press the button, let the timeout expire. When it times out the value will be reverted to its previous value and the screen will return to its default state.
 
+### Touch-select + knob edit (pyEfis #308)
+Set `touch_edit: true` on a `numeric_display` to let a touch select it. Touching the
+value puts it straight into the edit state a knob push would, so you skip the knob walk.
+The value then shows the shared focus marks: a cyan ring around it and a small (10 px or
+smaller) circular-arrow icon on the ring's corner. From there:
+
+- the **inner knob** (`encoder`) steps it by `encoder_multiplier` (fine);
+- the **outer ring** (`encoder_outer`) steps it by `encoder_multiplier * encoder_coarse_multiplier`
+  (coarse; `encoder_coarse_multiplier` defaults to 10);
+- **push** (`encoder_button`) accepts the value and clears focus;
+- after `encoder_timeout` with no input, focus clears by itself and, as with the knob path,
+  the value reverts.
+
+Touching anywhere else or changing screens also clears focus, and only one value on the
+whole panel has focus at a time: touching another value moves it there. A `touch_edit`
+value does not need an `encoder_order`. If it has one, the knob walk still reaches it too,
+and the two paths end up in the same state. A gauge that is knob-edited with the
+`encoder_order` walk also shows the ring and icon instead of the orange text while it is
+being edited. The orange highlight still marks the walk itself.
+
+The HSI (`horizontal_situation_indicator`) takes the same `touch_edit` option for its HDG and
+CRS readouts (pyEfis #309), but there it is **on by default**; set `touch_edit: false` to
+turn it off. See its section in `docs/wiki/Widgets-Flight-Instruments.md`.
+
+Widgets draw these marks with `pyefis.instruments.edit_focus.draw_edit_marks()`, the one
+shared helper, so every settable value looks the same.
+
 ### Advanced gauge options
 These options change how the encoder works with these gauges.
 `clipping`: ensures the value does not exceed the min/max set for the db key
@@ -485,6 +517,14 @@ screens:
     encoder_button: BTN9
 ```
 
+Optional: `encoder_outer` names the outer ring of a dual-concentric knob
+(the Knobster's outer ring is `ENC4` through fix-gateway's `knobster` plugin).
+Its turns go only to the instrument that currently holds the knob, and only
+if that instrument handles them (`enc_outer_changed`; today, `flight_plan`
+and the gauges, where it is the coarse step).
+Otherwise the outer ring is ignored. If the key is missing from the FIX
+database, pyEfis logs a warning and runs without an outer ring.
+
 
 # Instrument List #
 Below is a list of the instrument types, defaults and options. This is a WIP and is mostly incomplete. Basically an option is any properly of the instrument that is defined in its source. 
@@ -525,9 +565,14 @@ Options:
   * trend_min_change - default 0.5; minimum rate (kt/s) below which trend is suppressed
 
 ## airspeed_trend_tape
+Vertical bar showing the IAS rate of change (reads FIX key `IAS`). Grows up
+from the centre line when accelerating, down when decelerating; hidden while
+`IAS` is bad, failed or old.
 
 Options:
   * font_family - default 'DejaVu Sans Condensed'
+  * trend_window - default 3.0; seconds of IAS history the rate is measured over
+  * max_rate - default 5.0; rate (kt/s) at which the bar reaches the edge
 
 ## altimeter_dial
 Analog altimeter dial
@@ -551,6 +596,31 @@ Options:
   * font_mask - default 00000
   * dbkey - default 'ALT'
   * maxalt - default 50000
+  * show_baro - default on for an `ALT` tape, off for any other `dbkey`; draws the
+    altimeter setting (`BARO`) in a box at the bottom of the tape. A touch selects it
+    for the knob (see "Touch-select + knob edit"): inner knob 0.01 inHg / 1 hPa, outer
+    ring 0.10 inHg / 10 hPa, push sets standard (29.92 inHg, which reads 1013 hPa) and a
+    second push restores the setting it replaced, unless `BARO` changed any other way
+    in between (a knob step, another display, the gateway). Add
+    an `encoder_order` to the tape to reach the box on the knob walk too. It reads inHg
+    or hPa from the `Pressure` unit group (`units: Pressure` in preferences, and the
+    Units action). When left at its default, the box turns itself off on a screen that
+    already shows `BARO` in another visible widget, so a screen never shows two baro
+    readouts.
+  * altsel_box - default True for an ALT tape, False for a VS tape. Draws the
+    touch-settable selected-altitude box (`ALTSEL`) at the top of the tape:
+    inner knob 100 ft, outer ring 1000 ft, push syncs to the current altitude
+    rounded to 100 ft and ends the edit (pyEfis #310). Needs no `encoder_order`; one may still
+    be given to put the tape in the knob walk, which lands on the ALTSEL box
+    first, then the baro box. A touch on either box focuses that box.
+  * alt_bug_enabled - default follows `altsel_box`. Draws the selected-altitude
+    bug on the scale; pegs half-visible at the tape edge when off-scale.
+  * alt_bug_color - default '#00ffff'
+  * alt_bug_alert_color - default '#ffb000' (amber). The box text, border and
+    bug turn this colour while the `ALTSEL` annunciate flag is set, and back when
+    it clears. fix-gateway sets the flag on an altitude deviation
+    (EFIS-ALTSEL-005/-006); the tape reads only the flag.
+  * alt_bug_dbkey - default 'ALTSEL'
 
 ## altimeter_trend_tape
 
@@ -749,7 +819,7 @@ Analog heading display
 Options:
   * font_family - default 'DejaVu Sans Condensed'
   * bg_color - default black
-  * fg_color - default gray
+  * fg_color - default white
 
 ## heading_tape
 Horizontal Heading Tape
@@ -1027,6 +1097,12 @@ box, never the enclosing screen's -- each tab is built through the same
 `instrument_spec.md` §"container slots" for the `containers`/`ContainerSlot`
 exporter contract this relies on).
 
+Encoder: every tab inherits the enclosing screen's `encoder`,
+`encoder_button`, `encoder_outer` and `encoder_timeout`, so an instrument with `encoder_order`
+inside a tab is driven by the screen's knob. Each tab keeps its own encoder
+order, and only the tab on show responds. Turning the knob does not switch
+tabs.
+
 Options:
   * default_tab - integer, default 0. Which tab is shown on screen load /
     power-up. Always resets to this configured tab -- the last tab the pilot
@@ -1155,12 +1231,18 @@ Options:
 
 ## virtual_vfr
 
-![Virtual VFR](/docs/images/virtual_vfr.png)
+The attitude indicator with Synthetic Vision. With the `svs:` block's
+`enabled: true` (or the flat `svs_enabled: true`) it draws terrain, water,
+roads, obstacles, airports, runways and the PAPI from the makerplane-data
+packs; with SVS off it is the plain sky/ground attitude. The legacy 2D
+runway/airport overlay drawn from the raw FAA CIFP file has been removed, so no
+CIFP data is needed. See
+[Widgets-Attitude-and-SVS](wiki/Widgets-Attitude-and-SVS.md).
 
 Options:
   * font_percent
   * font_family - default 'DejaVu Sans Condensed'
-  * gsi
+  * svs - nested Synthetic Vision block
 
 ## vsi_dial
 
