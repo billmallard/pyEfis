@@ -621,16 +621,16 @@ def test_frame_clock_repaints_on_nd_data_only_while_on(fix, qtbot):
     m.isVisible = lambda: True
     m.update = lambda: None
     m._frame_tick()
-    pose = m._frame_last_pose
+    seen = (m._frame_last_pose, m._frame_last_overlay)
     fix.db.set_value("GSI", 0.6)
     m._frame_tick()
-    assert m._frame_last_pose != pose
+    assert (m._frame_last_pose, m._frame_last_overlay) != seen
     m.nd_mode = "off"
     m._frame_tick()
-    pose = m._frame_last_pose
+    seen = (m._frame_last_pose, m._frame_last_overlay)
     fix.db.set_value("GSI", -0.6)
     m._frame_tick()
-    assert m._frame_last_pose == pose
+    assert (m._frame_last_pose, m._frame_last_overlay) == seen
 
 
 def test_frame_clock_repaints_on_expanded_to_ctr(fix, qtbot):

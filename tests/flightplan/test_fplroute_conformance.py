@@ -199,8 +199,14 @@ def test_fplseq_is_the_last_write_after_every_route_key(fix, profile, tmp_path):
 
 
 def test_the_differences_are_named_down_to_slot_and_field():
-    """The diff has to point at the slot and field, not just fail."""
-    reference = _reference(FLOWN[0])
+    """The diff has to point at the slot and field, not just fail.
+
+    Named, not ``FLOWN[0]``: the mutation below only bites on a profile
+    whose slot 3 carries a flag (ELZUS, the IAF), and the alphabetically
+    first profile changes as profiles are added (demo5's slot 3 is a
+    no-flag CA, AER-5839)."""
+    reference = _reference("fp8-ksmx-rnav30-missed")
+    assert dict(reference)["FPL3FLAGS"] == 32
     published = [(k, 0x00) if k == "FPL3FLAGS" else (k, v) for k, v in reference]
     assert _first_difference(reference, published).startswith("slot 3 (")
     assert "field FLAGS: fplroute 32, pyEfis 0" in _first_difference(reference, published)

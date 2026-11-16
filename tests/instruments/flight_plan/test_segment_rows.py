@@ -79,6 +79,10 @@ def page(fix, qtbot, monkeypatch):
     for key, dtype in _ENGINE.items():
         _define(fix, key, dtype, _BLANK[dtype])
     fix.db.set_value("MAGVAR", MAGVAR)
+    # Over KSBA: the fixture's (0, 0) is over 2,000 nm away, and Activate
+    # Leg asks first beyond 500 nm (FPACT1, AER-5801).
+    fix.db.set_value("LAT", KSBA.lat)
+    fix.db.set_value("LONG", KSBA.lon)
     w = flight_plan.FlightPlan(None)
     qtbot.addWidget(w)
     w.parent = SimpleNamespace(parent=BEELINK)

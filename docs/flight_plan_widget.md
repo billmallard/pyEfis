@@ -176,7 +176,11 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   computed). RS3 changed DTK/DIS from the leg leaving the fix, in true. The TO row
   (`FPLACTLEG`) is `active_color`, earlier rows `past_color`, later rows
   `future_color`. Tapping a row opens a menu: Insert Before, Insert After,
-  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`),
+  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`;
+  when the leg's from-fix is more than `ACT_CONFIRM_NM`, 500 nm, from a
+  valid `LAT`/`LONG` it first asks `FROM <fix> <n> NM / ACTIVATE LEG?`,
+  and No or a tap off the box sends nothing -- FPACT1, AER-5801; the same
+  applies to Show Fixes and a segment's Activate (to entry)),
   Direct To (stages + `DTO k`), WPT Info (full detail, see below), Set Role
   (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),

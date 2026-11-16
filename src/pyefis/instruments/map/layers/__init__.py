@@ -8,8 +8,8 @@ import math
 import threading
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import (QColor, QFont, QPainter, QPainterPath, QPen,
-                         QPolygonF, QTransform)
+from PyQt6.QtGui import (QColor, QFont, QImage, QPainter, QPainterPath,
+                         QPen, QPolygonF, QTransform)
 
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 
@@ -278,6 +278,70 @@ def paint_window_images(p, x, current, history, key, smooth=False):
     blit_window_image(p, x, current, smooth)
 
 
+class ScreenImage:
+    """A stroke drawn in screen space that stays put while the map moves
+    under it (a range ring), kept as a transparent image and blitted while
+    its *key* holds (MAPPAINT1).
+
+    A big anti-aliased circle costs about 1.5 ms to rasterize at 650x1000;
+    blitting it costs a fraction of that, and the pixels are the same: the
+    image holds the stroke's premultiplied coverage, which is what drawing
+    it blends, and it is placed on whole device pixels. Text stays out of
+    the image -- glyph edges blended into a part-covered image pixel round
+    differently from glyph edges blended onto the screen -- and so do
+    strokes that overlap each other in different draw calls; one image per
+    stroke keeps the draw order."""
+
+    def __init__(self):
+        self._key = None
+        self._img = None
+        self._pos = None
+        self.builds = 0
+
+    def paint(self, p, w, h, bounds, key, draw):
+        """Blit the image for *key*, building it with ``draw(painter)``
+        when the key moved; *bounds* (QRectF) holds everything ``draw``
+        touches. ``draw(p)`` runs directly instead when the painter is
+        transformed (the image is screen-registered) or is not a QPainter
+        (a test's recording painter)."""
+        if not isinstance(p, QPainter) or not p.transform().isIdentity():
+            draw(p)
+            return
+        dev = p.device()
+        dpr = dev.devicePixelRatioF() if dev is not None else 1.0
+        key = (key, w, h, dpr, bounds.x(), bounds.y(), bounds.width(),
+               bounds.height())
+        if key != self._key:
+            x0 = max(0, int(math.floor(bounds.left() * dpr)))
+            y0 = max(0, int(math.floor(bounds.top() * dpr)))
+            x1 = min(int(math.ceil(w * dpr)),
+                     int(math.ceil(bounds.right() * dpr)))
+            y1 = min(int(math.ceil(h * dpr)),
+                     int(math.ceil(bounds.bottom() * dpr)))
+            if x1 <= x0 or y1 <= y0:
+                self._img, self._key = None, key
+                return
+            img = QImage(x1 - x0, y1 - y0,
+                         QImage.Format.Format_ARGB32_Premultiplied)
+            img.setDevicePixelRatio(dpr)
+            img.fill(0)
+            self._pos = QPointF(x0 / dpr, y0 / dpr)
+            ip = QPainter(img)
+            ip.setRenderHints(p.renderHints())
+            ip.translate(-self._pos.x(), -self._pos.y())
+            draw(ip)
+            ip.end()
+            self._img, self._key = img, key
+            self.builds += 1
+        if self._img is not None:
+            p.drawImage(self._pos, self._img)
+
+
+def rect_key(rects):
+    """QRectFs as a hashable tuple, for a ScreenImage key."""
+    return tuple((r.x(), r.y(), r.width(), r.height()) for r in rects)
+
+
 class MapLayer:
     """One toggleable information layer.
 
@@ -419,6 +483,9 @@ class RangeRingsLayer(MapLayer):
         self.opacity = 55            # percent; 55% of 255 rounds to alpha 140
         self.width_px = 0.0          # 0 = auto, scales with the map width
         self.label_size = 0          # 0 = auto, scales with the map width
+        # The rings sit still on screen while the map moves under them, so
+        # each is drawn once into an image (MAPPAINT1).
+        self._images = []
 
     def configure(self, owner):
         self.fractions = parse_ring_fractions(
@@ -493,9 +560,16 @@ class RangeRingsLayer(MapLayer):
         f = QFont(x.font_family)
         f.setPixelSize(self.label_pixel_size(x))
         p.setFont(f)
-        for frac, r_px in zip(self.fractions, self.ring_radii_px(x)):
-            p.setPen(pen)
-            p.drawEllipse(QPointF(x.cx, x.cy), r_px, r_px)
+        radii = self.ring_radii_px(x)
+        while len(self._images) < len(radii):
+            self._images.append(ScreenImage())
+        pad = pen.widthF() + 2.0
+        for img, frac, r_px in zip(self._images, self.fractions, radii):
+            img.paint(p, x.w, x.h,
+                      QRectF(x.cx - r_px - pad, x.cy - r_px - pad,
+                             2.0 * (r_px + pad), 2.0 * (r_px + pad)),
+                      (x.cx, x.cy, r_px, ring_c.rgba(), pen.widthF()),
+                      lambda q, r=r_px: self._ring(q, x, r, pen))
             if self.labels:
                 rect = self.label_rect(x, r_px)
                 if self.label_kept_out(x, rect):
@@ -503,3 +577,14 @@ class RangeRingsLayer(MapLayer):
                 p.setPen(label_pen)
                 p.drawText(rect, Qt.AlignmentFlag.AlignLeft,
                            format_range_nm(x.range_nm * frac))
+
+    @staticmethod
+    def _ring(p, x, r_px, pen):
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(x.cx, x.cy), r_px, r_px)
+
+    @property
+    def image_builds(self):
+        """Ring rasterizations so far (MAPPAINT1 perf budget)."""
+        return sum(img.builds for img in self._images)
