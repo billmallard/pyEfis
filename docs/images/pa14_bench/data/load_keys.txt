@@ -1,0 +1,7 @@
+13:46:26Z pre-load {'FPLSTATE': '0|', 'FPLACTLEG': '0|', 'FPLN': "ERR 'int' object is not subscriptable", 'FPLSEQ': '55|', 'FPLMSG': '|', 'FPLPHASE': '|', 'WPFROM': '|', 'WPNAME': '|', 'WPDIS': '0.0|f', 'FPLCRS': '0.0|f', 'FPLXTK': '0.0|f', 'FPLCDI': '0.0|f', 'CDISCALE': '2.0|', 'FPLAPR': '0|', 'FPLAPRTYPE': '|', 'FPLTURN': '|', 'LAT': '34.392858|o', 'LONG': '-119.841493|o', 'GS': '0.0|o', 'MAGVAR': '-14.0|o'}
+13:46:37Z after-load-rw25 {'FPLMSG': 'UNSUPP CI SLOT3|', 'FPLSEQ': '56|', 'FPLSTATE': '0|'}
+13:47:46Z after-load-rw15b {'FPLMSG': 'UNSUPP CI SLOT3|', 'FPLSEQ': '57|', 'FPLSTATE': '0|'}
+13:48:53Z after-vtu-insert {'FPLMSG': 'UNSUPP CI SLOT3|', 'FPLSEQ': '58|', 'FPLSTATE': '0|'}
+13:49:29Z after-awy {'FPLMSG': 'UNSUPP CI SLOT3|', 'FPLSEQ': '59|', 'FPLSTATE': '0|'}
+13:54:40Z after-star {'FPLMSG': 'UNSUPP CI SLOT3|', 'FPLSEQ': '62|', 'FPLSTATE': '0|'}
+13:55:32Z after-apr {'FPLMSG': 'UNSUPP CI SLOT3|', 'FPLSEQ': '63|', 'FPLSTATE': '0|', 'FPLAPRTYPE': 'RNAV|'}
