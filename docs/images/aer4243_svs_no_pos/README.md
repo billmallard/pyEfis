@@ -9,13 +9,21 @@ every frame (AI-FAIL-001).
 | File | Build | LAT at the gateway | What it shows |
 |---|---|---|---|
 | `1_before_dev_lat_old.png` | dev `68fc968` | `Old` | The defect. The map says NO POS with a grey ownship, and the SVS draws terrain at the dead position. |
-| `2_after_lat_old.png` | branch `73078f4` | `Old` | Same state. The terrain is gone, the ground is the attitude fill, and SVS UNAVAIL shows. |
+| `2_after_lat_old.png` | dev `2f6bc38d` (re-taken 2026-11-16) | `Old` | Same state. The terrain is gone, the ground is the attitude fill, and SVS UNAVAIL shows. |
 | `3_after_lat_fresh.png` | branch `73078f4` | fresh (rewritten 5 s earlier) | The terrain is back, the map ownship is yellow, no annunciation. |
 | `4_after_lat_aged_out.png` | branch `73078f4` | `Old` (36 s after the write) | It aged out live. SVS UNAVAIL and the map's NO POS appear together. |
 
 Frames 1 and 2 were taken after a pyEfis restart with LAT already old, so pyEfis
 learned the flag from its initial read. Each was accepted only when three grabs
 4 s apart had the same hash.
+
+Frame 2 was re-taken on 2026-11-16 on pyEfis dev `2f6bc38d` and fix-gateway dev
+`382856a`, by `../aer4339_startup_notice/grab_aer5805.sh`, about 62 s after a
+restart with X-Plane not sending (three grabs 4 s apart, same hash). It differs
+from frames 1, 3 and 4 in ways that are not about SVS: the airspeed, altitude
+and vertical-speed tapes show a red X because their keys are old too, the map
+is TRK UP rather than NORTH UP, and the HSI shows `BRG1 OFF / BRG2 OFF` with no
+bearing pointers.
 
 ## How they were made
 
