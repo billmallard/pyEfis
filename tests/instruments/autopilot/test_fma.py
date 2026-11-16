@@ -140,30 +140,60 @@ def test_target_without_a_usable_value_is_the_mode_alone(ap_db, qtbot):
     assert w.model.cells()["vert"].text == "VS"
 
 
-def test_alt_hold_shows_no_number(ap_db, qtbot):
-    """AP-ANN-002: ALT hold has no reference key; ALTSEL is not necessarily
-    the altitude being held, so no number is shown."""
+def test_alt_hold_shows_the_held_altitude(ap_db, qtbot):
+    """AP-ANN-002: ALT carries APALTREF, the altitude the source reports it
+    is holding (Bill, AER-5808), and follows it."""
     ap_db("APENG", True)
     ap_db("APVERT", "ALT")
-    w = _strip(qtbot)
-    assert w.model.cells()["vert"].text == "ALT"
-
-
-@pytest.mark.xfail(strict=True, reason="AP-ANN-002 gap: AFC1 has no key for "
-                   "the altitude ALT hold is holding (spec section 7)")
-def test_alt_hold_shows_its_reference(ap_db, qtbot):
-    """AP-ANN-002 (gap tracker): with a source-published hold reference, ALT
-    shows it. Flips red the day the key and its reader land."""
-    fix = ap_db.fix
-    fix.db.define_item("APALTREF", "APALTREF", "int", -1000, 60000, "ft",
-                       2000, "")
-    ref = fix.db.get_item("APALTREF")
-    ref.value = 8500
-    ref.old = ref.bad = ref.fail = False
-    ap_db("APENG", True)
-    ap_db("APVERT", "ALT")
+    ap_db("APALTREF", 8500)
     w = _strip(qtbot)
     assert w.model.cells()["vert"].text == "ALT 8500"
+    ap_db("APALTREF", 9000)
+    assert w.model.cells()["vert"].text == "ALT 9000"
+
+
+def test_alt_hold_is_never_the_preselect(ap_db, qtbot):
+    """AP-ANN-002: holding 8,500 with 10,500 dialled reads ALT 8500, and with
+    no usable APALTREF it reads ALT alone: never ALTSEL (Bill, AER-5808)."""
+    fix = ap_db.fix
+    fix.db.define_item("ALTSEL", "ALTSEL", "int", -1000, 60000, "ft", 0, "")
+    altsel = fix.db.get_item("ALTSEL")
+    altsel.value = 10500
+    altsel.old = altsel.bad = altsel.fail = False
+    ap_db("APENG", True)
+    ap_db("APVERT", "ALT")
+    ap_db("APALTREF", 8500)
+    w = _strip(qtbot)
+    assert w.model.cells()["vert"].text == "ALT 8500"
+    for flag in ("old", "bad", "fail"):
+        ap_db("APALTREF", 8500, **{flag: True})
+        assert w.model.cells()["vert"].text == "ALT", flag
+
+
+def test_alt_hold_reference_is_optional(ap_db, qtbot):
+    """AP-ANN-002, AP-STALE-003: a source that never writes APALTREF (it goes
+    old) leaves the strip live with ALT alone; the reference never blanks the
+    strip to NO AP DATA the way a state key does."""
+    ap_db("APENG", True)
+    ap_db("APVERT", "ALT")
+    ap_db("APALTREF", old=True)
+    w = _strip(qtbot)
+    assert w.ap.fresh
+    assert w.model.cells()["vert"].text == "ALT"
+    assert "APALTREF" not in state.STATE_KEYS
+
+
+def test_alt_ref_shown_only_with_alt_active(ap_db, qtbot):
+    """AP-ANN-002: the reference belongs to ALT hold; armed ALT and other
+    active modes never carry it."""
+    ap_db("APENG", True)
+    ap_db("APVERT", "PIT")
+    ap_db("APVERTARM", "ALT")
+    ap_db("APALTREF", 8500)
+    w = _strip(qtbot)
+    cells = w.model.cells()
+    assert cells["vert"].text == "PIT"
+    assert cells["vert_arm"].text == "ALT"
 
 
 # -- AP-ANN-003 / AP-ANN-004: mode changes ------------------------------------
@@ -246,9 +276,10 @@ def test_capture_is_annunciated(ap_db, qtbot):
     assert (cell.text, cell.boxed) == (fma.CAPTURE_TEXT, True)
     clock.t += 11
     ap_db("APALTCAP", False)
+    ap_db("APALTREF", 8500)
     ap_db("APVERT", "ALT")
     cell = w.model.cells()["vert"]
-    assert (cell.text, cell.boxed) == ("ALT", True)
+    assert (cell.text, cell.boxed) == ("ALT 8500", True)
 
 
 def test_blink_hides_text_on_the_off_phase(ap_db, qtbot):

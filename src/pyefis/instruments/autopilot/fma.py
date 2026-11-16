@@ -30,10 +30,12 @@ modes are green, armed modes white and in their own place (44.c(1), (2) and
   strip is empty: an aircraft with no autopilot gets no permanent caption.
 
 The vertical target is shown only where the contract names it: ``VS`` with
-``VSSEL``, ``IAS`` with ``IASSEL``. ALT hold has no reference key -- the
-altitude being held is not necessarily ``ALTSEL`` -- so ``ALT`` shows no number
-rather than a guessed one. Capture (``APALTCAP``) shows ``ALT CAP``; the
-``ALTSEL`` box on the altimeter tape carries the number.
+``VSSEL``, ``IAS`` with ``IASSEL``, ``ALT`` with ``APALTREF``, the altitude the
+autopilot reports it is holding (Bill, AER-5808: not ``ALTSEL``, which the
+pilot may already have turned to the next altitude). A target key that is
+missing, old, bad or failed shows the mode alone, never a guessed number:
+``ALT`` is never filled in from ``ALTSEL``. Capture (``APALTCAP``) shows
+``ALT CAP``; the ``ALTSEL`` box on the altimeter tape carries the number.
 """
 
 import logging
@@ -59,6 +61,10 @@ CAPTURE_TEXT = "ALT CAP"
 #: The capture pseudo-mode, for change detection only.
 _CAPTURE = "ALTCAP"
 
+#: The altitude ALT hold is holding (fix-gateway autopilot.yaml). Optional: a
+#: gateway or source without it shows ``ALT`` alone.
+ALT_REF_KEY = "APALTREF"
+
 DEFAULT_FLASH_S = 10.0
 #: Half-period of the flash: text on 0.5 s, off 0.5 s.
 BLINK_HALF_S = 0.5
@@ -67,7 +73,7 @@ SLOTS = ("lat", "lat_arm", "ap", "yd", "vert", "vert_arm")
 #: Worst-case text per slot: the font is sized to fit these, so it does not
 #: jump as modes change.
 TEMPLATES = {"lat": "LOC", "lat_arm": "LOC GPS", "ap": "AP", "yd": "YD",
-             "vert": "VS -2000", "vert_arm": "ALT GS"}
+             "vert": "ALT 18000", "vert_arm": "ALT GS"}
 
 
 class Cell:
@@ -91,6 +97,10 @@ def format_vs(fpm):
 
 def format_ias(kt):
     return "IAS %d" % int(round(kt))
+
+
+def format_alt(ft):
+    return "ALT %d" % int(round(ft))
 
 
 class FMAModel:
@@ -156,6 +166,8 @@ class FMAModel:
                 return format_vs(binding.value)
             if mode == "IAS":
                 return format_ias(binding.value)
+            if mode == "ALT":
+                return format_alt(binding.value)
         return mode
 
     def cells(self, now=None):
@@ -215,7 +227,8 @@ class ModeAnnunciator(QWidget):
 
         self.ap = apstate.APState(parent=self)
         self.targets = {"VS": bugs.BugBinding("VSSEL", self),
-                        "IAS": bugs.BugBinding("IASSEL", self)}
+                        "IAS": bugs.BugBinding("IASSEL", self),
+                        "ALT": bugs.BugBinding(ALT_REF_KEY, self)}
         self.model = FMAModel(self.ap, self.targets, clock=clock,
                               flash_s=self.mode_flash_s)
         self.ap.changed.connect(self._on_state)

@@ -17,6 +17,7 @@ AFC1_KEYS = [
     ("APVERT", "str", None, None, 2000),
     ("APVERTARM", "str", None, None, 2000),
     ("APALTCAP", "bool", None, None, 2000),
+    ("APALTREF", "int", -1000, 60000, 2000),
     ("APDISC", "bool", None, None, 2000),
 ]
 

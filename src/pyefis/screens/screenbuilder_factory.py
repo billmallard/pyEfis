@@ -1659,7 +1659,7 @@ _register(InstrumentSpec(
     builds_in_isolation=True,
     offscreen_renderable=True,
     dbkeys=["APENG", "YDENG", "APLAT", "APLATARM", "APVERT", "APVERTARM",
-            "APALTCAP", "APDISC", "VSSEL", "IASSEL"],
+            "APALTCAP", "APALTREF", "APDISC", "VSSEL", "IASSEL"],
     properties=[
         Prop("ap_position", "enum", default="left", enum=["left", "center"],
              label="AP/YD position",
