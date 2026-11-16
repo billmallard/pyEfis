@@ -74,10 +74,12 @@ from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import model as fp_model
+from pyefis.flightplan import plates as fp_plates
 from pyefis.flightplan import proc_load as fp_proc
 from pyefis.flightplan import procedures as fp_procedures
 from pyefis.flightplan import refusal as fp_refusal
 from pyefis.flightplan import waypoints as fp_waypoints
+from pyefis.instruments.flight_plan import plate_render
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +101,7 @@ _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 _EXPIRED_COLOR = "#ffb000"
 _CYCLE_COLOR = "#9a9a9a"
 _CDI_SCALE_CHOICES = ("0.3", "1.0", "2.0", "AUTO")
-_INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog", "proc")
+_INSTRUMENT_PAGES = ("fpl", "entry", "dto", "catalog", "proc", "charts")
 # PROC page (PA7): its tabs, in the guide's order, and the fields each kind
 # asks for, in the order the pilot picks them (pyEfis #238).
 PROC_TABS = (("Departure", "departure"), ("Arrival", "arrival"), ("Approach", "approach"))
@@ -108,6 +110,12 @@ _PROC_FIELDS = {"departure": ("airport", "proc", "runway", "transition"),
                 "approach": ("airport", "proc", "transition")}
 _PROC_FIELD_LABELS = {"airport": "Airport", "runway": "Runway", "transition": "Transition"}
 _PROC_KIND_LABELS = {"departure": "Departure", "arrival": "Arrival", "approach": "Approach"}
+# Charts page (PA12): what each d-TPP chart type is called in the list, and
+# the zoom steps the - and + keys walk (1 = the whole page fits the pane).
+_CHART_LABELS = {"APD": "DIAGRAM", "IAP": "APPROACH", "DP": "DEPARTURE", "ODP": "OBST DP",
+                 "STR": "ARRIVAL", "MIN": "MINIMUMS", "HOT": "HOT SPOTS", "LAH": "LAHSO",
+                 "DAU": "ALT MIN"}
+CHART_ZOOMS = (1.0, 1.5, 2.0, 3.0)
 _SEGMENT_PAGE_KIND = {"departure": "departure", "arrival": "arrival",
                       "approach": "approach", "missed": "approach"}
 
@@ -234,6 +242,7 @@ class FlightPlan(QWidget):
         self.nasr_db_path = ""
         self.navaid_db_path = ""
         self.procedures_db_path = ""
+        self.plates_path = ""
         self.columns = "DTK,DIS,CUM"
         self.keypad = True
         self.keyboard = False
@@ -310,6 +319,16 @@ class FlightPlan(QWidget):
         self._catalog_message = ""
         self._catalog_dist_cache = {}
 
+        # Charts page (PA12). _charts is the page's state: the airport, the
+        # chart on view (None for the airport's chart list), the list's
+        # first row, the zoom step, the page point at the view's centre as
+        # a fraction of the page, and a message. _plate_view is where the
+        # last paint put the chart (for a pan drag), _plate_drag the drag.
+        self._charts = None
+        self._plate_view = None
+        self._plate_drag = None
+        self._plate_renderer = plate_render.PlateRenderer()
+
         self._modal = None
         self._uwpt_new = None
         self._uwpt_edit = None
@@ -320,6 +339,8 @@ class FlightPlan(QWidget):
         self._procedure_index_key = None
         self._airway_graph = None
         self._airway_graph_key = None
+        self._plate_index = None
+        self._plate_index_key = None
         self._catalog = None
         self._catalog_dir_used = None
 
@@ -479,6 +500,8 @@ class FlightPlan(QWidget):
             self._open_catalog_page()
         elif page == "proc":
             self._open_proc_page()
+        elif page == "charts":
+            self._open_charts_page()
 
     def _show_fpl_base(self):
         """Close every menu, overlay and entry surface and show the FPL
@@ -811,6 +834,14 @@ class FlightPlan(QWidget):
         self._airway_graph_key = key
         return self._airway_graph
 
+    def _ensure_plate_index(self):
+        key = self.plates_path
+        if self._plate_index is not None and self._plate_index_key == key:
+            return self._plate_index
+        self._plate_index = fp_plates.PlateIndex(key or None)
+        self._plate_index_key = key
+        return self._plate_index
+
     def _ensure_catalog(self):
         if self._catalog is None or self._catalog_dir_used != self.flightplan_dir:
             flightplan_dir = self._flightplan_dir()
@@ -916,7 +947,8 @@ class FlightPlan(QWidget):
     def _close_entry(self):
         # The PROC page's airport field opens this page over it, and back
         # out goes back there.
-        back = "proc" if (self._entry_mode or {}).get("kind") == "proc_airport" else "fpl"
+        back = {"proc_airport": "proc", "charts_airport": "charts"}.get(
+            (self._entry_mode or {}).get("kind"), "fpl")
         self._entry_mode = None
         self._entry_field = ""
         self._entry_message = ""
@@ -963,7 +995,7 @@ class FlightPlan(QWidget):
         self._entry_nav_index = None
         self._entry_tab = "Recent"
         self._entry_type_filter = "All"
-        if mode.get("kind") == "proc_airport":
+        if mode.get("kind") in ("proc_airport", "charts_airport"):
             self._entry_tab = "Nearest"
             self._entry_type_filter = "Apt"
         self._page = "entry"
@@ -979,6 +1011,11 @@ class FlightPlan(QWidget):
             self._ensure_waypoint_index().recent.push(wp.id)
             self._close_entry()
             self._proc_set_airport(wp.id)
+            return
+        if kind == "charts_airport":
+            self._ensure_waypoint_index().recent.push(wp.id)
+            self._close_entry()
+            self._charts_set_airport(wp.id)
             return
         if kind == "direct_to":
             if self._bridge.available:
@@ -1405,6 +1442,9 @@ class FlightPlan(QWidget):
     def _footer_proc(self):
         self._open_proc_page()
 
+    def _footer_charts(self):
+        self._open_charts_page()
+
     def _footer_menu(self):
         self._menu_open = not self._menu_open
         self._confirm = None
@@ -1754,6 +1794,122 @@ class FlightPlan(QWidget):
     def _proc_loaded_ident(self, kind):
         ks = fp_proc.loaded(self._plan, kind)
         return self._plan.segments[ks[0]].ident if ks else ""
+
+    # -- Charts page (PA12) ---------------------------------------------------
+    def _loaded_approach(self):
+        """``(airport, procedure, name)`` for the loaded approach: its name as
+        the FPL page shows it (``ILS07``), the airport it serves and its
+        procedures-pack row. ``(None, None, "")`` with no approach loaded;
+        the airport or the row is None when it cannot be found.
+
+        The segment carries no airport, so the airport is the first one the
+        approach's name is found at, trying the airports the plan flies to
+        after it, then every airport in the plan, then the airports nearest
+        the approach's last fix."""
+        segs = self._plan.segments
+        k = next((n for n, seg in enumerate(segs) if seg.kind == "approach"), None)
+        if k is None:
+            return None, None, ""
+        name = (segs[k].ident or "").strip().upper().split(".")[0]
+
+        def airports(seq):
+            return [s.legs[0].id for s in seq
+                    if s.kind == "waypoint" and s.legs[0].type == "airport"]
+
+        candidates = airports(segs[k + 1:]) + airports(segs)
+        fixed = [wp for wp in segs[k].legs if wp.lat is not None and wp.lon is not None]
+        if fixed:
+            near = self._ensure_waypoint_index().nearest(
+                fixed[-1].lat, fixed[-1].lon, types=frozenset({"airport"}))
+            candidates += [entry[0].id for entry in near[:5]]
+        index = self._ensure_procedure_index()
+        for apt in dict.fromkeys(candidates):
+            for proc in index.procedures_at(apt, "approach"):
+                if fp_proc.procedure_name(proc) == name:
+                    return apt, proc, name
+        return (candidates[0] if candidates else None), None, name
+
+    def _open_charts_page(self):
+        """The Charts page: the loaded approach's plate when exactly one
+        chart is that approach's (``PlateIndex.plate_for_approach``), else
+        the chart list of the airport it serves -- or, with no approach
+        loaded, of the destination. The list starts with the airport
+        diagram (CAP-207)."""
+        airport, proc, name = self._loaded_approach()
+        index = self._ensure_plate_index()
+        plate, message = None, ""
+        if name:
+            if airport and proc is not None:
+                plate = index.plate_for_approach(airport, proc.ident, proc.approach_type)
+            if plate is None and index.plates_at(airport or ""):
+                message = f"NO SINGLE PLATE FOR {name}"
+        if not airport:
+            airport = self._proc_default_airport("approach")
+        self._charts = {"airport": airport or "", "plate": plate, "first": 0, "zoom": 0,
+                        "centre": (0.5, 0.5), "message": message}
+        self._plate_drag = None
+        self._page = "charts"
+        self.update()
+
+    def _close_charts(self):
+        self._charts = None
+        self._plate_drag = None
+        self._page = "fpl"
+        self.update()
+
+    def _charts_set_airport(self, ident):
+        if self._charts is None:
+            return
+        self._charts.update(airport=(ident or "").strip().upper(), plate=None, first=0,
+                            message="")
+        self.update()
+
+    def _charts_change_airport(self):
+        self._open_entry({"kind": "charts_airport"})
+
+    def _charts_show(self, plate):
+        self._charts.update(plate=plate, zoom=0, centre=(0.5, 0.5), message="")
+        self.update()
+
+    def _charts_list(self):
+        self._charts.update(plate=None, message="")
+        self._plate_drag = None
+        self.update()
+
+    def _charts_zoom(self, step):
+        st = self._charts
+        st["zoom"] = max(0, min(len(CHART_ZOOMS) - 1, st["zoom"] + step))
+        if st["zoom"] == 0:
+            st["centre"] = (0.5, 0.5)
+        self.update()
+
+    def _charts_fit(self):
+        self._charts.update(zoom=0, centre=(0.5, 0.5))
+        self.update()
+
+    def _charts_scroll(self, delta):
+        self._charts["first"] = max(0, self._charts["first"] + delta)
+        self.update()
+
+    def _plate_drag_start(self, x, y):
+        """A press on a zoomed chart starts a pan; True if it did."""
+        view = self._plate_view
+        if (view is None or self._charts is None or self._charts["zoom"] == 0
+                or not view["rect"].contains(QPointF(x, y))):
+            return False
+        self._plate_drag = {"x": x, "y": y, "centre": self._charts["centre"]}
+        return True
+
+    def _plate_drag_move(self, x, y):
+        drag, view = self._plate_drag, self._plate_view
+        if view is None or self._charts is None:
+            return
+        cx, cy = drag["centre"]
+        # The page moves with the finger, so the point at the centre moves
+        # the other way.
+        self._charts["centre"] = (cx - (x - drag["x"]) / view["w"],
+                                  cy - (y - drag["y"]) / view["h"])
+        self.update()
 
     # -- Catalog page ---------------------------------------------------------
     def _open_catalog_page(self):
@@ -2354,7 +2510,9 @@ class FlightPlan(QWidget):
                 self._catalog_confirm is not None, self._dto_tab,
                 self._dto_target is not None, self._seg_menu, self._seg_fixes,
                 self._seg_fix_menu, None if self._proc is None else self._proc["kind"],
-                self._proc_picker)
+                self._proc_picker,
+                None if self._charts is None else (self._charts["airport"],
+                                                   self._charts["plate"]))
 
     def _enc_prepare(self):
         self._enc_refresh()
@@ -2489,6 +2647,10 @@ class FlightPlan(QWidget):
             self._close_catalog()
         elif self._page == "proc":
             self._close_proc()
+        elif self._page == "charts" and self._charts is not None and self._charts["plate"]:
+            self._charts_list()
+        elif self._page == "charts":
+            self._close_charts()
         else:
             return False
         return True
@@ -2548,6 +2710,9 @@ class FlightPlan(QWidget):
         x, y = event.position().x(), event.position().y()
         flinging = self._fling_timer.isActive()
         self._stop_fling()
+        if self._hit(x, y) is None and self._plate_drag_start(x, y):
+            event.accept()
+            return
         if self._in_list_view(y):
             # Not a tap yet: it fires on release if the finger stayed put.
             # A press that stops a fling only stops it.
@@ -2564,6 +2729,10 @@ class FlightPlan(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._plate_drag is not None:
+            self._plate_drag_move(event.position().x(), event.position().y())
+            event.accept()
+            return
         press = self._press
         if press is None:
             super().mouseMoveEvent(event)
@@ -2587,6 +2756,10 @@ class FlightPlan(QWidget):
         event.accept()
 
     def mouseReleaseEvent(self, event):
+        if self._plate_drag is not None:
+            self._plate_drag = None
+            event.accept()
+            return
         press, self._press = self._press, None
         if press is None:
             super().mouseReleaseEvent(event)
@@ -2835,6 +3008,7 @@ class FlightPlan(QWidget):
         self._tap_targets = []
         self._tap_kinds = []
         self._list_view = None
+        self._plate_view = None
         self._enc_layer_start = 0
         self._enc_field = None
         p = QPainter(self if device is None else device)
@@ -2851,6 +3025,8 @@ class FlightPlan(QWidget):
                 self._paint_catalog(p, w, h)
             elif page == "proc" and self._proc is not None:
                 self._paint_proc(p, w, h)
+            elif page == "charts" and self._charts is not None:
+                self._paint_charts(p, w, h)
             else:
                 self._paint_fpl(p, w, h)
             self._paint_enc_focus(p, w, h)
@@ -3366,6 +3542,11 @@ class FlightPlan(QWidget):
         labels = ("ADD WPT", "DIRECT TO", "PROC", "CATALOG", "MENU")
         callbacks = (self._footer_add, self._footer_direct_to, self._footer_proc,
                      self._footer_catalog, self._footer_menu)
+        if self.plates_path:
+            # PA12: one tap to the loaded approach's plate. Only a screen
+            # that names a plates pack grows the key.
+            labels = labels[:4] + ("CHARTS",) + labels[4:]
+            callbacks = callbacks[:4] + (self._footer_charts,) + callbacks[4:]
         seg = w / len(labels)
         f = QFont(self.font_family)
         f.setPixelSize(self._px(int(footer_h * 0.34), 9))
@@ -4086,6 +4267,163 @@ class FlightPlan(QWidget):
                    f"REMOVE {kind.upper()}")
         if loaded:
             self._tap(*remove_rect, self._proc_remove, "soft")
+
+    # -- Charts page (PA12) -------------------------------------------------------
+    def _paint_charts(self, p, w, h):
+        """The airport's chart list, or one chart drawn to fit the pane. No
+        ownship is drawn on any chart (brief guardrail 5)."""
+        st = self._charts
+        plate = st["plate"]
+        header_h = int(self._chrome_h(h, 1.3, 0.18))
+        info_h = int(self._chrome_h(h, 0.7, 0.08))
+        footer_h = int(self._chrome_h(h, 1.3, 0.18))
+        title = plate.chart_name if plate else f"CHARTS  {st['airport']}"
+        self._paint_charts_header(p, w, header_h, title)
+        top, bottom = header_h + info_h, h - footer_h
+        plates = [] if plate else self._ensure_plate_index().plates_at(st["airport"])
+        self._paint_charts_info(p, w, header_h, info_h, plate or (plates[0] if plates else None))
+        if plate:
+            self._paint_plate(p, w, top, bottom, plate)
+            self._paint_charts_footer(p, w, bottom, footer_h, (
+                ("LIST", self._charts_list, True),
+                ("ZOOM -", lambda: self._charts_zoom(-1), st["zoom"] > 0),
+                ("FIT", self._charts_fit, st["zoom"] > 0),
+                ("ZOOM +", lambda: self._charts_zoom(1), st["zoom"] < len(CHART_ZOOMS) - 1)))
+        else:
+            more_up, more_down, page_rows = self._paint_charts_list(p, w, top, bottom, plates)
+            self._paint_charts_footer(p, w, bottom, footer_h, (
+                ("AIRPORT", self._charts_change_airport, True),
+                ("▲", lambda: self._charts_scroll(-page_rows), more_up),
+                ("▼", lambda: self._charts_scroll(page_rows), more_down)))
+        if self._message:
+            self._paint_toast(p, w, h, self._message)
+
+    def _paint_charts_header(self, p, w, header_h, title):
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(header_h * 0.4), 10))
+        p.setFont(f)
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(header_h * 0.2, 0, w - header_h * 1.4, header_h),
+                   Qt.AlignmentFlag.AlignCenter, title)
+        cancel_rect = (w - header_h, 0, header_h, header_h)
+        p.setPen(QPen(QColor("#ff8080")))
+        p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
+        self._tap(*cancel_rect, self._close_charts)
+
+    def _paint_charts_info(self, p, w, top, info_h, plate):
+        """The page's message, or the chart's airport and amendment, and on
+        the right the cycle the chart is from -- amber once it has expired
+        (PA9's annunciation: expired data is shown, never refused)."""
+        st = self._charts
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(info_h * 0.6), 9))
+        p.setFont(f)
+        rect = QRectF(10, top, w - 20, info_h)
+        left, color = "", "#9a9a9a"
+        if st["message"]:
+            left, color = st["message"], "#ff4040"
+        elif plate is not None and st["plate"] is not None:
+            amdt = " ".join(v for v in (plate.amdt_num, plate.amdt_date) if v)
+            left = plate.icao_ident + (f"  AMDT {amdt}" if amdt else "")
+        p.setPen(QPen(QColor(color)))
+        p.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, left)
+        if plate is not None and plate.cycle:
+            text, cycle_color = self._cycle_text(plate.cycle)
+            p.setPen(QPen(QColor(cycle_color)))
+            p.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
+
+    def _paint_charts_list(self, p, w, top, bottom, plates):
+        """One row per chart, a page at a time; returns ``(more above, more
+        below, rows per page)``."""
+        st = self._charts
+        f = QFont(self.font_family)
+        if not plates:
+            f.setPixelSize(self._px(int((bottom - top) * 0.06), 10))
+            p.setFont(f)
+            p.setPen(QPen(QColor("#808080")))
+            text = (f"NO CHARTS FOR {st['airport']}" if self._ensure_plate_index().ready
+                    else "NO CHARTS DATABASE")
+            p.drawText(QRectF(0, top, w, bottom - top), Qt.AlignmentFlag.AlignCenter, text)
+            return False, False, 1
+        row_h = self._row_h_cap()
+        rows = max(1, int((bottom - top) // row_h))
+        st["first"] = max(0, min(st["first"], len(plates) - rows))
+        f.setPixelSize(self._px(int(row_h * 0.42), 9))
+        p.setFont(f)
+        y = top
+        for plate in plates[st["first"]:st["first"] + rows]:
+            p.setPen(QPen(QColor("#222222")))
+            p.drawRect(QRectF(2, y + 2, w - 4, row_h - 4))
+            p.setPen(QPen(QColor("#ffffff")))
+            p.drawText(QRectF(10, y, w * 0.72 - 10, row_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       plate.chart_name)
+            p.setPen(QPen(QColor("#9a9a9a")))
+            p.drawText(QRectF(w * 0.72, y, w * 0.28 - 10, row_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       _CHART_LABELS.get(plate.chart_code, plate.chart_code))
+            self._tap(0, y, w, row_h, (lambda pl=plate: self._charts_show(pl)), "row")
+            y += row_h
+        return st["first"] > 0, st["first"] + rows < len(plates), rows
+
+    def _paint_plate(self, p, w, top, bottom, plate):
+        """The chart's page, fitted to the pane and then zoomed, with the
+        point ``_charts["centre"]`` at the middle of the view as far as the
+        page's edges allow."""
+        st = self._charts
+        view = QRectF(0, top, w, bottom - top)
+        renderer = self._plate_renderer
+        index = self._ensure_plate_index()
+
+        def fetch():
+            return index.pdf_bytes(plate.pdf_name)
+
+        size = renderer.page_size(plate.pdf_name, fetch) if renderer.available else None
+        image = None
+        if size is not None:
+            pw, ph = size
+            fit = min(view.width() / pw, view.height() / ph)
+            zoom = CHART_ZOOMS[st["zoom"]]
+            iw, ih = round(pw * fit * zoom), round(ph * fit * zoom)
+            image = renderer.render(plate.pdf_name, fetch, iw, ih)
+        if image is None:
+            f = QFont(self.font_family)
+            f.setPixelSize(self._px(int(view.height() * 0.035), 9))
+            p.setFont(f)
+            p.setPen(QPen(QColor("#ffb000")))
+            text = renderer.unavailable_reason or "CHART CANNOT BE DRAWN"
+            p.drawText(view, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+            return
+
+        def place(length, span, start, centre):
+            if length <= span:
+                return start + (span - length) / 2
+            return min(start, max(start + span - length, start + span / 2 - centre * length))
+
+        x = place(iw, view.width(), view.left(), st["centre"][0])
+        y = place(ih, view.height(), view.top(), st["centre"][1])
+        st["centre"] = ((view.center().x() - x) / iw, (view.center().y() - y) / ih)
+        p.save()
+        p.setClipRect(view)
+        p.drawImage(QPointF(x, y), image)
+        p.restore()
+        self._plate_view = {"rect": view, "w": iw, "h": ih}
+
+    def _paint_charts_footer(self, p, w, top, footer_h, keys):
+        """Soft keys ``(label, callback, enabled)``; a disabled key is grey
+        and takes no tap."""
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(0, top), QPointF(w, top))
+        seg = w / len(keys)
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(footer_h * 0.34), 9))
+        p.setFont(f)
+        for i, (label, callback, enabled) in enumerate(keys):
+            x = i * seg
+            p.setPen(QPen(QColor("#ffffff" if enabled else "#505050")))
+            p.drawText(QRectF(x, top, seg, footer_h), Qt.AlignmentFlag.AlignCenter, label)
+            if enabled:
+                self._tap(x, top, seg, footer_h, callback, "soft")
 
     # -- Catalog page -------------------------------------------------------------
     def _paint_catalog(self, p, w, h):

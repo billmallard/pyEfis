@@ -1518,6 +1518,10 @@ _register(InstrumentSpec(
              help="procedures-conus.pack for SID/STAR/approach lookup (PA5; "
                   "on the Pi /data/makerplane-data/procedures/current/"
                   "procedures.sqlite)"),
+        Prop("plates_path", "string", default="", label="Plates pack path",
+             help="FAA d-TPP plates pack, or a directory holding one or more "
+                  "regional plates packs, for the Charts page (PA12). Blank "
+                  "hides the FPL page's CHARTS key"),
         Prop("hold_speed_kt", "number", default=90.0, minimum=40.0, maximum=250.0,
              step=5.0, label="Hold speed (kt)",
              help="speed a hold coded in minutes is turned into a distance at "
