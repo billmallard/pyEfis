@@ -507,6 +507,27 @@ def test_full_layout_groups_lateral_centre_vertical_left_to_right(panel):
         < panel.boxes[ap.BOX_VS].geometry().left()
 
 
+def test_yaml_options_reach_the_panel_through_apply_options(db, qtbot):
+    """The screen-build path, not the setter: ``layout: compact`` in screen
+    YAML must switch the layout (AVIONICS-DATA found it inert on AER-5812,
+    because the option landed as a plain attribute)."""
+    from pyefis.screens.screenbuilder_options import apply_options
+
+    class _Screen:
+        instruments = {}
+        encoder_list = []
+
+    w = _panel(qtbot)
+    _Screen.instruments = {0: w}
+    apply_options(_Screen, 0, {"type": "autopilot_panel", "options": {
+        "layout": "compact", "buttons": "AP,HDG", "active_color": "#00ee00"}})
+    assert w.panel_layout == "compact"
+    assert "layout" not in vars(w)          # QWidget.layout() not shadowed
+    assert callable(w.layout)
+    assert w.buttons == "HDG,AP"
+    assert w.active_color == "#00ee00"
+
+
 def test_unknown_layout_falls_back_to_full(panel):
     panel.setPanelLayout("sideways")
     assert panel.panel_layout == "full"
