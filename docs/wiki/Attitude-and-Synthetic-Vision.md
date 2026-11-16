@@ -213,6 +213,7 @@ The full list, including the tick sizes and opacities, is on
 | Min auto range (`svs_min_range_nm`) | 8 nm | | |
 | Safe clearance (`svs_clearance_green_ft`) | 1000 | 2500 | Green at and above this clearance. |
 | Caution clearance (`svs_clearance_yellow_ft`) | 500 | 1500 | Amber above this; red below. |
+| Terrain palette (`svs_palette`) | `clearance` | | The clearance-band colours: `clearance` (the stock scheme), `subdued` or `high_contrast`. |
 | Safe-band gradient (`svs_safe_gradient`) | on | | |
 | Terrain grid (`svs_terrain_grid`) | 0.35 | | 0 turns the grid off. |
 | Terrain texture (`svs_terrain_texture`) | 0.35 | | 0 turns the texture off. |
@@ -222,8 +223,6 @@ The full list, including the tick sizes and opacities, is on
 | PAPI lights (`svs_papi`) | on | | |
 | Road colour, casing and width options (`svs_road_*`) | | | The road ribbons' look. |
 
-One option in the list does nothing on the device today: **Terrain palette**
-(`svs_palette`, [#394](https://github.com/billmallard/pyEfis/issues/394)).
 Terrain is always drawn filled; there is no wireframe mode
 ([#395](https://github.com/billmallard/pyEfis/issues/395)).
 
