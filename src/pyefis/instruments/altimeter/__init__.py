@@ -30,6 +30,7 @@ from pyefis.instruments import edit_focus
 from pyefis.instruments import helpers
 from pyefis.instruments.helpers import bugs
 from pyefis.instruments.altimeter import altsel
+from pyefis.instruments.autopilot import state as apstate
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,10 @@ class Altimeter_Tape(QGraphicsView):
         alt_bug_color="#00ffff",
         alt_bug_alert_color="#ffb000",
         alt_bug_dbkey="ALTSEL",
+        vs_bug=None,
+        vs_bug_color="#00ffff",
+        vs_bug_dbkey="VSSEL",
+        altsel_capture_color="#00ff00",
     ):
         super(Altimeter_Tape, self).__init__(parent)
         # Checkbox option: alpha-fade the scrolling scale into the
@@ -372,6 +377,22 @@ class Altimeter_Tape(QGraphicsView):
         self._touch_pending = None
         if self.altsel_box or self.alt_bug_enabled:
             self._altsel_binding()
+        # Autopilot cues (AFC4). The VSSEL bug sits on a VS tape while VS is
+        # the active vertical mode, and the ALTSEL box changes look while the
+        # autopilot captures it (APALTCAP). Both read the reported state only,
+        # and vanish when it goes old (autopilot.state.APState).
+        self.vs_bug = (dbkey == "VS") if vs_bug is None else vs_bug
+        self.vs_bug_color = vs_bug_color
+        self.vs_bug_dbkey = vs_bug_dbkey
+        self.altsel_capture_color = altsel_capture_color
+        self._vssel = None
+        self._ap = None
+        if self.vs_bug:
+            self._vssel = bugs.BugBinding(self.vs_bug_dbkey, self)
+            self._vssel.changed.connect(self._ap_changed)
+        if self.vs_bug or self.altsel_box:
+            self._ap = apstate.APState(parent=self)
+            self._ap.changed.connect(self._ap_changed)
 
         self.conversionFunction1 = lambda x: x
         self.conversionFunction2 = lambda x: x
@@ -486,7 +507,7 @@ class Altimeter_Tape(QGraphicsView):
             self.scene.width() / 2, self.y_offset(self._altimeter + self.maxalt)
         )
         if (self.baro_shown() or helpers.tape_invalid(self.item)
-                or self.item.bad):
+                or self.item.bad or self.vs_bug_y() is not None):
             # centerOn() may blit-scroll the viewport, which would drag the
             # fixed baro box (or the failed-tape X, or the suspect frame)
             # along with the scale; repaint it in place.
@@ -538,6 +559,7 @@ class Altimeter_Tape(QGraphicsView):
             helpers.draw_failed_tape_x(p, QRectF(self.viewport().rect()))
         else:
             self._paint_alt_bug(p)
+            self._paint_vs_bug(p)
             if self.item.bad:
                 helpers.draw_suspect_tape_frame(
                     p, QRectF(self.viewport().rect()))
@@ -952,6 +974,9 @@ class Altimeter_Tape(QGraphicsView):
                 self, binding, font_family=self.font_family)
             self.altsel_display.color = QColor(self.alt_bug_color)
             self.altsel_display.alert_color = QColor(self.alt_bug_alert_color)
+            self.altsel_display.capture_color = QColor(
+                self.altsel_capture_color)
+            self.altsel_display.capturing = self.altsel_capturing()
         bh = max(16, qRound(self.width() * 0.34))
         self.altsel_display.setGeometry(0, 0, self.width(), bh)
         self.altsel_display.show()
@@ -995,6 +1020,52 @@ class Altimeter_Tape(QGraphicsView):
         # scale labels, which a bug there would cover.
         p.drawPath(bugs.tape_bug_path(float(w), y, bug_w, bug_h,
                                       point_right=False))
+        p.restore()
+
+    # --- autopilot cues (AFC4) ------------------------------------------------
+
+    def _ap_changed(self, *_):
+        box = self.altsel_display
+        if box is not None:
+            box.capturing = self.altsel_capturing()
+            self._altsel_refresh()
+        self.viewport().update()
+
+    def altsel_capturing(self):
+        """Is the autopilot capturing the selected altitude (``APALTCAP`` on a
+        fresh reading)?"""
+        return self._ap is not None and self._ap.capturing
+
+    def vs_bug_y(self):
+        """Where the VSSEL bug goes, ``(y, off)`` as :meth:`alt_bug_y`, or
+        None: drawn only while VS is the active autopilot vertical mode on a
+        fresh reading and VSSEL holds a value (brief section 5.5 item 5)."""
+        if not self.vs_bug or self._vssel is None or self._ap is None:
+            return None
+        if not self._ap.vertical_active_is("VS") or not self._vssel.drawable():
+            return None
+        y = self.mapFromScene(
+            QPointF(0, self.y_offset(self._vssel.value + self.maxalt))).y()
+        top = 0
+        if self.altsel_display is not None and self.altsel_display.isVisible():
+            top = self.altsel_display.geometry().bottom() + 1
+        bottom = self.viewport().height()
+        if self.baro_shown():
+            bottom = self._baro_zone().top()
+        return bugs.clamp_to_span(y, top, bottom)
+
+    def _paint_vs_bug(self, p):
+        placed = self.vs_bug_y()
+        if placed is None:
+            return
+        y, _off = placed
+        w = self.width()
+        color = self._vssel.color(QColor(self.vs_bug_color))
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(color))
+        p.drawPath(bugs.tape_bug_path(float(w), y, max(5.0, w * 0.12),
+                                      max(10.0, w * 0.26), point_right=False))
         p.restore()
 
     def _altsel_refresh(self):

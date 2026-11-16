@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import *
 
 import pyavtools.fix as fix
 from pyefis.instruments import helpers
+from pyefis.instruments.autopilot import state as apstate
+from pyefis.instruments.helpers import bugs
 
 class VSI_Dial(QWidget):
     FULL_WIDTH = 300
@@ -212,6 +214,32 @@ class VSI_PFD(QWidget):
         self.item.oldChanged[bool].connect(self.repaint)
         self.item.badChanged[bool].connect(self.repaint)
         self.item.failChanged[bool].connect(self.repaint)
+        # VSSEL bug (AFC4, brief section 5.5 item 5): on the scale while VS is
+        # the active autopilot vertical mode on a fresh reading, gone when the
+        # autopilot state goes old.
+        self.vs_bug = True
+        self.vs_bug_color = "#00ffff"
+        self._vssel = bugs.BugBinding("VSSEL", self)
+        self._vssel.changed.connect(self.update)
+        self._ap = apstate.APState(parent=self)
+        self._ap.changed.connect(self.update)
+
+    def scale_y(self, fpm):
+        """The scale position of ``fpm``, clamped to the widget."""
+        h = self.height()
+        if fpm >= 0:
+            y = h/2 - (fpm**self.scaleRoot / self.max**self.scaleRoot) * self.dy
+            return max(0.0, y)
+        y = h/2 + (abs(fpm)**self.scaleRoot / self.max**self.scaleRoot) * self.dy
+        return min(float(h), y)
+
+    def vs_bug_y(self):
+        """Where the VSSEL bug goes, or None when it is not drawn."""
+        if not self.vs_bug or not self._ap.vertical_active_is("VS"):
+            return None
+        if not self._vssel.drawable() or not getattr(self, "max", 0):
+            return None
+        return self.scale_y(self._vssel.value)
 
     def resizeEvent(self, event):
         # Just for convenience
@@ -285,6 +313,17 @@ class VSI_PFD(QWidget):
 
         dot_color = (QColor(helpers.SUSPECT_TAPE_COLOR) if self.item.bad
                      else QColor(Qt.GlobalColor.magenta))
+
+        # The VSSEL bug on the left edge, notch facing the scale; the rate
+        # dot is drawn after it, so the dot stays on top.
+        bug_y = self.vs_bug_y()
+        if bug_y is not None:
+            p.save()
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(self._vssel.color(QColor(self.vs_bug_color))))
+            p.drawPath(bugs.tape_bug_path(0.0, bug_y, max(5.0, w * 0.30),
+                                          max(8.0, w * 0.45)))
+            p.restore()
 
         #p.drawEllipse(QPointF(w+4, h/2), 4.0, 4.0)
         dot_size = int(self.width() * 0.4)

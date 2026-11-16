@@ -25,6 +25,8 @@ import pyavtools.fix as fix
 import pyefis.hmi as hmi
 from pyefis.instruments.NumericalDisplay import NumericalDisplay
 from pyefis.instruments import helpers
+from pyefis.instruments.autopilot import state as apstate
+from pyefis.instruments.helpers import bugs
 
 
 class Airspeed(QWidget):
@@ -238,6 +240,7 @@ class Airspeed_Tape(QGraphicsView):
         self, parent=None, font_percent=None, font_family="DejaVu Sans Condensed",
         show_tas=True, show_trend=True,
         trend_lookahead=6.0, trend_window=3.0, trend_min_change=0.5,
+        ias_bug=True, ias_bug_color="#00ffff", ias_bug_dbkey="IASSEL",
     ):
         super(Airspeed_Tape, self).__init__(parent)
         # Checkbox option: alpha-fade the scrolling scale into the
@@ -309,6 +312,23 @@ class Airspeed_Tape(QGraphicsView):
         self.fontsize = 15
         self.majorDiv = 10
         self.minorDiv = 5
+
+        # Selected airspeed (AFC4, brief section 5.5 item 4): the IASSEL bug
+        # and a target box at the top of the tape, shown while IAS is the
+        # active or an armed autopilot vertical mode on a fresh reading, the
+        # twin of the ALTSEL box (TK5). Display only: the value is set on the
+        # control head (AFC3). AC 25-11B A.4.2 (p.71) asks for a mark showing
+        # the flight guidance system's target airspeed.
+        self.ias_bug = ias_bug
+        self.ias_bug_color = ias_bug_color
+        self.ias_bug_dbkey = ias_bug_dbkey
+        self._iassel = None
+        self._ap = None
+        if self.ias_bug:
+            self._iassel = bugs.BugBinding(self.ias_bug_dbkey, self)
+            self._iassel.changed.connect(self._ap_changed)
+            self._ap = apstate.APState(parent=self)
+            self._ap.changed.connect(self._ap_changed)
 
     def resizeEvent(self, event):
         if self.font_percent:
@@ -462,9 +482,11 @@ class Airspeed_Tape(QGraphicsView):
 
         self.resetTransform()
         self.centerOn(self.scene.width() / 2, -self._airspeed * self.pph + tape_start)
-        if helpers.tape_invalid(self.item) or self.item.bad:
+        if (helpers.tape_invalid(self.item) or self.item.bad
+                or self.ias_target_shown()):
             # centerOn() may blit-scroll the viewport, which would drag the
-            # fixed failed-tape X or suspect frame along with the scale.
+            # fixed failed-tape X, suspect frame or IASSEL box along with the
+            # scale.
             self.viewport().update()
         self.numerical_display.value = self._airspeed
 
@@ -497,6 +519,8 @@ class Airspeed_Tape(QGraphicsView):
             helpers.draw_failed_tape_x(p, QRectF(self.viewport().rect()))
         elif self.item.bad:
             helpers.draw_suspect_tape_frame(p, QRectF(self.viewport().rect()))
+        if not failed:
+            self._paint_ias_target(p)
 
         # TAS box at the bottom of the tape. P5c: the same rounded, translucent
         # readout panel the boxed IAS uses (it used to be a solid-white slab
@@ -559,6 +583,87 @@ class Airspeed_Tape(QGraphicsView):
                            QPoint(x0 - arrow, trend_y - arrow),
                            QPoint(x0 + arrow, trend_y - arrow)]
                 p.drawPolygon(QPolygon(tip))
+
+    # --- selected airspeed (AFC4) -------------------------------------------
+
+    def _ap_changed(self, *_):
+        self.viewport().update()
+
+    def ias_target_shown(self):
+        """Box and bug are up: IAS active or armed on a fresh autopilot
+        reading. IASSEL 0 means "not set" (AFC1), so the box shows dashes and
+        there is no bug."""
+        return (bool(self.ias_bug) and self._ap is not None
+                and self._ap.vertical_reported("IAS"))
+
+    def ias_target_active(self):
+        return self._ap is not None and self._ap.vertical_active_is("IAS")
+
+    def ias_target_set(self):
+        b = self._iassel
+        return (b is not None and b.drawable() and b.value is not None
+                and b.value > 0)
+
+    def ias_box_rect(self):
+        w = self.width()
+        return QRectF(0.0, 0.0, float(w), float(max(16, qRound(w * 0.30))))
+
+    def ias_box_text(self):
+        if not self.ias_target_set():
+            return "---"
+        return str(int(round(self._iassel.value)))
+
+    def _tas_box_top(self):
+        if not self.show_tas:
+            return float(self.viewport().height())
+        w = self.width()
+        lbl_px = max(7, qRound(w * 0.13))
+        val_px = max(9, qRound(w * 0.20))
+        box_h = lbl_px + val_px + qRound(lbl_px * 0.6)
+        return self.height() - box_h - max(1.0, w * 0.02)
+
+    def ias_bug_y(self):
+        """``(y, off)`` for the IASSEL bug in viewport pixels, pegged between
+        the target box and the TAS box (bugs.clamp_to_span), or None."""
+        if not (self.ias_target_shown() and self.ias_target_set()):
+            return None
+        tape_start = self.max * self.pph + self.height() / 2
+        y = self.mapFromScene(
+            QPointF(0, -self._iassel.value * self.pph + tape_start)).y()
+        return bugs.clamp_to_span(y, self.ias_box_rect().bottom() + 1,
+                                  self._tas_box_top())
+
+    def _paint_ias_target(self, p):
+        if not self.ias_target_shown():
+            return
+        w = self.width()
+        color = self._iassel.color(QColor(self.ias_bug_color))
+        placed = self.ias_bug_y()
+        if placed is not None:
+            y, _off = placed
+            p.save()
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(color))
+            # On the label edge, beside the attitude display, notch facing
+            # the scale; the left edge carries the V-speed bands.
+            p.drawPath(bugs.tape_bug_path(float(w), y, max(5.0, w * 0.10),
+                                          max(10.0, w * 0.24),
+                                          point_right=False))
+            p.restore()
+        # The box: border in the active-mode colour while IAS is the active
+        # vertical mode, plain white while it is only armed (brief 5.3).
+        r = self.ias_box_rect().adjusted(1.0, 1.0, -1.0, -1.0)
+        border = (QColor(0, 255, 0) if self.ias_target_active()
+                  else QColor(Qt.GlobalColor.white))
+        helpers.draw_readout_panel(
+            p, r, helpers.READOUT_RADIUS_RATIO * r.height(), border,
+            pen_width=max(1.0, r.height() * 0.05), fill_alpha=1.0)
+        f = QFont(self.font_family)
+        f.setPixelSize(max(6, qRound(r.height() * 0.62)))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(color))
+        p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), self.ias_box_text())
 
     def getAirspeed(self):
         return self._airspeed

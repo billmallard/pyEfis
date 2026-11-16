@@ -161,7 +161,14 @@ PAIRS = {
     "altimeter_tape": [
         ("alt_bug_color", "#000000", TEXT_FLOOR),
         ("alt_bug_alert_color", "#000000", TEXT_FLOOR),
+        # AFC4: the capture border on the box, the VSSEL bug on the tape.
+        ("altsel_capture_color", "#000000", GRAPHIC_FLOOR),
+        ("vs_bug_color", "#000000", GRAPHIC_FLOOR),
     ],
+    # AFC4: the IASSEL target box value (opaque black fill, airspeed
+    # _paint_ias_target) and the VSSEL bug on the VSI scale.
+    "airspeed_tape": [("ias_bug_color", "#000000", TEXT_FLOOR)],
+    "vsi_pfd": [("vs_bug_color", "#000000", GRAPHIC_FLOOR)],
     # AFC4 mode strip: every annunciation is text on the strip's own fill.
     "ap_annunciator": [
         ("active_color", "background_color", TEXT_FLOOR),
