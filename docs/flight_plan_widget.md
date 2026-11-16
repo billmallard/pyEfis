@@ -176,7 +176,11 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   computed). RS3 changed DTK/DIS from the leg leaving the fix, in true. The TO row
   (`FPLACTLEG`) is `active_color`, earlier rows `past_color`, later rows
   `future_color`. Tapping a row opens a menu: Insert Before, Insert After,
-  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`),
+  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`;
+  when the leg's from-fix is more than `ACT_CONFIRM_NM`, 500 nm, from a
+  valid `LAT`/`LONG` it first asks `FROM <fix> <n> NM / ACTIVATE LEG?`,
+  and No or a tap off the box sends nothing -- FPACT1, AER-5801; the same
+  applies to Show Fixes and a segment's Activate (to entry)),
   Direct To (stages + `DTO k`), WPT Info (full detail, see below), Set Role
   (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
@@ -215,7 +219,14 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   it survives a pyEfis restart, shows on a second display, inverts (Menu >
   Invert re-runs the one-way check, and refuses with the reason) and
   stores/loads. Before RS2 it was a display-only tag re-attached after every
-  read-back by guessing, which lost it in all four cases.
+  read-back by guessing, which lost it in all four cases. A fix that ends a
+  departure or an airway has no plain row, so their segment menus offer
+  **Load Airway at <exit>** instead (G87, pyEfis #474): the new airway
+  starts at the fix after it, and the exit fix keeps its one slot. Entering
+  that fix again as a waypoint, the only way before, put it in two slots.
+  Any waypoint that is the fix already on either side of where it would go
+  (same ident, within `model.SAME_FIX_NM`) is now refused with "x IS
+  ALREADY THE PREVIOUS FIX" or "... NEXT FIX".
 - **Airway segment rows** (RS3, AER-3792, `route_segments_plan.md` section 6)
   -- the entry fix stays its own row; every leg inside the airway is ONE
   two-line segment row: a route glyph, the ident in bold with
@@ -229,7 +240,8 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   not repeated. Tapping the segment row opens the **segment menu**: Change
   Exit / Change Entry (the airway's other fixes through the same picker as
   Load Airway; `FlightPlan.change_exit`/`change_entry` re-expand the same
-  segment), Show Fixes, Activate to <entry> (`ACT` on the entry slot) and
+  segment), Show Fixes, Load Airway at <exit> (chains the next airway),
+  Activate to <entry> (`ACT` on the entry slot) and
   Remove Airway (`remove_segment`, which leaves the entry fix). **Show
   Fixes** is a read-only sheet of every fix with the magnetic course,
   distance and MEA of the leg into it; tapping a fix (there, or a nested
@@ -244,7 +256,8 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   it (`075° TO +700`, `HDG 255°`). The active leg opens the block into
   working rows exactly as in an airway. The segment menu offers Show Fixes
   (course, distance and the coded altitude constraint into each leg),
-  Activate to the first fix, Select <kind> (the PROC page for that kind) and
+  Load Airway at <last fix> (a departure only), Activate to the first fix,
+  Select <kind> (the PROC page for that kind) and
   Remove <kind>; the approach and its missed approach go together. A leg with
   no fix offers only Activate Leg in its one-fix menu.
 - **PROC** (PA7, billmallard/pyEfis#238; guide pp. 3-64 to 3-75) -- tabs
