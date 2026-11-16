@@ -110,3 +110,39 @@ six times (thread comment, 2026-11-15 10:35Z). The engine's ramp, MAP
 suspend and missed approach are proven on X-Plane's truth through the
 replay test. Slice C is queued again (session `400e386d7193`, night of
 2026-11-15) for clean frames on the glass.
+
+## Night 2 (2026-11-16 05:15-05:45Z): slice C again, clean
+
+Session `400e386d7193`, `complete`, with no other follower on the bench
+(`data/night2_events.txt`). At the start the bus held another route, so the
+follower republished the PROC-page route (`match True`), then ACTed DARTS.
+
+| Frame | What it shows |
+|---|---|
+| `n2c_lnav_active_faf_fpl` | LNAV, approach active, 1.99 nm before MOVVE (the FAF). |
+| `n2c_final_mipte_fpl` | MOVVE -> MIPTE, 0.30 nm scale. |
+| `n2c_susp_at_map_fpl` | Suspended at the MAP (RW21): "SUSP AT MAP", "Fly the missed". No auto-sequence. |
+| `n2c_missed_fpl` | RESUME 8 s later: MISSED, `SEQ ALT -> CAPOB` (the `CA` to +600 was already met), course 237 to CAPOB. |
+| `n2c_sadde_hold_fpl` | SADDE, the missed approach hold. |
+
+The follower's ramp-threshold grabs (`C_scale_*`) fired at the slice's start,
+on the other route still on the bus, so they are not used. The same
+one-shot-on-stale-state trap as night 1's MAP trigger. The ramp is pinned
+numerically in fix-gateway's `test_pa14_xplane_replay.py`.
+
+## Map frames: slice C's trajectory replayed into the bench (2026-11-16 12:31Z)
+
+The follower grabs only the Flight Plan tab, so the map during the approach
+comes from `bench_scripts/c_replay.py`. It writes X-Plane's own truth for
+session `2c89084d9ebf` (t = 530-1000 s, 2x) into the live gateway over
+netfix, with the Map tab up and no X-Plane running. It sends ACT 10, then
+RESUME 8 s after the MAP suspend, as the follower did. This is a replay,
+not the live sim feed. Keys at each grab: `data/c_replay_keys.txt`.
+
+| Frame | Bus at the grab |
+|---|---|
+| `r2c_map_apr_active` | LNAV, APR 2, scale 0.997, 1.99 nm to MOVVE |
+| `r2c_map_ramp_1nm` | scale 0.647, 0.99 nm to MOVVE |
+| `r2c_map_final` | scale 0.30, 1.49 nm to RW21 |
+| `r2c_map_susp_at_map` | SUSP at RW21, 0.01 nm |
+| `r2c_map_missed` | missed, APR 3, scale 1.0, to CAPOB |
