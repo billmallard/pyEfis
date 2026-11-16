@@ -58,8 +58,7 @@ Values it reads from the FIX item, set in fix-gateway (the aircraft parameters),
 
 <!-- /generated -->
 
-The green band starts at Vs0, not Vs
-([#396](https://github.com/billmallard/pyEfis/issues/396)).
+The green band starts at Vs, or at Vs0 when Vs is not set.
 
 ## `airspeed_dial`
 

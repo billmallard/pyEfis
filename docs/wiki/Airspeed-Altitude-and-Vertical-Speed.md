@@ -22,14 +22,13 @@ rolls like a drum.
 |---|---|---|
 | Red | 0 | Vs0 |
 | White (half width) | Vs0 | Vfe |
-| Green | Vs0 | Vno |
+| Green | Vs (Vs0 when Vs is not set) | Vno |
 | Yellow | Vno | Vne |
 | Red | Vne | top of the tape |
 
 A red line marks Vne. The scale runs from 0 to 1.25 times Vne. The low red band
-appears only when Vs0 is set. The green band starts at Vs0, not at the clean
-stall speed Vs: Vs is not drawn on the tape today
-([#396](https://github.com/billmallard/pyEfis/issues/396)).
+appears only when Vs0 is set. The green band starts at the clean stall speed
+Vs, so between Vs0 and Vs only the white flap band shows.
 
 **Where the V-speeds come from.** They are the aircraft's numbers, not the
 panel's. Enter them once under
