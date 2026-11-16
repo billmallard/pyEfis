@@ -127,13 +127,20 @@ bench panel. Pick it to suit the aircraft's climb and descent performance.
 
 ## When data is flagged
 
+A **bad** value is suspect: its source still sends it but has flagged it. An
+**old** value has stopped updating and is frozen at the last one received, so
+the tapes treat it as failed.
+
+| Instrument | Bad | Old or failed |
+|---|---|---|
+| Airspeed or altitude tape | An amber frame round the tape; the scale stays. The readout digits blank, the box outline stays | A red X across the whole tape, with the scale, bands, bug and trend arrow removed. The readout is a grey box with a red `XXX` |
+| TAS box | `---` | `---`. It also reads `---` while `IAS` is old or failed |
+| VSI | An amber frame round the scale; the bar stays, the number blanks | The scale and bar removed, a red X across the scale, a red `XXX` |
+
 | Instrument | Old or bad | Failed |
 |---|---|---|
-| Airspeed or altitude readout | Digits blank, the box outline stays | Grey box with a red `XXX` |
-| TAS box | `---` | `---` |
 | Altimeter setting | Grey | Red `XXX` |
 | Selected altitude and bug | Grey | Dashes, no bug |
-| VSI | Number blank, the bar stays | Bar removed, red `XXX` |
 
 ## Customizing
 

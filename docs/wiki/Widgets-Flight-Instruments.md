@@ -93,7 +93,8 @@ Values it reads from the FIX item, set in fix-gateway (the aircraft parameters),
 
 A readout that shows TAS, GS or IAS. The **Set airspeed mode** action steps
 through them (empty argument) or picks one (`0` TAS, `1` GS, `2` IAS). `XXX` on
-failure, blank when old or bad. Replaced in the palette by `value_text`.
+failure, blank when old or bad. In TAS mode it reads `---` while `IAS` is old or
+failed. Replaced in the palette by `value_text`.
 
 <!-- generated:airspeed_box -->
 
@@ -228,8 +229,8 @@ Values it reads from the FIX item, set in fix-gateway (the aircraft parameters),
 ## `vsi_pfd`
 
 A narrow strip with a dot that rides up and down with the rate, on a scale that
-spreads out the low rates. The dot is grey when old or bad; a red X replaces it
-on failure.
+spreads out the low rates. When `VS` is bad the dot turns amber inside an amber
+frame; when it is old or failed a red X across the strip replaces it.
 
 ![VSI PFD](../images/vsi_pfd.png)
 
