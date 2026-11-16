@@ -20,6 +20,7 @@ from PyQt6.QtCore import qRound
 
 from pyefis.instruments import ai
 from pyefis.instruments import airspeed
+from pyefis.instruments import autopilot
 from pyefis.instruments import altimeter
 from pyefis.instruments import button
 from pyefis.instruments import checklist
@@ -260,6 +261,13 @@ def build_nav_status(screen, config, font_percent=None, font_family=None, replac
     # same reading build_flight_plan gives it.
     return nav_status.NavStatus(screen, font_family=font_family,
                                 font_percent=font_percent)
+
+def build_autopilot_panel(screen, config, font_percent=None, font_family=None,
+                          replace=None):
+    # font_percent is a multiplier on the panel's box-derived text sizes, the
+    # reading build_nav_status gives it.
+    return autopilot.AutopilotPanel(screen, font_family=font_family,
+                                    font_percent=font_percent)
 
 # Every instrument type is migrated -- these legacy lookup tables are populated
 # entirely from REGISTRY by the fold-back below. They remain (empty here) for
@@ -1610,6 +1618,78 @@ _register(InstrumentSpec(
     ],
     preview={"state": "LEG", "from": "KSBA", "to": "GVO", "next": "RZS",
              "dis": "12.4 NM", "ete": "0:06", "phase": "TERM"},
+))
+
+# The autopilot mode controller (AFC3, brief autopilot_control_head_plan.md
+# sections 5.1-5.4). Presses write APCMD + APCMDSEQ; every key is drawn from
+# the state the autopilot source reports, never from the press.
+_register(InstrumentSpec(
+    type="autopilot_panel",
+    label="Autopilot Panel",
+    category="navigation",
+    builder=build_autopilot_panel,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=["APCMD", "APCMDSEQ", "APENG", "FDENG", "YDENG", "APLAT",
+            "APLATARM", "APVERT", "APVERTARM", "APALTCAP", "APCAPS", "APMSG",
+            "HEADBUG", "VSSEL", "IASSEL", "ALTSEL", "HEAD", "VS", "IAS",
+            "ALT"],
+    properties=[
+        Prop("layout", "enum", default="full", enum=["full", "compact"],
+             label="Layout", apply="setter:setPanelLayout",
+             help="full: three columns (lateral, centre, vertical), each "
+                  "with its value boxes over its keys; compact: two rows, "
+                  "the boxes over one row of keys, for small panels and "
+                  "side strips"),
+        Prop("buttons", "string", default=autopilot.DEFAULT_BUTTONS,
+             label="Buttons",
+             help="comma list of the keys shown, from APR, NAV, HDG, TRK, "
+                  "AP, FD, YD, LVL, IAS, VNAV, VS, ALT; drop YD for an "
+                  "airplane with no yaw damper. TRK is off by default. A key "
+                  "the autopilot cannot fly is greyed, never hidden"),
+        Prop("touch_edit", "boolean", default=True, label="Touch to edit",
+             help="touch a value box (HDG, VS, IAS, ALT SEL) to give it the "
+                  "knob: inner/outer steps, push to sync"),
+        Prop("active_color", "color", default="#00ff00",
+             label="Active colour",
+             help="indicator bar of an active mode, and the accent on the "
+                  "active vertical mode's box",
+             token="state.valid"),
+        Prop("armed_color", "color", default="#ffffff",
+             label="Armed colour",
+             help="outline of an armed mode's indicator bar",
+             token="ink.primary"),
+        Prop("caution_color", "color", default="#ffaa00",
+             label="Caution colour",
+             help="a request not taken, and the no-autopilot-data message",
+             token="state.caution"),
+        Prop("key_color", "color", default="#101418", label="Key colour",
+             help="key face",
+             token="surface.raised"),
+        Prop("level_color", "color", default="#1f5fbf", label="LVL colour",
+             help="the LVL key's own face colour, so it can be found "
+                  "without looking for its label"),
+        Prop("text_color", "color", default="#ffffff", label="Text colour",
+             help="key labels and the autopilot message",
+             token="ink.primary"),
+        Prop("muted_color", "color", default="#aaaaaa",
+             label="Unavailable colour",
+             help="greyed keys and the box labels",
+             token="ink.muted"),
+        Prop("line_color", "color", default="#ffffff", label="Line colour",
+             help="key and box borders",
+             token="line.border"),
+        Prop("target_color", "color", default="#00ffff",
+             label="Target colour",
+             help="the selected values in the boxes",
+             token="nav.reference"),
+        Prop("bg_color", "color", default="#000000", label="Background",
+             help="panel ground behind the keys and boxes",
+             token="surface.base"),
+    ],
+    preview={"hdg": "270", "vs": "+500", "ias": "---", "altsel": "8500",
+             "active": ["AP", "FD", "HDG", "VS"], "armed": ["ALT", "NAV"],
+             "unavailable": ["VNAV"], "message": ""},
 ))
 
 _register(InstrumentSpec(

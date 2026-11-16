@@ -138,7 +138,7 @@ configuration, and the Data Status screen's **About** button opens it.
 
 ## The software notice at start-up
 
-![The notice strip across the bottom of the bench panel, 8 seconds after start (an October capture)](../images/aer4339_startup_notice/beelink_banner_8s.png)
+![The notice strip across the bottom of the bench panel, 7 seconds after start, on a bench where the notice has been accepted](../images/aer4339_startup_notice/beelink_banner_8s.png)
 
 Each start, a strip across the bottom reads: *"pyEfis is experimental software
 for Experimental / Amateur-Built aircraft. It is not certified. It is provided

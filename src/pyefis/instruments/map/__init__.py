@@ -8,7 +8,7 @@ import math
 import time
 
 from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import (QBrush, QColor, QFont, QPainter, QPainterPath,
+from PyQt6.QtGui import (QBrush, QColor, QFont, QImage, QPainter, QPainterPath,
                          QPen, QPolygonF)
 from PyQt6.QtWidgets import QPinchGesture, QWidget
 
@@ -158,6 +158,18 @@ class MapTransform:
             de, dn = de * c - dn * s, de * s + dn * c
         return QPointF(self.cx + de * self._px_per_m,
                        self.cy - dn * self._px_per_m)
+
+    def to_screen_xy(self, lat, lon):
+        """:meth:`to_screen` over numpy arrays: ``(x, y)`` arrays, the same
+        arithmetic in the same order, so each point lands on the same float
+        as the scalar call (MAPPAINT1: one projection per layer per frame,
+        not one Python call per feature)."""
+        de = (lon - self.lon0) * M_PER_DEG_LAT * self._coslat
+        dn = (lat - self.lat0) * M_PER_DEG_LAT
+        if self.rot:
+            c, s = math.cos(self.rot), math.sin(self.rot)
+            de, dn = de * c - dn * s, de * s + dn * c
+        return self.cx + de * self._px_per_m, self.cy - dn * self._px_per_m
 
     def to_world(self, x, y):
         """Inverse of :meth:`to_screen`: screen px -> ``(lat, lon)`` (FP10
@@ -362,6 +374,19 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._gesture_frame_rate = 30.0
         self._frame_dirty = False
         self._frame_last_pose = None
+        self._frame_last_overlay = None
+        # MAPPAINT1: the layers are drawn into _layer_img and blitted; a
+        # repaint that changes only what is drawn over them (the ND overlay,
+        # the TRK box) reuses that image. _layer_gen counts every repaint
+        # request that may change what a layer draws -- each update() call
+        # (layer workers publishing, toggles, gestures, flag changes) -- and
+        # is part of the image's key, so only the frame clock's overlay-only
+        # request can reuse it.
+        self._layer_gen = 0
+        self._layer_img = None
+        self._layer_x = None
+        self._layer_own = None
+        self._layer_key = None
         self._frame_timer = QTimer(self)
         self._frame_timer.timeout.connect(self._frame_tick)
         self._frame_timer.start(int(round(1000.0 / self._frame_rate)))
@@ -533,6 +558,13 @@ class MovingMap(LiveBindingMixin, QWidget):
         map at the caller's rate."""
         self._frame_dirty = True
 
+    def update(self, *args):
+        """QWidget.update(), and the layer image is redrawn on the next
+        paint. Every caller but the frame clock's overlay-only repaint comes
+        through here (MAPPAINT1)."""
+        self._layer_gen += 1
+        super().update(*args)
+
     def _frame_tick(self):
         """Repaint at most at the clock rate, and only when the pose
         changed enough to move pixels: position by ~half a screen px,
@@ -540,25 +572,46 @@ class MovingMap(LiveBindingMixin, QWidget):
         or a gesture call (zoom_by/pan_by/rotate_by, MP3) or a layer
         (request_frame) marked a frame dirty. Explicit UI actions (range,
         orientation, layer toggles)
-        and async layer completions still call update() directly."""
+        and async layer completions still call update() directly.
+
+        What only the overlay draws -- the ND data blocks and scales
+        (``nd.signature``) and the magnetic track in the TRK box -- repaints
+        without redrawing the layers (MAPPAINT1): see _paint_layers."""
         if not self.isVisible():
             return
-        m_per_px = (float(self.range_nm) * NM_M) / max(1.0, self.height() / 2.0)
+        pose = self._clock_pose()
+        overlay = (round(self._track * 4.0),
+                   map_nd.signature(self, self._nd_read)
+                   if self.nd_active() else None)
+        if pose != self._frame_last_pose or self._frame_dirty:
+            self._frame_last_pose = pose
+            self._frame_last_overlay = overlay
+            self._frame_dirty = False
+            self.update()
+        elif overlay != self._frame_last_overlay:
+            self._frame_last_overlay = overlay
+            # Not self.update(): the layer image stays valid.
+            QWidget.update(self)
+
+    def _clock_pose(self):
+        """The view, quantized to what moves pixels: position to half a
+        screen px, track to 0.25 deg, altitude to 100 ft. The frame clock
+        repaints the layers when it changes; between changes they stay
+        where they were drawn."""
+        # Metres per screen px as the transform draws them: range_nm spans
+        # range_px (the compass radius in ND mode, about 280 px on a
+        # 650x1000 portrait panel), not half the height, which made the
+        # clock repaint for every 0.28 px of motion there (MAPPAINT1).
+        m_per_px = (float(self.range_nm) * NM_M) / max(
+            1.0, self._range_px(self.height()))
         q = max(1e-7, (0.5 * m_per_px) / M_PER_DEG_LAT)  # deg per half-px
-        pose = (round(self._lat / q), round(self._lon / q),
-                round(self._track * 4.0), round(self.view_track() * 4.0),
+        return (round(self._lat / q), round(self._lon / q),
+                round(self.view_track() * 4.0),
                 round(self._alt_ft / 100.0),
                 self.view_orientation(), float(self.range_nm),
                 round(self._pan_e), round(self._pan_n),
                 round(self._rot_offset * 4.0),
-                map_nd.normalize_mode(self.nd_mode),
-                map_nd.signature(self, self._nd_read)
-                if self.nd_active() else None)
-        if pose == self._frame_last_pose and not self._frame_dirty:
-            return
-        self._frame_last_pose = pose
-        self._frame_dirty = False
-        self.update()
+                map_nd.normalize_mode(self.nd_mode))
 
     # --- layer plumbing ---------------------------------------------------
     def _build_layers(self):
@@ -1385,13 +1438,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._ui_targets = []
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        x = self._transform()
-        p.fillRect(self.rect(), map_layers.qcolor(x.palette["background"]))
-        for layer in self._layers:
-            if layer.enabled:
-                p.save()
-                layer.paint(p, x)
-                p.restore()
+        x = self._paint_layers(p)
+        # Ownship as the layer image has it: where it is now on a fresh
+        # image, where it was when the image was drawn on a reused one.
+        own = self._layer_own
 
         # Ownship: top-down aircraft arrow at the anchor, up = track
         # (track_up) or rotated to track (north_up).
@@ -1401,7 +1451,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         if not col.isValid():
             col = QColor(Qt.GlobalColor.yellow)
         s = max(8.0, self.width() * 0.025)
-        osp = x.to_screen(self._lat, self._lon)   # off-centre when panned
+        osp = x.to_screen(*own)                   # off-centre when panned
         p.save()
         p.translate(osp.x(), osp.y())
         p.rotate(self.ownship_screen_deg(x))
@@ -1413,7 +1463,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         p.restore()
 
         if self.nd_active():
-            map_nd.paint(self, p, x, self._nd_read)
+            map_nd.paint(self, p, x, self._nd_read, own=own)
 
         # Status chip: range + orientation (+ NO POS when stale).
         f = QFont(self.font_family)
@@ -1468,6 +1518,62 @@ class MovingMap(LiveBindingMixin, QWidget):
             self._paint_perf_overlay(p)
         if self._map_perf_log:
             self.perf.maybe_report()
+
+    def _layer_image_key(self):
+        """When the layer image may be reused: no update() since it was
+        drawn (layer workers publish through update(), so this covers their
+        snapshots), the clock's pose and everything else the transform is
+        built from unchanged."""
+        return (self._layer_gen, self._clock_pose(), self.width(),
+                self.height(), id(map_layers.palette(self)),
+                self.defer_render, self.devicePixelRatioF())
+
+    def _paint_layers(self, p):
+        """The background and every enabled layer, drawn into the layer
+        image and blitted; returns the transform the frame is drawn in.
+
+        A repaint the frame clock asks for only for the overlay (an ND
+        readout, the TRK box) blits the image from the last paint instead
+        and returns that paint's transform; paintEvent draws ownship and
+        the ND at the ownship position the image was drawn at
+        (_layer_own), so the frame is the last one with new readouts. The
+        aircraft has moved less than half a px since, the clock's own
+        threshold (MAPPAINT1). The ND's label keep-out is checked against
+        the image's at that position too, since the TRK box width follows
+        the track's digits.
+        The background is opaque, so the image is too, and the blit is a
+        copy."""
+        key = self._layer_image_key()
+        img, x = self._layer_img, self._layer_x
+        if img is not None and key == self._layer_key:
+            keep = map_nd.keep_out(self, x, self._layer_own) \
+                if self.nd_active() else ()
+            if map_layers.rect_key(keep) == map_layers.rect_key(
+                    x.label_keep_out):
+                p.drawImage(QPointF(0.0, 0.0), img)
+                self.perf.layer_reuses += 1
+                return x
+        x = self._transform()
+        dpr = self.devicePixelRatioF()
+        pw = max(1, int(math.ceil(self.width() * dpr)))
+        ph = max(1, int(math.ceil(self.height() * dpr)))
+        if img is None or img.width() != pw or img.height() != ph:
+            img = QImage(pw, ph, QImage.Format.Format_RGB32)
+        img.setDevicePixelRatio(dpr)
+        lp = QPainter(img)
+        lp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        lp.fillRect(self.rect(), map_layers.qcolor(x.palette["background"]))
+        for layer in self._layers:
+            if layer.enabled:
+                lp.save()
+                layer.paint(lp, x)
+                lp.restore()
+        lp.end()
+        self._layer_img, self._layer_x, self._layer_key = img, x, key
+        self._layer_own = (self._lat, self._lon)
+        self.perf.layer_renders += 1
+        p.drawImage(QPointF(0.0, 0.0), img)
+        return x
 
     #: rail ink: an opaque light grey at rest (the status chip's white at
     #: its alpha, over a dark map), full white while a finger is on it.

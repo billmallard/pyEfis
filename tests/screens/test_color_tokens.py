@@ -19,6 +19,15 @@ from pyefis.screens.screenbuilder_preferences import apply_preferences
 # The contract's section 5 tier table, as (type, prop) -> token. The AI-family
 # horizon_heading_color row covers both AI types.
 CONTRACT_MAP = {
+    ("autopilot_panel", "active_color"): "state.valid",
+    ("autopilot_panel", "armed_color"): "ink.primary",
+    ("autopilot_panel", "caution_color"): "state.caution",
+    ("autopilot_panel", "key_color"): "surface.raised",
+    ("autopilot_panel", "text_color"): "ink.primary",
+    ("autopilot_panel", "muted_color"): "ink.muted",
+    ("autopilot_panel", "line_color"): "line.border",
+    ("autopilot_panel", "target_color"): "nav.reference",
+    ("autopilot_panel", "bg_color"): "surface.base",
     ("horizontal_situation_indicator", "course_color"): "nav.course",
     ("horizontal_situation_indicator", "track_color"): "nav.course",
     ("horizontal_situation_indicator", "heading_bug_color"): "nav.reference",
