@@ -107,8 +107,12 @@ def strip_sheet(path):
     put("APALTCAP", True)
     shot("4 altitude capture: ALT CAP boxed")
     put("APALTCAP", False); put("APVERT", "ALT"); put("APVERTARM", "")
+    put("APALTREF", 8500); put("ALTSEL", 10500)
     clock.t = 1080.0
-    shot("5 ALT hold (no reference key, no number)")
+    shot("5 ALT hold 8500 (APALTREF), 10500 preselected")
+    put("APALTREF", old=True)
+    shot("5b same, APALTREF old: ALT, no number")
+    put("APALTREF", old=False)
     put("APVERT", "IAS"); put("APVERTARM", "ALT"); clock.t = 1120.0
     shot("6 IAS 90 climb, ALT armed")
     put("APENG", False); put("APDISC", True); clock.t = 1160.0
@@ -145,6 +149,10 @@ def tapes_sheet(path):
     grab(airspeed.Airspeed_Tape(), 90, 420, "IAS active")
     put("APVERT", "PIT"); put("APVERTARM", "IAS")
     grab(airspeed.Airspeed_Tape(), 90, 420, "IAS armed")
+    put("APVERT", "IAS"); put("APVERTARM", "")
+    editing = airspeed.Airspeed_Tape()
+    editing._ias_focused = True          # the state a touch on the box leaves
+    grab(editing, 90, 420, "IAS editing")
     put("APVERT", "VS"); put("APVERTARM", "ALT")
     grab(altimeter.Altimeter_Tape(dbkey="VS", maxalt=4000, majorDiv=500,
                                   minorDiv=100), 80, 420, "VS tape")

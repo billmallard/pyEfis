@@ -4,10 +4,13 @@ Offscreen renders of the real widgets, driven from an in-memory FIX database
 (`tests/mock_db`), one autopilot state per row. Not a Pi 5 GL capture: that sheet
 and the X-Plane bench run are separate steps of AFC4's definition of done.
 
-- `strip.png`: `ap_annunciator` at 640x40 over a sky-blue ground, nine states
-  (captions on the left). Row 3 is the same moment as row 2, half a second later: the
-  flash's off phase, box kept.
-- `tapes.png`: the IASSEL box and bug (IAS active, then armed), the VSSEL bug on a VS
+- `strip.png`: `ap_annunciator` at 640x40 over a sky-blue ground, ten states
+  (captions on the left), AP YD first (the default since Bill's ruling on AER-5808).
+  Row 3 is the same moment as row 2, half a second later: the flash's off phase, box
+  kept. Rows 5 and 5b: ALT hold with `APALTREF` 8500 while `ALTSEL` is 10500, then the
+  same with `APALTREF` old.
+- `tapes.png`: the IASSEL box and bug (IAS active, then armed, then holding the edit
+  focus after a touch: ring and edit icon), the VSSEL bug on a VS
   tape and on `VSI_PFD`, and the ALTSEL box while capturing (green border) beside the
   plain box.
 

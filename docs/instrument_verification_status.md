@@ -34,7 +34,7 @@ The first seven areas below are **verified + deployed to the Pi**; the autopilot
 | **VSI** | [vsi_widget_spec.md](vsi_widget_spec.md) | 11 pass | none | — |
 | **Turn coordinator / slip-skid** | [tc_widget_spec.md](tc_widget_spec.md) | 9 pass | none | — |
 | **Heading / compass** | [heading_widget_spec.md](heading_widget_spec.md) | (in HSI suite) 29 pass | none | — |
-| **Autopilot annunciation + target cues** (AFC4) | [ap_annunciator_widget_spec.md](ap_annunciator_widget_spec.md) | 80 pass, 1 xfail (`tests/instruments/autopilot/`) | none | ALT hold reference (AP-ANN-002): no key in AFC1; Pi 5 and X-Plane bench pending |
+| **Autopilot annunciation + target cues** (AFC4) | [ap_annunciator_widget_spec.md](ap_annunciator_widget_spec.md) | 96 pass, no xfail (`tests/instruments/autopilot/`; AP-ANN-002 gap closed by `APALTREF`, AER-5808) | none | Pi 5 and X-Plane bench pending |
 
 **Net: no implementable code gap is open.** EFIS-ALTSEL-006 is implemented (below). The last
 data-blocked item, AI-LIM-001, closed with AER-5086 (further below).
