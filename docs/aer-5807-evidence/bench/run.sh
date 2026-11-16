@@ -21,4 +21,6 @@ QT_QPA_PLATFORM=offscreen PYTHONPATH="$PYEFIS/src" $PY "$HERE/drive.py" \
 RC=$?
 kill "$(cat "$OUT/source.pid")" 2>/dev/null
 kill "$(cat "$OUT/fixgw.pid")" 2>/dev/null
+# Hold the port until this gateway is gone, so a second run can bind it.
+while kill -0 "$(cat "$OUT/fixgw.pid")" 2>/dev/null; do sleep 0.5; done
 echo "RC=$RC"

@@ -67,7 +67,7 @@ SCENES = [
           APVERTARM="ALT", IASSEL=95.0), None),
     ("5 LVL engaged", dict(APENG=True, FDENG=True, APLAT="LVL",
                            APVERT="LVL"), None),
-    ("6 NAV pressed 0.3 s ago, no change yet: pending (border flash on)",
+    ("6 NAV pressed 0.1 s ago, no change yet: pending (border flash on)",
      dict(APENG=True, FDENG=True, APLAT="HDG", APVERT="ALT"), "press:NAV:0.1"),
     ("7 NAV not taken after 2 s: amber + APMSG",
      dict(APENG=True, FDENG=True, APLAT="HDG", APVERT="ALT",
