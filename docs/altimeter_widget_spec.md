@@ -113,10 +113,11 @@ Symbology is industry convention grounded in open references: **AC 23.1311-1C** 
 
 ## 7. Open items
 
-- **Altitude deviation alerting.** The gateway half is done: fix-gateway #90 sets the
-  `ALTSEL` annunciate flag on deviation, armed on capture (EFIS-ALTSEL-005/-009/-010).
-  The display half, recolouring the bug while the flag is set (EFIS-ALTSEL-006), is not
-  implemented in this tape yet.
+- **Altitude deviation alerting.** Done in both halves: fix-gateway #90 sets the
+  `ALTSEL` annunciate flag on deviation, armed on capture (EFIS-ALTSEL-005/-009/-010),
+  and pyEfis #362 recolours the box and bug while it is set (EFIS-ALTSEL-006). The
+  autopilot's capture look on the box (AL-CAP-001, AFC4) is specified in
+  [`ap_annunciator_widget_spec.md`](ap_annunciator_widget_spec.md).
 - The `Altimeter_Tape` class is shared with the VS tape (`dbkey="VS"`); keep the trend
   opt-out-able so a VS instance (or a tape beside a VSI, §17.8.b) can disable it.
 - **Baro (Kollsman) setting** display is a separate widget/requirement, not part of this

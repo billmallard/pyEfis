@@ -119,6 +119,20 @@ The selected altitude is FIX key `ALTSEL` (int, ft, -1000 to 60000). fix-gateway
 
 ---
 
+### Autopilot Mode Annunciation (AFC4)
+
+The autopilot state is FIX keys written by the autopilot source only (fix-gateway
+`database/autopilot.yaml`, AFC1). The display shows that state and never a button press
+(makerplane brief `autopilot_control_head_plan.md` section 3). Detailed requirements with
+FAA page cites: [`ap_annunciator_widget_spec.md`](ap_annunciator_widget_spec.md) section 4.
+
+- **EFIS-AP-001:** The PFD shall show the autopilot's mode annunciation strip across the top of the attitude display: AP and YD engagement, the active lateral and vertical modes in green, the armed modes in white in their own places, and the active vertical target where the contract names it. This is the "auto-pilot status text" space EFIS-WIND-001 reserves. *(Implemented, AFC4: `ap_annunciator`.)*
+- **EFIS-AP-002:** A change of active mode, including altitude capture, shall be boxed and flash for a brief period (10 s by default). *(Implemented, AFC4.)*
+- **EFIS-AP-003:** An autopilot disconnect (`APDISC`) shall show a red, flashing `AP` until the pilot acknowledges it; the latch is the autopilot source's. *(Visual implemented, AFC4; the aural part waits for audio.)*
+- **EFIS-AP-004:** When the autopilot state keys go old, bad or failed, the strip and every cue the state gates (the `IASSEL` and `VSSEL` bugs, the `IASSEL` box, the `ALTSEL` capture look) shall be removed, and the strip shall show `NO AP DATA`. *(Implemented, AFC4.)*
+
+---
+
 
 ## Notes
 
