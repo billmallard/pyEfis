@@ -336,8 +336,13 @@ class AI(QGraphicsView):
         # which is correct in steady state but lags VPATH during
         # transient descents — the FIX key still wires up cleanly via
         # the missing-key guard below.
+        # A VPATH that nothing writes is old, not failed: it sits at 0.0
+        # and would pin the marker to the horizon, so old VPATH falls back
+        # too (AER-5799). Only VPATH tracks old; the four required keys
+        # keep their fail/bad gating unchanged.
         self._fpm_fail = {k: True for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
         self._fpm_bad  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
+        self._fpm_vpath_old = True
         self._fpm_vs    = 0.0
         self._fpm_gs    = 0.0
         self._fpm_track = 0.0
@@ -353,6 +358,9 @@ class AI(QGraphicsView):
             _item.valueChanged[float].connect(lambda v, k=key: self._fpmValueChanged(k, v))
             _item.failChanged[bool].connect(lambda f, k=key: self._fpmFailChanged(k, f))
             _item.badChanged[bool].connect(lambda b, k=key: self._fpmBadChanged(k, b))
+            if key == 'VPATH':
+                _item.oldChanged[bool].connect(self._fpmVpathOldChanged)
+                self._fpm_vpath_old = _item.old
             self._fpm_fail[key] = _item.fail
             self._fpm_bad[key]  = _item.bad
             setattr(self, f'_fpm_{key.lower()}', _item.value)
@@ -909,6 +917,11 @@ class AI(QGraphicsView):
         if self.isVisible():
             self.update()
 
+    def _fpmVpathOldChanged(self, old):
+        self._fpm_vpath_old = old
+        if self.isVisible():
+            self.update()
+
     def update(self):  # noqa: A003 — deliberate QWidget.update override
         """Route repaint requests to the viewport widget. With the P5
         QOpenGLWidget viewport, update() on the view widget itself
@@ -1089,8 +1102,11 @@ class AI(QGraphicsView):
         # FIX key when the source publishes it (X-Plane idx 18 slot 3
         # is the same value X-Plane's own primary-flight-display FPM
         # uses). Fall back to atan2(VS, GS), which is correct in
-        # steady state but lags VPATH on transient descents.
-        if not self._fpm_fail['VPATH']:
+        # steady state but lags VPATH on transient descents. VPATH is
+        # used only while it is fresh: a source that does not publish it
+        # leaves it old at 0.0, not failed (AER-5799).
+        if not (self._fpm_fail['VPATH'] or self._fpm_vpath_old
+                or self._fpm_bad['VPATH']):
             fpa_deg = self._fpm_vpath
         else:
             gs_fpm = self._fpm_gs * 101.269  # knots → ft/min
@@ -1098,6 +1114,7 @@ class AI(QGraphicsView):
                 fpa_deg = math.degrees(math.atan2(self._fpm_vs, gs_fpm))
             else:
                 fpa_deg = 0.0
+        self._fpm_fpa_deg = fpa_deg  # observability for AER-5799 tests
         # Drift angle: crab relative to heading, normalised ±180°.
         # TRACK (idx 18 slot 2 = hpath) is the TRUE ground track;
         # HEAD is magnetic. Subtract MAGVAR from HEAD so both legs of

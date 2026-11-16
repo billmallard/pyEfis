@@ -27,11 +27,16 @@
 #  map, so nothing here depends on any other instrument being on the
 #  screen; an owner without a frame clock gets update().
 #
-#  Great-circle legs are drawn as straight screen segments with no
-#  subdivision. Verified numerically against MapTransform.to_screen: for a
+#  Great-circle legs up to _GC_SPLIT_NM are drawn as straight screen
+#  segments. Verified numerically against MapTransform.to_screen: for a
 #  leg near the edge of the widest shipped range (160 NM), the chord-vs-
 #  geodesic pixel deviation is ~0.1 px at a 40 NM leg, ~0.4 px at 80 NM, and
 #  only crosses 1 px past ~110 NM -- comfortably above a typical enroute leg.
+#  A longer leg is drawn as a polyline of great-circle points no more than
+#  _GC_STEP_NM apart (MAPGC1, AER-5800): the engine measures cross-track
+#  against the great circle, and a 1,835 NM chord ran 3.85 NM right of it
+#  20 NM before the fix, so the pilot crossed the magenta line with the
+#  CDI pegged. Short legs keep their single segment.
 #
 #  RS4 (route segments brief section 7, pyEfis #307): the segment table on
 #  the bus (FPLS*) labels each airway with its ident along its first leg,
@@ -65,6 +70,7 @@
 #  active leg, from the engine's own FROM/TO outputs. A gateway without
 #  FPLLDSEQ keeps the behaviour from before the key.
 
+import functools
 import math
 import time
 from dataclasses import replace
@@ -120,6 +126,12 @@ _PROCEDURE_KINDS = frozenset({"departure", "arrival", "approach", "missed"})
 #: is where that path starts; otherwise (a direct-to into the leg's fix)
 #: the engine flies FROM -> TO, and that is what is drawn.
 _FROM_TOL_NM = 0.1
+
+# MAPGC1: a straight leg longer than _GC_SPLIT_NM is drawn through points
+# along its great circle at most _GC_STEP_NM apart. A 20 NM chord of the
+# lon/lat plane misses the great circle by about 0.01 NM at 36 deg latitude.
+_GC_SPLIT_NM = 110.0
+_GC_STEP_NM = 20.0
 
 _STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
               "vector": Qt.PenStyle.DotLine}
@@ -524,8 +536,48 @@ def _tinter(x):
     return tint
 
 
+def great_circle_points(points):
+    """*points* (``(lat, lon)`` pairs) with every pair more than
+    _GC_SPLIT_NM apart filled in along its great circle, so the drawn
+    polyline is the course the engine flies (MAPGC1). Shorter pairs are
+    left as they are."""
+    out = list(points[:1])
+    for a, b in zip(points, points[1:]):
+        d = fp_geo.distance_nm(a[0], a[1], b[0], b[1])
+        if d > _GC_SPLIT_NM:
+            n = math.ceil(d / _GC_STEP_NM)
+            brg = fp_geo.initial_bearing(a[0], a[1], b[0], b[1])
+            out.extend(fp_geo.destination_point(a[0], a[1], brg, d * i / n)
+                       for i in range(1, n))
+        out.append(b)
+    return out
+
+
 def _polyline(points):
-    return QPolygonF([QPointF(lon, lat) for lat, lon in points])
+    return QPolygonF([QPointF(lon, lat) for lat, lon in great_circle_points(points)])
+
+
+@functools.lru_cache(maxsize=16)
+def _line_polyline(a, b):
+    """The great-circle polyline for a straight ``a -> b`` line, or None
+    when it is short enough to draw as one segment. Cached: the endpoints
+    come from engine keys that change once per leg."""
+    if fp_geo.distance_nm(a[0], a[1], b[0], b[1]) <= _GC_SPLIT_NM:
+        return None
+    return _polyline([a, b])
+
+
+def _draw_line(p, x, lonlat, a, b):
+    """Stroke the straight ``a -> b`` line with the current pen, along
+    its great circle when it is long (MAPGC1)."""
+    poly = _line_polyline(a, b)
+    if poly is None:
+        p.drawLine(x.to_screen(a[0], a[1]), x.to_screen(b[0], b[1]))
+        return
+    p.save()
+    p.setWorldTransform(lonlat, True)
+    p.drawPolyline(poly)
+    p.restore()
 
 
 class _Snapshot:
@@ -797,8 +849,7 @@ class FlightPlanLayer(MapLayer):
             pen.setStyle(_STYLE_PEN[style])
             p.setPen(pen)
             if kind == "line":
-                (la1, lo1), (la2, lo2) = ref
-                p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+                _draw_line(p, x, lonlat, *ref)
                 continue
             if kind == "lead":
                 poly = snap.lead_poly
@@ -812,11 +863,11 @@ class FlightPlanLayer(MapLayer):
 
         direct = build_direct_to(route, engine, dto)
         if direct is not None:
-            color, (la1, lo1), (la2, lo2) = direct
+            color, a, b = direct
             pen.setColor(color)
             pen.setWidthF(_ACTIVE_WIDTH)
             p.setPen(pen)
-            p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+            _draw_line(p, x, lonlat, a, b)
 
         if not snap.loaded:
             if dto is not None and _off_route_direct(engine) and x.range_nm <= _SYMBOL_RANGE:
