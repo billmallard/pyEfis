@@ -34,6 +34,7 @@ obstacle layer on the map.
 | Dashed line | Missed-approach legs. |
 | Dotted line | Vector legs. |
 | Racetrack | A hold or procedure turn, drawn as its pattern. |
+| Rounded corner | A fly-by turn: the arc fix-gateway's engine will fly at that waypoint. The leg into it ends at the middle of the arc, where the engine moves on to the next leg. A corner stays square where the engine turns no arc, or where a leg next to it is too short or is a hold or vector. |
 | Magenta line from where you were | An off-route Direct-To. |
 | Dashed magenta line past the runway | The extended final course, 5 nm, while the plan is suspended at the missed approach point. |
 
@@ -47,6 +48,24 @@ shows the place, the plan keeps that layer's symbol and ident and adds only
 the ring and the role.
 
 ![The bench in the WINCH hold, 10 nm north up: the hold drawn as a magenta racetrack at WINCH, with the coastline, Avila and the airports around San Luis Obispo](../images/map/bench_map_hold.png)
+
+### Traffic
+
+With the traffic layer on (the default) and fix-gateway publishing ADS-B
+traffic, each target is drawn at its position:
+
+| Drawn as | Means |
+|---|---|
+| White arrowhead | A target, pointing along its track. A diamond when its track is not known. |
+| Number by the symbol | Relative altitude in hundreds of feet: `+05` is 500 ft above you, `-12` is 1,200 ft below, `00` is level. It sits above the symbol for traffic above you and below it otherwise. `--` when the target's altitude or your pressure altitude (`PALT`) is not available. |
+| Arrow to the right | The target is climbing or descending at 500 ft/min or more. |
+| Yellow, flashing | An alerted target. |
+| Open outline | A target with degraded position accuracy (NIC or NACp of 4 or less). |
+| Grey, dashed | A stale target, with no recent report. It goes when fix-gateway drops it, or 12 seconds after its last report at the latest. |
+
+An amber **TFC FAIL** at the bottom left means the traffic source has failed or
+stopped reporting after it was working, so an empty map does not mean an empty
+sky. An installation that has never had traffic shows nothing.
 
 ### What hides as you zoom out
 
@@ -157,7 +176,7 @@ used, with defaults and the bench panel's value where it differs:
 | Ownship position (`ownship_position`) | 50 | | Percent up from the bottom; 30 shows more ahead. |
 | Map style (`map_style`) | `standard` | | `nav_only` drops the relief for a black background. |
 | Terrain mode (`terrain_mode`) | `relief` | | `caution` colours terrain amber within 1,000 ft below you and red within 100 ft or above. |
-| Layer: terrain / roads / rivers / airports / navaids / flight plan / range rings | on | | |
+| Layer: terrain / roads / rivers / airports / navaids / flight plan / traffic / range rings | on | | |
 | Layer: waypoints (`layer_fixes`) | off | on | |
 | Layer: airways (`layer_airways`) | off | on | |
 | Range ring fractions (`range_ring_fractions`) | `0.5,1` | | |
@@ -189,7 +208,9 @@ Trimmed from the bench panel:
 
 The map reads `LAT`, `LONG`, `TRACK`, `TRACKM`, `ALT` and `MAGVAR`, and the flight-plan
 keys fix-gateway's flight-plan engine publishes. ND mode also reads `GS`, `TAS`,
-`WINDDIR`, `WINDSPD`, `WPDIS`, `WPETE`, `GSI` and `GSV`. It writes `DTOID`, `DTOLAT`,
+`WINDDIR`, `WINDSPD`, `WPDIS`, `WPETE`, `GSI` and `GSV`. The traffic layer
+reads fix-gateway's traffic block (`TFCCOUNT` and the `TFCn...` slot keys) and
+`PALT`; the fly-by arcs come from `FPLfTA`. The map writes `DTOID`, `DTOLAT`,
 `DTOLON`, `DTOTYPE` and `FPLCMD` for a Direct-To, the route block for an
 insert, and the range index to `range_key` when one is set. See
 [FIX Database Keys](FIX-Database-Keys).
