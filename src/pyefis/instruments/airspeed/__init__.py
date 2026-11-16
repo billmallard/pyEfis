@@ -24,7 +24,8 @@ from PyQt6.QtWidgets import *
 import pyavtools.fix as fix
 import pyefis.hmi as hmi
 from pyefis.instruments.NumericalDisplay import NumericalDisplay
-from pyefis.instruments import helpers
+from pyefis.instruments import edit_focus, helpers
+from pyefis.instruments.airspeed import iassel
 from pyefis.instruments.autopilot import state as apstate
 from pyefis.instruments.helpers import bugs
 
@@ -235,6 +236,10 @@ class Airspeed(QWidget):
         pass
 
 
+# The knob-walk highlight, as the gauges and the ALTSEL box use.
+_HIGHLIGHT_COLOR = "orange"
+
+
 class Airspeed_Tape(QGraphicsView):
     def __init__(
         self, parent=None, font_percent=None, font_family="DejaVu Sans Condensed",
@@ -316,17 +321,25 @@ class Airspeed_Tape(QGraphicsView):
         # Selected airspeed (AFC4, brief section 5.5 item 4): the IASSEL bug
         # and a target box at the top of the tape, shown while IAS is the
         # active or an armed autopilot vertical mode on a fresh reading, the
-        # twin of the ALTSEL box (TK5). Display only: the value is set on the
-        # control head (AFC3). AC 25-11B A.4.2 (p.71) asks for a mark showing
-        # the flight guidance system's target airspeed.
+        # twin of the ALTSEL box (TK5). AC 25-11B A.4.2 (p.71) asks for a mark
+        # showing the flight guidance system's target airspeed. While shown,
+        # the box is touch and knob editable like the ALTSEL box (Bill,
+        # AER-5808): the same edit focus (#308), the rules in iassel.py.
         self.ias_bug = ias_bug
         self.ias_bug_color = ias_bug_color
         self.ias_bug_dbkey = ias_bug_dbkey
         self._iassel = None
+        self._iassel_editor = None
         self._ap = None
+        self._touch_edit = True
+        self.enc_has_outer = False
+        self._ias_walk = False       # knob-walk highlight (not in control)
+        self._ias_focused = False    # holds edit focus
         if self.ias_bug:
             self._iassel = bugs.BugBinding(self.ias_bug_dbkey, self)
             self._iassel.changed.connect(self._ap_changed)
+            self._iassel_editor = iassel.IasSelEditor(
+                self._iassel, self._current_ias)
             self._ap = apstate.APState(parent=self)
             self._ap.changed.connect(self._ap_changed)
 
@@ -587,6 +600,13 @@ class Airspeed_Tape(QGraphicsView):
     # --- selected airspeed (AFC4) -------------------------------------------
 
     def _ap_changed(self, *_):
+        if self._ias_focused and not self.ias_target_shown():
+            # IAS left the reported modes (or the state went old) while the
+            # box held focus: the box is gone, so is the edit.
+            ctl = self._encoder_controller()
+            if ctl is not None:
+                ctl.release_focus()
+            self._ias_focused = False
         self.viewport().update()
 
     def ias_target_shown(self):
@@ -600,13 +620,20 @@ class Airspeed_Tape(QGraphicsView):
         return self._ap is not None and self._ap.vertical_active_is("IAS")
 
     def ias_target_set(self):
-        b = self._iassel
-        return (b is not None and b.drawable() and b.value is not None
-                and b.value > 0)
+        return self._iassel_editor is not None and self._iassel_editor.is_set()
+
+    def ias_box_zone(self):
+        """The strip at the top of the tape that the box and its focus ring
+        occupy, in viewport pixels: the box's own height plus the ring's
+        margin, so making the box editable did not shrink it."""
+        w = self.width()
+        m = edit_focus.inset_for_marks(QRectF(0, 0, 100, 100)).top()
+        h = max(16, qRound(w * 0.30)) + 2.0 * m
+        return QRectF(0.0, 0.0, float(w), h)
 
     def ias_box_rect(self):
-        w = self.width()
-        return QRectF(0.0, 0.0, float(w), float(max(16, qRound(w * 0.30))))
+        """The box itself, inset so the focus ring fits around it."""
+        return edit_focus.inset_for_marks(self.ias_box_zone())
 
     def ias_box_text(self):
         if not self.ias_target_set():
@@ -630,7 +657,7 @@ class Airspeed_Tape(QGraphicsView):
         tape_start = self.max * self.pph + self.height() / 2
         y = self.mapFromScene(
             QPointF(0, -self._iassel.value * self.pph + tape_start)).y()
-        return bugs.clamp_to_span(y, self.ias_box_rect().bottom() + 1,
+        return bugs.clamp_to_span(y, self.ias_box_zone().bottom() + 1,
                                   self._tas_box_top())
 
     def _paint_ias_target(self, p):
@@ -652,7 +679,7 @@ class Airspeed_Tape(QGraphicsView):
             p.restore()
         # The box: border in the active-mode colour while IAS is the active
         # vertical mode, plain white while it is only armed (brief 5.3).
-        r = self.ias_box_rect().adjusted(1.0, 1.0, -1.0, -1.0)
+        r = self.ias_box_rect()
         border = (QColor(0, 255, 0) if self.ias_target_active()
                   else QColor(Qt.GlobalColor.white))
         helpers.draw_readout_panel(
@@ -662,8 +689,106 @@ class Airspeed_Tape(QGraphicsView):
         f.setPixelSize(max(6, qRound(r.height() * 0.62)))
         f.setBold(True)
         p.setFont(f)
-        p.setPen(QPen(color))
+        fg = (QColor(_HIGHLIGHT_COLOR) if self._ias_walk and not self._ias_focused
+              else color)
+        p.setPen(QPen(fg))
         p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), self.ias_box_text())
+        if self.ias_box_editable() or self._ias_focused:
+            edit_focus.draw_edit_marks(p, r, focused=self._ias_focused,
+                                       bounds=self.ias_box_zone())
+
+    # --- selected airspeed: touch and knob editing (AFC4, AER-5808) ---------
+    #
+    # The EncoderController protocol (#308), as the altimeter tape's ALTSEL
+    # box has it: a touch on the box takes focus, the inner knob steps 1 kt,
+    # the outer ring 10 kt, a push syncs to the current airspeed and ends the
+    # edit. Only while the box is shown, so only while IAS is reported.
+
+    def _current_ias(self):
+        item = self.item
+        return item.value, not (item.fail or item.bad or item.old)
+
+    def ias_box_editable(self):
+        return (self._touch_edit and self._iassel_editor is not None
+                and self._iassel_editor.writable and self.ias_target_shown())
+
+    @property
+    def touch_edit(self):
+        # The panel option as set; ias_box_editable() adds the key and the
+        # reported mode.
+        return self._touch_edit
+
+    @touch_edit.setter
+    def touch_edit(self, on):
+        self._touch_edit = bool(on)
+
+    def _encoder_controller(self):
+        w = self.parent()
+        while w is not None:
+            ctl = getattr(w, "encoder_controller", None)
+            if ctl is not None:
+                return ctl
+            w = w.parent()
+        return None
+
+    def _ias_refresh(self):
+        # Paint now, not queued: the late-repaint trap the altimeter tape's
+        # boxes hit on the live panel (Altimeter_Tape._baro_refresh).
+        vp = self.viewport()
+        if vp.isVisible():
+            vp.repaint()
+        else:
+            vp.update()
+
+    def enc_selectable(self):
+        return self.ias_box_editable()
+
+    def enc_highlight(self, onoff):
+        self._ias_walk = bool(onoff)
+        if not onoff:
+            self._ias_focused = False
+        self._ias_refresh()
+
+    def enc_select(self):
+        if not self.ias_box_editable():
+            return False
+        self._ias_walk = False
+        self._ias_focused = True
+        self._ias_refresh()
+        return True
+
+    def enc_changed(self, steps):
+        if not self.ias_box_editable():
+            return False
+        self._iassel_editor.step(iassel.FINE_STEP_KT * steps)
+        return True
+
+    def enc_outer_changed(self, steps):
+        if not self.ias_box_editable():
+            return False
+        self._iassel_editor.step(iassel.COARSE_STEP_KT * steps)
+        return True
+
+    def enc_clicked(self):
+        # Push: sync to the current airspeed and end the edit, as the ALTSEL
+        # box does. With no valid airspeed nothing is written and the box
+        # stays focused.
+        if not self.ias_box_editable():
+            return False
+        return not self._iassel_editor.sync()
+
+    def edit_focus_hit(self, global_pos):
+        local = self.viewport().mapFromGlobal(global_pos.toPoint())
+        return self.ias_box_zone().contains(QPointF(local))
+
+    def mousePressEvent(self, event):
+        if self.ias_box_editable() \
+                and self.ias_box_zone().contains(event.position()):
+            ctl = self._encoder_controller()
+            if ctl is not None and ctl.touch_focus(self):
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
     def getAirspeed(self):
         return self._airspeed

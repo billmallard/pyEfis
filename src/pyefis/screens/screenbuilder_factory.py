@@ -625,6 +625,12 @@ _register(InstrumentSpec(
         Prop("ias_bug_color", "color", default="#00ffff",
              label="IASSEL bug color",
              help="colour of the IASSEL bug and the target box value"),
+        Prop("touch_edit", "boolean", default=True,
+             label="Touch to set IASSEL",
+             help="touch the IASSEL box, then turn the knob to set the "
+                  "autopilot's target airspeed: inner ring 1 kt, outer ring "
+                  "10 kt, push syncs to the current airspeed. Only while the "
+                  "box is shown (IAS active or armed)"),
     ],
     # V-speeds come from the IAS item's aux (fix-gateway), not the panel editor.
     fix_values=[
