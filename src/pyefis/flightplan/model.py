@@ -58,6 +58,10 @@ TYPE_TO_FPLTYPE = {"unknown": 0, "airport": 1, "vor": 2, "ndb": 3, "fix": 4, "us
 FPLTYPE_TO_TYPE = {v: k for k, v in TYPE_TO_FPLTYPE.items()}
 
 NAME_MAX_LEN = 32
+# Two slots with one ident this close are one fix: the waypoint database
+# (NASR) and the procedures pack (CIFP) code the same navaid a few feet
+# apart, and a fix name is reused only far away.
+SAME_FIX_NM = 0.5
 # Leg fields (PA3) default to a plain TF leg with no constraints; to_json
 # omits a field at its default so an ordinary route file stays readable.
 _LEG_DEFAULTS = {"pt": "TF", "crs": None, "dst": 0.0, "alt": "", "spd": 0, "flags": 0,
@@ -211,6 +215,13 @@ def waypoint_segment(wp: Waypoint) -> Segment:
     return Segment(kind="waypoint", legs=[wp])
 
 
+def same_fix(a: Waypoint, b: Waypoint) -> bool:
+    """True if *a* and *b* are one fix (:data:`SAME_FIX_NM`). Two adjacent
+    slots at one fix make a zero-length leg, and the engine flies it as
+    course 000 until it sequences (AER-1606)."""
+    return bool(a.id) and a.id == b.id and geo.distance_nm(a.lat, a.lon, b.lat, b.lon) < SAME_FIX_NM
+
+
 def _norm(ident: str) -> str:
     return (ident or "").strip().upper()
 
@@ -304,10 +315,18 @@ class FlightPlan:
     def _insert_at(self, i: int, wp: Waypoint) -> None:
         """Insert *wp* as a waypoint segment so it becomes flat index *i*.
         Landing strictly inside an airway cuts it in two: the leg into and
-        out of *wp* is no longer on the airway."""
+        out of *wp* is no longer on the airway. A *wp* that is the fix
+        already on either side is refused: the second slot would be a
+        zero-length leg (G87, pyEfis #474 -- a SID's exit fix entered again
+        to start an airway from; Load Airway on the SID does that)."""
         self._check_cap()
         if not (0 <= i <= self.count):
             raise FlightPlanError(f"index {i} out of range")
+        legs = self.waypoints
+        if i > 0 and same_fix(legs[i - 1], wp):
+            raise FlightPlanError(f"{wp.id} IS ALREADY THE PREVIOUS FIX")
+        if i < len(legs) and same_fix(legs[i], wp):
+            raise FlightPlanError(f"{wp.id} IS ALREADY THE NEXT FIX")
         new = waypoint_segment(wp)
         if i == self.count:
             self.segments.append(new)
