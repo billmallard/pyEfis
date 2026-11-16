@@ -232,6 +232,7 @@ def test_fpm_on_its_terrain_elevation(fix, qtbot, pitch, fpa):
     for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH'):
         widget._fpm_fail[k] = False
         widget._fpm_bad[k] = False
+    widget._fpm_vpath_old = False
     widget._fpm_vpath = fpa
     widget._fpm_track = widget._fpm_head = 180.0
     widget._fpm_gs = 120.0
