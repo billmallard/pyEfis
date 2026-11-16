@@ -426,7 +426,6 @@ class ModeButton(QWidget):
         bar_line.setAlpha(90)
         if state in (NO_DATA, UNAVAILABLE):
             label = QColor(panel.muted_color)
-            label.setAlpha(150)
             if lvl:
                 face.setAlpha(110)
             return face, border, width, label, None, bar_line
