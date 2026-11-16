@@ -180,13 +180,17 @@ _SEG_MENU_ITEMS = (
     ("Change Exit", "_seg_menu_change_exit"),
     ("Change Entry", "_seg_menu_change_entry"),
     ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Load Airway", "_seg_menu_load_airway"),
     ("Activate", "_seg_menu_activate"),
     ("Remove Airway", "_seg_menu_remove"),
 )
 # PA7: a loaded procedure's segment row. The approach and its missed
 # approach are one block: each opens this menu, and Remove takes both.
+# Load Airway is offered on a departure only (G87, pyEfis #474): the block's
+# last fix has no plain row of its own to load one from.
 _PROC_SEG_MENU_ITEMS = (
     ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Load Airway", "_seg_menu_load_airway"),
     ("Activate", "_seg_menu_activate"),
     ("Select", "_seg_menu_select_procedure"),
     ("Remove", "_seg_menu_remove_procedure"),
@@ -1381,6 +1385,17 @@ class FlightPlan(QWidget):
         first, _ = self._plan.segment_span(self._seg_menu)
         self._close_seg_menu()
         self._activate_leg(first + 1)
+
+    def _seg_menu_load_airway(self):
+        # From the segment's last fix, which ends it: insert_airway starts
+        # the new airway at the fix after it, so the fix keeps one slot.
+        _, last = self._plan.segment_span(self._seg_menu)
+        self._close_seg_menu()
+        self._open_airway_picker(last, self._plan.waypoints[last])
+
+    def _seg_load_airway_offered(self, k):
+        seg = self._plan.segments[k]
+        return seg.kind in ("airway", "departure") and bool(seg.legs[-1].id)
 
     def _seg_menu_select_procedure(self):
         kind = _SEGMENT_PAGE_KIND[self._plan.segments[self._seg_menu].kind]
@@ -3564,7 +3579,11 @@ class FlightPlan(QWidget):
         page_kind = _SEGMENT_PAGE_KIND.get(seg_kind)
         items = []
         for label, attr in (_SEG_MENU_ITEMS if page_kind is None else _PROC_SEG_MENU_ITEMS):
-            if attr == "_seg_menu_activate":
+            if attr == "_seg_menu_load_airway":
+                if not self._seg_load_airway_offered(k):
+                    continue
+                label = f"{label} at {self._plan.segments[k].exit}"
+            elif attr == "_seg_menu_activate":
                 label = f"Activate to {fp_proc.leg_label(self._plan.waypoints[first])}"
             elif page_kind is not None and attr in ("_seg_menu_select_procedure",
                                                     "_seg_menu_remove_procedure"):

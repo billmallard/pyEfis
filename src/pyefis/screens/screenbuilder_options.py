@@ -158,6 +158,24 @@ def _is_aircraft_ref(inst_type, option):
         return False
 
 
+def _registry_setter(inst_type, option, instrument):
+    """The bound method a registry Prop names with ``apply="setter:<m>"``,
+    or None. ``instrument_spec`` promises such an option reaches the widget
+    as ``widget.<m>(value)``; a plain setattr would only shadow it (AER-5807:
+    ``layout: compact`` landed as an attribute and the panel stayed full).
+    Never raises."""
+    try:
+        from pyefis.screens import screenbuilder_factory as _factory
+        spec = _factory.REGISTRY.get(inst_type)
+        prop = spec.prop(option) if spec is not None else None
+        if prop is None or not prop.apply.startswith("setter:"):
+            return None
+        method = getattr(instrument, prop.apply[len("setter:"):], None)
+        return method if callable(method) else None
+    except Exception:
+        return None
+
+
 def apply_options(screen, index, config, state=False):
     if "options" not in config:
         return
@@ -200,6 +218,11 @@ def apply_options(screen, index, config, state=False):
                 instrument.setDbkey(value)
             else:
                 setattr(instrument, option, value)
+            continue
+
+        setter = _registry_setter(config.get("type"), option, instrument)
+        if setter is not None:
+            setter(value)
             continue
 
         if "font_percent" == option:

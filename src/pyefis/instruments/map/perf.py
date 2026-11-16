@@ -217,6 +217,10 @@ class MapPerfStats:
 
     def __init__(self):
         self.frames_painted = 0
+        # MAPPAINT1: of frames_painted, how many redrew every layer and how
+        # many blitted the cached layer image under a fresh overlay.
+        self.layer_renders = 0
+        self.layer_reuses = 0
         self.paint_ms = _Ring()
         self.layers = {}          # layer id -> LayerStats
         self.water = WaterStats()
@@ -238,8 +242,10 @@ class MapPerfStats:
 
     def summary_text(self):
         p50, p95, mx, n = self.paint_ms.stats()
-        lines = ["Map perf: %d frames, paint ms p50=%.1f p95=%.1f max=%.1f "
-                 "(n=%d)" % (self.frames_painted, p50, p95, mx, n)]
+        lines = ["Map perf: %d frames (layers %d drawn, %d reused), paint ms "
+                 "p50=%.1f p95=%.1f max=%.1f (n=%d)" % (
+                     self.frames_painted, self.layer_renders,
+                     self.layer_reuses, p50, p95, mx, n)]
         for lid in sorted(self.layers):
             ls = self.layers[lid]
             lines.append(
@@ -272,6 +278,8 @@ class MapPerfStats:
         p50, p95, mx, n = self.paint_ms.stats()
         return dict(
             frames_painted=self.frames_painted,
+            layer_renders=self.layer_renders,
+            layer_reuses=self.layer_reuses,
             paint_ms=dict(p50=p50, p95=p95, max=mx, count=n),
             layers={lid: ls.as_dict() for lid, ls in self.layers.items()},
             water=self.water.as_dict(),
