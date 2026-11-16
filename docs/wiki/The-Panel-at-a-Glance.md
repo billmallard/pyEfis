@@ -150,7 +150,8 @@ Every value carries fix-gateway's quality flags, and each instrument shows them.
 |---|---|
 | A grey **sky** on the attitude display | An attitude input (pitch, roll, lateral acceleration or true airspeed) is old or bad. |
 | A dark grey attitude display with a red **XXX** | An attitude input has failed. |
-| A blank tape readout, the box outline left | The airspeed or altitude value is old or bad. |
+| An amber frame round a tape, its readout blank | The airspeed, altitude or vertical speed is bad: sent, but flagged as suspect. |
+| A red **X** across a tape, its scale gone | The airspeed, altitude or vertical speed has failed or is old (stopped updating). |
 | A red **XXX** in a readout | That value has failed. |
 | A grey selected altitude, altimeter setting or bug | That value is old or bad. |
 | An amber **SVS UNAVAIL** | Synthetic vision is on but has no usable position, so the ground is drawn plain brown. |

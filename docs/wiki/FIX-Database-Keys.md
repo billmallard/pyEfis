@@ -20,7 +20,7 @@ values work is on
 | `BARO` | inHg | Altimeter setting, always in inHg on the bus | altitude tape | the altitude tape's box, the baro buttons |
 | `ALTSEL` | ft | Selected altitude | altitude tape | the altitude tape's box |
 | `OAT` | °C | Outside air temperature | text readouts on the stock screens; switched by **Units** | |
-| `PALT`, `DALT` | ft | Pressure and density altitude | text readouts on the stock screens | |
+| `PALT`, `DALT` | ft | Pressure and density altitude | text readouts on the stock screens; `PALT` also the map's traffic layer | |
 
 **`IAS` aux values:** `Vs`, `Vs0`, `Vno`, `Vne` and `Vfe`. They draw the
 airspeed bands; see
@@ -43,7 +43,7 @@ airspeed bands; see
 |---|---|---|---|---|
 | `HEAD` | deg | Magnetic heading | HSI, heading instruments, synthetic vision | |
 | `MAGVAR` | deg | Magnetic variation | synthetic vision, the moving map, the flight plan page | |
-| `TRACK` | deg | GPS ground track, true | flight path marker | |
+| `TRACK` | deg | GPS ground track, true | flight path marker, the moving map | |
 | `TRACKM` | deg | GPS ground track, magnetic | HSI (track diamond), the moving map | |
 | `LAT`, `LONG` | deg | Position | synthetic vision, the moving map, the flight plan page, listbox Nearest sort | |
 | `HEADBUG` | deg | Selected heading | HSI | the HSI's HDG edit, the heading-bug buttons |
@@ -57,8 +57,9 @@ airspeed bands; see
 | `NAVTYPE` | | VOR or LOC, for the source tab; nothing in fix-gateway publishes it today | HSI | |
 | `NAV1CRS`, `NAV2CRS` | deg | Course set on each NAV radio | | the HSI's CRS edit |
 | `BRG1`, `BRG2` | deg | Bearing pointers 1 and 2 | HSI | |
-| `BRG1SRC`, `BRG2SRC` | | What each bearing pointer points at | HSI | the HSI's bearing labels |
+| `BRG1SRC`, `BRG2SRC` | | What each bearing pointer points at | HSI | the HSI's BRG tab and bearing labels |
 | `VOR1BRG`, `VOR2BRG` | deg | Bearing to each VOR | HSI (CRS push) | |
+| `TFCCOUNT`, `TFCnTGT` and the `TFCn` slot fields | | ADS-B traffic targets, from fix-gateway's traffic writer | the moving map's traffic layer | |
 | `HWIND`, `XWIND` | kt | Headwind (negative is tailwind), crosswind (positive is from the right) | `wind_display` | |
 
 **Nav-source selection.** `COURSE`, `CDI`, `TOFROM` and `GSI` always carry the
@@ -88,7 +89,8 @@ what pyEFIS touches.
 | `FPLSfKIND` / `FPLSfID` | | Segment kind (0 waypoint, 1 airway, 2 departure, 3 arrival, 4 approach, 5 missed) / ident (`V27`) | pyEFIS |
 | `FPLSfENT` / `FPLSfEXT` / `FPLSfFIRST` / `FPLSfLAST` | | Segment entry and exit idents, first and last slot | pyEFIS |
 | `FPLSEGCNT`, `FPLCOUNT` | | Segment rows / slots in use | pyEFIS |
-| `FPLNAME`, `FPLDBCYC` | | Route name / data cycle the airways came from | pyEFIS |
+| `FPLNAME`, `FPLDBCYC` | | Route name / AIRAC cycle the airways and procedures came from | pyEFIS |
+| `FPLAPRTYPE` | | Type of the loaded approach (`RNAV`, `ILS`, `VOR`), empty with none | pyEFIS |
 | `FPLSEQ` | | Commit counter, written last; the engine acts when it changes | pyEFIS |
 | `DTOID` / `DTOLAT` / `DTOLON` / `DTOTYPE` | | Direct-To target | pyEFIS |
 | `FPLCMD` | | `"<seq> VERB [arg]"`: `ACT`, `DTO`, `DTOX`, `SUSP`, `RESUME`, `SCALE` | pyEFIS |
@@ -106,10 +108,12 @@ what pyEFIS touches.
 | `FPLREMDIS` / `FPLREMETE` | nm / s | Distance and time to the end of the plan | engine |
 | `FPLACTSEG` / `FPLSEGREM` | / nm | Segment of the TO slot / distance left in it | engine |
 | `FPLALERT` | | Engine alert | engine |
+| `FPLfTA` | nm | Fly-by turn anticipation at slot `f`, 0 for no arc; the map draws the turn from it | engine |
+| `FPLTURN` | | `L` or `R` while the engine flies the turn coded at the start of a direct-to-fix leg | engine |
 | `GPSSRC` | | 0 pyEFIS's plan, 1 an external navigator | fix-gateway configuration |
 
 The `nav_status` line reads `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`,
-`WPNEXT`, `WPDIS` and `WPETE`.
+`WPNEXT`, `WPDIS`, `WPETE`, `FPLAPRTYPE`, `FPLDBCYC` and `FPLTURN`.
 
 ## Engine
 

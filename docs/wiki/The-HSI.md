@@ -180,13 +180,11 @@ The HSI never shows a needle it cannot trust.
 | Flag (red) | Shown when | What else changes |
 |---|---|---|
 | `HDG` | the heading is failed or bad | The bearing pointers are hidden. |
-| `NAV` | the selected source's deviation is failed or bad, or the radio is receiving no lateral signal (`CDIV` 0) | With a bad deviation or no signal, the deviation bar and TO/FROM triangle go. |
-| `GS` | the source has a glidepath but its deviation is failed or bad | The diamond goes. |
+| `NAV` | the selected source's deviation is old, failed or bad, the radio is receiving no lateral signal (`CDIV` 0), or the course (`COURSE`) is failed or bad | The deviation bar and TO/FROM triangle go. With a failed or bad course the course pointer and deviation dots go too, and the CRS readout shows dashes. |
+| `GS` | the source has a glidepath but its deviation is old, failed or bad | The diamond goes. |
 
 - The rose numerals are hidden while the heading or course is bad, or the
   deviation or glidepath has failed.
-- A deviation that is only **old** (not refreshed in time) hides the bar
-  without a flag.
 - Treat a `NAV` flag as no guidance, whatever the course pointer shows.
 - A bearing pointer whose source is invalid is hidden, and its label turns
   orange with an `X`: `2 VOR1 X`.

@@ -380,8 +380,8 @@ value, a range (min and max), units, quality flags and **aux** values.
 
 | Flag | Means | Shown as |
 |---|---|---|
-| old | Not updated within its time limit. | Dimmed; tape readouts go blank. |
-| bad | Present but untrusted. | Dimmed; tape readouts go blank. |
+| old | Not updated within its time limit. | Dimmed; the airspeed, altitude and vertical-speed tapes show it as failed (red X). |
+| bad | Present but untrusted. | Dimmed; tape readouts go blank inside an amber frame. |
 | fail | The source has failed. | The value is treated as 0; `X`s fill the readout (`xxx` with no mask). |
 | annunciate | Attention requested. | Red text. |
 
