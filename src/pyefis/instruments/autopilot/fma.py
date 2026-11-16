@@ -2,14 +2,16 @@
 """The `ap_annunciator` instrument (AFC4): the autopilot mode annunciation
 strip across the top of the attitude display.
 
-    [ HDG   GPS ] [ AP  YD ] [ VS +500   ALT ]
-      active armed             active+target armed
+    [ AP  YD ] [ HDG   GPS ] [ VS +500   ALT ]
+                 active armed  active+target armed
 
-Three groups, lateral | AP/YD | vertical by default -- the left-to-right order
-of the control head's groups (AFC3), because AC 25.1329-1C 43.b(4) (p.41) asks
-for annunciations positioned like their controls. ``ap_position: left`` puts
-AP/YD first instead. Active modes are green, armed modes white and in their own
-place (44.c(1), (2) and (4), p.41-42; AC 25-11B Table 5-1, p.43).
+Three groups, AP/YD | lateral | vertical by default: Bill, AER-5808
+(2026-11-16), "AP YD first ... matches unwritten convention from
+competitors". ``ap_position: center`` puts AP/YD between lateral and vertical
+instead, the left-to-right order of the control head's groups (AFC3; AC
+25.1329-1C 43.b(4), p.41, positions annunciations like their controls). Active
+modes are green, armed modes white and in their own place (44.c(1), (2) and
+(4), p.41-42; AC 25-11B Table 5-1, p.43).
 
 - A change of active mode -- including armed to active, a reversion, and the
   start of altitude capture -- is boxed and flashes for ``mode_flash_s``
@@ -202,7 +204,7 @@ class ModeAnnunciator(QWidget):
         self.font_family = font_family
         self.font_percent = font_percent
         # Panel options (InstrumentSpec Props in screenbuilder_factory).
-        self.ap_position = "center"
+        self.ap_position = "left"
         self.mode_flash_s = DEFAULT_FLASH_S
         self.touch_ack = True
         self.active_color = "#00ff00"
@@ -256,7 +258,7 @@ class ModeAnnunciator(QWidget):
         """``{slot: QRectF}``: three groups, each split active | armed."""
         w, h = float(self.width()), float(self.height())
         groups = [("lat", 0.34), ("ap", 0.20), ("vert", 0.46)]
-        if self.ap_position == "left":
+        if self.ap_position != "center":
             groups = [groups[1], groups[0], groups[2]]
         rects = {}
         x = 0.0
@@ -274,7 +276,7 @@ class ModeAnnunciator(QWidget):
 
     def group_dividers(self):
         w = float(self.width())
-        first = 0.34 if self.ap_position != "left" else 0.20
+        first = 0.34 if self.ap_position == "center" else 0.20
         return [w * first, w * 0.54]
 
     def _font(self, px):

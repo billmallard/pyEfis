@@ -422,17 +422,20 @@ def test_recovery_restores_the_reading(ap_db, qtbot):
 
 # -- AP-LAYOUT-001 ------------------------------------------------------------
 
-def test_groups_follow_the_control_head_order(ap_db, qtbot):
-    """AP-LAYOUT-001: lateral | AP YD | vertical by default (the AFC3 head's
-    order), AP YD first with ap_position left; active and armed apart."""
+def test_groups_put_ap_yd_first_by_default(ap_db, qtbot):
+    """AP-LAYOUT-001: AP YD | lateral | vertical by default (Bill, AER-5808);
+    ap_position center gives the AFC3 head's order. Active and armed apart."""
     w = _strip(qtbot)
+    assert w.ap_position == "left"
+    r = w.slot_rects()
+    assert r["ap"].left() < r["yd"].left() < r["lat"].left() \
+        < r["lat_arm"].left() < r["vert"].left() < r["vert_arm"].left()
+    assert w.group_dividers()[0] == r["lat"].left()
+    w.ap_position = "center"
     r = w.slot_rects()
     assert r["lat"].left() < r["lat_arm"].left() < r["ap"].left() \
         < r["yd"].left() < r["vert"].left() < r["vert_arm"].left()
-    w.ap_position = "left"
-    r = w.slot_rects()
-    assert r["ap"].left() < r["yd"].left() < r["lat"].left() \
-        < r["vert"].left()
+    assert w.group_dividers()[0] == r["ap"].left()
 
 
 def test_template_fits_every_slot(ap_db, qtbot):

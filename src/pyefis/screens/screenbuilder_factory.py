@@ -1661,10 +1661,10 @@ _register(InstrumentSpec(
     dbkeys=["APENG", "YDENG", "APLAT", "APLATARM", "APVERT", "APVERTARM",
             "APALTCAP", "APDISC", "VSSEL", "IASSEL"],
     properties=[
-        Prop("ap_position", "enum", default="center", enum=["center", "left"],
+        Prop("ap_position", "enum", default="left", enum=["left", "center"],
              label="AP/YD position",
-             help="center: lateral | AP YD | vertical, the control head's "
-                  "order; left: AP YD | lateral | vertical"),
+             help="left: AP YD | lateral | vertical; center: lateral | "
+                  "AP YD | vertical, the control head's order"),
         Prop("mode_flash_s", "number", default=10.0,
              label="Mode change flash (s)",
              help="how long a new active mode is boxed and flashes"),
