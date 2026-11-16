@@ -133,6 +133,11 @@ COMMIT_ANSWER_MS = 2000
 # slots on the bus against the route last read, so a slot value that arrived
 # after the key still reaches the page (FlightPlan._route_drifted).
 ROUTE_VERIFY_S = 1.0
+# The writes that can move FixBridge.route_key(): FPLSEQ goes last in a
+# commit (RS1), and FPLLDSEQ is the engine's answer to it. FPLCOUNT and
+# FPLSEGCNT are written before FPLSEQ and are not watched; a writer that
+# breaks that order is caught by the route_verify_s check.
+_ROUTE_KEY_WRITES = frozenset(("FPLSEQ", "FPLLDSEQ"))
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
 
@@ -172,13 +177,17 @@ _SEG_MENU_ITEMS = (
     ("Change Exit", "_seg_menu_change_exit"),
     ("Change Entry", "_seg_menu_change_entry"),
     ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Load Airway", "_seg_menu_load_airway"),
     ("Activate", "_seg_menu_activate"),
     ("Remove Airway", "_seg_menu_remove"),
 )
 # PA7: a loaded procedure's segment row. The approach and its missed
 # approach are one block: each opens this menu, and Remove takes both.
+# Load Airway is offered on a departure only (G87, pyEfis #474): the block's
+# last fix has no plain row of its own to load one from.
 _PROC_SEG_MENU_ITEMS = (
     ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Load Airway", "_seg_menu_load_airway"),
     ("Activate", "_seg_menu_activate"),
     ("Select", "_seg_menu_select_procedure"),
     ("Remove", "_seg_menu_remove_procedure"),
@@ -251,7 +260,12 @@ class FlightPlan(QWidget):
         self._page = None
         self._plan = fp_model.FlightPlan()
         self._plan_dirty = False
+        # The engine outputs as last read (FixBridge.read_engine). A bus
+        # write only marks them stale; _engine_value() reads them again on
+        # the next use, so the 25 writes of an engine cycle cost one read,
+        # and none for a page that is not painted.
         self._engine = {}
+        self._engine_stale = False
         # Every assignment to _message goes through the property below, which
         # (re)starts this one-shot timer; a tap anywhere clears it early.
         self.toast_ms = TOAST_MS
@@ -400,7 +414,7 @@ class FlightPlan(QWidget):
         if self._bridge.available:
             self._sync_plan_from_bridge()
             self._sync_engine_from_bridge()
-            self._bridge.add_listener(self._on_bridge_change)
+            self._bridge.add_listener(self._on_bridge_change, keyed=True)
             msg_item = self._bridge._get("FPLMSG")
             msg_item.valueWrite[msg_item.dtype].connect(self._on_fplmsg)
         self._connect_hmi()
@@ -649,18 +663,24 @@ class FlightPlan(QWidget):
         self.update()
 
     def _sync_engine_from_bridge(self):
-        self._engine = self._bridge.read_engine() or {}
+        """Mark the engine outputs stale: the next _engine_value() reads
+        them from the bus."""
+        self._engine_stale = True
 
-    def _on_bridge_change(self):
-        """A write of ``FPLSEQ`` or of an engine output. The engine rewrites
-        every output each guidance cycle, so this runs some 25 times a
-        cycle: the engine values are taken every time, the route only when
-        it or the engine's answer to it changed (``route_key``). Reading
-        the route on every call cost a FIX lookup per slot field plus a
-        deep copy of the plan, on the GUI thread, for each widget loaded --
-        and put the bus route back over a catalog "Edit" working copy the
-        pilot had not committed yet."""
-        if (self._bridge.route_key() != self._synced_route_key
+    def _on_bridge_change(self, key=None):
+        """A write of *key*: ``FPLSEQ``, an engine output, a slot's
+        ``FPLfTA`` or the staged direct-to point. The engine rewrites every
+        output each guidance cycle, so this runs some 25 times a cycle, for
+        each widget loaded, hidden or not: it reads nothing from the bus.
+        The engine values are marked stale, and the route is read only when
+        it or the engine's answer to it changed (``route_key``, which only
+        a write of ``FPLSEQ`` or ``FPLLDSEQ`` moves). Reading the route on
+        every call cost a FIX lookup per slot field plus a deep copy of the
+        plan -- and put the bus route back over a catalog "Edit" working
+        copy the pilot had not committed yet; building the engine dict on
+        every call cost 27 lookups (pyEfis #480)."""
+        if (((key is None or key in _ROUTE_KEY_WRITES)
+                and self._bridge.route_key() != self._synced_route_key)
                 or self._route_drifted()):
             self._sync_plan_from_bridge()
         self._sync_engine_from_bridge()
@@ -688,6 +708,9 @@ class FlightPlan(QWidget):
         self.update()
 
     def _engine_value(self, key, default=None):
+        if self._engine_stale:
+            self._engine_stale = False
+            self._engine = self._bridge.read_engine() or {}
         item = self._engine.get(key)
         return item.value if item is not None else default
 
@@ -1319,6 +1342,17 @@ class FlightPlan(QWidget):
         self._close_seg_menu()
         if self._bridge.available:
             self._bridge.command("ACT", first + 1)
+
+    def _seg_menu_load_airway(self):
+        # From the segment's last fix, which ends it: insert_airway starts
+        # the new airway at the fix after it, so the fix keeps one slot.
+        _, last = self._plan.segment_span(self._seg_menu)
+        self._close_seg_menu()
+        self._open_airway_picker(last, self._plan.waypoints[last])
+
+    def _seg_load_airway_offered(self, k):
+        seg = self._plan.segments[k]
+        return seg.kind in ("airway", "departure") and bool(seg.legs[-1].id)
 
     def _seg_menu_select_procedure(self):
         kind = _SEGMENT_PAGE_KIND[self._plan.segments[self._seg_menu].kind]
@@ -3489,7 +3523,11 @@ class FlightPlan(QWidget):
         page_kind = _SEGMENT_PAGE_KIND.get(seg_kind)
         items = []
         for label, attr in (_SEG_MENU_ITEMS if page_kind is None else _PROC_SEG_MENU_ITEMS):
-            if attr == "_seg_menu_activate":
+            if attr == "_seg_menu_load_airway":
+                if not self._seg_load_airway_offered(k):
+                    continue
+                label = f"{label} at {self._plan.segments[k].exit}"
+            elif attr == "_seg_menu_activate":
                 label = f"Activate to {fp_proc.leg_label(self._plan.waypoints[first])}"
             elif page_kind is not None and attr in ("_seg_menu_select_procedure",
                                                     "_seg_menu_remove_procedure"):

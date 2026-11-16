@@ -22,14 +22,13 @@ rolls like a drum.
 |---|---|---|
 | Red | 0 | Vs0 |
 | White (half width) | Vs0 | Vfe |
-| Green | Vs0 | Vno |
+| Green | Vs (Vs0 when Vs is not set) | Vno |
 | Yellow | Vno | Vne |
 | Red | Vne | top of the tape |
 
 A red line marks Vne. The scale runs from 0 to 1.25 times Vne. The low red band
-appears only when Vs0 is set. The green band starts at Vs0, not at the clean
-stall speed Vs: Vs is not drawn on the tape today
-([#396](https://github.com/billmallard/pyEfis/issues/396)).
+appears only when Vs0 is set. The green band starts at the clean stall speed
+Vs, so between Vs0 and Vs only the white flap band shows.
 
 **Where the V-speeds come from.** They are the aircraft's numbers, not the
 panel's. Enter them once under
@@ -128,13 +127,20 @@ bench panel. Pick it to suit the aircraft's climb and descent performance.
 
 ## When data is flagged
 
+A **bad** value is suspect: its source still sends it but has flagged it. An
+**old** value has stopped updating and is frozen at the last one received, so
+the tapes treat it as failed.
+
+| Instrument | Bad | Old or failed |
+|---|---|---|
+| Airspeed or altitude tape | An amber frame round the tape; the scale stays. The readout digits blank, the box outline stays | A red X across the whole tape, with the scale, bands, bug and trend arrow removed. The readout is a grey box with a red `XXX` |
+| TAS box | `---` | `---`. It also reads `---` while `IAS` is old or failed |
+| VSI | An amber frame round the scale; the bar stays, the number blanks | The scale and bar removed, a red X across the scale, a red `XXX` |
+
 | Instrument | Old or bad | Failed |
 |---|---|---|
-| Airspeed or altitude readout | Digits blank, the box outline stays | Grey box with a red `XXX` |
-| TAS box | `---` | `---` |
 | Altimeter setting | Grey | Red `XXX` |
 | Selected altitude and bug | Grey | Dashes, no bug |
-| VSI | Number blank, the bar stays | Bar removed, red `XXX` |
 
 ## Customizing
 

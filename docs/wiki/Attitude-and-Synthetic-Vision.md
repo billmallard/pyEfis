@@ -11,7 +11,7 @@ terrain is `atitude_indicator`.
 > standby attitude, airspeed and altitude instruments: ones that share no
 > sensor, computer, software, power source or display with pyEFIS.
 
-![The bench in a left turn in the WINCH hold, over the sea at about 4,000 ft: pitch ladder and bank scale tilted, the garmin aircraft symbol, standard-rate marks on the bank arc, the coastline and terrain beyond, and the 33 heading mark on the horizon](../images/attitude/bench_turn_over_water.png)
+![The bench in a right turn entering the WINCH hold, over the sea at about 3,900 ft: pitch ladder and bank scale tilted, the garmin aircraft symbol, standard-rate marks on the bank arc, and the coastline and terrain beyond](../images/attitude/bench_turn_over_water.png)
 
 ## Reading it
 
@@ -107,7 +107,7 @@ against groundspeed). Sideways, it shows drift: track against heading.
 
 The terrain ahead is coloured by how far it is below you.
 
-![The bench on the RNAV 30 approach to KSMX at about 2,200 ft: most of the terrain ahead is red, because the bench panel sets its warning band to 1,500 ft of clearance. Airport flags for L52 and SMX stand on the horizon](../images/attitude/bench_terrain_clearance.png)
+![The bench on the RNAV 30 approach to KSMX at about 2,130 ft: most of the terrain ahead is red, because the bench panel sets its warning band to 1,500 ft of clearance. Airport flags for L52 and SMX stand on the horizon](../images/attitude/bench_terrain_clearance.png)
 
 | Colour | Terrain is |
 |---|---|
@@ -126,7 +126,7 @@ elevation is drawn green, so a normal approach does not paint the whole pattern
 red. Terrain higher than that keeps its amber and red, and magenta always
 shows.
 
-![The bench near the missed approach point at KSMX, descending through about 1,150 ft: within 5 nm of the field the low terrain is green, the runway is drawn to true size, and a road runs across the foreground](../images/attitude/bench_final_runway.png)
+![The bench at the missed approach point at KSMX, at about 1,000 ft: within 5 nm of the field the low terrain is green, and runway 30 is drawn to true size beneath, its numbers and threshold bars in the foreground](../images/attitude/bench_final_runway.png)
 
 **What else is drawn**, each from its own navdata pack:
 
@@ -160,7 +160,7 @@ what its data holds, in the arc ahead.
 | An amber **SVS UNAVAIL** and no terrain | Synthetic vision is on, but `LAT` or `LONG` is old, bad or failed, or the graphics could not start. |
 | No terrain and no message | No terrain tiles were found at the **Terrain tile path**. |
 
-![SVS UNAVAIL on the bench with the position aged out: no terrain, and the map shows NO POS. The sky and ground are grey because the attitude inputs had aged out too](../images/aer4243_svs_no_pos/2_after_lat_old.png)
+![SVS UNAVAIL on the bench with the position aged out: no terrain, and the map shows NO POS. The sky and ground are grey because the attitude inputs had aged out too, and the airspeed, altitude and vertical-speed tapes show a red X for the same reason](../images/aer4243_svs_no_pos/2_after_lat_old.png)
 
 If the graphics fail once at start-up, or three times while drawing, synthetic
 vision stays off until pyEFIS restarts.
@@ -213,6 +213,7 @@ The full list, including the tick sizes and opacities, is on
 | Min auto range (`svs_min_range_nm`) | 8 nm | | |
 | Safe clearance (`svs_clearance_green_ft`) | 1000 | 2500 | Green at and above this clearance. |
 | Caution clearance (`svs_clearance_yellow_ft`) | 500 | 1500 | Amber above this; red below. |
+| Terrain palette (`svs_palette`) | `clearance` | | The clearance-band colours: `clearance` (the stock scheme), `subdued` or `high_contrast`. |
 | Safe-band gradient (`svs_safe_gradient`) | on | | |
 | Terrain grid (`svs_terrain_grid`) | 0.35 | | 0 turns the grid off. |
 | Terrain texture (`svs_terrain_texture`) | 0.35 | | 0 turns the texture off. |
@@ -222,8 +223,6 @@ The full list, including the tick sizes and opacities, is on
 | PAPI lights (`svs_papi`) | on | | |
 | Road colour, casing and width options (`svs_road_*`) | | | The road ribbons' look. |
 
-One option in the list does nothing on the device today: **Terrain palette**
-(`svs_palette`, [#394](https://github.com/billmallard/pyEfis/issues/394)).
 Terrain is always drawn filled; there is no wireframe mode
 ([#395](https://github.com/billmallard/pyEfis/issues/395)).
 

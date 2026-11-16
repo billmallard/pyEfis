@@ -42,6 +42,7 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `show_units` | Show units | off | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid band; >0 draws a segmented (LED-style) band |
 | `name_location` | Name location | `top` | `top`, `right` | where the name label sits relative to the gauge |
+| `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -76,6 +77,7 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
 | `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
+| `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -121,6 +123,7 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
 | `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
+| `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 

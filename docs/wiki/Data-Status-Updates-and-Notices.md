@@ -26,8 +26,31 @@ cycle and its effective dates. The row's colour is the updater's verdict:
 | Amber | Expired, or outside its effective window. |
 
 The words in each row come from the updater as it wrote them; pyEFIS only
-colours them. `Data status unavailable — run an update to populate it.` means
-the updater has not written a status yet.
+colours them. Two exceptions keep the list on one screen:
+
+- Terrain comes as one pack per region, and two or more of them share one row,
+  `Terrain (N regions)`. When every region is current the row reads as they do.
+  Otherwise it takes the worst region's colour and status, and the detail names
+  each region that is not current.
+- A detail too long for its column is shortened to the cycle and its expiry,
+  such as `2611 to 2026-11-26`, adding `, next 2612 staged` when that fits too.
+
+`Data status unavailable — run an update to populate it.` means the updater has
+not written a status yet.
+
+### After a panel change
+
+When a config pull installs a new panel, an amber banner opens the screen:
+`PANEL CHANGED AT BOOT` (or `PANEL CHANGED` when the pull was run by hand), the
+config version and when it was installed, the start of its hash, and *Check
+every instrument shows the right source before flight.* Check the panel, then
+touch **Acknowledge** on the banner. The banner stays until you do; **Continue**
+works either way.
+
+The acknowledgement is recorded by `pyefis-data panel-ack`, for the exact
+config shown. If another pull has installed a newer config in the meantime,
+the record is refused and the banner shows the newer change: *A newer panel
+change was installed. Check it, then acknowledge again.*
 
 | Button | What it does |
 |---|---|
@@ -82,8 +105,9 @@ The screen re-reads the status every minute and each time it is shown.
 
 A small `DATA` outline, on screens that carry the **Data Annunciation**
 instrument. It is hidden while every pack is current, white when one is
-expiring soon or missing, and amber when one has expired. Touch it to open Data
-Status.
+expiring soon or missing, and amber when one has expired or a
+[panel change](#after-a-panel-change) is waiting to be acknowledged. Touch it to
+open Data Status.
 
 The bench panel does not carry it. Add it from the configurator palette's
 system category.
@@ -93,6 +117,15 @@ system category.
 ![About on the bench (an October capture): About pyEfis, the version, the software notice, and the installed data packs with their cycles](../images/about/bench_beelink_about.png)
 
 - The pyEFIS version and the software notice.
+- **Safety advisories**, directly under the version, when the updater has
+  any for this device. Each shows its severity (`WARNING` in red, `CAUTION` in
+  amber, `ADVISORY` in white) and title, its id and date, a description, and
+  `Required action:`. Advisories that apply are listed first, then by
+  severity. One the device cannot match against an installed version says
+  `May apply to this device`. With none, the section is not shown at all. If
+  you have not turned the advisory feed on, a grey `Safety advisories: off`
+  line shows instead. When the last verified feed is more than 28 days old,
+  or there has never been one, a grey line says so.
 - **Installed data packs:** each pack with its cycle and any notice its
   publisher attached.
 - **Notice acknowledgments:** each time the software notice was accepted on
@@ -105,7 +138,7 @@ configuration, and the Data Status screen's **About** button opens it.
 
 ## The software notice at start-up
 
-![The notice strip across the bottom of the bench panel, 8 seconds after start (an October capture)](../images/aer4339_startup_notice/beelink_banner_8s.png)
+![The notice strip across the bottom of the bench panel, 7 seconds after start, on a bench where the notice has been accepted](../images/aer4339_startup_notice/beelink_banner_8s.png)
 
 Each start, a strip across the bottom reads: *"pyEfis is experimental software
 for Experimental / Amateur-Built aircraft. It is not certified. It is provided

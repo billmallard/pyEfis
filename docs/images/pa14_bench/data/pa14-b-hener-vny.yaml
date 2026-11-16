@@ -1,0 +1,17 @@
+# PA14 slice B (AER-1613): V485 HENER-OHIGH, then FERN7 (OHIGH transition and
+# its common route, as published: CANYN FIM VNY), from 4 nm before HENER at
+# 9,000 ft (V485 MEA 9,000 from HENER). X-Plane cannot load a STAR by name, so
+# the STAR's fixes are written as waypoints.
+name: pa14-b-hener-vny
+departure: KSBA
+destination: KSMO
+cifp: {cycle: "2611"}
+aircraft: {tas_kt: 110}
+start: {fix: HENER, before_nm: 4.0, alt_ft: 9000, heading: on_course}
+route:
+  - waypoint: VTU
+  - airway: {id: V485, exit: OHIGH}
+  - waypoint: CANYN
+  - waypoint: FIM
+  - waypoint: VNY
+end: {after_fix: VNY, max_s: 2400}

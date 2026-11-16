@@ -17,6 +17,7 @@ from PyQt6.QtGui import QColor, QImage, QPainter
 from PyQt6.QtWidgets import QWidget
 
 from pyefis.flightplan import fixbridge
+from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import model as fp_model
 from pyefis.instruments import map as moving_map
 from pyefis.instruments.map.layers import flight_plan as fp_layer
@@ -671,3 +672,89 @@ def test_active_segment_legs_paint_wider(fix, qtbot):
     c = x.to_screen(34.0, inside)
     px = img_on.pixelColor(int(round(c.x())), int(round(c.y())))
     assert px.red() > 200 and px.green() > 200 and px.blue() > 200
+
+
+# ---------------------------------------------------------------------------
+# MAPGC1 (AER-5800): a long leg is drawn along its great circle -- the
+# course the engine measures cross-track against -- not as a lon/lat chord.
+# ---------------------------------------------------------------------------
+_KSMO = (34.01582, -118.45131)
+_SANFI = (35.96152, -80.99262)
+_GC_TOL_NM = 0.05
+
+
+def _off_great_circle_nm(poly, a, b):
+    """The largest distance from the a -> b great circle of *poly*'s
+    vertices and of its chord midpoints, in the lon/lat plane the layer
+    paints through (lonlat_transform is affine in it)."""
+    pts = [(poly[i].y(), poly[i].x()) for i in range(poly.size())]
+    mids = [((p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0) for p, q in zip(pts, pts[1:])]
+    return max(abs(fp_geo.cross_track_nm(lat, lon, a[0], a[1], b[0], b[1]))
+               for lat, lon in pts + mids)
+
+
+def test_long_line_draws_along_the_great_circle():
+    poly = fp_layer._line_polyline(_KSMO, _SANFI)
+    assert poly is not None
+    assert (poly[0].y(), poly[0].x()) == _KSMO
+    assert (poly[poly.size() - 1].y(), poly[poly.size() - 1].x()) == _SANFI
+    assert _off_great_circle_nm(poly, _KSMO, _SANFI) <= _GC_TOL_NM
+
+
+def test_short_line_stays_one_segment():
+    b = fp_geo.destination_point(*_KSMO, 75.0, 40.0)
+    assert fp_layer._line_polyline(_KSMO, b) is None
+    assert fp_layer.great_circle_points([_KSMO, b]) == [_KSMO, b]
+    assert fp_layer._polyline([_KSMO, b]).size() == 2
+
+
+def _publish_points(fix, points):
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    wps = [fp_model.Waypoint(id=f"WP{i:02d}", type="fix", lat=lat, lon=lon)
+           for i, (lat, lon) in enumerate(points)]
+    bridge.publish(fp_model.FlightPlan(name="TEST", waypoints=wps))
+
+
+def test_long_two_point_leg_path_draws_along_the_great_circle(fix, qtbot):
+    _publish_points(fix, [_KSMO, _SANFI])
+    layer = fp_layer.FlightPlanLayer()
+    layer.configure(_owner(qtbot))
+    layer.collect(None)
+    snap = layer._snapshot
+    assert snap.loaded and len(snap.polys) == 1
+    assert _off_great_circle_nm(snap.polys[0], _KSMO, _SANFI) <= _GC_TOL_NM
+
+
+@pytest.mark.parametrize("act_leg, want", [(2, "active"), (0, "future")])
+def test_long_leg_paints_under_ownship_on_the_great_circle(fix, qtbot, act_leg, want):
+    """Bill's case: KSMO -> SANFI active, ownship on the great circle 20 NM
+    before SANFI, where the chord ran 3.85 NM right of it. The leg passes
+    through the centre of a 5 NM map, active (the FROM -> TO line) or not
+    (the leg's two-point path)."""
+    _publish_points(fix, [_KSMO, _SANFI])
+    if act_leg:
+        fix.db.set_value("FPLSTATE", 1)
+        fix.db.set_value("FPLACTLEG", act_leg)
+        fix.db.set_value("FPLFRLAT", _KSMO[0])
+        fix.db.set_value("FPLFRLON", _KSMO[1])
+        fix.db.set_value("WPLAT", _SANFI[0])
+        fix.db.set_value("WPLON", _SANFI[1])
+    brg = fp_geo.initial_bearing(*_SANFI, *_KSMO)
+    lat0, lon0 = fp_geo.destination_point(*_SANFI, brg, 20.0)
+    layer = fp_layer.FlightPlanLayer()
+    layer.configure(_owner(qtbot))
+    layer.collect(None)
+    x = moving_map.MapTransform(lat0, lon0, 5.0, 0.0, 200, 200, 0.5)
+    img = QImage(200, 200, QImage.Format.Format_RGB32)
+    img.fill(0)
+    p = QPainter(img)
+    layer.paint(p, x)
+    p.end()
+    c = x.to_screen(lat0, lon0)
+    cx, cy = int(round(c.x())), int(round(c.y()))
+    near = [img.pixelColor(cx + dx, cy + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)]
+    if want == "active":
+        assert any(q.red() > 200 and q.blue() > 200 and q.green() < 80 for q in near)
+    else:
+        assert any(q.red() > 200 and q.green() > 200 and q.blue() > 200 for q in near)

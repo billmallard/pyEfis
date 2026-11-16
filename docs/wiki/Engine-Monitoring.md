@@ -68,7 +68,8 @@ colour bands stay on the absolute scale, and the indicator turns blue.
 
 **Hottest cylinder.** Give a bar a `highlight_key`, such as `EGTMAX1` or
 `CHTMAX1`, and it draws a magenta ball at its foot while it is the hottest. The
-palette groups do not set one.
+ball is not drawn while the highlight key is old, bad or failed. The palette
+groups do not set one.
 
 ## Alerts on the stock screens
 
@@ -95,6 +96,15 @@ touch selects it too. A selected bar or arc turns orange.
 | Segments (`segments`) | 0 | 0 | — | 0 draws a solid band; more draws that many blocks. |
 | Name location (`name_location`) | — | `top` | — | `top` or `right`. |
 | Font mask (`font_mask`) | — | — | `000` | The widest value the readout makes room for. |
+| Tank (`tank`) | unset | unset | — | A fuel tank from the aircraft parameters. See below. |
+
+**Fuel tank gauges.** Instead of typing a FIX key, pick a **Tank** for a bar or
+arc gauge. The configurator stores the tank and, when the device pulls the
+panel, fills in that tank's FIX key (`FUELQ1` and so on) and its name. If the
+tank is later removed from the aircraft, the gauge is served marked `unbound`:
+it shows its name and `xxx` with the indicator at zero, and stays that way until
+the panel is changed. A `tank:` option copied into a screen file
+by hand is ignored, with a warning in the log.
 
 The configurator also shows each gauge's range and limits, read-only, because
 they are set in the aircraft parameters, not on the panel.

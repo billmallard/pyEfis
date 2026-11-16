@@ -1,0 +1,14 @@
+# PA14 slice A (AER-1613): KSBA FLOUT5.RW15B.VTU, then V485 VTU-HENER, flown
+# from 3 nm before FLOUT at 6,000 ft. The SID's VA leg is the box's job (bench
+# follower ACTs it, sees VECTORS, RESUMEs); X-Plane flies FLOUT-VTU-HENER.
+name: pa14-a-flout-hener
+departure: KSBA
+destination: KSMO
+cifp: {cycle: "2611"}
+aircraft: {tas_kt: 110}
+start: {fix: FLOUT, before_nm: 3.0, alt_ft: 6000, heading: on_course}
+route:
+  - waypoint: FLOUT
+  - waypoint: VTU
+  - airway: {id: V485, exit: HENER}
+end: {after_fix: HENER, max_s: 2500}

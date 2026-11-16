@@ -170,3 +170,127 @@ def test_every_engine_key_the_layer_reads_is_in_its_draw_signature():
 @pytest.mark.parametrize("key", sorted(READOUTS))
 def test_readout_keys_stay_out_of_the_draw_signature(key):
     assert key not in fp_layer._DRAW_KEYS
+
+
+# pyEfis #480 (FPLWRITE2): what a write costs, not only whether it paints.
+# A collect plus draw signature is some 70 FIX lookups, and the engine
+# writes 25 keys each cycle; the layer skips a write that cannot change the
+# picture before reading anything.
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def _layer(w):
+    return next(layer for layer in w._layers if layer.id == "flight_plan")
+
+
+def _count_lookups(layer, monkeypatch):
+    calls = []
+    get = layer._bridge._get
+
+    def counted(key):
+        calls.append(key)
+        return get(key)
+
+    monkeypatch.setattr(layer._bridge, "_get", counted)
+    return calls
+
+
+def _settled(fix, qtbot, monkeypatch):
+    """A flying map one engine cycle in, on a frozen clock."""
+    w, updates = _flying_map(fix, qtbot)
+    layer = _layer(w)
+    layer._clock = clock = _Clock()
+    _engine_cycle(fix)
+    w._frame_dirty = False
+    return w, layer, clock, _count_lookups(layer, monkeypatch)
+
+
+def test_a_readout_write_reads_nothing_from_the_bus(fix, qtbot, monkeypatch):
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+
+    for n, key in enumerate(sorted(READOUTS)):
+        fix.db.set_value(key, READOUTS[key] + n + 1)
+
+    assert lookups == []
+    assert w._frame_dirty is False
+
+
+def test_an_unchanged_engine_cycle_is_one_lookup_per_drawn_key(fix, qtbot, monkeypatch):
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+
+    _engine_cycle(fix, **{k: v + 1 for k, v in READOUTS.items()})
+
+    drawn = set(fixbridge.ENGINE_OUTPUT_KEYS) & set(fp_layer._DRAW_KEYS)
+    assert sorted(lookups) == sorted(drawn)
+    assert w._frame_dirty is False
+
+
+def test_a_full_collect_still_runs_once_a_recheck_interval(fix, qtbot, monkeypatch):
+    """MAGVAR and the route counts are drawn from but not watched: a
+    write of anything still re-collects once _RECHECK_S has gone by."""
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+    collects = []
+    collect = layer.collect
+    monkeypatch.setattr(layer, "collect", lambda x: (collects.append(1), collect(x)))
+
+    fix.db.set_value("WPDIS", 3.0)
+    assert collects == []
+    clock.now += fp_layer._RECHECK_S
+    fix.db.set_value("WPDIS", 2.9)
+    assert collects == [1]
+    fix.db.set_value("WPDIS", 2.8)
+    assert collects == [1]
+
+
+def test_staging_a_direct_to_marks_a_frame_with_no_engine_write(fix, qtbot, monkeypatch):
+    """Off-route direct-to draws the line to the staged DTO point; the
+    bridge watches DTO*, so a new point is drawn without waiting for the
+    next engine write or the recheck."""
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+    fix.db.set_value("FPLSTATE", 2)
+    fix.db.set_value("FPLACTLEG", 0)
+    w._frame_dirty = False
+
+    fixbridge.FixBridge(fix).stage_direct_to(
+        fp_model.Waypoint(id="RZS", type="vor", lat=34.5, lon=-119.7))
+
+    assert w._frame_dirty is True
+
+
+def test_a_write_that_changes_nothing_drawn_never_reaches_the_relay_signal(fix, qtbot, monkeypatch):
+    """Emitting the relay's signal per write cost more than the check that
+    then dropped it; the relay asks the layer before it emits."""
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+    emitted = []
+    layer._relay.changed.connect(emitted.append)
+
+    _engine_cycle(fix, **{k: v + 1 for k, v in READOUTS.items()})
+    assert emitted == []
+
+    _engine_cycle(fix, FPLACTLEG=3)
+    assert emitted == ["FPLACTLEG"]
+
+
+def test_desired_track_moving_under_a_tenth_of_a_degree_skips_the_collect(fix, qtbot, monkeypatch):
+    """In flight FPLCRS moves in the fourth decimal every cycle; the layer
+    draws it only to 0.1 deg (the extension past the MAP)."""
+    w, layer, clock, lookups = _settled(fix, qtbot, monkeypatch)
+    collects = []
+    collect = layer.collect
+    monkeypatch.setattr(layer, "collect", lambda x: (collects.append(1), collect(x)))
+    fix.db.set_value("FPLCRS", 217.31)
+    del collects[:]
+
+    for crs in (217.3199, 217.3195, 217.3191):
+        _engine_cycle(fix, FPLCRS=crs)
+    assert collects == []
+
+    _engine_cycle(fix, FPLCRS=217.6)
+    assert collects == [1]

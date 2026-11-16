@@ -716,3 +716,214 @@ def test_ack_hidden_while_picker_open(app, tmp_path):
     calls[0][1](0, json.dumps({"network": True, "usb": []}))
     calls[1][1](0, json.dumps(CATALOG))
     assert w.mode == "picker" and w.btn_ack.isHidden()
+
+
+# --- Terrain regions collapse to one row (Bill, AER-5616 card, 2026-11-14) ---
+
+def _bench_packs(terrain_override=None):
+    """The Beelink's status.json pack list, 2026-11-14: five navdata/roads
+    packs, six terrain regions (one pack each), water. Twelve packs."""
+    packs = [{"id": i, "name": n, "kind": k, "status": "current",
+              "severity": "none", "detail": d}
+             for i, n, k, d in [
+                 ("airports-conus", "Airports & Runways", "navdata", "2611"),
+                 ("highways-conus", "Roads & Highways", "highways", "2026q3r1"),
+                 ("navaids-conus", "Navaids & Airways", "navdata", "2611"),
+                 ("obstacles-conus", "Obstacles", "obstacles", "261001"),
+                 ("procedures-conus", "SIDs, STARs & Approaches", "procedures", "2611")]]
+    for r in ["mexico-central-america", "mosaic", "us-central", "us-east",
+              "us-south", "us-west"]:
+        t = {"id": f"terrain-{r}", "name": "Terrain", "kind": "terrain",
+             "status": "current", "severity": "none", "detail": "2024edr4"}
+        t.update((terrain_override or {}).get(r, {}))
+        packs.append(t)
+    packs.append({"id": "water-na", "name": "Water", "kind": "water",
+                  "status": "current", "severity": "none", "detail": "2026q4r1"})
+    return packs
+
+
+def test_terrain_regions_collapse_to_one_row():
+    rows = data_status.display_rows(_bench_packs())
+    assert len(rows) == 7
+    t = [r for r in rows if r.get("kind") == "terrain"]
+    assert len(t) == 1
+    assert (t[0]["name"], t[0]["status"], t[0]["detail"], t[0]["severity"]) == (
+        "Terrain (6 regions)", "current", "2024edr4", "none")
+    # The collapsed row sits where the first terrain pack was.
+    assert [r["id"] for r in rows] == ["airports-conus", "highways-conus",
+        "navaids-conus", "obstacles-conus", "procedures-conus", "terrain",
+        "water-na"]
+
+
+def test_terrain_region_not_current_is_flagged():
+    packs = _bench_packs({
+        "us-west": {"status": "EXPIRED", "severity": "amber",
+                    "detail": "2023 expired"},
+        "us-east": {"status": "MISSING", "severity": "white", "detail": ""}})
+    t = [r for r in data_status.display_rows(packs) if r.get("kind") == "terrain"][0]
+    assert t["name"] == "Terrain (6 regions)"
+    assert t["severity"] == "amber" and t["status"] == "EXPIRED"
+    assert t["detail"] == "us-east MISSING, us-west EXPIRED"
+
+
+def test_single_terrain_pack_is_not_collapsed():
+    packs = [p for p in _bench_packs() if p["id"] in
+             ("airports-conus", "terrain-us-west")]
+    assert data_status.display_rows(packs) == packs
+
+
+def test_terrain_region_from_regions_field():
+    packs = [{"id": "t1", "kind": "terrain", "regions": ["alaska"],
+              "status": "EXPIRED", "severity": "amber"},
+             {"id": "t2", "kind": "terrain", "regions": ["hawaii"],
+              "status": "current", "severity": "none"}]
+    assert data_status.display_rows(packs)[0]["detail"] == "alaska EXPIRED"
+
+
+@pytest.mark.parametrize("size", [(800, 480), (1024, 600), (1920, 1080)])
+@pytest.mark.parametrize("pending", [True, False], ids=["banner", "no-banner"])
+def test_bench_pack_list_fits_above_the_buttons_at_full_size(app, tmp_path, size,
+                                                              pending):
+    # Under the banner the bench's 12 packs used to run behind
+    # Continue/About/Update. Collapsed, they fit at the normal row height.
+    doc = dict(SAMPLE, packs=_bench_packs())
+    if pending:
+        doc = dict(doc, panel_change=_pending()["panel_change"])
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, doc)))
+    w.resize(*size)
+    w.show()
+    w.grab()
+    top, bottom = w._pack_span
+    assert bottom - top == 7 * w.row_h               # full rows, no shrink
+    assert bottom <= w.btn_continue.y()
+    if pending:
+        assert top >= w._banner_rect.bottom()
+
+
+def test_short_pack_list_keeps_full_row_height(app, tmp_path):
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, SAMPLE)))
+    w.resize(800, 480)
+    w.show()
+    w.grab()
+    top, bottom = w._pack_span
+    assert bottom - top == 2 * w.row_h
+
+
+# --- PFD DATA flag lights for a pending panel change (Bill, AER-5481) ---
+
+def _flag_pixels(a):
+    """Count amber pixels the DATA flag painted."""
+    img = a.grab().toImage()
+    n = 0
+    for x in range(img.width()):
+        for y in range(img.height()):
+            c = img.pixelColor(x, y)
+            if c.red() > 200 and c.red() - c.blue() > 100:
+                n += 1
+    return n
+
+
+_CURRENT = {"ok": True, "packs": [{"name": "Airports", "severity": "none"}]}
+
+
+def test_annunciation_amber_for_pending_panel_change(app, tmp_path):
+    doc = dict(_CURRENT, panel_change=_pending()["panel_change"])
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, doc)))
+    a.resize(120, 40)
+    assert data_status.worst_severity(a.status) == "none"      # packs current
+    assert data_status.annunciation_severity(a.status) == "amber"
+    assert _flag_pixels(a) > 20
+
+
+def test_annunciation_amber_for_panel_change_when_status_not_ok(app, tmp_path):
+    # config-pull's own status.json: ok false, no packs, cue pending.
+    doc = {"ok": False, "packs": [], "panel_change": _pending()["panel_change"]}
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, doc)))
+    a.resize(120, 40)
+    assert data_status.annunciation_severity(a.status) == "amber"
+    assert _flag_pixels(a) > 20
+
+
+@pytest.mark.parametrize("block", [None, _CLEAR, {"pending": "yes"}],
+                         ids=["absent", "acknowledged", "truthy-string"])
+def test_annunciation_hidden_without_pending_panel_change(app, tmp_path, block):
+    doc = dict(_CURRENT) if block is None else dict(_CURRENT, panel_change=block)
+    a = data_status.DataAnnunciation(status_path=str(_write(tmp_path, doc)))
+    a.resize(120, 40)
+    assert data_status.annunciation_severity(a.status) == "none"
+    assert _flag_pixels(a) == 0
+
+
+def test_annunciation_severity_falls_back_to_packs(app):
+    assert data_status.annunciation_severity(None) == "none"
+    assert data_status.annunciation_severity(SAMPLE) == "amber"
+    soon = {"ok": True, "packs": [{"severity": "white"}]}
+    assert data_status.annunciation_severity(soon) == "white"
+
+
+@pytest.mark.parametrize("size", [(800, 480), (1024, 600), (1920, 1080)])
+def test_message_goes_below_the_bench_list_under_the_banner(app, tmp_path, size):
+    # Under the banner the bench's list reaches the usual message line
+    # (0.74h); the message moves below the last row, still above the buttons.
+    doc = dict(SAMPLE, packs=_bench_packs(), panel_change=_pending()["panel_change"])
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, doc)))
+    w.resize(*size)
+    w.show()
+    w.message = "Recording acknowledgement…"
+    w.grab()
+    bottom = w._pack_span[1]
+    assert w._message_y >= bottom                    # not over a pack row
+    assert w._message_y + w.row_h <= w.btn_continue.y()
+
+
+def test_bench_details_fit_their_column_at_800x480(app, tmp_path):
+    # The airports/navaids detail ran off the column mid-word ("... to 20").
+    packs = _bench_packs()
+    for pk in packs:
+        if pk["id"] in ("airports-conus", "navaids-conus", "procedures-conus"):
+            pk.update(_AIRPORTS, id=pk["id"])
+    doc = dict(SAMPLE, packs=packs, panel_change=_pending()["panel_change"])
+    w = data_status.DataStatus(status_path=str(_write(tmp_path, doc)))
+    w.resize(800, 480)
+    w.show()
+    w.grab()
+    assert w._painted_details[0] in ("2611 to 2026-11-26",
+                                     "2611 to 2026-11-26, next 2612 staged")
+    col = 800 - round(800 * 0.58) - round(800 * 0.10)
+    from PyQt6.QtGui import QFontMetrics
+    fm = QFontMetrics(w.font)
+    assert all(fm.horizontalAdvance(d) <= col for d in w._painted_details)
+
+
+_AIRPORTS = {"id": "airports-conus", "cycle": "2611", "expires": "2026-11-26",
+             "next_cycle": "2612", "next_staged": True,
+             "detail": "2611 effective 2026-10-29 to 2026-11-26, next 2612 "
+                       "from 2026-11-26 (staged)"}
+
+
+def _fm(px=16):
+    from PyQt6.QtGui import QFont, QFontMetrics
+    f = QFont("DejaVu Sans")
+    f.setPixelSize(px)
+    return QFontMetrics(f)
+
+
+def test_fit_detail_keeps_full_text_when_it_fits(app):
+    fm = _fm()
+    full = _AIRPORTS["detail"]
+    assert data_status.fit_detail(_AIRPORTS, fm, fm.horizontalAdvance(full) + 1) == full
+
+
+def test_fit_detail_condenses_to_cycle_and_expiry(app):
+    fm = _fm()
+    short = "2611 to 2026-11-26"
+    longer = short + ", next 2612 staged"
+    assert data_status.fit_detail(_AIRPORTS, fm, fm.horizontalAdvance(longer)) == longer
+    assert data_status.fit_detail(_AIRPORTS, fm, fm.horizontalAdvance(short)) == short
+
+
+def test_fit_detail_elides_without_structured_fields(app):
+    fm = _fm()
+    pk = {"detail": "a long free-text detail with no cycle fields at all"}
+    out = data_status.fit_detail(pk, fm, 80)
+    assert out.endswith("…") and fm.horizontalAdvance(out) <= 80

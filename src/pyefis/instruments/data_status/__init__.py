@@ -145,6 +145,85 @@ def worst_severity(status):
                key=lambda s: _SEV_RANK.get(s, 1), default="none")
 
 
+def annunciation_severity(status):
+    """What the PFD DATA flag shows: amber while a config pull's panel change
+    waits to be acknowledged (CERT17, Bill 2026-11-14 on AER-5481), else the
+    worst pack severity. Data Status never boots (BACKLOG L3), so this flag is
+    the pilot's only way to it; with every pack current the cue would
+    otherwise show nowhere the pilot looks."""
+    if panel_change(status) is not None:
+        return "amber"
+    return worst_severity(status)
+
+
+def _terrain_region(p):
+    """Region name of a terrain pack: its ``regions`` entry, else its id
+    without the ``terrain-`` prefix."""
+    if p.get("regions"):
+        return str(p["regions"][0])
+    pid = str(p.get("id", ""))
+    return pid[len("terrain-"):] if pid.startswith("terrain-") else pid
+
+
+def display_rows(packs):
+    """The Data Status rows for the status file's packs. Terrain ships one
+    pack per region, and identical "Terrain current 2024edr4" rows crowded
+    the list off the screen (Bill, 2026-11-14 on AER-5616), so two or more
+    terrain packs collapse into one row at the first terrain pack's place:
+    "Terrain (N regions)". When every region is current the row shows their
+    shared status and detail; otherwise it takes the worst region's severity
+    and status, and the detail names each region that is not current. Every
+    other pack is one row, unchanged."""
+    terrain = [p for p in packs if p.get("kind") == "terrain"]
+    if len(terrain) < 2:
+        return list(packs)
+    worst = max(terrain, key=lambda p: _SEV_RANK.get(p.get("severity", "white"), 1))
+    flagged = [p for p in terrain if p.get("severity", "white") != "none"]
+    if flagged:
+        status = worst.get("status", "")
+        detail = ", ".join(f"{_terrain_region(p)} {p.get('status', '')}"
+                           for p in flagged)
+    else:
+        statuses = {p.get("status", "") for p in terrain}
+        details = {p.get("detail", "") for p in terrain}
+        status = statuses.pop() if len(statuses) == 1 else "current"
+        detail = details.pop() if len(details) == 1 else ""
+    row = {"id": "terrain", "kind": "terrain",
+           "name": f"Terrain ({len(terrain)} regions)",
+           "status": status, "detail": detail,
+           "severity": worst.get("severity", "white")}
+    rows, placed = [], False
+    for p in packs:
+        if p.get("kind") == "terrain":
+            if not placed:
+                rows.append(row)
+                placed = True
+        else:
+            rows.append(p)
+    return rows
+
+
+def fit_detail(pk, fm, width):
+    """The pack's detail text if it fits ``width`` (QFontMetrics ``fm``).
+    Otherwise a short form from the pack's own fields, cycle and expiry
+    ("2611 to 2026-11-26", with ", next 2612 staged" when that also fits),
+    so a narrow column keeps the expiry instead of cutting it off mid-word.
+    Failing that, the detail elided at the column edge."""
+    full = str(pk.get("detail", "") or "")
+    if fm.horizontalAdvance(full) <= width:
+        return full
+    cycle, expires = pk.get("cycle"), pk.get("expires")
+    if cycle and expires:
+        short = f"{cycle} to {expires}"
+        if pk.get("next_staged") and pk.get("next_cycle"):
+            longer = f"{short}, next {pk['next_cycle']} staged"
+            if fm.horizontalAdvance(longer) <= width:
+                return longer
+        if fm.horizontalAdvance(short) <= width:
+            return short
+    return fm.elidedText(full, Qt.TextElideMode.ElideRight, int(width))
+
+
 def fmt_bytes(n):
     """Human size for the picker (decimal-ish, GB/MB/KB)."""
     n = n or 0
@@ -623,6 +702,9 @@ class DataStatus(QWidget):
         # the result can tell "a newer change arrived" from "not recorded".
         self._ack_hash = None
         self._banner_rect = QRectF()
+        self._pack_span = None        # (top, bottom) of the last painted pack list
+        self._painted_details = []    # detail strings as last painted (tests)
+        self._message_y = None        # y of the last painted message line (tests)
 
         self.btn_continue = QPushButton("Continue", self)
         self.btn_update = QPushButton("Update", self)
@@ -1062,7 +1144,7 @@ class DataStatus(QWidget):
         # 0.10h + 1.8 rows, as in paintEvent). Acknowledge sits at its right.
         x = qRound(w * 0.10)
         top = qRound(h * 0.10) + qRound(self.row_h * 1.8)
-        self._banner_rect = QRectF(x, top, w - 2 * x, self.row_h * 4.2)
+        self._banner_rect = QRectF(x, top, w - 2 * x, self.row_h * 3.6)
         aw, ah = qRound(w * 0.18), qRound(self.row_h * 1.8)
         self.btn_ack.setGeometry(qRound(self._banner_rect.right()) - aw - qRound(self.row_h * 0.4),
                                  qRound(self._banner_rect.center().y()) - ah // 2, aw, ah)
@@ -1149,22 +1231,35 @@ class DataStatus(QWidget):
             p.drawText(QRectF(x, y, w - 2 * x, self.row_h), flags,
                        "Data status unavailable — run an update to populate it.")
         else:
-            for pk in self.status.get("packs", []):
+            packs = display_rows(self.status.get("packs", []))
+            step = self.row_h
+            self._pack_span = (y, y + step * len(packs))     # message line, tests
+            self._painted_details = []
+            for pk in packs:
                 color = SEVERITY_COLORS.get(pk.get("severity", "white"),
                                             SEVERITY_COLORS["white"])
                 p.setPen(color)
-                p.drawText(QRectF(x, y, col_status - x, self.row_h), flags,
+                p.drawText(QRectF(x, y, col_status - x, step), flags,
                            str(pk.get("name", pk.get("id", ""))))
-                p.drawText(QRectF(col_status, y, col_detail - col_status, self.row_h), flags,
+                p.drawText(QRectF(col_status, y, col_detail - col_status, step), flags,
                            str(pk.get("status", "")))
-                p.drawText(QRectF(col_detail, y, w - col_detail - x, self.row_h), flags,
-                           str(pk.get("detail", "")))
-                y += self.row_h
+                dw = w - col_detail - x
+                detail = fit_detail(pk, p.fontMetrics(), dw)
+                self._painted_details.append(detail)
+                p.drawText(QRectF(col_detail, y, dw, step), flags, detail)
+                y += step
 
         if self.message:
             p.setFont(self.font)
             p.setPen(SEVERITY_COLORS["white"])
-            p.drawText(QRectF(x, h * 0.74, w - 2 * x, self.row_h), flags, self.message)
+            # Below the pack list when the list reaches the usual message line
+            # (a long list under the panel-change banner), so it never paints
+            # over a row.
+            my = h * 0.74
+            if self._pack_span is not None and self.status and self.status.get("ok"):
+                my = max(my, self._pack_span[1])
+            self._message_y = my
+            p.drawText(QRectF(x, my, w - 2 * x, self.row_h), flags, self.message)
 
     def _paint_banner(self, p, block):
         """Amber panel-change banner (CERT17). Returns the y the pack list
@@ -1190,16 +1285,17 @@ class DataStatus(QWidget):
                           r.height() - self.row_h - pad),
                    int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft
                        | Qt.AlignmentFlag.AlignTop), body)
-        return qRound(r.bottom() + self.row_h * 0.6)
+        return qRound(r.bottom() + self.row_h * 0.25)
 
 
 class DataAnnunciation(QWidget):
     """A small, persistent 'DATA' flag for the flight (PFD) view.
 
-    Subtle by design: amber when any installed navdata is expired, white when
-    expiring soon or missing, and **hidden** when everything is current (or no
-    updater is present) so a healthy display is never cluttered. Tapping it
-    jumps to the Data Status screen.
+    Subtle by design: amber when any installed navdata is expired or a config
+    pull's panel change is waiting to be acknowledged, white when expiring
+    soon or missing, and **hidden** when everything is current (or no updater
+    is present) so a healthy display is never cluttered. Tapping it jumps to
+    the Data Status screen.
     """
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
@@ -1244,7 +1340,7 @@ class DataAnnunciation(QWidget):
             max(8, qRound(self.height() * 0.7 * font_scale(self.font_percent))))
 
     def paintEvent(self, event):
-        sev = worst_severity(self.status)
+        sev = annunciation_severity(self.status)
         if sev == "none":
             return                      # healthy / no updater -> show nothing
         p = QPainter(self)

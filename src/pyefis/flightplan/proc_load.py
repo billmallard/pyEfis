@@ -80,10 +80,7 @@ FLAG_FLYOVER = 0x01
 FLAG_FROM_PROCEDURE = 0x20
 
 HOLD_PTS = frozenset({"HM", "HF", "HA"})
-# Two slots with one ident this close are one fix: the waypoint database
-# (NASR) and the procedures pack (CIFP) code the same navaid a few feet
-# apart, and a fix name is reused only far away.
-SAME_FIX_NM = 0.5
+SAME_FIX_NM = model.SAME_FIX_NM
 NO_FIX_POINT_NM = 2.0
 HOLD_SPEED_KT = 90.0
 
@@ -384,10 +381,6 @@ def loaded(plan, page_kind):
     return [k for k, seg in enumerate(plan.segments) if seg.kind in kinds]
 
 
-def _same_fix(a, b):
-    return bool(a.id) and a.id == b.id and geo.distance_nm(a.lat, a.lon, b.lat, b.lon) < SAME_FIX_NM
-
-
 def _plain(seg):
     return seg.kind == "waypoint"
 
@@ -481,7 +474,7 @@ def insert(plan, page_kind, segments, airport):
         if at > 0:
             prev = plan.segments[at - 1]
             first = new[0].legs[0]
-            if _same_fix(prev.legs[-1], first):
+            if model.same_fix(prev.legs[-1], first):
                 if _plain(prev):
                     notices.append(f"{first.id} MERGED INTO {new[0].ident}")
                     del plan.segments[at - 1]
@@ -495,7 +488,7 @@ def insert(plan, page_kind, segments, airport):
         if end < len(plan.segments):
             nxt = plan.segments[end]
             last = new[-1].legs[-1]
-            if _same_fix(last, nxt.legs[0]):
+            if model.same_fix(last, nxt.legs[0]):
                 if _plain(nxt):
                     notices.append(f"{last.id} MERGED INTO {new[-1].ident}")
                     del plan.segments[end]

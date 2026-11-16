@@ -27,11 +27,16 @@
 #  map, so nothing here depends on any other instrument being on the
 #  screen; an owner without a frame clock gets update().
 #
-#  Great-circle legs are drawn as straight screen segments with no
-#  subdivision. Verified numerically against MapTransform.to_screen: for a
+#  Great-circle legs up to _GC_SPLIT_NM are drawn as straight screen
+#  segments. Verified numerically against MapTransform.to_screen: for a
 #  leg near the edge of the widest shipped range (160 NM), the chord-vs-
 #  geodesic pixel deviation is ~0.1 px at a 40 NM leg, ~0.4 px at 80 NM, and
 #  only crosses 1 px past ~110 NM -- comfortably above a typical enroute leg.
+#  A longer leg is drawn as a polyline of great-circle points no more than
+#  _GC_STEP_NM apart (MAPGC1, AER-5800): the engine measures cross-track
+#  against the great circle, and a 1,835 NM chord ran 3.85 NM right of it
+#  20 NM before the fix, so the pilot crossed the magenta line with the
+#  CDI pegged. Short legs keep their single segment.
 #
 #  RS4 (route segments brief section 7, pyEfis #307): the segment table on
 #  the bus (FPLS*) labels each airway with its ident along its first leg,
@@ -65,6 +70,7 @@
 #  active leg, from the engine's own FROM/TO outputs. A gateway without
 #  FPLLDSEQ keeps the behaviour from before the key.
 
+import functools
 import math
 import time
 from dataclasses import replace
@@ -121,6 +127,12 @@ _PROCEDURE_KINDS = frozenset({"departure", "arrival", "approach", "missed"})
 #: the engine flies FROM -> TO, and that is what is drawn.
 _FROM_TOL_NM = 0.1
 
+# MAPGC1: a straight leg longer than _GC_SPLIT_NM is drawn through points
+# along its great circle at most _GC_STEP_NM apart. A 20 NM chord of the
+# lon/lat plane misses the great circle by about 0.01 NM at 36 deg latitude.
+_GC_SPLIT_NM = 110.0
+_GC_STEP_NM = 20.0
+
 _STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
               "vector": Qt.PenStyle.DotLine}
 
@@ -131,6 +143,21 @@ _STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
 # list (tests/instruments/test_map_flight_plan_repaint.py scans for it).
 _DRAW_KEYS = ("FPLSTATE", "FPLACTLEG", "FPLACTSEG", "FPLAPR", "FPLPHASE",
               "FPLFRLAT", "FPLFRLON", "WPLAT", "WPLON", "FPLCRS", "FPLLDSEQ")
+
+# The engine outputs this layer draws nothing from: the readouts. A write
+# of one is skipped without a lookup (FlightPlanLayer._wants_collect).
+_READOUT_KEYS = frozenset(fp_fixbridge.ENGINE_OUTPUT_KEYS
+                          + fp_fixbridge.OPTIONAL_ENGINE_OUTPUT_KEYS) - frozenset(_DRAW_KEYS)
+
+# A write that changed nothing drawn is skipped, but at most this long goes
+# by without a full collect, so what is drawn from keys the bridge does not
+# watch (MAGVAR, the route counts) still converges on the bus.
+_RECHECK_S = 1.0
+
+# A drawn key the layer only ever uses rounded, with its digits: the desired
+# track moves in the fourth decimal every cycle in flight, and the extension
+# past the MAP draws it to 0.1 deg (_draw_signature).
+_SEEN_DIGITS = {"FPLCRS": 1}
 
 
 def _engine_val(engine, key, default=None):
@@ -509,8 +536,48 @@ def _tinter(x):
     return tint
 
 
+def great_circle_points(points):
+    """*points* (``(lat, lon)`` pairs) with every pair more than
+    _GC_SPLIT_NM apart filled in along its great circle, so the drawn
+    polyline is the course the engine flies (MAPGC1). Shorter pairs are
+    left as they are."""
+    out = list(points[:1])
+    for a, b in zip(points, points[1:]):
+        d = fp_geo.distance_nm(a[0], a[1], b[0], b[1])
+        if d > _GC_SPLIT_NM:
+            n = math.ceil(d / _GC_STEP_NM)
+            brg = fp_geo.initial_bearing(a[0], a[1], b[0], b[1])
+            out.extend(fp_geo.destination_point(a[0], a[1], brg, d * i / n)
+                       for i in range(1, n))
+        out.append(b)
+    return out
+
+
 def _polyline(points):
-    return QPolygonF([QPointF(lon, lat) for lat, lon in points])
+    return QPolygonF([QPointF(lon, lat) for lat, lon in great_circle_points(points)])
+
+
+@functools.lru_cache(maxsize=16)
+def _line_polyline(a, b):
+    """The great-circle polyline for a straight ``a -> b`` line, or None
+    when it is short enough to draw as one segment. Cached: the endpoints
+    come from engine keys that change once per leg."""
+    if fp_geo.distance_nm(a[0], a[1], b[0], b[1]) <= _GC_SPLIT_NM:
+        return None
+    return _polyline([a, b])
+
+
+def _draw_line(p, x, lonlat, a, b):
+    """Stroke the straight ``a -> b`` line with the current pen, along
+    its great circle when it is long (MAPGC1)."""
+    poly = _line_polyline(a, b)
+    if poly is None:
+        p.drawLine(x.to_screen(a[0], a[1]), x.to_screen(b[0], b[1]))
+        return
+    p.save()
+    p.setWorldTransform(lonlat, True)
+    p.drawPolyline(poly)
+    p.restore()
 
 
 class _Snapshot:
@@ -548,22 +615,27 @@ class _BridgeRelay(QObject):
     changed; anything else asks ``owner`` for a frame -- through its frame
     clock (``request_frame``) when it has one, else ``update()``."""
 
-    changed = pyqtSignal()
+    changed = pyqtSignal(str)
 
-    def __init__(self, owner, on_change=None):
+    def __init__(self, owner, on_change=None, skip=None):
         super().__init__(owner)
         self._owner = owner
         self._on_change = on_change
+        self._skip = skip
         self.changed.connect(self._deliver)
 
-    def on_bridge_change(self):
-        self.changed.emit()
+    def on_bridge_change(self, key=""):
+        # *skip* drops a write before the signal: emitting it costs more
+        # than the layer's own check, and most writes change nothing drawn.
+        if self._skip is not None and self._skip(key):
+            return
+        self.changed.emit(key or "")
 
-    @pyqtSlot()
-    def _deliver(self):
+    @pyqtSlot(str)
+    def _deliver(self, key):
         # On the GUI thread (this relay's affinity): the layer re-collects
         # here, between frames, never inside paint().
-        if self._on_change is not None and self._on_change() is False:
+        if self._on_change is not None and self._on_change(key) is False:
             return
         request = getattr(self._owner, "request_frame", None)
         if request is not None:
@@ -586,26 +658,71 @@ class FlightPlanLayer(MapLayer):
         self._relay = None
         self._snapshot = None
         self._drawn_sig = None
+        # (value, fail, bad) of each watched key at its last write, and when
+        # the last full collect ran (_wants_collect).
+        self._seen = {}
+        self._clock = time.monotonic
+        self._collected_at = None
 
     def configure(self, owner):
         self._owner = owner
         self._bridge = fp_fixbridge.FixBridge(pyavtools_fix)
         if self._bridge.available:
-            self._relay = _BridgeRelay(owner, self._on_bridge_change)
-            self._bridge.add_listener(self._relay.on_bridge_change)
+            self._relay = _BridgeRelay(owner, self._on_bridge_change, self._skips_write)
+            self._bridge.add_listener(self._relay.on_bridge_change, keyed=True)
             self.collect(None)
             self._drawn_sig = self._draw_signature()
 
-    def _on_bridge_change(self):
-        """A bus notification, on the GUI thread: re-collect, and say
-        whether a frame is wanted -- False when nothing this layer draws
-        changed, or the layer is switched off."""
+    def _on_bridge_change(self, key=""):
+        """A bus write of *key* that _wants_collect let through, on the GUI
+        thread: re-collect, and say whether a frame is wanted -- False when
+        nothing this layer draws changed, or the layer is switched off."""
         self.collect(None)
         sig = self._draw_signature()
         if sig == self._drawn_sig:
             return False
         self._drawn_sig = sig
         return bool(self.enabled)
+
+    def _skips_write(self, key):
+        """The relay's check, before its signal. It runs on whichever thread
+        delivers the bridge's callbacks -- one thread, whichever it is -- and
+        only that thread touches _seen and _collected_at."""
+        return not self._wants_collect(key)
+
+    def _wants_collect(self, key):
+        """False when the write of *key* cannot have changed anything this
+        layer draws, so the collect and signature can be skipped. The
+        engine rewrites all 25 of its outputs each guidance cycle, changed
+        or not, and a collect plus signature costs some 70 FIX lookups: on
+        every write that was most of the bridge's time on the GUI thread
+        (pyEfis #480). Skipped: a readout, and a watched key written with
+        the value and flags it already had. At most _RECHECK_S goes by
+        between full collects whatever was written."""
+        changed = True
+        if key in _READOUT_KEYS:
+            changed = False
+        elif key:
+            try:
+                item = self._bridge._get(key)
+            except KeyError:
+                pass
+            else:
+                value = item.value
+                if key in _SEEN_DIGITS:
+                    try:
+                        value = round(float(value), _SEEN_DIGITS[key])
+                    except (TypeError, ValueError):
+                        pass
+                state = (value, bool(item.fail), bool(item.bad))
+                changed = self._seen.get(key) != state
+                self._seen[key] = state
+        now = self._clock()
+        if (changed or self._collected_at is None
+                or now - self._collected_at >= _RECHECK_S):
+            self._collected_at = now
+            return True
+        return False
 
     def _draw_signature(self):
         """Everything paint() draws from, as a comparable tuple: the route
@@ -732,8 +849,7 @@ class FlightPlanLayer(MapLayer):
             pen.setStyle(_STYLE_PEN[style])
             p.setPen(pen)
             if kind == "line":
-                (la1, lo1), (la2, lo2) = ref
-                p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+                _draw_line(p, x, lonlat, *ref)
                 continue
             if kind == "lead":
                 poly = snap.lead_poly
@@ -747,11 +863,11 @@ class FlightPlanLayer(MapLayer):
 
         direct = build_direct_to(route, engine, dto)
         if direct is not None:
-            color, (la1, lo1), (la2, lo2) = direct
+            color, a, b = direct
             pen.setColor(color)
             pen.setWidthF(_ACTIVE_WIDTH)
             p.setPen(pen)
-            p.drawLine(x.to_screen(la1, lo1), x.to_screen(la2, lo2))
+            _draw_line(p, x, lonlat, a, b)
 
         if not snap.loaded:
             if dto is not None and _off_route_direct(engine) and x.range_nm <= _SYMBOL_RANGE:

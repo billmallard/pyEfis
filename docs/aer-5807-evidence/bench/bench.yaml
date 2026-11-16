@@ -1,0 +1,13 @@
+# AER-5807 bench: a private gateway, netfix only, on 127.0.0.1:3492.
+database file: "{CONFIG}/database.yaml"
+auto start: true
+initialization files: []
+connections:
+  netfix:
+    load: yes
+    module: fixgw.plugins.netfix
+    type: server
+    host: 127.0.0.1
+    port: 3492
+    buffer_size: 1024
+    timeout: 1.0

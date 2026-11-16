@@ -1,0 +1,55 @@
+##### A_1
+  idle_or_qt   36.2%  ( 362.4 ms per second)
+  map_paint    19.0%  ( 189.8 ms per second)
+  ai_paint     10.1%  ( 101.4 ms per second)
+  notify       10.0%  (  99.7 ms per second)
+GUI thread samples 7492, inside _notify 747 = 9.97%
+##### B_1
+  idle_or_qt   38.1%  ( 381.1 ms per second)
+  map_paint    22.4%  ( 224.4 ms per second)
+  ai_paint     11.2%  ( 112.4 ms per second)
+  notify        2.0%  (  20.0 ms per second)
+GUI thread samples 7499, inside _notify 150 = 2.00%
+##### B_2
+  idle_or_qt   38.7%  ( 386.7 ms per second)
+  map_paint    20.0%  ( 199.9 ms per second)
+  ai_paint     11.7%  ( 116.7 ms per second)
+  notify        1.8%  (  18.4 ms per second)
+GUI thread samples 7497, inside _notify 138 = 1.84%
+##### A_2
+  idle_or_qt   30.8%  ( 308.1 ms per second)
+  map_paint    24.1%  ( 241.2 ms per second)
+  notify       11.4%  ( 114.0 ms per second)
+  ai_paint     10.3%  ( 103.0 ms per second)
+GUI thread samples 7497, inside _notify 855 = 11.40%
+##### B_3
+  idle_or_qt   32.6%  ( 326.0 ms per second)
+  map_paint    28.5%  ( 284.7 ms per second)
+  ai_paint     13.5%  ( 135.0 ms per second)
+  notify        1.6%  (  15.9 ms per second)
+GUI thread samples 7498, inside _notify 119 = 1.59%
+##### A_3
+  idle_or_qt   28.9%  ( 289.1 ms per second)
+  map_paint    28.4%  ( 284.0 ms per second)
+  notify       12.7%  ( 127.1 ms per second)
+  ai_paint      8.9%  (  89.4 ms per second)
+GUI thread samples 7493, inside _notify 952 = 12.71%
+##### B_4
+  idle_or_qt   33.1%  ( 331.0 ms per second)
+  map_paint    29.0%  ( 290.0 ms per second)
+  ai_paint     13.7%  ( 137.4 ms per second)
+  notify        1.2%  (  12.3 ms per second)
+GUI thread samples 7499, inside _notify 92 = 1.23%
+##### A_4
+  idle_or_qt   28.8%  ( 288.4 ms per second)
+  map_paint    27.9%  ( 278.7 ms per second)
+  notify       12.2%  ( 121.5 ms per second)
+  ai_paint     11.2%  ( 112.1 ms per second)
+GUI thread samples 7496, inside _notify 911 = 12.15%
+##### B_5
+  idle_or_qt   32.1%  ( 321.3 ms per second)
+  map_paint    32.0%  ( 319.8 ms per second)
+  ai_paint     11.4%  ( 114.1 ms per second)
+  notify        1.2%  (  11.7 ms per second)
+GUI thread samples 7495, inside _notify 88 = 1.17%
+081234c0bcb31be68ee5d146f9cf85ec  /home/pyefis/perf/2026-11-14-svs-slow/timeline.py
