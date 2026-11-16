@@ -4273,7 +4273,7 @@ class FlightPlan(QWidget):
             "delete_all": "Delete all stored routes?",
             "new": "Active plan has unsaved edits.\nStart a new plan?",
         }[kind]
-        self._paint_confirm(p, w, h, text, self._catalog_confirm_yes)
+        self._paint_confirm(p, w, h, text, self._catalog_confirm_yes, self._catalog_confirm_no)
 
     # -- generic modal overlay ------------------------------------------------
     def _paint_modal(self, p, w, h):

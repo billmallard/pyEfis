@@ -1141,6 +1141,45 @@ def test_catalog_delete_all_skips_managed_routes_and_reports(qtbot, tmp_path):
     assert "SKIPPED 1 MANAGED" in w._catalog_message
 
 
+@pytest.mark.parametrize("kind", ["activate", "invert_activate", "delete", "delete_all", "new"])
+def test_catalog_confirm_no_by_touch_clears_the_question(fix, qtbot, tmp_path, kind):
+    # FPCONF1 (AER-5821): the painted No button once called _close_menu,
+    # which clears the FPL-page _confirm only, so on the Catalog page a tap
+    # on No left the question up. The encoder back path was never affected.
+    _define_all_fp1_keys(fix)
+    w = flight_plan.FlightPlan(None)
+    qtbot.addWidget(w)
+    w.resize(800, 480)
+    cat = fp_catalog.Catalog(tmp_path)
+    _install_catalog(w, cat)
+    w._plan = _plan(2)
+    w._plan_dirty = True
+    w._commit()
+    slug = cat.save(fp_model.FlightPlan(
+        name="AB", waypoints=[fp_model.Waypoint(id="A", type="fix", lat=0, lon=0),
+                               fp_model.Waypoint(id="B", type="fix", lat=1, lon=1)]))
+    stored = {e.slug: cat.load(e.slug).to_json() for e in cat.list()}
+    w._open_catalog_page()
+    {
+        "activate": lambda: w._catalog_activate(slug),
+        "invert_activate": lambda: w._catalog_invert_activate(slug),
+        "delete": lambda: w._catalog_delete_request(slug),
+        "delete_all": w._catalog_delete_all_request,
+        "new": w._catalog_new,
+    }[kind]()
+    assert w._catalog_confirm["kind"] == kind
+
+    w.grab()
+    (x, y, tw, th, _), = [t for t, k in zip(w._tap_targets, w._tap_kinds) if k == "no"]
+    QTest.mouseClick(w, Qt.MouseButton.LeftButton, pos=QPoint(int(x + tw / 2), int(y + th / 2)))
+
+    assert w._catalog_confirm is None
+    assert w._page == "catalog"
+    assert {e.slug: cat.load(e.slug).to_json() for e in cat.list()} == stored
+    assert [wp.id for wp in w._plan.waypoints] == ["WP00", "WP01"]
+    assert w._plan_dirty is True
+
+
 # ---------------------------------------------------------------------------
 # WPT Info page (FP5b)
 # ---------------------------------------------------------------------------
