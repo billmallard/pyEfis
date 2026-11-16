@@ -21,6 +21,7 @@ from PyQt6.QtCore import qRound
 from pyefis.instruments import ai
 from pyefis.instruments import airspeed
 from pyefis.instruments import altimeter
+from pyefis.instruments.autopilot import fma as ap_fma
 from pyefis.instruments import button
 from pyefis.instruments import checklist
 from pyefis.instruments import flight_plan
@@ -1606,6 +1607,55 @@ _register(InstrumentSpec(
     ],
     preview={"state": "LEG", "from": "KSBA", "to": "GVO", "next": "RZS",
              "dis": "12.4 NM", "ete": "0:06", "phase": "TERM"},
+))
+
+# AFC4 (makerplane brief autopilot_control_head_plan.md section 5.5 item 1):
+# the autopilot mode annunciation strip, across the top of the attitude
+# display. Reads the AFC1 state keys only; writes APCMD DISC solely to
+# acknowledge a disconnect alert.
+def build_ap_annunciator(screen, config, font_percent=None, font_family=None,
+                         replace=None):
+    return ap_fma.ModeAnnunciator(screen, font_family=font_family,
+                                  font_percent=font_percent)
+
+
+_register(InstrumentSpec(
+    type="ap_annunciator",
+    label="Autopilot Mode Annunciator",
+    category="attitude",
+    builder=build_ap_annunciator,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=["APENG", "YDENG", "APLAT", "APLATARM", "APVERT", "APVERTARM",
+            "APALTCAP", "APDISC", "VSSEL", "IASSEL"],
+    properties=[
+        Prop("ap_position", "enum", default="center", enum=["center", "left"],
+             label="AP/YD position",
+             help="center: lateral | AP YD | vertical, the control head's "
+                  "order; left: AP YD | lateral | vertical"),
+        Prop("mode_flash_s", "number", default=10.0,
+             label="Mode change flash (s)",
+             help="how long a new active mode is boxed and flashes"),
+        Prop("touch_ack", "boolean", default=True,
+             label="Tap acknowledges disconnect",
+             help="a tap on the strip sends APCMD DISC while a disconnect "
+                  "alert (APDISC) is shown and the autopilot is disengaged"),
+        Prop("active_color", "color", default="#00ff00",
+             label="Active mode colour",
+             help="active modes and AP/YD engaged (AC 25-11B Table 5-1: "
+                  "engaged modes green)"),
+        Prop("armed_color", "color", default="#ffffff",
+             label="Armed mode colour", help="armed modes"),
+        Prop("warning_color", "color", default="#ff0000",
+             label="Disconnect warning colour",
+             help="the flashing AP of a disconnect alert (APDISC)"),
+        Prop("background_color", "color", default="#000000",
+             label="Background colour", help="the strip's fill"),
+        Prop("background_opacity", "number", default=0.75,
+             label="Background opacity", help="0 (clear) to 1 (opaque)"),
+    ],
+    preview={"lat": "HDG", "lat_arm": "GPS", "ap": "AP", "yd": "YD",
+             "vert": "VS +500", "vert_arm": "ALT"},
 ))
 
 _register(InstrumentSpec(

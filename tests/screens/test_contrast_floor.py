@@ -162,6 +162,12 @@ PAIRS = {
         ("alt_bug_color", "#000000", TEXT_FLOOR),
         ("alt_bug_alert_color", "#000000", TEXT_FLOOR),
     ],
+    # AFC4 mode strip: every annunciation is text on the strip's own fill.
+    "ap_annunciator": [
+        ("active_color", "background_color", TEXT_FLOOR),
+        ("armed_color", "background_color", TEXT_FLOOR),
+        ("warning_color", "background_color", TEXT_FLOOR),
+    ],
     "horizontal_situation_indicator": [
         ("fg_color", "bg_color", TEXT_FLOOR),
         ("needle_color", "bg_color", GRAPHIC_FLOOR),
