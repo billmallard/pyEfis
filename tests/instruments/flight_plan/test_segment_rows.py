@@ -268,10 +268,11 @@ def test_tapping_a_plain_row_still_opens_the_fix_menu(page):
 def test_segment_menu_items(page):
     page._open_seg_menu(1)
     taps, kinds = _paint_taps(page)
-    # Five items plus Cancel, all on the menu layer.
-    assert len(taps) - page._enc_layer_start == 6
+    # Six items plus Cancel, all on the menu layer.
+    assert len(taps) - page._enc_layer_start == 7
     assert [label for label, _ in flight_plan._SEG_MENU_ITEMS] == [
-        "Change Exit", "Change Entry", "Show Fixes", "Activate", "Remove Airway"]
+        "Change Exit", "Change Entry", "Show Fixes", "Load Airway", "Activate",
+        "Remove Airway"]
 
 
 def test_activate_flies_to_the_airway_entry(page):

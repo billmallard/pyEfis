@@ -14,7 +14,8 @@ import sqlite3
 import threading
 import time
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+import numpy as np
+from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
 
 from pyefis.flightplan.waypoints import Waypoint
@@ -90,6 +91,16 @@ class _DbLayer(MapLayer):
         with self._lock:
             snap = self._snap
         return snap[1] if snap else []
+
+    def _columns(self, rows, *cols):
+        """Float arrays of the given row columns, built once per snapshot
+        (the rows list is replaced, never mutated, on publish)."""
+        cached = getattr(self, "_cols", None)
+        if cached is None or cached[0] is not rows:
+            arrs = tuple(np.array([r[c] for r in rows], dtype=float)
+                         for c in cols)
+            cached = self._cols = (rows, arrs)
+        return cached[1]
 
     def _worker_loop(self):
         last = None
@@ -256,10 +267,12 @@ class FixesLayer(_DbLayer):
         p.setBrush(Qt.BrushStyle.NoBrush)
         pal = getattr(x, "palette", STANDARD_PALETTE)
         fix_pen = QPen(qcolor(pal["fix"]), pal["fix_width"])
-        for fid, lat, lon in rows:
-            c = x.to_screen(lat, lon)
-            if not (0 < c.x() < x.w and 0 < c.y() < x.h):
-                continue
+        lat, lon = self._columns(rows, 1, 2)
+        sx, sy = x.to_screen_xy(lat, lon)
+        on = np.flatnonzero((sx > 0) & (sx < x.w) & (sy > 0) & (sy < x.h))
+        for i, cx, cy in zip(on.tolist(), sx[on].tolist(), sy[on].tolist()):
+            fid = rows[i][0]
+            c = QPointF(cx, cy)
             p.setPen(fix_pen)
             p.drawPolygon(QPolygonF([
                 QPointF(c.x(), c.y() - s),
@@ -297,17 +310,37 @@ class AirwaysLayer(_DbLayer):
         f = QFont(x.font_family)
         f.setPixelSize(max(7, int(x.w * 0.018)))
         p.setFont(f)
-        labelled = set()
-        for awy, la1, lo1, la2, lo2 in rows:
-            p.setPen(pen)
-            e1 = x.to_screen(la1, lo1)
-            e2 = x.to_screen(la2, lo2)
-            p.drawLine(e1, e2)
-            if awy not in labelled and x.range_nm <= 80:
-                labelled.add(awy)
-                mx, my = (e1.x() + e2.x()) / 2, (e1.y() + e2.y()) / 2
+        la1, lo1, la2, lo2 = self._columns(rows, 1, 2, 3, 4)
+        x1, y1 = x.to_screen_xy(la1, lo1)
+        x2, y2 = x.to_screen_xy(la2, lo2)
+        # A segment with both ends past the same edge, by more than the
+        # pen reaches, draws nothing; neither does its label, whose
+        # midpoint is past that edge too. The rest draw in row order, as
+        # before, so a later line still crosses an earlier label.
+        m = pen.widthF() + 2.0
+        off = (((x1 < -m) & (x2 < -m)) | ((x1 > x.w + m) & (x2 > x.w + m))
+               | ((y1 < -m) & (y2 < -m)) | ((y1 > x.h + m) & (y2 > x.h + m)))
+        first = self._first_rows(rows) if x.range_nm <= 80 else ()
+        p.setPen(pen)
+        for i in np.flatnonzero(~off).tolist():
+            a, b, c, d = x1[i], y1[i], x2[i], y2[i]
+            p.drawLine(QLineF(a, b, c, d))
+            if i in first:
+                mx, my = (a + c) / 2, (b + d) / 2
                 if 0 < mx < x.w and 0 < my < x.h:
                     p.setPen(QPen(QColor(150, 180, 240)))
                     p.drawText(QRectF(mx - 30, my - f.pixelSize() - 2,
                                       60, f.pixelSize() + 4),
-                               Qt.AlignmentFlag.AlignHCenter, awy)
+                               Qt.AlignmentFlag.AlignHCenter, rows[i][0])
+                    p.setPen(pen)
+
+    def _first_rows(self, rows):
+        """Indices of each airway's first row: the segment its label goes
+        on, whether or not that segment is on screen."""
+        cached = getattr(self, "_first", None)
+        if cached is None or cached[0] is not rows:
+            seen = {}
+            for i, r in enumerate(rows):
+                seen.setdefault(r[0], i)
+            cached = self._first = (rows, frozenset(seen.values()))
+        return cached[1]

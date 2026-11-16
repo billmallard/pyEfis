@@ -160,7 +160,7 @@ what its data holds, in the arc ahead.
 | An amber **SVS UNAVAIL** and no terrain | Synthetic vision is on, but `LAT` or `LONG` is old, bad or failed, or the graphics could not start. |
 | No terrain and no message | No terrain tiles were found at the **Terrain tile path**. |
 
-![SVS UNAVAIL on the bench with the position aged out: no terrain, and the map shows NO POS. The sky and ground are grey because the attitude inputs had aged out too](../images/aer4243_svs_no_pos/2_after_lat_old.png)
+![SVS UNAVAIL on the bench with the position aged out: no terrain, and the map shows NO POS. The sky and ground are grey because the attitude inputs had aged out too, and the airspeed, altitude and vertical-speed tapes show a red X for the same reason](../images/aer4243_svs_no_pos/2_after_lat_old.png)
 
 If the graphics fail once at start-up, or three times while drawing, synthetic
 vision stays off until pyEFIS restarts.
