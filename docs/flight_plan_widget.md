@@ -36,6 +36,15 @@ themselves). Every DB-backed object is construct-never-raises with
   `procedures_db_path` option and `_ensure_procedure_index()`, lazily, the
   same pattern as `nasr_db_path`/`navaid_db_path` -> `_ensure_waypoint_index`
   — PA7's PROC page is the first real consumer.
+- **`plates.py`** (PA12, procedures epic) — `PlateIndex`: the FAA d-TPP
+  charts in one or more `plates` packs (makerplane-data PA11,
+  `docs/plates.md`), by airport, and `plate_for_approach()`, which finds the
+  one chart for a CIFP approach by comparing names (type letter, runway,
+  suffix, circling letter; a plain chart beats a `CAT`/`COPTER`/`HI-`/
+  `CONVERGING` one). Nothing in the d-TPP catalog links a chart to its CIFP
+  procedure. Over cycle 2611 it finds exactly one chart for 8,293 of the
+  8,297 CIFP approaches at airports with charts; for the other four it
+  answers None and the page shows the list. It never reads `plate_georef`.
 - **`proc_load.py`** (PA7, procedures epic) — turns a `ProcedureIndex`
   selection into route segments and places them in a plan. `assemble()`
   returns one `departure`/`arrival` segment, or an `approach` segment and its
@@ -324,6 +333,35 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   with the guide's message while the ident is in the active plan
   (`WaypointInUseError`).
 
+### Charts page (PA12)
+
+A d-TPP chart drawn from the `plates` pack (billmallard/pyEfis#241). The
+FPL page grows a **CHARTS** soft key when `plates_path` is set; one tap
+opens the loaded approach's plate. With no approach loaded, or when no
+single chart is that approach's, it opens the chart list of the airport
+the approach serves (or the destination), and says `NO SINGLE PLATE FOR
+<name>` in the second case. The list puts the airport diagram first
+(CAP-207), then the approaches, departures, arrivals and the rest; AIRPORT
+picks another airport through the Entry page (Nearest/Apt, as on the PROC
+page).
+
+- **The page** is drawn by Qt PDF (`PyQt6.QtPdf`, in the PyQt6 wheel;
+  Debian packages it as `python3-pyqt6.qtpdf`) on white paper -- a d-TPP
+  PDF paints no background. It fits the pane with its aspect kept. ZOOM -
+  and ZOOM + walk 1x, 1.5x, 2x and 3x; a drag on a zoomed chart pans it,
+  stopping at the page's edges; FIT goes back to 1x. Without Qt PDF the
+  pane says what to install; a PDF that cannot be read says so. Neither
+  raises.
+- **The line under the title** shows the airport and amendment, and on the
+  right the chart's cycle -- amber `AIRAC 2601 EXPIRED` once it has
+  expired. An expired chart is still drawn (guardrail 3).
+- **No ownship**, on any chart (guardrail 5). PA11 publishes a fitted
+  transform and a measured residual per plate, but no plate has cleared the
+  method's bar yet, and no error budget has been set. A test pins that a
+  georef row, even `ok` with a 0.01 nm residual, changes nothing on the
+  glass.
+- **Back** (the X, or the encoder's long push) goes chart, list, FPL page.
+
 ### The generic modal (Catalog Copy, user waypoints)
 
 A small reusable keypad overlay (`_modal_open`/`_modal_key`/`_modal_enter`/
@@ -424,7 +462,7 @@ screen, the `checklist` broadcast precedent).
 
 | Verb | Payload |
 |------|---------|
-| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc` open those pages |
+| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc`/`charts` open those pages |
 | `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
 
 ### From the moving map (FP10)
@@ -467,6 +505,7 @@ the plan two ways:
 | `nasr_db_path` | `""` | `airports.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
 | `navaid_db_path` | `""` | `navaids.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
 | `procedures_db_path` | `""` | the `procedures` pack: airways (PA2) and the PROC page (PA5/PA7) |
+| `plates_path` | `""` | a `plates` pack, or a directory searched for them (regional packs), for the Charts page (PA12); blank hides the CHARTS key |
 | `hold_speed_kt` | `90` | speed a time-coded hold's leg is converted to a distance at (one minute at 90 kt = 1.5 nm), since the bus carries no leg time |
 | `columns` | `"DTK,DIS,CUM"` | comma-separated FPL page columns; choices DTK, DIS, CUM, ETE, ETA |
 | `keypad` | `true` | show the on-screen keypad on the Entry/DTO Waypoint pages and the generic modal |

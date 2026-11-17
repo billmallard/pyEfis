@@ -98,6 +98,7 @@ FIX keys it reads by default: `FPLCOUNT`, `FPLNAME`, `FPLSEQ`, `FPLSTATE`, `FPLA
 | `nasr_db_path` | Airport db path | empty |  | NASR airports.sqlite for FastFind/nearest airport lookup (same path as the moving map's nasr_db_path) |
 | `navaid_db_path` | Navaid db path | empty |  | navaids.sqlite for FastFind/nearest navaid and fix lookup (same path as the moving map's navaid_db_path) |
 | `procedures_db_path` | Procedures db path | empty |  | the procedures pack for SID/STAR/approach lookup (on the Pi /data/makerplane-data/procedures/current/procedures.sqlite) |
+| `plates_path` | Plates pack path | empty |  | FAA d-TPP plates pack, or a directory holding one or more regional plates packs, for the Charts page (PA12). Blank hides the FPL page's CHARTS key |
 | `hold_speed_kt` | Hold speed (kt) | `90` | 40 to 250, step 5 | speed a hold coded in minutes is turned into a distance at when the PROC page loads it (one minute at 90 kt = 1.5 nm); the bus carries no leg time |
 | `columns` | Columns | `DTK,DIS,CUM` |  | comma-separated FPL page data columns, in order; choices DTK, DIS, CUM, ETE, ETA |
 | `keypad` | On-screen keypad | on | on / off | show the gloved-finger on-screen keypad on the Entry/Direct To Waypoint pages and any text/lat-lon prompt |
