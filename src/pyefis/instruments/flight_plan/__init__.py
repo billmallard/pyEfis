@@ -119,6 +119,9 @@ ENC_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
 # long-press convention to inherit, so it is set here and documented in
 # docs/flight_plan_widget.md.
 ENC_LONG_PRESS_MS = 600
+# Activate Leg asks first when the leg's from-fix is farther than this from
+# the aircraft (FPACT1, AER-5801).
+ACT_CONFIRM_NM = 500.0
 # How long a FPL-page toast (STORED, NO AIRWAYS AT x, ROUTE FULL, an error)
 # stays up before it clears itself (pyEfis #323: with no expiry, STORED sat
 # over the LEG/DIRECT/SUSP badge for the rest of a bench session).
@@ -177,13 +180,17 @@ _SEG_MENU_ITEMS = (
     ("Change Exit", "_seg_menu_change_exit"),
     ("Change Entry", "_seg_menu_change_entry"),
     ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Load Airway", "_seg_menu_load_airway"),
     ("Activate", "_seg_menu_activate"),
     ("Remove Airway", "_seg_menu_remove"),
 )
 # PA7: a loaded procedure's segment row. The approach and its missed
 # approach are one block: each opens this menu, and Remove takes both.
+# Load Airway is offered on a departure only (G87, pyEfis #474): the block's
+# last fix has no plain row of its own to load one from.
 _PROC_SEG_MENU_ITEMS = (
     ("Show Fixes", "_seg_menu_show_fixes"),
+    ("Load Airway", "_seg_menu_load_airway"),
     ("Activate", "_seg_menu_activate"),
     ("Select", "_seg_menu_select_procedure"),
     ("Remove", "_seg_menu_remove_procedure"),
@@ -276,6 +283,9 @@ class FlightPlan(QWidget):
         self._wpt_info = None
         self._menu_open = False
         self._confirm = None
+        # Activate Leg from a far from-fix (FPACT1, AER-5801): the pending
+        # {"slot", "from_id", "dist_nm"} the pilot is asked about before ACT.
+        self._act_confirm = None
 
         # Airway insertion (PA6, AER-1605): row menu -> pick an airway through
         # the selected fix -> pick an exit fix -> AirwayGraph.expand() inserts
@@ -825,6 +835,16 @@ class FlightPlan(QWidget):
         except KeyError:
             return 0.0, 0.0
 
+    def _valid_aircraft_position(self):
+        """``(lat, lon)``, or None when LAT/LONG is missing, failed or old."""
+        try:
+            items = fix.db.get_item("LAT"), fix.db.get_item("LONG")
+        except KeyError:
+            return None
+        if any(it.fail or it.old for it in items):
+            return None
+        return items[0].value, items[1].value
+
     # -- Entry page: reference point + FastFind ----------------------------
     def _entry_reference_point(self):
         mode = self._entry_mode or {}
@@ -1031,8 +1051,36 @@ class FlightPlan(QWidget):
     def _row_menu_activate_leg(self):
         i = self._row_menu_index
         self._close_row_menu()
-        if self._bridge.available:
-            self._bridge.command("ACT", i + 1)
+        self._activate_leg(i + 1)
+
+    def _activate_leg(self, slot):
+        """Send ``ACT slot``, but first ask when the leg's from-fix is more
+        than ACT_CONFIRM_NM from the aircraft (FPACT1): an approach later in
+        the plan can start from a fix far behind, and the engine flies the
+        leg it is given. No position, or slot 1 (the engine starts from the
+        aircraft): no question."""
+        if not self._bridge.available:
+            return
+        pos = self._valid_aircraft_position()
+        if slot >= 2 and pos is not None and slot - 2 < len(self._plan.waypoints):
+            frm = self._plan.waypoints[slot - 2]
+            dist = fp_geo.distance_nm(pos[0], pos[1], frm.lat, frm.lon)
+            if dist > ACT_CONFIRM_NM:
+                self._act_confirm = {"slot": slot, "from_id": frm.id, "dist_nm": dist}
+                self.update()
+                return
+        self._bridge.command("ACT", slot)
+
+    def _act_confirm_yes(self):
+        c = self._act_confirm
+        self._act_confirm = None
+        if c is not None and self._bridge.available:
+            self._bridge.command("ACT", c["slot"])
+        self.update()
+
+    def _act_confirm_no(self):
+        self._act_confirm = None
+        self.update()
 
     def _row_menu_direct_to(self):
         i = self._row_menu_index
@@ -1336,8 +1384,18 @@ class FlightPlan(QWidget):
         # sequencer then carries on into the airway.
         first, _ = self._plan.segment_span(self._seg_menu)
         self._close_seg_menu()
-        if self._bridge.available:
-            self._bridge.command("ACT", first + 1)
+        self._activate_leg(first + 1)
+
+    def _seg_menu_load_airway(self):
+        # From the segment's last fix, which ends it: insert_airway starts
+        # the new airway at the fix after it, so the fix keeps one slot.
+        _, last = self._plan.segment_span(self._seg_menu)
+        self._close_seg_menu()
+        self._open_airway_picker(last, self._plan.waypoints[last])
+
+    def _seg_load_airway_offered(self, k):
+        seg = self._plan.segments[k]
+        return seg.kind in ("airway", "departure") and bool(seg.legs[-1].id)
 
     def _seg_menu_select_procedure(self):
         kind = _SEGMENT_PAGE_KIND[self._plan.segments[self._seg_menu].kind]
@@ -1383,8 +1441,7 @@ class FlightPlan(QWidget):
         i = self._seg_fix_menu
         self._seg_fix_menu = None
         self._seg_fixes = None
-        if self._bridge.available:
-            self._bridge.command("ACT", i + 1)
+        self._activate_leg(i + 1)
         self.update()
 
     def _seg_fix_wpt_info(self):
@@ -2354,7 +2411,7 @@ class FlightPlan(QWidget):
                 self._catalog_confirm is not None, self._dto_tab,
                 self._dto_target is not None, self._seg_menu, self._seg_fixes,
                 self._seg_fix_menu, None if self._proc is None else self._proc["kind"],
-                self._proc_picker)
+                self._proc_picker, self._act_confirm is not None)
 
     def _enc_prepare(self):
         self._enc_refresh()
@@ -2459,6 +2516,8 @@ class FlightPlan(QWidget):
             self._modal_do_cancel()
         elif self._entry_dupe_choices:
             self._cancel_dupe_chooser()
+        elif self._act_confirm is not None:
+            self._act_confirm_no()
         elif self._row_menu_index is not None:
             self._close_row_menu()
         elif self._seg_menu is not None:
@@ -2895,7 +2954,8 @@ class FlightPlan(QWidget):
         overlay_open = (self._row_menu_index is not None or self._seg_menu is not None
                         or self._menu_open or self._seg_fixes is not None
                         or self._wpt_info is not None or self._seg_fix_menu is not None
-                        or self._airway_picker is not None)
+                        or self._airway_picker is not None
+                        or self._act_confirm is not None)
         if overlay_open:
             # The list under an overlay neither scrolls nor takes a press.
             self._list_view = None
@@ -2927,9 +2987,20 @@ class FlightPlan(QWidget):
             self._paint_seg_fix_menu(p, w, h)
         elif self._airway_picker is not None:
             self._paint_airway_picker(p, w, h)
+        elif self._act_confirm is not None:
+            self._paint_act_confirm(p, w, h)
 
         if self._message:
             self._paint_toast(p, w, h, self._message)
+
+    def _paint_act_confirm(self, p, w, h):
+        # A tap anywhere off the box is No: the soft keys under the dimmed
+        # page must not leave a stale question (and its slot) pending.
+        self._tap(0, 0, w, h, self._act_confirm_no)
+        self._paint_overlay_backdrop(p, w, h)
+        c = self._act_confirm
+        text = f"FROM {c['from_id']} {c['dist_nm']:.0f} NM\nACTIVATE LEG?"
+        self._paint_confirm(p, w, h, text, self._act_confirm_yes, self._act_confirm_no)
 
     def _paint_map_susp_banner(self, p, w, bottom, banner_h, tappable):
         """Alert above the soft keys while suspended at the MAP (G49): the
@@ -3508,7 +3579,11 @@ class FlightPlan(QWidget):
         page_kind = _SEGMENT_PAGE_KIND.get(seg_kind)
         items = []
         for label, attr in (_SEG_MENU_ITEMS if page_kind is None else _PROC_SEG_MENU_ITEMS):
-            if attr == "_seg_menu_activate":
+            if attr == "_seg_menu_load_airway":
+                if not self._seg_load_airway_offered(k):
+                    continue
+                label = f"{label} at {self._plan.segments[k].exit}"
+            elif attr == "_seg_menu_activate":
                 label = f"Activate to {fp_proc.leg_label(self._plan.waypoints[first])}"
             elif page_kind is not None and attr in ("_seg_menu_select_procedure",
                                                     "_seg_menu_remove_procedure"):
@@ -3664,7 +3739,7 @@ class FlightPlan(QWidget):
             p.drawText(QRectF(0, h * 0.03, w, h * 0.08),
                        Qt.AlignmentFlag.AlignCenter, picker["message"])
 
-    def _paint_confirm(self, p, w, h, text, on_yes):
+    def _paint_confirm(self, p, w, h, text, on_yes, on_no=None):
         box_w, box_h = w * 0.6, h * 0.3
         box_x, box_y = (w - box_w) / 2, (h - box_h) / 2
         p.setBrush(QBrush(QColor("#202020")))
@@ -3682,7 +3757,7 @@ class FlightPlan(QWidget):
         p.setPen(QPen(QColor("#80ff80")))
         p.drawText(QRectF(*no_rect), Qt.AlignmentFlag.AlignCenter, "No")
         self._tap(*yes_rect, on_yes)
-        self._tap(*no_rect, self._close_menu, "no")
+        self._tap(*no_rect, on_no or self._close_menu, "no")
 
     def _paint_menu(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
@@ -4198,7 +4273,7 @@ class FlightPlan(QWidget):
             "delete_all": "Delete all stored routes?",
             "new": "Active plan has unsaved edits.\nStart a new plan?",
         }[kind]
-        self._paint_confirm(p, w, h, text, self._catalog_confirm_yes)
+        self._paint_confirm(p, w, h, text, self._catalog_confirm_yes, self._catalog_confirm_no)
 
     # -- generic modal overlay ------------------------------------------------
     def _paint_modal(self, p, w, h):

@@ -31,9 +31,9 @@ fix-gateway, for scenes that flight did not fly. The
 | **TO / FROM triangle** | On the course pointer: pointing towards its head for TO, towards its tail for FROM. Hidden when the source gives neither, for example on a localizer. |
 | **Heading bug** (cyan) | On the rim, at the selected heading. |
 | **Track diamond** (magenta) | On the rim, at your GPS ground track. Shown at or above `track_min_speed` (20 kt on the bench panel, 5 kt by default). |
-| **Bearing pointers** (cyan) | Pointer 1 is a single bar, pointer 2 a double bar. Each points at a station or waypoint. They are cyan whatever the source: magenta and green belong to the course pointer. Each is off until you turn it on, and never on the course pointer's own source. |
-| **BRG tab** (right of the HDG / MAG / CRS panel) | `BRG OFF`, or the pointer and its source: `BRG1 VOR1`. One row per pointer the panel offers. Tap a row to step that pointer: off, then each source that is not the course pointer's, then off. Filled cyan while its needle is on. |
-| **Bearing labels** (bottom corners) | `1 GPS`, `2 VOR1` and so on, in cyan, while a pointer is on. Without the top panel they also read `1 OFF`; tap one to step that pointer as on the BRG tab. |
+| **Bearing pointers** (cyan) | Pointer 1 is a single bar and points at VOR1 (NAV 1); pointer 2 is a double bar and points at VOR2 (NAV 2). GPS is never a bearing pointer: it shows as the course pointer when the source tab selects it. Both are cyan: magenta and green belong to the course pointer. Each is off until you turn it on, and never on the course pointer's own source. |
+| **BRG tab** (right of the HDG / MAG / CRS panel) | The left source tab's mirror image, same size. It reads the pointers that are on: `NONE`, `BRG 1`, `BRG 2` or `BOTH`. Tap it to step NONE, BRG 1, BRG 2, BOTH, NONE. It skips a pointer on the course pointer's source: with VLOC1 selected the tab offers only NONE and BRG 2; with VLOC2, NONE and BRG 1. If you switch the source onto a pointer's VOR, that pointer turns off (BOTH becomes the other one). Filled cyan while a needle is on. |
+| **Bearing labels** (bottom corners) | `1 VOR1` and `2 VOR2`, in cyan, while a pointer is on. Without the top panel an off pointer reads `1 OFF`; tapping either label steps the same cycle as the BRG tab. |
 | **Glideslope scale** (right of centre) | Shown only when the source has vertical guidance. The diamond is your glidepath. |
 
 ## Nav sources
@@ -98,9 +98,9 @@ of the active leg, and it moves to the next leg as the engine sequences. What
 you see on the HSI:
 
 **On a leg.** The course pointer is the leg's course and the triangle shows TO
-the waypoint. A bearing pointer cannot be set to GPS while GPS is the source,
-because it would only repeat the course pointer. Set one to a VOR to keep a
-station in view alongside the plan.
+the waypoint. Bearing pointers never point at GPS, which would only repeat the
+course pointer. Turn on BRG 1 or BRG 2 to keep a VOR in view alongside the
+plan.
 
 **Fly-by turns.** The engine starts the turn early, so you roll out on the next
 leg instead of overshooting it. The turn starts about `R tan(Δ/2)` before the
@@ -114,13 +114,13 @@ point:
    waypoint.
 3. You roll out on the next leg with the bar centred.
 
-In these four pictures bearing pointer 1 is on, set to VOR1 tuned to GVO, so
+In these four pictures bearing pointer 1 is on, with VOR1 tuned to GVO, so
 it points west at the station throughout and stays clear of the course
 pointer.
 
 | Before the turn | In the turn | Sequenced | On the next leg |
 |---|---|---|---|
-| ![About 2 nm before HENER, course 073, centred; the BRG tab reads BRG1 VOR1 and the cyan bearing pointer points at GVO](../images/hsi/gps_flyby_1_before_turn.png) | ![In the turn: heading 100, the course already 134](../images/hsi/gps_flyby_2_in_turn.png) | ![Sequenced at the bisector: heading 109, course 134 to VTU](../images/hsi/gps_flyby_3_sequenced.png) | ![Rolled out on 134 to VTU](../images/hsi/gps_flyby_4_on_next_leg.png) |
+| ![About 2 nm before HENER, course 073, centred; the BRG tab reads BRG1 VOR1 (captured before the one-button tab of HSIBRG4, which reads BRG 1) and the cyan bearing pointer points at GVO](../images/hsi/gps_flyby_1_before_turn.png) | ![In the turn: heading 100, the course already 134](../images/hsi/gps_flyby_2_in_turn.png) | ![Sequenced at the bisector: heading 109, course 134 to VTU](../images/hsi/gps_flyby_3_sequenced.png) | ![Rolled out on 134 to VTU](../images/hsi/gps_flyby_4_on_next_leg.png) |
 
 A waypoint flagged fly-over, or a course change of more than 120 degrees, is not
 anticipated. There, the engine sequences abeam the waypoint and the pointer
@@ -228,8 +228,8 @@ last column where it differs.
 | Track diamond (`track_indicator_enabled`) | on | | Draw the diamond at `TRACKM`. |
 | Track diamond color (`track_color`) | `#ff00ff` | | |
 | Track min speed (`track_min_speed`) | 5 kt | 20 kt | Hide the diamond below this groundspeed. |
-| Bearing pointer 1 (`bearing1_enabled`) | off | on | Offer pointer 1 (`BRG1`): its BRG tab row and label. It starts off. |
-| Bearing pointer 2 (`bearing2_enabled`) | off | on | Offer pointer 2 (`BRG2`): its BRG tab row and label. It starts off. |
+| Bearing pointer 1 (`bearing1_enabled`) | off | on | Offer pointer 1 (`BRG1`, VOR1) on the BRG tab, and its label. It starts off. |
+| Bearing pointer 2 (`bearing2_enabled`) | off | on | Offer pointer 2 (`BRG2`, VOR2) on the BRG tab, and its label. It starts off. |
 | Bearing pointer color (`bearing_color`) | `#00ffff` | | Both pointers, their labels and the BRG tab. |
 | Source label (`source_label_enabled`) | on | | Show the source tab or label. |
 | Source auto-color (`source_auto_color`) | on | | Colour by source. Off: always `course_color`. |
@@ -275,7 +275,9 @@ is too small for its `font_percent` can crowd the source tab: see
 The HSI needs fix-gateway's `compute` plugin to turn the per-source keys into
 the ones it draws. The shipped `connections/compute.yaml` already does this:
 `GPSSRC` picks the GPS source, `NAVSRC` picks the source the HSI shows, and
-`BRG1SRC` / `BRG2SRC` pick what each bearing pointer points at. A sensor or
+`BRG1SRC` / `BRG2SRC` pick what each bearing pointer points at (the HSI's BRG
+tab writes VOR1 to `BRG1SRC` and VOR2 to `BRG2SRC`; any other value turns that
+pointer off on the HSI). A sensor or
 radio plugin only has to write the per-source keys:
 
 | To show | Write |
