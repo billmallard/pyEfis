@@ -7,6 +7,10 @@ updater installs them and records their state. pyEFIS shows that state in three
 places: the **Data Status** screen, the **DATA** flag, and the **About**
 screen. This page also covers the software notice shown at start-up.
 
+Data Status and About are always one swipe away: the
+[system menu](The-Panel-at-a-Glance#the-system-menu) opens either from any
+screen, and brings you back to that screen afterwards.
+
 How packs are built, signed and verified is in the makerplane-data wiki:
 [Navigation Data Currency](https://github.com/billmallard/makerplane-data/wiki/Navigation-Data-Currency).
 Installing `pyefis-data` and its daily timer is on
@@ -54,7 +58,7 @@ change was installed. Check it, then acknowledge again.*
 
 | Button | What it does |
 |---|---|
-| **Continue** | Go to the panel's flight screen, the one marked as the default. |
+| **Continue** | Go to the panel's flight screen, the one marked as the default. When the system menu opened Data Status, go back to the screen it was opened from. |
 | **About** | Open the About screen. |
 | **Update** | Check for and install newer packs. |
 
@@ -133,8 +137,10 @@ system category.
   on screen, or auto-accepted on a bench unit, which is marked as not a
   person's accept), and the versions it covered.
 
-**Back** returns to Data Status. pyEFIS adds the About screen to every
-configuration, and the Data Status screen's **About** button opens it.
+**Back** returns to Data Status, or, when the system menu opened About, to the
+screen you opened it from. pyEFIS adds the About screen to every
+configuration, and the Data Status screen's **About** button and the system
+menu open it.
 
 ## The software notice at start-up
 
