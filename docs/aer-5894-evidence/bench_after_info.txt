@@ -1,0 +1,14 @@
+fixgw=320999 pyefis=380647 pyEfis_head=11d6f523 branch=aer-5894/cert1e-hsi-heading-quality
+15:51:17.326 @qHEAD;Current Aircraft Magnetic Heading;float;0.0;359.9;deg;2000; @rHEAD;90.0;01000 @qIAS;Indicated Airspeed;float;0.0;1000.0;knots;2000;Min,Max,V1,V2,Vne,Vfe,Vmc,Va,Vno,Vs,Vs0,Vx,Vy,Vgnd @rIAS;110.0;01000
+15:51:23.356 @rHEAD;90.0;00000 @rIAS;110.0;00000
+15:51:24 grabbed 1_live 50a4936057fa
+15:51:24 feed stopped (fixgw running)
+15:51:29.744 @rHEAD;90.0;01000 @rIAS;110.0;01000
+15:51:31 grabbed 2_old 550a362e05e8
+15:51:37.147 @rHEAD;90.0;00000 @rIAS;110.0;00000
+15:51:38 grabbed 3_live_again 612825c32e41
+15:51:38 SIGSTOP fixgw
+15:51:45 grabbed 4_fail 2c2d3157a3a1
+15:51:45 SIGCONT fixgw
+15:51:51.892 @rHEAD;90.0;00000 @rIAS;110.0;00000
+15:51:53 grabbed 5_resumed 9a7b62f1c052
