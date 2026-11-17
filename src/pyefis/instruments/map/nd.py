@@ -383,10 +383,12 @@ def bottom_left(enabled_layers):
 def vdev(read):
     """The vertical deviation scale's state, or None when it is not drawn:
     no ``GSI`` key, or ``GSV`` published and < 0.5 (no glideslope/glidepath,
-    e.g. a VOR). Mirrors the HSI's rules exactly: an absent ``GSV`` leaves
-    the scale up on ``GSI``'s own quality (an older gateway); the pointer is
-    hidden on old/bad/fail; the red GS flag shows only when ``GSV`` says a
-    glidepath is present and ``GSI`` is bad or failed.
+    e.g. a VOR). Follows the HSI's ``_gs_expected``/``_gs_flag_shown``: an
+    absent ``GSV`` leaves the scale up on ``GSI``'s own quality (an older
+    gateway); whenever the scale is up and ``GSI`` is old, bad or failed,
+    the pointer is hidden and the red GS flag shows. The pointer never goes
+    without the flag (Bill, 2026-11-08: no failure is shown only by taking
+    a symbol away; pyEfis #489).
 
     ``pointer`` is ``GSI`` clamped to the scale's +/-1 (pegged), or None."""
     gsi = read("GSI")
@@ -402,13 +404,13 @@ def vdev(read):
         if gsv_v < 0.5:
             return None
     value, old, bad, fail = gsi
+    flag = bool(old or bad or fail)
     pointer = None
-    if not (old or bad or fail):
+    if not flag:
         try:
             pointer = max(-1.0, min(1.0, float(value)))
         except (TypeError, ValueError):
             pointer = None
-    flag = gsv_v is not None and bool(bad or fail)
     return {"pointer": pointer, "flag": flag}
 
 
