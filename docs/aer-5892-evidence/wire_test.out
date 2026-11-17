@@ -1,0 +1,15 @@
+pyavtools: /paperclip/.local/lib/python3.13/site-packages/pyavtools/fix/__init__.py client: /paperclip/.local/lib/python3.13/site-packages/pyavtools/fix/client.py
+system_menu: /paperclip/instances/default/workspaces/0508322b-8f58-4fd4-8ed3-8cf49de65b52/AER-5892/pyEfis/src/pyefis/system_menu.py
+key item: True
+  on_key thread: MainThread main? True
+start: visible = False
+  on_key thread: MainThread main? True
+after write true : visible = True
+  on_key thread: MainThread main? True
+after write false: visible = True
+closed by Close  : visible = False
+  on_key thread: MainThread main? True
+second press     : visible = True
+  on_key thread: MainThread main? True
+--- stopping fix
+--- stopped
