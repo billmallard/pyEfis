@@ -147,6 +147,7 @@ Each key's range and limits are its aux values (`Min`, `Max`, `lowWarn`,
 | `ENC3`, `ENC4`, `BTN3` | The knob's turn, outer ring and push, as the stock `hmi/encoder_input.yaml` names them | the knob hardware |
 | `ENC1` | The menu's encoder | the knob hardware |
 | `HIDEBUTTON` | Hides the stock screens' buttons | pyEFIS (button timeout), the **Show Menu** button |
+| `SYSMENU` | Opens the [system menu](The-Panel-at-a-Glance#the-system-menu). A momentary command, like a button: write `true` on the press and `false` on the release. pyEFIS only reads it | a control head or knob binding |
 | `DIM` | Display brightness step | the dimmer buttons |
 | `TRIMP`, `TRIMR`, `TRIMY` | Trim position | the trim buttons |
 | `MAPRANGE`, `MAPORIENT`, `MAPTERRAIN`, `MAPNDMODE` | Map range, orientation, terrain layer and ND mode, when a panel binds them | map buttons |
