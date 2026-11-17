@@ -38,10 +38,10 @@ this bench, made visible by the first full recomposition, not the menu.
 
 ## The bus key over the real wire
 
-`wire_test.py` runs a real pyavtools client (not the test mock) in a pyEfis
+`wire_check.py` runs a real pyavtools client (not the test mock) in a pyEfis
 process against a real fixgw netfix server from the fix-gateway branch
 `aer-5892/sysmenu-key` on 127.0.0.1:3499, and writes `SYSMENU` from a second
-netfix connection the way a control head would. `wire_test.out` is its output:
+netfix connection the way a control head would. `wire_check.out` is its output:
 true opens the menu, false leaves it as it is, and the next true opens it
 again. The slot runs on the GUI thread. The bench's live gateway was not used:
 it does not define `SYSMENU` until the fix-gateway change is deployed, and it
