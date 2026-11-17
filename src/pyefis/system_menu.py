@@ -25,10 +25,15 @@ Two ways in, one menu:
   recogniser; it is pure geometry, so its accept and reject cases are tested
   without Qt. The filter only watches -- it never consumes an event -- so a
   tap on a control in the corner still reaches that control.
-* **The bus key.** A write of true to ``SYSMENU`` opens the same menu. It is
-  a momentary command, like a button key: the writer (MENU1b's Tessera icon,
-  a later encoder binding) writes true on the press and false on the release.
-  pyEfis only reads it.
+* **The bus key.** ``SYSMENU`` going from false to true opens the same menu.
+  It is a momentary command, like a button key: the writer (MENU1b's Tessera
+  icon, a later encoder binding) writes true on the press and false on the
+  release. pyEfis only reads it. Only the rising edge opens: pyavtools emits
+  a write signal on every write and re-reads every key on reconnect, so a
+  key held true -- a stuck button, a periodic republish -- must not reopen
+  the menu after the pilot closes it. And a press while the menu is open does
+  nothing, so nothing on the bus can keep the overlay up (Safety and
+  Compliance's conditions on FHA row MNU-1).
 
 The menu is an overlay over whichever screen is up: Data Status, About,
 Screens, Close. It closes on Close, on a tap outside its panel, or after
@@ -286,6 +291,7 @@ class SystemMenu(QWidget):
         self._cols = 1
         self.buttons = {}
         self._overrides = []    # [(widget, attr, configured value)]
+        self._key_last = False  # SYSMENU's last value seen (rising edge)
         self.idle = QTimer(self)
         self.idle.setSingleShot(True)
         self.idle.setInterval(int(idle_s * 1000))
@@ -530,7 +536,12 @@ class SystemMenu(QWidget):
 
     # --- the bus key ---
     def on_key(self, value):
-        if value:
+        """A write of ``SYSMENU``. Opens on false -> true only, and never
+        while the menu is open (which would extend it)."""
+        value = bool(value)
+        rising = value and not self._key_last
+        self._key_last = value
+        if rising and not self.isVisible():
             log.info("system menu: opened by %s", MENU_KEY)
             self.open_menu()
 
@@ -572,6 +583,8 @@ def initialize(window, fix, screens):
         item = None
     if item is not None:
         try:
+            # A key already true at start is not a press.
+            menu._key_last = bool(item.value)
             item.valueWrite[bool].connect(menu.on_key)
             menu.key_item = item
         except Exception:

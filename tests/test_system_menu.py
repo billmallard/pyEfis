@@ -677,6 +677,82 @@ def test_a_key_already_true_at_start_does_not_open(fix, qtbot):
         QApplication.instance().removeEventFilter(menu.swipe)
 
 
+def test_a_held_key_does_not_reopen_after_close(fix, qtbot):
+    # Safety and Compliance's condition for MNU-1 (Minor): a writer that keeps
+    # writing true -- a stuck button, a periodic republish -- must not reopen
+    # the menu after the pilot closes it. pyavtools emits valueWrite on every
+    # write, changed or not.
+    item = _menu_key(fix)
+    win, screens = _bus_window(qtbot)
+    menu = sm.initialize(win, fix, screens)
+    try:
+        item.value = True
+        assert menu.isVisible()
+        menu.close_menu()
+        for _ in range(3):
+            item.value = True               # re-asserted, never released
+            assert not menu.isVisible()
+        item.value = False
+        item.value = True                   # a fresh press
+        assert menu.isVisible()
+    finally:
+        QApplication.instance().removeEventFilter(menu.swipe)
+
+
+def test_a_reconnect_redelivering_true_does_not_reopen(fix, qtbot):
+    # On reconnect the client re-reads every key and sets its value again
+    # (valueWrite fires). A key held true through a gateway blip is not a press.
+    item = _menu_key(fix)
+    win, screens = _bus_window(qtbot)
+    menu = sm.initialize(win, fix, screens)
+    try:
+        item.value = True
+        menu.close_menu()
+        item.fail = True                    # the client's mark_all_fail
+        item.value = True                   # the re-read after reconnect
+        item.fail = False
+        assert not menu.isVisible()
+    finally:
+        QApplication.instance().removeEventFilter(menu.swipe)
+
+
+def test_the_bus_cannot_extend_or_reset_an_open_menu(fix, qtbot):
+    # The overlay always ends by itself: presses on the bus while it is open
+    # neither restart the idle timer nor send the card back to its main page.
+    item = _menu_key(fix)
+    win, screens = _bus_window(qtbot)
+    menu = sm.initialize(win, fix, screens)
+    try:
+        menu.idle.setInterval(2000)
+        item.value = True
+        _click(menu.buttons["Screens"])
+        qtbot.wait(300)
+        before = menu.idle.remainingTime()
+        for _ in range(3):
+            item.value = False
+            item.value = True
+        after = menu.idle.remainingTime()
+        assert 0 <= after <= before
+        assert "Back" in menu.buttons       # still the Screens page
+    finally:
+        QApplication.instance().removeEventFilter(menu.swipe)
+
+
+def test_a_key_true_at_start_opens_only_after_it_goes_false(fix, qtbot):
+    item = _menu_key(fix)
+    item.value = True
+    win, screens = _bus_window(qtbot)
+    menu = sm.initialize(win, fix, screens)
+    try:
+        item.value = True
+        assert not menu.isVisible()
+        item.value = False
+        item.value = True
+        assert menu.isVisible()
+    finally:
+        QApplication.instance().removeEventFilter(menu.swipe)
+
+
 def test_a_missing_key_leaves_the_swipe_working(qtbot, caplog):
     win, screens = _bus_window(qtbot)
     with caplog.at_level(logging.WARNING, logger="pyefis.system_menu"):
