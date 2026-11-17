@@ -1,0 +1,8 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "511b4410",
+ "run": "local: docs/aer-5892-evidence/drive.sh on the Beelink, composed by compose.py (README.md)",
+ "device": "Beelink (xcb), live bench panel, 1920x1080, x11grab",
+ "sha256": "bc7c41f90378f91fc07cbad98cacb987f60e206a7d38adcaf01e81dd65b019b9",
+ "created_utc": "2026-11-17T16:06:03Z"
+}

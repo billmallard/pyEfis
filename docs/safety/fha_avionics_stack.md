@@ -105,6 +105,8 @@ assumptions are good engineering practice, not regulatory compliance.
 | MAP-1 | Moving map | L/M | Min / TBD | As TER-1, TER-2 | none with an ID | No requirement IDs (O4) |
 | DAT-1 | Data currency annunciation | L | Min | `DataAnnunciation` not shown | none with an ID | (O4) |
 | DAT-2 | Data currency annunciation | M | Maj (expired data shown as current) | Updater accepts an older signed manifest (fixed on `dev`, H3) | none with an ID | (O4) |
+| MNU-1 | System menu overlay (any function under it) | L | Min | An unintended corner swipe or a `SYSMENU` write opens the overlay: the card covers the top-right of the panel and the scrim dims every instrument. It is obvious, and it ends on one tap outside the card (the tap is consumed, not passed through), on Close, or by itself after the idle timeout | none with an ID; A1 | Minor holds only while the overlay is bounded: it opens on a `SYSMENU` rising edge only, and nothing on the bus extends it (O4) |
+| MNU-2 | System menu overlay | M | n/a | None: the overlay shows no value of its own, and every value under it keeps its own flags | none | |
 
 ### 3.3 fix-gateway: the data path
 
