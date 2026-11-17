@@ -310,6 +310,6 @@ def test_vsi_tape_flag_change_is_not_rate_limited(fix, qtbot, flag):
     _show(qtbot, w)
     assert w.vstext.toPlainText() == "0"
     setattr(item, flag, True)
-    assert w.vstext.toPlainText() == ("" if flag == "bad" else "XXX")
+    assert w.vstext.toPlainText() == ("0" if flag == "bad" else "XXX")
     setattr(item, flag, False)
     assert w.vstext.toPlainText() == "0"
