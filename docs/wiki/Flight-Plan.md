@@ -240,6 +240,7 @@ Touching it opens the flight plan page.
 | Airport db path (`nasr_db_path`) | | the installed pack | For idents, Nearest and NRST APT. |
 | Navaid db path (`navaid_db_path`) | | the installed pack | For navaid and fix idents, and airways. |
 | Procedures db path (`procedures_db_path`) | | the installed pack | |
+| Plates pack path (`plates_path`) | | | FAA approach plates and airport diagrams for the Charts page. A pack file, or a folder of regional packs. Blank hides the CHARTS key. |
 | Columns (`columns`) | `DTK,DIS,CUM` | | Any of `DTK`, `DIS`, `CUM`, `ETE`, `ETA`. `ETA` is accepted but left blank today. |
 | On-screen keypad (`keypad`) | on | | |
 | Physical keyboard (`keyboard`) | off | on | |
@@ -277,7 +278,7 @@ From the bench panel:
 ```
 
 A screen button can open the page with the action `flightplan page` (`fpl`,
-`dto`, `proc` or `catalog`), or start a Direct-To with `flightplan direct to <ident>`.
+`dto`, `proc`, `catalog` or `charts`), or start a Direct-To with `flightplan direct to <ident>`.
 
 ### Feeding it
 
