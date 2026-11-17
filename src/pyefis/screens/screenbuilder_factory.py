@@ -863,15 +863,15 @@ _register(InstrumentSpec(
         Prop("bearing1_enabled", "boolean", default=False,
              label="Bearing pointer 1",
              help="make the single-bar RMI bearing needle (BRG1) available. "
-                  "It starts Off; the pilot steps it through each source that "
-                  "is not the CDI's (VOR1/VOR2/GPS via BRG1SRC) with the BRG "
-                  "tab or its corner label"),
+                  "It points at VOR1 only (BRG1SRC). It starts Off; the BRG "
+                  "tab steps NONE, BRG 1, BRG 2, BOTH, skipping a pointer on "
+                  "the CDI's own source"),
         Prop("bearing2_enabled", "boolean", default=False,
              label="Bearing pointer 2",
              help="make the double-bar RMI bearing needle (BRG2) available. "
-                  "It starts Off; the pilot steps it through each source that "
-                  "is not the CDI's (VOR1/VOR2/GPS via BRG2SRC) with the BRG "
-                  "tab or its corner label"),
+                  "It points at VOR2 only (BRG2SRC). It starts Off; the BRG "
+                  "tab steps NONE, BRG 1, BRG 2, BOTH, skipping a pointer on "
+                  "the CDI's own source"),
         Prop("bearing_color", "color", default="#00ffff",
              label="Bearing pointer color",
              help="colour of both bearing needles, their labels and the BRG "
@@ -1526,6 +1526,10 @@ _register(InstrumentSpec(
              help="procedures-conus.pack for SID/STAR/approach lookup (PA5; "
                   "on the Pi /data/makerplane-data/procedures/current/"
                   "procedures.sqlite)"),
+        Prop("plates_path", "string", default="", label="Plates pack path",
+             help="FAA d-TPP plates pack, or a directory holding one or more "
+                  "regional plates packs, for the Charts page (PA12). Blank "
+                  "hides the FPL page's CHARTS key"),
         Prop("hold_speed_kt", "number", default=90.0, minimum=40.0, maximum=250.0,
              step=5.0, label="Hold speed (kt)",
              help="speed a hold coded in minutes is turned into a distance at "

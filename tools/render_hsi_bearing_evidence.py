@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 #  SPDX-License-Identifier: GPL-2.0-or-later
-"""Evidence renders for cyan, opt-in bearing pointers and the BRG tab
-(HSIBRG1, AER-5548).
+"""Evidence renders for the one-button BRG tab (HSIBRG4, AER-5847; it
+replaced the two-row tab of HSIBRG1, AER-5548).
 
 Renders the HSI at the Pi 5 panel's native size (432 x 425 px, the live Pi
-options, as tools/render_hsi_touch_edit_evidence.py) in `top_panel`, with the
-CDI on GPS and on VLOC1, and the bearing pointers stepped through the BRG tab
-by real synthetic taps:
+options, as tools/render_hsi_touch_edit_evidence.py) in `top_panel` with
+both pointers available, the CDI on GPS, VLOC1 and VLOC2, and the tab
+stepped through every state it offers there by real synthetic taps (GPS:
+NONE, BRG 1, BRG 2, BOTH; VLOC1: NONE, BRG 2; VLOC2: NONE, BRG 1). A last
+column per row is the `corners` layout, where the corner labels carry the
+tap.
 
-- **one pointer available**: Off (the default), then one tap, then the last
-  source, so the tab shows `BRG OFF`, `BRG1 VOR1` and the end of the cycle.
-- **both available**: pointer 1 and pointer 2 each tapped on, two rows.
-- **corners**: no top panel, so the corner labels carry `1 OFF` and the tap.
+Every state is reached through the widget's own mouse handling, and the
+script asserts the label, the pointers on and what each tap wrote to
+BRGnSRC, so a render that does not show the behaviour fails instead of
+saving. It also asserts the BRG tab is the source tab mirrored about the
+panel's centre line, and prints both rectangles.
 
-Every state is reached through the widget's own mouse handling; the script
-asserts what each tap must have written, so a render that does not show the
-behaviour fails instead of saving.
-
-Writes ``sheet_1x.png`` and ``tab_zoom3x.png`` (the tab, nearest-neighbour 3x).
+Writes ``sheet_1x.png`` and ``tabs_zoom3x.png`` (the source tab, the panel
+and the BRG tab in one crop, nearest-neighbour 3x).
 
     QT_QPA_PLATFORM=offscreen PYTHONPATH=src python3 tools/render_hsi_bearing_evidence.py OUTDIR
 """
@@ -40,15 +41,13 @@ from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 PANEL_W, PANEL_H, COLS, ROWS = 1920, 1200, 200, 110
 HSI_W, HSI_H = round(45 * PANEL_W / COLS), round(39 * PANEL_H / ROWS)
-CDI = {"GPS": 2.0, "VLOC1": 0.0}
-# (name, layout, pointers available, taps as (pointer, count))
-STATES = (
-    ("BRG off (default)", "top_panel", (1,), ()),
-    ("BRG1 one tap", "top_panel", (1,), ((1, 1),)),
-    ("BRG1 two taps", "top_panel", (1,), ((1, 2),)),
-    ("BRG1 + BRG2 on", "top_panel", (1, 2), ((1, 1), (2, 2))),
-    ("corners, BRG off", "corners", (1, 2), ()),
-)
+CDI = {"GPS": 2.0, "VLOC1": 0.0, "VLOC2": 1.0}
+#: The states the tab offers per CDI source, in tap order (HSIBRG4).
+OFFERED = {"GPS": ("NONE", "BRG 1", "BRG 2", "BOTH"),
+           "VLOC1": ("NONE", "BRG 2"),
+           "VLOC2": ("NONE", "BRG 1")}
+ON = {"NONE": (), "BRG 1": (1,), "BRG 2": (2,), "BOTH": (1, 2)}
+COLS_PER_ROW = 5          # four tab states at most, then `corners`
 
 
 def _settle(app, n=30):
@@ -87,7 +86,9 @@ def _tap(h, rect):
                      pos=QPoint(int(x + w * 0.5), int(y + hh * 0.5)))
 
 
-def render(app, cdi, layout, pointers, taps):
+def render(app, cdi, layout, taps):
+    """The HSI with both pointers available, the CDI on `cdi`, after `taps`
+    taps on the BRG tab (top_panel) or on corner label 1 (corners)."""
     from pyefis.instruments.hsi import HSI
 
     _seed(CDI[cdi])
@@ -99,35 +100,47 @@ def render(app, cdi, layout, pointers, taps):
     for k, v in dict(bg_opacity=30, heading_bug_enabled=True, needle_width=2,
                      track_indicator_enabled=True, depth_rings=False,
                      shadow_enabled=True, center_symbol="aircraft",
-                     source_auto_color=True, readout_layout=layout).items():
+                     source_auto_color=True, readout_layout=layout,
+                     bearing1_enabled=True, bearing2_enabled=True).items():
         setattr(h, k, v)
-    for n in pointers:
-        setattr(h, "bearing%d_enabled" % n, True)
     h.setGeometry(0, 0, HSI_W, HSI_H)
     host.show()
     _settle(app, 50)
     h.viewport().repaint()
     _settle(app)
-    assert not any(h._brgOn.values()), "a pointer was on before any tap"
-    for n, count in taps:
-        for _ in range(count):
-            rects = h._brg_tab_rects if layout == "top_panel" else h._brg_label_rect
-            _tap(h, rects[n])
-            _route_bearings()
-            h.viewport().repaint()
-            _settle(app)
-        cycle = h._bearing_cycle()
-        assert CDI[cdi] not in cycle
-        want = cycle[count - 1]
-        got = fix.db.get_item("BRG%dSRC" % n).value
-        assert h._brgOn[n] and got == want, (cdi, n, count, got, want)
+    assert h._bearing_tab_label() == "NONE", "a pointer was on before any tap"
+    assert [st[0] for st in h._bearing_states()] == list(OFFERED[cdi])
+    for _ in range(taps):
+        if layout == "top_panel":
+            rect = h._brg_tab_rect
+        else:
+            rect = next(r for r in (h._brg_label_rect[1], h._brg_label_rect[2])
+                        if r is not None)
+        _tap(h, rect)
+        _route_bearings()
+        h.viewport().repaint()
+        _settle(app)
+    label = OFFERED[cdi][taps % len(OFFERED[cdi])]
+    assert h._bearing_tab_label() == label, (cdi, taps, h._bearing_tab_label())
     for n in (1, 2):
-        if h._bearing_visible(n):
+        assert h._brgOn[n] is (n in ON[label]), (cdi, label, n)
+        if n in ON[label]:
+            # Its VOR, never GPS, and never the CDI's own source.
+            assert fix.db.get_item("BRG%dSRC" % n).value == n - 1
+            assert n - 1 != CDI[cdi]
+            assert h._bearing_visible(n)
             assert h._bearing_color(n) == QColor("#00ffff")
     img = host.grab().toImage()
-    tab = dict(h._brg_tab_rects)
+    geo = None
+    if layout == "top_panel":
+        sx, sy, sw, sh = h._source_label_rect
+        bx, by, bw, bh = h._brg_tab_rect
+        centre = HSI_W / 2.0
+        assert abs(bw - sw) < 1e-6 and abs(bh - sh) < 1e-6 and abs(by - sy) < 1e-6
+        assert abs((bx + bw - centre) - (centre - sx)) < 1e-6
+        geo = (h._source_label_rect, h._brg_tab_rect)
     host.close()
-    return img, tab
+    return img, geo
 
 
 def main(outdir):
@@ -139,16 +152,17 @@ def main(outdir):
     if hmi.actions is None:
         hmi.initialize({})
 
-    imgs, tabs = {}, {}
+    imgs, geos = {}, {}
     for cdi in CDI:
-        for name, layout, pointers, taps in STATES:
-            imgs[(cdi, name)], tabs[(cdi, name)] = render(
-                app, cdi, layout, pointers, taps)
+        for taps, label in enumerate(OFFERED[cdi]):
+            imgs[(cdi, label)], geos[(cdi, label)] = render(
+                app, cdi, "top_panel", taps)
+        imgs[(cdi, "corners")], _ = render(app, cdi, "corners", 0)
 
     pad, label_h = 16, 22
     font = QFont("DejaVu Sans")
     font.setPixelSize(13)
-    sheet = QImage(pad + len(STATES) * (HSI_W + pad),
+    sheet = QImage(pad + COLS_PER_ROW * (HSI_W + pad),
                    pad + len(CDI) * (label_h + HSI_H + pad),
                    QImage.Format.Format_RGB32)
     sheet.fill(QColor(40, 40, 40))
@@ -157,31 +171,35 @@ def main(outdir):
     p.setPen(QColor(230, 230, 230))
     for r, cdi in enumerate(CDI):
         y = pad + r * (label_h + HSI_H + pad) + label_h
-        for c, (name, *_rest) in enumerate(STATES):
+        cells = [(lbl, "tab %s" % lbl) for lbl in OFFERED[cdi]]
+        cells += [None] * (COLS_PER_ROW - 1 - len(cells))
+        cells.append(("corners", "corners, NONE"))
+        for c, cell in enumerate(cells):
+            if cell is None:
+                continue
             x = pad + c * (HSI_W + pad)
-            p.drawText(x, y - 6, "CDI %s: %s" % (cdi, name))
-            p.drawImage(x, y, imgs[(cdi, name)])
+            p.drawText(x, y - 6, "CDI %s: %s" % (cdi, cell[1]))
+            p.drawImage(x, y, imgs[(cdi, cell[0])])
     p.end()
     sheet.save(os.path.join(outdir, "sheet_1x.png"))
 
-    # The BRG tab, 3x nearest-neighbour, every top_panel state.
-    z, m = 3, 10
+    # Source tab, panel and BRG tab in one crop, 3x nearest-neighbour.
+    z, m = 3, 6
     crops = []
     for cdi in CDI:
-        for name, layout, *_rest in STATES:
-            if layout != "top_panel":
-                continue
-            rs = tabs[(cdi, name)].values()
-            x0 = min(r[0] for r in rs) - m * 4
-            y0 = min(r[1] for r in rs) - m
-            x1 = max(r[0] + r[2] for r in rs) + m
-            y1 = max(r[1] + r[3] for r in rs) + m
-            b = QRect(int(x0), int(y0), int(x1 - x0), int(y1 - y0))
+        for label in OFFERED[cdi]:
+            (sx, sy, sw, sh), (bx, by, bw, bh) = geos[(cdi, label)]
+            b = QRect(int(sx) - m, int(sy) - m * 3,
+                      int(bx + bw - sx) + 2 * m, int(sh) + m * 6)
             b = b.intersected(QRect(0, 0, HSI_W, HSI_H))
-            crops.append(("CDI %s: %s" % (cdi, name), imgs[(cdi, name)].copy(b)))
+            crops.append(("CDI %s: %s" % (cdi, label), imgs[(cdi, label)].copy(b)))
+            print("CDI %-5s %-5s source tab x=%.2f y=%.2f w=%.2f h=%.2f | "
+                  "BRG tab x=%.2f y=%.2f w=%.2f h=%.2f | insets from centre "
+                  "%.2f / %.2f" % (cdi, label, sx, sy, sw, sh, bx, by, bw, bh,
+                                   HSI_W / 2.0 - sx, bx + bw - HSI_W / 2.0))
     cw = max(i.width() for _n, i in crops) * z
     ch = max(i.height() for _n, i in crops) * z
-    per_row = 4
+    per_row = 2
     rows = (len(crops) + per_row - 1) // per_row
     zoom = QImage(pad + per_row * (cw + pad), pad + rows * (label_h + ch + pad),
                   QImage.Format.Format_RGB32)
@@ -197,7 +215,7 @@ def main(outdir):
                                      Qt.AspectRatioMode.IgnoreAspectRatio,
                                      Qt.TransformationMode.FastTransformation))
     p.end()
-    zoom.save(os.path.join(outdir, "tab_zoom3x.png"))
+    zoom.save(os.path.join(outdir, "tabs_zoom3x.png"))
     print("hsi %dx%d, %d renders -> %s" % (HSI_W, HSI_H, len(imgs), outdir))
 
 
