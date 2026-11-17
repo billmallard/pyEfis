@@ -465,6 +465,31 @@ def test_screens_page_lists_flight_screens_and_switches(ui, qtbot):
     assert win.screens[win.running_screen].name == "MAP"
 
 
+@pytest.mark.parametrize("count", [3, 8])
+def test_every_page_fits_its_buttons_on_the_card(qtbot, count):
+    # the bench showed the Screens page collapsed to a 20 px bar: the card's
+    # height was taken before the rebuilt layout was activated
+    screens = [_FakeScreen("S%d" % i) for i in range(count)]
+    win = _Window(screens)
+    qtbot.addWidget(win)
+    win.resize(1920, 1080)
+    win.show()
+    menu = sm.SystemMenu(win, screens, px_per_mm=4.0)
+    menu.open_menu()
+    for page in ("main", "screens", "main"):
+        if page == "screens":
+            _click(menu.buttons["Screens"])
+        elif "Back" in menu.buttons:
+            _click(menu.buttons["Back"])
+        QApplication.processEvents()
+        card = menu.panel.rect()
+        for label, b in menu.buttons.items():
+            g = b.geometry()
+            assert card.contains(g), (page, label, g, card)
+            assert g.height() >= menu._row_px(), (page, label)
+        assert menu.rect().contains(menu.panel.geometry())
+
+
 def test_screens_page_back_returns_to_the_main_page(ui):
     _win, menu, *_ = ui
     menu.open_menu()

@@ -325,8 +325,7 @@ class SystemMenu(QWidget):
         cols = self._cols
         pw = min(int(w * 0.9), max(int(row * 5.5) * cols, int(w * 0.28) * cols))
         self.panel.setFixedWidth(pw)
-        self.panel.adjustSize()
-        ph = min(self.panel.sizeHint().height(), int(h * 0.94))
+        ph = min(self._layout.totalSizeHint().height(), int(h * 0.94))
         margin = max(6, int(round(self.px_per_mm * 3)))
         self.panel.setGeometry(w - pw - margin, margin, pw, ph)
 
@@ -437,6 +436,12 @@ class SystemMenu(QWidget):
                                 ("Screens", self._to_screens),
                                 ("Close", self.close_menu)):
                 self._layout.addWidget(self._button(label, slot))
+        # Widgets added to a visible card are shown by a queued call, and a
+        # layout sizes only visible widgets: show them now, so the card's
+        # height counts them.
+        for w in self.panel.findChildren(
+                QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            w.show()
         if self.isVisible():
             self._place_panel()
         self.touched()
