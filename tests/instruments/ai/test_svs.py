@@ -8,6 +8,7 @@ physical display or real terrain tiles.
 import math
 import struct
 import tempfile
+import threading
 from pathlib import Path
 from unittest import mock
 
@@ -2083,3 +2084,58 @@ class TestAsyncCollectorWakesFrameClock:
         widget._frame_tick()
         widget.redraw.assert_not_called()
         widget.update.assert_not_called()
+
+
+class TestEmptyCollectIsCached:
+    """AER-1816: an empty collect is a result, not a miss. Water and
+    highways return ``None`` when nothing is in range, and the cache hit
+    used to require a non-None array, so every paint over a dry, roadless
+    area re-launched the worker for the same key. On the live display that
+    is a collect on every frame; in ``svs_capture`` it meant a pending
+    result on every other paint, so the scene never settled. The cache is
+    keyed: once a key is recorded, a repeat call with that key is a hit
+    whatever the value."""
+
+    @staticmethod
+    def _paint_three_times(collect, worker_attr, r):
+        starts = []
+        real_thread = threading.Thread
+
+        def counting_thread(*a, **kw):
+            t = real_thread(*a, **kw)
+            starts.append(t)
+            return t
+
+        with mock.patch("pyefis.instruments.ai.svs.threading.Thread",
+                        side_effect=counting_thread):
+            for _ in range(3):
+                collect()
+                w = getattr(r, worker_attr)
+                if w is not None:
+                    w.join(timeout=5)
+        return starts
+
+    def test_empty_water_collect_launches_one_worker(self):
+        r = SVSRenderer({})
+        r.water_db = _StubWaterDB([])
+        r._collect_range_nm = 20.0
+        starts = self._paint_three_times(
+            lambda: r._collect_water_triangles(39.2, -106.85, 8000.0, 20.0),
+            "_water_worker", r)
+        assert len(starts) == 1
+        assert r._water_tris_cache is None
+        assert r._water_tris_cache_key is not None
+
+    def test_empty_highway_collect_launches_one_worker(self):
+        class _ReadyDB:
+            ready = True
+        r = SVSRenderer({})
+        r.highway_db = _ReadyDB()
+        r._collect_range_nm = 20.0
+        r._collect_highways_sync = lambda *a: None
+        starts = self._paint_three_times(
+            lambda: r._collect_highways(39.2, -106.85, 8000.0, 20.0, 12.0),
+            "_hwy_worker", r)
+        assert len(starts) == 1
+        assert r._hwy_cache is None
+        assert r._hwy_cache_key is not None

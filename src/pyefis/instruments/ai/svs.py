@@ -1708,8 +1708,10 @@ class SVSRenderer:
         # GIL bursts stalled render frames (flight report: noticeable
         # pauses). Rebuilds now happen only on actual movement
         # (~0.6 NM) or range change.
-        if (self._water_tris_cache is not None
-                and self._water_tris_cache_key == key):
+        # Keyed on the key alone: ``None`` (nothing in range) is a real
+        # result, and gating the hit on a non-None array re-launched the
+        # worker every paint over a dry area (AER-1816).
+        if self._water_tris_cache_key == key:
             return self._water_tris_cache
 
         # Promote a finished worker result, or kick the worker and
@@ -1919,9 +1921,9 @@ class SVSRenderer:
         # width floor uses whatever pixels_per_deg the CURRENT collection sees
         # for the same reason -- it changes only on a widget resize.
         key = self._collect_key(ac_lat, ac_lon, self._collect_range_nm)
-        # Purely key-based — see the water collector note.
-        if (self._hwy_cache is not None
-                and self._hwy_cache_key == key):
+        # Purely key-based, empty result included — see the water
+        # collector note.
+        if self._hwy_cache_key == key:
             return self._hwy_cache
         with self._hwy_worker_lock:
             if self._hwy_result is not None:
