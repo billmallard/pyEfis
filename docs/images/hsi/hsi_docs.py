@@ -89,9 +89,8 @@ def pump(sec):
 
 
 def make_hsi(brg1=False, **over):
-    """brg1: step bearing pointer 1 on, as one tap on its BRG tab row does.
-    Pointers start Off; a tap turns one on at the first source that is not
-    the CDI's (VOR1 when the CDI is on GPS)."""
+    """brg1: turn bearing pointer 1 (VOR1) on, as one tap on the BRG tab
+    does from NONE when the CDI is not on VLOC1 (HSIBRG4)."""
     h = HSI(font_percent=None, cdi_enabled=True, gsi_enabled=True, font_family="B612")
     # The screen builder's own option path (type coercion included).
     screen = type("S", (), {"instruments": [h], "encoder_list": []})()
@@ -101,7 +100,7 @@ def make_hsi(brg1=False, **over):
     h.show()
     pump(0.3)
     if brg1:
-        h._cycle_bearing_src(1)
+        h._step_bearing_state()
         pump(0.3)
     return h
 

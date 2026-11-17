@@ -9,7 +9,9 @@ Every state is reached by synthetic taps through the widget's own mouse
 handling, and the script asserts what each tap wrote. The NAV flag shows
 because the CDI key carries no live signal in this render.
 
-Regenerate (fonts must resolve; DejaVu Sans as on the bench):
+Regenerate (fonts must resolve; DejaVu Sans as on the bench). The tool was
+rewritten for HSIBRG4 (AER-5847, `docs/aer-5847-evidence/`); to reproduce these
+pictures, run it from commit fefa03f6:
 
     QT_QPA_PLATFORM=offscreen PYTHONPATH=src python3 tools/render_hsi_bearing_evidence.py docs/aer-5548-evidence
 

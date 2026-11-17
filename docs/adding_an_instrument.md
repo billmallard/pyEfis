@@ -134,6 +134,13 @@ captured `svs/<scene>.webp` instead (see the configurator README).
 
 ## Step 6 — regenerate + deploy assets
 
+**Normally automatic.** `.github/workflows/editor-assets.yml` rebuilds
+`schema.json`, `groups.json` and every `palette/<type>.svg` that renders for real
+offscreen, and uploads them to the branch's R2 prefix on a `dev`/`qa`/`master`
+push that touches the editor, the factory or `src/pyefis/instruments/`. Types the
+offscreen path cannot draw (GL/SVS/embedded-app) build as placeholders and are
+never uploaded by CI. The manual route below is for those, or for a local check:
+
 ```bash
 # pyEfis: rebuild schema.json (+ groups.json + palette/<type>.svg)
 PYTHONPATH="<pylib>;src" python tools/build_editor_assets.py --out work/editor_assets
