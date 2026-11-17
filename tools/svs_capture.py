@@ -135,6 +135,7 @@ import json
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Dependencies live in C:\pylib on the Windows dev box, not site-packages.
@@ -633,39 +634,56 @@ def settled(svs, expect_layers, require_terrain=True):
     also no terrain-side collectors to wait for in that mode, so the caller
     passes ``expect_layers=set()`` alongside ``require_terrain=False``.
     """
-    if svs is None:
-        return False
-    if require_terrain and (svs.gl_failed or not svs.drew_terrain):
-        return False
+    return not unsettled_reasons(svs, expect_layers, require_terrain)
 
-    for name in expect_layers:
+
+def unsettled_reasons(svs, expect_layers, require_terrain=True):
+    """Every ``settled()`` predicate that is still false, as short strings.
+
+    ``settled()`` is exactly ``not unsettled_reasons(...)``, so the two cannot
+    drift. On a timeout the caller prints this list, which names the collector
+    that never keyed instead of leaving it to a bisection (AER-1816). An empty
+    list means settled.
+    """
+    if svs is None:
+        return ["renderer: not created"]
+    reasons = []
+    if require_terrain:
+        if svs.gl_failed:
+            reasons.append("terrain: gl_failed")
+        elif not svs.drew_terrain:
+            reasons.append("terrain: drew_terrain is False")
+
+    for name in sorted(expect_layers):
         state = svs._async_state.get(name)
-        if state is None:  # not even requested yet
-            return False
+        if state is None:
+            reasons.append(f"{name}: never requested")
+            continue
         if state.get("res") is not None:
-            return False
+            reasons.append(f"{name}: result pending promotion")
         worker = state.get("worker")
         if worker is not None and worker.is_alive():
-            return False
+            reasons.append(f"{name}: worker alive")
         if state.get("key") is None:
-            return False
+            reasons.append(f"{name}: no key recorded")
 
-    for db_attr, result, worker, key in (
-        ("water_db", "_water_result", "_water_worker", "_water_tris_cache_key"),
-        ("highway_db", "_hwy_result", "_hwy_worker", "_hwy_cache_key"),
+    for label, db_attr, result, worker, key in (
+        ("water", "water_db", "_water_result", "_water_worker",
+         "_water_tris_cache_key"),
+        ("highways", "highway_db", "_hwy_result", "_hwy_worker", "_hwy_cache_key"),
     ):
         db = getattr(svs, db_attr, None)
         if db is None or not getattr(db, "ready", False):
             continue
         if getattr(svs, result) is not None:
-            return False
+            reasons.append(f"{label}: result pending promotion")
         w = getattr(svs, worker)
         if w is not None and w.is_alive():
-            return False
+            reasons.append(f"{label}: worker alive")
         if getattr(svs, key) is None:
-            return False
+            reasons.append(f"{label}: no key recorded")
 
-    return True
+    return reasons
 
 
 def seed_mock_fix(args):
@@ -876,7 +894,8 @@ def main(argv=None):
         win.setCentralWidget(widget)
         win.show()
 
-    state = {"confirmed": 0, "elapsed_ms": 0, "requested": False, "done": False}
+    state = {"confirmed": 0, "elapsed_ms": 0, "requested": False, "done": False,
+             "reasons": None, "t0": time.monotonic()}
     timeout_ms = args.timeout * 1000.0
 
     def pump():
@@ -907,12 +926,20 @@ def main(argv=None):
                 app.exit(EXIT_SAVE_FAILED)
             return
 
+        require_terrain = not args.symbology_only
         if state["elapsed_ms"] > timeout_ms:
+            # The timeout counts pump ticks, not wall time: a tick whose render
+            # runs longer than PUMP_INTERVAL_MS stretches it, so report both.
+            wall_s = time.monotonic() - state["t0"]
+            reasons = unsettled_reasons(svs, expect_layers, require_terrain)
             print(
-                f"scene never settled within {args.timeout:.0f}s -- refusing to "
-                f"capture a half-loaded frame",
+                f"scene never settled within {args.timeout:.0f}s "
+                f"({wall_s:.1f}s wall) -- refusing to capture a half-loaded frame",
                 file=sys.stderr,
             )
+            print("still unsettled: " + ("; ".join(reasons) or
+                                         "nothing (settled on the last tick)"),
+                  file=sys.stderr)
             app.exit(EXIT_NOT_SETTLED)
             return
 
@@ -928,7 +955,12 @@ def main(argv=None):
                 return
 
         if not state["requested"]:
-            if settled(svs, expect_layers, require_terrain=not args.symbology_only):
+            reasons = unsettled_reasons(svs, expect_layers, require_terrain)
+            if args.verbose and reasons != state["reasons"]:
+                print(f"[{time.monotonic() - state['t0']:7.1f}s] unsettled: "
+                      f"{'; '.join(reasons) or 'none'}")
+                state["reasons"] = reasons
+            if not reasons:
                 state["confirmed"] += 1
                 if state["confirmed"] >= CONFIRM_FRAMES:
                     if args.offscreen:
