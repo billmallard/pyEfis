@@ -29,8 +29,8 @@ Three VSI variants share the `VS` FIX item:
   (`scaleRoot` 0.8) so resolution is finer near zero; marks at 500/1000/1500/2000 fpm each
   side of a zero reference. **Annunciation: none** — the dot always draws magenta.
 - **`Alt_Trend_Tape`** — a VS tape (label `VSI` + digital value + a white indicator bar
-  growing up/down from zero). **Annunciates**: `fail` → red `XXX` + bar removed;
-  `old`/`bad` → blank value.
+  growing up/down from zero). **Annunciates**: `fail`/`old` → red `XXX` + bar removed;
+  `bad` → amber frame, value in amber (CERT1c).
 
 ## 3. Data contract
 
@@ -58,7 +58,7 @@ a Major hazard. IDs (`VSI-<CLASS>-<NNN>`) are stable and anchor the test catalog
 | ID | Requirement | Trigger | Required response | Cite | Status |
 |----|-------------|---------|-------------------|------|--------|
 | **VSI-DISP-001** | Performance-appropriate scale, clear zero, up=climb/down=descend | always | Zero reference + signed scale over a climb/descent-appropriate range | §8.11 p.24; §A.6 p.74 | **DONE** — `Alt_Trend_Tape` range + graduations now config (`maxvs`/`minorDiv`/`numberedDiv`); dial + PFD ranges still fixed (see §7) |
-| **VSI-ANN-001** | VS-invalid annunciation on **every** variant | `VS` fail / old / bad | `fail` or `old` (expired TOL) → remove the moving element and scale + show a red X (CERT1a/CERT1b); `bad` → amber frame, dot amber / readout blank (never a live-looking value) | Table 4-6 p.32 (Major); §2 | **DONE** — all three variants: `VSI_PFD` flags fail and old (red X, no dot), amber dot and frame on bad |
+| **VSI-ANN-001** | VS-invalid annunciation on **every** variant | `VS` fail / old / bad | `fail` or `old` (expired TOL) → remove the moving element and scale + show a red X (CERT1a/CERT1b); `bad` → amber frame, dot amber / readout value in amber (CERT1c; never a white, live-looking value) | Table 4-6 p.32 (Major); §2 | **DONE** — all three variants: `VSI_PFD` flags fail and old (red X, no dot), amber dot and frame on bad |
 
 **Contract for the gap.** `VSI_PFD.paintEvent` must consume the `VS` item quality: on
 `fail`, **do not draw the magenta dot** — draw a red failure flag (an `X`) so a frozen dot

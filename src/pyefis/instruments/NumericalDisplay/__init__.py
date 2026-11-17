@@ -133,11 +133,10 @@ class NumericalDisplay(QGraphicsView):
         sax = qRound(self.w - pad_x - font_width * self.scroll_decimal)
         self.scrolling_area.move(sax, qRound(text_top))
         prest = "0" * (self.total_decimals - self.scroll_decimal)
-        if self._bad or self._old:
+        if self._old:
             prest = ""
         self.pre_scroll_text = self.scene.addSimpleText(prest, self.f)
-        self.pre_scroll_text.setPen(QPen(QColor(Qt.GlobalColor.white)))
-        self.pre_scroll_text.setBrush(QBrush(QColor(Qt.GlobalColor.white)))
+        self._apply_digit_color()
 
         self.pre_scroll_text.setX(pad_x)
         self.pre_scroll_text.setY(text_top)
@@ -211,10 +210,10 @@ class NumericalDisplay(QGraphicsView):
         if self._value < 0 and prevalue >= 0:
             # IF negative ensure the sign it displayed
             prest = "-{1:0{0}d}".format(prelen - 1, prevalue)
-        if self._bad or self._old:
+        if self._old:
             prest = ""
         self.pre_scroll_text.setText(prest)
-        if not (self._bad or self._old or self._fail):
+        if not (self._old or self._fail):
             self.scrolling_area.value = scroll_value
 
     def getValue(self):
@@ -234,13 +233,27 @@ class NumericalDisplay(QGraphicsView):
             # the pending resizeEvent already applies the current flags when
             # it builds pre_scroll_text (see the bad/old check there).
             return
-        if self._bad or self._old or self._fail:
+        if self._old or self._fail:
             self.pre_scroll_text.setText("")
             self.scrolling_area.hide()
         else:
-            self.pre_scroll_text.setBrush(QBrush(QColor(Qt.GlobalColor.white)))
+            # CERT1c: a suspect (bad) value is still shown, in amber -- the
+            # colour of the tape's suspect frame -- rather than blanked: a
+            # live scale beside an empty box told the pilot nothing.
+            self._apply_digit_color()
             self.redraw()
             self.scrolling_area.show()
+
+    def _digit_color(self):
+        if self._bad:
+            return QColor(helpers.SUSPECT_TAPE_COLOR)
+        return QColor(Qt.GlobalColor.white)
+
+    def _apply_digit_color(self):
+        color = self._digit_color()
+        self.pre_scroll_text.setPen(QPen(color))
+        self.pre_scroll_text.setBrush(QBrush(color))
+        self.scrolling_area.setColor(color)
 
     def getBad(self):
         return self._bad
@@ -305,6 +318,15 @@ class NumericalScrollDisplay(QGraphicsView):
         self.scroll_decimal = scroll_decimal
         self.f = QFont(font_family, font_size)
         self._value = 0
+        self._color = QColor(Qt.GlobalColor.white)
+        self._digits = []
+
+    def setColor(self, color):
+        """Recolour the drum's digits (CERT1c: amber under a suspect value)."""
+        self._color = QColor(color)
+        for t in self._digits:
+            t.setPen(QPen(self._color))
+            t.setBrush(QBrush(self._color))
 
     def resizeEvent(self, event):
         self.w = self.width()
@@ -321,6 +343,7 @@ class NumericalScrollDisplay(QGraphicsView):
         nsh = self.digit_vertical_spacing * 12 + self.h
         self.scene = QGraphicsScene(0, 0, self.w, nsh)
         self.setBackgroundBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._digits = []
         for i in range(20):
             y = self.y_offset(i) - font_height / 2
             if y < 0:
@@ -331,9 +354,8 @@ class NumericalScrollDisplay(QGraphicsView):
                 text = text + "0" * add0s
             t = self.scene.addSimpleText(text, self.f)
             t.setX(2)
-            t.setPen(QPen(QColor(Qt.GlobalColor.white)))
-            t.setBrush(QBrush(QColor(Qt.GlobalColor.white)))
             t.setY(y)
+            self._digits.append(t)
         for i in range(9, 0, -1):
             sv = i - 10
             y = self.y_offset(sv) - font_height / 2
@@ -344,10 +366,10 @@ class NumericalScrollDisplay(QGraphicsView):
                 add0s = self.scroll_decimal - len(text)
                 text = text + "0" * add0s
             t = self.scene.addSimpleText(text, self.f)
-            t.setPen(QPen(QColor(Qt.GlobalColor.white)))
-            t.setBrush(QBrush(QColor(Qt.GlobalColor.white)))
             t.setX(2)
             t.setY(y)
+            self._digits.append(t)
+        self.setColor(self._color)
         self.setScene(self.scene)
 
     def y_offset(self, sv):
