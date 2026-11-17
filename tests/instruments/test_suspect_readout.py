@@ -105,6 +105,12 @@ def test_bad_readout_shows_value_in_amber(fix, qtbot, name):
         "a bad readout must still show its value, in amber"
     assert _ink(bad, _is_white) == 0, \
         "a bad readout's digits must not stay white"
+    if not isinstance(w, vsi.Alt_Trend_Tape):
+        # The scrolling drum (last digit) is a separate view with its own
+        # digit items: it must turn amber too, not just the fixed digits.
+        nd = w.numerical_display
+        drum = nd.grab().toImage().copy(nd.scrolling_area.geometry())
+        assert _ink(drum, _is_amber) > 10, "the drum digit must be amber"
 
     item.bad = False
     back = _readout_image(qtbot, w)
