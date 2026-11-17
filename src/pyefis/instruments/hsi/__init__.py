@@ -893,12 +893,16 @@ class HSI(QGraphicsView):
         c.translate(self.cx, self.cy)
         c.rotate(-self._heading)
         c.translate(-self.cx, -self.cy)
-        if self.hdg_bug_item is not None:
+        # Bug and track diamond sit on the card at (value - heading): with no
+        # valid heading the card is frozen and they would point the wrong way
+        # (CERT1e), so they go with the numerals, under the HDG flag.
+        if self.hdg_bug_item is not None and self._heading_valid():
             _hbc = QColor(self.heading_bug_color)
             c.setPen(QPen(_hbc))
             c.setBrush(QBrush(_hbc))
             c.drawPolygon(self._hdg_bug_polygon())
-        if self.track_item is not None and self.track_item.isVisible():
+        if self.track_item is not None and self.track_item.isVisible() \
+                and self._heading_valid():
             _tc = QColor(self.track_color)
             c.setPen(QPen(_tc))
             c.setBrush(QBrush(_tc))
@@ -1137,10 +1141,12 @@ class HSI(QGraphicsView):
         img, pad = baked
         c.drawImage(QPointF(-pad, -pad), img)
 
-    def _draw_readout_box(self, c, ax, ay, anchor, label, value, color):
+    def _draw_readout_box(self, c, ax, ay, anchor, label, value, color,
+                          value_color=None):
         """One boxed readout (small label + degree value) anchored at (ax, ay).
         anchor = 2-char h/v code: h in l/c/r, v in t/m/b. Screen-fixed; a
-        translucent black fill keeps it legible over the map/terrain."""
+        translucent black fill keeps it legible over the map/terrain.
+        value_color defaults to fg_color."""
         bw = self.fontSize * 3.6
         bh = self.fontSize * 2.4
         x = ax if anchor[0] == 'l' else (ax - bw if anchor[0] == 'r' else ax - bw / 2.0)
@@ -1171,7 +1177,7 @@ class HSI(QGraphicsView):
         else:
             vy = y; vh = bh
         f.setPixelSize(max(12, int(self.fontSize * 1.18)))
-        c.setFont(f); c.setPen(QPen(QColor(self.fg_color)))
+        c.setFont(f); c.setPen(QPen(QColor(value_color or self.fg_color)))
         c.drawText(QRectF(x, vy, bw, vh),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
                    value)
@@ -1198,6 +1204,15 @@ class HSI(QGraphicsView):
         crs = _deg(self._crs_display())                            # selected course
         sel = _deg(getattr(self, "_hdgBug", 0.0) or 0.0)          # selected heading (bug)
         white = QColor(self.fg_color)
+        # MAG never shows a frozen heading as live (CERT1e): red XXX on a failed
+        # or expired HEAD (CERT1a's failed look; old as fail, as CERT1b ruled
+        # for the tapes), blank under an amber label on a suspect one.
+        magcol = white
+        magval = None
+        if self._HeadFail or self._HeadOld:
+            hdg, magcol, magval = "XXX", QColor(255, 0, 0), QColor(255, 0, 0)
+        elif self._HeadBad:
+            hdg, magcol = "", QColor(255, 150, 0)
         cyan = QColor(getattr(self, "heading_bug_color", "#00ffff"))
         crscol = self._course_pointer_color()
 
@@ -1218,7 +1233,8 @@ class HSI(QGraphicsView):
             self._draw_source_tab(c, px, py, ph)
             self._draw_bearing_tab(c, px + pw, py, ph)
             self._draw_readout_panel(c, px, py, pw, ph, "h",
-                [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
+                [("HDG", sel, cyan), ("MAG", hdg, magcol, magval),
+                 ("CRS", crs, crscol)])
             # Inside the sectioned panel the focus ring hugs the cell, so it
             # cannot cross into the neighbouring cell or the source tab.
             for field, i in (("hdg", 0), ("crs", 2)):
@@ -1234,7 +1250,8 @@ class HSI(QGraphicsView):
         elif layout == "split":
             # Actual-heading box ABOVE the rose (top gutter, outside), course +
             # selected heading in the bottom corners (Bill 2026-08-02).
-            self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, white)
+            self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, magcol,
+                                   magval)
             cbox = self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
             hbox = self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
             self._set_box_edit_rects(hbox, cbox)
@@ -1281,7 +1298,7 @@ class HSI(QGraphicsView):
         lf = QFont(self.font_family); lf.setPixelSize(max(9, int(self.fontSize * 0.64)))
         lf.setBold(True)
         vf = QFont(self.font_family); vf.setPixelSize(max(12, int(self.fontSize * 1.18)))
-        for i, (label, value, color) in enumerate(segments):
+        for i, (label, value, color, *value_color) in enumerate(segments):
             if orientation == "v":
                 sx, sy, sw, sh = x, y + h * i / n, w, h / n
                 if i > 0:
@@ -1295,7 +1312,8 @@ class HSI(QGraphicsView):
             c.setFont(lf); c.setPen(QPen(QColor(color)))
             c.drawText(QRectF(sx, sy + sh * 0.12, sw, sh * 0.36),
                        int(Qt.AlignmentFlag.AlignCenter), label)
-            c.setFont(vf); c.setPen(QPen(QColor(self.fg_color)))
+            c.setFont(vf)
+            c.setPen(QPen(QColor((value_color and value_color[0]) or self.fg_color)))
             c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
                        int(Qt.AlignmentFlag.AlignCenter), value)
 
@@ -1533,16 +1551,26 @@ class HSI(QGraphicsView):
             self.rotate(-diff)
             self.last_update_time = now
 
+    # A HEAD quality change repaints at once: a stale heading sends no value
+    # changes, so waiting for the next one would leave the frozen card drawn
+    # as live (CERT1e).
     def setHeadOld(self,old):
-        self._HeadOld = old
+        if old != self._HeadOld:
+            self._HeadOld = old
+            self.changeFail()
+            self.update()
 
     def setHeadBad(self,bad):
-        self._HeadBad = bad
+        if bad != self._HeadBad:
+            self._HeadBad = bad
+            self.changeFail()
+            self.update()
 
     def setHeadFail(self,fail):
         if fail != self._HeadFail:
             self._HeadFail = fail
             self.changeFail()
+            self.update()
  
     heading = property(getHeading, setHeading)
 
@@ -1555,7 +1583,7 @@ class HSI(QGraphicsView):
     def isFail(self):
         return self._GsiFail\
             or self._CdiFail\
-            or self._HeadBad\
+            or not self._heading_valid()\
             or self._CourseBad
 
     def changeFail(self):
@@ -1651,8 +1679,14 @@ class HSI(QGraphicsView):
     # Failure flags (Bill, 2026-11-08): the HSI never tells the pilot about a
     # failure only by taking a symbol away. Each flag covers every reason its
     # symbols are removed, on the rose and the arc alike.
+    def _heading_valid(self):
+        # Old counts as failed (CERT1e, after CERT1b for the tapes): a heading
+        # source that stopped while fix-gateway runs leaves HEAD old, not
+        # failed, and the frozen card must not read as live.
+        return not (self._HeadOld or self._HeadBad or self._HeadFail)
+
     def _hdg_flag_shown(self):
-        return self._HeadFail or self._HeadBad
+        return not self._heading_valid()
 
     def _nav_flag_shown(self):
         # Every reason _cdi_shown() drops the bar: CDI stale, invalid or failed,
@@ -1798,7 +1832,7 @@ class HSI(QGraphicsView):
             return False
         if self.brgdb[n] is None:
             return False
-        if self._HeadFail or self._HeadBad:
+        if not self._heading_valid():
             return False
         if self._brgOld[n] or self._brgBad[n] or self._brgFail[n]:
             return False
@@ -2022,11 +2056,12 @@ class HSI(QGraphicsView):
             self._draw_arc_course(c, cx, own_y)
 
         # 5. Heading bug + track diamond as band markers (in-sector only).
-        if getattr(self, "heading_bug_enabled", False) and not (self._HeadFail or self._HeadBad):
+        if getattr(self, "heading_bug_enabled", False) and self._heading_valid():
             if self._arc_in_sector(self._hdgBug):
                 self._draw_arc_band_marker(c, self._hdgBug,
                                            QColor(self.heading_bug_color), "bug")
-        if self._track_visible() and self._arc_in_sector(self._track):
+        if self._track_visible() and self._heading_valid() \
+                and self._arc_in_sector(self._track):
             self._draw_arc_band_marker(c, self._track, QColor(self.track_color), "diamond")
 
         # 6. Ownship symbol at (cx, own_y), pointing up.
@@ -2426,7 +2461,7 @@ class HSI(QGraphicsView):
         station. Where the push cannot act -- heading invalid, a localizer, or
         no valid bearing -- it ends the edit instead."""
         if self._edit_field == "hdg":
-            if self._HeadFail or self._HeadBad:
+            if not self._heading_valid():
                 return False
             self._write_edit(int(round(float(self._heading or 0.0))) % 360)
             return True
