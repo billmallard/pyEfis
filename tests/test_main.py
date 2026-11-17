@@ -160,6 +160,25 @@ def test_main_in_kiosk_mode_loads_no_keybindings(
         main_module.kiosk.configure(None)
 
 
+def test_main_builds_the_system_menu_after_the_kiosk(
+    monkeypatch, config_files, patched_runtime
+):
+    # MENU1: built last, over every screen, banner and the DEMO marking
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value={"hooks": {}}))
+    order = []
+    monkeypatch.setattr(main_module.kiosk, "initialize",
+                        mock.Mock(side_effect=lambda *a: order.append("kiosk")))
+    monkeypatch.setattr(main_module.system_menu, "initialize",
+                        mock.Mock(side_effect=lambda *a: order.append("menu")))
+    with pytest.raises(SystemExit):
+        main_module.main()
+    main_module.system_menu.initialize.assert_called_once_with(
+        main_module.gui.mainWindow, main_module.fix, main_module.gui.screens)
+    assert order == ["kiosk", "menu"]
+
+
 def test_main_sigusr1_screenshot_disabled_on_eglfs(
     monkeypatch, config_files, patched_runtime, caplog
 ):
