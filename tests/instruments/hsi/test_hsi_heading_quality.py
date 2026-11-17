@@ -18,7 +18,7 @@ from pyefis.instruments import hsi
 
 RED = QColor(255, 0, 0)
 AMBER = QColor(255, 150, 0)
-FROZEN = 120.0                                  # a 5-deg multiple: see the arc note in the PR
+FROZEN = 120.0                                  # a 5-deg multiple: the arc draws numerals only then (AER-5894 follow-up)
 FROZEN_TEXT = "120°"
 
 
@@ -196,3 +196,34 @@ def test_heading_sync_push_refused_on_an_invalid_heading(fix, qtbot, flag):
     _set(w, flag)
     assert w.enc_clicked() is False
     w._edit_item.output_value.assert_not_called()
+
+
+def _value_pens(painter, value):
+    """The pen colour in force at each drawText of `value` on a mock painter."""
+    pen = None
+    out = []
+    for name, args, _kw in painter.method_calls:
+        if name == "setPen":
+            pen = QColor(args[0].color())
+        elif name == "drawText" and args[-1] == value:
+            out.append(pen)
+    return out
+
+
+@pytest.mark.parametrize("layout", ["top_panel", "split"])
+def test_mag_xxx_is_painted_red(fix, qtbot, layout):
+    """The red XXX is the value's own pen, not just the label's: the readout
+    primitives paint each value in fg_color unless told otherwise."""
+    w = _mk(qtbot, "heading_up", layout=layout)
+    painter = mock.MagicMock()
+    painter.fontMetrics.return_value.horizontalAdvance.return_value = 10
+    painter.fontMetrics.return_value.height.return_value = 10
+    if layout == "top_panel":
+        w._draw_readout_panel(painter, 0, 0, 120, 40, "h",
+                              [("HDG", "130°", QColor("cyan")),
+                               ("MAG", "XXX", RED, RED)])
+    else:
+        w._draw_readout_box(painter, 60, 0, "ct", "MAG", "XXX", RED, RED)
+    assert _value_pens(painter, "XXX") == [RED]
+    if layout == "top_panel":                   # a segment with no value colour
+        assert _value_pens(painter, "130°") == [QColor(w.fg_color)]
