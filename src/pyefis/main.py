@@ -55,6 +55,7 @@ import pyefis.fix_watchdog as fix_watchdog
 import pyefis.hmi as hmi
 import pyefis.gui as gui
 import pyefis.kiosk as kiosk
+import pyefis.system_menu as system_menu
 
 
 config_filename = "default.yaml"
@@ -264,6 +265,11 @@ def main():
     # DEMO4: the DEMO marking on every install, the page follower in kiosk
     # mode. After the screens and the startup notice, so it stacks on top.
     kiosk.initialize(gui.mainWindow, fix, gui.screens)
+
+    # MENU1: the system menu (Data Status, About, Screens), opened by the
+    # top-right corner swipe or the SYSMENU key. Built last so it stacks on
+    # top of every screen and banner.
+    system_menu.initialize(gui.mainWindow, fix, gui.screens)
 
     # A kiosk has no keyboard, and a key must not reach exit (brief 6.2).
     if "keybindings" in config and kiosk.locked():
