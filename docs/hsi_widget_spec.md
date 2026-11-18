@@ -351,7 +351,7 @@ failed, and is removed only when a valid signal drives the needle.*
 
 | ID | Flag | Trigger | Required response | Cite | Status |
 |----|------|---------|-------------------|------|--------|
-| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag inside the card, upper right (clear of the readout panels); compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
+| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/old/bad or absent (`old` as `fail`, CERT1e) | Red **HDG** flag inside the card, upper right (clear of the readout panels); compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
 | **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) stale/bad/fail/absent, no lateral signal received (`CDIV` = 0), or `COURSE` bad/fail | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
 | **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (`GSV` ≥ 0.5, or `GSV` absent) but the GS signal is stale/invalid/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **DONE** — red GS flag; diamond suppressed |
 
@@ -370,7 +370,7 @@ convention, and no element is left showing its last-good value after loss:
 
 | Signal | valid | old (stale) | bad (invalid) | fail | absent |
 |--------|-------|-------------|---------------|------|--------|
-| `HEAD` | normal | grey card | grey + HDG flag (ANN-001) | HDG flag, freeze/blank card | HDG flag |
+| `HEAD` | normal | as `fail` (CERT1e) | HDG flag; card stops, numerals, heading bug, track diamond and bearing needles removed; MAG blank under an amber label | HDG flag; card stops, numerals, heading bug, track diamond and bearing needles removed; MAG red `XXX` | HDG flag |
 | `COURSE` | normal | grey pointer | remove pointer + CDI scale/bar + NAV flag; CRS readout `---°` | remove pointer + CDI scale/bar + NAV flag; CRS readout `---°` | pointer removed |
 | `CDI` | normal | hide + NAV flag | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
 | `CDIV` | CDI on its own quality | — | — | — | CDI on its own quality; `CDIV` = 0 → hide bar + NAV flag (ANN-002) |
@@ -523,6 +523,7 @@ will flip the run red the moment a flag is implemented, forcing removal of the m
 | 102 | **HSI-ANN-002** (NAV flag) | `nav_flag_on_cdi_invalid` | pass |
 | 103 | **HSI-ANN-003** (GS flag) | `gs_flag_on_gs_lost` | pass |
 | 104 | **HSI-ANN-002** (no lateral signal) | `nav_flag_on_no_lateral_signal` | pass |
+| 105 | **HSI-ANN-001** + HSI-FAIL-001 (`HEAD` fail/old/bad, CERT1e) | `test_hsi_heading_quality.py` | pass |
 
 Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
 `quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;

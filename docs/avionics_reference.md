@@ -276,7 +276,7 @@ with a touch-settable selected-altitude box at the top of the tape (pyEfis #310)
 `instruments/airspeed/__init__.py` — `Airspeed` (round dial), **`Airspeed_Tape`** (the
 moving-scale tape; the verification target), `Airspeed_Box`. The tape draws the green /
 white / yellow arcs + a thin **red VNE line**, a fixed pointer, a digital IAS readout
-(fail→`XXX`, old/bad→blank via `NumericalDisplay`), a TAS box, and a trend vector.
+(fail/old→`XXX`, bad→value in amber via `NumericalDisplay`, CERT1c), a TAS box, and a trend vector.
 **Gaps (§17.7.1):** no **low-speed red band VSO→0** (AS-LSA-001) and no **high-speed red
 band VNE→top** — only a hairline VNE radial, not the required band (AS-HSA-001).
 

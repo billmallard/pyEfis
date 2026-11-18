@@ -79,8 +79,36 @@ panel was built:
   for the screen you are on takes you back to the PFD.
 - **With a keyboard attached**, `S` is the next screen, `A` the previous one and
   `P` the PFD.
+- **From any screen**, the system menu's **Screens** page lists every screen
+  (below).
 
 Changing screens ends any edit in progress (below).
+
+## The system menu
+
+Every panel has a system menu, whatever its screens carry. To open it, put a
+finger on the top-right corner of the glass, right at the top edge, and swipe
+down and to the left, the way a phone opens its control centre. It shows over
+the screen you are on:
+
+| Entry | What it does |
+|---|---|
+| **Data Status** | Opens the [Data Status](Data-Status-Updates-and-Notices#the-data-status-screen) screen. **Continue** brings you back to the screen you were on. |
+| **About** | Opens the [About](Data-Status-Updates-and-Notices#the-about-screen) screen. **Back** brings you back to the screen you were on. |
+| **Screens** | Lists every flight screen; the one you are on is outlined. Touch one to go there. |
+| **Close** | Closes the menu. |
+
+A touch anywhere outside the menu closes it too, and it closes by itself after
+10 seconds untouched. Opening it ends any edit in progress. It works in flight
+and on the ground: every entry only shows information or changes the screen,
+and the Data Status **Update** button keeps its own rules.
+
+The swipe has to start within about 8 mm of the top edge and 25 mm of the right
+edge, move at least 15 mm down and 4 mm left, and finish within 1.5 seconds. A
+tap on a button in that corner is still a tap, and a pan or pinch on the map or
+a scroll on the flight plan page does not open the menu. A gateway key opens
+the same menu, so a control head or a knob can be set up to open it too
+([FIX Database Keys](FIX-Database-Keys#buttons-controls-and-system), `SYSMENU`).
 
 ## Touch a value, then turn the knob
 
