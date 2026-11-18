@@ -241,14 +241,18 @@ class PlateIndex:
         return bool(self._cons)
 
     def plates_at(self, airport: str) -> list[Plate]:
-        """Every chart for *airport* (ICAO ident), in :data:`CHART_ORDER`
-        then catalog order. Empty if not ready or the airport has none."""
+        """Every chart for *airport*, in :data:`CHART_ORDER` then catalog
+        order. Empty if not ready or the airport has none. *airport* is the
+        ICAO ident, or the FAA ident for an airport the metafile files with
+        no ICAO ident (``W99``), as the CIFP does; the returned plates carry
+        that ident."""
         apt = _norm(airport)
         for con in self._cons:
             rows = con.execute(
-                "SELECT icao_ident, chart_code, chart_name, pdf_name, amdt_num, "
-                "amdt_date, cycle FROM plates WHERE icao_ident = ? ORDER BY id",
-                (apt,)).fetchall()
+                "SELECT ?, chart_code, chart_name, pdf_name, amdt_num, amdt_date, cycle "
+                "FROM plates WHERE icao_ident = ? OR (icao_ident = '' AND apt_ident = ?) "
+                "ORDER BY id",
+                (apt, apt, apt)).fetchall()
             if rows:
                 plates = [Plate(*(v if v is not None else "" for v in r)) for r in rows]
                 rank = {c: n for n, c in enumerate(CHART_ORDER)}
