@@ -1,0 +1,113 @@
+# The modules on the primary flight display's data path: the code between a FIX
+# database value and the attitude, altitude, airspeed, heading, vertical speed and
+# turn-and-slip the pilot reads. Each entry names the hazard assessment rows
+# (fha_avionics_stack.md, section 3) whose mitigations live in that module.
+#
+# What the list is for: tools/hazard_coverage.py reports the statement and branch
+# coverage that tests citing a requirement ID achieve on these modules, and on these
+# modules only, beside the coverage from the whole suite. It is a report, not a gate,
+# until the date in report_only_until; whether it gates after that is the project
+# owner's decision.
+#
+# Keeping it current: a module that starts carrying a PFD value onto the glass is
+# added here in the same change, with its rows. Safety and Compliance reviews this
+# list. tests/tools/test_hazard_coverage.py fails when a listed path no longer
+# exists or a cited row is not in the hazard assessment.
+
+version: 1
+report_only_until: 2026-12-19
+
+modules:
+  - path: src/pyefis/fix_watchdog.py
+    rows: [GW-2, PFD-2, PFD-4, PFD-6, PFD-8, PFD-10, PFD-12]
+    why: Marks every key failed after 2 s of gateway silence (fix H1), the one detection of a hung gateway. Vertical speed and turn-and-slip freeze with the rest (PFD-10, PFD-12 name a frozen value).
+
+  - path: src/pyefis/instruments/ai/ai_widget.py
+    rows: [PFD-1, PFD-2, PFD-6, PFD-12, PFD-13, PFD-14]
+    why: Draws attitude, the fail and greyed states, bank and pitch-limit cues, the slip ball and the flight-path marker.
+
+  - path: src/pyefis/instruments/airspeed/__init__.py
+    rows: [PFD-5, PFD-6, PFD-13, PFD-14]
+    why: The airspeed tape, its V-speed bands, its annunciation, and the TAS and trend readouts.
+
+  - path: src/pyefis/instruments/altimeter/__init__.py
+    rows: [PFD-3, PFD-4, PFD-9, PFD-10, PFD-15]
+    why: The altitude tape, the baro setting shown on it, its trend and its annunciation; the same class draws the VS tape on the shipped PFD screens (dbkey VS), and the selected-altitude box and bug (AL-BUG-001).
+
+  - path: src/pyefis/instruments/altimeter/altsel.py
+    rows: [PFD-15]
+    why: Selected altitude bug, readout and the deviation alert driven by the gateway flag.
+
+  - path: src/pyefis/instruments/hsi/__init__.py
+    rows: [PFD-7, PFD-8, NAV-1, NAV-2]
+    why: Heading on the HSI, the DG tape and the heading display; the CDI, its source and its flags.
+
+  - path: src/pyefis/instruments/vsi/__init__.py
+    rows: [PFD-9, PFD-10, PFD-13, PFD-14]
+    why: The vertical speed displays and their annunciation; also the airspeed trend tape (AS_Trend_Tape), withheld when IAS is bad, failed or old.
+
+  - path: src/pyefis/instruments/tc/__init__.py
+    rows: [PFD-11, PFD-12]
+    why: Turn rate and slip, and their annunciation.
+
+  - path: src/pyefis/instruments/wind/__init__.py
+    rows: [PFD-13, PFD-14]
+    why: Wind display, and its failed state when the wind keys are missing.
+
+  - path: src/pyefis/instruments/NumericalDisplay/__init__.py
+    rows: [PFD-4, PFD-6]
+    why: The rolling digital readout inside the airspeed and altitude tapes.
+
+  - path: src/pyefis/instruments/helpers/__init__.py
+    rows: [PFD-2, PFD-4, PFD-6, PFD-10]
+    why: Shared failed and suspect tape states, used by the VSI as well as the airspeed and altitude tapes (tape_invalid, draw_failed_tape_x, draw_suspect_tape_frame).
+
+  - path: src/pyefis/instruments/helpers/bugs.py
+    rows: [PFD-15]
+    why: Shared selected-value bug binding, hidden on fail, greyed on old or bad, absent when the key is missing.
+
+  - path: src/pyefis/instruments/gauges/numeric.py
+    rows: [PFD-9, PFD-10]
+    why: The numeric_display widget, which shows the VS readout on the shipped PFD screens (includes/ahrs/virtual_vfr.yaml, svs.yaml), with its fail, old and bad states.
+
+  - path: src/pyefis/instruments/gauges/abstract.py
+    rows: [PFD-9, PFD-10]
+    why: The base class of numeric.py; it subscribes the key and holds the fail, old, bad and annunciate handling the readout draws from.
+
+  - path: src/pyefis/screens/screenbuilder_factory.py
+    rows: [PFD-4, PFD-10, PFD-13, PFD-14, PFD-15]
+    why: Not only key binding. It forwards the options that carry mitigations, and dropping one is a code fault every installation inherits, not an installation error. The tape baro box (show_baro, AL-BARO-001), the VSI range (VSI-DISP-001, cited in the file), show_fpm, and the selected-altitude defaults (altsel_box, alt_bug_dbkey). build_altimeter_tape once dropped every option but dbkey silently.
+
+  - path: src/pyefis/screens/screenbuilder_options.py
+    rows: [PFD-4]
+    why: configure_tape_baro decides whether each altimeter tape shows its baro box (AL-BARO-001). A wrong answer removes the baro setting from the tape.
+
+  - path: src/pyefis/main.py
+    rows: [GW-2, PFD-2, PFD-4, PFD-6, PFD-8]
+    why: Starts the link watchdog. When the start raises, the display runs on with no watchdog and only a log line, so a hung gateway leaves frozen values shown as valid (fix H1 absent).
+
+# Considered and left off, with the reason, so a reviewer sees where the line was drawn.
+not_listed:
+  - path: src/pyefis/instruments/ai/svs.py
+    reason: Terrain is advisory (TER-1, TER-2; assumption A3). A stall in the renderer is the hung-display mechanism (section 3.1.1, O8), which coverage does not address.
+  - path: src/pyefis/instruments/ai/svs_gl.py
+    reason: As svs.py.
+  - path: src/pyefis/instruments/ai/pose.py
+    reason: Dead-reckoned position for the terrain view only. Attitude does not pass through it.
+  - path: src/pyefis/instruments/map
+    reason: Moving map, MAP-1 (Minor or TBD, supplemental per A4).
+  - path: src/pyefis/hmi/menu.py
+    reason: BaroProxy writes BARO from the encoder. This is the input path, not the display path. A wrong step gives a misset baro (PFD-4), which the baro box on the tape shows to the pilot (AL-BARO-001).
+  - path: src/pyefis/screens/screenbuilder_encoder.py
+    reason: Routes the knob to the focused widget. Input path, as hmi/menu.py.
+  - path: src/pyefis/instruments/misc/__init__.py
+    reason: ValueDisplay (value_text) can show any key, but no shipped screen binds a PFD key to it. A PFD value placed there is an installation choice. Revisit if a shipped screen does.
+  - path: src/pyefis/instruments/live_binding.py
+    reason: Derives widget settings from control keys; only the moving map uses it today (MAP-1). Add it when a PFD widget does.
+
+# On the data path but outside this repository, so not measured here.
+outside_this_repository:
+  - module: pyavtools.fix
+    reason: The FIX database client every widget reads from (flags, time-to-live, the socket). It is a pinned dependency from makerplane/pyAvTools.
+  - module: fix-gateway
+    reason: The database, the network server and the source plugins (GW-1 to GW-4). Measured in fix-gateway's own CI once it has requirement IDs (O4).

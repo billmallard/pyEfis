@@ -78,6 +78,18 @@ jobs:
           --run-url "$RUN_URL" --out reports/verification.json
         python tools/verification_report.py summary reports/verification.json >> "$GITHUB_STEP_SUMMARY"
 
+    - name: Hazard-path coverage from requirement-tagged tests (a report, not a gate)
+      # CERT9: statement and branch coverage on the modules docs/safety/hazard_paths.yaml
+      # lists, from the tests that cite a requirement ID, read from this run's per-test
+      # coverage contexts. continue-on-error: it gates nothing until the project owner
+      # decides that it should (report_only_until in the YAML).
+      if: always() && steps.pytest.outcome != 'skipped'
+      continue-on-error: true
+      run: |
+        python tools/hazard_coverage.py report --paths docs/safety/hazard_paths.yaml \
+          --coverage .coverage --record reports/verification.json --out reports/hazard_coverage.json
+        python tools/hazard_coverage.py summary reports/hazard_coverage.json >> "$GITHUB_STEP_SUMMARY"
+
     - name: Keep the test results
       if: always() && steps.pytest.outcome != 'skipped'
       uses: actions/upload-artifact@v6
@@ -86,6 +98,7 @@ jobs:
         path: |
           reports/junit.xml
           reports/verification.json
+          reports/hazard_coverage.json
           reports/tested-env.txt
         retention-days: 90
 
@@ -153,6 +166,10 @@ jobs:
         [ -f records/fgw/verification.json ] && records="$records records/fgw/verification.json"
         python tools/verification_report.py page $records --expect pyEfis fix-gateway \
           --safety docs/safety --out site
+    - name: Render the hazard-path coverage page
+      # CERT9: site/hazard_coverage.html, from the build job's report when it made one.
+      if: hashFiles('records/pyefis/hazard_coverage.json') != ''
+      run: python tools/hazard_coverage.py page records/pyefis/hazard_coverage.json --out site/hazard_coverage.html
     - name: Render the evidence index
       run: |
         # TV12: every committed evidence image and what its sidecar says, as evidence.html.
