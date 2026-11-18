@@ -1990,10 +1990,13 @@ class HSI(QGraphicsView):
         fail = self.isFail()
 
         # 1. Compass band ticks (every 5 deg in-sector), weight/length hierarchy
-        # matching the rose; each tick fans slightly toward ownship.
-        base = int(round(self._heading))
-        span = int(self.ARC_HALF_DEG) + 5
-        for d in range(base - span, base + span + 1, 5):
+        # matching the rose; each tick fans slightly toward ownship. The loops
+        # step from the 5-deg mark at or below the left sector edge, so ticks and
+        # numerals sit on true compass marks at any heading (AER-5920).
+        first = int(math.floor((self._heading - self.ARC_HALF_DEG) / 5.0)) * 5
+        last = int(math.ceil(self._heading + self.ARC_HALF_DEG))
+        marks = range(first, last + 1, 5)
+        for d in marks:
             cnt = d % 360
             if not self._arc_in_sector(cnt):
                 continue
@@ -2020,7 +2023,7 @@ class HSI(QGraphicsView):
             nf = QFont(self.font_family); nf.setPixelSize(nsize)
             c.setFont(nf); c.setPen(QPen(fg))
             _bw = nsize * 3.0; _bh = nsize * 1.6
-            for d in range(base - span, base + span + 1, 5):
+            for d in marks:
                 cnt = d % 360
                 if cnt % 30 != 0 or not self._arc_in_sector(cnt):
                     continue
