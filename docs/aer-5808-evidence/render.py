@@ -95,7 +95,9 @@ def strip_sheet(path):
     def shot(caption):
         img = QImage(W, H, QImage.Format.Format_ARGB32)
         img.fill(QColor("#1d3a5f"))      # sky-blue ground under the strip
-        w.render(img)
+        # Children only, no palette background, so the strip composites over
+        # the ground as it does over the attitude display.
+        w.render(img, flags=type(w).RenderFlag.DrawChildren)
         rows.append((caption, img))
 
     shot("1 AP+YD, HDG (GPS armed), VS +500 (ALT armed)")
