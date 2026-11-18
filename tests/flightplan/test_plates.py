@@ -95,6 +95,30 @@ def test_ksba_charts_list_with_the_diagram_first(tmp_path):
     assert (ils.chart_name, ils.amdt_num, ils.cycle) == ("ILS OR LOC RWY 07", "7", "2611")
 
 
+# Grant County, WV: the metafile gives its charts an empty icao_ident and only
+# the FAA ident W99, which is also its CIFP airport ident. 791 airports with
+# approach charts in cycle 2611 are filed this way (AER-5981).
+W99 = [("MIN", "TAKEOFF MINIMUMS", "NE4TO.PDF", "", ""),
+       ("IAP", "RNAV (GPS) Y RWY 31", "06500RY31.PDF", "0C", ""),
+       ("IAP", "RNAV (GPS) Z RWY 31", "06500RZ31.PDF", "0C", ""),
+       ("IAP", "RNAV (GPS)-C", "06500RC.PDF", "0A", ""),
+       ("IAP", "VOR/DME-A", "06500VDA.PDF", "2D", "")]
+
+
+def test_an_airport_with_no_icao_ident_finds_its_charts(tmp_path):
+    index = plates.PlateIndex(ksba_plates.build(tmp_path / "p.sqlite", records=W99,
+                                                airport="W99", icao=False))
+    listed = index.plates_at("W99")
+    assert [pl.pdf_name for pl in listed] == ["06500RY31.PDF", "06500RZ31.PDF",
+                                              "06500RC.PDF", "06500VDA.PDF", "NE4TO.PDF"]
+    assert {pl.icao_ident for pl in listed} == {"W99"}
+    assert index.plate_for_approach("W99", "R31-Z").chart_name == "RNAV (GPS) Z RWY 31"
+    assert index.plate_for_approach("W99", "VDM-A").chart_name == "VOR/DME-A"
+    # The FAA ident answers only for an airport that has no ICAO ident.
+    ksba = plates.PlateIndex(ksba_plates.build(tmp_path / "k.sqlite"))
+    assert ksba.plates_at("SBA") == []
+
+
 def test_pdf_bytes_come_back_as_stored(tmp_path):
     index = plates.PlateIndex(ksba_plates.build(tmp_path / "p.sqlite",
                                                 pdfs={"00378IL7.PDF": b"%PDF-1.4 x"}))
