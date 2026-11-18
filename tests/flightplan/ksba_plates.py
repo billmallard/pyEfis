@@ -51,9 +51,12 @@ KSBA_RECORDS = [
 ]
 
 
-def build(path, pdfs=None, cycle="2611", records=KSBA_RECORDS, airport="KSBA"):
+def build(path, pdfs=None, cycle="2611", records=KSBA_RECORDS, airport="KSBA", icao=True):
     """Write a plates pack to *path*. *pdfs* maps a pdf_name to its bytes; a
-    record whose PDF is not given gets a few junk bytes."""
+    record whose PDF is not given gets a few junk bytes. With ``icao=False``
+    the airport is filed the way the metafile files one with no ICAO ident:
+    ``apt_ident`` is *airport* and ``icao_ident`` is empty."""
+    apt_ident, icao_ident = (airport[1:], airport) if icao else (airport, "")
     pdfs = pdfs or {}
     con = sqlite3.connect(str(path))
     try:
@@ -67,7 +70,7 @@ def build(path, pdfs=None, cycle="2611", records=KSBA_RECORDS, airport="KSBA"):
                 "INSERT INTO plates (state, city, apt_ident, icao_ident, military, chart_code, "
                 "chart_name, procuid, pdf_name, amdt_num, amdt_date, cycle) "
                 "VALUES ('CA', 'SANTA BARBARA', ?, ?, 0, ?, ?, NULL, ?, ?, ?, ?)",
-                (airport[1:], airport, code, chart, name, amdt or None, date or None, cycle))
+                (apt_ident, icao_ident, code, chart, name, amdt or None, date or None, cycle))
         con.commit()
     finally:
         con.close()
