@@ -3,6 +3,7 @@ from unittest import mock
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
+from pyefis.instruments import helpers
 from pyefis.instruments.NumericalDisplay import NumericalDisplay
 
 
@@ -51,11 +52,13 @@ def test_numerical_display_decimals(qtbot):
     widget.getValue()
     assert widget._bad == True
     widget.resize(85, 50)
-    assert widget.pre_scroll_text.text() == ""
+    # CERT1c: a suspect value is still shown (in amber), not blanked.
+    assert widget.pre_scroll_text.text() == "432"
+    assert widget.pre_scroll_text.brush().color() == helpers.SUSPECT_TAPE_COLOR
     assert widget.value == 43210
-    assert widget.pre_scroll_text.text() != "432"
     a = widget.getValue()
     assert a == 43210
+    widget.setOld(True)
     assert widget.pre_scroll_text.text() == ""
     assert widget.getBad() == True
     widget.setOld(True)
