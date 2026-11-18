@@ -313,9 +313,10 @@ screen.
   scale) and a magenta diamond at `GSI` (normalised +/-1, pegged
   beyond), up for positive `GSI` like the HSI's needle. Gated exactly as
   the HSI gates its glideslope: hidden at `GSV` < 0.5, shown on `GSI`'s
-  own quality when `GSV` is absent, the pointer hidden on
-  `old`/`bad`/`fail`, and the red GS flag when `GSV` says a glidepath is
-  present and `GSI` is bad or failed. No digital readout and no RNP band:
+  own quality when `GSV` is absent, and whenever the scale is up and
+  `GSI` is `old`/`bad`/`fail`, the pointer hidden and the red GS flag
+  shown (the pointer never goes without the flag, pyEfis #489). No
+  digital readout and no RNP band:
   the 737's are in feet and `GSI` is not.
 - **CTR MAP** (`ctr`, G11b). The same symbol set framed as a closed
   compass rose with ownship at the panel centre, per the spec's section

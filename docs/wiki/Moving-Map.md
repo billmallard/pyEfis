@@ -96,7 +96,7 @@ arc instead of the top edge.
 | **Top left** | `GS` and `TAS`, then the wind as direction°/speed with an arrow pointing the way it blows. |
 | **Top right** | The active waypoint in magenta, its ETA in UTC (`HHMM.Mz`, now plus `WPETE`) and its distance in NM. Only while a plan is active (`FPLSTATE` not 0); ETA and distance are left out in the `VECTORS` phase. |
 | **Bottom left** | The map layers that are on, in cyan: `ARPT` (airports), `WPT` (waypoints), `STA` (navaids). |
-| **Vertical deviation scale** | Right edge, from `GSI`, with a magenta diamond pointer. Hidden when `GSV` is published and below 0.5 (no glidepath). A red `GS` flag shows when `GSV` says a glidepath is present and `GSI` is bad or failed. |
+| **Vertical deviation scale** | Right edge, from `GSI`, with a magenta diamond pointer. Hidden when `GSV` is published and below 0.5 (no glidepath). When the scale is up and `GSI` is stale, bad or failed, the diamond is removed and a red `GS` flag shows, as on the HSI. This includes an older gateway that publishes no `GSV`. |
 
 A failed value in a data block reads red `XXX`; an old or bad one is grey. A
 key fix-gateway does not define is left out.
