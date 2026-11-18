@@ -6,7 +6,7 @@ Experimental Amateur-Built use. A severity in this document describes the worst 
 a failure in an airplane; it is not a classification of the software, and it is not a software
 level. The classification of any real installation is the installer's, made per airplane.
 
-**Maintained by:** Safety and Compliance. **Edition:** 3, 2026-11-18. Edition 2 was dated 2026-11-10 and the first edition 2026-11-07. A living document: a change that adds a display function adds or updates
+**Maintained by:** Safety and Compliance. **Edition:** 4, 2026-11-18. Edition 3 was dated earlier the same day, edition 2 2026-11-10 and the first edition 2026-11-07. A living document: a change that adds a display function adds or updates
 a row here (section 6).
 
 ---
@@ -30,7 +30,7 @@ a row here (section 6).
   implemented is listed as such. **A mitigation is not credited until it has a test.**
 - **Open:** what is still not mitigated, not tested or not assessed. Open items are collected in
   section 5.
-- **Read against:** pyEfis `dev` at b38df57c (2026-11-17), plus the fixes named in the rows.
+- **Read against:** pyEfis `dev` at 5bb6dec2 (2026-11-18), plus the fixes named in the rows.
 
 ## 2. Architecture assumptions
 
@@ -42,8 +42,16 @@ attitude source in instrument meteorological conditions. The pilot flies with in
 attitude, airspeed and altitude instruments.** The pyEfis `README.rst` and the wiki home page carry
 this statement.
 
-**A2. The standby is independent.** "Independent" means the standby shares no sensor, computer,
-software, power source or display with the pyEfis path. Appendix 1 says that "dual independent
+**A2. The standby is independent, element by element (restated in edition 4).** The standby has
+its own transducers, its own computer and software if it has any, its own power source and its
+own display; it shares none of them with the pyEfis path. It **does** share the airplane's pitot
+and static ports, unless the installation provides separate ones. That is the conventional
+light-airplane installation: the standby airspeed indicator and altimeter tee off the same pitot
+and static lines as the air data computer. The port is the sensing element, so a blocked port
+gives the primary and the standby the same wrong value, and the standby cross-check cannot catch
+it. That failure is row ADS-1 (section 3.1.2); it does not reach attitude, which has no shared
+port. Edition 2 said the standby shares no sensor at all; for air data that was not true of the
+installations this stack serves. Appendix 1 says that "dual independent
 attitude systems generally meet requirements" for the attitude row; that is the only argument by
 which the attitude L cell is met. A standby fed from the same AHRS, the same gateway or the same
 bus is not independent, and does not carry the argument.
@@ -78,18 +86,19 @@ assumptions are good engineering practice, not regulatory compliance.
 |---|---|---|---|---|---|---|
 | PFD-1 | Attitude | L | Cat (App. 1: met by an independent standby, A2) | Host, process or gateway failure; AHRS plugin loss (A6) | AI-ANN-001 (fail display), AI-FAIL-001 (greyed when old or bad); A1, A2 | Only an independent standby lowers this cell (A1, A2) |
 | PFD-2 | Attitude | M | Cat | Frozen last value after a hung gateway or socket error (fixed on `dev`, H1); a primary key with no time-to-live never goes old (fixed on `dev`, H2); a bad AHRS solution flagged valid; two sources fighting on `PITCH`/`ROLL` (A5); a hung display (section 3.1.1) | AI-ANN-001 and AI-FAIL-001 act only when the flags are set. Recovery aids once the pilot knows: AI-CHEV-001, AI-BANK-001, AI-DCL-001 | No comparator against the standby; detection of a bad solution flagged valid rests on the pilot's scan (O2); a hung display has no mitigation in pyEfis (O8) |
-| PFD-3 | Altitude | L | Haz | As PFD-1 (A6) | AL-ANN-001 | Covered by the A1 standby scope |
-| PFD-4 | Altitude | M | Cat | Frozen value (H1, H2); a misset baro setting; a hung display (section 3.1.1) | AL-ANN-001; AL-BARO-001 (baro setting shown on the tape); AL-TREND-001 (a frozen trend is a cue only in climb or descent) | A hung display has no mitigation in pyEfis (O8) |
-| PFD-5 | Airspeed | L | Maj (Haz at higher performance) | As PFD-1 (A6) | AS-ANN-001 | Covered by the A1 standby scope |
-| PFD-6 | Airspeed | M | Maj to Cat | Frozen value (H1, H2); wrong V-speed bands from a bad aircraft profile (H4); a hung display (section 3.1.1) | AS-ANN-001; AS-MARK-001, AS-LSA-001, AS-HSA-001 (bands drawn as specified, but from configured values); AI-LIM-001 (pitch-limit marker, implemented; shown only when an `AOA` source such as the onspeed plugin is present) | A3 means stall warning never depends on the display. A hung display has no mitigation in pyEfis (O8) |
+| PFD-3 | Altitude | L | Haz | As PFD-1 (A6) | AL-ANN-001 | Covered by the A1 standby scope for a host loss. A blocked static port is not a loss: it is ADS-1, and the standby goes with it |
+| PFD-4 | Altitude | M | Cat | Frozen value (H1, H2); a misset baro setting; a hung display (section 3.1.1); a blocked static port, shared with the standby (ADS-1) | AL-ANN-001; AL-BARO-001 (baro setting shown on the tape); AL-TREND-001 (a frozen trend is a cue only in climb or descent) | A hung display has no mitigation in pyEfis (O8). A blocked static port is not caught by the standby (ADS-1, O9) |
+| PFD-5 | Airspeed | L | Maj (Haz at higher performance) | As PFD-1 (A6) | AS-ANN-001 | Covered by the A1 standby scope for a host loss. A blocked pitot is not a loss: it is ADS-1, and the standby goes with it |
+| PFD-6 | Airspeed | M | Maj to Cat | Frozen value (H1, H2); wrong V-speed bands from a bad aircraft profile (H4); a hung display (section 3.1.1); a blocked pitot or static port, shared with the standby (ADS-1) | AS-ANN-001; AS-MARK-001, AS-LSA-001, AS-HSA-001 (bands drawn as specified, but from configured values); AI-LIM-001 (pitch-limit marker, implemented; shown only when an `AOA` source such as the onspeed plugin is present) | A3 means stall warning never depends on the display. A hung display has no mitigation in pyEfis (O8). A blocked pitot or static port is not caught by the standby (ADS-1, O9) |
 | PFD-7 | Heading | L | Maj | As PFD-1 (A6); magnetometer or CAN-FIX `HEAD` loss | HDG-ANN-001, HSI-ANN-001 | |
 | PFD-8 | Heading | M | Maj | Undetected error over 10 deg (App. 1 definition); magnetic interference; frozen value (H1, H2); a hung display (section 3.1.1) | HDG-ANN-001, HDG-FMT-001, HSI-FAIL-001 | A hung display has no mitigation in pyEfis (O8) |
 | PFD-9 | Vertical speed | L | TBD | As PFD-1 | VSI-ANN-001 | App. 1 row not checked (O3) |
-| PFD-10 | Vertical speed | M | Maj (per AC 25-11B Table 4-6, as the VSI spec cites it) | Frozen value; a trend computed from a frozen altitude | VSI-ANN-001, VSI-DISP-001 | App. 1 row not checked (O3) |
+| PFD-10 | Vertical speed | M | Maj (per AC 25-11B Table 4-6, as the VSI spec cites it) | Frozen value; a trend computed from a frozen altitude; a blocked static port reads zero (ADS-1) | VSI-ANN-001, VSI-DISP-001 | App. 1 row not checked (O3) |
 | PFD-11 | Turn rate and slip | L | TBD | As PFD-1 | TC-ANN-001 | Severity not assessed (O3) |
 | PFD-12 | Turn rate and slip | M | TBD | Frozen or biased lateral acceleration | TC-DISP-001, TC-SLIP-001, TC-SLIP-002, AI-SLIP-001, AI-SLIP-002 | Severity not assessed (O3) |
 | PFD-13 | Flight path, wind, TAS, airspeed trend | L | Min (provisional) | As PFD-1; derived keys missing | EFIS-FPM-008 (FPM removed when an input is missing), EFIS-TAS-002 (dashes when TAS is unavailable), EFIS-WIND-011 (wind keys not defined) | Provisional (O3) |
 | PFD-14 | Flight path, wind, TAS, airspeed trend | M | TBD (a flight-path marker used as guidance in IMC may exceed Maj) | Derived from wrong inputs with valid flags | EFIS-FPM-011 (FPM colour when an input is degraded), EFIS-WIND-009 (wind state by colour and content). No airspeed-trend requirement handles a bad input | **Assess before any guidance use of the FPM** (O3) |
+| ADS-1 | Air data: altitude, airspeed, vertical speed (common pitot or static blockage) | M | Cat (as PFD-4; PFD-6 up to Cat) | A blocked pitot or static port, shared by the pyEfis air data source and the standby (A2, section 3.1.2). Both show the same wrong value, each valid | Outside this stack: a heated pitot for IFR, an alternate static source, the preflight inspection. In this stack: none implemented. A GPS plausibility cue is the candidate (O9) | The standby cross-check does not detect it (A2); the GPS cue is not built (O9) |
 | PFD-15 | Selected altitude and deviation alert | L/M | TBD | Gateway-computed flag (`ALTSEL`, fix-gateway annunciate plugin) not delivered or not set | AL-BUG-001, EFIS-ALTSEL-002, EFIS-ALTSEL-005, EFIS-ALTSEL-006, EFIS-ALTSEL-009, EFIS-ALTSEL-010 | Severity not assessed; A3 applies to any altitude alerting (O3) |
 
 #### 3.1.1 A hung display: one mechanism behind PFD-2, 4, 6 and 8
@@ -115,6 +124,40 @@ host.
 A candidate remedy is a frame-liveness check that runs off the GUI thread and blanks the display or
 flags it failed when the PFD has not repainted for a set time (O8). Its threshold is a safety
 cue, and it is not set here.
+
+#### 3.1.2 A common pitot or static blockage: ADS-1
+
+The air data source behind pyEfis and the standby airspeed indicator and altimeter usually share
+one pitot line and one static line (A2). A blocked port is a single failure that reaches both:
+
+- **Pitot blocked, drain open** (ice, an insect nest): indicated airspeed decays toward zero.
+- **Pitot and drain blocked:** the pitot pressure is trapped, so indicated airspeed rises in a
+  climb and falls in a descent, like an altimeter.
+- **Static blocked:** altitude freezes, vertical speed reads zero, and airspeed reads low in a
+  climb and high in a descent.
+
+Every one of these is drawn with valid flags on both the primary and the standby. The pyEfis
+annunciation requirements (AL-ANN-001, AS-ANN-001, VSI-ANN-001) act on the data flags, and the
+flags are good: the transducer is measuring correctly the pressure it is given. The pilot's
+cross-check against the standby (A1, O2) has nothing to compare, because the standby is fed the
+same pressure.
+
+The mitigations that lower the likelihood are airframe provisions, outside this stack: a heated
+pitot for flight in visible moisture, an alternate static source, and the preflight inspection of
+the ports and covers. The installer owns them.
+
+The stack can add a detection cue from a source that shares no port: GPS. Two comparisons are
+available from keys the FIX database already defines:
+
+- **Altitude:** `GPS_ELLIPSOID_ALT` against `ALT`. The two are not the same quantity: the GPS
+  value is height above the ellipsoid, not above mean sea level, and baro altitude departs from
+  true altitude with temperature. The comparison can therefore catch a frozen altitude in a climb
+  or a descent, or a gross disagreement, but not a small error.
+- **Speed:** `GS` against `IAS`. They differ by the wind and by the TAS correction, so the
+  comparison can catch an airspeed that decays toward zero or tracks altitude, not a small error.
+
+The cue is not built (O9). Its thresholds and how it is shown are safety-cue choices, and they are
+not set here. A cue of this kind only converts the M cell toward L once it has a test.
 
 ### 3.2 pyEfis: other functions
 
@@ -175,7 +218,10 @@ repository's `dev` branch with tests; this document does not say which release c
    open: nothing in pyEfis flags it (O8). That path, and any path nobody has found yet, is
    detected only by the pilot's cross-check against the standby (O2).
 2. **The standby is load-bearing.** It is the only thing that lowers the attitude L cell, and the
-   only cross-check for an M cell the stack fails to flag. That is why A1 and A2 exist.
+   only cross-check for an M cell the stack fails to flag. That is why A1 and A2 exist. It is not
+   a cross-check for a blocked pitot or static port, which it shares (ADS-1). For that failure,
+   the protection is the airframe's heated pitot and alternate static source, and the only
+   in-stack detection would be a GPS comparison that does not exist yet (O9).
 3. **The instrument specs are a real mitigation record.** Every primary instrument has an
    annunciation requirement (AI-ANN-001, AL-ANN-001, AS-ANN-001, HDG-ANN-001, VSI-ANN-001,
    TC-ANN-001, HSI-ANN-001, HSI-ANN-002, HSI-ANN-003), each with tests. Those requirements convert
@@ -193,6 +239,7 @@ repository's `dev` branch with tests; this document does not say which release c
 | O6 | CAN-FIX requirements bind senders only: nothing specifies that a receiver flags a silent node or an out-of-range frame | CAN-1, CAN-2 | fix-gateway CAN-FIX plugin |
 | O7 | No data quality requirements per pack kind (accuracy, resolution, completeness, timeliness) | TER-2, PKG-3 | makerplane-data check catalogue |
 | O8 | A hung GUI thread freezes every PFD value with valid flags, and the client watchdog cannot trip because it runs on that thread (section 3.1.1). Candidate remedy: a frame-liveness check off the GUI thread, for example a separate thread or a service-manager watchdog fed from the paint loop, that blanks or flags the display after N seconds without a repaint. N is a safety-cue threshold and is the project owner's decision. Also held here: an assumption A8, that the primary-flight code is separable from the rest, is entered in section 2 only once the import check that enforces it has no exceptions left; until then it would be false | PFD-2, PFD-4, PFD-6, PFD-8, GW-2 | pyEfis maintainers, with Safety and Compliance |
+| O9 | A blocked pitot or static port, shared with the standby, gives both the same wrong air data with valid flags (section 3.1.2). Candidate cue: a GPS plausibility check, `GPS_ELLIPSOID_ALT` against `ALT` and `GS` against `IAS`. Its thresholds and presentation are safety-cue choices and are the project owner's decision | ADS-1, PFD-4, PFD-6, PFD-10 | pyEfis maintainers, with Safety and Compliance |
 
 ## 6. Keeping it current
 
@@ -212,6 +259,9 @@ repository's `dev` branch with tests; this document does not say which release c
   `heading_widget_spec.md`, `hsi_widget_spec.md`, `tc_widget_spec.md`, `vsi_widget_spec.md`,
   `requirements.md`, `instrument_verification_status.md`, `README.rst`.
 - canfix-spec `src/requirements.rst` (32 IDs).
+- fix-gateway `src/fixgw/config/database/ahrs.yaml` (`ALT`, `IAS`, `GS`, `GPS_ELLIPSOID_ALT`).
+- FAA-H-8083-25, Pilot's Handbook of Aeronautical Knowledge, chapter on flight instruments
+  (pitot-static blockage behaviour).
 - The fix pull requests in section 3.5.
 - **Not read:** SAE ARP4761A and ARP4754B (paywalled). The shape here is from FAA public guidance
   and the SAE abstract.
