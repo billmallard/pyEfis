@@ -35,11 +35,19 @@
 # timestamp's age: the item timestamp is wall-clock, and a GPS time set
 # that steps the clock back would otherwise hide a hung gateway for as
 # long as the step.
+#
+# When the watchdog is not running the display still runs: a dead display
+# is worse than an unmonitored one.  But a hung gateway would then go
+# unflagged, so the loss is shown on the glass (AER-5983): ``start`` records
+# why the watchdog is off in ``off_reason``, and ``show_off_cue`` draws a
+# persistent cue over every screen until pyEfis restarts with it running.
 
 import logging
 import time
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtWidgets import QWidget
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +58,17 @@ DEFAULT_PING_KEYS = ("PITCH", "ROLL", "ALT", "IAS")
 
 DEFAULT_TIMEOUT_S = 2.0
 DEFAULT_INTERVAL_S = 0.5
+
+# Why the watchdog is not running, set by start(); None while it runs.
+OFF_START_FAILED = "start-failed"   # start raised (bad FixLinkTimeout, ...)
+OFF_DISABLED = "disabled"           # FixLinkTimeout <= 0
+OFF_NO_PING_KEY = "no-ping-key"     # no ping candidate in the FIX database
+off_reason = None
+
+# The cue's wording and look are a safety-cue decision for Bill (AER-5983);
+# this is the proposal on that card.
+OFF_CUE_TEXT = "LINK MON OFF"
+OFF_CUE_COLOR = QColor(255, 176, 0)
 
 
 class FixLinkWatchdog(QObject):
@@ -133,12 +152,23 @@ def start(db, config):
     ``FixLinkTimeout`` (seconds, default 2.0) is how long the gateway may
     stay silent before every item is marked failed; 0 disables the
     watchdog.  ``FixLinkPingKey`` overrides the key used to ping it.
-    Returns the running watchdog, or None.
+    Returns the running watchdog, or None with ``off_reason`` saying why.
+    Never raises: a watchdog that cannot start must not stop the display.
     """
+    global off_reason
+    try:
+        watchdog, off_reason = _start(db, config)
+    except Exception:
+        log.critical("FIX link watchdog failed to start", exc_info=True)
+        watchdog, off_reason = None, OFF_START_FAILED
+    return watchdog
+
+
+def _start(db, config):
     timeout = float(config.get("FixLinkTimeout", DEFAULT_TIMEOUT_S))
     if timeout <= 0:
         log.warning("FIX link watchdog disabled (FixLinkTimeout <= 0)")
-        return None
+        return None, OFF_DISABLED
     configured = config.get("FixLinkPingKey")
     candidates = (configured,) if configured else DEFAULT_PING_KEYS
     key = choose_ping_key(db, candidates)
@@ -147,9 +177,72 @@ def start(db, config):
             "FIX link watchdog NOT running: none of %s is in the FIX "
             "database, so a hung gateway will not be flagged",
             ", ".join(candidates))
-        return None
+        return None, OFF_NO_PING_KEY
     interval = min(DEFAULT_INTERVAL_S, timeout / 2)
     watchdog = FixLinkWatchdog(db, key, timeout=timeout, interval=interval)
     watchdog.start()
     log.info("FIX link watchdog: ping %s, fail after %.1f s", key, timeout)
-    return watchdog
+    return watchdog, None
+
+
+class LinkMonitorOffCue(QWidget):
+    """The persistent cue that the link watchdog is not running.  Transparent
+    to touch, stacked over every screen, refitted when the window resizes.
+    It sits just below the DEMO strip's band so the two never overlap."""
+
+    def __init__(self, parent, reason, font_family="DejaVu Sans Condensed"):
+        super().__init__(parent)
+        self.reason = reason
+        self.font_family = font_family
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        parent.installEventFilter(self)
+        self.fit_to_parent()
+
+    def eventFilter(self, obj, event):
+        if obj is self.parentWidget() and event.type() == QEvent.Type.Resize:
+            self.fit_to_parent()
+        return False
+
+    def fit_to_parent(self):
+        p = self.parentWidget()
+        if p is None:
+            return
+        # size(), not width()/height(): gui.initialize assigns plain ints over
+        # mainWindow.width/height in windowed mode.
+        w, h = p.size().width(), p.size().height()
+        top = max(18, int(h * 0.035)) + 4   # kiosk.DemoMarking's height
+        bh = max(22, int(h * 0.05))
+        bw = max(bh * 7, int(w * 0.2))
+        self.setGeometry(int((w - bw) / 2), top, bw, bh)
+
+    def paintEvent(self, event):
+        qp = QPainter(self)
+        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        qp.setPen(QPen(OFF_CUE_COLOR, 2))
+        qp.setBrush(QColor(0, 0, 0, 220))
+        qp.drawRoundedRect(r, 3, 3)
+        font = QFont(self.font_family)
+        font.setPixelSize(max(12, int(self.height() * 0.6)))
+        font.setBold(True)
+        qp.setFont(font)
+        qp.drawText(r, Qt.AlignmentFlag.AlignCenter, OFF_CUE_TEXT)
+
+
+def show_off_cue(parent, reason):
+    """Put the cue over ``parent`` when ``reason`` says the watchdog is off.
+    Returns the cue, or None when the watchdog runs or the cue could not be
+    built -- a failure here is logged and never propagates into boot."""
+    if reason is None:
+        return None
+    try:
+        cue = LinkMonitorOffCue(parent, reason)
+        cue.show()
+        cue.raise_()
+        log.warning("FIX link watchdog off (%s): showing %s",
+                    reason, OFF_CUE_TEXT)
+        return cue
+    except Exception:
+        log.error("could not show the %s cue", OFF_CUE_TEXT, exc_info=True)
+        return None

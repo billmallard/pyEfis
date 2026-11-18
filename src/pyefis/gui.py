@@ -25,6 +25,7 @@ import logging
 import sys
 import yaml
 from pyefis import hmi
+from pyefis import fix_watchdog
 from pyefis import startup_notice
 from pyefis.instruments import edit_focus
 import pyavtools.fix as fix
@@ -554,6 +555,9 @@ def initialize(config, config_path, preferences):
     # to touch, never a modal (BACKLOG L3). Built after every other child so it
     # stacks on top.
     mainWindow.startupNotice = startup_notice.show_banner(mainWindow)
+    # AER-5983: a link watchdog that is not running is shown, not just logged.
+    mainWindow.linkMonitorCue = fix_watchdog.show_off_cue(
+        mainWindow, fix_watchdog.off_reason)
 
 
     def button_timeout():
