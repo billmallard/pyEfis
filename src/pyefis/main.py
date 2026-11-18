@@ -228,12 +228,9 @@ def main():
     pyefis_ver = fix.db.get_item('PYEFIS_VERSION')
 
     # CERT1: a gateway that hangs with the socket open must not leave the
-    # last values on the glass as good.  Never let it stop the display.
-    try:
-        link_watchdog = fix_watchdog.start(fix.db, config.get("main") or {})
-    except Exception:
-        log.critical("FIX link watchdog failed to start", exc_info=True)
-        link_watchdog = None
+    # last values on the glass as good.  start() never raises, so it cannot
+    # stop the display; when it is off, gui shows that on the glass.
+    link_watchdog = fix_watchdog.start(fix.db, config.get("main") or {})
 
     hmi.initialize(config)
 

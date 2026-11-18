@@ -553,3 +553,22 @@ def test_import_path_setup_uses_map_env_and_skips_missing_tools_env(monkeypatch)
 
     assert "/map-env" in imported.sys.path
     assert "/app" in imported.sys.path
+
+
+def test_main_keeps_running_and_records_a_watchdog_that_failed_to_start(
+    monkeypatch, config_files, patched_runtime
+):
+    # AER-5983 path 1: a malformed FixLinkTimeout raises inside start(); the
+    # display still boots, and the reason reaches gui for the cue.
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.fix_watchdog, "off_reason", None)
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(
+        return_value={"main": {"FixLinkTimeout": "2s"}, "hooks": {}}))
+
+    with pytest.raises(SystemExit) as exc:
+        main_module.main()
+
+    assert exc.value.code == 7
+    main_module.gui.initialize.assert_called_once()
+    assert main_module.fix_watchdog.off_reason == main_module.fix_watchdog.OFF_START_FAILED
