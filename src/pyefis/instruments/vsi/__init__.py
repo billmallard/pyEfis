@@ -636,8 +636,9 @@ class Alt_Trend_Tape(QGraphicsView):
             self.vstext.setPlainText("XXX")
             self.vstext.setDefaultTextColor (QColor(Qt.GlobalColor.red))
         elif self._bad:
-            self.vstext.setPlainText("")
-            self.vstext.setDefaultTextColor (QColor(255, 150, 0))
+            # CERT1c: a suspect VS still reads, in the suspect frame's amber.
+            self.vstext.setPlainText(str(int(self._vs)))
+            self.vstext.setDefaultTextColor(QColor(helpers.SUSPECT_TAPE_COLOR))
         else:
             self.vstext.setPlainText(str(int(self._vs)))
             self.vstext.setDefaultTextColor (QColor(Qt.GlobalColor.white))

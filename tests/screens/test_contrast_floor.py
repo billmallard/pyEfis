@@ -199,6 +199,21 @@ PAIRS = {
         ("text_color", "#000000", TEXT_FLOOR),
         ("active_color", "#000000", TEXT_FLOOR),
     ],
+    # autopilot_panel (AFC3): key labels on the key face (LVL on its own
+    # face), the indicator bars on the face, the target values on the boxes'
+    # black fill, the message line and borders on the panel ground.
+    "autopilot_panel": [
+        ("text_color", "key_color", TEXT_FLOOR),
+        ("muted_color", "key_color", TEXT_FLOOR),
+        ("text_color", "level_color", TEXT_FLOOR),
+        ("active_color", "key_color", GRAPHIC_FLOOR),
+        ("armed_color", "key_color", GRAPHIC_FLOOR),
+        ("caution_color", "key_color", GRAPHIC_FLOOR),
+        ("target_color", "#000000", TEXT_FLOOR),
+        ("caution_color", "bg_color", TEXT_FLOOR),
+        ("text_color", "bg_color", TEXT_FLOOR),
+        ("line_color", "bg_color", GRAPHIC_FLOOR),
+    ],
     "flight_plan": [
         ("active_color", "#000000", TEXT_FLOOR),
         ("future_color", "#000000", TEXT_FLOOR),

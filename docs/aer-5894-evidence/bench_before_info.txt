@@ -1,0 +1,14 @@
+fixgw=320999 pyefis=338392 pyEfis_head=9205cb47 branch=dev
+15:48:43.431 @qHEAD;Current Aircraft Magnetic Heading;float;0.0;359.9;deg;2000; @rHEAD;20.0;01000 @qIAS;Indicated Airspeed;float;0.0;1000.0;knots;2000;Min,Max,V1,V2,Vne,Vfe,Vmc,Va,Vno,Vs,Vs0,Vx,Vy,Vgnd @rIAS;0.0;01000
+15:48:49.461 @rHEAD;90.0;00000 @rIAS;110.0;00000
+15:48:50 grabbed 1_live 76227d6c0fae
+15:48:50 feed stopped (fixgw running)
+15:48:55.850 @rHEAD;90.0;01000 @rIAS;110.0;01000
+15:48:57 grabbed 2_old ad3b3b6d0f7e
+15:49:03.261 @rHEAD;90.0;00000 @rIAS;110.0;00000
+15:49:04 grabbed 3_live_again d7424ed28773
+15:49:04 SIGSTOP fixgw
+15:49:11 grabbed 4_fail f89efabad87e
+15:49:11 SIGCONT fixgw
+15:49:18.002 @rHEAD;90.0;00000 @rIAS;110.0;00000
+15:49:19 grabbed 5_resumed 03018fbcac13

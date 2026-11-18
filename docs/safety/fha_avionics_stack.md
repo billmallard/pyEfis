@@ -6,7 +6,7 @@ Experimental Amateur-Built use. A severity in this document describes the worst 
 a failure in an airplane; it is not a classification of the software, and it is not a software
 level. The classification of any real installation is the installer's, made per airplane.
 
-**Maintained by:** Safety and Compliance. **Edition:** 2, 2026-11-10. The first edition was dated 2026-11-07. A living document: a change that adds a display function adds or updates
+**Maintained by:** Safety and Compliance. **Edition:** 3, 2026-11-18. Edition 2 was dated 2026-11-10 and the first edition 2026-11-07. A living document: a change that adds a display function adds or updates
 a row here (section 6).
 
 ---
@@ -30,7 +30,7 @@ a row here (section 6).
   implemented is listed as such. **A mitigation is not credited until it has a test.**
 - **Open:** what is still not mitigated, not tested or not assessed. Open items are collected in
   section 5.
-- **Read against:** pyEfis `dev` at 4fd2af4 (2026-11-10), plus the fixes named in the rows.
+- **Read against:** pyEfis `dev` at b38df57c (2026-11-17), plus the fixes named in the rows.
 
 ## 2. Architecture assumptions
 
@@ -77,13 +77,13 @@ assumptions are good engineering practice, not regulatory compliance.
 | ID | Function | Mode | Sev. | Mechanism (where in the stack) | Mitigating requirements | Open |
 |---|---|---|---|---|---|---|
 | PFD-1 | Attitude | L | Cat (App. 1: met by an independent standby, A2) | Host, process or gateway failure; AHRS plugin loss (A6) | AI-ANN-001 (fail display), AI-FAIL-001 (greyed when old or bad); A1, A2 | Only an independent standby lowers this cell (A1, A2) |
-| PFD-2 | Attitude | M | Cat | Frozen last value after a hung gateway or socket error (fixed on `dev`, H1); a primary key with no time-to-live never goes old (fixed on `dev`, H2); a bad AHRS solution flagged valid; two sources fighting on `PITCH`/`ROLL` (A5) | AI-ANN-001 and AI-FAIL-001 act only when the flags are set. Recovery aids once the pilot knows: AI-CHEV-001, AI-BANK-001, AI-DCL-001 | No comparator against the standby; detection of a bad solution flagged valid rests on the pilot's scan (O2) |
+| PFD-2 | Attitude | M | Cat | Frozen last value after a hung gateway or socket error (fixed on `dev`, H1); a primary key with no time-to-live never goes old (fixed on `dev`, H2); a bad AHRS solution flagged valid; two sources fighting on `PITCH`/`ROLL` (A5); a hung display (section 3.1.1) | AI-ANN-001 and AI-FAIL-001 act only when the flags are set. Recovery aids once the pilot knows: AI-CHEV-001, AI-BANK-001, AI-DCL-001 | No comparator against the standby; detection of a bad solution flagged valid rests on the pilot's scan (O2); a hung display has no mitigation in pyEfis (O8) |
 | PFD-3 | Altitude | L | Haz | As PFD-1 (A6) | AL-ANN-001 | Covered by the A1 standby scope |
-| PFD-4 | Altitude | M | Cat | Frozen value (H1, H2); a misset baro setting | AL-ANN-001; AL-BARO-001 (baro setting shown on the tape); AL-TREND-001 (a frozen trend is a cue only in climb or descent) | |
+| PFD-4 | Altitude | M | Cat | Frozen value (H1, H2); a misset baro setting; a hung display (section 3.1.1) | AL-ANN-001; AL-BARO-001 (baro setting shown on the tape); AL-TREND-001 (a frozen trend is a cue only in climb or descent) | A hung display has no mitigation in pyEfis (O8) |
 | PFD-5 | Airspeed | L | Maj (Haz at higher performance) | As PFD-1 (A6) | AS-ANN-001 | Covered by the A1 standby scope |
-| PFD-6 | Airspeed | M | Maj to Cat | Frozen value (H1, H2); wrong V-speed bands from a bad aircraft profile (H4) | AS-ANN-001; AS-MARK-001, AS-LSA-001, AS-HSA-001 (bands drawn as specified, but from configured values); AI-LIM-001 (pitch-limit marker, implemented; shown only when an `AOA` source such as the onspeed plugin is present) | A3 means stall warning never depends on the display |
+| PFD-6 | Airspeed | M | Maj to Cat | Frozen value (H1, H2); wrong V-speed bands from a bad aircraft profile (H4); a hung display (section 3.1.1) | AS-ANN-001; AS-MARK-001, AS-LSA-001, AS-HSA-001 (bands drawn as specified, but from configured values); AI-LIM-001 (pitch-limit marker, implemented; shown only when an `AOA` source such as the onspeed plugin is present) | A3 means stall warning never depends on the display. A hung display has no mitigation in pyEfis (O8) |
 | PFD-7 | Heading | L | Maj | As PFD-1 (A6); magnetometer or CAN-FIX `HEAD` loss | HDG-ANN-001, HSI-ANN-001 | |
-| PFD-8 | Heading | M | Maj | Undetected error over 10 deg (App. 1 definition); magnetic interference; frozen value (H1, H2) | HDG-ANN-001, HDG-FMT-001, HSI-FAIL-001 | |
+| PFD-8 | Heading | M | Maj | Undetected error over 10 deg (App. 1 definition); magnetic interference; frozen value (H1, H2); a hung display (section 3.1.1) | HDG-ANN-001, HDG-FMT-001, HSI-FAIL-001 | A hung display has no mitigation in pyEfis (O8) |
 | PFD-9 | Vertical speed | L | TBD | As PFD-1 | VSI-ANN-001 | App. 1 row not checked (O3) |
 | PFD-10 | Vertical speed | M | Maj (per AC 25-11B Table 4-6, as the VSI spec cites it) | Frozen value; a trend computed from a frozen altitude | VSI-ANN-001, VSI-DISP-001 | App. 1 row not checked (O3) |
 | PFD-11 | Turn rate and slip | L | TBD | As PFD-1 | TC-ANN-001 | Severity not assessed (O3) |
@@ -92,6 +92,30 @@ assumptions are good engineering practice, not regulatory compliance.
 | PFD-14 | Flight path, wind, TAS, airspeed trend | M | TBD (a flight-path marker used as guidance in IMC may exceed Maj) | Derived from wrong inputs with valid flags | EFIS-FPM-011 (FPM colour when an input is degraded), EFIS-WIND-009 (wind state by colour and content). No airspeed-trend requirement handles a bad input | **Assess before any guidance use of the FPM** (O3) |
 | PFD-15 | Selected altitude and deviation alert | L/M | TBD | Gateway-computed flag (`ALTSEL`, fix-gateway annunciate plugin) not delivered or not set | AL-BUG-001, EFIS-ALTSEL-002, EFIS-ALTSEL-005, EFIS-ALTSEL-006, EFIS-ALTSEL-009, EFIS-ALTSEL-010 | Severity not assessed; A3 applies to any altitude alerting (O3) |
 
+#### 3.1.1 A hung display: one mechanism behind PFD-2, 4, 6 and 8
+
+Every function on the PFD is drawn by one GUI thread, and the client watchdog that H1 added runs
+on that same thread: it is a Qt timer (`src/pyefis/fix_watchdog.py`, the `QTimer` import and the
+timer it creates). A call on the GUI thread that does not return stops all of it at once. Examples
+are a GL driver call in the synthetic vision or the map, and a database read that blocks on a
+lock. Then:
+
+- nothing is repainted, so the glass keeps the last attitude, altitude, airspeed and heading,
+  drawn with the flags they had, which were valid;
+- the watchdog cannot run, so it never marks the data failed, however long the stall lasts. A
+  stall that ends does not trip it either, because the gateway kept answering throughout;
+- the process does not exit, so the service manager's restart never fires.
+
+H1 closed the frozen-and-valid case for a hung gateway. It does not cover a hung display. **No
+mitigation exists inside pyEfis today.** The pilot's cross-check against the independent standby
+(A1, A2) is the only detection, as for any misleading failure the stack does not flag (O2). This
+is a further instance of the common cause in A6: one thread, as well as one process and one
+host.
+
+A candidate remedy is a frame-liveness check that runs off the GUI thread and blanks the display or
+flags it failed when the PFD has not repainted for a set time (O8). Its threshold is a safety
+cue, and it is not set here.
+
 ### 3.2 pyEfis: other functions
 
 | ID | Function | Mode | Sev. | Mechanism | Mitigating requirements | Open |
@@ -99,12 +123,14 @@ assumptions are good engineering practice, not regulatory compliance.
 | EMS-1 | Powerplant parameters | L | Min to Haz | CAN-FIX node, bus, gateway or host loss | none with an ID | No requirement IDs for the engine widgets (O4) |
 | EMS-2 | Powerplant parameters | M | Haz | Wrong limits from a bad aircraft profile, so a missed exceedance (H4); frozen value (H1, H2) | none with an ID | No IDs (O4); A3 for engine alerting |
 | NAV-1 | Navigation guidance (HSI, flight plan, procedures) | L | Maj | Source or flight-plan engine loss | HSI-ANN-002 (NAV flag), HSI-ANN-003 (GS flag), HSI-FAIL-001 | |
-| NAV-2 | Navigation guidance | M | Maj (LP/LPV Haz in TSO-C146e terms) | Wrong source shown; deviation scaled wrong; stale procedure data | HSI-SRC-001 (active source always annunciated), HSI-DEV-001 (normalised deviation), HSI-FAIL-001; A4 | Flight-plan engine and procedures pack have no requirement IDs (O4) |
+| NAV-2 | Navigation guidance | M | Maj (LP/LPV Haz in TSO-C146e terms) | Wrong source shown; deviation scaled wrong; stale procedure data | HSI-SRC-001 (active source always annunciated), HSI-DEV-001 (normalised deviation), HSI-FAIL-001; A4. Bearing pointers are cyan, fixed to VOR1 / VOR2, never GPS and never on the CDI's own source, so a bearing needle cannot read as a second course pointer (HSI-COLOR-001, spec 6.8; HSIBRG1, HSIBRG4) | Flight-plan engine and procedures pack have no requirement IDs (O4) |
 | TER-1 | Terrain and obstacle awareness (SVS, map) | L | Min (advisory) | GL failure; no position; pack missing | AI-SVS-001 (no terrain without a valid position, SVS UNAVAIL), EFIS-SVS-002 (terrain viewpoint from FIX position), EFIS-SVS-006 (fallback to the sky/ground gradient when terrain is unavailable) | |
 | TER-2 | Terrain and obstacle awareness | M | Up to Haz if trusted like TAWS | Wrong or stale pack; datum or registration error; replayed manifest (H3) | AI-SVS-001; signed manifest and publish gate (makerplane-data); A3 (no TAWS) | Per-kind data quality requirements are not written (O7) |
 | MAP-1 | Moving map | L/M | Min / TBD | As TER-1, TER-2 | none with an ID | No requirement IDs (O4) |
 | DAT-1 | Data currency annunciation | L | Min | `DataAnnunciation` not shown | none with an ID | (O4) |
 | DAT-2 | Data currency annunciation | M | Maj (expired data shown as current) | Updater accepts an older signed manifest (fixed on `dev`, H3) | none with an ID | (O4) |
+| MNU-1 | System menu overlay (any function under it) | L | Min | An unintended corner swipe or a `SYSMENU` write opens the overlay: the card covers the top-right of the panel and the scrim dims every instrument. It is obvious, and it ends on one tap outside the card (the tap is consumed, not passed through), on Close, or by itself after the idle timeout | none with an ID; A1 | Minor holds only while the overlay is bounded: it opens on a `SYSMENU` rising edge only, and nothing on the bus extends it (O4) |
+| MNU-2 | System menu overlay | M | n/a | None: the overlay shows no value of its own, and every value under it keeps its own flags | none | |
 
 ### 3.3 fix-gateway: the data path
 
@@ -114,7 +140,7 @@ source, so a gateway change can find its row.
 | ID | Failure | Effect at the display | Sev. | Mitigation today | Open |
 |---|---|---|---|---|---|
 | GW-1 | Process crash or orderly close | All PFD functions lost and flagged (PFD-1, 3, 5, 7) | Cat (met only by A2) | Client marks all keys failed on a clean close | Covered by the A1 standby scope |
-| GW-2 | Hang, deadlock or socket error | All PFD values frozen and shown valid (PFD-2, 4, 6, 8) | Cat | Client watchdog marks every key failed after 2 s of silence (H1); every displayed key has a time-to-live (H2) | |
+| GW-2 | Hang, deadlock or socket error | All PFD values frozen and shown valid (PFD-2, 4, 6, 8) | Cat | Client watchdog marks every key failed after 2 s of silence (H1); every displayed key has a time-to-live (H2) | The watchdog runs on the display's GUI thread, so it does not cover a hung display (section 3.1.1, O8) |
 | GW-3 | Two sources write one key | Value alternates between sources, each flagged valid | Cat for attitude, by PFD-2 | A5 (configuration rule only) | Source selection is a roadmap item; no interlock (O5) |
 | GW-4 | Computed key from bad inputs | Derived value wrong but valid | as PFD-14 | none with an ID | fix-gateway has no requirement IDs (O4) |
 
@@ -144,9 +170,10 @@ repository's `dev` branch with tests; this document does not say which release c
 ## 4. What this assessment says
 
 1. **The Catastrophic cells are all M cells, plus one L cell that only the standby can lower.**
-   Every M cell on the primary path rests on the data flags being set. H1 and H2 closed the two
-   known paths by which they were not. A path nobody has found yet is still detected only by the
-   pilot's cross-check against the standby (O2).
+   Every M cell on the primary path rests on the data flags being set. H1 and H2 closed two
+   known paths by which they were not. A third known path, a hung display (section 3.1.1), is
+   open: nothing in pyEfis flags it (O8). That path, and any path nobody has found yet, is
+   detected only by the pilot's cross-check against the standby (O2).
 2. **The standby is load-bearing.** It is the only thing that lowers the attitude L cell, and the
    only cross-check for an M cell the stack fails to flag. That is why A1 and A2 exist.
 3. **The instrument specs are a real mitigation record.** Every primary instrument has an
@@ -165,6 +192,7 @@ repository's `dev` branch with tests; this document does not say which release c
 | O5 | No interlock against two sources on one key | GW-3 | Source selection on the fix-gateway roadmap |
 | O6 | CAN-FIX requirements bind senders only: nothing specifies that a receiver flags a silent node or an out-of-range frame | CAN-1, CAN-2 | fix-gateway CAN-FIX plugin |
 | O7 | No data quality requirements per pack kind (accuracy, resolution, completeness, timeliness) | TER-2, PKG-3 | makerplane-data check catalogue |
+| O8 | A hung GUI thread freezes every PFD value with valid flags, and the client watchdog cannot trip because it runs on that thread (section 3.1.1). Candidate remedy: a frame-liveness check off the GUI thread, for example a separate thread or a service-manager watchdog fed from the paint loop, that blanks or flags the display after N seconds without a repaint. N is a safety-cue threshold and is the project owner's decision. Also held here: an assumption A8, that the primary-flight code is separable from the rest, is entered in section 2 only once the import check that enforces it has no exceptions left; until then it would be false | PFD-2, PFD-4, PFD-6, PFD-8, GW-2 | pyEfis maintainers, with Safety and Compliance |
 
 ## 6. Keeping it current
 

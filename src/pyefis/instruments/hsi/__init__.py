@@ -138,12 +138,14 @@ class HSI(QGraphicsView):
         # rear rose. Default heading_up = today's behaviour.
         self.orientation = "heading_up"
         # HSI bearing pointers (P5b.2): two RMI-style needles (BRG1/BRG2), each
-        # pointing to a station/waypoint, source-selected via BRG1SRC/BRG2SRC
-        # (0=VOR1, 1=VOR2, 2=GPS). bearingN_enabled is the layout switch that
-        # makes a pointer available at all (not every panel has a bearing
-        # source). Every needle is drawn in bearing_color (cyan) whatever its
-        # source: source colour belongs to the CDI alone (HSI-COLOR-001,
-        # HSIBRG1), so a bearing needle never reads as a second course pointer.
+        # pointing to a station. Each has one fixed source (HSIBRG4): pointer 1
+        # is VOR1 (pairs with NAV1), pointer 2 is VOR2 (NAV2), written to
+        # BRG1SRC/BRG2SRC when the pilot turns it on. GPS is not a bearing
+        # source here; it shows only as the CDI. bearingN_enabled is the layout
+        # switch that makes a pointer available at all (not every panel has a
+        # bearing source). Every needle is drawn in bearing_color (cyan): source
+        # colour belongs to the CDI alone (HSI-COLOR-001, HSIBRG1), so a bearing
+        # needle never reads as a second course pointer.
         self.bearing1_enabled = False
         self.bearing2_enabled = False
         self.bearing_color = "#00ffff"
@@ -338,11 +340,12 @@ class HSI(QGraphicsView):
         self._brgFail = {1: True, 2: True}
         self._brgSrc = {1: None, 2: None}
         # Pilot's run-time selection (HSIBRG1): an available pointer is Off
-        # until the pilot steps it on with the BRG tab or its corner label,
+        # until the pilot steps it on with the BRG tab or a corner label,
         # Garmin-style. Held here, not on the bus: whether this display draws
         # a needle is presentation, and BRGnSRC keeps meaning "which source".
+        # The tab steps the pair through NONE, BRG 1, BRG 2, BOTH (HSIBRG4).
         self._brgOn = {1: False, 2: False}
-        self._brg_tab_rects = {}
+        self._brg_tab_rect = None
         self.brgdb = {1: None, 2: None}
         self.brgsrcdb = {1: None, 2: None}
         for _n in (1, 2):
@@ -890,12 +893,16 @@ class HSI(QGraphicsView):
         c.translate(self.cx, self.cy)
         c.rotate(-self._heading)
         c.translate(-self.cx, -self.cy)
-        if self.hdg_bug_item is not None:
+        # Bug and track diamond sit on the card at (value - heading): with no
+        # valid heading the card is frozen and they would point the wrong way
+        # (CERT1e), so they go with the numerals, under the HDG flag.
+        if self.hdg_bug_item is not None and self._heading_valid():
             _hbc = QColor(self.heading_bug_color)
             c.setPen(QPen(_hbc))
             c.setBrush(QBrush(_hbc))
             c.drawPolygon(self._hdg_bug_polygon())
-        if self.track_item is not None and self.track_item.isVisible():
+        if self.track_item is not None and self.track_item.isVisible() \
+                and self._heading_valid():
             _tc = QColor(self.track_color)
             c.setPen(QPen(_tc))
             c.setBrush(QBrush(_tc))
@@ -1035,8 +1042,8 @@ class HSI(QGraphicsView):
 
         # Per-pointer bearing-source labels (P5b.2), mirroring the tappable
         # nav-source annunciation: pointer 1 bottom-left, pointer 2 bottom-right,
-        # cyan like the needles, tapping steps the pointer Off -> sources -> Off
-        # (_cycle_bearing_src; "1 OFF" where no BRG tab carries Off). A
+        # cyan like the needles; a tap steps the BRG state, as the tab does
+        # (_step_bearing_state; "1 OFF" where no BRG tab carries Off). A
         # trailing "X" annunciates an invalid selected source (the pointer's own BRGn old/bad/fail), the
         # §7 under-specified surface (source-selector requirement candidate --
         # routed through instrument_verification, not authored here).
@@ -1134,10 +1141,12 @@ class HSI(QGraphicsView):
         img, pad = baked
         c.drawImage(QPointF(-pad, -pad), img)
 
-    def _draw_readout_box(self, c, ax, ay, anchor, label, value, color):
+    def _draw_readout_box(self, c, ax, ay, anchor, label, value, color,
+                          value_color=None):
         """One boxed readout (small label + degree value) anchored at (ax, ay).
         anchor = 2-char h/v code: h in l/c/r, v in t/m/b. Screen-fixed; a
-        translucent black fill keeps it legible over the map/terrain."""
+        translucent black fill keeps it legible over the map/terrain.
+        value_color defaults to fg_color."""
         bw = self.fontSize * 3.6
         bh = self.fontSize * 2.4
         x = ax if anchor[0] == 'l' else (ax - bw if anchor[0] == 'r' else ax - bw / 2.0)
@@ -1168,7 +1177,7 @@ class HSI(QGraphicsView):
         else:
             vy = y; vh = bh
         f.setPixelSize(max(12, int(self.fontSize * 1.18)))
-        c.setFont(f); c.setPen(QPen(QColor(self.fg_color)))
+        c.setFont(f); c.setPen(QPen(QColor(value_color or self.fg_color)))
         c.drawText(QRectF(x, vy, bw, vh),
                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
                    value)
@@ -1181,7 +1190,7 @@ class HSI(QGraphicsView):
         vendor-style presets (Bill 2026-08-02)."""
         layout = getattr(self, "readout_layout", "garmin")
         self._edit_rects = {}
-        self._brg_tab_rects = {}
+        self._brg_tab_rect = None
         if layout == "none":
             return
 
@@ -1195,6 +1204,15 @@ class HSI(QGraphicsView):
         crs = _deg(self._crs_display())                            # selected course
         sel = _deg(getattr(self, "_hdgBug", 0.0) or 0.0)          # selected heading (bug)
         white = QColor(self.fg_color)
+        # MAG never shows a frozen heading as live (CERT1e): red XXX on a failed
+        # or expired HEAD (CERT1a's failed look; old as fail, as CERT1b ruled
+        # for the tapes), blank under an amber label on a suspect one.
+        magcol = white
+        magval = None
+        if self._HeadFail or self._HeadOld:
+            hdg, magcol, magval = "XXX", QColor(255, 0, 0), QColor(255, 0, 0)
+        elif self._HeadBad:
+            hdg, magcol = "", QColor(255, 150, 0)
         cyan = QColor(getattr(self, "heading_bug_color", "#00ffff"))
         crscol = self._course_pointer_color()
 
@@ -1215,7 +1233,8 @@ class HSI(QGraphicsView):
             self._draw_source_tab(c, px, py, ph)
             self._draw_bearing_tab(c, px + pw, py, ph)
             self._draw_readout_panel(c, px, py, pw, ph, "h",
-                [("HDG", sel, cyan), ("MAG", hdg, white), ("CRS", crs, crscol)])
+                [("HDG", sel, cyan), ("MAG", hdg, magcol, magval),
+                 ("CRS", crs, crscol)])
             # Inside the sectioned panel the focus ring hugs the cell, so it
             # cannot cross into the neighbouring cell or the source tab.
             for field, i in (("hdg", 0), ("crs", 2)):
@@ -1231,7 +1250,8 @@ class HSI(QGraphicsView):
         elif layout == "split":
             # Actual-heading box ABOVE the rose (top gutter, outside), course +
             # selected heading in the bottom corners (Bill 2026-08-02).
-            self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, white)
+            self._draw_readout_box(c, W / 2.0, m * 0.5, "ct", "MAG", hdg, magcol,
+                                   magval)
             cbox = self._draw_readout_box(c, m, H - m, "lb", "CRS", crs, crscol)
             hbox = self._draw_readout_box(c, W - m, H - m, "rb", "HDG", sel, cyan)
             self._set_box_edit_rects(hbox, cbox)
@@ -1278,7 +1298,7 @@ class HSI(QGraphicsView):
         lf = QFont(self.font_family); lf.setPixelSize(max(9, int(self.fontSize * 0.64)))
         lf.setBold(True)
         vf = QFont(self.font_family); vf.setPixelSize(max(12, int(self.fontSize * 1.18)))
-        for i, (label, value, color) in enumerate(segments):
+        for i, (label, value, color, *value_color) in enumerate(segments):
             if orientation == "v":
                 sx, sy, sw, sh = x, y + h * i / n, w, h / n
                 if i > 0:
@@ -1292,7 +1312,8 @@ class HSI(QGraphicsView):
             c.setFont(lf); c.setPen(QPen(QColor(color)))
             c.drawText(QRectF(sx, sy + sh * 0.12, sw, sh * 0.36),
                        int(Qt.AlignmentFlag.AlignCenter), label)
-            c.setFont(vf); c.setPen(QPen(QColor(self.fg_color)))
+            c.setFont(vf)
+            c.setPen(QPen(QColor((value_color and value_color[0]) or self.fg_color)))
             c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
                        int(Qt.AlignmentFlag.AlignCenter), value)
 
@@ -1301,6 +1322,30 @@ class HSI(QGraphicsView):
     #: so the tab neither breathes as the source cycles nor special-cases the
     #: slot digit (pyEfis#148).
     _SOURCE_TAB_LABELS = ("GPS", "VOR1", "VOR2", "LOC1", "LOC2", "VLOC1", "VLOC2")
+
+    def _side_tab_metrics(self, c, py, ph):
+        """(top, height, corner radius, width) shared by the two tabs hanging
+        off the top panel, the nav-source tab on the left and the BRG tab on
+        the right (HSIBRG4: the BRG tab is the source tab mirrored), or None
+        when the panel is too short for a tab. Sets the tabs' font on `c`.
+
+        Same corner radius the panel itself uses (_draw_readout_panel keys it
+        to the panel's own height, AER-413), so the tab's outer corners match
+        the panel's and the height is the straight run of the panel's edge.
+        Width is the widest of _SOURCE_TAB_LABELS, so neither tab breathes."""
+        rr = ph * helpers.READOUT_RADIUS_RATIO
+        th = ph - 2.0 * rr
+        if th <= 0:
+            return None
+        tab_r = min(rr, th / 2.0)
+        lf = QFont(self.font_family)
+        lf.setPixelSize(int(self.fontSize))
+        c.setFont(lf)
+        fm = c.fontMetrics()
+        pad = self.fontSize * 0.35
+        tab_w = max(fm.horizontalAdvance(candidate)
+                    for candidate in self._SOURCE_TAB_LABELS) + 2.0 * pad
+        return py + rr, th, tab_r, tab_w
 
     def _draw_source_tab(self, c, px, py, ph):
         """Nav-source annunciation as a coloured tab hanging off the left edge
@@ -1336,22 +1381,10 @@ class HSI(QGraphicsView):
         label = self._source_label()
         if not label:
             return
-        # Same corner radius the panel itself uses (_draw_readout_panel keys it
-        # to the panel's own height, AER-413), so the tab's left corners match
-        # the panel's and `th` is the straight run of the panel's left edge.
-        rr = ph * helpers.READOUT_RADIUS_RATIO
-        th = ph - 2.0 * rr
-        if th <= 0:
+        metrics = self._side_tab_metrics(c, py, ph)
+        if metrics is None:
             return
-        tab_r = min(rr, th / 2.0)
-        lf = QFont(self.font_family)
-        lf.setPixelSize(int(self.fontSize))
-        c.setFont(lf)
-        fm = c.fontMetrics()
-        pad = self.fontSize * 0.35
-        tab_w = max(fm.horizontalAdvance(candidate)
-                    for candidate in self._SOURCE_TAB_LABELS) + 2.0 * pad
-        top = py + rr
+        top, th, tab_r, tab_w = metrics
         right = px
         left = right - tab_w
 
@@ -1378,63 +1411,45 @@ class HSI(QGraphicsView):
                    int(Qt.AlignmentFlag.AlignCenter), label)
         self._source_label_rect = (left, top, tab_w, th)
 
-    #: Every label a BRG tab row can show, for its constant width (as
-    #: _SOURCE_TAB_LABELS): "BRG OFF"/"BRG1 GPS" with one pointer available,
-    #: "BRG1 OFF"/"BRG2 VOR1" per row with both.
-    _BEARING_TAB_LABELS = ("BRG OFF", "BRG1 OFF", "BRG1 VOR1", "BRG1 VOR2",
-                           "BRG2 VOR1", "BRG2 VOR2")
+    #: The BRG tab's states in tap order (HSIBRG4, Bill 2026-11-16): the
+    #: label each shows and the pointers it turns on. _bearing_states() drops
+    #: any state that needs a pointer this layout lacks or that would repeat
+    #: the CDI.
+    _BEARING_STATES = (("NONE", ()), ("BRG 1", (1,)), ("BRG 2", (2,)),
+                       ("BOTH", (1, 2)))
 
-    def _bearing_tab_label(self, n, single):
-        """Text of pointer n's row on the BRG tab: "BRG OFF" / "BRG1 VOR1".
-        With a single row the Off text drops the digit -- there is only one
-        pointer it can mean."""
-        if not self._bearing_selected(n):
-            return "BRG OFF" if single else "BRG%d OFF" % n
-        name = {0: "VOR1", 1: "VOR2", 2: "GPS"}[self._brg_src_index(n)]
-        return "BRG%d %s" % (n, name)
+    def _bearing_tab_label(self):
+        """Text of the BRG tab: the state it shows ("NONE" / "BRG 1" /
+        "BRG 2" / "BOTH")."""
+        on = self._bearing_on_pointers()
+        for label, pointers in self._BEARING_STATES:
+            if pointers == on:
+                return label
+        return "NONE"
 
     def _draw_bearing_tab(self, c, px, py, ph):
-        """Bearing-pointer selector (HSIBRG1): a cyan tab hanging off the RIGHT
-        edge of the HDG | MAG | CRS panel, the mirror of the nav-source tab on
-        its left (_draw_source_tab), `readout_layout: top_panel` only. Drawn
-        only when bearing1_enabled or bearing2_enabled makes a pointer
-        available; one row per available pointer, stacked when both are, each
-        row its own tap target (_brg_tab_rects; a tap steps that pointer Off ->
-        each source not the CDI's -> Off). A row whose needle is on is filled
-        cyan with a darkened label (helpers.darken_to_contrast, as the source
-        tab); an Off row is the readout panel's dark fill with a cyan label, so
-        "a needle is on the rose" reads from the fill as well as the text.
-        `px` is the panel's right edge; the panel border, drawn after this,
-        owns the shared edge. Same fit caveat as the source tab (spec 7.4)."""
-        self._brg_tab_rects = {}
-        rows = [n for n in (1, 2) if self._bearing_selectable(n)]
-        if not rows:
+        """Bearing-pointer selector (HSIBRG1, one button since HSIBRG4): a cyan
+        tab hanging off the RIGHT edge of the HDG | MAG | CRS panel,
+        `readout_layout: top_panel` only. It is the nav-source tab
+        (_draw_source_tab) mirrored about the panel's centre line: same top,
+        height, width, corner radius and font (_side_tab_metrics). Drawn only
+        when bearing1_enabled or bearing2_enabled makes a pointer available.
+        The label is the state; a tap steps NONE -> BRG 1 -> BRG 2 -> BOTH ->
+        NONE, offering only the states that add a needle (_step_bearing_state).
+        With a needle on, the tab is filled cyan with a darkened label
+        (helpers.darken_to_contrast, as the source tab); at NONE it is the
+        readout panel's dark fill with a cyan label and outline, so "a needle
+        is on the rose" reads from the fill as well as the text. `px` is the
+        panel's right edge; the panel border, drawn after this, owns the
+        shared edge. Same fit caveat as the source tab (spec 7.4): the tab is
+        never widened to fit a label."""
+        self._brg_tab_rect = None
+        if not any(self._bearing_selectable(n) for n in (1, 2)):
             return
-        rr = ph * helpers.READOUT_RADIUS_RATIO
-        th = ph - 2.0 * rr
-        if th <= 0:
+        metrics = self._side_tab_metrics(c, py, ph)
+        if metrics is None:
             return
-        tab_r = min(rr, th / 2.0)
-        rh = th / len(rows)
-        lf = QFont(self.font_family)
-        lf.setBold(True)
-        pad = self.fontSize * 0.35
-        # The labels are longer than the source tab's, so the font shrinks to
-        # the room beside the panel (down to 9 px) rather than run off the
-        # widget's right edge.
-        room = self.width() - px - self.fontSize * 0.25 - 2.0 * pad
-        size = max(9, int(min(self.fontSize * 0.8, rh * 0.75)))
-        while True:
-            lf.setPixelSize(size)
-            c.setFont(lf)
-            fm = c.fontMetrics()
-            text_w = max(fm.horizontalAdvance(candidate)
-                         for candidate in self._BEARING_TAB_LABELS)
-            if text_w <= room or size <= 9:
-                break
-            size -= 1
-        tab_w = text_w + 2.0 * pad
-        top = py + rr
+        top, th, tab_r, tab_w = metrics
         left = px
         right = left + tab_w
 
@@ -1461,30 +1476,18 @@ class HSI(QGraphicsView):
         cyan = QColor(self.bearing_color)
         dark = QColor(0, 0, 0)
         dark.setAlphaF(0.55)
-        single = len(rows) == 1
-        c.save()
-        for i, n in enumerate(rows):
-            row = QRectF(left - overlap, top + rh * i, tab_w + overlap, rh)
-            on = self._bearing_selected(n)
-            c.setClipRect(row)
-            c.setClipPath(path, Qt.ClipOperation.IntersectClip)
-            c.setPen(Qt.PenStyle.NoPen)
-            c.setBrush(QBrush(cyan if on else dark))
-            c.drawPath(path)
-            c.setClipping(False)
-            c.setPen(QPen(helpers.darken_to_contrast(cyan) if on else cyan))
-            c.drawText(QRectF(left, top + rh * i, tab_w, rh),
-                       int(Qt.AlignmentFlag.AlignCenter),
-                       self._bearing_tab_label(n, single))
-            self._brg_tab_rects[n] = (left, top + rh * i, tab_w, rh)
-        c.restore()
-        # Outline in cyan so an all-Off tab still reads as a control on the
-        # map, and a hairline between two rows that share a fill.
+        on = bool(self._bearing_on_pointers())
+        c.setPen(Qt.PenStyle.NoPen)
+        c.setBrush(QBrush(cyan if on else dark))
+        c.drawPath(path)
+        c.setPen(QPen(helpers.darken_to_contrast(cyan) if on else cyan))
+        c.drawText(QRectF(left, top, tab_w, th),
+                   int(Qt.AlignmentFlag.AlignCenter), self._bearing_tab_label())
+        self._brg_tab_rect = (left, top, tab_w, th)
+        # Outline in cyan so a NONE tab still reads as a control on the map.
         c.setBrush(Qt.BrushStyle.NoBrush)
         c.setPen(QPen(cyan, max(1.0, self.fontSize * helpers.READOUT_PEN_RATIO)))
         c.drawPath(edge)
-        if not single:
-            c.drawLine(QLineF(left, top + rh, right, top + rh))
 
     def _readout_box_reach(self):
         """How far a free-standing readout box (``_draw_readout_box``) reaches
@@ -1548,16 +1551,26 @@ class HSI(QGraphicsView):
             self.rotate(-diff)
             self.last_update_time = now
 
+    # A HEAD quality change repaints at once: a stale heading sends no value
+    # changes, so waiting for the next one would leave the frozen card drawn
+    # as live (CERT1e).
     def setHeadOld(self,old):
-        self._HeadOld = old
+        if old != self._HeadOld:
+            self._HeadOld = old
+            self.changeFail()
+            self.update()
 
     def setHeadBad(self,bad):
-        self._HeadBad = bad
+        if bad != self._HeadBad:
+            self._HeadBad = bad
+            self.changeFail()
+            self.update()
 
     def setHeadFail(self,fail):
         if fail != self._HeadFail:
             self._HeadFail = fail
             self.changeFail()
+            self.update()
  
     heading = property(getHeading, setHeading)
 
@@ -1570,7 +1583,7 @@ class HSI(QGraphicsView):
     def isFail(self):
         return self._GsiFail\
             or self._CdiFail\
-            or self._HeadBad\
+            or not self._heading_valid()\
             or self._CourseBad
 
     def changeFail(self):
@@ -1616,7 +1629,7 @@ class HSI(QGraphicsView):
         if value != self._navsrc:
             self._navsrc = value
             # A bearing pointer on the CDI's new source would repeat it.
-            self._drop_bearings_on_cdi_source()
+            self._drop_unavailable_bearings()
             # The CRS readout edits a per-source key (NAV1CRS / NAV2CRS), and
             # none at all on GPS: a source change ends a CRS edit rather than
             # leaving the knob on a key the readout no longer shows.
@@ -1666,8 +1679,14 @@ class HSI(QGraphicsView):
     # Failure flags (Bill, 2026-11-08): the HSI never tells the pilot about a
     # failure only by taking a symbol away. Each flag covers every reason its
     # symbols are removed, on the rose and the arc alike.
+    def _heading_valid(self):
+        # Old counts as failed (CERT1e, after CERT1b for the tapes): a heading
+        # source that stopped while fix-gateway runs leaves HEAD old, not
+        # failed, and the frozen card must not read as live.
+        return not (self._HeadOld or self._HeadBad or self._HeadFail)
+
     def _hdg_flag_shown(self):
-        return self._HeadFail or self._HeadBad
+        return not self._heading_valid()
 
     def _nav_flag_shown(self):
         # Every reason _cdi_shown() drops the bar: CDI stale, invalid or failed,
@@ -1720,7 +1739,7 @@ class HSI(QGraphicsView):
     def _setBrgSrc(self, n, value):
         if value != self._brgSrc[n]:
             self._brgSrc[n] = value
-            self._drop_bearings_on_cdi_source()
+            self._drop_unavailable_bearings()
             if self.isVisible():
                 self.update()
 
@@ -1753,29 +1772,55 @@ class HSI(QGraphicsView):
         s = int(round(self._navsrc))
         return s if s in (0, 1, 2) else None
 
+    #: Each pointer's one source as its BRGnSRC value (HSIBRG4, Bill
+    #: 2026-11-16): pointer 1 pairs only with NAV1 (VOR1), pointer 2 only with
+    #: NAV2 (VOR2). GPS is never a bearing source on this display; it shows
+    #: as the CDI when the source tab selects it.
+    _BEARING_SOURCE = {1: 0, 2: 1}
+
     def _bearing_selectable(self, n):
         """Pointer n can be stepped on at run time: the layout enables it and
-        its BRGnSRC key exists to carry the chosen source."""
+        its BRGnSRC key exists to carry the source."""
         return bool(getattr(self, "bearing%d_enabled" % n, False)) \
             and self.brgsrcdb[n] is not None
 
-    def _bearing_selected(self, n):
-        """The pilot has pointer n on, on a source other than the CDI's. A
-        pointer on the CDI's own source is never drawn: it would repeat the
+    def _bearing_offered(self, n):
+        """Pointer n can be turned on now: selectable, and its fixed source is
+        not the CDI's. A pointer on the CDI's own source would repeat the
         course pointer (Bill, 2026-11-12, HSIBRG1)."""
-        if not self._bearing_selectable(n) or not self._brgOn[n]:
-            return False
-        s = self._brg_src_index(n)
-        return s is not None and s != self._cdi_src_index()
+        return self._bearing_selectable(n) \
+            and self._BEARING_SOURCE[n] != self._cdi_src_index()
 
-    def _drop_bearings_on_cdi_source(self):
-        """Turn Off any pointer whose source has become the CDI's (a NAVSRC
-        change, or BRGnSRC written elsewhere). Off rather than merely hidden,
-        so the BRG tab never reads OFF over a needle that comes back later."""
-        cdi = self._cdi_src_index()
+    def _bearing_selected(self, n):
+        """The pilot has pointer n on, BRGnSRC holds its fixed source, and
+        that source is not the CDI's. Any other BRGnSRC (GPS, or the other
+        VOR, written by another display or the gateway) leaves this pointer
+        Off here (HSIBRG4)."""
+        if not self._bearing_offered(n) or not self._brgOn[n]:
+            return False
+        return self._brg_src_index(n) == self._BEARING_SOURCE[n]
+
+    def _bearing_on_pointers(self):
+        """The pointers whose needles are on, as a tuple: (), (1,), (2,) or
+        (1, 2) -- the key into _BEARING_STATES."""
+        return tuple(n for n in (1, 2) if self._bearing_selected(n))
+
+    def _bearing_states(self):
+        """The BRG states a tap steps through, in order (HSIBRG4): every
+        state of _BEARING_STATES whose pointers can all be on now. CDI on GPS:
+        all four; CDI on NAV1: NONE, BRG 2; CDI on NAV2: NONE, BRG 1; one
+        pointer in the layout: NONE and that one."""
+        return [st for st in self._BEARING_STATES
+                if all(self._bearing_offered(n) for n in st[1])]
+
+    def _drop_unavailable_bearings(self):
+        """Turn Off any pointer that can no longer be drawn: its source became
+        the CDI's (a NAVSRC change), or BRGnSRC was set elsewhere to anything
+        but its fixed source (GPS included). Off rather than merely hidden,
+        so the BRG tab never reads NONE over a needle that comes back later;
+        from BOTH the other pointer stays on."""
         for _n in (1, 2):
-            if self._brgOn[_n] and cdi is not None \
-                    and self._brg_src_index(_n) == cdi:
+            if self._brgOn[_n] and not self._bearing_selected(_n):
                 self._brgOn[_n] = False
 
     def _bearing_visible(self, n):
@@ -1787,7 +1832,7 @@ class HSI(QGraphicsView):
             return False
         if self.brgdb[n] is None:
             return False
-        if self._HeadFail or self._HeadBad:
+        if not self._heading_valid():
             return False
         if self._brgOld[n] or self._brgBad[n] or self._brgFail[n]:
             return False
@@ -1837,14 +1882,14 @@ class HSI(QGraphicsView):
 
     def _bearing_corner_label(self, n):
         """(text, invalid) for pointer n's bottom-corner label, or ("", False)
-        when none is drawn. A pointer that is on carries its source ("1 GPS"),
-        with a trailing "X" when its BRGn is invalid. An Off pointer shows
-        "1 OFF" as the tap target only where there is no BRG tab; under
-        `top_panel` the tab carries Off and the corner stays clear."""
-        if not self._bearing_selectable(n):
-            return "", False
+        when none is drawn. A pointer that is on carries its source ("1 VOR1"),
+        with a trailing "X" when its BRGn is invalid. An Off pointer that can
+        be turned on shows "1 OFF" as a tap target only where there is no BRG
+        tab; under `top_panel` the tab carries the state and the corner stays
+        clear."""
         if not self._bearing_selected(n):
-            if getattr(self, "readout_layout", "top_panel") == "top_panel":
+            if not self._bearing_offered(n) \
+                    or getattr(self, "readout_layout", "top_panel") == "top_panel":
                 return "", False
             return "%d OFF" % n, False
         txt = self._bearing_src_label(n)
@@ -1853,12 +1898,6 @@ class HSI(QGraphicsView):
         invalid = (self.brgdb[n] is None or self._brgOld[n]
                    or self._brgBad[n] or self._brgFail[n])
         return (txt + " X" if invalid else txt), invalid
-
-    def _bearing_cycle(self):
-        """Pointer sources a tap steps through, in order: VOR1, VOR2, GPS,
-        less the CDI's own (it would repeat the course pointer)."""
-        cdi = self._cdi_src_index()
-        return [s for s in (0, 1, 2) if s != cdi]
 
     # -- Arc orientation mode (P5b.3) --------------------------------------
     # The forward heading sector (+/- ARC_HALF_DEG, so 120 deg total) is spread
@@ -1951,10 +1990,13 @@ class HSI(QGraphicsView):
         fail = self.isFail()
 
         # 1. Compass band ticks (every 5 deg in-sector), weight/length hierarchy
-        # matching the rose; each tick fans slightly toward ownship.
-        base = int(round(self._heading))
-        span = int(self.ARC_HALF_DEG) + 5
-        for d in range(base - span, base + span + 1, 5):
+        # matching the rose; each tick fans slightly toward ownship. The loops
+        # step from the 5-deg mark at or below the left sector edge, so ticks and
+        # numerals sit on true compass marks at any heading (AER-5920).
+        first = int(math.floor((self._heading - self.ARC_HALF_DEG) / 5.0)) * 5
+        last = int(math.ceil(self._heading + self.ARC_HALF_DEG))
+        marks = range(first, last + 1, 5)
+        for d in marks:
             cnt = d % 360
             if not self._arc_in_sector(cnt):
                 continue
@@ -1981,7 +2023,7 @@ class HSI(QGraphicsView):
             nf = QFont(self.font_family); nf.setPixelSize(nsize)
             c.setFont(nf); c.setPen(QPen(fg))
             _bw = nsize * 3.0; _bh = nsize * 1.6
-            for d in range(base - span, base + span + 1, 5):
+            for d in marks:
                 cnt = d % 360
                 if cnt % 30 != 0 or not self._arc_in_sector(cnt):
                     continue
@@ -2017,11 +2059,12 @@ class HSI(QGraphicsView):
             self._draw_arc_course(c, cx, own_y)
 
         # 5. Heading bug + track diamond as band markers (in-sector only).
-        if getattr(self, "heading_bug_enabled", False) and not (self._HeadFail or self._HeadBad):
+        if getattr(self, "heading_bug_enabled", False) and self._heading_valid():
             if self._arc_in_sector(self._hdgBug):
                 self._draw_arc_band_marker(c, self._hdgBug,
                                            QColor(self.heading_bug_color), "bug")
-        if self._track_visible() and self._arc_in_sector(self._track):
+        if self._track_visible() and self._heading_valid() \
+                and self._arc_in_sector(self._track):
             self._draw_arc_band_marker(c, self._track, QColor(self.track_color), "diamond")
 
         # 6. Ownship symbol at (cx, own_y), pointing up.
@@ -2201,27 +2244,29 @@ class HSI(QGraphicsView):
         item.value = value
         item.output_value()
 
-    def _cycle_bearing_src(self, n):
-        """Step pointer n Off -> each source that is not the CDI's (VOR1, VOR2,
-        GPS order) -> Off (HSIBRG1). A source step writes BRGnSRC, so the
-        fix-gateway select re-routes the canonical BRGn (one-key-one-writer);
-        Off is this display's own state and leaves BRGnSRC as it was."""
-        if not self._bearing_selectable(n):
+    def _step_bearing_state(self):
+        """Step the BRG state to the next one _bearing_states() offers:
+        NONE -> BRG 1 -> BRG 2 -> BOTH -> NONE, less any state that would
+        repeat the CDI or needs a pointer the layout lacks (HSIBRG4). Turning
+        a pointer on writes its fixed source to BRGnSRC if it is not there
+        already, so the fix-gateway select re-routes the canonical BRGn
+        (one-key-one-writer); Off is this display's own state and leaves
+        BRGnSRC as it was."""
+        states = [st[1] for st in self._bearing_states()]
+        if len(states) < 2:
             return
-        cycle = self._bearing_cycle()
-        if self._bearing_selected(n):
-            i = cycle.index(self._brg_src_index(n)) + 1
-        else:
-            i = 0
-        if i >= len(cycle):
-            self._brgOn[n] = False
-        else:
-            self._brgOn[n] = True
-            if self._brg_src_index(n) != cycle[i]:
-                self._send_key("BRG%dSRC" % n, float(cycle[i]))
-                # Track the write at once; the item's own valueChanged lands
-                # the same value through _setBrgSrc.
-                self._brgSrc[n] = float(cycle[i])
+        cur = self._bearing_on_pointers()
+        i = states.index(cur) if cur in states else 0
+        nxt = states[(i + 1) % len(states)]
+        for n in (1, 2):
+            if n in nxt:
+                src = self._BEARING_SOURCE[n]
+                if self._brg_src_index(n) != src:
+                    self._send_key("BRG%dSRC" % n, float(src))
+                    # Track the write at once; the item's own valueChanged
+                    # lands the same value through _setBrgSrc.
+                    self._brgSrc[n] = float(src)
+            self._brgOn[n] = n in nxt
         self.update()
 
     def mousePressEvent(self, event):
@@ -2235,18 +2280,17 @@ class HSI(QGraphicsView):
                 self._send_key("NAVSRC", float((cur + 1) % 3))
                 event.accept()
                 return
-        # Tapping a BRG tab row or a bearing-source label steps that pointer
-        # Off -> each source not the CDI's -> Off (_cycle_bearing_src).
+        # Tapping the BRG tab, or either bearing-source corner label where
+        # there is no tab, steps the BRG state (_step_bearing_state).
         px, py = event.pos().x(), event.pos().y()
-        for rects in (getattr(self, "_brg_tab_rects", None) or {},
-                      getattr(self, "_brg_label_rect", None) or {}):
-            for _n in (1, 2):
-                rr = rects.get(_n)
-                if rr is not None and rr[0] <= px <= rr[0] + rr[2] \
-                        and rr[1] <= py <= rr[1] + rr[3]:
-                    self._cycle_bearing_src(_n)
-                    event.accept()
-                    return
+        labels = getattr(self, "_brg_label_rect", None) or {}
+        for rr in (getattr(self, "_brg_tab_rect", None),
+                   labels.get(1), labels.get(2)):
+            if rr is not None and rr[0] <= px <= rr[0] + rr[2] \
+                    and rr[1] <= py <= rr[1] + rr[3]:
+                self._step_bearing_state()
+                event.accept()
+                return
         # Touching the HDG or CRS readout gives it edit focus for the knob
         # (pyEfis #309). Checked after the source taps above, so those keep
         # working exactly as before wherever they overlap.
@@ -2420,7 +2464,7 @@ class HSI(QGraphicsView):
         station. Where the push cannot act -- heading invalid, a localizer, or
         no valid bearing -- it ends the edit instead."""
         if self._edit_field == "hdg":
-            if self._HeadFail or self._HeadBad:
+            if not self._heading_valid():
                 return False
             self._write_edit(int(round(float(self._heading or 0.0))) % 360)
             return True

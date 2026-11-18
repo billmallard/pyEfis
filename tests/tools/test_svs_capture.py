@@ -512,3 +512,51 @@ def test_wrapper_that_imports_fix_first_is_refused():
     )
     assert proc.returncode == 6, proc.stderr
     assert "not the mock FIX client" in proc.stderr
+
+
+class _FakeSettleSVS:
+    """Just the attributes ``unsettled_reasons`` reads -- no GL."""
+
+    class _ReadyDB:
+        ready = True
+
+    def __init__(self):
+        self.gl_failed = False
+        self.drew_terrain = True
+        self._async_state = {
+            "airports": {"key": ("k",), "res": None, "worker": None},
+            "obstacles": {"key": ("k",), "res": None, "worker": None},
+        }
+        self.water_db = self._ReadyDB()
+        self._water_result = None
+        self._water_worker = None
+        self._water_tris_cache_key = ("k",)
+        self.highway_db = None
+
+
+def test_unsettled_reasons_empty_when_settled(svs_capture):
+    svs = _FakeSettleSVS()
+    assert svs_capture.unsettled_reasons(svs, {"airports", "obstacles"}) == []
+    assert svs_capture.settled(svs, {"airports", "obstacles"})
+
+
+def test_unsettled_reasons_names_the_stuck_collector(svs_capture):
+    """AER-1816: a timeout has to say which predicate never cleared."""
+    svs = _FakeSettleSVS()
+    svs._water_result = (("k",), None)
+    svs._async_state["obstacles"]["key"] = None
+    reasons = svs_capture.unsettled_reasons(svs, {"airports", "obstacles"})
+    assert reasons == ["obstacles: no key recorded",
+                       "water: result pending promotion"]
+    assert not svs_capture.settled(svs, {"airports", "obstacles"})
+
+
+def test_unsettled_reasons_terrain_and_unrequested_layer(svs_capture):
+    svs = _FakeSettleSVS()
+    svs.drew_terrain = False
+    del svs._async_state["airports"]
+    reasons = svs_capture.unsettled_reasons(svs, {"airports"})
+    assert reasons == ["terrain: drew_terrain is False",
+                       "airports: never requested"]
+    assert svs_capture.unsettled_reasons(
+        svs, {"airports"}, require_terrain=False) == ["airports: never requested"]

@@ -233,7 +233,7 @@ See §3. Keep all.
 | `source_auto_color` | boolean | color course pointer + CDI by `NAVTYPE` (magenta GPS / green VOR-LOC) instead of the static `course_color`. Default **on**. |
 | `vloc_color` | color | the "green" used when the source is VOR/LOC (default `#00ff00`). |
 | `orientation` | enum | `north_up` (full 360 rose, today) / `heading_up` / `track_up` / `arc` (120° expanded HSI). |
-| `bearing1_enabled` / `bearing2_enabled` | boolean | show bearing pointer 1 / 2. |
+| `bearing1_enabled` / `bearing2_enabled` | boolean | offer bearing pointer 1 (VOR1) / 2 (VOR2) on the BRG tab. |
 | `bearing_color` | color | bearing-pointer color (default cyan `#00ffff`). |
 | `tofrom_enabled` | boolean | show the TO/FROM indicator. |
 | `data_fields` | enum/multi | which corner data fields to show (CRS, HDG, DIS, DTK, GS, ETE, source). |
@@ -288,13 +288,23 @@ Each item: what it does, the input(s), the convention.
    second magenta pointer at the same waypoint; every needle is now
    `bearing_color`.* Opt-in at run time, Garmin-style: `bearing1_enabled` /
    `bearing2_enabled` only make a pointer **available**; each is **Off** until the
-   pilot steps it on, and a step goes Off → each source that is not the CDI's
-   (VOR1, VOR2, GPS order) → Off. A source step writes `BRGnSRC`; Off is the
-   display's own state and leaves `BRGnSRC` as it was, so no FIX key changed. A
-   pointer on the CDI's source is never drawn: if `NAVSRC` (or a `BRGnSRC`
-   written elsewhere) puts the two on one source, that pointer turns Off. The
-   control is the BRG tab (7.4) under `top_panel`, and the bottom-corner labels
-   (`1 OFF` / `1 VOR1`) under the other layouts.
+   pilot turns it on. *Fixed sources (HSIBRG4, AER-5847, Bill 2026-11-16):* pointer
+   1 pairs only with NAV1 (VOR1), pointer 2 only with NAV2 (VOR2). GPS is not a
+   bearing source: it shows only as the CDI, chosen on the source tab. One control
+   steps the pair NONE → BRG 1 → BRG 2 → BOTH → NONE, offering only the states
+   that add a needle: CDI on GPS, all four; on VLOC1, NONE and BRG 2; on VLOC2,
+   NONE and BRG 1; one pointer in the layout, NONE and that one. Turning a pointer
+   on writes its VOR to `BRGnSRC` (through `output_value()`, so the gateway's
+   select re-routes `BRGn`) if it is not there already; Off is the display's own
+   state and leaves `BRGnSRC` as it was. A pointer on the CDI's source is never
+   drawn: a `NAVSRC` change onto a pointer's VOR turns that pointer Off (BOTH
+   becomes the other one; a lone duplicate becomes NONE), and it does not come
+   back when the CDI moves on. A `BRGnSRC` written elsewhere to anything but the
+   pointer's own VOR (GPS, or the other VOR) also turns that pointer Off on this
+   display. The control is the BRG tab (7.4) under `top_panel`; under the other
+   layouts the bottom-corner labels (`1 OFF` / `1 VOR1`) carry it, and tapping
+   either one steps the same cycle. A pointer that would repeat the CDI shows no
+   `OFF` label.
 9. **OBS mode** — when an OBS control sets the course, `COURSE` becomes
    pilot-settable; with a GPS source, asserting `OBSMODE` suspends waypoint
    sequencing and holds the active-to waypoint; annunciate **"OBS"**. **"SUSP"**
@@ -341,7 +351,7 @@ failed, and is removed only when a valid signal drives the needle.*
 
 | ID | Flag | Trigger | Required response | Cite | Status |
 |----|------|---------|-------------------|------|--------|
-| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/bad or absent | Red **HDG** flag inside the card, upper right (clear of the readout panels); compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
+| **HSI-ANN-001** | Heading (compass) flag | `HEAD` fail/old/bad or absent (`old` as `fail`, CERT1e) | Red **HDG** flag inside the card, upper right (clear of the readout panels); compass card and every heading-referenced element (course pointer, CDI geometry, bearing pointers, track diamond) must stop presenting misleading heading | IFH p.118; AC 25-11B §4.2; 14 CFR §23.2605(b) | **DONE** — red HDG flag |
 | **HSI-ANN-002** | NAV (lateral) flag | Selected lateral source (`CDI`) stale/bad/fail/absent, no lateral signal received (`CDIV` = 0), or `COURSE` bad/fail | **NAV** flag by the course pointer; remove the CDI bar | IFH p.118, p.283 | **DONE** — red NAV flag; CDI removed |
 | **HSI-ANN-003** | GS (glideslope) flag | Glideslope *expected* (`GSV` ≥ 0.5, or `GSV` absent) but the GS signal is stale/invalid/failed | **GS** flag on the glideslope scale — distinct from "no GS present" (scale simply absent) | IFH p.283; AC 25-11B §4.2 | **DONE** — red GS flag; diamond suppressed |
 
@@ -360,7 +370,7 @@ convention, and no element is left showing its last-good value after loss:
 
 | Signal | valid | old (stale) | bad (invalid) | fail | absent |
 |--------|-------|-------------|---------------|------|--------|
-| `HEAD` | normal | grey card | grey + HDG flag (ANN-001) | HDG flag, freeze/blank card | HDG flag |
+| `HEAD` | normal | as `fail` (CERT1e) | HDG flag; card stops, numerals, heading bug, track diamond and bearing needles removed; MAG blank under an amber label | HDG flag; card stops, numerals, heading bug, track diamond and bearing needles removed; MAG red `XXX` | HDG flag |
 | `COURSE` | normal | grey pointer | remove pointer + CDI scale/bar + NAV flag; CRS readout `---°` | remove pointer + CDI scale/bar + NAV flag; CRS readout `---°` | pointer removed |
 | `CDI` | normal | hide + NAV flag | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
 | `CDIV` | CDI on its own quality | — | — | — | CDI on its own quality; `CDIV` = 0 → hide bar + NAV flag (ANN-002) |
@@ -391,17 +401,18 @@ now raises its flag too. Open items: the grey `old` treatments (`COURSE`,
 **HSI-SRC-001.** The active nav source is annunciated on the face at all times (e.g.
 "GPS", "VOR1", "LOC1"), coloured per HSI-COLOR-001, so the crew always knows what drives
 lateral/vertical guidance (14 CFR §23.2605(b); `avionics_reference.md` §4.1).
-*BRG tab (HSIBRG1, AER-5548).* The panel's right edge carries the mirror of the source
-tab: the bearing-pointer selector (`HSI._draw_bearing_tab`), drawn only when
-`bearing1_enabled` or `bearing2_enabled` makes a pointer available. One row per available
-pointer, stacked when both are; each row is its own tap target and steps its pointer as
-6.8 describes. Text: `BRG OFF` / `BRG1 VOR1` with one pointer, `BRG1 OFF` / `BRG2 GPS`
-per row with two. A row whose needle is on is filled `bearing_color` with a darkened label;
-an Off row is the panel's dark fill with a cyan label, inside a cyan outline. Its labels
-are longer than the source tab's, so its font shrinks to the room beside the panel (9 px
-floor) rather than run off the widget. Under `top_panel` the corner labels then name only
-an on pointer's source; under the other layouts an Off pointer keeps a `1 OFF` corner
-label as its control.
+*BRG tab (HSIBRG1, AER-5548; one button since HSIBRG4, AER-5847).* The panel's right
+edge carries the bearing-pointer selector (`HSI._draw_bearing_tab`), drawn only when
+`bearing1_enabled` or `bearing2_enabled` makes a pointer available. It is the source tab
+mirrored about the panel's centre line: the same top, height, width, corner radius and
+font, all from one `HSI._side_tab_metrics()`, so the two cannot drift. It is one tap
+target, and its label is the state: `NONE`, `BRG 1`, `BRG 2` or `BOTH`; a tap steps the
+cycle 6.8 describes. Every label fits inside the source tab's constant width (the widest
+of its labels, `VLOC1`), so the HSIBRG1 font shrink is gone; the tab is never widened to
+fit. With a needle on, the tab is filled `bearing_color` with a darkened label; at `NONE`
+it is the panel's dark fill with a cyan label, inside a cyan outline. Under `top_panel` the
+corner labels name only an on pointer's source; under the other layouts an Off pointer
+that can be turned on keeps a `1 OFF` corner label as a control.
 
 *Status: implemented. In `readout_layout: top_panel` (the default), the annunciation is
 a coloured tab (`HSI._draw_source_tab`, pyEfis#140) on the left edge of the HDG | MAG |
@@ -512,6 +523,7 @@ will flip the run red the moment a flag is implemented, forcing removal of the m
 | 102 | **HSI-ANN-002** (NAV flag) | `nav_flag_on_cdi_invalid` | pass |
 | 103 | **HSI-ANN-003** (GS flag) | `gs_flag_on_gs_lost` | pass |
 | 104 | **HSI-ANN-002** (no lateral signal) | `nav_flag_on_no_lateral_signal` | pass |
+| 105 | **HSI-ANN-001** + HSI-FAIL-001 (`HEAD` fail/old/bad, CERT1e) | `test_hsi_heading_quality.py` | pass |
 
 Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
 `quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;

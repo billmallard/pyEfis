@@ -14,6 +14,7 @@ import pytest
 from PyQt6.QtGui import QImage
 
 import pyefis.hmi.functions as functions
+from pyefis.instruments import hsi
 from pyefis.instruments import map as moving_map
 from pyefis.instruments.map import nd
 from pyefis.screens import screenbuilder_factory as factory
@@ -480,20 +481,54 @@ def test_vdev_hidden_when_gsv_says_no_glidepath(fix):
 
 def test_vdev_without_gsv_key_follows_gsi_quality(fix):
     """An older gateway publishes no GSV: the scale shows on GSI's own
-    quality, as the HSI does, and never raises the GS flag."""
+    quality, as the HSI does, and a bad GSI raises the GS flag there too
+    (pyEfis #489)."""
     _define(fix, "GSI", 0.2)
     assert nd.vdev(_reader(fix)) == {"pointer": pytest.approx(0.2),
                                      "flag": False}
     fix.db.get_item("GSI").bad = True
-    assert nd.vdev(_reader(fix)) == {"pointer": None, "flag": False}
+    assert nd.vdev(_reader(fix)) == {"pointer": None, "flag": True}
 
 
-@pytest.mark.parametrize("flag,pointer,raised", [
-    ("old", None, False), ("bad", None, True), ("fail", None, True)])
-def test_vdev_quality(fix, flag, pointer, raised):
+@pytest.mark.parametrize("gsv", [None, 1.0], ids=["gsv-absent", "gsv-1"])
+@pytest.mark.parametrize("flag", ["old", "bad", "fail"])
+def test_vdev_quality(fix, flag, gsv):
+    """Every reason the pointer is removed raises the GS flag, with or
+    without GSV, stale GSI included (pyEfis #489)."""
     _define(fix, "GSI", 0.2, **{flag: True})
-    _define(fix, "GSV", 1.0)
-    assert nd.vdev(_reader(fix)) == {"pointer": pointer, "flag": raised}
+    if gsv is not None:
+        _define(fix, "GSV", gsv)
+    assert nd.vdev(_reader(fix)) == {"pointer": None, "flag": True}
+
+
+class _HsiGs:
+    """The HSI's own GS rule, borrowed unbound, over plain attributes."""
+    _gs_expected = hsi.HSI._gs_expected
+    _gs_flag_shown = hsi.HSI._gs_flag_shown
+
+    def __init__(self, gsv, old, bad, fail):
+        self.gsi_enabled = True
+        self._gsv = gsv
+        self._GsiOld, self._GsiBad, self._GsiFail = old, bad, fail
+
+
+@pytest.mark.parametrize("gsv", [None, 0.0, 1.0])
+@pytest.mark.parametrize("old,bad,fail", [
+    (o, b, f) for o in (False, True) for b in (False, True)
+    for f in (False, True)])
+def test_vdev_matches_the_hsi_gs_rule(fix, gsv, old, bad, fail):
+    """The ND's scale and GS flag agree with the HSI's in every GSV and
+    GSI quality combination, and the pointer never goes without the
+    flag."""
+    _define(fix, "GSI", 0.2, old=old, bad=bad, fail=fail)
+    if gsv is not None:
+        _define(fix, "GSV", gsv)
+    ref = _HsiGs(gsv, old, bad, fail)
+    st = nd.vdev(_reader(fix))
+    assert (st is not None) == ref._gs_expected()
+    if st is not None:
+        assert st["flag"] == ref._gs_flag_shown()
+        assert (st["pointer"] is None) == st["flag"]
 
 
 def test_vdev_paints_the_pointer_where_the_model_says(fix, qtbot):
@@ -517,6 +552,28 @@ def test_vdev_paints_the_pointer_where_the_model_says(fix, qtbot):
     assert rows, "no magenta pointer on the scale"
     centre = (min(rows) + max(rows)) / 2.0
     assert centre == pytest.approx(nd.vdev_pointer_y(g, 0.5), abs=1.5)
+
+
+def test_vdev_paints_the_gs_flag_on_a_stale_gsi_without_gsv(fix, qtbot):
+    """The case pyEfis #489 found silent: an older gateway (no GSV) and a
+    stale GSI. Paint a frame: the red GS box sits on the scale's centre and
+    no magenta pointer is left on the scale."""
+    _define(fix, "GSI", 0.5, old=True)
+    m = _map(qtbot, nd_mode="expanded", layer_terrain=False,
+             layer_roads=False, layer_rivers=False, layer_range_rings=False,
+             layer_airports=False, layer_navaids=False)
+    m._build_layers()
+    img = QImage(W, H, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    m.render(img)
+    g = nd.vdev_geometry(W, H)
+    x0, y0, half = int(round(g["x"])), g["y0"], g["half"]
+    column = [img.pixelColor(x0, y)
+              for y in range(int(y0 - half), int(y0 + half) + 1)]
+    assert any(c.red() > 200 and c.green() < 60 and c.blue() < 60
+               for c in column), "no red GS flag on the scale"
+    assert not any(c.red() > 200 and c.blue() > 200 and c.green() < 80
+                   for c in column), "pointer still drawn under the flag"
 
 
 # --- data blocks -----------------------------------------------------------
@@ -621,16 +678,16 @@ def test_frame_clock_repaints_on_nd_data_only_while_on(fix, qtbot):
     m.isVisible = lambda: True
     m.update = lambda: None
     m._frame_tick()
-    pose = m._frame_last_pose
+    seen = (m._frame_last_pose, m._frame_last_overlay)
     fix.db.set_value("GSI", 0.6)
     m._frame_tick()
-    assert m._frame_last_pose != pose
+    assert (m._frame_last_pose, m._frame_last_overlay) != seen
     m.nd_mode = "off"
     m._frame_tick()
-    pose = m._frame_last_pose
+    seen = (m._frame_last_pose, m._frame_last_overlay)
     fix.db.set_value("GSI", -0.6)
     m._frame_tick()
-    assert m._frame_last_pose == pose
+    assert (m._frame_last_pose, m._frame_last_overlay) == seen
 
 
 def test_frame_clock_repaints_on_expanded_to_ctr(fix, qtbot):

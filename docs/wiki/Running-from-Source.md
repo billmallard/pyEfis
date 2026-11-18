@@ -27,8 +27,9 @@ source venv/bin/activate
 - `make init` does that, then installs pyEFIS editable with PyQt6 6.8.0 (the
   `qt` extra).
 - On a Raspberry Pi running Bookworm, both use the system's PyQt6 instead
-  (`sudo apt install python3-pyqt6 x11-utils` first), and the venv sees the
-  system packages.
+  (`sudo apt install python3-pyqt6 python3-pyqt6.qtpdf x11-utils` first), and
+  the venv sees the system packages. Debian packages Qt PDF separately from
+  PyQt6; without `python3-pyqt6.qtpdf` the Charts page cannot draw plates.
 
 Neither installs synthetic vision's dependencies. Add them with:
 
@@ -103,6 +104,7 @@ instrument's options, refresh them with
 | Symptom | Fix |
 |---|---|
 | `ModuleNotFoundError: No module named 'PyQt6'` | Install the `qt` extra, or on a Pi `python3-pyqt6`. |
+| The Charts page shows `PLATE RENDERER NOT INSTALLED` | On a Pi, `sudo apt install python3-pyqt6.qtpdf`. The pip `qt` extra already includes Qt PDF. |
 | The attitude display shows `SVS UNAVAIL` | Expected without the `svs` extra, a usable GPU, or position data. |
 | No live values | fix-gateway is not running, or `FixServer`/`FixPort` in `main/default.yaml` do not point at it. |
 | Display errors from a terminal | Set `DISPLAY=:0`. |

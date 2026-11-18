@@ -36,6 +36,15 @@ themselves). Every DB-backed object is construct-never-raises with
   `procedures_db_path` option and `_ensure_procedure_index()`, lazily, the
   same pattern as `nasr_db_path`/`navaid_db_path` -> `_ensure_waypoint_index`
   — PA7's PROC page is the first real consumer.
+- **`plates.py`** (PA12, procedures epic) — `PlateIndex`: the FAA d-TPP
+  charts in one or more `plates` packs (makerplane-data PA11,
+  `docs/plates.md`), by airport, and `plate_for_approach()`, which finds the
+  one chart for a CIFP approach by comparing names (type letter, runway,
+  suffix, circling letter; a plain chart beats a `CAT`/`COPTER`/`HI-`/
+  `CONVERGING` one). Nothing in the d-TPP catalog links a chart to its CIFP
+  procedure. Over cycle 2611 it finds exactly one chart for 8,293 of the
+  8,297 CIFP approaches at airports with charts; for the other four it
+  answers None and the page shows the list. It never reads `plate_georef`.
 - **`proc_load.py`** (PA7, procedures epic) — turns a `ProcedureIndex`
   selection into route segments and places them in a plan. `assemble()`
   returns one `departure`/`arrival` segment, or an `approach` segment and its
@@ -176,7 +185,11 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   computed). RS3 changed DTK/DIS from the leg leaving the fix, in true. The TO row
   (`FPLACTLEG`) is `active_color`, earlier rows `past_color`, later rows
   `future_color`. Tapping a row opens a menu: Insert Before, Insert After,
-  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`),
+  **Load Airway** (PA6, AER-1605 — see below), Activate Leg (`ACT k`;
+  when the leg's from-fix is more than `ACT_CONFIRM_NM`, 500 nm, from a
+  valid `LAT`/`LONG` it first asks `FROM <fix> <n> NM / ACTIVATE LEG?`,
+  and No or a tap off the box sends nothing -- FPACT1, AER-5801; the same
+  applies to Show Fixes and a segment's Activate (to entry)),
   Direct To (stages + `DTO k`), WPT Info (full detail, see below), Set Role
   (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
@@ -215,7 +228,14 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   it survives a pyEfis restart, shows on a second display, inverts (Menu >
   Invert re-runs the one-way check, and refuses with the reason) and
   stores/loads. Before RS2 it was a display-only tag re-attached after every
-  read-back by guessing, which lost it in all four cases.
+  read-back by guessing, which lost it in all four cases. A fix that ends a
+  departure or an airway has no plain row, so their segment menus offer
+  **Load Airway at <exit>** instead (G87, pyEfis #474): the new airway
+  starts at the fix after it, and the exit fix keeps its one slot. Entering
+  that fix again as a waypoint, the only way before, put it in two slots.
+  Any waypoint that is the fix already on either side of where it would go
+  (same ident, within `model.SAME_FIX_NM`) is now refused with "x IS
+  ALREADY THE PREVIOUS FIX" or "... NEXT FIX".
 - **Airway segment rows** (RS3, AER-3792, `route_segments_plan.md` section 6)
   -- the entry fix stays its own row; every leg inside the airway is ONE
   two-line segment row: a route glyph, the ident in bold with
@@ -229,7 +249,8 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   not repeated. Tapping the segment row opens the **segment menu**: Change
   Exit / Change Entry (the airway's other fixes through the same picker as
   Load Airway; `FlightPlan.change_exit`/`change_entry` re-expand the same
-  segment), Show Fixes, Activate to <entry> (`ACT` on the entry slot) and
+  segment), Show Fixes, Load Airway at <exit> (chains the next airway),
+  Activate to <entry> (`ACT` on the entry slot) and
   Remove Airway (`remove_segment`, which leaves the entry fix). **Show
   Fixes** is a read-only sheet of every fix with the magnetic course,
   distance and MEA of the leg into it; tapping a fix (there, or a nested
@@ -244,7 +265,8 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   it (`075° TO +700`, `HDG 255°`). The active leg opens the block into
   working rows exactly as in an airway. The segment menu offers Show Fixes
   (course, distance and the coded altitude constraint into each leg),
-  Activate to the first fix, Select <kind> (the PROC page for that kind) and
+  Load Airway at <last fix> (a departure only), Activate to the first fix,
+  Select <kind> (the PROC page for that kind) and
   Remove <kind>; the approach and its missed approach go together. A leg with
   no fix offers only Activate Leg in its one-fix menu.
 - **PROC** (PA7, billmallard/pyEfis#238; guide pp. 3-64 to 3-75) -- tabs
@@ -310,6 +332,35 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   supported, `UserWaypointStore.edit` has no id parameter) and Delete, refused
   with the guide's message while the ident is in the active plan
   (`WaypointInUseError`).
+
+### Charts page (PA12)
+
+A d-TPP chart drawn from the `plates` pack (billmallard/pyEfis#241). The
+FPL page grows a **CHARTS** soft key when `plates_path` is set; one tap
+opens the loaded approach's plate. With no approach loaded, or when no
+single chart is that approach's, it opens the chart list of the airport
+the approach serves (or the destination), and says `NO SINGLE PLATE FOR
+<name>` in the second case. The list puts the airport diagram first
+(CAP-207), then the approaches, departures, arrivals and the rest; AIRPORT
+picks another airport through the Entry page (Nearest/Apt, as on the PROC
+page).
+
+- **The page** is drawn by Qt PDF (`PyQt6.QtPdf`, in the PyQt6 wheel;
+  Debian packages it as `python3-pyqt6.qtpdf`) on white paper -- a d-TPP
+  PDF paints no background. It fits the pane with its aspect kept. ZOOM -
+  and ZOOM + walk 1x, 1.5x, 2x and 3x; a drag on a zoomed chart pans it,
+  stopping at the page's edges; FIT goes back to 1x. Without Qt PDF the
+  pane says what to install; a PDF that cannot be read says so. Neither
+  raises.
+- **The line under the title** shows the airport and amendment, and on the
+  right the chart's cycle -- amber `AIRAC 2601 EXPIRED` once it has
+  expired. An expired chart is still drawn (guardrail 3).
+- **No ownship**, on any chart (guardrail 5). PA11 publishes a fitted
+  transform and a measured residual per plate, but no plate has cleared the
+  method's bar yet, and no error budget has been set. A test pins that a
+  georef row, even `ok` with a 0.01 nm residual, changes nothing on the
+  glass.
+- **Back** (the X, or the encoder's long push) goes chart, list, FPL page.
 
 ### The generic modal (Catalog Copy, user waypoints)
 
@@ -411,7 +462,7 @@ screen, the `checklist` broadcast precedent).
 
 | Verb | Payload |
 |------|---------|
-| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc` open those pages |
+| `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc`/`charts` open those pages |
 | `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
 
 ### From the moving map (FP10)
@@ -454,6 +505,7 @@ the plan two ways:
 | `nasr_db_path` | `""` | `airports.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
 | `navaid_db_path` | `""` | `navaids.sqlite` for FastFind/nearest (same name as `moving_map`'s) |
 | `procedures_db_path` | `""` | the `procedures` pack: airways (PA2) and the PROC page (PA5/PA7) |
+| `plates_path` | `""` | a `plates` pack, or a directory searched for them (regional packs), for the Charts page (PA12); blank hides the CHARTS key |
 | `hold_speed_kt` | `90` | speed a time-coded hold's leg is converted to a distance at (one minute at 90 kt = 1.5 nm), since the bus carries no leg time |
 | `columns` | `"DTK,DIS,CUM"` | comma-separated FPL page columns; choices DTK, DIS, CUM, ETE, ETA |
 | `keypad` | `true` | show the on-screen keypad on the Entry/DTO Waypoint pages and the generic modal |

@@ -285,7 +285,9 @@ def test_alt_trend_tape_resize_config_and_redraw_states(fix, qtbot):
 
     widget.bad = True
     assert widget.getBad() is True
-    assert widget.vstext.toPlainText() == ""
+    # CERT1c: a suspect VS still reads, in amber.
+    assert widget.vstext.toPlainText() == str(int(widget._vs))
+    assert widget.vstext.defaultTextColor() == helpers.SUSPECT_TAPE_COLOR
 
     widget.bad = False
     widget.old = True
@@ -414,7 +416,7 @@ def test_vsi_cat_dial_invalid_annunciation(fix, qtbot):
 
 def test_vsi_cat_tape_invalid_annunciation(fix, qtbot):
     """VSI-TC-003 | VSI-ANN-001 | The VS tape annunciates invalid VS: fail or old -> XXX +
-    bar removed (CERT1b), bad -> blank value. AC 25-11B Table 4-6 (p.32, Major); ref sec 2."""
+    bar removed (CERT1b), bad -> value in amber (CERT1c). AC 25-11B Table 4-6 (p.32, Major); ref sec 2."""
     _reset_vs_item(fix)
     widget = vsi.Alt_Trend_Tape()
     widget.myparent = _parent(qtbot, update_period=0)
@@ -427,7 +429,8 @@ def test_vsi_cat_tape_invalid_annunciation(fix, qtbot):
     assert widget.indicator_line is None                   # ...and bar removed
     widget.fail = False
     widget.bad = True
-    assert widget.vstext.toPlainText() == ""               # bad -> no live value
+    assert widget.vstext.toPlainText() == str(int(widget._vs))  # bad -> amber value
+    assert widget.vstext.defaultTextColor() == helpers.SUSPECT_TAPE_COLOR
     widget.bad = False
     widget.old = True
     assert widget.vstext.toPlainText() == "XXX"            # old -> flag (CERT1b)

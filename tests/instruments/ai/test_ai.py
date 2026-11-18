@@ -463,6 +463,71 @@ def test_fpm_solution_independent_of_optional_vpath(fix, qtbot):
     assert widget._fpm_solution_valid() is True
 
 
+def _fpm_fix_inputs(fix, vpath, vpath_old):
+    """Drive the FPM keys through the FIX database, so the widget's own
+    init and signal wiring decide whether VPATH is used."""
+    fix.db.define_item("VPATH", "Vertical flight path angle", "float",
+                       -90.0, 90.0, "deg", 50000, "")
+    fix.db.set_value("VPATH", vpath)
+    item = fix.db.get_item("VPATH")
+    item.bad = item.fail = False
+    item.old = vpath_old
+    fix.db.set_value("VS", -500.0)
+    fix.db.set_value("GS", 120.0)
+    for k in ('VS', 'GS', 'TRACK', 'HEAD'):
+        fix.db.get_item(k).old = False
+
+
+def test_fpm_old_vpath_falls_back_to_vs_over_gs(fix, qtbot):
+    """AER-5799: a VPATH nothing publishes is old at 0.0, not failed. It
+    pinned the marker to the horizon in a descent; the FPM must fall back to
+    atan2(VS, GS): -500 fpm at 120 kt is -2.36 deg."""
+    _reset_ai_items(fix)
+    _fpm_fix_inputs(fix, vpath=0.0, vpath_old=True)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    widget._drawFPM(mock.MagicMock(), widget.width(), widget.height())
+    assert widget._fpm_fpa_deg == pytest.approx(-2.356, abs=0.01)
+
+
+def test_fpm_fresh_vpath_used_as_is(fix, qtbot):
+    """A fresh VPATH is the source's own flight path angle and wins over the
+    VS/GS estimate."""
+    _reset_ai_items(fix)
+    _fpm_fix_inputs(fix, vpath=-3.0, vpath_old=False)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    widget._drawFPM(mock.MagicMock(), widget.width(), widget.height())
+    assert widget._fpm_fpa_deg == pytest.approx(-3.0)
+
+
+def test_fpm_vpath_going_old_in_flight_falls_back(fix, qtbot):
+    """VPATH that stops updating after the widget is built: oldChanged must
+    move the marker to the fallback, and a fresh VPATH must take it back."""
+    _reset_ai_items(fix)
+    _fpm_fix_inputs(fix, vpath=-3.0, vpath_old=False)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    item = fix.db.get_item("VPATH")
+    item.old = True
+    widget._drawFPM(mock.MagicMock(), widget.width(), widget.height())
+    assert widget._fpm_fpa_deg == pytest.approx(-2.356, abs=0.01)
+    item.old = False
+    widget._drawFPM(mock.MagicMock(), widget.width(), widget.height())
+    assert widget._fpm_fpa_deg == pytest.approx(-3.0)
+
+
+def test_fpm_bad_vpath_falls_back(fix, qtbot):
+    """A bad VPATH is not trusted either."""
+    _reset_ai_items(fix)
+    _fpm_fix_inputs(fix, vpath=-3.0, vpath_old=False)
+    widget = ai.AI()
+    _show_ai(qtbot, widget)
+    fix.db.get_item("VPATH").bad = True
+    widget._drawFPM(mock.MagicMock(), widget.width(), widget.height())
+    assert widget._fpm_fpa_deg == pytest.approx(-2.356, abs=0.01)
+
+
 # =============================================================================
 # AI requirements test catalog -- keyed to ai_widget_spec.md sec 4 (Flags,
 # Alerts & Recovery Annunciation) and avionics_reference.md.

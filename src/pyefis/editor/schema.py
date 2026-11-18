@@ -347,8 +347,8 @@ _ACTIONS = [
     # flight_plan instrument on the screen), mirroring the checklist broadcast.
     {"verb": "flightplan page", "label": "Flight plan: show page",
      "group": "flightplan", "arg": {"kind": "string"},
-     "help": "switch the flight_plan instrument's page ('fpl', 'dto', or "
-             "'catalog')"},
+     "help": "switch the flight_plan instrument's page ('fpl', 'dto', "
+             "'catalog', 'proc' or 'charts')"},
     {"verb": "flightplan direct to", "label": "Flight plan: direct to",
      "group": "flightplan", "arg": {"kind": "string"},
      "help": "blank opens the Direct To page; an ident stages and activates "

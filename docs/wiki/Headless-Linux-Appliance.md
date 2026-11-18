@@ -100,7 +100,7 @@ eglfs. The convenience of `pip install PyQt6` is exactly what costs you eglfs.
 Two ways out:
 
 - **Option A — distro PyQt6 (keeps eglfs).** `sudo apt install python3-pyqt6
-  python3-pyqt6.qtopengl`, create the venv with `--system-site-packages`, and
+  python3-pyqt6.qtopengl python3-pyqt6.qtpdf`, create the venv with `--system-site-packages`, and
   install pyEFIS **without** the `[qt]` extra. Caveat: you inherit Ubuntu's Qt
   (6.4.x on 24.04), older than pyEFIS's 6.8.0 target — verify the SVS/GL paths.
 - **Option B — minimal X + `xcb` (documented below).** Keeps the tested pip

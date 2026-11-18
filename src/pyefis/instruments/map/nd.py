@@ -227,14 +227,16 @@ def trk_box(family, fs, box_h, track, osp_x, apex_y):
     return box, runs, sp
 
 
-def keep_out(widget, x):
+def keep_out(widget, x, own=None):
     """Rects the ND draws over, for MapTransform.label_keep_out: the TRK box
     and the lubber under it, where the full-range ring's top label lands
-    (G11c). EXPANDED only: CTR MAP keeps the look accepted on #441."""
+    (G11c). EXPANDED only: CTR MAP keeps the look accepted on #441. *own*
+    is ownship ``(lat, lon)``, the widget's by default."""
     if not polished(widget):
         return ()
     g = expanded_geometry(float(x.w), float(x.h), x.font_family)
-    osp = x.to_screen(widget._lat, widget._lon)
+    lat, lon = own if own is not None else (widget._lat, widget._lon)
+    osp = x.to_screen(lat, lon)
     apex_y = osp.y() - g["r"]
     box, _runs, _sp = trk_box(x.font_family, g["fs"], g["box_h"],
                               widget._track, osp.x(), apex_y)
@@ -381,10 +383,12 @@ def bottom_left(enabled_layers):
 def vdev(read):
     """The vertical deviation scale's state, or None when it is not drawn:
     no ``GSI`` key, or ``GSV`` published and < 0.5 (no glideslope/glidepath,
-    e.g. a VOR). Mirrors the HSI's rules exactly: an absent ``GSV`` leaves
-    the scale up on ``GSI``'s own quality (an older gateway); the pointer is
-    hidden on old/bad/fail; the red GS flag shows only when ``GSV`` says a
-    glidepath is present and ``GSI`` is bad or failed.
+    e.g. a VOR). Follows the HSI's ``_gs_expected``/``_gs_flag_shown``: an
+    absent ``GSV`` leaves the scale up on ``GSI``'s own quality (an older
+    gateway); whenever the scale is up and ``GSI`` is old, bad or failed,
+    the pointer is hidden and the red GS flag shows. The pointer never goes
+    without the flag (Bill, 2026-11-08: no failure is shown only by taking
+    a symbol away; pyEfis #489).
 
     ``pointer`` is ``GSI`` clamped to the scale's +/-1 (pegged), or None."""
     gsi = read("GSI")
@@ -400,13 +404,13 @@ def vdev(read):
         if gsv_v < 0.5:
             return None
     value, old, bad, fail = gsi
+    flag = bool(old or bad or fail)
     pointer = None
-    if not (old or bad or fail):
+    if not flag:
         try:
             pointer = max(-1.0, min(1.0, float(value)))
         except (TypeError, ValueError):
             pointer = None
-    flag = gsv_v is not None and bool(bad or fail)
     return {"pointer": pointer, "flag": flag}
 
 
@@ -510,15 +514,17 @@ def _draw_lines(p, lines, x, y, lh, align_right=False, right=None):
     return y
 
 
-def paint(widget, p, x, read, now=None):
+def paint(widget, p, x, read, now=None, own=None):
     """Paint the ND overlay (EXPANDED arc or CTR rose) over the map layers
     and ownship. *x* is the frame's MapTransform, built with ``range_px`` =
-    the compass radius."""
+    the compass radius; *own* is ownship ``(lat, lon)`` as the map under
+    it was drawn, the widget's by default."""
     w, h = float(x.w), float(x.h)
     g = geometry(widget.nd_mode, w, h, x.font_family)
     fs = g["fs"]
     family = x.font_family
-    osp = x.to_screen(widget._lat, widget._lon)
+    osp = x.to_screen(*(own if own is not None
+                        else (widget._lat, widget._lon)))
     r = x.nm_to_px(x.range_nm)          # == g["r"]: range_px is the arc
     up = rose_up(widget, x)             # magnetic bearing at the top
     half = g["half"]

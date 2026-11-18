@@ -508,3 +508,170 @@ def test_water_vertices_are_decimated_before_rasterizing(water_numpy):
     assert water_numpy["vertices_before"] > 0
     assert water_numpy["vertices_after"] < water_numpy["vertices_before"]
     assert water_numpy["polygons_after"] == water_numpy["polygons_before"]
+
+
+# --- MAPPAINT1: what a repaint redraws, and how often -------------------
+#
+# The bench panel's map (650x1000, ND CTR, 10 NM) flown tick by tick: the
+# frame clock is stopped and _frame_tick is called directly, one call per
+# simulated 100 ms, with the paint each tick asks for delivered before the
+# next. No timer, worker or wall clock is involved, so the counts are exact
+# on any runner. Measured on the Beelink with the live layer set
+# (MAPPAINT1, AER-5668): a layer redraw costs about 22 ms of GUI thread, a
+# repaint over the cached layer image about 5.
+
+#: The bench panel's map size and view.
+_ND_W, _ND_H = 650, 1000
+_ND_RANGE_NM = 10.0
+#: 136 kt, the bench X-Plane cruise the investigation measured at.
+_GS_KT = 136.0
+_TICK_S = 0.1
+_TICKS = 30
+
+
+@pytest.fixture
+def nd_map(bmg, qapp):
+    import pyavtools.fix as fix
+    for key, value in (("LAT", _LAT), ("LONG", _LON), ("TRACK", 90.0),
+                       ("TRACKM", 90.0), ("GS", _GS_KT), ("TAS", 128.0),
+                       ("ALT", 3000.0)):
+        fix.db.set_value(key, value)
+    w = _make_widget(bmg, qapp, ["--w", str(_ND_W), "--h", str(_ND_H)],
+                     range_nm=_ND_RANGE_NM)
+    w.resize(_ND_W, _ND_H)
+    w.nd_mode = "ctr"
+    w._frame_timer.stop()
+    w._frame_tick()                 # the clock's first pose, then its paint
+    qapp.processEvents()
+    yield w, fix
+    w.hide()
+    qapp.processEvents()
+
+
+def _fly(w, fix, qapp, ticks, step):
+    """Call ``step(i)`` (which writes the bus) then the frame clock, once
+    per tick, delivering each paint. Returns the deltas of (layer redraws,
+    layer-image reuses) across the flight."""
+    renders, reuses = w.perf.layer_renders, w.perf.layer_reuses
+    for i in range(ticks):
+        step(i)
+        qapp.processEvents()        # deliver the bus writes' signals
+        w._frame_tick()
+        qapp.processEvents()        # deliver the paint it asked for
+    return (w.perf.layer_renders - renders, w.perf.layer_reuses - reuses)
+
+
+def _gs_only(fix):
+    return lambda i: fix.db.set_value("GS", _GS_KT + (i % 2 + 1))
+
+
+def test_nd_readout_changes_redraw_no_layer(nd_map, qapp):
+    """MAPPAINT1 question 1: an ND readout changing (here GS, every tick)
+    repaints the ND over the cached layer image; no layer redraws."""
+    w, fix = nd_map
+    renders, reuses = _fly(w, fix, qapp, _TICKS, _gs_only(fix))
+    assert renders == 0
+    # Companion: every tick did repaint (a frozen map also redraws nothing).
+    assert reuses == _TICKS
+
+
+def test_nd_readout_budget_fails_when_every_repaint_redraws_layers(
+        nd_map, qapp, monkeypatch):
+    """The companion that makes the budget above real: with the layer
+    image never reusable (the pre-MAPPAINT1 pipeline), the same readout
+    changes redraw every layer on every tick."""
+    w, fix = nd_map
+    monkeypatch.setattr(type(w), "_layer_image_key", lambda self: object())
+    renders, _reuses = _fly(w, fix, qapp, _TICKS, _gs_only(fix))
+    assert renders == _TICKS
+
+
+def _straight_flight(fix, track_deg):
+    """Dead-reckon the scene's start point along *track_deg* at _GS_KT,
+    one tick per call."""
+    def step(i):
+        lat, lon = _LAT, _LON
+        for _ in range(i + 1):
+            lat, lon = _dead_reckon(lat, lon, track_deg)
+        fix.db.set_value("LAT", lat)
+        fix.db.set_value("LONG", lon)
+    return step
+
+
+def _dead_reckon(lat, lon, track_deg):
+    d_deg = (_GS_KT * _TICK_S / 3600.0) / 60.0
+    return (lat + d_deg * math.cos(math.radians(track_deg)),
+            lon + d_deg * math.sin(math.radians(track_deg))
+            / math.cos(math.radians(lat)))
+
+
+def _half_px_bound(w, track_deg):
+    """Layer redraws a straight flight may cost: one per half screen px
+    crossed in latitude plus one per half px in longitude (the clock
+    quantizes each), at the transform's own scale, plus one for each
+    starting bucket edge."""
+    m_per_px = _ND_RANGE_NM * 1852.0 / w._transform().range_px
+    dist_m = _GS_KT * 1852.0 / 3600.0 * _TICK_S * _TICKS
+    half = 0.5 * m_per_px
+    return (math.ceil(dist_m * abs(math.cos(math.radians(track_deg))) / half)
+            + math.ceil(dist_m * abs(math.sin(math.radians(track_deg))) / half)
+            + 2)
+
+
+def test_straight_flight_redraws_layers_once_per_half_pixel(nd_map, qapp):
+    """MAPPAINT1 cadence: the frame clock repaints for half a screen px of
+    motion at the scale the map is drawn at. In ND CTR on the 650x1000
+    panel range spans the compass radius (~280 px), not half the height;
+    measuring against h/2 repainted for every 0.28 px."""
+    w, fix = nd_map
+    track = 307.0
+    renders, reuses = _fly(w, fix, qapp, _TICKS, _straight_flight(fix, track))
+    bound = _half_px_bound(w, track)
+    # Companion: the aircraft did move the map.
+    assert renders >= bound // 2
+    assert renders <= bound
+    assert reuses == 0
+
+
+def test_straight_flight_budget_fails_at_the_half_height_scale(
+        nd_map, qapp, monkeypatch):
+    """The companion: the frame clock measuring pixels at h/2 (before
+    MAPPAINT1) blows the same bound on the same flight."""
+    w, fix = nd_map
+    bound = _half_px_bound(w, 307.0)
+    real = type(w)._range_px
+    monkeypatch.setattr(type(w), "_frame_tick", _tick_at_half_height(real))
+    renders, _reuses = _fly(w, fix, qapp, _TICKS,
+                            _straight_flight(fix, 307.0))
+    assert renders > bound
+
+
+def _tick_at_half_height(real_range_px):
+    """_frame_tick with the clock's metres-per-px taken from h/2, the rule
+    before MAPPAINT1; the transform keeps the real scale."""
+    from pyefis.instruments import map as moving_map
+    tick = moving_map.MovingMap._frame_tick
+
+    def old_tick(self):
+        self._range_px = lambda h: h / 2.0
+        try:
+            tick(self)
+        finally:
+            del self._range_px
+    return old_tick
+
+
+def test_range_rings_rasterize_once_per_view(nd_map, qapp):
+    """The range rings sit still on screen while the map moves, so a
+    flight that redraws the layers many times rasterizes them once."""
+    w, fix = nd_map
+    rings = next(layer for layer in w._layers if layer.id == "range_rings")
+    builds = rings.image_builds
+    renders, _reuses = _fly(w, fix, qapp, _TICKS, _straight_flight(fix, 307.0))
+    assert renders > 1
+    assert rings.image_builds == builds
+    # Companion: the counter counts. A new panel size is a new image.
+    w.resize(_ND_W, _ND_H - 100)
+    w.update()
+    qapp.processEvents()
+    assert rings.image_builds == builds + len(rings.fractions)
