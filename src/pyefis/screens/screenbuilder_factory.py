@@ -388,6 +388,13 @@ def _ai_overlay_props():
              help="radius of the bank arc as a percent of widget height "
                   "(33.3 = the classic height/3); an explicit "
                   "bankAngleRadius px in YAML overrides it"),
+        Prop("fd_style", "enum", default="single_cue",
+             enum=["single_cue", "cross_pointer", "off"],
+             label="Flight director style",
+             help="single_cue: a magenta command chevron the aircraft symbol "
+                  "flies into; cross_pointer: separate pitch and roll bars; "
+                  "off: no flight director. Drawn only while FDENG is on and "
+                  "FDPITCH/FDROLL are current"),
         Prop("pitch_ladder_avoid_bank", "boolean", default=False,
              label="Ladder stops below bank arc",
              help="G1000-style declutter: the ladder climbs into the bank "
