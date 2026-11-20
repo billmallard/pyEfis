@@ -4,7 +4,9 @@
 Consumes the ``TFCk*`` key block that the fix-gateway traffic writer fills
 from GDL90 Traffic Reports. The contract is ``docs/fix_dynamic_list_spec.md``
 section 5 (what the display may assume); this module implements it and adds
-nothing the spec does not carry.
+nothing the spec does not carry. The reader and the classification live in
+``pyefis.instruments.traffic``, shared with the synthetic vision (SVSTFC1);
+this module paints them.
 
 Reading rules, each from the spec:
 
@@ -39,124 +41,20 @@ outline instead of a filled symbol; stale = grey, dashed.
 
 import logging
 import math
-import threading
 import time
-from dataclasses import dataclass
 
 import pyavtools.fix as pyavtools_fix
 from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QPen, QPolygonF
 
 from pyefis.instruments.map.layers import MapLayer, register_layer
+from pyefis.instruments.traffic import (  # noqa: F401 -- Target re-exported
+    ALERT_COLOR, FAIL_COLOR, FLASH_S, NORMAL_COLOR, OUTLINE_COLOR,
+    STALE_COLOR, STALE_HIDE_S, Target, TrafficBlock, _float_or_none,
+    alt_tag, draw_order, is_degraded, relative_alt_ft, trend, true_track,
+    visible)
 
 log = logging.getLogger(__name__)
-
-#: probe bound for ``TFCnTGT``, matching the gateway writer's own (traffic.py
-#: MAX_SLOTS). The block size is discovered, never hard-coded (spec 2.4).
-MAX_SLOTS = 1000
-
-#: slot fields read on a ``TGT`` write.
-_FIELDS = ("LAT", "LON", "ALT", "VS", "TRK", "TTYP", "NIC", "NACP",
-           "ALRT", "CS")
-
-#: GDL90 G§3.5.1.6: a target with NIC or NACp at or below this is degraded.
-DEGRADED_MAX = 4
-
-#: vertical speed, fpm, at or beyond which the trend arrow shows (the TCAS
-#: and ADS-B traffic convention, AC 20-172).
-TREND_FPM = 500.0
-
-#: seconds a stale target stays on screen after its last ``TGT`` write if
-#: the writer never evicts it. The writer evicts at its ``evict_s`` (default
-#: 10 s); still being stale past that means the writer is not running.
-STALE_HIDE_S = 12.0
-
-#: flash period of an alerted target, seconds per phase.
-FLASH_S = 0.5
-
-NORMAL_COLOR = QColor(255, 255, 255)
-ALERT_COLOR = QColor(255, 210, 0)
-STALE_COLOR = QColor(150, 150, 150)
-OUTLINE_COLOR = QColor(0, 0, 0)
-FAIL_COLOR = QColor(255, 190, 60)
-
-
-@dataclass(frozen=True)
-class Target:
-    """One target as of its last ``TGT`` write. ``None`` = the field was
-    ``bad`` (unavailable at the source)."""
-
-    ident: int
-    lat: float
-    lon: float
-    alt_ft: object          # float or None
-    vs_fpm: object          # float or None
-    trk_deg: object         # float or None; what ``ttyp`` says it is
-    ttyp: int
-    nic: int
-    nacp: int
-    alert: bool
-    callsign: str
-    stale: bool
-    t_write: float          # time.monotonic() of the TGT write
-
-
-def is_degraded(t):
-    """GDL90 G§3.5.1.6: NIC or NACp 4 or lower (0 = unknown, also degraded)."""
-    return t.nic <= DEGRADED_MAX or t.nacp <= DEGRADED_MAX
-
-
-def true_track(t, magvar):
-    """The target's direction of travel in degrees TRUE, or None for a
-    non-directional symbol. ``TTYP`` 1 and 3 are true already; 2 is a
-    magnetic heading, converted with ``MAGVAR`` (positive west, MAG = TRUE
-    + VAR). With no ``MAGVAR`` a magnetic heading is not guessed at: the
-    symbol goes non-directional rather than point the wrong way."""
-    if t.trk_deg is None or t.ttyp == 0:
-        return None
-    if t.ttyp == 2:
-        if magvar is None:
-            return None
-        return (t.trk_deg - magvar) % 360.0
-    return t.trk_deg % 360.0
-
-
-def relative_alt_ft(t, palt_ft):
-    """``TFCkALT - PALT`` (spec 4.9), or None when either is unavailable."""
-    if t.alt_ft is None or palt_ft is None:
-        return None
-    return t.alt_ft - palt_ft
-
-
-def alt_tag(rel_ft):
-    """Relative altitude in hundreds of feet, signed: ``+05``, ``-12``,
-    ``00``. ``--`` when unavailable."""
-    if rel_ft is None:
-        return "--"
-    h = int(round(rel_ft / 100.0))
-    return "00" if h == 0 else "%+03d" % h
-
-
-def trend(t):
-    """+1 climbing, -1 descending, 0 level or unknown (``VS`` bad)."""
-    if t.vs_fpm is None:
-        return 0
-    if t.vs_fpm >= TREND_FPM:
-        return 1
-    if t.vs_fpm <= -TREND_FPM:
-        return -1
-    return 0
-
-
-def visible(t, now):
-    """A stored target is drawn unless it has been stale past the cap."""
-    return not (t.stale and now - t.t_write > STALE_HIDE_S)
-
-
-def draw_order(targets):
-    """Stale under live, alerts on top, so the target that matters most is
-    never covered."""
-    return sorted(targets, key=lambda t: (not t.stale, t.alert))
 
 
 def symbol_polygon(s, directional):
@@ -167,131 +65,6 @@ def symbol_polygon(s, directional):
                           QPointF(0, s * 0.3), QPointF(-s * 0.75, s * 0.75)])
     return QPolygonF([QPointF(0, -s), QPointF(s * 0.8, 0),
                       QPointF(0, s), QPointF(-s * 0.8, 0)])
-
-
-class TrafficBlock:
-    """The ``TFC`` slots on the bus and the targets read from them.
-
-    Thread-safe: the slot handlers run in whichever thread writes the keys,
-    :meth:`targets` is called from paint on the GUI thread."""
-
-    def __init__(self, db, on_change=None):
-        self._db = db
-        self._on_change = on_change
-        self._lock = threading.Lock()
-        self._by_ident = {}       # TGT value -> Target
-        self._slot_ident = {}     # slot n -> TGT value held there
-        self.slots = []
-        self._seen_live = False
-        self.count_item = self._get("TFCCOUNT")
-        n = 1
-        while n <= MAX_SLOTS:
-            tgt = self._get("TFC%dTGT" % n)
-            if tgt is None:
-                break
-            self.slots.append(n)
-            tgt.valueWrite[int].connect(lambda _v, n=n: self.read_slot(n))
-            tgt.oldChanged.connect(lambda _o, n=n: self.read_slot(n))
-            tgt.failChanged.connect(lambda _f, n=n: self.read_slot(n))
-            n += 1
-        if self.count_item is not None:
-            self.count_item.valueWrite[int].connect(lambda _v: self._count())
-            self.count_item.failChanged.connect(lambda _f: self._count())
-            self.count_item.oldChanged.connect(lambda _o: self._count())
-            self._count()
-        for n in self.slots:
-            self.read_slot(n)
-
-    @property
-    def available(self):
-        return bool(self.slots)
-
-    def _get(self, key):
-        try:
-            return self._db.get_item(key)
-        except KeyError:
-            return None
-
-    def _count(self):
-        c = self.count_item
-        if not (c.fail or c.old):
-            self._seen_live = True
-        self._changed()
-
-    def _changed(self):
-        if self._on_change is not None:
-            self._on_change()
-
-    def read_slot(self, n):
-        """Re-read slot *n* after a write to (or a flag change on) its
-        ``TGT``. Called in the writing thread, so the fields are the ones
-        that preceded this ``TGT`` write."""
-        tgt = self._db.get_item("TFC%dTGT" % n)
-        ident = int(tgt.value)
-        target = None
-        if ident != -1 and not tgt.fail:
-            target = self._read_fields(n, ident, bool(tgt.old))
-        with self._lock:
-            prev = self._slot_ident.pop(n, None)
-            if prev is not None and prev != ident:
-                self._by_ident.pop(prev, None)
-            if target is not None:
-                self._slot_ident[n] = ident
-                self._by_ident[ident] = target
-            elif ident != -1:
-                # failed: hidden, but the slot still holds this identity
-                self._slot_ident[n] = ident
-                self._by_ident.pop(ident, None)
-        self._changed()
-
-    def _read_fields(self, n, ident, stale):
-        def item(field):
-            return self._db.get_item("TFC%d%s" % (n, field))
-
-        def val(field):
-            it = item(field)
-            return None if it.bad else it.value
-
-        lat, lon = item("LAT"), item("LON")
-        if lat.bad or lon.bad:
-            return None         # no valid position: nothing to place
-        return Target(
-            ident=ident, lat=float(lat.value), lon=float(lon.value),
-            alt_ft=_float_or_none(val("ALT")),
-            vs_fpm=_float_or_none(val("VS")),
-            trk_deg=_float_or_none(val("TRK")),
-            ttyp=int(item("TTYP").value or 0),
-            nic=int(item("NIC").value or 0),
-            nacp=int(item("NACP").value or 0),
-            alert=int(item("ALRT").value or 0) == 1,
-            callsign=str(item("CS").value or "").strip(),
-            stale=stale, t_write=time.monotonic())
-
-    def targets(self):
-        with self._lock:
-            return list(self._by_ident.values())
-
-    def source_failed(self):
-        """True when the writer reports its source failed (``TFCCOUNT``
-        ``fail``) or has stopped writing (``TFCCOUNT`` ``old``) -- once it
-        has been seen working. The gateway's default database carries the
-        ``TFC`` block whether or not a receiver is fitted, so a block that
-        has never been live is an installation without traffic, not a
-        failure, and gets no chip."""
-        c = self.count_item
-        if c is None:
-            return False
-        if not (c.fail or c.old):
-            self._seen_live = True
-            return False
-        return self._seen_live
-
-
-def _float_or_none(v):
-    try:
-        return None if v is None else float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 @register_layer
