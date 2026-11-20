@@ -54,8 +54,9 @@ def test_the_core_only_boot_loads_nothing_non_core_but_the_allowlist(doc, boot):
 def test_each_runtime_entry_is_attributed_to_the_edges_that_bring_it(doc):
     allowed = core_rules.runtime_allowlist(doc)
     assert allowed["pyefis.instruments.ai.svs"] == ["E1 (CERT12b)"]
-    assert allowed["pyefis.instruments.map"] == ["E4 (CERT12c)"]
-    assert sorted(allowed["numpy"]) == ["E1 (CERT12b)", "E2 (CERT12b)", "E4 (CERT12c)"]
+    assert "pyefis.instruments.map" not in allowed   # E4, removed by CERT12c
+    assert allowed["pyefis.instruments.data_status"] == ["E5 (AER-6105)"]
+    assert sorted(allowed["numpy"]) == ["E1 (CERT12b)", "E2 (CERT12b)"]
 
 
 def test_a_planted_import_by_name_fails_the_runtime_check_but_not_the_static_one(doc, tmp_path):
