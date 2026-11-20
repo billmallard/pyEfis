@@ -216,6 +216,28 @@ compare them to the box's own display, but **not written to the database**:
 
 A later `extras:` option may opt individual rows in per installation. Not in v1.
 
+### 4.3 Opt-in attitude and air data (v2, CERT13h)
+
+Added in fix-gateway for the redundant-lane work (CERT13h, AER-6082), so
+OnSpeed can be a second lane's attitude and air-data source. Three plugin
+options, each **off** in the shipped `connections/onspeed.yaml`, opt rows of
+§4.2 in. The "one key, one writer" reason in §4.2 still holds: an option is
+turned on only where nothing else writes its keys.
+
+| Option | Sentence field | FIX key | Conversion |
+|---|---|---|---|
+| `attitude` | Pitch, Roll | `PITCH`, `ROLL` | raw / 10 -> deg; signs already match (+ nose up, + right wing down) |
+| `airspeed` | IAS | `IAS` | raw / 10 -> kt |
+| `altitude` | Pressure alt | `ALT` (not `PALT`) | ISA pressure altitude corrected to `BARO`, with the formula fix-gateway's `compute` `PALT` uses (`fixgw/airdata.py`), so the two round-trip |
+
+Quality: no validity is carried for these fields, so they go out good;
+`ALT` is `bad` while `BARO` is bad, failed or implausible; a value outside
+its key's range is `bad`; a port failure sets `fail` on each output that is
+on. The other §4.2 rows stay unpublished. The firmware's limits on these
+fields (altitude smoothed with a time constant of about 10 s, the
+`SPHERICAL_PROBE` IAS echo, one output UART) are in fix-gateway
+`doc/plugins/onspeed.md`.
+
 ## 5. Quality and validity
 
 Two independent layers, and neither substitutes for the other:
