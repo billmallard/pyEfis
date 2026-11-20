@@ -16,7 +16,6 @@ back to, and the supervisor has to see it.
 import json
 import os
 import pathlib
-import shutil
 import subprocess
 import sys
 
@@ -51,10 +50,9 @@ HSI = ("src/pyefis/instruments/hsi/__init__.py", "HSI")
 
 def _boot(tmp_path, plant=None, ground=False):
     """Boot the staged source; returns (result or None, stderr)."""
-    src = core_rules.stage_source(tmp_path)
-    # stage_source leaves config/ out; the bundled DataStatus and About definitions
+    # stage_source brings config/ along: the bundled DataStatus and About definitions
     # live there, and without them those screens are never built.
-    shutil.copytree(core_rules.SHIPPED_CONFIG, src / "pyefis" / "config")
+    src = core_rules.stage_source(tmp_path)
     if plant is not None:
         path, cls = plant
         core_rules.plant(src, path, FAULT.format(cls=cls))

@@ -17,7 +17,7 @@
 from PyQt6.QtCore import *
 
 import logging
-import importlib
+from pyefis.screens import instrument_table
 
 
 # Read through the configuration and load the hook modules
@@ -30,7 +30,7 @@ def initialize(config):
         module = config[each]["module"]
         try:
             name = each
-            importlib.import_module(module)
+            instrument_table.external_module(module)
             #load_screen(each[7:], module, config)
         except Exception as e:
             logging.critical("Unable to load module - " + module + ": " + str(e))

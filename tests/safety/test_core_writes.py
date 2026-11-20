@@ -91,15 +91,34 @@ def test_no_write_breaks_rule_r5_but_the_allowlist(doc, audit):
                        "writes: %s" % stale)
 
 
+# The plant goes in a non-core module that the planted boot is made to load: the core-only
+# screen plus one static_text (misc). It used to go in about/, which the factory imported
+# for every screen; CERT12c made the factory lazy and AER-6105 made about core.
+PLANT_MODULE = "src/pyefis/instruments/misc/__init__.py"
+STATIC_TEXT = """      - type: static_text
+        row: 100
+        column: 140
+        span: {rows: 10, columns: 20}
+        options:
+          text: PLANT
+"""
+
+
 def test_planted_writes_fail_the_audit(doc, tmp_path):
+    assert core_rules.core_imports.core_group(PLANT_MODULE, doc) is None
     src = core_rules.stage_source(tmp_path)
-    core_rules.plant(src, "src/pyefis/instruments/about/__init__.py", PLANT)
+    core_rules.plant(src, PLANT_MODULE, PLANT)
     cfg = core_rules.stage_config(tmp_path / "config", core_rules.CORE_ONLY)
+    screen = cfg / "default.yaml"
+    text = screen.read_text(encoding="utf-8")
+    assert text.count("\nhooks:") == 1, "the core-only screen moved; update this plant"
+    screen.write_text(text.replace("\nhooks:", "\n" + STATIC_TEXT + "\nhooks:"), encoding="utf-8")
     planted = core_rules.run_probe(cfg, tmp_path / "planted.json", writes=True, src=src)
+    assert "pyefis.instruments.misc.StaticText" in planted["screens"]["PFD"]
     found = core_rules.write_violations(doc, planted["writes"])
     assert set(found) == {
-        ("PITCH", "src/pyefis/instruments/about/__init__.py"),
-        ("BARO", "src/pyefis/instruments/about/__init__.py"),
+        ("PITCH", PLANT_MODULE),
+        ("BARO", PLANT_MODULE),
         ("NAVSRC", "src/pyefis/hmi/functions.py"),
     }, found
     assert "non-core code on the call stack" in found[("NAVSRC", "src/pyefis/hmi/functions.py")]

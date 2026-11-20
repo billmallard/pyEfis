@@ -45,8 +45,8 @@ def test_every_core_path_exists(doc):
         assert (p.is_dir() if prefix.endswith("/") else p.is_file()), prefix
 
 
-def test_the_two_named_groups_exist(doc):
-    assert set(doc["groups"]) == {"primary-flight", "powerplant"}
+def test_the_named_groups_exist(doc):
+    assert set(doc["groups"]) == {"primary-flight", "powerplant", "boot-screens"}
 
 
 def test_every_ratchet_entry_names_an_edge_and_the_row_that_removes_it(doc):
@@ -73,12 +73,12 @@ def test_the_core_imports_nothing_outside_rule_r1_but_the_allowlist(doc):
 
 
 def test_the_allowlist_is_exactly_the_brief_edges_today(doc):
-    """E1 to E3 from the attitude widget, E4 from the composition root, nothing else."""
+    """E1 to E3 from the attitude widget, nothing else. CERT12c removed E4, the
+    composition root's top-level instrument imports."""
     found = {(c["from"], c["imports"]) for c in ci.crossings(doc)}
     assert {m for f, m in found if f.endswith("ai_widget.py")} == {
         "pyefis.instruments.ai.svs", "pyefis.instruments.ai.camera", "pyefis.instruments.ai.pose"}
-    assert {f for f, m in found if not f.endswith("ai_widget.py")} == {
-        "src/pyefis/screens/screenbuilder_factory.py", "src/pyefis/screens/screenbuilder.py"}
+    assert {f for f, m in found if not f.endswith("ai_widget.py")} == set()
 
 
 # ---------------------------------------------------------------- planted violations

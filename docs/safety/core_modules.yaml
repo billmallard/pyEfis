@@ -71,6 +71,14 @@ groups:
     # modules too, or it leaves the VS readout behind.
     paths:
       - src/pyefis/instruments/gauges/
+  boot-screens:
+    why: The shell's own Data Status and About screens. gui.py adds and builds both on every boot, in flight too, and a fault in either constructor stops the process before the PFD shows (AER-6105). A ground boot shows Data Status first.
+    # A lane must carry this group while the shell builds these screens unguarded. CERT13
+    # may leave it off a reversionary lane once AER-6106 lands: a constructor fault in a
+    # non-flight screen then drops that screen instead of stopping the boot.
+    paths:
+      - src/pyefis/instruments/data_status/
+      - src/pyefis/instruments/about/
 
 # Rule R1: the only third-party packages a core module may import (top-level import
 # names). Everything else outside the standard library is a violation.
@@ -186,26 +194,6 @@ ratchet:
       removed_by: CERT12b
       from: src/pyefis/instruments/ai/ai_widget.py
       imports: [pyefis.instruments.ai.pose]
-    - edge: E4
-      removed_by: CERT12c
-      from: src/pyefis/screens/screenbuilder_factory.py
-      imports:
-        - pyefis.instruments.about
-        - pyefis.instruments.checklist
-        - pyefis.instruments.data_status
-        - pyefis.instruments.flight_plan
-        - pyefis.instruments.listbox
-        - pyefis.instruments.map
-        - pyefis.instruments.misc
-        - pyefis.instruments.nav_status
-        - pyefis.instruments.weston
-        - pyefis.instruments.wind
-    # The composition root's second top-level import of weston. The brief's E4 row
-    # names only the factory; this one is in screenbuilder.py and is never used there.
-    - edge: E4
-      removed_by: CERT12c
-      from: src/pyefis/screens/screenbuilder.py
-      imports: [pyefis.instruments.weston]
 
   # Non-core modules (and watched packages) in sys.modules after the core-only boot
   # (tests/safety/test_core_boot.py). A module two edges bring in is listed under each,
@@ -228,38 +216,6 @@ ratchet:
       removed_by: CERT12b
       modules:
         - pyefis.instruments.ai.pose
-    - edge: E4
-      removed_by: CERT12c
-      modules:
-        - pyefis.flightplan
-        - pyefis.flightplan.airac
-        - pyefis.flightplan.airways
-        - pyefis.flightplan.catalog
-        - pyefis.flightplan.fixbridge
-        - pyefis.flightplan.geo
-        - pyefis.flightplan.model
-        - pyefis.flightplan.plates
-        - pyefis.flightplan.proc_load
-        - pyefis.flightplan.procedures
-        - pyefis.flightplan.refusal
-        - pyefis.flightplan.waypoints
-        - pyefis.instruments.about
-        - pyefis.instruments.checklist
-        - pyefis.instruments.data_status
-        - pyefis.instruments.flight_plan
-        - pyefis.instruments.flight_plan.plate_render
-        - pyefis.instruments.listbox
-        - pyefis.instruments.live_binding
-        - pyefis.instruments.map
-        - pyefis.instruments.map.layers
-        - pyefis.instruments.map.nd
-        - pyefis.instruments.map.perf
-        - pyefis.instruments.misc
-        - pyefis.instruments.nav_status
-        - pyefis.instruments.weston
-        - pyefis.instruments.wind
-        - numpy
-        - sqlite3
 
   # Writes that break rule R5, as the write audit finds them
   # (tests/safety/test_core_writes.py): key, writer (the module path), edge, removed_by.
