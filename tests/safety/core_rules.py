@@ -48,8 +48,10 @@ def stage_config(dest, default_yaml=None):
 def stage_source(dest):
     """A copy of src/pyefis under dest/src, for planting a violation. Returns dest/src."""
     src = pathlib.Path(dest) / "src"
+    # config/ comes too: gui.py adds the bundled Data Status and About screens from it on
+    # every boot, so a copy without it boots fewer modules than the real tree does.
     shutil.copytree(ROOT / "src" / "pyefis", src / "pyefis",
-                    ignore=shutil.ignore_patterns("__pycache__", "config"))
+                    ignore=shutil.ignore_patterns("__pycache__"))
     return src
 
 
