@@ -268,7 +268,7 @@ def test_bug_can_be_turned_off_alone(alt_db, qtbot):
 def test_build_altimeter_tape_forwards_altsel_options(monkeypatch):
     from pyefis.screens import screenbuilder_factory as sf
     seen = {}
-    monkeypatch.setattr(sf.altimeter, "Altimeter_Tape",
+    monkeypatch.setattr(altimeter, "Altimeter_Tape",
                         lambda screen, **kw: seen.update(kw) or object())
     sf.build_altimeter_tape(None, {"options": {
         "altsel_box": False, "alt_bug_enabled": True,

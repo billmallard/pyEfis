@@ -60,6 +60,7 @@ from PyQt6.QtWidgets import (QApplication, QGridLayout, QLabel, QPushButton,
 
 from pyefis import display_metrics
 from pyefis.instruments import edit_focus
+from pyefis.screens.instrument_table import instrument
 
 log = logging.getLogger(__name__)
 
@@ -484,14 +485,14 @@ class SystemMenu(QWidget):
         self._show(name)
 
     def go_data_status(self):
-        self._go_with_return(DATA_STATUS_SCREEN, "data_status", "DataStatus",
+        self._go_with_return(DATA_STATUS_SCREEN, "DataStatus",
                              "continue_screen")
 
     def go_about(self):
-        self._go_with_return(ABOUT_SCREEN, "about", "AboutSystem",
+        self._go_with_return(ABOUT_SCREEN, "AboutSystem",
                              "back_screen")
 
-    def _go_with_return(self, name, module, cls_name, attr):
+    def _go_with_return(self, name, cls_name, attr):
         """Show ``name`` with its Continue/Back pointed at the screen the
         pilot left, for this trip only. From Data Status or About the
         configured targets stand (a trip that began there has no flight
@@ -500,14 +501,12 @@ class SystemMenu(QWidget):
         origin = self.running_name()
         if origin is not None and origin not in (DATA_STATUS_SCREEN, ABOUT_SCREEN):
             self._restore()
-            self._point_return(name, module, cls_name, attr, origin)
+            self._point_return(name, cls_name, attr, origin)
         self._show(name)
 
-    def _point_return(self, name, module, cls_name, attr, origin):
+    def _point_return(self, name, cls_name, attr, origin):
         try:
-            import importlib
-            cls = getattr(importlib.import_module("pyefis.instruments." + module),
-                          cls_name)
+            cls = instrument(cls_name)
         except Exception:
             log.warning("system menu: cannot point %s back to %s", name, origin,
                         exc_info=True)

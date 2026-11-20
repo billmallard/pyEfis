@@ -62,6 +62,15 @@
 #  FPLfTA 0 (fly-over, over 120 deg, the MAP, an older gateway) stays a
 #  square corner.
 #
+#  HOLDENT2 (AER-6016): the hold the engine names on FPLHOLDSLOT carries
+#  the entry it reports on FPLHOLDENT -- the parallel or teardrop path
+#  (leg_paths.hold_entry_pattern) with the racetrack, and a label at the
+#  fix. Dashed while FPLHOLDCOMMIT says it is a prediction, solid once the
+#  engine is flying it. The layer never picks an entry: no key, an empty
+#  key or slot 0 draws the racetrack alone, as before. Built in collect()
+#  when the three keys or the route change, never per frame. The line
+#  style and the label are proposed defaults; the look is Bill's.
+#
 #  Guardrail 1 on the map: a route the engine rejected draws nothing.
 #  After a rejected commit the slots on the bus still hold the refused
 #  route (the engine keeps flying the one it had), and only the engine
@@ -134,7 +143,14 @@ _GC_SPLIT_NM = 110.0
 _GC_STEP_NM = 20.0
 
 _STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
-              "vector": Qt.PenStyle.DotLine}
+              "vector": Qt.PenStyle.DotLine, "predicted": Qt.PenStyle.DashLine}
+
+#: the hold entry's label at the fix (HOLDENT2), and the short form used
+#: when the word is wider than _ENTRY_LABEL_MAX_FRAC of the map.
+_ENTRY_LABELS = {fp_legs.HOLD_ENTRY_DIRECT: ("DIRECT", "DIR"),
+                 fp_legs.HOLD_ENTRY_TEARDROP: ("TEARDROP", "TDP"),
+                 fp_legs.HOLD_ENTRY_PARALLEL: ("PARALLEL", "PAR")}
+_ENTRY_LABEL_MAX_FRAC = 0.18
 
 
 # The engine outputs this layer draws from. A change of any of them (value,
@@ -142,7 +158,8 @@ _STYLE_PEN = {"solid": Qt.PenStyle.SolidLine, "missed": Qt.PenStyle.DashLine,
 # other engine output is not. A key the layer starts reading joins this
 # list (tests/instruments/test_map_flight_plan_repaint.py scans for it).
 _DRAW_KEYS = ("FPLSTATE", "FPLACTLEG", "FPLACTSEG", "FPLAPR", "FPLPHASE",
-              "FPLFRLAT", "FPLFRLON", "WPLAT", "WPLON", "FPLCRS", "FPLLDSEQ")
+              "FPLFRLAT", "FPLFRLON", "WPLAT", "WPLON", "FPLCRS", "FPLLDSEQ",
+              "FPLHOLDSLOT", "FPLHOLDENT", "FPLHOLDCOMMIT")
 
 # The engine outputs this layer draws nothing from: the readouts. A write
 # of one is skipped without a lookup (FlightPlanLayer._wants_collect).
@@ -472,6 +489,47 @@ def build_leg_draws(route, engine, paths, kinds=None, lead=None):
     return out
 
 
+def hold_entry_key(route, engine):
+    """``(slot, entry, committed)`` from ``FPLHOLDSLOT``/``FPLHOLDENT``/
+    ``FPLHOLDCOMMIT``, or None when there is no entry to draw: a key
+    absent (an older gateway), slot 0, an empty or unknown entry, or a
+    slot that is not a hold in *route*."""
+    try:
+        slot = int(_engine_val(engine, "FPLHOLDSLOT", 0) or 0)
+        entry = str(_engine_val(engine, "FPLHOLDENT", "") or "")
+        commit = engine.get("FPLHOLDCOMMIT")
+    except (TypeError, ValueError):
+        return None
+    if commit is None or slot <= 0 or entry not in fp_legs.HOLD_ENTRIES:
+        return None
+    slots = route.waypoints
+    if slot > len(slots) or (slots[slot - 1].pt or "").upper() not in fp_legs.HOLD_PTS:
+        return None
+    return slot, entry, bool(commit.value)
+
+
+def build_hold_entry(route, paths, entry_key, magvar=0.0):
+    """The entry path for *entry_key* (:func:`hold_entry_key`) at its hold,
+    ``[(lat, lon), ...]`` (:func:`flightplan.leg_paths.hold_entry_pattern`;
+    ``[]`` for a direct entry), or None when the hold has no racetrack
+    drawn to enter (no turn direction or leg length on the slot)."""
+    if entry_key is None:
+        return None
+    slot, entry, _commit = entry_key
+    leg = next((leg for leg in paths if leg.to_slot == slot), None)
+    if leg is None or not leg.pattern:
+        return None
+    w = route.waypoints[slot - 1]
+    return fp_legs.hold_entry_pattern((w.lat, w.lon), fp_legs._true(w.crs, magvar), w.turn, entry)
+
+
+def hold_entry_label(entry, fits):
+    """The label for *entry* at the hold fix: the word, or its short form
+    when *fits* (a callable taking the text) says the word does not fit."""
+    full, short = _ENTRY_LABELS[entry]
+    return full if fits(full) else short
+
+
 def parse_alt_constraint(alt):
     """``FPLfALT`` (guide notation: ``"+3500"``, ``"-3500"``, ``"@3500"``,
     ``"B2900,4000"``) as chart lines, top to bottom: ``[(text, bar_over,
@@ -594,6 +652,14 @@ class _Snapshot:
         self.polys = [_polyline(leg.points) for leg in paths]
         self.patterns = [_polyline(leg.pattern) if leg.pattern else None for leg in paths]
         self.set_turns(None, paths, None)
+        self.set_entry(None, None)
+
+    def set_entry(self, entry_key, points):
+        """The hold entry (HOLDENT2) for *entry_key*: *points* from
+        :func:`build_hold_entry`, None when no entry is drawn."""
+        self.entry_key = entry_key
+        self.entry = entry_key if points is not None else None
+        self.entry_poly = _polyline(points) if points else None
 
     def set_turns(self, turn_key, paths, lead):
         """The paths as drawn, with the fly-by turns (TURN3) applied for
@@ -799,6 +865,7 @@ class FlightPlanLayer(MapLayer):
                 return
         if snap.loaded:
             self._apply_turns(snap, engine, key[4] or 0.0)
+            self._apply_entry(snap, engine, key[4] or 0.0)
 
     def _apply_turns(self, snap, engine, magvar):
         """Round the fly-by turns (TURN3) from the engine's FPLfTA, on a
@@ -814,6 +881,16 @@ class FlightPlanLayer(MapLayer):
         paths = [replace(leg, points=list(leg.points)) for leg in snap.paths]
         lead = fp_legs.apply_flyby_turns(paths, snap.route.waypoints, list(ta), magvar, act_leg, fr)
         snap.set_turns(turn_key, paths, lead)
+
+    @staticmethod
+    def _apply_entry(snap, engine, magvar):
+        """Rebuild the hold entry (HOLDENT2) when the engine's entry keys
+        changed; the route's own geometry is never touched. A route commit
+        builds a new snapshot, so the entry follows a re-route too."""
+        entry_key = hold_entry_key(snap.route, engine)
+        if entry_key == snap.entry_key:
+            return
+        snap.set_entry(entry_key, build_hold_entry(snap.route, snap.paths, entry_key, magvar))
 
     def paint(self, p, x):
         t0 = time.perf_counter()
@@ -859,6 +936,16 @@ class FlightPlanLayer(MapLayer):
             p.setWorldTransform(lonlat, True)
             p.drawPolyline(poly)
             p.restore()
+        if snap.loaded and snap.entry_poly is not None:
+            color, width = self._entry_pen(route, engine, snap.entry)
+            pen.setColor(tint(color))
+            pen.setWidthF(width)
+            pen.setStyle(_STYLE_PEN["solid" if snap.entry[2] else "predicted"])
+            p.setPen(pen)
+            p.save()
+            p.setWorldTransform(lonlat, True)
+            p.drawPolyline(snap.entry_poly)
+            p.restore()
         pen.setStyle(Qt.PenStyle.SolidLine)
 
         direct = build_direct_to(route, engine, dto)
@@ -897,6 +984,39 @@ class FlightPlanLayer(MapLayer):
             self._paint_constraints(p, x, build_constraint_labels(route, engine, snap.kinds),
                                     below)
             self._paint_airway_labels(p, x, build_airway_labels(route, engine))
+            if snap.entry is not None:
+                self._paint_entry_label(p, x, route, engine, snap.entry)
+
+    @staticmethod
+    def _entry_pen(route, engine, entry):
+        """Colour and width of the hold entry: those of the hold's leg."""
+        slot = entry[0]
+        act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
+        color = _leg_color(slot, act_leg, _off_route_direct(engine))
+        if color == ACTIVE:
+            return color, _ACTIVE_WIDTH
+        return color, _SEGMENT_WIDTH if slot in set(_emphasis_slots(route, engine)) else _LEG_WIDTH
+
+    def _paint_entry_label(self, p, x, route, engine, entry):
+        """The entry's name above the hold fix's symbol (HOLDENT2), in the
+        hold leg's colour; the ident and constraint stack below it."""
+        slot, kind, _commit = entry
+        w = route.waypoints[slot - 1]
+        c = x.to_screen(w.lat, w.lon)
+        r = max(5.0, min(12.0, x.w * 0.016))
+        if not (-r < c.x() < x.w + r and -r < c.y() < x.h + r):
+            return
+        f = QFont(x.font_family)
+        f.setPixelSize(max(8, int(x.w * 0.02)))
+        f.setBold(True)
+        p.setFont(f)
+        fm = QFontMetricsF(f)
+        text = hold_entry_label(kind, lambda t: fm.horizontalAdvance(t) <= x.w * _ENTRY_LABEL_MAX_FRAC)
+        line_h = f.pixelSize() + 4
+        color, _width = self._entry_pen(route, engine, entry)
+        p.setPen(QPen(_tinter(x)(color)))
+        p.drawText(QRectF(c.x() - 60, c.y() - r * 1.5 - 1 - line_h, 120, line_h),
+                   Qt.AlignmentFlag.AlignHCenter, text)
 
     @staticmethod
     def _unloaded_draws(engine):
