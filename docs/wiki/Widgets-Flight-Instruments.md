@@ -275,6 +275,8 @@ FIX keys it reads by default: `COURSE`, `CDI`, `GSI`, `HEAD`, `BRG1`, `BRG2`, `B
 | `track_indicator_enabled` | Track diamond | on | on / off | show the magenta GPS ground-track diamond (TRACK), above the speed gate |
 | `track_color` | Track diamond color | `#ff00ff` | colour | GPS ground-track diamond colour |
 | `track_min_speed` | Track min speed (kt) | `5` | 0 to 50, step 1 | hide the track diamond below this groundspeed (kt) |
+| `turn_rate_enabled` | Turn-rate trend | on | on / off | show the magenta turn-rate trend arc from the lubber line to the heading in 6 s at the present rate of turn (ROT), with marks at half and standard rate; hidden when ROT is absent, old, bad or failed |
+| `turn_rate_color` | Turn-rate trend color | `#ff00ff` | colour | turn-rate trend arc colour |
 | `center_symbol` | Center symbol | `aircraft` | `aircraft`, `none` | fixed ownship symbol at the rose centre; 'aircraft' is a silhouette (deliberately not a triangle -- a triangle reads as the TO/FROM / course indicator) |
 | `readout_layout` | Readout layout | `top_panel` | `top_panel`, `corners`, `split`, `none` | placement of the integral actual-heading (HEAD), selected-heading (HEADBUG) and course (COURSE) readouts. top_panel = one sectioned panel across the top (outside the rose); corners = selected-heading + course boxes in the top corners; split = heading box above the rose, course/bug in the bottom corners |
 | `numeral_scale` | Numeral size | `1.5` | 0.5 to 3, step 0.1 | compass-rose numeral/letter size as a multiple of the base tick font (larger = bigger rose numbers) |

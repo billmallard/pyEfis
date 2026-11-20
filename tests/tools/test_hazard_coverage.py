@@ -77,6 +77,27 @@ def test_listed_and_not_listed_do_not_overlap():
     assert not listed & {m["path"] for m in doc["not_listed"]}
 
 
+def test_every_listed_module_is_core_or_says_why_not():
+    """One core list (core_modules.yaml) serves the core checks and this report. A
+    hazard-path module outside it must be named under outside_core with the reason."""
+    spec = hc.load_paths(PATHS)
+    outside = {m["path"]: m.get("reason") for m in spec["outside_core"]}
+    for m in spec["modules"]:
+        if m["core_group"] is None:
+            assert outside.get(m["path"]), f"{m['path']} is not in the core list and outside_core gives no reason"
+    for path in outside:
+        listed = [m for m in spec["modules"] if m["path"] == path]
+        assert listed, f"outside_core names {path}, which is not a listed module"
+        assert listed[0]["core_group"] is None, f"outside_core names {path}, which is core"
+
+
+def test_the_core_list_is_the_one_the_core_checks_read():
+    doc = yaml.safe_load(PATHS.read_text(encoding="utf-8"))
+    assert (PATHS.parent / doc["core_list"]).resolve() == (_ROOT / "docs" / "safety" / "core_modules.yaml")
+    groups = {m["core_group"] for m in hc.load_paths(PATHS)["modules"]}
+    assert groups == {"primary-flight", "powerplant", None}
+
+
 def test_report_only_until_is_a_date():
     spec = hc.load_paths(PATHS)
     datetime.date.fromisoformat(spec["report_only_until"])
@@ -211,6 +232,7 @@ def _sample(until="2026-12-19"):
         "tagged_test_functions": 3, "tagged_test_outcomes": {"passed": 3}, "suite_tests": 9,
         "requirements_cited": ["XX-ANN-001"], "requirements_cited_not_defined": [],
         "modules": [{"path": "src/pyefis/fix_watchdog.py", "rows": ["GW-2"], "why": "Watchdog.",
+                     "core_group": "primary-flight",
                      "all_tests": dict(n, covered_lines=9), "tagged_tests": n,
                      "requirements_reaching": ["XX-ANN-001"]}],
         "total": {"all_tests": dict(n, covered_lines=9), "tagged_tests": n},
@@ -229,7 +251,18 @@ def test_summary_shows_both_columns(tmp_path, capsys):
     p.write_text(json.dumps(_sample()))
     assert hc.main(["summary", str(p)]) == 0
     out = capsys.readouterr().out
-    assert "| `src/pyefis/fix_watchdog.py` | GW-2 | 4/10 (40.0%) | 1/4 (25.0%) | 9/10 (90.0%) |" in out
+    assert ("| `src/pyefis/fix_watchdog.py` | primary-flight | GW-2 | 4/10 (40.0%) | 1/4 (25.0%) "
+            "| 9/10 (90.0%) |") in out
+
+
+def test_a_record_without_core_groups_still_renders(tmp_path, capsys):
+    rec = _sample()
+    del rec["modules"][0]["core_group"]
+    p = tmp_path / "h.json"
+    p.write_text(json.dumps(rec))
+    assert hc.main(["summary", str(p)]) == 0
+    assert "| `src/pyefis/fix_watchdog.py` | n/a | GW-2 |" in capsys.readouterr().out
+    assert hc.main(["page", str(p), "--out", str(tmp_path / "h.html")]) == 0
 
 
 def test_page_wording_is_public_text(tmp_path):

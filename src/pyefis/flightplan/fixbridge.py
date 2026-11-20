@@ -105,8 +105,11 @@ ENGINE_OUTPUT_KEYS = (
 # precedent). FPLSUSPMAP (G49): 1 = suspended at the MAP auto-suspend.
 # FPLLDSEQ (PA8): the FPLSEQ of the route the engine has loaded; it differs
 # from FPLSEQ after a rejected commit, when the slots on the bus hold a
-# route the engine refused.
-OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP", "FPLLDSEQ")
+# route the engine refused. FPLHOLDSLOT/FPLHOLDENT/FPLHOLDCOMMIT
+# (HOLDENT1): the next hold's slot, its AIM 5-3-8 entry, and whether that
+# entry is the one being flown or a prediction.
+OPTIONAL_ENGINE_OUTPUT_KEYS = ("FPLSUSPMAP", "FPLLDSEQ",
+                               "FPLHOLDSLOT", "FPLHOLDENT", "FPLHOLDCOMMIT")
 
 # TURN3 (fix-gateway flightplan.yaml, AER-5418): FPLfTA, each slot's fly-by
 # turn anticipation in nm, the one slot field the engine writes. Read and

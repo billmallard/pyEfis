@@ -6,14 +6,14 @@ import pyefis.hooks as hooks
 
 
 def test_initialize_returns_when_config_is_none():
-    with mock.patch.object(hooks.importlib, "import_module") as import_module:
+    with mock.patch.object(hooks.instrument_table, "external_module") as import_module:
         hooks.initialize(None)
 
     import_module.assert_not_called()
 
 
 def test_initialize_accepts_empty_config():
-    with mock.patch.object(hooks.importlib, "import_module") as import_module:
+    with mock.patch.object(hooks.instrument_table, "external_module") as import_module:
         hooks.initialize({})
 
     import_module.assert_not_called()
@@ -25,7 +25,7 @@ def test_initialize_imports_configured_hook_modules():
         "second": {"module": "custom_hooks.second"},
     }
 
-    with mock.patch.object(hooks.importlib, "import_module") as import_module:
+    with mock.patch.object(hooks.instrument_table, "external_module") as import_module:
         hooks.initialize(config)
 
     assert import_module.call_args_list == [
@@ -38,7 +38,7 @@ def test_initialize_logs_and_reraises_import_errors():
     config = {"bad": {"module": "custom_hooks.missing"}}
     error = RuntimeError("boom")
 
-    with mock.patch.object(hooks.importlib, "import_module", side_effect=error):
+    with mock.patch.object(hooks.instrument_table, "external_module", side_effect=error):
         with mock.patch.object(hooks.logging, "critical") as critical:
             with pytest.raises(RuntimeError, match="boom"):
                 hooks.initialize(config)

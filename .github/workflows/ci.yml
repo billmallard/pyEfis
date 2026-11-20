@@ -23,13 +23,17 @@ jobs:
     - uses: actions/checkout@v6
     # G61a: tests/flightplan/test_refusal.py reads the engine's source and fails when
     # it can publish an FPLMSG refusal code the display has no plain words for.
+    # HOLDENT2: tests/instruments/test_map_hold_entry.py loads the engine (it
+    # needs only fixgw/geo.py) and checks the drawn hold entry against it.
     - name: Check out fix-gateway's flightplan engine
       uses: actions/checkout@v6
       with:
         repository: billmallard/fix-gateway
         ref: dev
         path: _fixgw
-        sparse-checkout: src/fixgw/plugins/flightplan/engine.py
+        sparse-checkout: |
+          src/fixgw/plugins/flightplan/engine.py
+          src/fixgw/geo.py
         sparse-checkout-cone-mode: false
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
@@ -58,6 +62,12 @@ jobs:
     - name: Public safety documents speak in no first person and cite no board id
       # CERT18c. Fails naming file, line and word; tools/verification_report.py check-text.
       run: python tools/verification_report.py check-text docs/safety/*.md
+    - name: Primary-flight core imports nothing outside rule R1 (a ratchet)
+      # CERT12a. docs/safety/core_modules.yaml names the core and allowlists today's
+      # crossings (E1 to E4) with the row that removes each; a new crossing or a stale
+      # entry fails. The runtime check (R4) and the write audit (R5) run in pytest,
+      # tests/safety/.
+      run: python tools/core_imports.py check
     - name: Test with pytest
       id: pytest
       env:

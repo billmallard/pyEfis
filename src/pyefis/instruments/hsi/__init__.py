@@ -131,6 +131,14 @@ class HSI(QGraphicsView):
         self.track_indicator_enabled = True
         self.track_color = "#ff00ff"
         self.track_min_speed = 5.0
+        # Turn-rate trend (ATT1b): a Garmin-style arc from the lubber line to
+        # the heading the aircraft will reach in TURN_TREND_SECONDS at the
+        # present rate of turn (ROT), with fixed marks at half and standard
+        # rate. Screen-fixed at the lubber, so it reads the same on any card
+        # heading. On by default; it self-hides when ROT is absent, old, bad
+        # or failed, so it is safe on panels without a turn-rate source.
+        self.turn_rate_enabled = True
+        self.turn_rate_color = "#ff00ff"
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
         # P5a redesign option defaults (must match the InstrumentSpec Prop
@@ -297,6 +305,24 @@ class HSI(QGraphicsView):
             self.gsdb.valueChanged[float].connect(self.setGs)
         except Exception:
             self.gsdb = None
+        # Rate of turn (ROT, deg/s, + = right) for the turn-rate trend. Starts
+        # failed so an absent key hides the trend; guarded like TRACKM/GS.
+        self._rot = 0.0
+        self._RotOld = True
+        self._RotBad = True
+        self._RotFail = True
+        try:
+            self.rotdb = fix.db.get_item("ROT")
+            self._rot = self.rotdb.value or 0.0
+            self.rotdb.valueChanged[float].connect(self.setRot)
+            self.rotdb.oldChanged[bool].connect(self.setRotOld)
+            self.rotdb.badChanged[bool].connect(self.setRotBad)
+            self.rotdb.failChanged[bool].connect(self.setRotFail)
+            self._RotOld = self.rotdb.old
+            self._RotBad = self.rotdb.bad
+            self._RotFail = self.rotdb.fail
+        except Exception:
+            self.rotdb = None
 
         # Selected nav source (NAVSRC: 0=NAV1, 1=NAV2, 2=GPS) for source-based
         # colouring of the course pointer + CDI (magenta GPS / green VLOC).
@@ -821,6 +847,137 @@ class HSI(QGraphicsView):
         self._TrackFail = fail
         self._update_track()
 
+    # Turn-rate trend (ATT1b), after the Garmin G1000/G3X turn rate indicator:
+    # the arc ends where the heading will be in TURN_TREND_SECONDS, so a
+    # standard-rate turn (3 deg/s) reaches the 18-deg mark. Above
+    # TURN_TREND_MAX_DPS the arc stops at that rate's length and gains an
+    # arrowhead: the prediction no longer holds, only "faster than this".
+    TURN_TREND_SECONDS = 6.0
+    STANDARD_RATE_DPS = 3.0
+    TURN_TREND_MAX_DPS = 4.0
+
+    def _turn_trend_shown(self):
+        """The trend (and its rate marks) only with a live ROT. It does not
+        depend on HEAD: the arc hangs off the fixed lubber line, not the card."""
+        if not getattr(self, "turn_rate_enabled", False) or self.rotdb is None:
+            return False
+        return not (self._RotOld or self._RotBad or self._RotFail)
+
+    def _turn_trend_deg(self):
+        """(signed heading change in TURN_TREND_SECONDS, capped?). + = right."""
+        lim = self.TURN_TREND_MAX_DPS * self.TURN_TREND_SECONDS
+        d = float(self._rot) * self.TURN_TREND_SECONDS
+        if abs(d) > lim:
+            return math.copysign(lim, d), True
+        return d, False
+
+    def _turn_trend_marks(self):
+        """Screen-relative degrees of the fixed rate marks: (half, standard)
+        rate each side of the lubber."""
+        std = self.STANDARD_RATE_DPS * self.TURN_TREND_SECONDS
+        return (-std, -std / 2.0, std / 2.0, std)
+
+    def setRot(self, value):
+        if value != self._rot:
+            self._rot = value
+            if self.isVisible() and self._turn_trend_shown():
+                self.update()
+
+    # A ROT quality change repaints at once, whatever the value is doing: a
+    # stale rate sends no value changes (the VSI XXX lesson, AER-5178).
+    def setRotOld(self, old):
+        self._RotOld = old
+        self.update()
+
+    def setRotBad(self, bad):
+        self._RotBad = bad
+        self.update()
+
+    def setRotFail(self, fail):
+        self._RotFail = fail
+        self.update()
+
+    def _turn_trend_rose_radius(self):
+        """Radius of the trend arc on the rose: just outside the ring, under
+        the lubber, so it never crosses the ticks, bug or track diamond."""
+        return self.r + self.fontSize * 0.25
+
+    def _draw_turn_trend_rose(self, c):
+        """Rate marks + trend arc on the full rose, in screen space (0 deg =
+        the lubber, clockwise +)."""
+        col = QColor(getattr(self, "turn_rate_color", "#ff00ff"))
+        rt = self._turn_trend_rose_radius()
+        # Fixed marks: radial ticks OUTSIDE the ring (the compass ticks are all
+        # inside it, so the two scales never mix), white like the lubber; the
+        # standard-rate pair longer than the half-rate pair.
+        c.setPen(QPen(QColor(self.fg_color), max(1.0, self.fontSize * 0.08)))
+        std = self.STANDARD_RATE_DPS * self.TURN_TREND_SECONDS
+        r0 = self.r + self.fontSize * 0.08
+        for m in self._turn_trend_marks():
+            r1 = rt + self.fontSize * (0.4 if abs(m) >= std else 0.15)
+            a = math.radians(m)
+            sa, ca = math.sin(a), math.cos(a)
+            c.drawLine(QLineF(self.cx + r0 * sa, self.cy - r0 * ca,
+                              self.cx + r1 * sa, self.cy - r1 * ca))
+        d, capped = self._turn_trend_deg()
+        if abs(d) < 1e-6:
+            return
+        pen = QPen(col, max(2.0, self.fontSize * 0.2))
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        c.setPen(pen)
+        c.setBrush(Qt.BrushStyle.NoBrush)
+        rect = QRectF(self.cx - rt, self.cy - rt, rt * 2.0, rt * 2.0)
+        # Qt arcs: 1/16 deg, 0 = 3 o'clock, counter-clockwise +. Start at 12
+        # o'clock; a right turn (+d) sweeps clockwise, so the span is -d.
+        c.drawArc(rect, 90 * 16, int(round(-d * 16)))
+        if capped:
+            a = math.radians(d)
+            sgn = 1.0 if d > 0 else -1.0
+            tip = (self.cx + rt * math.sin(a), self.cy - rt * math.cos(a))
+            ux, uy = sgn * math.cos(a), sgn * math.sin(a)   # along the arc
+            px, py = math.sin(a), -math.cos(a)              # radial out
+            s = self.fontSize * 0.4
+            c.setPen(QPen(col, 1.0)); c.setBrush(QBrush(col))
+            c.drawPolygon(QPolygonF([
+                QPointF(tip[0] + ux * s, tip[1] + uy * s),
+                QPointF(tip[0] + px * s * 0.6, tip[1] + py * s * 0.6),
+                QPointF(tip[0] - px * s * 0.6, tip[1] - py * s * 0.6)]))
+
+    def _turn_trend_arc_point(self, rel):
+        """Arc-mode trend point `rel` deg off the lubber: on the compass band,
+        lifted clear of it toward the lubber side (up)."""
+        x, y = self._arc_band_point(self._heading + rel)
+        return x, y - self.fontSize * 0.35
+
+    def _draw_turn_trend_arc(self, c):
+        """Rate marks + trend on the arc band (orientation: arc)."""
+        col = QColor(getattr(self, "turn_rate_color", "#ff00ff"))
+        c.setPen(QPen(QColor(self.fg_color), max(1.0, self.fontSize * 0.08)))
+        std = self.STANDARD_RATE_DPS * self.TURN_TREND_SECONDS
+        for m in self._turn_trend_marks():
+            half = self.fontSize * (0.3 if abs(m) >= std else 0.2)
+            x, y = self._turn_trend_arc_point(m)
+            c.drawLine(QLineF(x, y - half, x, y + half))
+        d, capped = self._turn_trend_deg()
+        if abs(d) < 1e-6:
+            return
+        n = max(2, int(math.ceil(abs(d) / 0.5)) + 1)
+        pts = [QPointF(*self._turn_trend_arc_point(d * i / (n - 1)))
+               for i in range(n)]
+        pen = QPen(col, max(2.0, self.fontSize * 0.2))
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        c.setPen(pen)
+        c.setBrush(Qt.BrushStyle.NoBrush)
+        c.drawPolyline(QPolygonF(pts))
+        if capped:
+            sgn = 1.0 if d > 0 else -1.0
+            tx, ty = self._turn_trend_arc_point(d)
+            s = self.fontSize * 0.4
+            c.setPen(QPen(col, 1.0)); c.setBrush(QBrush(col))
+            c.drawPolygon(QPolygonF([QPointF(tx + sgn * s, ty),
+                                     QPointF(tx, ty - s * 0.6),
+                                     QPointF(tx, ty + s * 0.6)]))
+
     def _rose_image(self):
         """The static rose (disc, ticks, cardinal/numeral labels) baked
         UNROTATED at 2x supersample -- once per scene build (#94). The
@@ -950,6 +1107,11 @@ class HSI(QGraphicsView):
             c.setBrush(QBrush(_tc))
             c.drawPolygon(self._track_diamond_polygon())
         c.restore()
+
+        # Turn-rate trend (ATT1b), screen-fixed at the lubber; drawn before the
+        # overlay so the lubber triangle sits on the arc's root.
+        if self._turn_trend_shown():
+            self._draw_turn_trend_rose(c)
 
         # Put the static overlay image on the view
         c.drawImage(self.rect(), self.overlay)
@@ -2098,6 +2260,10 @@ class HSI(QGraphicsView):
                 ly = by + dy / dl * (self.tickSize * 1.4 + nsize * 0.7)
                 c.drawText(QRectF(lx - _bw / 2, ly - _bh / 2, _bw, _bh),
                            int(Qt.AlignmentFlag.AlignCenter), txt)
+
+        # 2b. Turn-rate trend (ATT1b) along the band, under the lubber.
+        if self._turn_trend_shown():
+            self._draw_turn_trend_arc(c)
 
         # 3. Top lubber triangle at (cx, top_y), pointing UP at the band.
         _lub = self.fontSize * 0.7

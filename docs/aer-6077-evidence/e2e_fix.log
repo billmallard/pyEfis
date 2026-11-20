@@ -1,0 +1,5 @@
+t=   4.2s kiosk up, demo live: gateway NAVSRC=2.0 (GPS) DEMOLOOP=1  -> 1_show_default.png
+t=   6.8s visitor taps VLOC: gateway NAVSRC=0.0 (NAV1 (VLOC)) DEMOLOOP=1  -> 2_visitor_vloc.png
+t=   6.8s waiting for the demo's next loop (DEMOLOOP 1 -> ?)
+t= 245.5s next loop: gateway NAVSRC=2.0 (GPS) DEMOLOOP=2  -> 3_next_loop.png
+t= 245.5s resets=2 result=PASS
