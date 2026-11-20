@@ -131,8 +131,9 @@ def drive(app, gui, driven):
     """Pilot inputs on every screen: buttons, the knob walk, and taps.
 
     For each screen in turn: show it, click every pyefis Button on it once, turn the
-    knob through every encoder-selectable instrument (on each one push, one detent each
-    way, push again), then tap a grid over every instrument and work the knob on
+    knob through every encoder-selectable instrument (on each one push and, if that took
+    control, one detent each way and a second push, then focus released as the timeout
+    would release it, which commits or reverts the edit), then tap a grid over every instrument and work the knob on
     whatever the tap focused. Each step drains the event loop. This exercises the write
     paths the shipped config wires to pilot controls, so the write audit sees them, not
     only the writes a boot makes. It reaches what these inputs reach and no more: a
@@ -162,17 +163,31 @@ def drive(app, gui, driven):
                 qb.click()
                 home(idx)
                 clicks += 1
-        # The knob walk, through the same slots the encoder FIX keys drive.
+        # The knob walk, through the same slots the encoder FIX keys drive. With the walk
+        # idle, the first detent only lights the current instrument; a second detent
+        # inside the timeout moves on. So each stop wakes the walk, then steps once
+        # (except the first stop, which works the instrument the walk starts on), and
+        # ends by releasing focus, as the timeout would.
         stops = 0
+        walked = set()
+        ctl = getattr(obj, "encoder_controller", None)
         if hasattr(obj, "encoderChanged") and obj.encoder_list_sorted:
-            for _ in range(len(obj.encoder_list_sorted)):
-                obj.encoderChanged(1)            # walk to the next instrument
+            for n in range(len(obj.encoder_list_sorted)):
+                obj.encoderChanged(1)            # wake the walk
+                if n:
+                    obj.encoderChanged(1)        # walk to the next instrument
+                walked.add(obj.encoder_current_selection)
                 obj.encoderButtonChanged(True)   # push: take control
                 obj.encoderButtonChanged(False)
-                obj.encoderChanged(1)            # one detent each way
-                obj.encoderChanged(-1)
-                obj.encoderButtonChanged(True)   # push again
-                obj.encoderButtonChanged(False)
+                # A push that acts at once (a button) does not take control; a detent
+                # then would walk the highlight, not edit a value.
+                if obj.encoder_control:
+                    obj.encoderChanged(1)        # one detent each way
+                    obj.encoderChanged(-1)
+                    obj.encoderButtonChanged(True)   # push again
+                    obj.encoderButtonChanged(False)
+                if ctl is not None:
+                    ctl.release_focus()          # the timeout: commit or revert
                 home(idx)
                 stops += 1
         # Touch: a 5 x 5 grid of taps over every instrument, edges included, each
@@ -181,7 +196,6 @@ def drive(app, gui, driven):
         # along a tape's bottom edge, a value box on the autopilot head), as a pilot's
         # finger would. A scroll area (the tapes, the HSI) takes it on its viewport.
         taps = 0
-        ctl = getattr(obj, "encoder_controller", None)
         for inst in list((getattr(obj, "instruments", None) or {}).values()):
             try:
                 if not inst.isVisible():
@@ -209,6 +223,8 @@ def drive(app, gui, driven):
                     home(idx)
                     taps += 1
         driven.append({"screen": scr.name, "button_clicks": clicks, "knob_stops": stops,
+                       "knob_reached": len(walked),
+                       "knob_list": len(getattr(obj, "encoder_list_sorted", None) or []),
                        "taps": taps})
 
 
