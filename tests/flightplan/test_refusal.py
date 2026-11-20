@@ -53,6 +53,16 @@ from pyefis.flightplan import refusal
     ("BAD SLOT", "WAYPOINT NOT IN PLAN"),
     ("NO POSITION", "NO GPS POSITION"),
     ("PARSE", "COMMAND NOT UNDERSTOOD"),
+    # GPS OBS (OBS2/OBS3): OBS <deg>, OBS OFF, and SUSP/RESUME while in OBS.
+    ("OBS N/A NO WPT", "OBS: NO ACTIVE WAYPOINT"),
+    ("OBS N/A NO POSITION", "OBS: NO GPS POSITION"),
+    ("OBS N/A FINAL APPROACH", "NO OBS ON THE FINAL APPROACH"),
+    ("OBS N/A HOLD", "NO OBS IN A HOLD"),
+    ("OBS N/A PROC TURN", "NO OBS IN A PROCEDURE TURN"),
+    ("OBS N/A VECTORS", "NO OBS ON VECTORS"),
+    ("OBS N/A NO FIX", "NO OBS: LEG HAS NO FIX"),
+    ("IN OBS", "IN OBS: OBS OFF FIRST"),
+    ("NOT IN OBS", "NOT IN OBS"),
 ])
 def test_each_engine_code_reads_in_plain_words(msg, plain):
     assert refusal.plain_reason(msg) == plain
@@ -182,3 +192,25 @@ def load(self, reason):
     codes = engine_refusal_codes(source)
     assert codes == {"BADTURN", "BADWIDGET", "SEGFOO", "NOSUCH", "NO FUEL"}
     assert codes - refusal.KNOWN_CODES == {"BADWIDGET", "SEGFOO", "NOSUCH", "NO FUEL"}
+
+
+def test_every_obs_refusal_constant_has_plain_words():
+    """The source reader above finds a code passed to _Reject or returned
+    from a *_reason function; the engine's OBS refusals are also returned
+    from _obs_refusal() as module constants, which it does not follow. Every
+    ``OBS_*_REASON`` constant in the engine is checked by name instead."""
+    path, required = _engine_path()
+    if not path.is_file():
+        if required:
+            pytest.fail(f"FIXGW_FLIGHTPLAN_ENGINE={path} does not exist")
+        pytest.skip("set FIX_GATEWAY_SRC to a fix-gateway checkout; CI sets "
+                    "FIXGW_FLIGHTPLAN_ENGINE")
+    tree = ast.parse(path.read_text())
+    reasons = {node.value.value for node in tree.body
+               if isinstance(node, ast.Assign) and len(node.targets) == 1
+               and isinstance(node.targets[0], ast.Name)
+               and node.targets[0].id.startswith("OBS_")
+               and node.targets[0].id.endswith("_REASON")
+               and isinstance(node.value, ast.Constant)}
+    assert len(reasons) >= 7      # the OBS2 set: a reader that stopped matching fails
+    assert reasons - refusal.KNOWN_CODES == set()
