@@ -53,6 +53,16 @@ from pyefis.flightplan import refusal
     ("BAD SLOT", "WAYPOINT NOT IN PLAN"),
     ("NO POSITION", "NO GPS POSITION"),
     ("PARSE", "COMMAND NOT UNDERSTOOD"),
+    # GPS OBS refusals (OBS2).
+    ("OBS N/A NO WPT", "OBS NOT AVAILABLE: NO ACTIVE WAYPOINT"),
+    ("OBS N/A NO POSITION", "OBS NOT AVAILABLE: NO GPS POSITION"),
+    ("OBS N/A FINAL APPROACH", "OBS NOT AVAILABLE ON FINAL APPROACH"),
+    ("OBS N/A HOLD", "OBS NOT AVAILABLE IN A HOLD"),
+    ("OBS N/A PROC TURN", "OBS NOT AVAILABLE ON A PROCEDURE TURN"),
+    ("OBS N/A VECTORS", "OBS NOT AVAILABLE ON VECTORS"),
+    ("OBS N/A NO FIX", "OBS NOT AVAILABLE ON A CLIMB LEG"),
+    ("IN OBS", "NOT AVAILABLE IN OBS"),
+    ("NOT IN OBS", "OBS IS NOT ON"),
 ])
 def test_each_engine_code_reads_in_plain_words(msg, plain):
     assert refusal.plain_reason(msg) == plain
