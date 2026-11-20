@@ -45,17 +45,15 @@ def test_every_core_path_exists(doc):
         assert (p.is_dir() if prefix.endswith("/") else p.is_file()), prefix
 
 
-def test_the_two_named_groups_exist(doc):
-    assert set(doc["groups"]) == {"primary-flight", "powerplant"}
+def test_the_named_groups_exist(doc):
+    assert set(doc["groups"]) == {"primary-flight", "powerplant", "boot-screens"}
 
 
 def test_every_ratchet_entry_names_an_edge_and_the_row_that_removes_it(doc):
     for section in ("imports", "runtime", "writes"):
         for entry in doc["ratchet"][section] or []:
-            assert entry["edge"] in {"E1", "E2", "E3", "E4", "E5"}, entry
-            # AER-6105 is not a backlog row: it is Safety and Compliance's open call on
-            # the boot screens (E5 runtime entry), whose answer names the row or ends it.
-            assert entry["removed_by"] in {"CERT12b", "CERT12c", "AER-6105"}, entry
+            assert entry["edge"] in {"E1", "E2", "E3", "E4"}, entry
+            assert entry["removed_by"] in {"CERT12b", "CERT12c"}, entry
 
 
 def test_membership_is_by_prefix_so_a_new_file_in_a_core_package_is_core(doc):

@@ -55,7 +55,6 @@ def test_each_runtime_entry_is_attributed_to_the_edges_that_bring_it(doc):
     allowed = core_rules.runtime_allowlist(doc)
     assert allowed["pyefis.instruments.ai.svs"] == ["E1 (CERT12b)"]
     assert "pyefis.instruments.map" not in allowed   # E4, removed by CERT12c
-    assert allowed["pyefis.instruments.data_status"] == ["E5 (AER-6105)"]
     assert sorted(allowed["numpy"]) == ["E1 (CERT12b)", "E2 (CERT12b)"]
 
 

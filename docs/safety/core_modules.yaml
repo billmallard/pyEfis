@@ -71,6 +71,14 @@ groups:
     # modules too, or it leaves the VS readout behind.
     paths:
       - src/pyefis/instruments/gauges/
+  boot-screens:
+    why: The shell's own Data Status and About screens. gui.py adds and builds both on every boot, in flight too, and a fault in either constructor stops the process before the PFD shows (AER-6105). A ground boot shows Data Status first.
+    # A lane must carry this group while the shell builds these screens unguarded. CERT13
+    # may leave it off a reversionary lane once AER-6106 lands: a constructor fault in a
+    # non-flight screen then drops that screen instead of stopping the boot.
+    paths:
+      - src/pyefis/instruments/data_status/
+      - src/pyefis/instruments/about/
 
 # Rule R1: the only third-party packages a core module may import (top-level import
 # names). Everything else outside the standard library is a violation.
@@ -208,15 +216,6 @@ ratchet:
       removed_by: CERT12b
       modules:
         - pyefis.instruments.ai.pose
-    # gui.py adds the bundled Data Status and About screens on every boot and builds them,
-    # resolving their instrument types by name (E5's class). E4 hid this until CERT12c
-    # made the factory lazy. Whether the boot screens join the core is Safety and
-    # Compliance's call (AER-6105).
-    - edge: E5
-      removed_by: AER-6105
-      modules:
-        - pyefis.instruments.about
-        - pyefis.instruments.data_status
 
   # Writes that break rule R5, as the write audit finds them
   # (tests/safety/test_core_writes.py): key, writer (the module path), edge, removed_by.
