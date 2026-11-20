@@ -26,7 +26,8 @@ Three pieces, each driven by the fix-gateway demo source's own keys
   without the demo. It is built on every install, kiosk or not: the glass
   says DEMO whenever the data is the demo's.
 * **The page follower** (kiosk only). ``DEMOPAGE`` names the screen the demo
-  script wants up, as ``SCREEN`` or ``SCREEN/TAB``. Any touch holds the panel
+  script wants up, as ``SCREEN`` or ``SCREEN/TAB``. It joins the script at
+  start and on a gateway reconnect, not only on a change. Any touch holds the panel
   where the attendee left it for ``idle_return_s``; then it rejoins the
   script at the page the script is on now.
 * **The touch lock** (kiosk only). :func:`locked` is read by the instruments
@@ -188,9 +189,16 @@ class PageFollower(QObject):
         self.idle.timeout.connect(self.rejoin)
         self._bad = set()
         item.valueChanged[str].connect(self._on_page)
+        # A reconnect re-reads the key, and when the value is the same it
+        # clears fail with no change signal; rejoin on that too.
+        item.failChanged.connect(self._on_fail)
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
+        # valueChanged fires only on a change, so without this a pyEfis start
+        # or restart would sit on its boot screen until the script next moved
+        # (DEMO11). The screens exist by now: initialize() runs after them.
+        self._on_page(item.value)
 
     def eventFilter(self, obj, event):
         if event.type() in self.INPUT_EVENTS:
@@ -206,6 +214,10 @@ class PageFollower(QObject):
     def _on_page(self, value):
         if not self.holding():
             self.apply(value)
+
+    def _on_fail(self, fail):
+        if not fail:
+            self._on_page(self.item.value)
 
     def rejoin(self):
         self.apply(self.item.value)

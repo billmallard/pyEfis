@@ -26,7 +26,6 @@ from PyQt6.QtGui import *
 from PyQt6.QtWidgets import *
 
 import yaml
-import importlib
 from os import environ
 import shutil
 import hashlib 
@@ -56,6 +55,7 @@ import pyefis.hmi as hmi
 import pyefis.gui as gui
 import pyefis.kiosk as kiosk
 import pyefis.system_menu as system_menu
+import pyefis.screens.instrument_table as instrument_table
 
 
 config_filename = "default.yaml"
@@ -228,18 +228,15 @@ def main():
     pyefis_ver = fix.db.get_item('PYEFIS_VERSION')
 
     # CERT1: a gateway that hangs with the socket open must not leave the
-    # last values on the glass as good.  Never let it stop the display.
-    try:
-        link_watchdog = fix_watchdog.start(fix.db, config.get("main") or {})
-    except Exception:
-        log.critical("FIX link watchdog failed to start", exc_info=True)
-        link_watchdog = None
+    # last values on the glass as good.  start() never raises, so it cannot
+    # stop the display; when it is off, gui shows that on the glass.
+    link_watchdog = fix_watchdog.start(fix.db, config.get("main") or {})
 
     hmi.initialize(config)
 
     if 'FMS' in config:
         sys.path.insert(0, config["FMS"]["module_dir"])
-        fms = importlib.import_module ("FixIntf")
+        fms = instrument_table.external_module("FixIntf")
         fms.start(config["FMS"]["aircraft_config"])
 
     # DEMO4: the kiosk lock is read by instruments as they build and paint.

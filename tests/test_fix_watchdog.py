@@ -14,6 +14,8 @@ import threading
 import time
 
 import pytest
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget
 
 import pyavtools.fix
 from pyavtools.fix import Database
@@ -291,3 +293,72 @@ def test_start_picks_first_present_key_and_honours_config(qtbot):
     w = fix_watchdog.start(FakeDB(keys=("OAT",)), {"FixLinkPingKey": "OAT"})
     assert w.ping_key == "OAT" and w.timeout == fix_watchdog.DEFAULT_TIMEOUT_S
     w.stop()
+
+
+# AER-5983: when the watchdog is not running, a hung gateway would leave
+# the last values on the glass as good.  The display keeps running, but
+# each of the three ways the watchdog can be off puts a cue on the glass.
+
+OFF_PATHS = [
+    pytest.param(FakeDB(), {"FixLinkTimeout": "2s"},
+                 fix_watchdog.OFF_START_FAILED, id="start-raises"),
+    pytest.param(FakeDB(), {"FixLinkTimeout": 0},
+                 fix_watchdog.OFF_DISABLED, id="timeout-zero"),
+    pytest.param(FakeDB(keys=("OAT",)), {},
+                 fix_watchdog.OFF_NO_PING_KEY, id="no-ping-key"),
+]
+
+
+@pytest.fixture
+def window(qtbot, monkeypatch):
+    monkeypatch.setattr(fix_watchdog, "off_reason", None)
+    w = QWidget()
+    w.setStyleSheet("background: black")
+    w.resize(800, 480)
+    qtbot.addWidget(w)
+    w.show()
+    return w
+
+
+def amber_pixels(window, rect):
+    img = window.grab(rect).toImage()
+    amber = fix_watchdog.OFF_CUE_COLOR
+    n = 0
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            if (abs(c.red() - amber.red()) < 40 and abs(c.green() - amber.green()) < 40
+                    and c.blue() < 60):
+                n += 1
+    return n
+
+
+@pytest.mark.parametrize("db,config,reason", OFF_PATHS)
+def test_watchdog_off_is_shown_on_the_glass(window, db, config, reason):
+    assert fix_watchdog.start(db, config) is None
+    assert fix_watchdog.off_reason == reason
+    cue = fix_watchdog.show_off_cue(window, fix_watchdog.off_reason)
+    assert cue is not None and cue.isVisible()
+    assert window.rect().contains(cue.geometry())
+    # Painted, not merely shown: the amber text reaches the window.  Inset
+    # past the border, so a cue drawn as an empty box fails.
+    assert amber_pixels(window, cue.geometry().adjusted(5, 5, -5, -5)) > 100
+
+
+def test_running_watchdog_shows_no_cue(window):
+    w = fix_watchdog.start(FakeDB(), {})
+    assert w is not None and fix_watchdog.off_reason is None
+    assert fix_watchdog.show_off_cue(window, fix_watchdog.off_reason) is None
+    assert window.findChildren(fix_watchdog.LinkMonitorOffCue) == []
+    w.stop()
+
+
+def test_off_cue_clears_the_demo_strip_and_follows_resize(window):
+    cue = fix_watchdog.show_off_cue(window, fix_watchdog.OFF_DISABLED)
+    demo_h = max(18, int(window.height() * 0.035))
+    assert cue.geometry().top() > demo_h
+    window.resize(1024, 600)
+    assert cue.geometry().center().x() in (511, 512)
+    assert cue.geometry().top() > max(18, int(600 * 0.035))
+    # Touch goes through to the instrument underneath.
+    assert cue.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)

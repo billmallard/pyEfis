@@ -280,8 +280,9 @@ class _Window(QWidget):
         self.shown.append(name)
 
 
-def _follower(fix, qtbot, idle_s=0.2, names=("PFD", "FPL", "EMS"), screens=()):
-    _, page = _demo_keys(fix)
+def _follower(fix, qtbot, idle_s=0.2, names=("PFD", "FPL", "EMS"), screens=(),
+              page=""):
+    _, page = _demo_keys(fix, page=page)
     win = _Window(list(names))
     qtbot.addWidget(win)
     kiosk.configure({"enabled": True, "idle_return_s": idle_s})
@@ -304,6 +305,43 @@ def test_it_follows_the_script_page(fix, qtbot):
     page.value = "FPL"
     page.value = "EMS"
     assert win.shown == ["FPL", "EMS"]
+
+
+def test_it_joins_the_script_page_already_set_at_start(fix, qtbot):
+    # DEMO11 (AER-6005): a pyEfis restart mid-script reads DEMOPAGE before the
+    # follower exists, so no change signal ever arrives for that page.
+    win, page = _follower(fix, qtbot, page="FPL")
+    assert win.shown == ["FPL"]
+    page.value = "EMS"
+    assert win.shown == ["FPL", "EMS"]
+
+
+def test_it_joins_the_script_tab_already_set_at_start(fix, qtbot):
+    hmi.initialize({})
+    section = _build(qtbot, "tab_section", tabs=_TABS)
+    screen = SimpleNamespace(name="EMS", object=section.parentWidget())
+    win, _ = _follower(fix, qtbot, screens=[screen], page="EMS/nav")
+    assert win.shown == ["EMS"]
+    assert section.stack.currentIndex() == 1
+
+
+def test_a_reconnect_with_the_same_page_rejoins_the_script(fix, qtbot):
+    # pyavtools marks every item failed on a disconnect and re-reads it on
+    # reconnect; an unchanged value comes back as fail clearing, no valueChanged.
+    win, page = _follower(fix, qtbot, page="FPL")
+    page.fail = True
+    assert win.shown == ["FPL"]       # going failed does not move the panel
+    page.fail = False
+    assert win.shown == ["FPL", "FPL"]
+
+
+def test_a_reconnect_does_not_break_a_touch_hold(fix, qtbot):
+    win, page = _follower(fix, qtbot, idle_s=0.3, page="FPL")
+    _press(win)
+    page.fail = True
+    page.fail = False
+    assert win.shown == ["FPL"]
+    assert kiosk.follower.holding()
 
 
 def test_a_touch_holds_the_panel_then_it_rejoins_the_script(fix, qtbot):

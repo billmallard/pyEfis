@@ -81,8 +81,8 @@ def patched_runtime(monkeypatch):
     monkeypatch.setattr(main_module.logging.config, "dictConfig", mock.Mock())
     monkeypatch.setattr(main_module.logging.config, "fileConfig", mock.Mock())
     monkeypatch.setattr(
-        main_module.importlib,
-        "import_module",
+        main_module.instrument_table,
+        "external_module",
         mock.Mock(return_value=fake_fms),
     )
     monkeypatch.setattr(main_module, "create_config_dir", mock.Mock())
@@ -125,7 +125,7 @@ def test_main_with_config_file_runs_startup_and_shutdown(
     )
     main_module.fix.initialize.assert_called_once_with(config)
     main_module.hmi.initialize.assert_called_once_with(config)
-    main_module.importlib.import_module.assert_called_once_with("FixIntf")
+    main_module.instrument_table.external_module.assert_called_once_with("FixIntf")
     patched_runtime.fms.start.assert_called_once_with("aircraft.yaml")
     main_module.gui.initialize.assert_called_once_with(
         config, str(config_file.parent), {"enabled": {"AUTO_START": True}}
@@ -269,7 +269,7 @@ def test_main_without_config_file_creates_user_config_and_uses_basic_logging(
     )
     main_module.logging.basicConfig.assert_called_once_with()
     main_module.hmi.keys.initialize.assert_not_called()
-    main_module.importlib.import_module.assert_not_called()
+    main_module.instrument_table.external_module.assert_not_called()
 
 
 def test_main_merges_custom_preferences_and_configures_logging_dict(
@@ -553,3 +553,22 @@ def test_import_path_setup_uses_map_env_and_skips_missing_tools_env(monkeypatch)
 
     assert "/map-env" in imported.sys.path
     assert "/app" in imported.sys.path
+
+
+def test_main_keeps_running_and_records_a_watchdog_that_failed_to_start(
+    monkeypatch, config_files, patched_runtime
+):
+    # AER-5983 path 1: a malformed FixLinkTimeout raises inside start(); the
+    # display still boots, and the reason reaches gui for the cue.
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.fix_watchdog, "off_reason", None)
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(
+        return_value={"main": {"FixLinkTimeout": "2s"}, "hooks": {}}))
+
+    with pytest.raises(SystemExit) as exc:
+        main_module.main()
+
+    assert exc.value.code == 7
+    main_module.gui.initialize.assert_called_once()
+    assert main_module.fix_watchdog.off_reason == main_module.fix_watchdog.OFF_START_FAILED

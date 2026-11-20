@@ -18,26 +18,11 @@ import os
 
 from PyQt6.QtCore import qRound
 
-from pyefis.instruments import ai
-from pyefis.instruments import airspeed
-from pyefis.instruments import autopilot
-from pyefis.instruments import altimeter
-from pyefis.instruments.autopilot import fma as ap_fma
-from pyefis.instruments import button
-from pyefis.instruments import checklist
-from pyefis.instruments import flight_plan
-from pyefis.instruments import nav_status
-from pyefis.instruments import data_status
-from pyefis.instruments import about
-from pyefis.instruments import gauges
-from pyefis.instruments import hsi
-from pyefis.instruments import listbox
-from pyefis.instruments import map as moving_map
-from pyefis.instruments import misc
-from pyefis.instruments import tc
-from pyefis.instruments import vsi
-from pyefis.instruments import weston
-from pyefis.instruments import wind
+# CERT12c: instrument classes come from the lazy table, by name, so a screen
+# imports only the instruments it places. Only core modules may be imported
+# here directly (briefs/primary_flight_core.md, R1 and R2b).
+from pyefis.instruments.autopilot import DEFAULT_BUTTONS as AUTOPILOT_DEFAULT_BUTTONS
+from pyefis.screens.instrument_table import instrument
 from pyefis.screens.instrument_spec import (
     Binding, ContainerSlot, InstrumentSpec, Prop, FixValue)
 
@@ -64,7 +49,7 @@ def build_weston(screen, config, font_percent=None, font_family=None, replace=No
         kwargs["wide"] = qRound(grid_width * config["span"]["columns"])
         kwargs["high"] = qRound(grid_height * config["span"]["rows"])
 
-    return weston.Weston(screen, **kwargs)
+    return instrument("Weston")(screen, **kwargs)
 
 
 def build_altimeter_tape(
@@ -86,7 +71,7 @@ def build_altimeter_tape(
               "altsel_capture_color"):
         if k in opts:
             kwargs[k] = opts[k]
-    return altimeter.Altimeter_Tape(
+    return instrument("Altimeter_Tape")(
         screen, font_family=font_family, **kwargs)
 
 
@@ -95,7 +80,7 @@ def build_atitude_indicator(
 ):
     opts = config.get("options", {}) or {}
     show_fpm = opts.get("show_fpm", True)
-    widget = ai.AI(
+    widget = instrument("AI")(
         screen, font_percent=font_percent, font_family=font_family,
         show_fpm=show_fpm,
     )
@@ -124,7 +109,7 @@ def build_virtual_vfr(
     # VVFR1 (AER-5417): the legacy CIFP screen-space overlay (VirtualVfr.py)
     # is gone; virtual_vfr is the attitude widget plus synthetic vision. The
     # type name stays because shipped screens and user configs name it.
-    widget = ai.AI(screen, font_percent=font_percent, font_family=font_family)
+    widget = instrument("AI")(screen, font_percent=font_percent, font_family=font_family)
     widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
     widget.symbol_color = opts.get("symbol_color", "yellow")
     # SVS config: the legacy nested `svs:` dict, overlaid with the flat svs_*
@@ -141,7 +126,7 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
     opts = config.get("options", {}) or {}
     # Legacy: an external button YAML referenced by path (hand-authored panels).
     if opts.get("config"):
-        return button.Button(
+        return instrument("Button")(
             screen,
             config_file=os.path.join(screen.parent.config_path, opts["config"]),
             font_family=font_family,
@@ -150,8 +135,8 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
     # Inline: the instrument's options ARE the button definition (authored in the
     # configurator). Needs at least a dbkey to bind to.
     if opts.get("dbkey"):
-        return button.Button(screen, config=dict(opts), font_family=font_family,
-                             font_percent=font_percent)
+        return instrument("Button")(screen, config=dict(opts), font_family=font_family,
+                                    font_percent=font_percent)
     raise ValueError(
         "button needs options: either 'config:' (an external YAML) or inline "
         "fields including 'dbkey:'")
@@ -160,9 +145,8 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
 def build_tab_section(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
-    from pyefis.instruments.tab_section import TabSection
     opts = config.get("options", {}) or {}
-    return TabSection(
+    return instrument("TabSection")(
         screen,
         tabs=config.get("tabs") or [],
         default_tab=opts.get("default_tab", 0),
@@ -174,7 +158,7 @@ def build_tab_section(
 def build_static_text(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
-    return misc.StaticText(
+    return instrument("StaticText")(
         text=config["options"]["text"], parent=screen, font_family=font_family,
         fontsize=(1.0 if font_percent is None else font_percent),
     )
@@ -194,7 +178,7 @@ def build_data_status(
         kwargs["update_command"] = opts["update_command"]
     if "about_screen" in opts:
         kwargs["about_screen"] = opts["about_screen"]
-    return data_status.DataStatus(**kwargs)
+    return instrument("DataStatus")(**kwargs)
 
 
 def build_about(
@@ -208,7 +192,7 @@ def build_about(
         kwargs["back_screen"] = opts["back_screen"]
     if "ack_path" in opts:
         kwargs["ack_path"] = opts["ack_path"]
-    return about.AboutSystem(**kwargs)
+    return instrument("AboutSystem")(**kwargs)
 
 
 def build_data_annunciation(
@@ -221,11 +205,11 @@ def build_data_annunciation(
         kwargs["status_path"] = opts["status_path"]
     if "target_screen" in opts:
         kwargs["target_screen"] = opts["target_screen"]
-    return data_status.DataAnnunciation(**kwargs)
+    return instrument("DataAnnunciation")(**kwargs)
 
 
 def build_listbox(screen, config, font_percent=None, font_family=None, replace=None):
-    return listbox.ListBox(
+    return instrument("ListBox")(
         screen,
         lists=config["options"]["lists"],
         replace=replace,
@@ -240,7 +224,7 @@ def build_checklist(screen, config, font_percent=None, font_family=None, replace
     # precedent. Absent/malformed config yields an empty "No checklist" widget
     # (construct-never-raises), which is why this type builds in isolation.
     opts = config.get("options", {}) or {}
-    return checklist.Checklist(
+    return instrument("Checklist")(
         screen,
         checklists=opts.get("checklists"),
         font_family=font_family,
@@ -253,23 +237,23 @@ def build_flight_plan(screen, config, font_percent=None, font_family=None, repla
     # screenbuilder_preferences). The widget reads it as a multiplier on its
     # built-in text sizes, not a fraction of its height -- see
     # FlightPlan._font_scale.
-    return flight_plan.FlightPlan(screen, font_family=font_family,
-                                  font_percent=font_percent)
+    return instrument("FlightPlan")(screen, font_family=font_family,
+                                    font_percent=font_percent)
 
 
 
 def build_nav_status(screen, config, font_percent=None, font_family=None, replace=None):
     # font_percent is a multiplier on the chip's height-derived text size, the
     # same reading build_flight_plan gives it.
-    return nav_status.NavStatus(screen, font_family=font_family,
-                                font_percent=font_percent)
+    return instrument("NavStatus")(screen, font_family=font_family,
+                                   font_percent=font_percent)
 
 def build_autopilot_panel(screen, config, font_percent=None, font_family=None,
                           replace=None):
     # font_percent is a multiplier on the panel's box-derived text sizes, the
     # reading build_nav_status gives it.
-    return autopilot.AutopilotPanel(screen, font_family=font_family,
-                                    font_percent=font_percent)
+    return instrument("AutopilotPanel")(screen, font_family=font_family,
+                                        font_percent=font_percent)
 
 # Every instrument type is migrated -- these legacy lookup tables are populated
 # entirely from REGISTRY by the fold-back below. They remain (empty here) for
@@ -566,7 +550,7 @@ _register(InstrumentSpec(
     label="Arc Gauge",
     category="gauge",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.ArcGauge(
+             replace=None: instrument("ArcGauge")(
                  screen, min_size=False, font_family=font_family)),
     keep_aspect=True,
     properties=[
@@ -608,7 +592,7 @@ _register(InstrumentSpec(
     label="Airspeed Tape",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: airspeed.Airspeed_Tape(
+             replace=None: instrument("Airspeed_Tape")(
                  screen, font_percent=font_percent)),
     dbkeys=["IAS"],
     properties=[
@@ -657,7 +641,7 @@ _register(InstrumentSpec(
     label="VSI Dial",
     category="vertical_speed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.VSI_Dial(screen, font_family=font_family)),
+             replace=None: instrument("VSI_Dial")(screen, font_family=font_family)),
     dbkeys=["VS"],
     keep_aspect=True,
     # VSI_Dial is hard-wired to VS and exposes no editor options today; this
@@ -675,7 +659,7 @@ _register(InstrumentSpec(
     label="Airspeed Dial",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: airspeed.Airspeed(screen, font_family=font_family)),
+             replace=None: instrument("Airspeed")(screen, font_family=font_family)),
     dbkeys=["IAS"],
     keep_aspect=True,
     properties=[_bg_opacity_prop()],
@@ -695,7 +679,7 @@ _register(InstrumentSpec(
     label="Altimeter Dial",
     category="altitude",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: altimeter.Altimeter(screen, font_family=font_family)),
+             replace=None: instrument("Altimeter")(screen, font_family=font_family)),
     dbkeys=["ALT"],
     keep_aspect=True,
     properties=[_bg_opacity_prop()],
@@ -782,7 +766,7 @@ _register(InstrumentSpec(
     label="VSI (PFD)",
     category="vertical_speed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.VSI_PFD(screen, font_family=font_family)),
+             replace=None: instrument("VSI_PFD")(screen, font_family=font_family)),
     dbkeys=["VS"],
     properties=[
         # AFC4: the autopilot's selected vertical speed.
@@ -800,9 +784,9 @@ _register(InstrumentSpec(
     label="Horizontal Situation Indicator (HSI)",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: hsi.HSI(screen, font_percent=font_percent,
-                                    cdi_enabled=True, gsi_enabled=True,
-                                    font_family=font_family)),
+             replace=None: instrument("HSI")(screen, font_percent=font_percent,
+                                             cdi_enabled=True, gsi_enabled=True,
+                                             font_family=font_family)),
     dbkeys=["COURSE", "CDI", "GSI", "HEAD",
             "BRG1", "BRG2", "BRG1SRC", "BRG2SRC"],
     keep_aspect=True,
@@ -926,7 +910,7 @@ _register(InstrumentSpec(
     label="Heading Tape",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: hsi.DG_Tape(screen, font_family=font_family)),
+             replace=None: instrument("DG_Tape")(screen, font_family=font_family)),
     dbkeys=["HEAD"],
     # DG_Tape is hard-wired to HEAD (no setDbkey); the old curated dbkey option
     # was a no-op and is dropped.
@@ -970,7 +954,7 @@ _register(InstrumentSpec(
     label="Horizontal Bar Gauge",
     category="gauge",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.HorizontalBar(
+             replace=None: instrument("HorizontalBar")(
                  screen, min_size=False, font_family=font_family)),
     properties=_bar_gauge_props(),
     fix_values=_gauge_fix_values(),
@@ -982,7 +966,7 @@ _register(InstrumentSpec(
     label="Vertical Bar Gauge",
     category="gauge",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.VerticalBar(
+             replace=None: instrument("VerticalBar")(
                  screen, min_size=False, font_family=font_family)),
     properties=_bar_gauge_props(),
     fix_values=_gauge_fix_values(),
@@ -994,7 +978,7 @@ _register(InstrumentSpec(
     label="Turn Coordinator",
     category="attitude",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: tc.TurnCoordinator(screen, font_family=font_family)),
+             replace=None: instrument("TurnCoordinator")(screen, font_family=font_family)),
     dbkeys=["ROT", "ALAT"],
     keep_aspect=True,
     preview={"rate": 8, "ball": 2},
@@ -1005,7 +989,7 @@ _register(InstrumentSpec(
     label="Numeric Display",
     category="text",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.NumericDisplay(
+             replace=None: instrument("NumericDisplay")(
                  screen, font_family=font_family)),
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
@@ -1026,7 +1010,7 @@ _register(InstrumentSpec(
     label="Value Text",
     category="text",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: misc.ValueDisplay(
+             replace=None: instrument("ValueDisplay")(
                  screen, font_family=font_family, font_percent=font_percent)),
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
@@ -1094,7 +1078,7 @@ _register(InstrumentSpec(
     label="Airspeed Box",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: airspeed.Airspeed_Box(screen, font_family=font_family)),
+             replace=None: instrument("Airspeed_Box")(screen, font_family=font_family)),
     dbkeys=["IAS", "GS", "TAS"],
     # Deprecated in favour of the Value Text widget (configurable prefix, value
     # colour and box). Hidden from the palette but kept in the schema so panels
@@ -1107,7 +1091,7 @@ _register(InstrumentSpec(
     label="Airspeed Trend Tape",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.AS_Trend_Tape(screen, font_family=font_family)),
+             replace=None: instrument("AS_Trend_Tape")(screen, font_family=font_family)),
     dbkeys=["IAS"],
 ))
 
@@ -1116,7 +1100,7 @@ _register(InstrumentSpec(
     label="Altimeter Trend Tape",
     category="altitude",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.Alt_Trend_Tape(screen, font_family=font_family)),
+             replace=None: instrument("Alt_Trend_Tape")(screen, font_family=font_family)),
     # The widget reads VS (vertical speed) directly; the legacy curated default
     # was "ALT", a key it never consumes.
     dbkeys=["VS"],
@@ -1148,7 +1132,7 @@ _register(InstrumentSpec(
     label="Moving Map",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: moving_map.MovingMap(
+             replace=None: instrument("MovingMap")(
                  screen, font_family=font_family)),
     dbkeys=["LAT", "LONG", "TRACKM", "TRACK"],
     properties=[
@@ -1396,7 +1380,7 @@ _register(InstrumentSpec(
     label="Wind Display",
     category="wind",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: wind.WindDisplay(screen, font_family=font_family)),
+             replace=None: instrument("WindDisplay")(screen, font_family=font_family)),
     dbkeys=["HWIND", "XWIND"],
 ))
 
@@ -1665,8 +1649,8 @@ _register(InstrumentSpec(
 # acknowledge a disconnect alert.
 def build_ap_annunciator(screen, config, font_percent=None, font_family=None,
                          replace=None):
-    return ap_fma.ModeAnnunciator(screen, font_family=font_family,
-                                  font_percent=font_percent)
+    return instrument("ModeAnnunciator")(screen, font_family=font_family,
+                                         font_percent=font_percent)
 
 
 _register(InstrumentSpec(
@@ -1729,7 +1713,7 @@ _register(InstrumentSpec(
                   "with its value boxes over its keys; compact: two rows, "
                   "the boxes over one row of keys, for small panels and "
                   "side strips"),
-        Prop("buttons", "string", default=autopilot.DEFAULT_BUTTONS,
+        Prop("buttons", "string", default=AUTOPILOT_DEFAULT_BUTTONS,
              label="Buttons",
              help="comma list of the keys shown, from APR, NAV, HDG, TRK, "
                   "AP, FD, YD, LVL, IAS, VNAV, VS, ALT; drop YD for an "
@@ -1873,7 +1857,7 @@ _register(InstrumentSpec(
     label="Heading Display",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: hsi.HeadingDisplay(screen, font_family=font_family)),
+             replace=None: instrument("HeadingDisplay")(screen, font_family=font_family)),
     dbkeys=["HEAD"],
     # Deprecated in favour of the Value Text widget (a HEAD-bound value with a
     # "HDG" prefix, colour and box). Hidden from the palette but kept in the

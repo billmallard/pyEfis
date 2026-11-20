@@ -19,7 +19,6 @@ from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtCore import QTimer, qRound
 from PyQt6.QtWidgets import QWidget
 
-from pyefis.instruments import weston
 from pyefis.screens import screenbuilder_config
 from pyefis.screens import screenbuilder_display
 from pyefis.screens import screenbuilder_encoder

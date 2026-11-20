@@ -346,3 +346,27 @@ def test_watch_ends_once_data_status_is_left(app, fix, fast_wait, qtbot):
     fix.db.set_value("IAS", 110.0)
     qtbot.wait(10)
     assert _running(gui.mainWindow) == "DataStatus"
+
+
+def test_initialize_shows_the_link_monitor_cue_over_the_flight_screen(
+        app, fix, fast_wait, monkeypatch):
+    # AER-5983: main started the watchdog and it is off; the cue goes over
+    # whichever screen boots, on top of every other child.
+    from pyefis import fix_watchdog
+    monkeypatch.setattr(fix_watchdog, "off_reason", fix_watchdog.OFF_NO_PING_KEY)
+    _ias(fix, 110.0)
+    _gs(fix, 105.0)
+    gui.initialize(_config(), "/config", {"includes": {}})
+    cue = gui.mainWindow.linkMonitorCue
+    assert cue is not None and cue.isVisible()
+    assert cue.parentWidget() is gui.mainWindow
+    assert gui.mainWindow.children()[-1] is cue
+
+
+def test_initialize_with_the_watchdog_running_shows_no_cue(app, fix, fast_wait, monkeypatch):
+    from pyefis import fix_watchdog
+    monkeypatch.setattr(fix_watchdog, "off_reason", None)
+    _ias(fix, 110.0)
+    _gs(fix, 105.0)
+    gui.initialize(_config(), "/config", {"includes": {}})
+    assert gui.mainWindow.linkMonitorCue is None

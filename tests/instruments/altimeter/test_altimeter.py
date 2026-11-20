@@ -174,7 +174,7 @@ def test_build_altimeter_tape_forwards_options(monkeypatch):
         captured.update(kwargs)
         return mock.Mock()
 
-    monkeypatch.setattr(sf.altimeter, "Altimeter_Tape", fake_tape)
+    monkeypatch.setattr(altimeter, "Altimeter_Tape", fake_tape)
     sf.build_altimeter_tape(None, {"options": {
         "dbkey": "VS", "minorDiv": 50, "majorDiv": 100, "round_to": 100,
         "total_decimals": 5, "font_mask": "00000", "numeric_box": False,
