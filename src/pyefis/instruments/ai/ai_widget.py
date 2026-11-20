@@ -28,7 +28,7 @@ from pyefis.instruments import edit_focus, helpers
 from pyefis.instruments.helpers import bugs
 from pyefis.instruments.ai.svs import SVSRenderer, make_svs_item
 from pyefis.instruments.ai.pose import PoseSource
-from pyefis.instruments.ai.camera import terrain_horizontal_px
+from pyefis.instruments.ai.projection import terrain_horizontal_px
 
 log = logging.getLogger(__name__)
 
