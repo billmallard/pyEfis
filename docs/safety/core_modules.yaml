@@ -1,0 +1,220 @@
+# The primary-flight core: the pyEfis code that renders or feeds a primary-flight row of
+# the hazard assessment (fha_avionics_stack.md, PFD-1 to PFD-15, NAV-1, NAV-2, MNU-1), is
+# the single write path for a pilot-set key that changes what a primary value means, or
+# without which the process cannot start or show the PFD. The design rationale is the
+# primary-flight core brief (CERT12) in the project workspace, sections 3 to 6.
+#
+# One list, read by the three core checks and by the hazard-path report:
+#   - tools/core_imports.py, the static import check (rule R1): a core module imports
+#     only core modules, the standard library and the third-party packages named here.
+#   - tests/safety/test_core_boot.py, the runtime check (rule R4): a core-only screen
+#     boots with no non-core module in sys.modules.
+#   - tests/safety/test_core_writes.py, the write audit (rule R5).
+#   - docs/safety/hazard_paths.yaml names this file under core_list, and
+#     tools/hazard_coverage.py reports each hazard-path module's core group from it.
+#
+# Membership is by path prefix: an entry ending in "/" is a package, so a new file added
+# under a core package is core by default. Paths are relative to the repository root.
+#
+# Each check is a ratchet. A crossing that exists today is listed under ratchet with the
+# brief's edge id (E1 to E4) and the backlog row that removes it. A crossing not listed
+# fails the build, and so does a listed one that no longer occurs: when a row lands, its
+# entries are deleted in the same change, so the lists only shrink.
+#
+# Changing the groups, the third-party list or the key classes is a change for Safety
+# and Compliance to review: it changes what a second lane would carry.
+
+version: 1
+
+groups:
+  primary-flight:
+    why: Attitude, airspeed, altitude, vertical speed, turn and slip, heading and the CDI, the shared drawing they use, the pilot-set write paths, and the shell that starts the process and shows the PFD.
+    paths:
+      # Package roots: importing any module below them runs these first.
+      - src/pyefis/__init__.py
+      - src/pyefis/instruments/__init__.py
+      # The ai package is mixed: the attitude widget is core, the SVS beside it is not.
+      # Its __init__ re-exports the widget lazily and imports nothing at module level.
+      - src/pyefis/instruments/ai/__init__.py
+      - src/pyefis/instruments/ai/ai_widget.py
+      - src/pyefis/instruments/airspeed/
+      - src/pyefis/instruments/altimeter/
+      - src/pyefis/instruments/vsi/
+      - src/pyefis/instruments/tc/
+      - src/pyefis/instruments/hsi/
+      - src/pyefis/instruments/helpers/
+      - src/pyefis/instruments/NumericalDisplay/
+      - src/pyefis/instruments/edit_focus.py
+      - src/pyefis/instruments/button/
+      - src/pyefis/instruments/autopilot/
+      - src/pyefis/instruments/tab_section/
+      - src/pyefis/common/
+      - src/pyefis/display_metrics.py
+      - src/pyefis/fix_watchdog.py
+      - src/pyefis/main.py
+      - src/pyefis/gui.py
+      - src/pyefis/cfg.py
+      - src/pyefis/hooks.py
+      - src/pyefis/hmi/
+      - src/pyefis/kiosk.py
+      - src/pyefis/system_menu.py
+      - src/pyefis/startup_notice.py
+      - src/pyefis/install_ack.py
+      - src/pyefis/advisories.py
+      - src/pyefis/version.py
+      - src/pyefis/screens/
+  powerplant:
+    why: The engine gauges. EMS-2 is Hazardous misleading, the highest severity outside the PFD rows.
+    paths:
+      - src/pyefis/instruments/gauges/
+
+# Rule R1: the only third-party packages a core module may import (top-level import
+# names). Everything else outside the standard library is a violation.
+third_party:
+  - PyQt6
+  - pyavtools
+  - yaml
+  - pycond
+
+# Rule R4 (the runtime check) also watches these packages, which the core does not
+# need and which arrive only with non-core code: NumPy, SQLite and the GL bindings.
+runtime_watch:
+  - numpy
+  - sqlite3
+  - OpenGL
+
+# Rule R5: the keys pyEfis may write, by class. A write is any assignment of an
+# item's value or any output to the gateway, made from pyefis code.
+primary_keys:
+  # No pyEfis code writes these, core or not: a sensor, a source plugin or the gateway
+  # owns each one, and pyEfis must never become a second writer of it.
+  sensed_computed:
+    keys: [PITCH, ROLL, YAW, ALAT, IAS, TAS, ALT, VS, HEAD, TRACK, TRACKM, ROT, AOA, GS,
+           LAT, LONG, MAGVAR, CDI, GSI, CDIV, GSV, TOFROM, COURSE]
+    # Engine values for the powerplant group, as patterns over the numbered keys.
+    patterns: ['^(TACH|MAP|CHT|EGT|OILP|OILT|FUELP|FUELQ|FUELF|VOLT|CURRNT)[0-9]*$']
+  # Pilot-set keys that change what a primary value means. Each may be written only
+  # from the core paths listed for it: the instrument that owns it, the HMI action
+  # layer (hmi/functions.py, which configured buttons and key bindings trigger), the
+  # button widget, the autopilot control head, and the encoder's baro proxy in
+  # hmi/menu.py. No non-core module may be on the call stack of the write either.
+  pilot_set:
+    BARO:
+      - src/pyefis/instruments/altimeter/__init__.py
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/hmi/menu.py
+      - src/pyefis/instruments/button/
+    ALTSEL:
+      - src/pyefis/instruments/altimeter/altsel.py
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+      - src/pyefis/instruments/autopilot/
+    HEADBUG:
+      - src/pyefis/instruments/hsi/
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+      - src/pyefis/instruments/autopilot/
+    NAVSRC:
+      - src/pyefis/instruments/hsi/
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+
+# The ratchet. Each entry names the brief's edge and the backlog row whose landing
+# deletes it.
+ratchet:
+  # Static imports from a core module (tools/core_imports.py).
+  imports:
+    - edge: E1
+      removed_by: CERT12b
+      from: src/pyefis/instruments/ai/ai_widget.py
+      imports: [pyefis.instruments.ai.svs]
+    - edge: E2
+      removed_by: CERT12b
+      from: src/pyefis/instruments/ai/ai_widget.py
+      imports: [pyefis.instruments.ai.camera]
+    - edge: E3
+      removed_by: CERT12b
+      from: src/pyefis/instruments/ai/ai_widget.py
+      imports: [pyefis.instruments.ai.pose]
+    - edge: E4
+      removed_by: CERT12c
+      from: src/pyefis/screens/screenbuilder_factory.py
+      imports:
+        - pyefis.instruments.about
+        - pyefis.instruments.checklist
+        - pyefis.instruments.data_status
+        - pyefis.instruments.flight_plan
+        - pyefis.instruments.listbox
+        - pyefis.instruments.map
+        - pyefis.instruments.misc
+        - pyefis.instruments.nav_status
+        - pyefis.instruments.weston
+        - pyefis.instruments.wind
+    # The composition root's second top-level import of weston. The brief's E4 row
+    # names only the factory; this one is in screenbuilder.py and is never used there.
+    - edge: E4
+      removed_by: CERT12c
+      from: src/pyefis/screens/screenbuilder.py
+      imports: [pyefis.instruments.weston]
+
+  # Non-core modules (and watched packages) in sys.modules after the core-only boot
+  # (tests/safety/test_core_boot.py). A module two edges bring in is listed under each,
+  # and stays allowed until the last of them is removed.
+  runtime:
+    - edge: E1
+      removed_by: CERT12b
+      modules:
+        - pyefis.instruments.ai.svs
+        - pyefis.instruments.ai.road_ribbon
+        - pyefis.instruments.ai.highway_db
+        - numpy
+        - sqlite3
+    - edge: E2
+      removed_by: CERT12b
+      modules:
+        - pyefis.instruments.ai.camera
+        - numpy
+    - edge: E3
+      removed_by: CERT12b
+      modules:
+        - pyefis.instruments.ai.pose
+    - edge: E4
+      removed_by: CERT12c
+      modules:
+        - pyefis.flightplan
+        - pyefis.flightplan.airac
+        - pyefis.flightplan.airways
+        - pyefis.flightplan.catalog
+        - pyefis.flightplan.fixbridge
+        - pyefis.flightplan.geo
+        - pyefis.flightplan.model
+        - pyefis.flightplan.plates
+        - pyefis.flightplan.proc_load
+        - pyefis.flightplan.procedures
+        - pyefis.flightplan.refusal
+        - pyefis.flightplan.waypoints
+        - pyefis.instruments.about
+        - pyefis.instruments.checklist
+        - pyefis.instruments.data_status
+        - pyefis.instruments.flight_plan
+        - pyefis.instruments.flight_plan.plate_render
+        - pyefis.instruments.listbox
+        - pyefis.instruments.live_binding
+        - pyefis.instruments.map
+        - pyefis.instruments.map.layers
+        - pyefis.instruments.map.nd
+        - pyefis.instruments.map.perf
+        - pyefis.instruments.misc
+        - pyefis.instruments.nav_status
+        - pyefis.instruments.weston
+        - pyefis.instruments.wind
+        - numpy
+        - sqlite3
+
+  # Writes that break rule R5, as the write audit finds them
+  # (tests/safety/test_core_writes.py): key, writer (the module path), edge, removed_by.
+  # Empty: on the shipped default config, booted and driven, no pyefis code writes a
+  # sensed or computed key, and BARO, ALTSEL and HEADBUG are written only from their
+  # core paths. The drive records no NAVSRC write: buttons/cdi-source.yaml ships but
+  # no default screen places it, so the NAVSRC paths are not exercised.
+  writes: []
