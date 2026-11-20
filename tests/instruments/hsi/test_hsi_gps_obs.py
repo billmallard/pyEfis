@@ -255,3 +255,23 @@ def test_marks_on_crs_only_in_obs(gps, qtbot):
     assert w._field_editable("crs")
     gps.db.set_value("FPLSTATE", 1)
     assert not w._field_editable("crs")
+
+
+# --- the seq rule the HSI keeps in step with FixBridge ------------------------
+
+def test_hsi_seq_is_fixbridge_seq_and_neither_repeats_the_other(gps, qtbot):
+    """The HSI may not import the flight-plan package (rule R1), so it keeps
+    FixBridge._next_seq's rule itself: one past the highest FPLCMD or
+    FPLCMDACK seq on the bus. Interleaved with a bridge, every seq is new."""
+    from pyefis.flightplan import fixbridge
+    _host, w = _hsi(qtbot)
+    bridge = fixbridge.FixBridge(gps)
+    seqs = []
+    gps.db.set_value("FPLCMDACK", -4)               # an answer to someone's seq 4
+    assert w._send_fpl_command("OBS 270")
+    seqs.append(_seqs(gps)[-1])
+    seqs.append(bridge._next_seq())
+    gps.db.set_value("FPLCMD", "%d SUSP" % seqs[-1])
+    assert w._send_fpl_command("OBS 271")
+    seqs.append(_seqs(gps)[-1])
+    assert seqs == [5, 6, 7]

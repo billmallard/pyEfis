@@ -28,7 +28,6 @@ from pyefis import common
 from pyefis.instruments import helpers
 from pyefis.instruments import edit_focus
 from pyefis import display_metrics
-from pyefis.flightplan import fixbridge
 
 # TODO: Add CDI and Glide Slope indicators and tick marks but make them
 #       configurable.
@@ -2773,9 +2772,33 @@ class HSI(QGraphicsView):
         value = self._obs_value
         if value is None or value == self._obs_sent or not self._gps_obs():
             return
-        if fixbridge.send_command(fix, "OBS", "%d" % value) is not None:
+        if self._send_fpl_command("OBS %d" % value):
             self._obs_sent = value
             self._obs_sent_at = self._obs_clock()
+
+    def _send_fpl_command(self, text):
+        """Write ``FPLCMD = "<seq> <text>"`` straight to the bus. The HSI is
+        primary-flight core and may not import the flight-plan package (rule
+        R1, docs/safety/core_modules.yaml), so it keeps FixBridge's seq rule
+        here: one past the highest seq on the bus, the last FPLCMD or the
+        last FPLCMDACK, so this writer and the page's bridges never repeat
+        each other's seq. A test holds the two rules together. False when
+        the gateway does not define the command keys."""
+        cmd = self._fix_item("FPLCMD")
+        ack = self._fix_item("FPLCMDACK")
+        if cmd is None or ack is None:
+            return False
+        try:
+            last = int(str(cmd.value or "").split()[0])
+        except (IndexError, ValueError):
+            last = 0
+        try:
+            last = max(last, abs(int(ack.value or 0)))
+        except (TypeError, ValueError):
+            pass
+        cmd.value = "%d %s" % (last + 1, text)
+        cmd.output_value()
+        return True
 
     def _obs_bearing(self):
         """Bearing TO the active waypoint (GPSBRG), or None when there is

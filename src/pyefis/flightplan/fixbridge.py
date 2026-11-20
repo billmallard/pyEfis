@@ -45,29 +45,6 @@ def _cmd_seq(text) -> int:
     except (IndexError, ValueError):
         return 0
 
-
-def _bus_seq(get) -> int:
-    """The highest seq on the bus: the last ``FPLCMD`` written by any
-    editor, or the last ``FPLCMDACK`` the engine answered."""
-    return max(_cmd_seq(get("FPLCMD").value), abs(int(get("FPLCMDACK").value or 0)))
-
-
-def send_command(fix_module, verb, arg=None) -> int | None:
-    """Write one ``FPLCMD`` from a widget that holds no :class:`FixBridge`
-    (the HSI's CRS knob in GPS OBS, OBS3). The seq is one past the highest
-    on the bus, the rule :meth:`FixBridge._next_seq` keeps, so the bridges
-    and this writer never repeat each other's seq. Returns the seq, or None
-    when the gateway does not define the command keys."""
-    db = fix_module.db
-    try:
-        seq = _bus_seq(db.get_item) + 1
-        item = db.get_item("FPLCMD")
-    except KeyError:
-        return None
-    item.value = f"{seq} {verb}" if arg is None else f"{seq} {verb} {arg}"
-    item.output_value()
-    return seq
-
 MAX_SLOTS = 100
 
 TYPE_TO_FPLTYPE = {"unknown": 0, "airport": 1, "vor": 2, "ndb": 3, "fix": 4, "user": 5, "map": 6}
@@ -445,7 +422,9 @@ class FixBridge:
         ``FPLCMD``. Private counters would both start at 1, re-send an
         identical string and answer each other's ``FPLCMDACK``; the last
         command and ack on the bus are shared by every writer."""
-        self._last_seq = max(self._last_seq, _bus_seq(self._get)) + 1
+        seen = max(_cmd_seq(self._get("FPLCMD").value),
+                   abs(int(self._get("FPLCMDACK").value or 0)))
+        self._last_seq = max(self._last_seq, seen) + 1
         return self._last_seq
 
     def _on_cmdack(self, value):

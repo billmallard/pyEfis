@@ -567,24 +567,3 @@ def test_a_new_database_object_is_looked_up_again(fix):
         bridge.read_route()
     bridge._fix.db = real
     assert bridge.read_route() is not None
-
-
-# ---------------------------------------------------------------------------
-# send_command: an FPLCMD from a widget with no bridge (OBS3, the HSI's CRS
-# knob in GPS OBS)
-# ---------------------------------------------------------------------------
-def test_send_command_is_none_without_the_command_keys(fix):
-    assert fixbridge.send_command(fix, "OBS", "270") is None
-
-
-def test_send_command_seq_is_one_past_the_bus_and_the_bridge_follows_it(fix):
-    _define_all_fp1_keys(fix)
-    bridge = fixbridge.FixBridge(fix)
-    assert bridge.command("SUSP") == 1
-    fix.db.set_value("FPLCMDACK", -4)            # an answer to someone's seq 4
-    assert fixbridge.send_command(fix, "OBS", "270") == 5
-    assert fix.db.get_item("FPLCMD").value == "5 OBS 270"
-    # The bridge never reuses the seq the other writer took.
-    assert bridge.command("RESUME") == 6
-    assert fixbridge.send_command(fix, "OBS", "OFF") == 7
-    assert fix.db.get_item("FPLCMD").value == "7 OBS OFF"
