@@ -45,6 +45,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from verification_report import CSS, STANDING_TEXT, find_leaks, sanitize  # noqa: E402
+import core_imports  # noqa: E402
 
 SCHEMA = "hazard-coverage/1"
 
@@ -52,12 +53,24 @@ SCHEMA = "hazard-coverage/1"
 # --------------------------------------------------------------------------- inputs
 
 def load_paths(path):
+    """The hazard-path list, with each module's group in the core list it names.
+
+    ``core_list`` is the primary-flight core list (core_modules.yaml), relative to the
+    hazard-path file. One list of core modules serves the import, boot and write checks
+    and this report, so the two cannot drift."""
     import yaml
-    doc = yaml.safe_load(pathlib.Path(path).read_text(encoding="utf-8"))
+    path = pathlib.Path(path)
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     until = doc.get("report_only_until")
     if isinstance(until, datetime.date):
         until = until.isoformat()
-    return {"modules": doc.get("modules") or [], "report_only_until": until or ""}
+    modules = [dict(m) for m in doc.get("modules") or []]
+    if doc.get("core_list"):
+        core = core_imports.load_core_list(path.parent / doc["core_list"])
+        for m in modules:
+            m["core_group"] = core_imports.core_group(m["path"], core)
+    return {"modules": modules, "report_only_until": until or "",
+            "outside_core": doc.get("outside_core") or []}
 
 
 def _function_id(nodeid):
@@ -131,14 +144,17 @@ def measure(data_file, modules, tagged):
         if tag_s is None and all_s is not None:
             # No tagged test reached the file: every statement and branch is uncovered.
             tag_s = dict(all_s, covered_lines=0, covered_branches=0)
-        rows.append({
+        row = {
             "path": path,
             "rows": list(m.get("rows") or []),
             "why": m.get("why", ""),
             "all_tests": _numbers(all_s),
             "tagged_tests": _numbers(tag_s),
             "requirements_reaching": sorted(reached),
-        })
+        }
+        if "core_group" in m:
+            row["core_group"] = m["core_group"]
+        rows.append(row)
     return rows
 
 
@@ -214,6 +230,14 @@ def mode_line(rec, today=None):
             if until else "A report, not a gate. Nothing fails on these numbers.")
 
 
+def core_label(m):
+    """A module's group in the core list, "not core", or "n/a" when the hazard-path
+    list names no core list (and for records made before it did)."""
+    if "core_group" not in m:
+        return "n/a"
+    return m["core_group"] or "not core"
+
+
 def _md(text):
     return (text or "").replace("|", "\\|").replace("\n", " ")
 
@@ -224,16 +248,17 @@ def summary(args):
            mode_line(rec), "",
            f"{rec['tagged_test_functions']} test functions cite a requirement ID "
            f"(of {rec['suite_tests']} tests in the suite). Modules from `{rec['paths_file']}`.", "",
-           "| Module | FHA rows | Statements, tagged tests | Branches, tagged tests "
+           "| Module | Core group | FHA rows | Statements, tagged tests | Branches, tagged tests "
            "| Statements, all tests | Branches, all tests | Requirements reaching it |",
-           "|---|---|---|---|---|---|---|"]
+           "|---|---|---|---|---|---|---|---|"]
     for m in rec["modules"]:
-        out.append(f"| `{_md(m['path'])}` | {', '.join(m['rows'])} | {cell(m['tagged_tests'], 'lines')} | "
+        out.append(f"| `{_md(m['path'])}` | {core_label(m)} | {', '.join(m['rows'])} | "
+                   f"{cell(m['tagged_tests'], 'lines')} | "
                    f"{cell(m['tagged_tests'], 'branches')} | {cell(m['all_tests'], 'lines')} | "
                    f"{cell(m['all_tests'], 'branches')} | "
                    f"{', '.join(f'`{i}`' for i in m['requirements_reaching']) or 'none'} |")
     t = rec["total"]
-    out.append(f"| **Total** | | {cell(t['tagged_tests'], 'lines')} | {cell(t['tagged_tests'], 'branches')} | "
+    out.append(f"| **Total** | | | {cell(t['tagged_tests'], 'lines')} | {cell(t['tagged_tests'], 'branches')} | "
                f"{cell(t['all_tests'], 'lines')} | {cell(t['all_tests'], 'branches')} | |")
     if rec["requirements_cited_not_defined"]:
         out += ["", "Cited by a test but not found as a definition by the spec parser: "
@@ -280,17 +305,17 @@ def render_page(rec, today=None):
          "without being traced to a requirement.</p>",
          f"<p>{rec['tagged_test_functions']} test functions cite a requirement ID, of "
          f"{rec['suite_tests']} tests in the suite.</p>",
-         "<table><tr><th>Module</th><th>Hazard rows</th><th>Statements, tagged tests</th>"
+         "<table><tr><th>Module</th><th>Core group</th><th>Hazard rows</th><th>Statements, tagged tests</th>"
          "<th>Branches, tagged tests</th><th>Statements, all tests</th><th>Branches, all tests</th>"
          "<th>Requirements whose tests reach it</th></tr>"]
     for m in rec["modules"]:
         h.append(f"<tr><td>{src_link(m['path'])}<br><span class=muted>{_e(m['why'])}</span></td>"
-                 f"<td>{_e(', '.join(m['rows']))}</td>"
+                 f"<td>{_e(core_label(m))}</td><td>{_e(', '.join(m['rows']))}</td>"
                  f"<td>{_e(cell(m['tagged_tests'], 'lines'))}</td><td>{_e(cell(m['tagged_tests'], 'branches'))}</td>"
                  f"<td>{_e(cell(m['all_tests'], 'lines'))}</td><td>{_e(cell(m['all_tests'], 'branches'))}</td>"
                  f"<td>{_e(', '.join(m['requirements_reaching']) or 'none')}</td></tr>")
     t = rec["total"]
-    h.append(f"<tr><th>Total</th><td></td><th>{_e(cell(t['tagged_tests'], 'lines'))}</th>"
+    h.append(f"<tr><th>Total</th><td></td><td></td><th>{_e(cell(t['tagged_tests'], 'lines'))}</th>"
              f"<th>{_e(cell(t['tagged_tests'], 'branches'))}</th><th>{_e(cell(t['all_tests'], 'lines'))}</th>"
              f"<th>{_e(cell(t['all_tests'], 'branches'))}</th><td></td></tr></table>")
     if rec["requirements_cited_not_defined"]:
