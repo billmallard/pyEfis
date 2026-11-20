@@ -34,6 +34,7 @@ obstacle layer on the map.
 | Dashed line | Missed-approach legs. |
 | Dotted line | Vector legs. |
 | Racetrack | A hold or procedure turn, drawn as its pattern. |
+| Entry at a hold | The parallel or teardrop entry fix-gateway's engine will fly into the next hold, and its name (`PARALLEL`, `TEARDROP` or `DIRECT`, or `PAR`/`TDP`/`DIR` on a small map) above the hold fix. Dashed while it is the engine's prediction, solid once the aircraft has reached the fix. A direct entry draws nothing but the name. With a gateway that does not publish the entry, the racetrack is drawn alone. |
 | Rounded corner | A fly-by turn: the arc fix-gateway's engine will fly at that waypoint. The leg into it ends at the middle of the arc, where the engine moves on to the next leg. A corner stays square where the engine turns no arc, or where a leg next to it is too short or is a hold or vector. |
 | Magenta line from where you were | An off-route Direct-To. |
 | Dashed magenta line past the runway | The extended final course, 5 nm, while the plan is suspended at the missed approach point. |
