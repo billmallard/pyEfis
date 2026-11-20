@@ -83,7 +83,8 @@ class Main(QMainWindow):
     windowClose = pyqtSignal(QEvent)
     # change_asd_mode = pyqtSignal(QEvent)
 
-    def __init__(self, config, config_path, preferences, parent=None):
+    def __init__(self, config, config_path, preferences, parent=None,
+                 flight_screen=None):
         super(Main, self).__init__(parent)
         self.preferences = preferences
         self.config_path = config_path
@@ -140,25 +141,64 @@ class Main(QMainWindow):
             w.setAutoFillBackground(True)
         # Init the variable to prvent exception in getRunningScreen()
         self.running_screen = None
+        # Screens whose build raised and were dropped (AER-6106); showScreen
+        # turns a jump to one of them into a logged no-op.
+        self.dropped_screens = []
+        flight = flight_screen if flight_screen is not None else next(
+            (s.name for s in screens if s.default), None)
+        if isinstance(flight, int) and 0 <= flight < len(screens):
+            flight = screens[flight].name
+        for scr in list(screens):
+            if scr.name == flight:
+                # Nothing to fall back to: let the fault stop the process so
+                # the supervisor sees it.
+                self._build_screen(scr)
+                continue
+            # Any other screen -- data status, About, a map -- is built inside
+            # a guard, so one constructor fault costs that screen only and not
+            # the flight screen with it (brief R3; AER-6106). A screen that
+            # raised mid-build may have left a widget parented to the window;
+            # remove it so it cannot paint over the screen that boots.
+            before = set(self.children())
+            try:
+                self._build_screen(scr)
+            except Exception:
+                log.exception("screen %s failed to build; dropped, the other "
+                              "screens carry on", scr.name)
+                for child in set(self.children()) - before:
+                    if isinstance(child, QWidget):
+                        child.hide()
+                    child.deleteLater()
+                screens.remove(scr)
+                self.dropped_screens.append(scr.name)
+        if screens and not any(s.default for s in screens):
+            # The boot screen was dropped (data status on a ground boot):
+            # boot the flight screen instead.
+            if not setDefaultScreen(flight):
+                screens[0].default = True
+            log.warning("boot screen dropped; booting %s instead",
+                        next(s.name for s in screens if s.default))
         for idx, scr in enumerate(screens):
-
-            scr.object = scr.module.Screen(self)
-            setattr(scr.object, 'screenName', scr.name)
-            log.debug("Loading Screen {0}".format(scr.name))
-            # TODO Figure out how to have different size screens
-            scr.object.resize(self.width(), self.height())
-            scr.object.move(0, 0)
             if scr.default:
                 scr.show()
                 self.running_screen = idx
             else:
                 scr.hide()
-                # This is to force screen builder to parse its configs now
-                # instead of waiting to do so just before it is first shown.
-                # Without this the user will often see a delay when navigating
-                # to a screen for the first time
-                if callable(getattr(scr.object, 'initScreen', None)):
-                    scr.object.initScreen()
+
+    def _build_screen(self, scr):
+        scr.object = scr.module.Screen(self)
+        setattr(scr.object, 'screenName', scr.name)
+        log.debug("Loading Screen {0}".format(scr.name))
+        # TODO Figure out how to have different size screens
+        scr.object.resize(self.width(), self.height())
+        scr.object.move(0, 0)
+        # Force screen builder to parse its configs and build its instruments
+        # now, inside the caller's guard, instead of waiting until the screen
+        # is first shown. Without this the user will often see a delay when
+        # navigating to a screen for the first time, and a fault in the boot
+        # screen's instruments would surface outside any guard.
+        if callable(getattr(scr.object, 'initScreen', None)):
+            scr.object.initScreen()
 
     def showScreen(self, scr):
         found = None
@@ -170,6 +210,12 @@ class Main(QMainWindow):
                 if s.name == scr:
                     found = i
                     break
+        if found is None and scr in getattr(self, 'dropped_screens', ()):
+            # A button or annunciation pointing at a screen that failed to
+            # build must not take the flight screen down with an exception
+            # escaping a Qt slot.
+            log.warning("screen %s was dropped at boot; not shown", scr)
+            return
         if found is not None:
             if found != self.running_screen:  # Make sure it's different.
                 screens[found].show()
@@ -519,7 +565,7 @@ def initialize(config, config_path, preferences):
     setDefaultScreen(boot)
     _ensure_about_screen(config)
 
-    mainWindow = Main(config, config_path, preferences)
+    mainWindow = Main(config, config_path, preferences, flight_screen=flight)
     mainWindow.groundBootWatch = (_GroundBootWatch(mainWindow, flight)
                                   if on_ground else None)
     hmi.actions.showNextScreen.connect(mainWindow.showNextScreen)
