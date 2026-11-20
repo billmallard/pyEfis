@@ -1641,6 +1641,19 @@ class SVSRenderer:
             return True
         return False
 
+    def paint_frame(self, painter, pose):
+        """Background-renderer seam (``background.py``): draw one frame for
+        *pose*, a ``FramePose`` captured by the host at paint time."""
+        paint_svs_frame(self, painter, pose)
+
+    def make_pose_source(self):
+        """Background-renderer seam: the position interpolator the host
+        feeds and samples per frame. GPS arrives at 1-10 Hz and the frame
+        clock at 30, so the terrain would step forward at the data rate
+        without it (plan P4)."""
+        from pyefis.instruments.ai.pose import PoseSource
+        return PoseSource()
+
     def _airports_in_range(self, ac_lat, ac_lon):
         """Yield ``(label, ref_lat, ref_lon, elev_ft, runways)`` records from
         whichever data source is configured. Each runway dict carries the
@@ -2629,72 +2642,52 @@ class SVSRenderer:
 
 
 # ---------------------------------------------------------------------------
-# Scene-graph wrapper — lets SVS participate in the same z-order system
-# as the pitch ladder, runways, and other items in the AI scene.
+# Background-renderer seam (background.py, CERT12 brief R2b) — the SVS draws
+# inside the AI's paint pass from a FramePose, at the z-value the AI gives
+# its background item, between the sky/land fill and the pitch ladder.
 # ---------------------------------------------------------------------------
-def make_svs_item(renderer: "SVSRenderer", ai_widget):
-    """Build a QGraphicsItem subclass instance that delegates to *renderer*.
+def create_background_renderer(config: dict) -> "SVSRenderer":
+    """The ``svs`` entry in background.py's renderer table."""
+    return SVSRenderer(config)
 
-    The item reads pose state (lat/lon/alt/pitch/roll/heading/ppd) from the
-    parent ``ai_widget`` at paint time. Z-value defaults to one below the
-    pitch ladder (ladder is z=1); override with ``setZValue`` after creation
-    or via the ``z_value`` SVS config key picked up by the AI widget.
+
+def paint_svs_frame(renderer, painter, pose):
+    """Draw *renderer*'s terrain for *pose* (a ``background.FramePose``).
+
+    SVSRenderer.draw does its own save/resetTransform/restore so the
+    outer scene transform is preserved for the next item in z order.
     """
-    from PyQt6.QtCore    import QRectF
-    from PyQt6.QtWidgets import QGraphicsItem
+    if renderer is None or not renderer.ready:
+        return
+    # AER-4243: no terrain for a position that is old, bad or failed.
+    # Clear drew_terrain so the AI falls back to its brown ground.
+    if not pose.position_valid:
+        renderer.drew_terrain = False
+        return
+    # The host raises the terrain to its raised reference with a lens
+    # shift of horizon_position's pixel offset and gives the camera the
+    # true pitch. The ladder puts zero pitch at offset_px - pitch * ppd;
+    # the shifted camera puts the horizon at offset_px - tan(pitch)
+    # (scaled to pixels), the same residual as at horizon_position 50.
+    # Depressing the camera by the offset as an angle sent the offset
+    # through the tangent as well, 1.2 deg off at 50/75 and pitch -10
+    # (AER-5122). The terrain rolls about the same raised point the AI
+    # rolls its ladder about (#304). No-op when horizon_position == 50.
+    # The heading is true: SVS projects in true-north coordinates.
+    renderer.draw(
+        painter, pose.width, pose.height,
+        pose.lat, pose.lon, pose.alt_ft,
+        pose.pitch_deg, pose.roll_deg, pose.heading_true_deg,
+        pose.px_per_deg, pose.device_pixel_ratio,
+        roll_pivot_px=pose.roll_pivot_px,
+        lens_shift_px=pose.lens_shift_px)
 
-    class _SVSGraphicsItem(QGraphicsItem):
-        def __init__(self, _renderer, _ai):
-            super().__init__()
-            self._renderer = _renderer
-            self._ai       = _ai
 
-        def boundingRect(self):
-            # Generous rect so Qt never culls the item — SVS uses
-            # resetTransform() internally and draws in pure viewport pixels,
-            # so the scene-coordinate bounds don't actually constrain output.
-            return QRectF(-1e6, -1e6, 2e6, 2e6)
-
-        def paint(self, painter, option, widget=None):
-            if self._renderer is None or not self._renderer.ready:
-                return
-            ai = self._ai
-            # AER-4243: no terrain for a position that is old, bad or failed.
-            # Clear drew_terrain so the AI falls back to its brown ground.
-            if not ai._svs_position_valid():
-                self._renderer.drew_terrain = False
-                return
-            vp = ai.viewport()
-            ppd = getattr(ai, 'pixelsPerDeg',
-                          vp.height() / ai.pitchDegreesShown)
-            # SVS does its geographic projection in true-north
-            # coordinates, so subtract local magnetic variation from
-            # the magnetic HEAD before projecting. _magvar defaults to
-            # 0 when the FIX MAGVAR key isn't published — in that case
-            # the SVS picture sits with a constant rotation equal to
-            # local variation, which is small enough not to break the
-            # picture but worth correcting where the data is available.
-            head_true = ai._fpm_head - getattr(ai, "_magvar", 0.0)
-            # SVSRenderer.draw does its own save/resetTransform/restore so the
-            # outer scene transform is preserved for the next item in z order.
-            # Raise the terrain to the AI's raised reference with a lens
-            # shift of horizon_position's pixel offset, and give the
-            # camera the true pitch. The ladder puts zero pitch at
-            # offset_px - pitch * ppd; the shifted camera puts the
-            # horizon at offset_px - tan(pitch) (scaled to pixels), the
-            # same residual as at horizon_position 50. Depressing the camera by the offset
-            # as an angle sent the offset through the tangent as well,
-            # 1.2 deg off at 50/75 and pitch -10 (AER-5122). No-op when
-            # horizon_position == 50.
-            offset_px = ai._horizon_offset_px()
-            self._renderer.draw(
-                painter, vp.width(), vp.height(),
-                ai._svs_lat, ai._svs_lon, ai._svs_alt,
-                ai._pitchAngle, ai._rollAngle, head_true,
-                ppd, vp.devicePixelRatioF(),
-                # Roll the terrain about the same raised point the AI
-                # widget rolls its ladder about (redraw(), #304).
-                roll_pivot_px=offset_px,
-                lens_shift_px=offset_px)
-
-    return _SVSGraphicsItem(renderer, ai_widget)
+def make_svs_item(renderer: "SVSRenderer", ai_widget):
+    """A background scene item that draws *renderer* for *ai_widget*'s
+    frame pose. The AI builds its own through the seam; this binds a
+    given renderer to a host, for the capture tools and tests."""
+    from pyefis.instruments.ai.background import make_background_item
+    return make_background_item(
+        ai_widget, renderer,
+        lambda painter, pose: paint_svs_frame(renderer, painter, pose))
