@@ -140,7 +140,6 @@ import numpy as np
 from PyQt6.QtGui import QColor, QPainter
 
 from pyefis.instruments.ai import road_ribbon
-from pyefis.instruments.ai import svs_traffic
 from pyefis.instruments.ai.highway_db import FLAG_BRIDGE, FLAG_TUNNEL
 
 log = logging.getLogger(__name__)
@@ -761,7 +760,11 @@ class SVSRenderer:
 
         # ADS-B traffic (SVSTFC1 / CAP-409): the moving map's TFC reader,
         # drawn in the scene. attach_traffic() connects it to the bus;
-        # until then (and with no TFC block) the layer is inert.
+        # until then (and with no TFC block) the layer is inert. Imported
+        # here, not at module load: ai_widget imports this module on every
+        # boot (edge E1), and a core-only boot must load no more of the
+        # SVS than the ratchet allows (tests/safety/test_core_boot.py).
+        from pyefis.instruments.ai import svs_traffic
         self.traffic_enabled = bool(config.get("traffic", True))
         _tr = config.get("traffic_range_nm", svs_traffic.DEFAULT_RANGE_NM)
         self.traffic_range_nm = float(_tr)
@@ -1643,6 +1646,7 @@ class SVSRenderer:
         Never raises: no block, or ``traffic: false``, leaves it inert."""
         if not self.traffic_enabled or db is None:
             return
+        from pyefis.instruments.ai import svs_traffic
         try:
             t = svs_traffic.SVSTraffic(db, self._async_dirty.set,
                                        self.traffic_range_nm)
