@@ -50,6 +50,11 @@ hooks:
 #kiosk:
 #  enabled: true
 #  idle_return_s: 60
+#  defaults:            # put back at each demo loop and on the idle return
+#    NAVSRC: 2          # GPS
+#    BARO: 29.92
+#    ALTSEL: 3000
+#    MAPRANGE: 2        # ladder index: 10 NM on the default ladder
 
 # Logging configuration - See Python logging.config module documenation
 logging:
