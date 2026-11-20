@@ -65,6 +65,10 @@ groups:
       - src/pyefis/screens/
   powerplant:
     why: The engine gauges. EMS-2 is Hazardous misleading, the highest severity outside the PFD rows.
+    # Two modules here also carry primary-flight rows: gauges/numeric.py and
+    # gauges/abstract.py draw the vertical-speed readout (PFD-9, PFD-10). The checks treat
+    # both groups the same, but a lane that carries primary-flight must carry these two
+    # modules too, or it leaves the VS readout behind.
     paths:
       - src/pyefis/instruments/gauges/
 
@@ -90,11 +94,31 @@ primary_keys:
   # owns each one, and pyEfis must never become a second writer of it.
   sensed_computed:
     keys: [PITCH, ROLL, YAW, ALAT, IAS, TAS, ALT, VS, HEAD, TRACK, TRACKM, ROT, AOA, GS,
-           LAT, LONG, MAGVAR, CDI, GSI, CDIV, GSV, TOFROM, COURSE]
-    # Engine values for the powerplant group, as patterns over the numbered keys.
-    patterns: ['^(TACH|MAP|CHT|EGT|OILP|OILT|FUELP|FUELQ|FUELF|VOLT|CURRNT)[0-9]*$']
-  # Pilot-set keys that change what a primary value means. Each may be written only
-  # from the core paths listed for it: the instrument that owns it, the HMI action
+           LAT, LONG, MAGVAR, CDI, GSI, CDIV, GSV, TOFROM, COURSE,
+           # Air data the gateway turns into IAS and ALT, and the derived altitudes.
+           CAS, PALT, TALT, DALT, AGL, AIRPRESS, DIFFAIRPRESS,
+           # Navigation values, and inputs the gateway selects into a primary key.
+           VPATH, XTRACK, GPSCRS, NAVTYPE,
+           # Accelerations and the bearing pointers.
+           ANORM, ALONG, VOR1BRG, VOR2BRG, BRG1, BRG2, GPSBRG, GPSBRGT,
+           # Sensor validity: a write here would make a bad value look good.
+           IASW, ORISYSW, GYROW, ACCELW, MAGW, MAGX, MAGY, MAGZ,
+           # Autopilot and flight-director state. The autopilot source is the one writer;
+           # the control head shows the reported state, never the press.
+           APENG, FDENG, YDENG, APLAT, APLATARM, APVERT, APVERTARM, APALTCAP, FDPITCH,
+           FDROLL, APCAPS, APMSG, APDISC]
+    patterns:
+      # Engine values for the powerplant group, as patterns over the numbered keys. THR
+      # and MIX are engine-control positions: pyEfis must never become their writer.
+      - '^(TACH|MAP|CHT|EGT|OILP|OILT|FUELP|FUELQ|FUELF|VOLT|CURRNT|H2OT|PROP|EGTAVG|EGTSPAN|EGTMAX|CHTMAX|THR|MIX)[0-9]*$'
+      # The per-source navigation inputs the gateway selects into CDI, GSI and the
+      # rest by NAVSRC, and their to-from flags, types and decision heights.
+      - '^(NAV[12]|GPS)(CDI|GSI|GSV|CDIV|GSF|GSNF|TF|TYPE|DH)$'
+      # GPS fix type, accuracy and satellite state.
+      - '^GPS_'
+  # A pilot-set key that changes what a primary value means, that the alerting or
+  # autopilot acts on, or that the PFD draws as a reference the pilot flies to. Each may
+  # be written only from the core paths listed for it: the instrument that owns it, the HMI action
   # layer (hmi/functions.py, which configured buttons and key bindings trigger), the
   # button widget, the autopilot control head, and the encoder's baro proxy in
   # hmi/menu.py. No non-core module may be on the call stack of the write either.
@@ -116,6 +140,29 @@ primary_keys:
       - src/pyefis/instruments/autopilot/
     NAVSRC:
       - src/pyefis/instruments/hsi/
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+    # The OBS courses: the gateway selects the active one into COURSE by NAVSRC.
+    NAV1CRS:
+      - src/pyefis/instruments/hsi/
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+    NAV2CRS:
+      - src/pyefis/instruments/hsi/
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+    # Autopilot speed and vertical-speed targets, like ALTSEL and HEADBUG.
+    IASSEL:
+      - src/pyefis/instruments/autopilot/
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+    VSSEL:
+      - src/pyefis/instruments/autopilot/
+      - src/pyefis/hmi/functions.py
+      - src/pyefis/instruments/button/
+    # The steep-turn reference on the attitude indicator's bank scale.
+    BANKBUG:
+      - src/pyefis/instruments/ai/ai_widget.py
       - src/pyefis/hmi/functions.py
       - src/pyefis/instruments/button/
 
@@ -214,7 +261,8 @@ ratchet:
   # Writes that break rule R5, as the write audit finds them
   # (tests/safety/test_core_writes.py): key, writer (the module path), edge, removed_by.
   # Empty: on the shipped default config, booted and driven, no pyefis code writes a
-  # sensed or computed key, and BARO, ALTSEL and HEADBUG are written only from their
-  # core paths. The drive records no NAVSRC write: buttons/cdi-source.yaml ships but
-  # no default screen places it, so the NAVSRC paths are not exercised.
+  # sensed or computed key, and BARO, ALTSEL, HEADBUG and NAV1CRS are written only from
+  # their core paths. The drive records no NAVSRC write: buttons/cdi-source.yaml ships
+  # but no default screen places it, so the NAVSRC paths are not exercised. Nor are
+  # NAV2CRS, IASSEL, VSSEL and BANKBUG: no default screen edits them.
   writes: []
