@@ -66,6 +66,46 @@ def test_factory_imports_no_instrument_package():
     assert instrument_imports == {"pyefis.instruments.autopilot.DEFAULT_BUTTONS"}
 
 
+def _dynamic_import_sites():
+    """(file, line) of every import by name in src/pyefis: a call to
+    ``import_module`` or ``__import__``, or an ``import_module`` import."""
+    sites = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+        for node in ast.walk(tree):
+            hit = False
+            if isinstance(node, ast.Call):
+                f = node.func
+                name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+                hit = name in ("import_module", "__import__")
+            elif isinstance(node, ast.ImportFrom) and node.module == "importlib":
+                hit = any(a.name == "import_module" for a in node.names)
+            if hit:
+                sites.append((path.relative_to(SRC).as_posix(), node.lineno))
+    return sites
+
+
+def test_every_dynamic_import_goes_through_the_table():
+    """E5: the screen module, user hooks, the FMS bridge and the system
+    menu's class lookup used to call importlib where they stood. Now only
+    the table does, so a reviewer reads one file to see what a config can
+    load."""
+    outside = [s for s in _dynamic_import_sites()
+               if s[0] != "screens/instrument_table.py"]
+    assert outside == []
+
+
+def test_dynamic_import_scan_sees_a_planted_site(tmp_path, monkeypatch):
+    """The scan above must find a site, or its empty result means nothing."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "a.py").write_text("import importlib\nimportlib.import_module('x')\n")
+    (pkg / "b.py").write_text("from importlib import import_module\n")
+    (pkg / "c.py").write_text("__import__('y')\n")
+    monkeypatch.setattr(sys.modules[__name__], "SRC", pkg)
+    assert _dynamic_import_sites() == [("a.py", 2), ("b.py", 1), ("c.py", 1)]
+
+
 # --- Runtime check: boot a real screen in a fresh interpreter ---------------
 
 _PROBE = r"""

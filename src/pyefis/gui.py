@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import QMainWindow, QApplication, QWidget
 
 import os
 import time
-import importlib
 import logging
 import sys
 import yaml
@@ -28,6 +27,7 @@ from pyefis import hmi
 from pyefis import fix_watchdog
 from pyefis import startup_notice
 from pyefis.instruments import edit_focus
+from pyefis.screens import instrument_table
 import pyavtools.fix as fix
 import pyavtools.scheduler as scheduler
 
@@ -60,7 +60,7 @@ class Screen(QObject):
     def __init__(self, name, module, config):
         super(Screen, self).__init__()
         self.name = name
-        self.module = importlib.import_module(module)
+        self.module = instrument_table.screen_module(module)
         self.config = config
 
         # This would hold the instantiated Screen object from the module.
@@ -533,7 +533,7 @@ def initialize(config, config_path, preferences):
 
     if 'FMS' in config:
         sys.path.insert(0, config["FMS"]["module_dir"])
-        ui = importlib.import_module("qtui")
+        ui = instrument_table.external_module("qtui")
         uiwidget = ui.FMSUI(config["FMS"]["flight_plan_dir"], mainWindow)
         ui_width = 1000
         if 'ui_width' in config['FMS']:
