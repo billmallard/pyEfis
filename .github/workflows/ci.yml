@@ -23,13 +23,17 @@ jobs:
     - uses: actions/checkout@v6
     # G61a: tests/flightplan/test_refusal.py reads the engine's source and fails when
     # it can publish an FPLMSG refusal code the display has no plain words for.
+    # HOLDENT2: tests/instruments/test_map_hold_entry.py loads the engine (it
+    # needs only fixgw/geo.py) and checks the drawn hold entry against it.
     - name: Check out fix-gateway's flightplan engine
       uses: actions/checkout@v6
       with:
         repository: billmallard/fix-gateway
         ref: dev
         path: _fixgw
-        sparse-checkout: src/fixgw/plugins/flightplan/engine.py
+        sparse-checkout: |
+          src/fixgw/plugins/flightplan/engine.py
+          src/fixgw/geo.py
         sparse-checkout-cone-mode: false
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
