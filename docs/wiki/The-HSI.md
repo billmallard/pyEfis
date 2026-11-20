@@ -31,6 +31,7 @@ fix-gateway, for scenes that flight did not fly. The
 | **TO / FROM triangle** | On the course pointer: pointing towards its head for TO, towards its tail for FROM. Hidden when the source gives neither, for example on a localizer. |
 | **Heading bug** (cyan) | On the rim, at the selected heading. |
 | **Track diamond** (magenta) | On the rim, at your GPS ground track. Shown at or above `track_min_speed` (20 kt on the bench panel, 5 kt by default). |
+| **Turn-rate trend** (magenta arc, white marks) | Just outside the rim, from the lubber mark to the heading you will reach in 6 seconds at your present rate of turn (`ROT`). The short white marks are half rate (9 degrees) and the long ones standard rate (18 degrees), each side. See [Turn rate](#turn-rate). |
 | **Bearing pointers** (cyan) | Pointer 1 is a single bar and points at VOR1 (NAV 1); pointer 2 is a double bar and points at VOR2 (NAV 2). GPS is never a bearing pointer: it shows as the course pointer when the source tab selects it. Both are cyan: magenta and green belong to the course pointer. Each is off until you turn it on, and never on the course pointer's own source. |
 | **BRG tab** (right of the HDG / MAG / CRS panel) | The left source tab's mirror image, same size. It reads the pointers that are on: `NONE`, `BRG 1`, `BRG 2` or `BOTH`. Tap it to step NONE, BRG 1, BRG 2, BOTH, NONE. It skips a pointer on the course pointer's source: with VLOC1 selected the tab offers only NONE and BRG 2; with VLOC2, NONE and BRG 1. If you switch the source onto a pointer's VOR, that pointer turns off (BOTH becomes the other one). Filled cyan while a needle is on. |
 | **Bearing labels** (bottom corners) | `1 VOR1` and `2 VOR2`, in cyan, while a pointer is on. Without the top panel an off pointer reads `1 OFF`; tapping either label steps the same cycle as the BRG tab. |
@@ -173,6 +174,26 @@ see [Touch a value, then turn the knob](The-Panel-at-a-Glance#touch-a-value-then
 On the X-Plane bench, X-Plane also drives `HEADBUG`, `NAV1CRS` and `NAV2CRS`,
 so it can overwrite a value you set here.
 
+## Turn rate
+
+The magenta arc above the rose shows your rate of turn, so you can hold a
+standard-rate turn on the HSI without looking at the turn coordinator. It
+starts at the lubber mark and ends at the heading you will be on in 6 seconds
+if the rate holds.
+
+- **Standard rate** (3 degrees a second, a 2-minute 360): the arc ends on the
+  long white mark, 18 degrees from the lubber.
+- **Half rate**: the arc ends on the short white mark, 9 degrees out.
+- **Wings level**: no arc, only the marks.
+- **Faster than 4 degrees a second**: the arc stops at 24 degrees and grows an
+  arrowhead. It is no longer a prediction, only "faster than this".
+
+The marks are fixed to the lubber, not the card, so they read the same at any
+heading. In the [arc view](#arc-view) the arc and marks run along the compass
+band, under the lubber.
+
+![Turn-rate trend at standard rate, left and right, on the rose (top_panel and corners layouts) and in the arc view](../images/hsi/turn_rate_trend.png)
+
 ## When data is missing
 
 The HSI never shows a needle it cannot trust.
@@ -190,6 +211,10 @@ The HSI never shows a needle it cannot trust.
   orange with an `X`: `2 VOR1 X`.
 - The track diamond hides when the track is invalid or you are below the
   speed gate.
+- The turn-rate arc and its marks hide when `ROT` is old, failed or bad, or
+  nothing publishes it. No flag is raised: the turn coordinator owns that
+  annunciation. A failed heading does not hide the arc, because it hangs off
+  the fixed lubber mark, not the card.
 
 | Localizer tuned, no signal | No valid data at all (bench, simulator not running) |
 |---|---|
@@ -199,7 +224,7 @@ The HSI never shows a needle it cannot trust.
 
 `orientation: arc` shows the forward 120 degrees of the rose spread across the
 instrument, for finer heading resolution. The course pointer, deviation bar,
-bug, track diamond and bearing pointers all draw on the arc, and the deviation
+bug, track diamond, turn-rate trend and bearing pointers all draw on the arc, and the deviation
 bar stays on the course pointer, as on a G1000 or G3X arc HSI.
 
 ![Arc orientation on the leg to VTU. Bearing pointer 1 is on, but GVO is behind the aircraft, outside the arc, so it is not drawn](../images/hsi/gps_arc_orientation.png)
@@ -228,6 +253,8 @@ last column where it differs.
 | Track diamond (`track_indicator_enabled`) | on | | Draw the diamond at `TRACKM`. |
 | Track diamond color (`track_color`) | `#ff00ff` | | |
 | Track min speed (`track_min_speed`) | 5 kt | 20 kt | Hide the diamond below this groundspeed. |
+| Turn-rate trend (`turn_rate_enabled`) | on | | Draw the [turn-rate arc](#turn-rate) and its marks from `ROT`. |
+| Turn-rate trend color (`turn_rate_color`) | `#ff00ff` | | |
 | Bearing pointer 1 (`bearing1_enabled`) | off | on | Offer pointer 1 (`BRG1`, VOR1) on the BRG tab, and its label. It starts off. |
 | Bearing pointer 2 (`bearing2_enabled`) | off | on | Offer pointer 2 (`BRG2`, VOR2) on the BRG tab, and its label. It starts off. |
 | Bearing pointer color (`bearing_color`) | `#00ffff` | | Both pointers, their labels and the BRG tab. |
@@ -288,6 +315,7 @@ radio plugin only has to write the per-source keys:
 | VOR bearing (pointers, push-to-centre) | `VOR1BRG`, `VOR2BRG` (magnetic, to the station) |
 | External GPS navigator | `EXTCRS`, `EXTCDI`, `EXTTF`, with `GPSSRC` 1 |
 | Selected heading | `HEADBUG` |
+| Turn-rate trend | `ROT` (degrees a second, positive for a right turn), from the AHRS |
 
 The internal flight plan writes its own guidance (`FPLCRS`, `FPLCDI`, `FPLTF`)
 and the active waypoint (`WPLAT`, `WPLON`), from which `compute` makes the GPS
