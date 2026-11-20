@@ -30,6 +30,7 @@ CONTRACT_MAP = {
     ("autopilot_panel", "bg_color"): "surface.base",
     ("horizontal_situation_indicator", "course_color"): "nav.course",
     ("horizontal_situation_indicator", "track_color"): "nav.course",
+    ("horizontal_situation_indicator", "turn_rate_color"): "nav.course",
     ("horizontal_situation_indicator", "heading_bug_color"): "nav.reference",
     ("horizontal_situation_indicator", "bearing_color"): "nav.reference",
     ("horizontal_situation_indicator", "vloc_color"): "state.valid",
