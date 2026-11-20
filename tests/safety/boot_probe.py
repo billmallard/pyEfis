@@ -4,7 +4,7 @@
 Run as a child process by the core checks, never imported by pytest, so that
 ``sys.modules`` starts empty and holds only what the boot itself loaded:
 
-    python tests/safety/boot_probe.py --config DIR --out result.json [--writes] [--drive]
+    python tests/safety/boot_probe.py --config DIR --out result.json [--writes] [--drive] [--ground]
 
 --config DIR is a complete pyEfis config directory (default.yaml beside a
 preferences.yaml). It runs ``pyefis.main.main()`` with ``--config-file DIR/default.yaml``
@@ -19,6 +19,7 @@ The result file holds:
   modules -- every name in sys.modules after the boot (the runtime import check, R4).
   screens -- the instrument classes each screen built, so a boot that built nothing
              cannot pass for a clean one.
+  running -- the screen on the glass once the boot has settled.
   writes  -- with --writes, every write to the FIX database made from pyefis code: the key,
              the writing module's repository path and line (the innermost pyefis frame),
              every pyefis module on the call stack, and how (value or output). A write is
@@ -26,6 +27,9 @@ The result file holds:
              action, a button, the encoder -- is seen the same way (the R5 audit).
   driven  -- with --drive, what the pilot-input sweep did (see drive()).
   errors  -- exceptions that escaped a Qt slot while driving; the boot carries on.
+
+--ground boots as if the aircraft were on the ground (the data-status screen first);
+without it the ground check finds no airspeed and the flight screen boots.
 
 --src points the boot at a copy of the source tree (DIR/pyefis), which is how the
 checks plant a violation without touching the repository.
@@ -234,6 +238,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--writes", action="store_true")
     ap.add_argument("--drive", action="store_true")
+    ap.add_argument("--ground", action="store_true")
     ap.add_argument("--settle-ms", type=int, default=500)
     ap.add_argument("--src", help="source root holding pyefis/ (default: this repository's src)")
     args = ap.parse_args(argv)
@@ -261,6 +266,8 @@ def main(argv=None):
     import pyefis.main
     import pyefis.gui as gui
     pyefis.main.gui.BOOT_GROUND_WAIT_S = 0
+    if args.ground:
+        pyefis.main.gui._boot_on_ground = lambda *a, **k: True
 
     snapshot = {}
 
@@ -279,6 +286,8 @@ def main(argv=None):
             scr.name: sorted({"%s.%s" % (type(i).__module__, type(i).__name__)
                               for i in (getattr(scr.object, "instruments", None) or {}).values()})
             for scr in gui.screens}
+        idx = gui.mainWindow.running_screen
+        snapshot["running"] = gui.screens[idx].name if idx is not None else None
         return 0
 
     QApplication.exec = short_exec
@@ -294,7 +303,7 @@ def main(argv=None):
     result = {"status": "ok" if snapshot else "boot failed before the event loop",
               "pyefis": str(pathlib.Path(pyefis.__file__).resolve()),
               "modules": snapshot.get("modules", []), "writes": snapshot.get("writes", []),
-              "screens": snapshot.get("screens", {}),
+              "screens": snapshot.get("screens", {}), "running": snapshot.get("running"),
               "driven": driven, "errors": errors}
     pathlib.Path(args.out).write_text(json.dumps(result, indent=1), encoding="utf-8")
     sys.stdout.flush()
