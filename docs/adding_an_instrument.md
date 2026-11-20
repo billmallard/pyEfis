@@ -55,13 +55,21 @@ Add (or extend) an `_register(InstrumentSpec(...))` in
 Declare category-1 `properties`, document category-2 `fix_values`, and give
 category-3 `preview` sample data so the twin can draw something realistic.
 
+The builder names the widget class through the lazy instrument table, never
+by importing its package (CERT12c, `briefs/primary_flight_core.md` R2b). Add
+one line to `INSTRUMENTS` in `src/pyefis/screens/instrument_table.py`
+(class name to package), then call `instrument("ClassName")(...)`. The
+package is imported only when a screen places the instrument, so a PFD never
+loads the map. `tests/screens/test_instrument_table.py` fails if the factory
+imports an instrument package directly.
+
 ```python
 _register(InstrumentSpec(
     type="arc_gauge",
     label="Arc Gauge",
     category="gauge",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.ArcGauge(
+             replace=None: instrument("ArcGauge")(
                  screen, min_size=False, font_family=font_family)),
     keep_aspect=True,
     properties=[
