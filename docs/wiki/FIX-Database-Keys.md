@@ -99,6 +99,7 @@ what pyEFIS touches.
 | `FPLPHASE` / `FPLAPR` / `FPLINTEG` | | Phase / approach state / integrity | engine |
 | `FPLSUSPMAP` | | Suspended at the missed approach point | engine |
 | `FPLLDSEQ` | | The `FPLSEQ` of the route the engine has loaded; differs from `FPLSEQ` after a refused commit | engine |
+| `FPLHOLDSLOT` / `FPLHOLDENT` / `FPLHOLDCOMMIT` | | Slot of the next hold (0 none) / its entry, `DIRECT`, `TEARDROP`, `PARALLEL` or empty / true once the entry is being flown, false while it is a prediction | engine |
 | `CDISCALE` | nm | Full-scale deflection | engine |
 | `FPLCRS` / `FPLXTK` / `FPLCDI` / `FPLTF` | deg / nm / -1 to 1 / | Desired track / cross-track / deviation / TO-FROM | engine |
 | `FPLFRLAT` / `FPLFRLON` | deg | Where a Direct-To started | engine |

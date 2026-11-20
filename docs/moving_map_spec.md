@@ -228,6 +228,24 @@ airways off)
   thread, between frames, only when `FPLSEQ`, `FPLLDSEQ` or `MAGVAR`
   changes) as lon/lat polylines and painted through one affine transform
   taken from `MapTransform`, so a frame does no per-vertex work.
+- Hold entry (HOLDENT2, AER-6016): the hold on fix-gateway's
+  `FPLHOLDSLOT` carries the entry on `FPLHOLDENT`, drawn with its
+  racetrack in the hold leg's colour (`leg_paths.hold_entry_pattern`):
+  a parallel flies one minute along the outbound course from the fix and
+  turns back over the holding side to the fix; a teardrop flies one minute
+  30 deg off the outbound course toward the holding side and turns in the
+  hold's direction to the fix; a direct entry draws nothing extra. The
+  entry leg is the engine's own (its ENTRY phase, checked against
+  `_hold_geometry` in the tests); the turn back is a standard-rate turn
+  at 120 kt, since the engine steers the inbound course there and leaves
+  the turn to the pilot. Dashed while `FPLHOLDCOMMIT` is false (a
+  prediction), solid once it is true. The entry's name sits above the
+  fix symbol (`PARALLEL`/`TEARDROP`/`DIRECT`, `PAR`/`TDP`/`DIR` when the
+  word is wider than 18% of the map), with the waypoint labels. Built in
+  `collect()` when the three keys or the route change. The layer never
+  picks an entry: no key, an empty one, slot 0 or a slot that is not a
+  hold draws the racetrack alone. Line style and label are proposed
+  defaults awaiting Bill's look.
 - A rejected route draws nothing (procedures brief guardrail 1). After a
   rejected commit the slots still hold the refused route; fix-gateway's
   `FPLLDSEQ` is the `FPLSEQ` of the route the engine actually loaded. When
