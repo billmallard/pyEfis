@@ -828,6 +828,15 @@ _register(InstrumentSpec(
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
              step=1, label="Track min speed (kt)",
              help="hide the track diamond below this groundspeed (kt)"),
+        Prop("turn_rate_enabled", "boolean", default=True,
+             label="Turn-rate trend",
+             help="show the magenta turn-rate trend arc from the lubber line "
+                  "to the heading in 6 s at the present rate of turn (ROT), "
+                  "with marks at half and standard rate; hidden when ROT is "
+                  "absent, old, bad or failed"),
+        Prop("turn_rate_color", "color", default="#ff00ff",
+             label="Turn-rate trend color", help="turn-rate trend arc colour",
+             token="nav.course"),
         Prop("center_symbol", "enum", default="aircraft",
              enum=["aircraft", "none"], label="Center symbol",
              help="fixed ownship symbol at the rose centre; 'aircraft' is a "
