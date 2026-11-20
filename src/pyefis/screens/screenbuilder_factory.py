@@ -815,7 +815,9 @@ _register(InstrumentSpec(
              label="Touch to set HDG / CRS",
              help="touch the HDG or CRS readout, then turn the knob to set it: "
                   "HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the "
-                  "selected VLOC source (not editable on GPS). Inner ring 1 "
+                  "selected VLOC source. On GPS, CRS is editable only while "
+                  "the flight plan is in OBS: it sets the OBS course, and push "
+                  "syncs it to the bearing to the waypoint. Inner ring 1 "
                   "deg, outer ring 10 deg; push syncs HDG to the heading or "
                   "centres the CDI on CRS"),
         Prop("track_indicator_enabled", "boolean", default=True,
