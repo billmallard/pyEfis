@@ -9,6 +9,11 @@
 # until the date in report_only_until; whether it gates after that is the project
 # owner's decision.
 #
+# The core list: core_list names core_modules.yaml, the primary-flight core that the
+# import, boot and write checks read. The report shows each module's group in it. Every
+# module listed here is core, except those under outside_core, each with the reason;
+# tests/tools/test_hazard_coverage.py fails on any other, so the two lists cannot drift.
+#
 # Keeping it current: a module that starts carrying a PFD value onto the glass is
 # added here in the same change, with its rows. Safety and Compliance reviews this
 # list. tests/tools/test_hazard_coverage.py fails when a listed path no longer
@@ -16,6 +21,7 @@
 
 version: 1
 report_only_until: 2026-12-19
+core_list: core_modules.yaml
 
 modules:
   - path: src/pyefis/fix_watchdog.py
@@ -85,6 +91,11 @@ modules:
   - path: src/pyefis/main.py
     rows: [GW-2, PFD-2, PFD-4, PFD-6, PFD-8]
     why: Starts the link watchdog. When the start raises, the display runs on with no watchdog and only a log line, so a hung gateway leaves frozen values shown as valid (fix H1 absent).
+
+# On the hazard path but deliberately outside the core list, with the reason.
+outside_core:
+  - path: src/pyefis/instruments/wind/__init__.py
+    reason: The wind vector is derived data, and the pilot does not fly attitude, airspeed or altitude from it; PFD-13 is Minor and provisional. Its tests count toward this report, but the import rule does not bind it. The flight-path marker and TAS that share PFD-13 and PFD-14 are drawn by the attitude widget and the airspeed tape, which are core.
 
 # Considered and left off, with the reason, so a reviewer sees where the line was drawn.
 not_listed:

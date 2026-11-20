@@ -1,0 +1,62 @@
+# A core-only PFD for the runtime import check (rule R4, tests/safety/test_core_boot.py):
+# attitude with no synthetic vision, the tapes, the VSI, turn and slip, the HSI, one
+# engine gauge and one pilot button. Nothing on it is map, SVS, flight-plan or plates
+# code, so after a boot no such module should be in sys.modules except those the
+# ratchet in docs/safety/core_modules.yaml still allowlists.
+main:
+  FixServer: 127.0.0.1
+  FixPort: 3490
+  nodeID: 1
+  screenFullSize: False
+  screenWidth: 1024
+  screenHeight: 600
+  screenColor: (0,0,0)
+  defaultScreen: PFD
+
+screens:
+  PFD:
+    module: pyefis.screens.screenbuilder
+    title: Core only
+    layout:
+      rows: 110
+      columns: 200
+    instruments:
+      - type: atitude_indicator
+        row: 0
+        column: 40
+        span: {rows: 70, columns: 100}
+      - type: airspeed_tape
+        row: 0
+        column: 20
+        span: {rows: 70, columns: 20}
+      - type: altimeter_tape
+        row: 0
+        column: 140
+        span: {rows: 70, columns: 20}
+      - type: vsi_pfd
+        row: 0
+        column: 160
+        span: {rows: 70, columns: 10}
+      - type: turn_coordinator
+        row: 70
+        column: 20
+        span: {rows: 40, columns: 40}
+      - type: horizontal_situation_indicator
+        row: 70
+        column: 60
+        span: {rows: 40, columns: 60}
+      - type: arc_gauge
+        row: 70
+        column: 120
+        span: {rows: 20, columns: 40}
+        options:
+          dbkey: TACH1
+          name: RPM
+      - type: button
+        row: 90
+        column: 120
+        span: {rows: 10, columns: 20}
+        options:
+          config: buttons/baro-up-invisible.yaml
+
+hooks:

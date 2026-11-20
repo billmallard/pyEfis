@@ -6,6 +6,7 @@ from unittest import mock
 import pytest
 from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6 import sip
 
 import pyefis.gui as gui
 import pyefis.hmi as hmi
@@ -233,6 +234,89 @@ def test_main_skips_init_screen_when_hidden_screen_has_no_hook(app, qtbot):
     qtbot.addWidget(window)
 
     assert no_init_mod.Screen.instances[0].hidden is True
+
+
+def _faulty_screen_module(name, where="init"):
+    """A screen whose constructor (where="init") or initScreen (where="initScreen")
+    raises once its widget exists, as a faulted instrument would (AER-6106)."""
+    module = _screen_module(name)
+    built = module.Screen
+
+    class FaultyScreen(built):
+        instances = []
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            FaultyScreen.instances.append(self)
+            if where == "init":
+                raise RuntimeError("planted constructor fault")
+
+        def initScreen(self):
+            raise RuntimeError("planted initScreen fault")
+
+    if where == "init":
+        FaultyScreen.initScreen = built.initScreen
+    module.Screen = FaultyScreen
+    return module
+
+
+@pytest.mark.parametrize("where", ["init", "initScreen"])
+def test_main_drops_a_non_flight_screen_that_fails_to_build(app, qtbot, where):
+    flight_mod = _screen_module("tests.fake_gui_screen_drop_flight")
+    bad_mod = _faulty_screen_module("tests.fake_gui_screen_drop_bad_" + where, where)
+    after_mod = _screen_module("tests.fake_gui_screen_drop_after")
+    _add_screen("PFD", "tests.fake_gui_screen_drop_flight", {}, True)
+    _add_screen("MAP", "tests.fake_gui_screen_drop_bad_" + where)
+    _add_screen("EMS", "tests.fake_gui_screen_drop_after")
+
+    window = gui.Main(_config(), ".", {})
+    qtbot.addWidget(window)
+    window.show()
+
+    assert [s.name for s in gui.screens] == ["PFD", "EMS"]
+    assert window.dropped_screens == ["MAP"]
+    assert window.running_screen == 0
+    assert flight_mod.Screen.instances[0].isVisible()
+    # The screens after the faulted one are still built.
+    assert after_mod.Screen.instances[0].init_count == 1
+    # The half-built widget is not left on the window to paint over the PFD.
+    assert not bad_mod.Screen.instances[0].isVisible()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert sip.isdeleted(bad_mod.Screen.instances[0])
+
+    # A button or annunciation pointing at the dropped screen is ignored; an
+    # unknown name still raises, as before.
+    window.showScreen("MAP")
+    assert window.running_screen == 0
+    with pytest.raises(KeyError):
+        window.showScreen("NOPE")
+
+
+def test_main_boots_the_flight_screen_when_the_boot_screen_is_dropped(app, qtbot):
+    _faulty_screen_module("tests.fake_gui_screen_boot_bad")
+    flight_mod = _screen_module("tests.fake_gui_screen_boot_flight")
+    _add_screen("DataStatus", "tests.fake_gui_screen_boot_bad", {}, True)
+    _add_screen("PFD", "tests.fake_gui_screen_boot_flight")
+
+    window = gui.Main(_config(), ".", {}, flight_screen="PFD")
+    qtbot.addWidget(window)
+    window.show()
+
+    assert [s.name for s in gui.screens] == ["PFD"]
+    assert gui.screens[0].default is True
+    assert window.running_screen == 0
+    assert flight_mod.Screen.instances[0].isVisible()
+
+
+@pytest.mark.parametrize("where", ["init", "initScreen"])
+def test_main_still_raises_when_the_flight_screen_fails_to_build(app, where):
+    _faulty_screen_module("tests.fake_gui_screen_flight_bad_" + where, where)
+    _screen_module("tests.fake_gui_screen_flight_other")
+    _add_screen("DataStatus", "tests.fake_gui_screen_flight_other", {}, True)
+    _add_screen("PFD", "tests.fake_gui_screen_flight_bad_" + where)
+
+    with pytest.raises(RuntimeError, match="planted"):
+        gui.Main(_config(), ".", {}, flight_screen="PFD")
 
 
 def test_main_uses_primary_screen_when_size_not_configured(app, qtbot, monkeypatch):
