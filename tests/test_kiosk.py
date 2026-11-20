@@ -405,3 +405,198 @@ def test_tab_section_show_tab_labelled(fix, qtbot):
     assert section.stack.currentIndex() == 1
     assert not section.show_tab_labelled("Map")
     assert section.stack.currentIndex() == 1
+
+
+# ---------------------------------------------------------------------------
+# the visitor reset (DEMO12, AER-6077): brief 6.2's settings go back to the
+# show defaults each loop, when the demo goes live, and on the idle return
+# ---------------------------------------------------------------------------
+
+SHOW = {"NAVSRC": 2, "BARO": 29.92, "ALTSEL": 3000, "MAPRANGE": 2}
+# what a visitor leaves behind: VLOC, a fat-fingered baro, a bug, 80 NM
+VISITOR = {"NAVSRC": 0.0, "BARO": 30.41, "ALTSEL": 9500, "MAPRANGE": 5}
+_KEY_DEFS = {"NAVSRC": ("float", 0.0, 3.0), "BARO": ("float", 0.0, 35.0),
+             "ALTSEL": ("int", -1000, 60000), "MAPRANGE": ("int", 0, 7)}
+VISITOR_KEYS_ALL = tuple(_KEY_DEFS)
+
+
+def _visitor_keys(fix, monkeypatch, keys=VISITOR_KEYS_ALL):
+    for key in keys:
+        dtype, lo, hi = _KEY_DEFS[key]
+        fix.db.define_item(key, key, dtype, lo, hi, "", 0, "")
+        it = fix.db.get_item(key)
+        it.value = VISITOR[key]
+        it.old = it.bad = it.fail = False
+    sent = []
+    monkeypatch.setattr(fix.db, "queue_out", lambda b: sent.append(b.decode()))
+    return sent
+
+
+def _loop_key(fix, n=1):
+    fix.db.define_item("DEMOLOOP", "Demo pass", "int", 0, 1000000, "", 0, "")
+    loop = fix.db.get_item("DEMOLOOP")
+    loop.value = n
+    loop.bad = loop.fail = False
+    return loop
+
+
+def _resetter(fix, qtbot, monkeypatch, live=True, loop=True, defaults=SHOW,
+              idle_s=60, keys=VISITOR_KEYS_ALL):
+    sent = _visitor_keys(fix, monkeypatch, keys)
+    live_item, _ = _demo_keys(fix, live=live, page="PFD")
+    loop_item = _loop_key(fix) if loop else None
+    win = _Window(["PFD", "EMS"])
+    qtbot.addWidget(win)
+    kiosk.configure({"enabled": True, "idle_return_s": idle_s, "defaults": defaults})
+    kiosk.initialize(win, fix, [])
+    return win, live_item, loop_item, sent
+
+
+def _values(fix, keys=VISITOR_KEYS_ALL):
+    return {k: fix.db.get_item(k).value for k in keys}
+
+
+def _visit(fix, keys=VISITOR_KEYS_ALL):
+    for k in keys:
+        fix.db.get_item(k).value = VISITOR[k]
+
+
+@pytest.mark.parametrize("cfg,want", [
+    (None, {}),
+    ({"NAVSRC": 2, "BARO": "29.92"}, {"NAVSRC": 2.0, "BARO": 29.92}),
+    # not a visitor key: the demo's or an engine's, never a kiosk default
+    ({"LAT": 34.0, "COURSE": 90, "FPLSEQ": 1, "MAPRANGE": 2}, {"MAPRANGE": 2.0}),
+    ({"BARO": "low", "ALTSEL": None, "NAVSRC": True, "MAPRANGE": 3}, {"MAPRANGE": 3.0}),
+    (["NAVSRC", 2], {}),
+])
+def test_configure_defaults(cfg, want, caplog):
+    with caplog.at_level(logging.ERROR, logger="pyefis.kiosk"):
+        kiosk.configure({"enabled": True, "defaults": cfg})
+    assert kiosk.defaults() == want
+    assert kiosk.locked()             # a bad default never unlocks the panel
+    dropped = (len(cfg) - len(want)) if isinstance(cfg, dict) else int(cfg is not None)
+    assert len(caplog.records) == dropped
+
+
+def test_visitor_keys_are_the_brief_6_2_settings():
+    assert kiosk.VISITOR_KEYS == ("NAVSRC", "BARO", "ALTSEL", "MAPRANGE")
+
+
+@pytest.mark.parametrize("key", list(_KEY_DEFS))
+def test_each_visitor_key_goes_back_to_its_show_default_at_the_next_loop(fix, qtbot, monkeypatch, key):
+    _, _, loop, sent = _resetter(fix, qtbot, monkeypatch, defaults={key: SHOW[key]})
+    _visit(fix)
+    sent.clear()
+    loop.value = 2                    # the demo starts its next pass
+    assert fix.db.get_item(key).value == pytest.approx(SHOW[key])
+    # sent to fix-gateway, not only set here (pyEfis #294)
+    assert [s.split(";")[:2] for s in sent if s.startswith(key + ";")]
+    assert float(sent[-1].split(";")[1]) == pytest.approx(SHOW[key])
+    # the others were not configured, so they keep the visitor's value
+    others = [k for k in _KEY_DEFS if k != key]
+    assert _values(fix, others) == pytest.approx({k: VISITOR[k] for k in others})
+
+
+def test_a_vloc_tap_through_the_hsi_reverts_at_the_next_loop(fix, qtbot, monkeypatch):
+    from pyefis.instruments.hsi import HSI
+    _, _, loop, sent = _resetter(fix, qtbot, monkeypatch)
+    fix.db.get_item("NAVSRC").value = 2.0
+    HSI._send_key("NAVSRC", 0.0)      # the HSI source tab's own write
+    assert fix.db.get_item("NAVSRC").value == 0.0
+    assert sent[-1].startswith("NAVSRC;0.0;")
+    before = len(sent)
+    loop.value = 2
+    assert fix.db.get_item("NAVSRC").value == 2.0
+    assert any(s.startswith("NAVSRC;2.0;") for s in sent[before:])
+
+
+def test_every_loop_resets_not_only_the_first(fix, qtbot, monkeypatch):
+    _, _, loop, _ = _resetter(fix, qtbot, monkeypatch)
+    for n in (2, 3, 4):
+        _visit(fix)
+        loop.value = n
+        assert _values(fix) == pytest.approx(SHOW)
+    assert kiosk.resetter.resets == 1 + 3      # the start, then each loop
+
+
+def test_the_demo_going_live_resets(fix, qtbot, monkeypatch):
+    _, live, _, _ = _resetter(fix, qtbot, monkeypatch, live=False)
+    assert _values(fix) == pytest.approx(VISITOR)
+    live.value = True
+    assert _values(fix) == pytest.approx(SHOW)
+
+
+def test_the_demo_coming_back_after_going_old_resets(fix, qtbot, monkeypatch):
+    # a gateway restart: DEMOLIVE stays true locally, goes old, then current
+    _, live, _, _ = _resetter(fix, qtbot, monkeypatch)
+    _visit(fix)
+    live.old = True
+    assert _values(fix) == pytest.approx(VISITOR)
+    live.old = False
+    assert _values(fix) == pytest.approx(SHOW)
+
+
+def test_the_once_a_second_demolive_refresh_does_not_reset(fix, qtbot, monkeypatch):
+    _, live, _, _ = _resetter(fix, qtbot, monkeypatch)
+    _visit(fix)
+    for _ in range(3):
+        live.value = True
+        live.old = False
+        # and if a client ever signals a same-value write, still no reset
+        live.valueChanged[bool].emit(True)
+        live.oldChanged.emit(False)
+    assert _values(fix) == pytest.approx(VISITOR)
+
+
+def test_a_pyefis_start_with_the_demo_running_resets_at_once(fix, qtbot, monkeypatch):
+    # state_persist brought NAVSRC back as the last visitor left it
+    _resetter(fix, qtbot, monkeypatch)
+    assert _values(fix) == pytest.approx(SHOW)
+
+
+def test_nothing_is_written_while_the_demo_is_not_live(fix, qtbot, monkeypatch):
+    _, live, loop, sent = _resetter(fix, qtbot, monkeypatch, live=False)
+    loop.value = 2
+    kiosk.resetter.idle_return()
+    assert _values(fix) == pytest.approx(VISITOR)
+    assert not [s for s in sent if s.split(";")[0] in VISITOR]
+
+
+def test_the_idle_return_resets(fix, qtbot, monkeypatch):
+    win, _, _, _ = _resetter(fix, qtbot, monkeypatch, idle_s=0.2)
+    _visit(fix)
+    _press(win)
+    assert _values(fix) == pytest.approx(VISITOR)
+    qtbot.waitUntil(lambda: not kiosk.follower.holding(), timeout=2000)
+    assert _values(fix) == pytest.approx(SHOW)
+    assert win.shown[-1] == "PFD"     # and it rejoined the script page
+
+
+def test_without_demoloop_it_resets_when_the_demo_goes_live(fix, qtbot, monkeypatch, caplog):
+    with caplog.at_level(logging.WARNING, logger="pyefis.kiosk"):
+        _, live, _, _ = _resetter(fix, qtbot, monkeypatch, live=False, loop=False)
+    assert any("DEMOLOOP" in r.getMessage() for r in caplog.records)
+    assert kiosk.resetter is not None
+    live.value = True
+    assert _values(fix) == pytest.approx(SHOW)
+
+
+def test_a_visitor_key_the_database_lacks_is_said_once_and_skipped(fix, qtbot, monkeypatch, caplog):
+    keys = ("NAVSRC", "BARO", "ALTSEL")
+    with caplog.at_level(logging.WARNING, logger="pyefis.kiosk"):
+        _, _, loop, _ = _resetter(fix, qtbot, monkeypatch, keys=keys)
+    assert [r.getMessage() for r in caplog.records].count(
+        "kiosk: the database has no MAPRANGE; it is not reset") == 1
+    _visit(fix, keys)
+    loop.value = 2
+    assert _values(fix, keys) == pytest.approx({k: SHOW[k] for k in keys})
+
+
+def test_no_reset_without_defaults_or_outside_kiosk_mode(fix, qtbot, monkeypatch):
+    _, _, loop, _ = _resetter(fix, qtbot, monkeypatch, defaults=None)
+    assert kiosk.resetter is None
+    kiosk.configure({"enabled": False, "defaults": SHOW})
+    kiosk.initialize(_Window([]), fix, [])
+    assert kiosk.resetter is None
+    loop.value = 5
+    assert _values(fix) == pytest.approx(VISITOR)
