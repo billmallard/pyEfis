@@ -106,7 +106,10 @@ primary_keys:
            # Autopilot and flight-director state. The autopilot source is the one writer;
            # the control head shows the reported state, never the press.
            APENG, FDENG, YDENG, APLAT, APLATARM, APVERT, APVERTARM, APALTCAP, FDPITCH,
-           FDROLL, APCAPS, APMSG, APDISC]
+           FDROLL, APCAPS, APMSG, APDISC,
+           # Pitch offset the pilot sets on a gateway encoder; the AHRS plugin adds it to
+           # the sensor pitch before writing PITCH, so a write here biases the attitude.
+           PITCHSET]
     patterns:
       # Engine values for the powerplant group, as patterns over the numbered keys. THR
       # and MIX are engine-control positions: pyEfis must never become their writer.
