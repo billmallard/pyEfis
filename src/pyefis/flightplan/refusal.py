@@ -62,17 +62,6 @@ _COMMAND = {
     "BAD SLOT": "WAYPOINT NOT IN PLAN",
     "NO POSITION": "NO GPS POSITION",
     "PARSE": "COMMAND NOT UNDERSTOOD",
-    # GPS OBS (fix-gateway OBS2, AER-6084): FPLCMD OBS <deg> / OBS OFF, and
-    # SUSP / RESUME while in OBS.
-    "OBS N/A NO WPT": "OBS: NO ACTIVE WAYPOINT",
-    "OBS N/A NO POSITION": "OBS: NO GPS POSITION",
-    "OBS N/A FINAL APPROACH": "NO OBS ON THE FINAL APPROACH",
-    "OBS N/A HOLD": "NO OBS IN A HOLD",
-    "OBS N/A PROC TURN": "NO OBS IN A PROCEDURE TURN",
-    "OBS N/A VECTORS": "NO OBS ON VECTORS",
-    "OBS N/A NO FIX": "NO OBS: LEG HAS NO FIX",
-    "IN OBS": "IN OBS: OBS OFF FIRST",
-    "NOT IN OBS": "NOT IN OBS",
 }
 
 #: Every code :func:`plain_reason` has words for: the first word of a route
