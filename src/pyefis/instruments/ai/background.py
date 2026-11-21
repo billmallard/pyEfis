@@ -17,6 +17,12 @@ down:
 - ``gl_failed``        could not draw: the AI annunciates SVS UNAVAIL.
 - ``drew_terrain``     drew on the last frame: the AI paints its land
                        area sky instead of the brown fail-safe ground.
+                       Required: False unless terrain was painted on that
+                       frame -- reset at the start of every frame and on
+                       every early return, as ``SVSRenderer.draw`` and
+                       ``svs.paint_svs_frame`` do. A renderer that leaves it
+                       True after a failed frame shows sky where the ground
+                       is (Safety and Compliance, AER-6242).
 - ``consume_async_dirty()``  a background worker landed a result with the
                        pose unchanged; the frame clock repaints.
 - ``paint_frame(painter, pose)``  draw one frame for *pose*, a
