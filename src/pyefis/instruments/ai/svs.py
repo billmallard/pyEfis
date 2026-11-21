@@ -758,6 +758,17 @@ class SVSRenderer:
         self._papi_cand_key = None
         self._papi_cand = []
 
+        # ADS-B traffic (SVSTFC1 / CAP-409): the moving map's TFC reader,
+        # drawn in the scene. attach_traffic() connects it to the bus;
+        # until then (and with no TFC block) the layer is inert. Imported
+        # here, not at module load, so the traffic reader loads only with a
+        # renderer that is actually constructed.
+        from pyefis.instruments.ai import svs_traffic
+        self.traffic_enabled = bool(config.get("traffic", True))
+        _tr = config.get("traffic_range_nm", svs_traffic.DEFAULT_RANGE_NM)
+        self.traffic_range_nm = float(_tr)
+        self.traffic = None
+
         # Clipmap terrain (P8 Track 1a): nested world-snapped grid
         # levels. cells = grid resolution per level; levels doubles
         # the spacing each ring out. Defaults cover ~120 km at the
@@ -1628,6 +1639,21 @@ class SVSRenderer:
                 st["worker"].start()
             return st["val"]
 
+    def attach_traffic(self, db):
+        """Read the ``TFC`` block from FIX database *db* (SVSTFC1). A bus
+        write marks the frame dirty the way an async collector result does.
+        Never raises: no block, or ``traffic: false``, leaves it inert."""
+        if not self.traffic_enabled or db is None:
+            return
+        from pyefis.instruments.ai import svs_traffic
+        try:
+            t = svs_traffic.SVSTraffic(db, self._async_dirty.set,
+                                       self.traffic_range_nm)
+        except Exception:
+            log.exception("SVS: traffic reader failed; traffic not drawn")
+            return
+        self.traffic = t if t.available else None
+
     def consume_async_dirty(self):
         """Check-and-clear the AER-1714 wake signal.
 
@@ -1638,8 +1664,12 @@ class SVSRenderer:
         what actually promotes the parked result into the draw."""
         if self._async_dirty.is_set():
             self._async_dirty.clear()
+            if self.traffic is not None:
+                self.traffic.needs_repaint()   # sync its wake key
             return True
-        return False
+        # Traffic changes with no bus write: an alert's flash phase, a
+        # stale target timing out.
+        return self.traffic is not None and self.traffic.needs_repaint()
 
     def paint_frame(self, painter, pose):
         """Background-renderer seam (``background.py``): draw one frame for
@@ -2647,8 +2677,13 @@ class SVSRenderer:
 # its background item, between the sky/land fill and the pitch ladder.
 # ---------------------------------------------------------------------------
 def create_background_renderer(config: dict) -> "SVSRenderer":
-    """The ``svs`` entry in background.py's renderer table."""
-    return SVSRenderer(config)
+    """The ``svs`` entry in instrument_table.RENDERERS: the renderer, with
+    ADS-B traffic attached to the FIX bus (SVSTFC1). The renderer reads the
+    TFC block itself; a bus without one leaves it inert."""
+    import pyavtools.fix as fix
+    renderer = SVSRenderer(config)
+    renderer.attach_traffic(getattr(fix, "db", None))
+    return renderer
 
 
 def paint_svs_frame(renderer, painter, pose):
