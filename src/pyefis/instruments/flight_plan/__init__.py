@@ -94,8 +94,11 @@ KEYPAD_ROWS = ("ABCDEFG", "HIJKLMN", "OPQRSTU", "VWXYZ01", "23456789")
 KEYPAD_NUMERIC_ROWS = ("789", "456", "123", "0.-", "NSEW")
 KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
 
-_STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
+_STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP", 4: "OBS"}
 _STATE_SUSP = 3
+# GPS OBS (fix-gateway OBS2, pyEfis OBS3): a pilot course through the TO
+# waypoint, set by FPLCMD OBS <deg> and left by FPLCMD OBS OFF.
+_STATE_OBS = 4
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 # Expired procedure data (PA9): the data-status screen's expired amber.
 _EXPIRED_COLOR = "#ffb000"
@@ -226,6 +229,9 @@ class FlightPlan(QWidget):
     # client thread on a live bus); a QTimer may only be started from the
     # thread it lives in, so the commit timer is armed through this signal.
     _arm_commit_timer = pyqtSignal()
+    # An OBS command's refusal text, re-emitted onto the GUI thread: the
+    # FPLCMDACK callback runs on the gateway client's thread.
+    _obs_refused = pyqtSignal(str)
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  font_percent=None):
@@ -436,6 +442,7 @@ class FlightPlan(QWidget):
         self._commit_timer.setSingleShot(True)
         self._commit_timer.timeout.connect(self._on_commit_timeout)
         self._arm_commit_timer.connect(self._start_commit_timer)
+        self._obs_refused.connect(self._show_obs_refusal)
 
         self._bridge = fp_fixbridge.FixBridge(fix)
         if self._bridge.available:
@@ -1569,6 +1576,39 @@ class FlightPlan(QWidget):
             state = int(self._engine_value("FPLSTATE", 0) or 0)
             self._bridge.command("RESUME" if state == _STATE_SUSP else "SUSP")
         self._menu_open = False
+        self.update()
+
+    def _obs_label(self):
+        """The menu's OBS item: "OBS" to enter GPS OBS, "OBS Off" while the
+        engine is in it (FPLSTATE = 4)."""
+        state = int(self._engine_value("FPLSTATE", 0) or 0)
+        return "OBS Off" if state == _STATE_OBS else "OBS"
+
+    def _menu_obs(self):
+        """Enter GPS OBS on the current desired track (FPLCRS), so the
+        needle does not move until the pilot turns CRS; or leave it. The
+        engine decides whether OBS is possible here, and a refusal shows
+        its FPLMSG text."""
+        if self._bridge.available:
+            state = int(self._engine_value("FPLSTATE", 0) or 0)
+            if state == _STATE_OBS:
+                arg = "OFF"
+            else:
+                try:
+                    arg = "%d" % (int(round(float(self._engine_value("FPLCRS", 0.0) or 0.0))) % 360)
+                except (TypeError, ValueError):
+                    arg = "0"
+            self._bridge.command("OBS", arg, on_ack=self._on_obs_ack)
+        self._menu_open = False
+        self.update()
+
+    def _on_obs_ack(self, _seq, ok, msg):
+        if not ok:
+            self._obs_refused.emit(str(msg or ""))
+
+    @pyqtSlot(str)
+    def _show_obs_refusal(self, msg):
+        self._message = fp_refusal.plain_reason(msg) or "OBS REFUSED"
         self.update()
 
     def _menu_cdi_scale(self):
@@ -3953,6 +3993,7 @@ class FlightPlan(QWidget):
             ("Store", self._menu_store),
             ("Clear", self._menu_clear_request),
             (susp_label, self._menu_suspend_resume),
+            (self._obs_label(), self._menu_obs),
             (f"CDI Scale ({self._cdi_scale_choice})", self._menu_cdi_scale),
             ("Delete", self._menu_delete_request),
         ]
