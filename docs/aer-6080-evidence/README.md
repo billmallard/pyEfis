@@ -3,7 +3,8 @@
 The seam must not change a pixel. Each bench renders the attitude widget at
 four pinned poses in three modes, once from `dev` and once from the branch,
 and the pairs are compared pixel for pixel. The strips below compare `dev`
-at ea09204f with the branch at 236b08ea, which has `dev` merged in.
+at 0e958c7d (with SVSTFC1 traffic) with the branch at 7a86613c, which has
+that `dev` merged in.
 
 | Mode | What it is |
 |---|---|
@@ -26,12 +27,18 @@ window, no DRM master) with the bench's own GL stack and the
 
 ![Beelink strip: rows coastal, mountains, approach, final; columns svs, symbology, none; each cell is the branch frame at half scale, captioned with its dev-vs-branch pixel count](beelink/strip-beelink.png)
 
-24 of 24 pairs are identical. The first Beelink run (2026-11-20, `dev`
-4146d4ca against branch 08901ad8) had 23 of 24. In that run `approach/svs`
-differed at one pixel, (480, 330), by 1 LSB per channel. Three repeat runs
-per tree showed that pixel flipping between the same two values on `dev`
-alone (`beelink/repeat-approach-svs.txt`). It is run-to-run variation in the
-renderer, and this run happened not to hit it.
+23 of 24 pairs are identical. `approach/svs` differs at one pixel, (480,
+330): `dev` has 0x6aa16a and the branch 0x6ba26b. That is the pixel the
+earlier runs found flipping on `dev` alone, between the same two values
+(`beelink/repeat-approach-svs.txt`), so it is run-to-run variation in the
+renderer, not this change. Here are the Beelink runs:
+
+| Run | Commits (`dev` vs branch) | Identical pairs |
+|---|---|---|
+| 2026-11-20 | 4146d4ca vs 08901ad8 | 23 of 24 (this pixel) |
+| 2026-11-21 | ea09204f vs 236b08ea | 24 of 24 |
+| 2026-11-21 | 0e958c7d vs 7a86613c, first run | 24 of 24 |
+| 2026-11-21 | 0e958c7d vs 7a86613c, the run committed here | 23 of 24 (this pixel, values swapped) |
 
 ## Pi 5 (eglfs, V3D 7.1) -- 2026-11-21
 
@@ -39,8 +46,9 @@ renderer, and this run happened not to hit it.
 
 24 of 24 pairs are identical. The frames were rendered under
 `QT_QPA_PLATFORM=eglfs` while the bench's live `pyefis.service` held the
-display. The service kept the same MainPID (1391040), and its restart count
-stayed at 0 before and after (`pi5/run.log`). Its journal showed no
+display. The service kept the same MainPID (1391847), and its restart count
+stayed at 0 before and after (`pi5/run.log`). The run at ea09204f vs 236b08ea
+was also 24 of 24. Its journal showed no
 traceback, segfault or GL out-of-memory error. The probe frame ran first,
 on its own, to check this before the full set.
 
