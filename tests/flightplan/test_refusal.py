@@ -63,6 +63,11 @@ from pyefis.flightplan import refusal
     ("OBS N/A NO FIX", "OBS NOT AVAILABLE ON A CLIMB LEG"),
     ("IN OBS", "NOT AVAILABLE IN OBS"),
     ("NOT IN OBS", "OBS IS NOT ON"),
+    ("OBS N/A DATABASE", "OBS NOT AVAILABLE: GATEWAY CONFIG OUT OF DATE"),
+    # An accepted commit that drops the active leg (HOLDFIX0): not a refusal.
+    ("ACTIVE LEG REMOVED", "ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE"),
+    ("ACTIVE LEG CHANGED", "ACTIVE LEG CHANGED: NO LEG ACTIVE"),
+    ("ACTIVE LEG AMBIGUOUS", "ACTIVE LEG REPEATED IN PLAN: NO LEG ACTIVE"),
 ])
 def test_each_engine_code_reads_in_plain_words(msg, plain):
     assert refusal.plain_reason(msg) == plain
@@ -168,7 +173,8 @@ def test_engine_publishes_no_code_without_plain_words():
     # The reader still finds the codes it was written against: a reader that
     # stopped matching the engine's source would otherwise pass on nothing.
     assert {"UNSUPP", "BADTURN", "SEGENT", "NO POSITION", "PARSE",
-            "OBS N/A HOLD", "NOT IN OBS"} <= codes
+            "OBS N/A HOLD", "NOT IN OBS", "OBS N/A DATABASE",
+            "ACTIVE LEG REMOVED"} <= codes
     assert codes - refusal.KNOWN_CODES == set(), (
         "the engine can publish these FPLMSG codes and plain_reason has no words for "
         "them: add them to pyefis/flightplan/refusal.py")

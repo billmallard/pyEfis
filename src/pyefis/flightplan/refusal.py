@@ -10,6 +10,11 @@ writes a short code to ``FPLMSG``: ``BADTURN RF RFFIX``, ``SEGENT S2 GVO``,
 list to know what to fix, so :func:`plain_reason` turns each code into a short
 reason that names the waypoint where the code carries one.
 
+Three codes are not refusals: an accepted commit that drops the active leg
+says why with ``ACTIVE LEG REMOVED``, ``CHANGED`` or ``AMBIGUOUS`` (HOLDFIX0),
+written after ``FPLLDSEQ``, so the FPL page never reads them as a refusal.
+They are here so that any surface showing ``FPLMSG`` has words for them.
+
 A code this module does not know -- an engine newer than this display -- is
 shown as it came, never as nothing. ``tests/flightplan/test_refusal.py`` reads
 the engine's source and fails when it can publish a code with no entry here.
@@ -78,8 +83,22 @@ _OBS = {
     "OBS N/A NO FIX": "OBS NOT AVAILABLE ON A CLIMB LEG",
     "IN OBS": "NOT AVAILABLE IN OBS",
     "NOT IN OBS": "OBS IS NOT ON",
+    # The gateway's database/flightplan.yaml predates OBS2 and cannot carry
+    # the OBS state. Refused on every leg; the pilot cannot fix it in flight.
+    "OBS N/A DATABASE": "OBS NOT AVAILABLE: GATEWAY CONFIG OUT OF DATE",
 }
 _COMMAND.update(_OBS)
+
+# An accepted commit that does not keep the active leg (fix-gateway HOLDFIX0):
+# the route loads and nothing is active. Not a refusal; whole messages.
+_ACTIVE_LEG = {
+    "ACTIVE LEG REMOVED": "ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE",
+    # The TO fix is still there, but after another FROM fix or on another path.
+    "ACTIVE LEG CHANGED": "ACTIVE LEG CHANGED: NO LEG ACTIVE",
+    # The active leg is in the new route more than once.
+    "ACTIVE LEG AMBIGUOUS": "ACTIVE LEG REPEATED IN PLAN: NO LEG ACTIVE",
+}
+_COMMAND.update(_ACTIVE_LEG)
 
 #: Every code :func:`plain_reason` has words for: the first word of a route
 #: refusal, or a whole command rejection.
