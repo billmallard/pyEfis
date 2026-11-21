@@ -51,6 +51,7 @@ from __future__ import annotations
 import copy
 
 from . import geo
+from . import hold
 from . import model
 
 #: The PROC page's three procedure kinds, as the pack names them.
@@ -79,7 +80,7 @@ PACK_FIRST_MISSED = 0x20
 FLAG_FLYOVER = 0x01
 FLAG_FROM_PROCEDURE = 0x20
 
-HOLD_PTS = frozenset({"HM", "HF", "HA"})
+HOLD_PTS = hold.HOLD_PTS
 SAME_FIX_NM = model.SAME_FIX_NM
 NO_FIX_POINT_NM = 2.0
 HOLD_SPEED_KT = 90.0
@@ -252,7 +253,7 @@ def _waypoint(leg, prev, *, magvar, hold_speed_kt, resolve_navaid):
         if leg.dist_nm:
             wp.dst = float(leg.dist_nm)
         elif leg.time_min and pt in HOLD_PTS:
-            wp.dst = round(float(leg.time_min) * float(hold_speed_kt) / 60.0, 2)
+            wp.dst = hold.minutes_to_nm(leg.time_min, hold_speed_kt)
     return wp
 
 
