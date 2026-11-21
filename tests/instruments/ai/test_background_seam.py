@@ -221,3 +221,16 @@ def test_the_svs_brings_its_own_pose_source_seeded_from_fix(fix, qtbot):
 def test_camera_uses_the_core_projection():
     assert camera.terrain_horizontal_px is projection.terrain_horizontal_px
     assert camera.TERRAIN_HFOV_PITCH_DEG == projection.TERRAIN_HFOV_PITCH_DEG
+
+
+def test_the_svs_factory_attaches_traffic_to_the_bus(fix, qtbot, monkeypatch):
+    """SVSTFC1 traffic is attached by the SVS's own factory, not by the AI:
+    set_svs_config still hands the renderer the FIX database."""
+    from pyefis.instruments.ai import svs
+    seen = []
+    monkeypatch.setattr(svs.SVSRenderer, "attach_traffic",
+                        lambda self, db: seen.append(db))
+    widget = ai.AI()
+    qtbot.addWidget(widget)
+    widget.set_svs_config({"enabled": False})
+    assert seen == [fix.db]
