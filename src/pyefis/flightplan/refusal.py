@@ -5,7 +5,7 @@ When the fix-gateway flightplan engine refuses a route commit or a command it
 writes a short code to ``FPLMSG``: ``BADTURN RF RFFIX``, ``SEGENT S2 GVO``,
 ``NO POSITION``. The code list is the engine's (``engine.py``
 ``unsupported_leg_reason``, ``_tier2_data_reason``,
-``segment_integrity_reason`` and the ``_Reject`` reasons; fix-gateway
+``segment_integrity_reason``, ``_obs_refusal`` and the ``_Reject`` reasons; fix-gateway
 ``doc/flightplan_keys.md``, the ``FPLMSG`` row). A pilot should not need that
 list to know what to fix, so :func:`plain_reason` turns each code into a short
 reason that names the waypoint where the code carries one.
@@ -63,6 +63,23 @@ _COMMAND = {
     "NO POSITION": "NO GPS POSITION",
     "PARSE": "COMMAND NOT UNDERSTOOD",
 }
+
+# GPS OBS refusals (fix-gateway OBS2): the OBS command with no waypoint or
+# position, or on a leg OBS cannot hold, and SUSP/RESUME or OBS OFF in the
+# wrong mode. Whole messages, like the command rejections.
+_OBS = {
+    "OBS N/A NO WPT": "OBS NOT AVAILABLE: NO ACTIVE WAYPOINT",
+    "OBS N/A NO POSITION": "OBS NOT AVAILABLE: NO GPS POSITION",
+    "OBS N/A FINAL APPROACH": "OBS NOT AVAILABLE ON FINAL APPROACH",
+    "OBS N/A HOLD": "OBS NOT AVAILABLE IN A HOLD",
+    "OBS N/A PROC TURN": "OBS NOT AVAILABLE ON A PROCEDURE TURN",
+    "OBS N/A VECTORS": "OBS NOT AVAILABLE ON VECTORS",
+    # A CA, or an FA past its fix: a climb with no fix to hold.
+    "OBS N/A NO FIX": "OBS NOT AVAILABLE ON A CLIMB LEG",
+    "IN OBS": "NOT AVAILABLE IN OBS",
+    "NOT IN OBS": "OBS IS NOT ON",
+}
+_COMMAND.update(_OBS)
 
 #: Every code :func:`plain_reason` has words for: the first word of a route
 #: refusal, or a whole command rejection.
