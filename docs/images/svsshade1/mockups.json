@@ -1,0 +1,100 @@
+{
+ "pyefis_rev": "f7fc078e",
+ "scenes": {
+  "mountains": {
+   "lat": 39.2,
+   "lon": -106.85,
+   "alt_ft": 12500.0,
+   "head": 150.0,
+   "apt": [
+    "KASE",
+    39.22188,
+    -106.86823,
+    7837.9
+   ]
+  },
+  "approach": {
+   "lat": 37.96933,
+   "lon": -107.98168,
+   "alt_ft": 10500.0,
+   "head": 105.0,
+   "apt": [
+    "KTEX",
+    37.95381,
+    -107.90875,
+    9069.7
+   ]
+  },
+  "final": {
+   "lat": 34.42721,
+   "lon": -119.87481,
+   "alt_ft": 611.0,
+   "head": 89.0,
+   "apt": [
+    "KSBA",
+    34.42619,
+    -119.84149,
+    13.5
+   ]
+  },
+  "coastal": {
+   "lat": 34.4275,
+   "lon": -119.8546,
+   "alt_ft": 2500.0,
+   "head": 0.0,
+   "apt": [
+    "KSBA",
+    34.42619,
+    -119.84149,
+    13.5
+   ]
+  }
+ },
+ "separation": {
+  "today": {
+   "floor": 0.0,
+   "caution": {
+    "with_floor": 11.6,
+    "no_floor": 11.6
+   },
+   "warning": {
+    "with_floor": 28.8,
+    "no_floor": 28.8
+   },
+   "conflict": {
+    "with_floor": 53.4,
+    "no_floor": 53.4
+   }
+  },
+  "solid": {
+   "floor": 0.7,
+   "caution": {
+    "with_floor": 24.7,
+    "no_floor": 14.6
+   },
+   "warning": {
+    "with_floor": 45.0,
+    "no_floor": 24.4
+   },
+   "conflict": {
+    "with_floor": 67.2,
+    "no_floor": 42.1
+   }
+  },
+  "tint": {
+   "floor": 0.7,
+   "caution": {
+    "with_floor": 24.4,
+    "no_floor": 13.8
+   },
+   "warning": {
+    "with_floor": 40.6,
+    "no_floor": 22.6
+   },
+   "conflict": {
+    "with_floor": 61.7,
+    "no_floor": 37.1
+   }
+  }
+ }
+}
