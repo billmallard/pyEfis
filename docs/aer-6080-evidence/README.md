@@ -48,9 +48,32 @@ renderer, not this change. Here are the Beelink runs:
 `QT_QPA_PLATFORM=eglfs` while the bench's live `pyefis.service` held the
 display. The service kept the same MainPID (1391847), and its restart count
 stayed at 0 before and after (`pi5/run.log`). The run at ea09204f vs 236b08ea
-was also 24 of 24. Its journal showed no
-traceback, segfault or GL out-of-memory error. The probe frame ran first,
-on its own, to check this before the full set.
+was also 24 of 24. Its journal showed no traceback, segfault or GL
+out-of-memory error. The probe frame ran first, on its own, to check this
+before the full set.
+
+## Traffic through the seam (SVSTFC1) -- 2026-11-21
+
+The poses above carry no traffic. These frames add the bench injector's
+targets (`--traffic svs`) at two of SVSTFC1's own evidence poses:
+
+- `near` (34.4258, -119.8415, 4500 ft, heading 34, horizon_position 50): six targets.
+- `ridge` (2000 ft, heading 0, horizon_position 68): twenty targets.
+
+An alerted target flashes on the clock, so the driver pins the phase with
+`--flash on|off`, the same patch for both trees. The two phases differ by
+175 px in the branch frames on each bench, so the targets are drawn and the
+pin takes effect. `dev` is 0e958c7d and the branch is eddae225 (its code is
+the same as 2f56b1e1).
+
+![Beelink traffic strip: rows near, ridge; columns flash on, flash off; each captioned 0 px differing from dev](beelink/traffic-beelink.png)
+
+![Pi 5 traffic strip: same layout, rendered under eglfs; each captioned 0 px differing from dev](pi5/traffic-pi5.png)
+
+4 of 4 pairs are identical on each bench. On the Pi, the live service kept
+its MainPID with 0 restarts (`pi5/traffic-run.log`). The driver is
+`run_traffic_strips.sh`; compare with
+`STRIP_POSES="near ridge" STRIP_MODES="on off" compare_strips.py`.
 
 ## Regenerate
 
