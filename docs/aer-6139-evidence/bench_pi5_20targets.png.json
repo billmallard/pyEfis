@@ -1,0 +1,19 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "dbdc299",
+ "run": "local: tools/svs_capture.py --out /home/wpballard/bench-scratch/aer6139/pi_tfc20.png --lat 35.72835 --lon -83.42185 --alt 4500 --heading 320 --traffic svs --traffic-extra 14 --tiles /data/makerplane-data/terrain/tiles --nasr  --dof  --water  --offscreen --width 800 --height 480 --range 20",
+ "device": "Raspberry Pi 5 Model B Rev 1.1 (eglfs)",
+ "sha256": "e64baef63cd765cbdfb2193605d9ae6eade56b7dcc419ad753b8708277677cfc",
+ "created_utc": "2026-11-21T20:48:03Z",
+ "pyefis_rev": "dbdc299",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  800,
+  480
+ ],
+ "actual_size": [
+  800,
+  480
+ ],
+ "argv": "tools/svs_capture.py --out /home/wpballard/bench-scratch/aer6139/pi_tfc20.png --lat 35.72835 --lon -83.42185 --alt 4500 --heading 320 --traffic svs --traffic-extra 14 --tiles /data/makerplane-data/terrain/tiles --nasr  --dof  --water  --offscreen --width 800 --height 480 --range 20"
+}

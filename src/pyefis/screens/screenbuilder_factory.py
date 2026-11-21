@@ -492,6 +492,14 @@ def _svs_props():
              help="draw the installed PAPI at its published glide path angle "
                   "and side, from the NASR airports pack (only where one is "
                   "installed)" + dev),
+        Prop("svs_traffic", "boolean", default=True, apply="special",
+             label="Traffic",
+             help="draw ADS-B traffic from the TFC block in the scene, "
+                  "with the moving map's symbols, relative-altitude tag "
+                  "and climb/descent arrow; never hidden by terrain" + dev),
+        Prop("svs_traffic_range_nm", "number", default=10.0, minimum=1.0,
+             maximum=50.0, apply="special", label="Traffic range (NM)",
+             help="targets farther than this are left to the map" + dev),
         Prop("svs_perf_log", "boolean", default=False, apply="special",
              label="Perf: log summary",
              help="print an SVS per-frame profiler summary every 2s "

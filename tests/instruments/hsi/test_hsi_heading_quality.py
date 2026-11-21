@@ -22,10 +22,10 @@ FROZEN = 120.0                                  # a 5-deg multiple: the arc draw
 FROZEN_TEXT = "120°"
 
 
-def _mk(qtbot, orientation, layout="top_panel"):
-    """A heading-only HSI (no CDI, no GSI), heading bug and track diamond on,
-    COURSE valid, everything valid, holding FROZEN."""
-    w = hsi.HSI(cdi_enabled=False, gsi_enabled=False)
+def _mk(qtbot, orientation, layout="top_panel", nav=False):
+    """A heading-only HSI (no CDI, no GSI; both when `nav`), heading bug and
+    track diamond on, COURSE valid, everything valid, holding FROZEN."""
+    w = hsi.HSI(cdi_enabled=nav, gsi_enabled=nav)
     qtbot.addWidget(w)
     w.heading_bug_enabled = True
     w.track_indicator_enabled = True
@@ -37,6 +37,8 @@ def _mk(qtbot, orientation, layout="top_panel"):
     w._CourseOld = w._CourseBad = w._CourseFail = False
     w._HeadOld = w._HeadBad = w._HeadFail = False
     w._TrackOld = w._TrackBad = w._TrackFail = False
+    w._CdiOld = w._CdiBad = w._CdiFail = False
+    w._GsiOld = w._GsiBad = w._GsiFail = False
     w.gsdb = None                               # no speed gate on the diamond
     w.setHeading(FROZEN)
     w._hdgBug = FROZEN + 10.0                  # in the arc sector, not FROZEN
@@ -227,3 +229,51 @@ def test_mag_xxx_is_painted_red(fix, qtbot, layout):
     assert _value_pens(painter, "XXX") == [RED]
     if layout == "top_panel":                   # a segment with no value colour
         assert _value_pens(painter, "130°") == [QColor(w.fg_color)]
+
+
+# CERT1f (Bill, 2026-11-20): the numerals follow HEAD alone. A failed CDI or
+# GSI, or a bad COURSE, takes away only what it drives (the course pointer and
+# the deviation bar), never the compass numerals over a valid heading. Before
+# this, isFail() gated the numerals, and a panel with no course source (COURSE
+# invalid) showed ticks with no numbers in every frame (pyEfis #508).
+_NAV_FAULTS = {
+    "cdi_fail": lambda w: w.setCdiFail(True),
+    "gsi_fail": lambda w: w.setGsiFail(True),
+    "course_bad": lambda w: w.setCourseBad(True),
+    "course_fail": lambda w: w.setCourseFail(True),
+}
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("fault", sorted(_NAV_FAULTS))
+def test_nav_fault_alone_keeps_the_numerals(fix, qtbot, monkeypatch,
+                                            orientation, fault):
+    """CERT1f | HEAD valid, one nav fault: numerals drawn, no HDG flag."""
+    w = _mk(qtbot, orientation, nav=True)
+    assert w.cdi_enabled and w.gsi_enabled
+    _NAV_FAULTS[fault](w)
+    p = _Paint(w, monkeypatch)
+    assert w._showHdgFlag is False
+    assert p.numerals(w)
+    assert all(label.opacity() == 1 for label in w.labels)
+
+
+@pytest.mark.parametrize("fault", ["cdi_fail", "course_bad", "course_fail"])
+def test_nav_fault_still_drops_the_deviation_bar(fix, qtbot, fault):
+    """The fault keeps its own consequence: no deviation bar (G66)."""
+    w = _mk(qtbot, "heading_up", nav=True)
+    _NAV_FAULTS[fault](w)
+    assert not w._cdi_shown()
+
+
+@pytest.mark.parametrize("orientation", ["heading_up", "arc"])
+@pytest.mark.parametrize("flag", ["fail", "old", "bad"])
+def test_invalid_heading_hides_numerals_with_nav_valid(fix, qtbot, monkeypatch,
+                                                       orientation, flag):
+    """The converse: a valid nav state does not hold the numerals up over an
+    invalid heading."""
+    w = _mk(qtbot, orientation, nav=True)
+    _set(w, flag)
+    p = _Paint(w, monkeypatch)
+    assert p.numerals(w) == []
+    assert all(label.opacity() == 0 for label in w.labels)
