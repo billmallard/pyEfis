@@ -34,28 +34,12 @@ The renderer gets a frame's pose as a value, never the widget, so the
 seam could later cross a process boundary: a frame plus the pose it was
 rendered for (brief section 7).
 
-Core module: standard library and PyQt6 only. It names a renderer module
-once, as a string in ``_RENDERERS``; that string is the only route from
-the core to SVS code.
+Core module: standard library and PyQt6 only. Renderers are named, as
+strings, in ``screens/instrument_table.py`` (``RENDERERS``), the one place
+pyEfis turns a name into code.
 """
 
-import importlib
 from dataclasses import dataclass
-
-# Renderer kinds the composition root may plug into the AI, by dotted
-# path to a ``create(config) -> renderer`` callable. The one place the
-# core names a non-core module, and only as a string (brief R2b).
-_RENDERERS = {
-    "svs": "pyefis.instruments.ai.svs:create_background_renderer",
-}
-
-
-def create_renderer(kind, config):
-    """Build the background renderer registered as *kind* from *config*.
-    Imports the renderer's module on first use, so a screen that never
-    asks for one never loads it."""
-    module_name, _, attr = _RENDERERS[kind].partition(":")
-    return getattr(importlib.import_module(module_name), attr)(config)
 
 
 @dataclass(frozen=True)

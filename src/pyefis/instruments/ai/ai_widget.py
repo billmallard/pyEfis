@@ -31,6 +31,7 @@ from pyefis.instruments.helpers import bugs
 # renderer loads none.
 from pyefis.instruments.ai import background
 from pyefis.instruments.ai.projection import terrain_horizontal_px
+from pyefis.screens import instrument_table
 
 log = logging.getLogger(__name__)
 
@@ -791,15 +792,16 @@ class AI(QGraphicsView):
     def set_svs_config(self, config: dict):
         """Plug the SVS in as this widget's background renderer, from its
         config dict (called by the screenbuilder). The SVS module is
-        resolved by name through the seam (``background.create_renderer``),
-        so it loads only when a screen asks for it.
+        resolved by name through the instrument table
+        (``instrument_table.renderer``), so it loads only when a screen asks
+        for it.
 
         The scene itself is built in ``resizeEvent``, so if this method runs
         before the first resize the attachment is deferred —
         ``resizeEvent`` re-runs ``_attach_svs_item_if_ready``.
         """
         self.set_background_renderer(
-            background.create_renderer("svs", config),
+            instrument_table.renderer("svs")(config),
             z_value=float(config.get("z_value", 0.5)),
             msaa_samples=int(config.get("msaa_samples", 2)),
             frame_rate=config.get("frame_rate", 30.0))
