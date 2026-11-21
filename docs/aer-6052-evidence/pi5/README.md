@@ -18,14 +18,23 @@ builder does. `svs_capture.py` itself is unchanged.
 | Scene | Pose | FD command | What it shows |
 |---|---|---|---|
 | `ksba_final` | KSBA, about 1.5 NM west of RWY 7 at 700 ft, hdg 75, pitch -2, wings level | pitch -4, roll 8 | near-airport terrain colouring, with the magenta ridge behind the bars |
+| `ksba_ridge` | the same pose | pitch 1.5, roll 8 | the bars on the magenta near-airport ridge: the blend case |
 | `mtn_climb` | east of the Front Range at 8500 ft, hdg 270, pitch 4, wings level | pitch 8, roll -15 | a climb with a left turn; the cue sits above the symbol, in the sky |
 | `bank_turn` | same spot, hdg 200, pitch 2, roll 25 right | pitch 0, roll 10 | a shallow-out command while banked: the cue shows -15 of bank error |
+
+`ksba_ridge_zoom2x.png` is the cue region of `ksba_ridge` at 2x, nearest
+neighbour (left single_cue, right cross_pointer). Measured on the
+cross_pointer frame: the FD fill is pure magenta (255, 0, 255), the ridge
+behind it averages (155, 58, 174), and their luminance contrast ratio is
+1.86:1. The two are the same hue family, and only the 1.5 px black outline
+separates them.
 
 Regenerate on the Pi (the scripts expect `~/bench-scratch/aer6052`, with `pr`
 a checkout of the branch and `venv` a Python with PyQt6, numpy and PyOpenGL):
 
 ```sh
 ./sheet.sh
+./ridge.sh
 ```
 
 `guarded_cap.sh` kills a capture on more than 400 MB of V3D buffer growth, on
