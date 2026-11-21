@@ -21,6 +21,7 @@ from pyefis.screens import screenbuilder
 from pyefis.screens import screenbuilder_factory
 from pyefis.screens.screenbuilder import Screen
 from pyefis.instruments.ai import svs as svs_module
+from pyefis.instruments import weston as weston_module
 
 
 # ── Minimal QWidget parent ────────────────────────────────────────────────────
@@ -1638,7 +1639,7 @@ class TestScreenBuilderPreferencesAndOptions:
 
     def test_weston_without_span_uses_unconstrained_constructor(self, fix, qtbot, monkeypatch):
         _FakeWeston.calls = []
-        monkeypatch.setattr(screenbuilder.weston, "Weston", _FakeWeston)
+        monkeypatch.setattr(weston_module, "Weston", _FakeWeston)
         screen = Screen(_TestParent(_config_with_instruments([]), config_path=str(Path.cwd())))
         qtbot.addWidget(screen)
         screen.layout = {"rows": 10, "columns": 10}
@@ -2245,7 +2246,7 @@ class TestScreenBuilderExternalWidgets:
         self, fix, qtbot, monkeypatch, instrument, expected
     ):
         _FakeWeston.calls = []
-        monkeypatch.setattr(screenbuilder.weston, "Weston", _FakeWeston)
+        monkeypatch.setattr(weston_module, "Weston", _FakeWeston)
         config = _config_with_instruments([instrument])
         screen = Screen(_TestParent(config, config_path=str(Path.cwd())))
         qtbot.addWidget(screen)

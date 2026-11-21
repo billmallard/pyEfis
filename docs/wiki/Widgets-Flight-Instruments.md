@@ -271,10 +271,12 @@ FIX keys it reads by default: `COURSE`, `CDI`, `GSI`, `HEAD`, `BRG1`, `BRG2`, `B
 | `source_label_enabled` | Source label | on | on / off | show the nav-source annunciation (GPS / VLOC1 / VLOC2, or VOR/LOC when NAVTYPE is available) on the rose face |
 | `heading_bug_enabled` | Heading bug | off | on / off | show the cyan heading bug at the selected heading (HEADBUG) |
 | `heading_bug_color` | Heading bug color | `#00ffff` | colour | heading-bug colour |
-| `touch_edit` | Touch to set HDG / CRS | on | on / off | touch the HDG or CRS readout, then turn the knob to set it: HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the selected VLOC source (not editable on GPS). Inner ring 1 deg, outer ring 10 deg; push syncs HDG to the heading or centres the CDI on CRS |
+| `touch_edit` | Touch to set HDG / CRS | on | on / off | touch the HDG or CRS readout, then turn the knob to set it: HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the selected VLOC source. On GPS, CRS is editable only while the flight plan is in OBS (FPLSTATE 4): it sends `FPLCMD OBS <deg>` at most every 250 ms, ending on the last value, and push syncs to the bearing to the waypoint (GPSBRG). Inner ring 1 deg, outer ring 10 deg; push syncs HDG to the heading or centres the CDI on CRS |
 | `track_indicator_enabled` | Track diamond | on | on / off | show the magenta GPS ground-track diamond (TRACK), above the speed gate |
 | `track_color` | Track diamond color | `#ff00ff` | colour | GPS ground-track diamond colour |
 | `track_min_speed` | Track min speed (kt) | `5` | 0 to 50, step 1 | hide the track diamond below this groundspeed (kt) |
+| `turn_rate_enabled` | Turn-rate trend | on | on / off | show the magenta turn-rate trend arc from the lubber line to the heading in 6 s at the present rate of turn (ROT), with marks at half and standard rate; hidden when ROT is absent, old, bad or failed |
+| `turn_rate_color` | Turn-rate trend color | `#ff00ff` | colour | turn-rate trend arc colour |
 | `center_symbol` | Center symbol | `aircraft` | `aircraft`, `none` | fixed ownship symbol at the rose centre; 'aircraft' is a silhouette (deliberately not a triangle -- a triangle reads as the TO/FROM / course indicator) |
 | `readout_layout` | Readout layout | `top_panel` | `top_panel`, `corners`, `split`, `none` | placement of the integral actual-heading (HEAD), selected-heading (HEADBUG) and course (COURSE) readouts. top_panel = one sectioned panel across the top (outside the rose); corners = selected-heading + course boxes in the top corners; split = heading box above the rose, course/bug in the bottom corners |
 | `numeral_scale` | Numeral size | `1.5` | 0.5 to 3, step 0.1 | compass-rose numeral/letter size as a multiple of the base tick font (larger = bigger rose numbers) |

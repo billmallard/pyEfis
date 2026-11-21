@@ -363,6 +363,48 @@ class FlightPlan:
                                   + _pieces(seg.kind, seg.ident, seg.cycle, seg.legs[j + 1:]))
         return wp
 
+    def insert_hold(self, i: int, wp: Waypoint) -> None:
+        """Insert hold slot *wp* right after flat waypoint *i*, the fix it
+        holds at (HOLDFIX1). Unlike :meth:`insert_after` the second slot at
+        one fix is the point -- ``TF X, HM X``, as a procedure codes a hold
+        -- and it joins *i*'s own segment: a hold at a fix on an airway or a
+        procedure flies the same path, so the segment is not cut. After a
+        plain waypoint it is a waypoint row of its own."""
+        if wp.pt not in ("HM", "HF", "HA"):
+            raise FlightPlanError(f"{wp.pt} is not a hold")
+        if not (0 <= i < self.count):
+            raise FlightPlanError(f"index {i} out of range")
+        legs = self.waypoints
+        if not same_fix(legs[i], wp):
+            raise FlightPlanError(f"a hold at {wp.id} must follow {wp.id}")
+        if i + 1 < len(legs) and legs[i + 1].pt in ("HM", "HF", "HA") \
+                and same_fix(legs[i + 1], wp):
+            raise FlightPlanError(f"ALREADY A HOLD AT {wp.id}")
+        self._check_cap()
+        k, j = self.locate(i)
+        seg = self.segments[k]
+        if seg.kind == "waypoint":
+            self.segments.insert(k + 1, waypoint_segment(wp))
+        else:
+            seg.legs.insert(j + 1, wp)
+
+    def remove_hold(self, i: int) -> Waypoint:
+        """Remove hold slot *i* without cutting its segment: the fix before
+        it is the same point, so the legs either side still join. The undo
+        of :meth:`insert_hold`."""
+        if not (0 <= i < self.count):
+            raise FlightPlanError(f"index {i} out of range")
+        k, j = self.locate(i)
+        seg = self.segments[k]
+        wp = seg.legs[j]
+        if wp.pt not in ("HM", "HF", "HA"):
+            raise FlightPlanError(f"{wp.id or wp.pt} is not a hold")
+        if len(seg.legs) == 1:
+            del self.segments[k]
+        else:
+            del seg.legs[j]
+        return wp
+
     # -- editing: segments (RS2) -------------------------------------------
     def insert_airway(self, after: int, ident: str, exit_fix: str, graph) -> Segment:
         """Fly airway *ident* from flat waypoint *after* (the entry fix) to

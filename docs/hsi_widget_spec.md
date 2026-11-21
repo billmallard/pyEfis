@@ -69,12 +69,17 @@ subscriptions):
 | `HEADBUG` | selected-heading bug (cyan); HDG readout; **written** by the HDG knob edit | `heading_bug_enabled`; edit: `touch_edit` |
 | `NAV1CRS` / `NAV2CRS` | **written** by the CRS knob edit, per `NAVSRC` (never `COURSE`) | `touch_edit` |
 | `VOR1BRG` / `VOR2BRG` | read on CRS push, to centre the CDI | `touch_edit` |
+| `FPLSTATE` / `GPSSRC` | GPS OBS gate (OBS3): CRS on GPS is editable only at `FPLSTATE` = 4 with `GPSSRC` = 0 (or absent) | `touch_edit` |
+| `FPLCMD` | **written** by the CRS knob in GPS OBS: `OBS <deg>`, at most one per 250 ms, ending on the last value | `touch_edit` |
+| `GPSBRG` | read on CRS push in GPS OBS: the course syncs to the bearing to the TO waypoint | `touch_edit` |
 | `TRACK` + `GS` | GPS ground-track diamond (magenta) | `track_indicator_enabled`, gated by `track_min_speed` |
+| `ROT` | turn-rate trend arc (magenta) from the lubber line, 6 s of turn | `turn_rate_enabled`; hidden when `ROT` is old/bad/fail |
 
 **Editor options (category 1, today):** `cdi_enabled`, `gsi_enabled`,
 `fg_color`, `bg_color`, `bg_opacity`, `needle_color`, `needle_width`,
 `course_color`, `heading_bug_enabled`, `heading_bug_color`,
-`track_indicator_enabled`, `track_color`, `track_min_speed`.
+`track_indicator_enabled`, `track_color`, `track_min_speed`,
+`turn_rate_enabled`, `turn_rate_color`.
 
 **Source-selection chain (fix-gateway, config-driven — already built):**
 `NAVSRC` (`0=NAV1, 1=NAV2, 2=GPS`, `max=3` so a button cycles 0→1→2→0) →
@@ -279,6 +284,15 @@ Each item: what it does, the input(s), the convention.
    `TRACK` (true), which sat off by the local magnetic variation on the magnetic
    rose; fixed to `TRACKM`, derived in fix-gateway as `(TRACK + MAGVAR) mod 360`
    via the new `wrap360` compute function.*
+7a. **Turn-rate trend** — Garmin G1000/G3X style: a magenta arc just outside the
+   rim from the lubber line to the heading reached in 6 s at `ROT`, so a
+   standard-rate turn (3 deg/s) ends on the 18-deg mark. Fixed white marks at
+   half (9 deg) and standard (18 deg) rate each side. Above 4 deg/s the arc
+   stops at 24 deg with an arrowhead. Screen-fixed at the lubber (it does not
+   rotate with the card, so a failed `HEAD` does not hide it). Arc and marks
+   hide when `ROT` is old, bad or failed, with no flag of its own (the turn
+   coordinator annunciates). In `orientation: arc` it runs along the band.
+   *ATT1b, AER-6076.*
 8. **Bearing pointers 1 & 2** — cyan needles pointing to `BRG1`/`BRG2`;
    single-line (1) / double-line (2); **hidden when heading is invalid**; they
    never override and are visually separated from the deviation bar. Each has a
@@ -535,6 +549,7 @@ source, expected appearance):
 - Source switch GPS→NAV1→NAV2: pointer color/line-style and on-face label change.
 - CDI valid/invalid: needle hides + flag on invalid.
 - Track diamond above/below `track_min_speed`.
+- Turn-rate trend at standard rate each way: arc ends on the 18-deg mark; hidden with `ROT` failed.
 - Bearing pointers with heading invalid → hidden.
 - OBS mode: course settable, "OBS"/"SUSP" annunciated, no auto-sequence.
 - TO/FROM for a VOR; absent for LOC and GPS.
@@ -618,7 +633,12 @@ panel).
 `touch_edit` option (editor: "Touch to set HDG / CRS", on by default) makes the
 HDG readout set `HEADBUG` and the CRS readout set `NAV1CRS` / `NAV2CRS` for the
 selected VLOC source. CRS is not editable on GPS, and `COURSE` is never written,
-because it is the NAVSRC `select` output. Inner ring 1 deg, outer ring 10 deg,
+because it is the NAVSRC `select` output. The one exception is GPS OBS (OBS3,
+AER-6086): while the engine reports `FPLSTATE` = 4 and `GPSSRC` selects the
+internal plan, the CRS knob sends `FPLCMD OBS <deg>` (at most one per 250 ms,
+always ending on the last value) and push syncs to `GPSBRG`, the bearing to
+the TO waypoint. The engine owns the OBS course and publishes it back as
+`FPLCRS`. Inner ring 1 deg, outer ring 10 deg,
 wrapping through 360, written as turned. Push syncs HDG to `HEAD` and centres
 the CDI on CRS by setting the course to `VOR1BRG` / `VOR2BRG`. The nav-source
 tab tap is unchanged. Full table: `docs/wiki/Widgets-Flight-Instruments.md`.
