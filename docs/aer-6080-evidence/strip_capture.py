@@ -5,7 +5,7 @@ through tools/svs_capture.py's GL target, in one of three modes.
   symbology    SVS plugged in, disabled (svs_capture --symbology-only).
   none         No renderer at all: set_svs_config is never called.
 
-Adds --horizon-position (svs_capture applies no screen options; deployed
+Adds --flash (pins the traffic flash phase) and --horizon-position (svs_capture applies no screen options; deployed
 SVS panels set 68), so the frames exercise the lens shift and roll pivot
 the AI hands the renderer. Runs against whichever tree is on PYTHONPATH,
 so the same file drives the dev and branch checkouts.
@@ -25,6 +25,9 @@ def main():
     p.add_argument("--mode", choices=("svs", "symbology", "none"),
                    required=True)
     p.add_argument("--horizon-position", type=float, default=50.0)
+    p.add_argument("--flash", choices=("on", "off"), default=None,
+                   help="pin an alerted traffic target's flash phase, which "
+                   "otherwise follows the clock (SVSTFC1)")
     ours, rest = p.parse_known_args()
     if rest and rest[0] == "--":
         rest = rest[1:]
@@ -35,6 +38,10 @@ def main():
     tool = runpy.run_path(str(Path(ours.tree) / "tools" / "svs_capture.py"),
                           run_name="svs_capture_mod")
     AI = tool["AI"]
+    if ours.flash is not None:
+        from pyefis.instruments.ai import svs_traffic
+        phase = ours.flash == "on"
+        svs_traffic.flash_on = lambda now=None: phase
 
     if ours.mode != "none":
         orig = AI.set_svs_config

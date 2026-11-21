@@ -5,14 +5,16 @@ cell the branch frame (the dev frame is identical wherever the table says
 
     python compare_strips.py <out-dir> <strip.png> [<label>]
 """
+import os
 import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter
 
-POSES = ("coastal", "mountains", "approach", "final")
-MODES = ("svs", "symbology", "none")
+POSES = tuple(os.environ.get("STRIP_POSES",
+                             "coastal mountains approach final").split())
+MODES = tuple(os.environ.get("STRIP_MODES", "svs symbology none").split())
 SCALE = 0.5
 
 
