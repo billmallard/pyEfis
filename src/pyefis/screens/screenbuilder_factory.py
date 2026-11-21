@@ -24,7 +24,8 @@ from PyQt6.QtCore import qRound
 from pyefis.instruments.autopilot import DEFAULT_BUTTONS as AUTOPILOT_DEFAULT_BUTTONS
 from pyefis.screens.instrument_table import instrument
 from pyefis.screens.instrument_spec import (
-    Binding, ContainerSlot, InstrumentSpec, Prop, FixValue)
+    ENCODER_ORDER, Binding, ContainerSlot, EncoderSupport, InstrumentSpec, Prop,
+    FixValue)
 
 
 def build_weston(screen, config, font_percent=None, font_family=None, replace=None):
@@ -287,6 +288,78 @@ def _register(spec: InstrumentSpec) -> InstrumentSpec:
     return spec
 
 
+# --- The screen knob (pyEfis #97) --------------------------------------------
+# An instrument with ``enc_selectable`` joins the knob walk through
+# ``encoder_order``; its record says so with ``encoder=EncoderSupport(...)``.
+# tests/editor/test_registry.py holds every record's EncoderSupport to the
+# real widget's enc_* methods.
+
+def _encoder_order_prop():
+    return Prop(ENCODER_ORDER, "integer", step=1,
+                apply="special", label="Knob order",
+                help="place on the screen's knob walk: turning the knob "
+                     "visits instruments in ascending order, and push gives "
+                     "the highlighted one the knob; blank = not on the walk")
+
+
+# What each AbstractGauge-based widget (arc, bar and numeric gauges) does with
+# the knob: push takes focus, the inner knob steps the value, the outer ring
+# steps it coarse, push again writes it, and a timeout reverts it.
+_GAUGE_KNOB = EncoderSupport(selectable=True, editable=True, outer_ring=True)
+
+
+def _gauge_encoder_props():
+    """The knob options every AbstractGauge honours (gauges/abstract.py).
+
+    Not here, on purpose: ``encoder_revert`` (internal state, overwritten on
+    every push) and ``encoder_num_excluded`` (a list the widget never reads).
+    """
+    return [
+        _encoder_order_prop(),
+        Prop("encoder_set_key", "fixkey", label="Knob writes key",
+             help="FIX key the knob writes; blank = the key this gauge "
+                  "displays"),
+        Prop("encoder_multiplier", "number", default=1, label="Knob step",
+             help="value change per inner-knob detent"),
+        Prop("encoder_coarse_multiplier", "number", default=10,
+             label="Outer ring step factor",
+             help="the outer ring steps the value by knob step x this"),
+        Prop("encoder_set_real_time", "boolean", default=False,
+             label="Write while turning",
+             help="send each step to the FIX key as the knob turns; a "
+                  "timeout before push still reverts it. Ignored with a "
+                  "digit mask"),
+        Prop("touch_edit", "boolean", default=False, label="Touch to edit",
+             help="touch the gauge to give it the knob; it then marks focus "
+                  "with a ring and edit icon"),
+        Prop("encoder_num_mask", "string", label="Digit mask",
+             help="set the value one digit at a time, e.g. 000.000 for a "
+                  "radio frequency; push moves to the next digit. Blank = "
+                  "step the whole value"),
+        Prop("encoder_num_mask_blank_character", "string", default=" ",
+             label="Digit mask blank",
+             help="character drawn for the digits not yet set"),
+        Prop("encoder_num_enforce_multiplier", "boolean", default=False,
+             label="Digits follow knob step",
+             help="digit entry offers only digits that give a multiple of "
+                  "the knob step within the key's range"),
+        Prop("encoder_num_require_confirm", "boolean", default=False,
+             label="Confirm after last digit",
+             help="after the last digit the value flashes and one more push "
+                  "saves it"),
+        Prop("encoder_num_8khz_channels", "boolean", default=False,
+             label="8.33 kHz channels",
+             help="digit entry shows 8.33 kHz channel numbers; use with a "
+                  "knob step of 0.008333333333"),
+        Prop("encoder_num_blink_time_on", "integer", default=300,
+             label="Digit blink on (ms)",
+             help="how long the digit being set shows in each blink"),
+        Prop("encoder_num_blink_time_off", "integer", default=100,
+             label="Digit blink off (ms)",
+             help="how long the digit being set is hidden in each blink"),
+    ]
+
+
 def _bg_opacity_prop():
     """Shared background-opacity control for instruments that paint an opaque
     background box. Percent (0-100): 100 = solid (the default, unchanged), 0 =
@@ -526,7 +599,9 @@ _register(InstrumentSpec(
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
     # Attitude is read directly (PITCH/ROLL); no FIX aux values.
     fix_values=[],
     # Representative pose for the twin (matches the render-tool demo so the
@@ -568,7 +643,9 @@ _register(InstrumentSpec(
              label="Name location",
              help="where the name label sits relative to the gauge"),
         _tank_prop(),
+        *_gauge_encoder_props(),
     ],
+    encoder=_GAUGE_KNOB,
     # The colour-band thresholds and the value range are FIX-database values
     # (item min/max + aux), set in fix-gateway, not in the panel editor (#64).
     fix_values=[
@@ -727,7 +804,9 @@ _register(InstrumentSpec(
         Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
              label="Selected-altitude key", apply="special",
              help="FIX key holding the selected altitude (default ALTSEL)"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     preview={"value": 3500},
 ))
 
@@ -874,6 +953,7 @@ _register(InstrumentSpec(
                   "tab, whatever the source (source colour is the CDI's)",
              token="nav.reference"),
     ],
+    encoder=EncoderSupport(editable=True, outer_ring=True),
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
              "brg1": 30, "brg2": 250},
 ))
@@ -919,6 +999,7 @@ def _bar_gauge_props():
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
         _tank_prop(),
+        *_gauge_encoder_props(),
     ]
 
 
@@ -932,6 +1013,7 @@ _register(InstrumentSpec(
     properties=_bar_gauge_props(),
     fix_values=_gauge_fix_values(),
     preview={"value": "72", "fill": 0.72},
+    encoder=_GAUGE_KNOB,
 ))
 
 _register(InstrumentSpec(
@@ -944,6 +1026,7 @@ _register(InstrumentSpec(
     properties=_bar_gauge_props(),
     fix_values=_gauge_fix_values(),
     preview={"value": "72", "fill": 0.72},
+    encoder=_GAUGE_KNOB,
 ))
 
 _register(InstrumentSpec(
@@ -974,8 +1057,10 @@ _register(InstrumentSpec(
              help="widest string the readout reserves space for (sizing)"),
         Prop("show_units", "boolean", default=False, label="Show units",
              help="append the FIX key's engineering units to the readout"),
+        *_gauge_encoder_props(),
     ],
     fix_values=_gauge_fix_values(),
+    encoder=_GAUGE_KNOB,
 ))
 
 _register(InstrumentSpec(
@@ -1427,7 +1512,9 @@ _register(InstrumentSpec(
         Prop("config", "string", default="", apply="special",
              label="Config file (legacy)",
              help="path to an external button YAML; blank = use the fields above"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True),
 ))
 
 _register(InstrumentSpec(
@@ -1441,7 +1528,9 @@ _register(InstrumentSpec(
         # config value until the Prop model grows an explicit list/object kind.
         Prop("lists", "string", required=True, apply="special",
              label="Lists", help="selectable lists -- list of {name, file} entries"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
 ))
 
 # Interactive checklist (CAP-115, backlog P1.1 -- Phase 1). Config is an inline
@@ -1486,7 +1575,9 @@ _register(InstrumentSpec(
              label="Section colour",
              help="colour of section subheaders and the progress line",
              token="ink.muted"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
 ))
 
 # `flight_plan` (FP5a/b, billmallard/pyEfis#185, #187): an app-like
@@ -1494,10 +1585,7 @@ _register(InstrumentSpec(
 # checklist, but reads the FP1 route block via flightplan.fixbridge.FixBridge
 # instead of taking its state inline -- missing FIX keys just mean
 # `available=False` (annunciate, read-only), never a raise. Touch,
-# physical-keyboard and encoder (FP5c) input are all wired. `encoder_order`
-# is not declared as a Prop -- no encoder instrument declares it yet; it is
-# read straight from screen YAML (screenbuilder_options.apply_options) until
-# #97 exports encoder options to the schema.
+# physical-keyboard and encoder (FP5c) input are all wired.
 _register(InstrumentSpec(
     type="flight_plan",
     label="Flight Plan",
@@ -1561,7 +1649,9 @@ _register(InstrumentSpec(
                   "icon and the row font. A taller pane shows MORE legs at "
                   "this height rather than fewer, larger ones. Needs "
                   "screenDiagonalInches to be correct for the device."),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     preview={"name": "KSBA-GVO-KSMX",
              "waypoints": [{"id": "KSBA"}, {"id": "GVO"}, {"id": "KSMX"}]},
 ))
@@ -1682,7 +1772,9 @@ _register(InstrumentSpec(
         Prop("bg_color", "color", default="#000000", label="Background",
              help="panel ground behind the keys and boxes",
              token="surface.base"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     preview={"hdg": "270", "vs": "+500", "ias": "---", "altsel": "8500",
              "active": ["AP", "FD", "HDG", "VS"], "armed": ["ALT", "NAV"],
              "unavailable": ["VNAV"], "message": ""},
@@ -1773,7 +1865,9 @@ _register(InstrumentSpec(
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
         *_svs_props(),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
 ))
 
 _register(InstrumentSpec(
