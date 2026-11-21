@@ -116,6 +116,7 @@ _SYMBOL_RANGE = 160.0
 # _STATE_BADGES / _APR_TEXT mapping).
 _STATE_DIRECT = 2
 _STATE_SUSP = 3
+_STATE_OBS = 4
 _APR_LNAV = 2
 
 _ROLE_SUFFIX = {"iaf": "IAF", "faf": "FAF", "map": "MAP", "mahp": "MAHP"}
@@ -125,6 +126,11 @@ _ROLE_SUFFIX = {"iaf": "IAF", "faf": "FAF", "map": "MAP", "mahp": "MAHP"}
 #: after the first bench screenshot (CLAUDE.md convention); this is a
 #: reasonable default that stays visible without dominating the plan.
 _EXTENSION_NM = 5.0
+
+#: GPS OBS (OBS3): the course line through the TO waypoint runs this far
+#: either side of it, or 1.5 map ranges when that is longer, so it crosses
+#: the whole map at any range. The look is Bill's call on the glass.
+_OBS_LINE_NM = 30.0
 
 #: segment kinds whose legs come from a coded procedure: their altitude
 #: constraints label the fix. An airway leg's FPLfALT is its MEA, which is
@@ -183,9 +189,18 @@ def _engine_val(engine, key, default=None):
 
 
 def _extension_drawn(state, apr):
-    """The gate build_extension applies: the only time FPLCRS is drawn."""
+    """The gates build_extension and build_obs_course apply: the only
+    times FPLCRS is drawn."""
     try:
-        return int(state or 0) == _STATE_SUSP and int(apr or 0) == _APR_LNAV
+        return ((int(state or 0) == _STATE_SUSP and int(apr or 0) == _APR_LNAV)
+                or int(state or 0) == _STATE_OBS)
+    except (TypeError, ValueError):
+        return False
+
+
+def _obs(engine):
+    try:
+        return int(_engine_val(engine, "FPLSTATE", 0) or 0) == _STATE_OBS
     except (TypeError, ValueError):
         return False
 
@@ -404,6 +419,25 @@ def build_extension(route, engine, magvar=None):
     return ((map_wp.lat, map_wp.lon), end)
 
 
+def build_obs_course(engine, magvar=None, length_nm=_OBS_LINE_NM):
+    """The GPS OBS course line (OBS3): ``FPLCRS`` (magnetic, converted to
+    true with *magvar*) through the TO waypoint (``WPLAT``/``WPLON``),
+    *length_nm* each side of it, drawn only while ``FPLSTATE`` = OBS.
+    Returns ``((lat1, lon1), (lat2, lon2))`` -- inbound end first -- or
+    ``None``: not in OBS, no valid course, or no TO waypoint (its
+    ``fail`` flag, NULLWP1). Everything comes from the engine's keys."""
+    if not _obs(engine):
+        return None
+    crs = _true_course(engine, magvar)
+    wp = engine.get("WPLAT")
+    if crs is None or wp is None or wp.fail:
+        return None
+    lat, lon = wp.value or 0.0, _engine_val(engine, "WPLON", 0.0) or 0.0
+    start = fp_geo.destination_point(lat, lon, (crs + 180.0) % 360.0, length_nm)
+    end = fp_geo.destination_point(lat, lon, crs, length_nm)
+    return (start, end)
+
+
 def route_loaded(route, engine):
     """False when the slots on the bus are not the route the engine has
     loaded: ``FPLLDSEQ`` (the ``FPLSEQ`` of the loaded route) differs from
@@ -486,6 +520,14 @@ def build_leg_draws(route, engine, paths, kinds=None, lead=None):
             out.append((color, width, style, ("path", k)))
         if leg.pattern:
             out.append((color, width, style, ("pattern", k)))
+    if _obs(engine):
+        # In GPS OBS the needle measures from the OBS course line
+        # (build_obs_course), not the plan's leg into the TO waypoint: that
+        # leg is still ahead, so it draws as one, and magenta stays the
+        # path being steered.
+        out = [(FUTURE, _LEG_WIDTH, style, ref) if color == ACTIVE
+               else (color, width, style, ref)
+               for color, width, style, ref in out]
     return out
 
 
@@ -808,7 +850,8 @@ class FlightPlanLayer(MapLayer):
         state, apr, crs = vals["FPLSTATE"], vals["FPLAPR"], vals["FPLCRS"]
         if crs is not None:
             # The desired track moves every cycle in flight and is drawn
-            # only as the extension past the MAP (build_extension).
+            # only as the extension past the MAP (build_extension) and the
+            # GPS OBS course line (build_obs_course).
             if _extension_drawn(state and state[0], apr and apr[0]):
                 try:
                     crs = (round(float(crs[0]), 1),) + crs[1:]
@@ -956,6 +999,14 @@ class FlightPlanLayer(MapLayer):
             p.setPen(pen)
             _draw_line(p, x, lonlat, a, b)
 
+        obs = build_obs_course(engine, self._bridge.magvar_or_none(),
+                               max(_OBS_LINE_NM, 1.5 * x.range_nm))
+        if obs is not None:
+            pen.setColor(ACTIVE)
+            pen.setWidthF(_ACTIVE_WIDTH)
+            p.setPen(pen)
+            _draw_line(p, x, lonlat, *obs)
+
         if not snap.loaded:
             if dto is not None and _off_route_direct(engine) and x.range_nm <= _SYMBOL_RANGE:
                 self._paint_symbols(p, x, [build_dto_symbol(route, engine, dto)],
@@ -1025,7 +1076,8 @@ class FlightPlanLayer(MapLayer):
         outputs, when one is active and on-route."""
         act_leg = int(_engine_val(engine, "FPLACTLEG", 0) or 0)
         fr = engine.get("FPLFRLAT")
-        if act_leg <= 0 or _off_route_direct(engine) or fr is None or fr.fail:
+        if act_leg <= 0 or _off_route_direct(engine) or _obs(engine) \
+                or fr is None or fr.fail:
             return []
         a = (fr.value or 0.0, _engine_val(engine, "FPLFRLON", 0.0) or 0.0)
         b = (_engine_val(engine, "WPLAT", 0.0) or 0.0, _engine_val(engine, "WPLON", 0.0) or 0.0)

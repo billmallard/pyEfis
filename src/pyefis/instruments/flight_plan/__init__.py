@@ -73,6 +73,7 @@ from pyefis.flightplan import airways as fp_airways
 from pyefis.flightplan import catalog as fp_catalog
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
+from pyefis.flightplan import hold as fp_hold
 from pyefis.flightplan import model as fp_model
 from pyefis.flightplan import plates as fp_plates
 from pyefis.flightplan import proc_load as fp_proc
@@ -94,8 +95,11 @@ KEYPAD_ROWS = ("ABCDEFG", "HIJKLMN", "OPQRSTU", "VWXYZ01", "23456789")
 KEYPAD_NUMERIC_ROWS = ("789", "456", "123", "0.-", "NSEW")
 KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
 
-_STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
+_STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP", 4: "OBS"}
 _STATE_SUSP = 3
+# GPS OBS (fix-gateway OBS2, pyEfis OBS3): a pilot course through the TO
+# waypoint, set by FPLCMD OBS <deg> and left by FPLCMD OBS OFF.
+_STATE_OBS = 4
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 # Expired procedure data (PA9): the data-status screen's expired amber.
 _EXPIRED_COLOR = "#ffb000"
@@ -175,6 +179,7 @@ _ROW_MENU_ITEMS = (
     ("Load Airway", "_row_menu_load_airway"),
     ("Activate Leg", "_row_menu_activate_leg"),
     ("Direct To", "_row_menu_direct_to"),
+    ("Hold...", "_row_menu_hold"),
     ("WPT Info", "_row_menu_wpt_info"),
     ("Set Role", None),
     ("Remove", "_row_menu_remove"),
@@ -207,8 +212,12 @@ _PROC_SEG_MENU_ITEMS = (
 _SEG_FIX_MENU_ITEMS = (
     ("Direct To", "_seg_fix_direct_to"),
     ("Activate Leg", "_seg_fix_activate_leg"),
+    ("Hold...", "_seg_fix_hold"),
     ("WPT Info", "_seg_fix_wpt_info"),
+    ("Remove Hold", "_seg_fix_remove_hold"),
 )
+# Menu items offered only where a hold can be built, or removed (HOLDFIX1).
+_HOLD_MENU_ATTRS = frozenset({"_row_menu_hold", "_seg_fix_hold"})
 
 # Every text size below is a fraction of some *height* (header/footer/row/box),
 # while the rects the text sits in are fractions of the *width*. In a pane
@@ -226,6 +235,9 @@ class FlightPlan(QWidget):
     # client thread on a live bus); a QTimer may only be started from the
     # thread it lives in, so the commit timer is armed through this signal.
     _arm_commit_timer = pyqtSignal()
+    # An OBS command's refusal text, re-emitted onto the GUI thread: the
+    # FPLCMDACK callback runs on the gateway client's thread.
+    _obs_refused = pyqtSignal(str)
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  font_percent=None):
@@ -342,6 +354,9 @@ class FlightPlan(QWidget):
         self._modal = None
         self._uwpt_new = None
         self._uwpt_edit = None
+        # Hold at a fix (HOLDFIX1, AER-6210): the clearance being entered,
+        # or None. See _open_hold_editor for the fields.
+        self._hold_edit = None
 
         self._waypoint_index = None
         self._waypoint_index_key = None
@@ -393,6 +408,8 @@ class FlightPlan(QWidget):
         self.scroll_hold_s = SCROLL_HOLD_S
         self._list_scroll = 0.0
         self._list_view = None
+        # The FPL message strip's rect as last painted (AER-6156), or None.
+        self._message_rect = None
         self._press = None
         self._last_pilot_scroll = None
         self._followed_active = None
@@ -436,6 +453,7 @@ class FlightPlan(QWidget):
         self._commit_timer.setSingleShot(True)
         self._commit_timer.timeout.connect(self._on_commit_timeout)
         self._arm_commit_timer.connect(self._start_commit_timer)
+        self._obs_refused.connect(self._show_obs_refusal)
 
         self._bridge = fp_fixbridge.FixBridge(fix)
         if self._bridge.available:
@@ -525,6 +543,7 @@ class FlightPlan(QWidget):
         self._modal = None
         self._uwpt_new = None
         self._uwpt_edit = None
+        self._hold_edit = None
         self._proc_picker = None
         self._close_entry()
         self._page = "fpl"
@@ -760,9 +779,23 @@ class FlightPlan(QWidget):
         return (int(self._engine_value("FPLSTATE", 0) or 0) == _STATE_SUSP
                 and int(self._engine_value("FPLSUSPMAP", 0) or 0) == 1)
 
+    def _in_hm_hold(self):
+        """Flying a hold the pilot ends (HOLDFIX1): the engine reports
+        FPLPHASE HOLD and the active slot is an ``HM``. RESUME there means
+        "exit at the next fix passage" (fix-gateway PA13); an ``HF`` or
+        ``HA`` hold ends by itself, so it offers no exit."""
+        if str(self._engine_value("FPLPHASE", "") or "") != "HOLD":
+            return False
+        act = int(self._engine_value("FPLACTLEG", 0) or 0)
+        wps = self._plan.waypoints
+        return 1 <= act <= len(wps) and wps[act - 1].pt == "HM"
+
     def _suspend_label(self):
-        """The menu's suspend/continue item. "Fly the missed" at the MAP
-        auto-suspend, "Resume" for any other suspend; both send RESUME."""
+        """The menu's suspend/continue item. "Exit hold" in an ``HM`` hold,
+        "Fly the missed" at the MAP auto-suspend, "Resume" for any other
+        suspend; all three send RESUME."""
+        if self._in_hm_hold():
+            return "Exit hold"
         if int(self._engine_value("FPLSTATE", 0) or 0) != _STATE_SUSP:
             return "Suspend"
         return "Fly the missed" if self._suspended_at_map() else "Resume"
@@ -1486,6 +1519,215 @@ class FlightPlan(QWidget):
         self._seg_fix_menu = None
         self._open_wpt_info(self._plan.waypoints[i])
 
+    def _seg_fix_hold(self):
+        i = self._seg_fix_menu
+        self._seg_fix_menu = None
+        self._seg_fixes = None
+        self._open_hold_editor(i)
+
+    def _seg_fix_remove_hold(self):
+        i = self._seg_fix_menu
+        self._seg_fix_menu = None
+        self._seg_fixes = None
+        try:
+            self._plan.remove_hold(i)
+        except fp_model.FlightPlanError as e:
+            self._message = str(e)
+            self.update()
+            return
+        self._plan_dirty = True
+        self._commit()
+
+    def _menu_item_offered(self, attr, i):
+        """Whether a fix menu shows *attr* for flat waypoint *i*: Hold...
+        where a hold can be built, Remove Hold on a hold the pilot built
+        (a coded one goes with its procedure)."""
+        if attr in _HOLD_MENU_ATTRS:
+            return fp_hold.can_hold_at(self._plan, i)
+        if attr == "_seg_fix_remove_hold":
+            return fp_hold.is_pilot_hold(self._plan.waypoints[i])
+        return True
+
+    # -- FPL page: hold at a fix (HOLDFIX1, AER-6210) ---------------------------
+    def _row_menu_hold(self):
+        i = self._row_menu_index
+        self._close_row_menu()
+        self._open_hold_editor(i)
+
+    def _hold_speed(self):
+        """The speed a leg in minutes is flown at: ``hold_speed_kt``, or
+        proc_load's default when the option is not a usable speed."""
+        try:
+            speed = float(self.hold_speed_kt)
+        except (TypeError, ValueError):
+            return fp_proc.HOLD_SPEED_KT
+        if not math.isfinite(speed) or speed <= 0:
+            return fp_proc.HOLD_SPEED_KT
+        return speed
+
+    def _aircraft_altitude(self):
+        """``ALT`` in ft, or None when it is missing, failed or old."""
+        try:
+            item = fix.db.get_item("ALT")
+        except KeyError:
+            return None
+        if item.fail or item.old:
+            return None
+        try:
+            return float(item.value)
+        except (TypeError, ValueError):
+            return None
+
+    def _open_hold_editor(self, i):
+        """The hold clearance for flat waypoint *i*, prefilled the way a
+        pilot holds as they arrive: inbound on the course of the leg into
+        the fix, the pattern on the far side, right turns, and the AIM leg
+        time for the present altitude. With no leg into the fix, the
+        pattern lies north on the 360 radial until the pilot says
+        otherwise.
+
+        Fields: ``index`` and ``fix`` (the slot and its ident), ``direction``
+        (a compass point), ``ref`` (``radial`` or ``inbound``, what
+        ``course`` is), ``typed`` (the pilot entered the course; until then
+        a new direction moves it), ``turn``, ``leg`` and ``unit``
+        (``MIN``/``NM``), and ``message`` (why Insert refused)."""
+        if not fp_hold.can_hold_at(self._plan, i):
+            self._message = "NO HOLD HERE"
+            self.update()
+            return
+        var = self._bridge.magvar_or_none() if self._bridge.available else None
+        crs = fp_hold.arrival_course(self._plan, i, 0.0 if var is None else var,
+                                     self._valid_aircraft_position())
+        if crs is None:
+            direction, ref, course = "N", "radial", fp_hold.DIRECTION_BEARING["N"]
+        else:
+            direction = fp_hold.nearest_direction(crs + 180.0)
+            ref, course = "inbound", crs
+        self._hold_edit = {
+            "index": i, "fix": self._plan.waypoints[i].id, "direction": direction,
+            "ref": ref, "course": course, "typed": False, "turn": fp_hold.DEFAULT_TURN,
+            "leg": fp_hold.default_leg_minutes(self._aircraft_altitude()), "unit": "MIN",
+            "message": "",
+        }
+        self.update()
+
+    def _close_hold_editor(self):
+        self._hold_edit = None
+        self._modal = None
+        self.update()
+
+    def _hold_set_direction(self, direction):
+        e = self._hold_edit
+        e["direction"] = direction
+        if not e["typed"]:
+            radial = fp_hold.DIRECTION_BEARING[direction]
+            e["course"] = radial if e["ref"] == "radial" else fp_hold.norm_course(radial + 180.0)
+        e["message"] = ""
+        self.update()
+
+    def _hold_toggle_ref(self):
+        """Radial <-> inbound course. The number shown becomes its
+        reciprocal, so the hold described does not change until the pilot
+        types a new one."""
+        e = self._hold_edit
+        e["ref"] = "inbound" if e["ref"] == "radial" else "radial"
+        e["course"] = fp_hold.norm_course(e["course"] + 180.0)
+        e["message"] = ""
+        self.update()
+
+    def _hold_edit_course(self):
+        title = "RADIAL" if self._hold_edit["ref"] == "radial" else "INBOUND COURSE"
+        self._modal_open(title, "", True, 3, self._hold_course_entered)
+
+    def _hold_course_entered(self, value):
+        e = self._hold_edit
+        if e is None:
+            return
+        try:
+            course = float(value)
+        except (TypeError, ValueError):
+            course = -1.0
+        if not 0.0 <= course <= 360.0:
+            e["message"] = "BAD COURSE"
+        else:
+            e["course"] = fp_hold.norm_course(course)
+            e["typed"] = True
+            e["message"] = ""
+        self.update()
+
+    def _hold_set_turn(self, turn):
+        self._hold_edit["turn"] = turn
+        self.update()
+
+    def _hold_edit_leg(self):
+        self._modal_open(f"LEG ({self._hold_edit['unit']})", "", True, 4,
+                         self._hold_leg_entered)
+
+    def _hold_leg_entered(self, value):
+        e = self._hold_edit
+        if e is None:
+            return
+        try:
+            leg = float(value)
+        except (TypeError, ValueError):
+            leg = 0.0
+        if not (math.isfinite(leg) and leg > 0.0):
+            e["message"] = "BAD LEG"
+        else:
+            e["leg"] = leg
+            e["message"] = ""
+        self.update()
+
+    def _hold_toggle_unit(self):
+        """Minutes <-> miles, converted at the hold speed so the leg does
+        not change until the pilot types a new one."""
+        e = self._hold_edit
+        speed = self._hold_speed()
+        if e["unit"] == "MIN":
+            e["unit"], e["leg"] = "NM", fp_hold.minutes_to_nm(e["leg"], speed)
+        else:
+            e["unit"], e["leg"] = "MIN", round(e["leg"] * 60.0 / speed, 1)
+        e["message"] = ""
+        self.update()
+
+    def _hold_resolve(self):
+        """``(waypoint, None)`` for the clearance as entered, or
+        ``(None, reason)``."""
+        e = self._hold_edit
+        try:
+            if e["ref"] == "radial":
+                inbound = fp_hold.inbound_course(e["direction"], radial=e["course"])
+            else:
+                inbound = fp_hold.inbound_course(e["direction"], inbound=e["course"])
+            dst = fp_hold.leg_nm(e["leg"], e["unit"], self._hold_speed())
+            wp = fp_hold.hold_waypoint(self._plan.waypoints[e["index"]], inbound,
+                                       e["turn"], dst)
+        except (fp_hold.HoldError, IndexError) as ex:
+            return None, str(ex)
+        return wp, None
+
+    def _hold_insert(self):
+        """Insert the hold slot after its fix and commit. The engine keeps
+        the active leg through the commit (HOLDFIX0, fix-gateway #223)."""
+        e = self._hold_edit
+        if e is None:
+            return
+        wp, error = self._hold_resolve()
+        if wp is None:
+            e["message"] = error
+            self.update()
+            return
+        try:
+            self._plan.insert_hold(e["index"], wp)
+        except fp_model.FlightPlanError as ex:
+            e["message"] = str(ex)
+            self.update()
+            return
+        self._hold_edit = None
+        self._message = f"HOLD AT {wp.id}"
+        self._plan_dirty = True
+        self._commit()
+
     # -- FPL page: footer / menu ---------------------------------------------
     def _footer_add(self):
         self._open_entry({"kind": "append", "index": None})
@@ -1567,8 +1809,42 @@ class FlightPlan(QWidget):
     def _menu_suspend_resume(self):
         if self._bridge.available:
             state = int(self._engine_value("FPLSTATE", 0) or 0)
-            self._bridge.command("RESUME" if state == _STATE_SUSP else "SUSP")
+            resume = state == _STATE_SUSP or self._in_hm_hold()
+            self._bridge.command("RESUME" if resume else "SUSP")
         self._menu_open = False
+        self.update()
+
+    def _obs_label(self):
+        """The menu's OBS item: "OBS" to enter GPS OBS, "OBS Off" while the
+        engine is in it (FPLSTATE = 4)."""
+        state = int(self._engine_value("FPLSTATE", 0) or 0)
+        return "OBS Off" if state == _STATE_OBS else "OBS"
+
+    def _menu_obs(self):
+        """Enter GPS OBS on the current desired track (FPLCRS), so the
+        needle does not move until the pilot turns CRS; or leave it. The
+        engine decides whether OBS is possible here, and a refusal shows
+        its FPLMSG text."""
+        if self._bridge.available:
+            state = int(self._engine_value("FPLSTATE", 0) or 0)
+            if state == _STATE_OBS:
+                arg = "OFF"
+            else:
+                try:
+                    arg = "%d" % (int(round(float(self._engine_value("FPLCRS", 0.0) or 0.0))) % 360)
+                except (TypeError, ValueError):
+                    arg = "0"
+            self._bridge.command("OBS", arg, on_ack=self._on_obs_ack)
+        self._menu_open = False
+        self.update()
+
+    def _on_obs_ack(self, _seq, ok, msg):
+        if not ok:
+            self._obs_refused.emit(str(msg or ""))
+
+    @pyqtSlot(str)
+    def _show_obs_refusal(self, msg):
+        self._message = fp_refusal.plain_reason(msg) or "OBS REFUSED"
         self.update()
 
     def _menu_cdi_scale(self):
@@ -2568,6 +2844,7 @@ class FlightPlan(QWidget):
                 self._dto_target is not None, self._seg_menu, self._seg_fixes,
                 self._seg_fix_menu, None if self._proc is None else self._proc["kind"],
                 self._proc_picker, self._act_confirm is not None,
+                self._hold_edit is not None,
                 None if self._charts is None else (self._charts["airport"],
                                                    self._charts["plate"]))
 
@@ -2672,6 +2949,8 @@ class FlightPlan(QWidget):
         """Returns False when there is nothing left to back out of."""
         if self._modal is not None:
             self._modal_do_cancel()
+        elif self._hold_edit is not None:
+            self._close_hold_editor()
         elif self._entry_dupe_choices:
             self._cancel_dupe_chooser()
         elif self._act_confirm is not None:
@@ -2765,8 +3044,15 @@ class FlightPlan(QWidget):
     def mousePressEvent(self, event):
         # Any tap dismisses the toast; a callback that raises a new one below
         # sets it again (and restarts the timer).
-        self._clear_toast()
         x, y = event.position().x(), event.position().y()
+        on_message = (bool(self._message) and self._message_rect is not None
+                      and self._message_rect.contains(x, y))
+        self._clear_toast()
+        if on_message:
+            # The FPL message strip covers the bottom list row: a tap on it
+            # only dismisses it, never selects the row hidden under it.
+            event.accept()
+            return
         flinging = self._fling_timer.isActive()
         self._stop_fling()
         if self._hit(x, y) is None and self._plate_drag_start(x, y):
@@ -3068,6 +3354,7 @@ class FlightPlan(QWidget):
         self._tap_kinds = []
         self._list_view = None
         self._plate_view = None
+        self._message_rect = None
         self._enc_layer_start = 0
         self._enc_field = None
         p = QPainter(self if device is None else device)
@@ -3131,7 +3418,8 @@ class FlightPlan(QWidget):
                         or self._menu_open or self._seg_fixes is not None
                         or self._wpt_info is not None or self._seg_fix_menu is not None
                         or self._airway_picker is not None
-                        or self._act_confirm is not None)
+                        or self._act_confirm is not None
+                        or self._hold_edit is not None)
         if overlay_open:
             # The list under an overlay neither scrolls nor takes a press.
             self._list_view = None
@@ -3165,9 +3453,142 @@ class FlightPlan(QWidget):
             self._paint_airway_picker(p, w, h)
         elif self._act_confirm is not None:
             self._paint_act_confirm(p, w, h)
+        elif self._hold_edit is not None:
+            self._paint_hold_editor(p, w, h)
+            if self._modal is not None:
+                self._paint_modal(p, w, h)
 
         if self._message:
-            self._paint_toast(p, w, h, self._message)
+            # Above the soft keys and any alert strip, never on the header
+            # (AER-6156): drawn over the bottom of the list while it is up.
+            self._paint_message_strip(p, w, h - footer_h - banner_h - refusal_h,
+                                      footer_h, self._message)
+
+    def _paint_message_strip(self, p, w, bottom, strip_h, text):
+        """An FPL-page message (STORED, ROUTE FULL, an OBS refusal) in a
+        strip above the soft keys, where the refused-commit banner sits, so
+        every answer to a press shows in one place (AER-6156; Bill chose the
+        place). It was drawn at pane fractions over the header, which is
+        physical, so on a short pane it printed over the LEG/DIRECT badge.
+        Text too long for two lines at the banner's size steps down."""
+        top = bottom - strip_h
+        rect = QRectF(1, top, w - 2, strip_h - 1)
+        self._message_rect = rect
+        p.setBrush(QBrush(QColor("#302c00")))
+        p.setPen(QPen(QColor("#ffff00"), 2))
+        p.drawRect(rect)
+        text_rect = QRectF(8, top, w - 16, strip_h)
+        flags = (Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap)
+        f = QFont(self.font_family)
+        size = self._px(int(strip_h * 0.40), 9)
+        while True:
+            f.setPixelSize(size)
+            p.setFont(f)
+            fits = p.boundingRect(text_rect, int(flags.value), text).height() <= strip_h
+            if fits or size <= 9:
+                break
+            size -= 1
+        p.drawText(text_rect, flags, text)
+
+    def _hold_summary(self):
+        """``(text, colour)``: the hold as it will be flown, or why it
+        cannot be."""
+        e = self._hold_edit
+        if e["message"]:
+            return e["message"], "#ff4040"
+        wp, error = self._hold_resolve()
+        if wp is None:
+            return error, "#ff4040"
+        leg = f"{wp.dst:g} NM"
+        if e["unit"] == "MIN":
+            leg = f"{e['leg']:g} MIN = {leg}"
+        return f"INBOUND {fp_hold.course_text(wp.crs)}  {wp.turn} TURNS  {leg}", "#ffffff"
+
+    def _paint_hold_editor(self, p, w, h):
+        """The hold clearance, in the order ATC gives it: the side of the
+        fix (a compass rose around it), the radial or inbound course, the
+        turns and the leg. Every field is a tap; the line above Insert says
+        what will be flown."""
+        self._paint_overlay_backdrop(p, w, h)
+        e = self._hold_edit
+        box_w = w * 0.9
+        box_x = (w - box_w) / 2
+        rows = 9
+        row_h = max(1.0, min(self._row_h_cap(), h * 0.84 / rows))
+        box_h = row_h * rows
+        box_y = (h - box_h) / 2
+        p.setBrush(QBrush(QColor("#202020")))
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawRect(QRectF(box_x, box_y, box_w, box_h))
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(row_h * 0.4), 10))
+        p.setFont(f)
+        label_w = box_w * 0.3
+        pad = 4.0
+
+        def button(x, y, bw, text, on, selected=False, color="#00ffff"):
+            rect = QRectF(x + pad, y + pad, bw - 2 * pad, row_h - 2 * pad)
+            p.setBrush(QBrush(QColor("#00ffff" if selected else "#202020")))
+            p.setPen(QPen(QColor("#00ffff" if selected else "#555555")))
+            p.drawRect(rect)
+            p.setPen(QPen(QColor("#000000" if selected else color)))
+            p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            self._tap(rect.x(), rect.y(), rect.width(), rect.height(), on, "row")
+
+        def label(y, text):
+            p.setPen(QPen(QColor("#9a9a9a")))
+            p.drawText(QRectF(box_x + 10, y, label_w - 10, row_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+
+        y = box_y
+        p.setPen(QPen(QColor("#ffffff")))
+        p.drawText(QRectF(box_x, y, box_w, row_h), Qt.AlignmentFlag.AlignCenter,
+                   f"HOLD AT {e['fix']}")
+        y += row_h
+
+        # The side of the fix: a 3 x 3 rose with the fix in the middle.
+        label(y + row_h, "SIDE")
+        cell_w = (box_w - label_w) / 3
+        rose = (("NW", "N", "NE"), ("W", None, "E"), ("SW", "S", "SE"))
+        for names in rose:
+            for c, name in enumerate(names):
+                x = box_x + label_w + c * cell_w
+                if name is None:
+                    p.setPen(QPen(QColor("#ffffff")))
+                    p.drawText(QRectF(x, y, cell_w, row_h), Qt.AlignmentFlag.AlignCenter,
+                               e["fix"])
+                    continue
+                button(x, y, cell_w, name, (lambda d=name: self._hold_set_direction(d)),
+                       selected=name == e["direction"])
+            y += row_h
+
+        half = (box_w - label_w) / 2
+        button(box_x, y, label_w, "RADIAL" if e["ref"] == "radial" else "INBOUND",
+               self._hold_toggle_ref, color="#ffffff")
+        button(box_x + label_w, y, box_w - label_w, fp_hold.course_text(e["course"]),
+               self._hold_edit_course)
+        y += row_h
+
+        label(y, "TURNS")
+        for n, turn in enumerate(fp_hold.TURNS):
+            button(box_x + label_w + n * half, y, half, "LEFT" if turn == "L" else "RIGHT",
+                   (lambda t=turn: self._hold_set_turn(t)), selected=turn == e["turn"])
+        y += row_h
+
+        label(y, "LEG")
+        button(box_x + label_w, y, half, f"{e['leg']:g}", self._hold_edit_leg)
+        button(box_x + label_w + half, y, half, e["unit"], self._hold_toggle_unit,
+               color="#ffffff")
+        y += row_h
+
+        text, color = self._hold_summary()
+        p.setPen(QPen(QColor(color)))
+        p.drawText(QRectF(box_x + 6, y, box_w - 12, row_h), Qt.AlignmentFlag.AlignCenter, text)
+        y += row_h
+
+        button(box_x, y, box_w / 2, "Insert", self._hold_insert, color="#80ff80")
+        button(box_x + box_w / 2, y, box_w / 2, "Cancel", self._close_hold_editor,
+               color="#ff8080")
 
     def _paint_act_confirm(self, p, w, h):
         # A tap anywhere off the box is No: the soft keys under the dimmed
@@ -3490,6 +3911,8 @@ class FlightPlan(QWidget):
         role = ROLE_ABBREV.get(wp.role, "")
         if role:
             label = f"{label} {role}"
+        if wp.pt in fp_hold.HOLD_PTS:
+            label = f"{label} HOLD"
         p.drawText(QRectF(lx, y, w * 0.4 - lx, rh),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
         self._paint_row_columns(p, w, y, rh, cols,
@@ -3587,6 +4010,8 @@ class FlightPlan(QWidget):
         label = fp_proc.leg_label(wp)
         if ROLE_ABBREV.get(wp.role):
             label = f"{label} {ROLE_ABBREV[wp.role]}"
+        if fp_hold.is_pilot_hold(wp):
+            label = f"{label} HOLD"
         if role == "from":
             label = f"{label}  (from)"
         p.drawText(QRectF(lx + dx, y, w * 0.42 - lx - dx, rh),
@@ -3741,7 +4166,10 @@ class FlightPlan(QWidget):
             self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu_role")
             return
         items = []
+        i = self._row_menu_index
         for label, attr in _ROW_MENU_ITEMS:
+            if attr is not None and not self._menu_item_offered(attr, i):
+                continue
             items.append((label, self._open_role_menu if attr is None else getattr(self, attr)))
         self._paint_menu_list(p, w, h, items, self._close_row_menu, scroll_key="row_menu")
 
@@ -3780,7 +4208,8 @@ class FlightPlan(QWidget):
         # A leg that ends without a fix (a climb, a vector) has nowhere to go
         # direct to and nothing to look up.
         items = [(label, getattr(self, attr)) for label, attr in _SEG_FIX_MENU_ITEMS
-                 if wp.id or attr == "_seg_fix_activate_leg"]
+                 if (wp.id or attr == "_seg_fix_activate_leg")
+                 and self._menu_item_offered(attr, i)]
         self._paint_menu_list(p, w, h, items, self._close_seg_fix_menu,
                               scroll_key="seg_fix_menu", title=fp_proc.leg_label(wp))
 
@@ -3953,6 +4382,7 @@ class FlightPlan(QWidget):
             ("Store", self._menu_store),
             ("Clear", self._menu_clear_request),
             (susp_label, self._menu_suspend_resume),
+            (self._obs_label(), self._menu_obs),
             (f"CDI Scale ({self._cdi_scale_choice})", self._menu_cdi_scale),
             ("Delete", self._menu_delete_request),
         ]
