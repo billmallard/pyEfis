@@ -1,0 +1,4 @@
+pyefis=1050025 head=fd48221a branch=aer-6134/cert1f-numerals-follow-heading
+21:28:16.455 @rHEAD;90.0;00000 @rCOURSE;0.0;00010 @rCDI;0.0;00010 @rGSI;0.0;01000
+21:28:17 grabbed 4793718262fc
+21:28:17.839 @rHEAD;90.0;00000 @rCOURSE;0.0;00010

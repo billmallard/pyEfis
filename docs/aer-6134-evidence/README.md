@@ -11,6 +11,30 @@ HEAD is valid, whatever the nav state. A nav fault drops only its own symbols.
 Those symbols already have their own gates: `_course_valid()` for the course
 pointer, `_cdi_shown()` for the deviation bar, and the NAV and GS flags.
 
+## Bench: Beelink, the live PFD (`cert1f_job.sh`)
+
+`bench_hsi_sheet.png` crops the HSI from the two live frames and is upscaled 2x
+nearest-neighbour. The left frame is `dev` at `ea09204f`, the bench checkout.
+The right frame is the branch at `fd48221a`. Both frames come from the same
+panel, with HEAD valid (`00000`, fed at 090) and COURSE bad (`00010`, the
+bench's own state: no course source). `bench_*_info.txt` logs the flags read
+around each grab.
+
+- `dev`: MAG `090°`, CRS `---°`, NAV flag, and a ticked card with no numerals.
+  This is how the bench HSI has looked in every frame (#508).
+- Branch: the same, plus the numerals. The NAV flag stays up.
+
+`cert1f_job.sh` ran on the Beelink on 2026-11-21, after the DEMO6 soak hold
+ended. It grabbed the `dev` frame under the bench lock, then staged the branch
+with `bench-deploy.sh --ref ... --owner AVIONICS --issue AER-6134`. It grabbed
+the branch frame under the lock, then restored `dev` (`restore RC=0`).
+`cert1f_capture.sh` feeds the primary keys with CERT1b's `cert1_writer.py`
+(`docs/aer-5269-evidence/`). It leaves COURSE, CDI and GSI as the bench has
+them. Grabs are full-framebuffer `ffmpeg -f x11grab` captures, taken twice
+1 s apart; the second one is kept (`bench_*_live.png`). The LINK MON OFF
+banner in the `dev` frame belongs to a separate bench check and is not part of
+this change.
+
 ## The looks: offscreen widget renders with Beelink fonts (`render_hsi.py`)
 
 `looks_dev.png` (before) and `looks_branch.png` (after) share a layout. The top
