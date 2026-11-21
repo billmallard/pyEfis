@@ -65,6 +65,19 @@ CRS_EDIT_KEYS = {0: "NAV1CRS", 1: "NAV2CRS"}
 #: Bearing TO the station for each NAVSRC: what a push on CRS centres the CDI
 #: on (course = bearing to station gives a centred needle with TO).
 CRS_CENTRE_KEYS = {0: "VOR1BRG", 1: "VOR2BRG"}
+#: GPS OBS (OBS3, AER-6086). While the flight-plan engine is in OBS
+#: (FPLSTATE = 4, fix-gateway OBS2) and the CDI is on the internal plan, the
+#: CRS knob sets the OBS course by sending ``FPLCMD OBS <deg>``: there is no
+#: course key to write, the engine owns the course and publishes it back as
+#: FPLCRS. Outside OBS, CRS stays read-only on GPS (TK2).
+FPLSTATE_OBS = 4
+#: Shortest gap between two OBS commands, in milliseconds. A knob spin sends
+#: at most one command per gap, and the last value always goes out when the
+#: gap ends, so the engine ends on the course the readout shows.
+OBS_SEND_INTERVAL_MS = 250
+#: Bearing TO the active waypoint (magnetic, fix-gateway's compute from
+#: WPLAT/WPLON): what a push on CRS in OBS syncs the course to (G1000 p.62).
+OBS_CENTRE_KEY = "GPSBRG"
 
 
 class HSI(QGraphicsView):
@@ -251,6 +264,16 @@ class HSI(QGraphicsView):
         self._edit_pending = None   # the field a touch is asking to focus
         self._edit_item = None      # the FIX item the focused field writes
         self._edit_rects = {}       # field -> (box, marks rect, marks bounds)
+        # GPS OBS course edit (OBS3): the course the knob has reached, the
+        # last one sent, and the send-rate gate (OBS_SEND_INTERVAL_MS).
+        self._obs_edit = False
+        self._obs_value = None
+        self._obs_sent = None
+        self._obs_sent_at = None
+        self._obs_clock = time.monotonic
+        self._obs_timer = QTimer(self)
+        self._obs_timer.setSingleShot(True)
+        self._obs_timer.timeout.connect(self._obs_flush)
 
         # GPS ground track (TRACK) + ground speed (GS) for the track diamond.
         # Subscribe always (the marker is drawn only when enabled); guarded so a
@@ -344,6 +367,24 @@ class HSI(QGraphicsView):
             self.cdivdb.valueChanged[float].connect(self.setCdiv)
         except Exception:
             self.cdivdb = None
+        # Flight-plan engine state (FPLSTATE, 4 = OBS) and the GPS guidance
+        # source (GPSSRC, 0 = internal plan): together they say whether the
+        # CRS knob sets a GPS OBS course (OBS3). Defensive; absent FPLSTATE
+        # (an older gateway) -> CRS stays read-only on GPS, as before.
+        self._fplstate = None
+        try:
+            self.fplstatedb = fix.db.get_item("FPLSTATE")
+            self._fplstate = self.fplstatedb.value
+            self.fplstatedb.valueChanged[self.fplstatedb.dtype].connect(self.setFplstate)
+        except Exception:
+            self.fplstatedb = None
+        self._gpssrc = None
+        try:
+            self.gpssrcdb = fix.db.get_item("GPSSRC")
+            self._gpssrc = self.gpssrcdb.value
+            self.gpssrcdb.valueChanged[self.gpssrcdb.dtype].connect(self.setGpssrc)
+        except Exception:
+            self.gpssrcdb = None
         # VOR TO/FROM for the selected source (TOFROM: 0=off/flag, 1=TO, 2=FROM).
         # Drawn as a triangle on the course line; hidden when 0 (LOC/GPS or no
         # signal). Defensive; absent -> not shown.
@@ -1808,6 +1849,27 @@ class HSI(QGraphicsView):
             if self.isVisible():
                 self.update()
 
+    def setFplstate(self, value):
+        if value != self._fplstate:
+            self._fplstate = value
+            self._end_obs_edit_if_gone()
+            if self.isVisible():
+                self.update()
+
+    def setGpssrc(self, value):
+        if value != self._gpssrc:
+            self._gpssrc = value
+            self._end_obs_edit_if_gone()
+            if self.isVisible():
+                self.update()
+
+    def _end_obs_edit_if_gone(self):
+        # OBS ended (OBS OFF, an ACT/DTO, the source moved to the external
+        # navigator): the knob has no OBS course to set, so the edit ends
+        # rather than turning a readout that no longer answers it.
+        if self._edit_field == "crs" and self._obs_edit and not self._gps_obs():
+            self._release_edit_focus()
+
     def setNavtype(self, value):
         if value != self._navtype:
             self._navtype = value
@@ -2499,9 +2561,26 @@ class HSI(QGraphicsView):
         except (TypeError, ValueError):
             return None
 
+    def _gps_obs(self):
+        """True when the CRS knob sets a GPS OBS course (OBS3): the CDI is
+        on GPS, GPS guidance is the internal plan (GPSSRC 0, or no GPSSRC),
+        and the engine says it is in OBS (FPLSTATE = 4). Read from the
+        engine's state only; with no FPLSTATE key this is never true."""
+        if self._navsrc_index() != 2 or self._fplstate is None:
+            return False
+        try:
+            if int(self._fplstate) != FPLSTATE_OBS:
+                return False
+            if self._gpssrc is not None and int(round(self._gpssrc)) != 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+        return self._fix_item("FPLCMD") is not None
+
     def _edit_key(self, field):
         """The FIX key a readout writes, or None when it is not editable now:
-        CRS has no key on a GPS source (or with no NAVSRC)."""
+        CRS has no key on a GPS source (or with no NAVSRC). In GPS OBS it
+        has none either -- it sends commands (_gps_obs)."""
         if field == "hdg":
             return "HEADBUG" if self.hdgbugdb is not None else None
         if field == "crs":
@@ -2511,12 +2590,16 @@ class HSI(QGraphicsView):
     def _field_editable(self, field):
         if not getattr(self, "touch_edit", False):
             return False
+        if field == "crs" and self._gps_obs():
+            return True
         return self._fix_item(self._edit_key(field)) is not None
 
     def _crs_display(self):
         """The course the CRS readout shows. While CRS is being edited that is
         the edited key itself: COURSE only follows it after fix-gateway's
         select runs, and the knob has to answer at once."""
+        if self._edit_field == "crs" and self._obs_edit:
+            return self._obs_value
         if self._edit_field == "crs" and self._edit_item is not None:
             return self._edit_item.value
         if not self._course_valid():
@@ -2591,12 +2674,28 @@ class HSI(QGraphicsView):
         if not self._field_editable(field):
             return False
         self._edit_field = field
-        self._edit_item = self._fix_item(self._edit_key(field))
+        if field == "crs" and self._gps_obs():
+            # The knob starts from the course the readout shows: the
+            # engine's OBS course, through GPSCRS -> COURSE.
+            self._edit_item = None
+            self._obs_edit = True
+            try:
+                self._obs_value = int(round(float(self._courseSelect or 0.0))) % 360
+            except (TypeError, ValueError):
+                self._obs_value = 0
+            self._obs_sent = self._obs_value
+        else:
+            self._edit_item = self._fix_item(self._edit_key(field))
         self.update()
         return True
 
     def enc_highlight(self, onoff):
         if not onoff:
+            if self._obs_edit:
+                # A timeout or a tap away ends the edit on the last value
+                # turned to, not on whatever the rate gate let through.
+                self._obs_flush()
+                self._obs_edit = False
             self._edit_field = None
             self._edit_item = None
             self.update()
@@ -2608,6 +2707,9 @@ class HSI(QGraphicsView):
         return self._edit_step(steps * EDIT_COARSE_DEG)
 
     def _edit_step(self, delta):
+        if self._edit_field == "crs" and self._obs_edit:
+            self._obs_send((int(self._obs_value or 0) + int(delta)) % 360)
+            return True
         item = self._edit_item
         if self._edit_field is None or item is None:
             return False
@@ -2637,6 +2739,12 @@ class HSI(QGraphicsView):
                 return False
             self._write_edit(int(round(float(self._heading or 0.0))) % 360)
             return True
+        if self._edit_field == "crs" and self._obs_edit:
+            brg = self._obs_bearing()
+            if brg is None:
+                return False
+            self._obs_send(int(round(brg)) % 360)
+            return True
         if self._edit_field == "crs":
             brg = self._station_bearing()
             if brg is None:
@@ -2644,6 +2752,67 @@ class HSI(QGraphicsView):
             self._write_edit(int(round(brg)) % 360)
             return True
         return False
+
+    def _obs_send(self, value):
+        """Turn the OBS course to *value*: the readout follows at once, and
+        ``FPLCMD OBS <value>`` goes out now or, inside
+        OBS_SEND_INTERVAL_MS of the last one, when that gap ends."""
+        self._obs_value = value
+        self.update()
+        now = self._obs_clock()
+        gap = OBS_SEND_INTERVAL_MS / 1000.0
+        if self._obs_sent_at is None or now - self._obs_sent_at >= gap:
+            self._obs_flush()
+        elif not self._obs_timer.isActive():
+            wait = gap - (now - self._obs_sent_at)
+            self._obs_timer.start(max(1, int(math.ceil(wait * 1000.0))))
+
+    def _obs_flush(self):
+        """Send the course the knob has reached, if it is not the one last
+        sent. Nothing goes out once the engine has left OBS: a late command
+        would put it back in."""
+        self._obs_timer.stop()
+        value = self._obs_value
+        if value is None or value == self._obs_sent or not self._gps_obs():
+            return
+        if self._send_fpl_command("OBS %d" % value):
+            self._obs_sent = value
+            self._obs_sent_at = self._obs_clock()
+
+    def _send_fpl_command(self, text):
+        """Write ``FPLCMD = "<seq> <text>"`` straight to the bus. The HSI is
+        primary-flight core and may not import the flight-plan package (rule
+        R1, docs/safety/core_modules.yaml), so it keeps FixBridge's seq rule
+        here: one past the highest seq on the bus, the last FPLCMD or the
+        last FPLCMDACK, so this writer and the page's bridges never repeat
+        each other's seq. A test holds the two rules together. False when
+        the gateway does not define the command keys."""
+        cmd = self._fix_item("FPLCMD")
+        ack = self._fix_item("FPLCMDACK")
+        if cmd is None or ack is None:
+            return False
+        try:
+            last = int(str(cmd.value or "").split()[0])
+        except (IndexError, ValueError):
+            last = 0
+        try:
+            last = max(last, abs(int(ack.value or 0)))
+        except (TypeError, ValueError):
+            pass
+        cmd.value = "%d %s" % (last + 1, text)
+        cmd.output_value()
+        return True
+
+    def _obs_bearing(self):
+        """Bearing TO the active waypoint (GPSBRG), or None when there is
+        none valid to sync to."""
+        item = self._fix_item(OBS_CENTRE_KEY)
+        if item is None or item.old or item.bad or item.fail:
+            return None
+        try:
+            return float(item.value)
+        except (TypeError, ValueError):
+            return None
 
     def _station_bearing(self):
         """Bearing TO the selected VOR (VOR1BRG / VOR2BRG), or None when there

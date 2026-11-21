@@ -69,6 +69,9 @@ subscriptions):
 | `HEADBUG` | selected-heading bug (cyan); HDG readout; **written** by the HDG knob edit | `heading_bug_enabled`; edit: `touch_edit` |
 | `NAV1CRS` / `NAV2CRS` | **written** by the CRS knob edit, per `NAVSRC` (never `COURSE`) | `touch_edit` |
 | `VOR1BRG` / `VOR2BRG` | read on CRS push, to centre the CDI | `touch_edit` |
+| `FPLSTATE` / `GPSSRC` | GPS OBS gate (OBS3): CRS on GPS is editable only at `FPLSTATE` = 4 with `GPSSRC` = 0 (or absent) | `touch_edit` |
+| `FPLCMD` | **written** by the CRS knob in GPS OBS: `OBS <deg>`, at most one per 250 ms, ending on the last value | `touch_edit` |
+| `GPSBRG` | read on CRS push in GPS OBS: the course syncs to the bearing to the TO waypoint | `touch_edit` |
 | `TRACK` + `GS` | GPS ground-track diamond (magenta) | `track_indicator_enabled`, gated by `track_min_speed` |
 | `ROT` | turn-rate trend arc (magenta) from the lubber line, 6 s of turn | `turn_rate_enabled`; hidden when `ROT` is old/bad/fail |
 
@@ -633,7 +636,12 @@ panel).
 `touch_edit` option (editor: "Touch to set HDG / CRS", on by default) makes the
 HDG readout set `HEADBUG` and the CRS readout set `NAV1CRS` / `NAV2CRS` for the
 selected VLOC source. CRS is not editable on GPS, and `COURSE` is never written,
-because it is the NAVSRC `select` output. Inner ring 1 deg, outer ring 10 deg,
+because it is the NAVSRC `select` output. The one exception is GPS OBS (OBS3,
+AER-6086): while the engine reports `FPLSTATE` = 4 and `GPSSRC` selects the
+internal plan, the CRS knob sends `FPLCMD OBS <deg>` (at most one per 250 ms,
+always ending on the last value) and push syncs to `GPSBRG`, the bearing to
+the TO waypoint. The engine owns the OBS course and publishes it back as
+`FPLCRS`. Inner ring 1 deg, outer ring 10 deg,
 wrapping through 360, written as turned. Push syncs HDG to `HEAD` and centres
 the CDI on CRS by setting the course to `VOR1BRG` / `VOR2BRG`. The nav-source
 tab tap is unchanged. Full table: `docs/wiki/Widgets-Flight-Instruments.md`.
