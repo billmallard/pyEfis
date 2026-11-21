@@ -449,6 +449,20 @@ floating label already overlaps the panel at this ratio, just hidden underneath 
 (VLOC/VOR/LOC) against the WCAG 4.5:1 floor — text stays white per Bill's direction, so
 the fix, if any, is a darker fill, not the text colour.*
 
+**HSI-SRC-002 (SDRVOR3, AER-6245).** A supplemental NAV source is marked, so a needle
+from a non-certified receiver never reads as a certified radio's. The gateway's source
+plugin says so on `NAVSUPP` (1 = the selected NAV slot's receiver is supplemental; the
+fix-gateway `sdr_vor` plugin writes `NAV<n>SUPP` on its slot and compute selects it over
+`NAVSRC`). The HSI never infers it from a frequency or a config. With `NAVSUPP` = 1 on a
+NAV source (never on GPS), an amber `SUPP` (`helpers.SUSPECT_TAPE_COLOR`, the caution
+amber of HSI-COLOR-002) is drawn centred under the source annunciation: under the tab in
+`top_panel`, under the floating label in the other layouts, in the rose and the arc.
+The source label (`VOR2` / `LOC2`) and its colour are unchanged, and the mark does not
+drop on `NAVSUPP`'s quality flags. With `NAVSUPP` absent (an older gateway) or 0, the HSI
+is pixel-identical to before. *Status: implemented; the look is pending Bill's call on
+pyEfis PR (label, colour, placement).* Tests: `supplemental_only_when_navsupp_set_on_a_nav_source`,
+`supplemental_mark_pixels`, `supplemental_mark_in_arc`.
+
 ### 7.5 Deviation scaling (HSI-DEV)
 
 **HSI-DEV-001.** The CDI and GS needles are strictly normalized (±1.0); the navigation
@@ -541,7 +555,9 @@ will flip the run red the moment a flag is implemented, forcing removal of the m
 
 Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
 `quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;
-HSI-COLOR-001 → `source_auto_color`; HSI-SRC-001 → `source_label`, `source_label_tap_cycles_navsrc`.
+HSI-COLOR-001 → `source_auto_color`; HSI-SRC-001 → `source_label`, `source_label_tap_cycles_navsrc`;
+HSI-SRC-002 → `hsi_supplemental_only_when_navsupp_set_on_a_nav_source`, `hsi_supplemental_mark_pixels`,
+`hsi_supplemental_mark_in_arc`.
 
 Visual / on-target cases the unit suite can't cover (label `test-case`; record heading,
 source, expected appearance):
