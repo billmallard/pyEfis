@@ -6,7 +6,7 @@ one-line chip.
     [LEG] KSBA > GVO > RZS   12.4 NM  0:06  TERM  RNAV 2611  TURN R
 
 ``WPFROM`` -> ``WPNAME`` (the TO waypoint, active colour) -> ``WPNEXT``, a
-``FPLSTATE`` badge (LEG / DIRECT / SUSP, none while no plan is active),
+``FPLSTATE`` badge (LEG / DIRECT / SUSP / OBS, none while no plan is active),
 optional ``WPDIS`` / ``WPETE`` and the flight phase (``FPLPHASE``, green;
 yellow for ``LOI``). A missing ident is drawn as underscores. A tap fires the
 ``flightplan page fpl`` HMI action so the flight_plan instrument opens its FPL
@@ -46,8 +46,9 @@ from pyefis.flightplan import airac
 
 logger = logging.getLogger(__name__)
 
-# FPLSTATE (Appendix A): 0 NONE, 1 LEG, 2 DIRECT, 3 SUSP.
-STATE_LABELS = {1: "LEG", 2: "DIRECT", 3: "SUSP"}
+# FPLSTATE (Appendix A): 0 NONE, 1 LEG, 2 DIRECT, 3 SUSP, 4 OBS (fix-gateway
+# OBS2; an older gateway never publishes 4, so the chip is unchanged there).
+STATE_LABELS = {1: "LEG", 2: "DIRECT", 3: "SUSP", 4: "OBS"}
 
 NAV_KEYS = ("FPLSTATE", "FPLPHASE", "WPFROM", "WPNAME", "WPNEXT", "WPDIS",
             "WPETE")

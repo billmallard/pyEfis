@@ -5,10 +5,15 @@ When the fix-gateway flightplan engine refuses a route commit or a command it
 writes a short code to ``FPLMSG``: ``BADTURN RF RFFIX``, ``SEGENT S2 GVO``,
 ``NO POSITION``. The code list is the engine's (``engine.py``
 ``unsupported_leg_reason``, ``_tier2_data_reason``,
-``segment_integrity_reason`` and the ``_Reject`` reasons; fix-gateway
+``segment_integrity_reason``, ``_obs_refusal`` and the ``_Reject`` reasons; fix-gateway
 ``doc/flightplan_keys.md``, the ``FPLMSG`` row). A pilot should not need that
 list to know what to fix, so :func:`plain_reason` turns each code into a short
 reason that names the waypoint where the code carries one.
+
+Three codes are not refusals: an accepted commit that drops the active leg
+says why with ``ACTIVE LEG REMOVED``, ``CHANGED`` or ``AMBIGUOUS`` (HOLDFIX0),
+written after ``FPLLDSEQ``, so the FPL page never reads them as a refusal.
+They are here so that any surface showing ``FPLMSG`` has words for them.
 
 A code this module does not know -- an engine newer than this display -- is
 shown as it came, never as nothing. ``tests/flightplan/test_refusal.py`` reads
@@ -63,6 +68,37 @@ _COMMAND = {
     "NO POSITION": "NO GPS POSITION",
     "PARSE": "COMMAND NOT UNDERSTOOD",
 }
+
+# GPS OBS refusals (fix-gateway OBS2): the OBS command with no waypoint or
+# position, or on a leg OBS cannot hold, and SUSP/RESUME or OBS OFF in the
+# wrong mode. Whole messages, like the command rejections.
+_OBS = {
+    "OBS N/A NO WPT": "OBS NOT AVAILABLE: NO ACTIVE WAYPOINT",
+    "OBS N/A NO POSITION": "OBS NOT AVAILABLE: NO GPS POSITION",
+    "OBS N/A FINAL APPROACH": "OBS NOT AVAILABLE ON FINAL APPROACH",
+    "OBS N/A HOLD": "OBS NOT AVAILABLE IN A HOLD",
+    "OBS N/A PROC TURN": "OBS NOT AVAILABLE ON A PROCEDURE TURN",
+    "OBS N/A VECTORS": "OBS NOT AVAILABLE ON VECTORS",
+    # A CA, or an FA past its fix: a climb with no fix to hold.
+    "OBS N/A NO FIX": "OBS NOT AVAILABLE ON A CLIMB LEG",
+    "IN OBS": "NOT AVAILABLE IN OBS",
+    "NOT IN OBS": "OBS IS NOT ON",
+    # The gateway's database/flightplan.yaml predates OBS2 and cannot carry
+    # the OBS state. Refused on every leg; the pilot cannot fix it in flight.
+    "OBS N/A DATABASE": "OBS NOT AVAILABLE: GATEWAY CONFIG OUT OF DATE",
+}
+_COMMAND.update(_OBS)
+
+# An accepted commit that does not keep the active leg (fix-gateway HOLDFIX0):
+# the route loads and nothing is active. Not a refusal; whole messages.
+_ACTIVE_LEG = {
+    "ACTIVE LEG REMOVED": "ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE",
+    # The TO fix is still there, but after another FROM fix or on another path.
+    "ACTIVE LEG CHANGED": "ACTIVE LEG CHANGED: NO LEG ACTIVE",
+    # The active leg is in the new route more than once.
+    "ACTIVE LEG AMBIGUOUS": "ACTIVE LEG REPEATED IN PLAN: NO LEG ACTIVE",
+}
+_COMMAND.update(_ACTIVE_LEG)
 
 #: Every code :func:`plain_reason` has words for: the first word of a route
 #: refusal, or a whole command rejection.
