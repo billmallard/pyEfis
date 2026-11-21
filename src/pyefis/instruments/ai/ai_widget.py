@@ -26,9 +26,11 @@ import pyavtools.fix as fix
 from pyefis import common
 from pyefis.instruments import edit_focus, helpers
 from pyefis.instruments.helpers import bugs
-from pyefis.instruments.ai.svs import SVSRenderer, make_svs_item
-from pyefis.instruments.ai.pose import PoseSource
-from pyefis.instruments.ai.camera import terrain_horizontal_px
+# The SVS reaches this widget only through the background-renderer seam
+# (CERT12 brief R2b): this module imports no SVS code, so an AI with no
+# renderer loads none.
+from pyefis.instruments.ai import background
+from pyefis.instruments.ai.projection import terrain_horizontal_px
 
 log = logging.getLogger(__name__)
 
@@ -268,7 +270,9 @@ class AI(QGraphicsView):
         # burst patterns and bounds the main-thread CPU. Flag changes
         # (old/bad/fail) still repaint immediately — they are alerts.
         # ------------------------------------------------------------------
-        self._pose = PoseSource()
+        # The position interpolator comes with a background renderer
+        # (set_background_renderer); with none, nothing here uses position.
+        self._pose = None
         self._frame_dirty = True
         self._frame_last_pose = None
         self._frame_timer = QTimer(self)
@@ -364,15 +368,6 @@ class AI(QGraphicsView):
             self._fpm_fail[key] = _item.fail
             self._fpm_bad[key]  = _item.bad
             setattr(self, f'_fpm_{key.lower()}', _item.value)
-            self._pose.set_fail(key, _item.fail)
-
-        # Seed the pose source from the initial FIX values — the
-        # valueChanged signals for anything set before this widget
-        # was constructed have already fired and will not repeat
-        # until the value changes again.
-        self._pose.set_dynamics(gs_kt=self._fpm_gs,
-                                track_deg=self._fpm_track,
-                                vs_fpm=self._fpm_vs)
 
         # SVS position inputs: LAT, LONG, ALT (disabled by default; renderer
         # set via set_svs_config). Missing keys leave the SVS position at 0
@@ -380,7 +375,7 @@ class AI(QGraphicsView):
         self._svs_lat  = 0.0
         self._svs_lon  = 0.0
         self._svs_alt  = 0.0
-        self.svs: SVSRenderer | None = None
+        self.svs = None
         # AER-4243: position quality. A LAT/LONG that is old, bad or failed
         # removes the terrain (SVS UNAVAIL), the way a GL failure does --
         # terrain held at a frozen position while the aircraft flies on is
@@ -402,10 +397,6 @@ class AI(QGraphicsView):
                     getattr(_item, f"{flag}Changed")[bool].connect(
                         lambda s, k=key, f=flag: self._positionFlagChanged(k, f, s))
                     self._svs_pos_flags[key][flag] = getattr(_item, flag)
-        if self._svs_lat or self._svs_lon:
-            self._pose.set_position(self._svs_lat, self._svs_lon)
-        if self._svs_alt:
-            self._pose.set_altitude(self._svs_alt)
 
         # Magnetic variation. SVS does its geographic projection in
         # true-north coordinates, so it needs TRUE heading. HEAD is by
@@ -798,39 +789,51 @@ class AI(QGraphicsView):
         self.redraw()
 
     def set_svs_config(self, config: dict):
-        """Initialise the SVS renderer from a config dict (called by screenbuilder).
-
-        SVS is added to the QGraphicsScene as a low-Z item so the pitch
-        ladder and other scene items render on top of the terrain. Override
-        the default with ``z_value`` in the SVS config block.
+        """Plug the SVS in as this widget's background renderer, from its
+        config dict (called by the screenbuilder). The SVS module is
+        resolved by name through the seam (``background.create_renderer``),
+        so it loads only when a screen asks for it.
 
         The scene itself is built in ``resizeEvent``, so if this method runs
-        before the first resize we defer the attachment — ``resizeEvent``
-        re-runs ``_attach_svs_item_if_ready`` after rebuilding the scene.
+        before the first resize the attachment is deferred —
+        ``resizeEvent`` re-runs ``_attach_svs_item_if_ready``.
         """
-        # If we already had an SVS item, detach it from whatever scene held it
-        # so we can swap in a fresh renderer cleanly.
+        self.set_background_renderer(
+            background.create_renderer("svs", config),
+            z_value=float(config.get("z_value", 0.5)),
+            msaa_samples=int(config.get("msaa_samples", 2)),
+            frame_rate=config.get("frame_rate", 30.0))
+
+    def set_background_renderer(self, renderer, z_value=0.5,
+                                msaa_samples=2, frame_rate=30.0):
+        """Host *renderer* behind the symbology (the seam's interface is
+        documented in ``background.py``). It draws in this widget's paint
+        pass from a ``FramePose``; the widget owns the GL viewport it draws
+        into."""
+        # If we already had a renderer item, detach it from whatever scene
+        # held it so we can swap in a fresh renderer cleanly.
         if getattr(self, "_svs_item", None) is not None:
             old_scene = self._svs_item.scene()
             if old_scene is not None:
                 old_scene.removeItem(self._svs_item)
             self._svs_item = None
 
-        self.svs = SVSRenderer(config)
+        self.svs = renderer
         # Canonical renderer handle. The screenbuilder assigns YAML `options`
         # as raw attributes, so `self.svs` is frequently overwritten with the
         # `svs:` config DICT after this runs (see the note in paintEvent). Keep
         # a reference under a name that is NOT a YAML option key so code that
         # needs the live renderer (e.g. _svs_drawing) can always find it.
-        self._svs_renderer = self.svs
+        self._svs_renderer = renderer
+        self._attach_pose_source(renderer)
         # Z-order layers inside the AI scene:
         #   z =  1.0  — pitch ladder lines, numerals  (setZValue(1) in resizeEvent)
-        #   z =  0.5  — SVS terrain (this item, default)
+        #   z =  0.5  — background renderer (this item, default)
         #   z =  0.0  — sky_rect, land_rect (the static artificial horizon)
-        # So SVS covers the static blue/brown background but stays behind the
-        # pitch ladder. Configurable via the `z_value` SVS config key.
-        z = float(config.get("z_value", 0.5))
-        # GL viewport (P5): the SVS renders directly into the view's
+        # So the renderer covers the static blue/brown background but stays
+        # behind the pitch ladder. Configurable via the SVS `z_value` key.
+        #
+        # GL viewport (P5): the renderer draws directly into the view's
         # backing GL surface between begin/endNativePainting — no
         # offscreen FBO, no glReadPixels. The QPainter scene items
         # (pitch ladder, symbology) render through Qt's GL paint
@@ -846,34 +849,76 @@ class AI(QGraphicsView):
             # Default 2x: at panel sizes the visual difference from 4x is
             # marginal, but terrain fill cost roughly halves — measured
             # decisive for holding 30 Hz at metro worst-case poses.
-            samples = int(config.get("msaa_samples", 2))
-            if samples > 1:
+            if msaa_samples > 1:
                 fmt = QSurfaceFormat()
-                fmt.setSamples(samples)
+                fmt.setSamples(msaa_samples)
                 glw.setFormat(fmt)
             self.setViewport(glw)
             self.setViewportUpdateMode(
                 QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         # Display frame rate (P4): the AI frame clock's tick rate.
-        self.set_frame_rate(config.get("frame_rate", 30.0))
-        self._svs_z = z
-        self._svs_item = make_svs_item(self.svs, self)
-        self._svs_item.setZValue(z)
+        self.set_frame_rate(frame_rate)
+        self._svs_z = z_value
+        self._svs_item = self._make_background_item(renderer)
         self._attach_svs_item_if_ready()
 
+    def _attach_pose_source(self, renderer):
+        """Take the renderer's position interpolator, if it has one, and
+        seed it from the current FIX values — the valueChanged signals for
+        anything set before now have already fired and will not repeat
+        until the value changes again."""
+        make = getattr(renderer, "make_pose_source", None)
+        self._pose = make() if make is not None else None
+        if self._pose is None:
+            return
+        for key in ("GS", "TRACK", "VS"):
+            self._pose.set_fail(key, self._fpm_fail[key])
+        self._pose.set_dynamics(gs_kt=self._fpm_gs,
+                                track_deg=self._fpm_track,
+                                vs_fpm=self._fpm_vs)
+        if self._svs_lat or self._svs_lon:
+            self._pose.set_position(self._svs_lat, self._svs_lon)
+        if self._svs_alt:
+            self._pose.set_altitude(self._svs_alt)
+
+    def _make_background_item(self, renderer):
+        item = background.make_background_item(self, renderer)
+        item.setZValue(getattr(self, "_svs_z", 0.5))
+        return item
+
+    def frame_pose(self):
+        """The pose the background renderer draws the current frame for:
+        a value, so the renderer never reads this widget's state."""
+        vp = self.viewport()
+        offset_px = self._horizon_offset_px()
+        return background.FramePose(
+            width=vp.width(), height=vp.height(),
+            lat=self._svs_lat, lon=self._svs_lon, alt_ft=self._svs_alt,
+            pitch_deg=self._pitchAngle, roll_deg=self._rollAngle,
+            # The renderer projects in true-north coordinates, so subtract
+            # local magnetic variation from the magnetic HEAD. _magvar is 0
+            # when the FIX MAGVAR key isn't published -- the picture then
+            # sits with a constant rotation equal to local variation.
+            heading_true_deg=self._fpm_head - getattr(self, "_magvar", 0.0),
+            px_per_deg=getattr(self, "pixelsPerDeg",
+                               vp.height() / self.pitchDegreesShown),
+            device_pixel_ratio=vp.devicePixelRatioF(),
+            roll_pivot_px=offset_px,
+            lens_shift_px=offset_px,
+            position_valid=self._svs_position_valid())
+
     def _attach_svs_item_if_ready(self):
-        """Idempotently add the SVS scene item to the current scene.
-        ``resizeEvent`` rebuilds ``self.scene`` on every resize, so the item
-        has to be re-attached each time the scene changes. If the item's
-        C++ object was deleted with a destroyed scene, rebuild the thin
-        wrapper around the surviving SVSRenderer.
+        """Idempotently add the background renderer's scene item to the
+        current scene. ``resizeEvent`` rebuilds ``self.scene`` on every
+        resize, so the item has to be re-attached each time the scene
+        changes. If the item's C++ object was deleted with a destroyed
+        scene, rebuild the thin wrapper around the surviving renderer.
 
         Resolved clobber-safe (self.svs is often the YAML config DICT the
         screenbuilder overwrites it with — see the note in set_svs_config):
         rebuilding around that dict instead of the live renderer leaves the
-        item wrapping something whose ``.ready`` access raises inside
-        paint(), which Qt swallows, so every SVS layer silently stops
-        drawing after the next scene rebuild."""
+        item wrapping something with no ``paint_frame``, so every SVS layer
+        silently stops drawing after the next scene rebuild."""
         svs = self._live_svs()
         if svs is None:
             return
@@ -891,24 +936,21 @@ class AI(QGraphicsView):
                 return
             except RuntimeError:
                 pass  # wrapper points at a deleted C++ object — rebuild
-        self._svs_item = make_svs_item(svs, self)
-        self._svs_item.setZValue(getattr(self, "_svs_z", 0.5))
+        self._svs_item = self._make_background_item(svs)
         scene.addItem(self._svs_item)
 
     def _fpmValueChanged(self, key, value):
         setattr(self, f'_fpm_{key.lower()}', value)
         # Feed the dead-reckoning inputs; the frame clock repaints.
-        if key == "GS":
-            self._pose.set_dynamics(gs_kt=value)
-        elif key == "TRACK":
-            self._pose.set_dynamics(track_deg=value)
-        elif key == "VS":
-            self._pose.set_dynamics(vs_fpm=value)
+        dynamics = {"GS": "gs_kt", "TRACK": "track_deg", "VS": "vs_fpm"}
+        if self._pose is not None and key in dynamics:
+            self._pose.set_dynamics(**{dynamics[key]: value})
         self._frame_dirty = True
 
     def _fpmFailChanged(self, key, fail):
         self._fpm_fail[key] = fail
-        self._pose.set_fail(key, fail)
+        if self._pose is not None:
+            self._pose.set_fail(key, fail)
         if self.isVisible():
             self.update()
 
@@ -932,16 +974,21 @@ class AI(QGraphicsView):
 
     def _positionValueChanged(self, key, value):
         """GPS/baro position inputs: store raw and timestamp into the
-        pose source. The frame clock samples the interpolated pose."""
+        pose source, if a renderer brought one. The frame clock samples
+        the interpolated pose."""
+        pose = self._pose
         if key == "LAT":
             self._svs_lat = value
-            self._pose.set_position(value, self._svs_lon)
+            if pose is not None:
+                pose.set_position(value, self._svs_lon)
         elif key == "LONG":
             self._svs_lon = value
-            self._pose.set_position(self._svs_lat, value)
+            if pose is not None:
+                pose.set_position(self._svs_lat, value)
         elif key == "ALT":
             self._svs_alt = value
-            self._pose.set_altitude(value)
+            if pose is not None:
+                pose.set_altitude(value)
         self._frame_dirty = True
 
     def _positionFlagChanged(self, key, flag, state):
@@ -997,7 +1044,7 @@ class AI(QGraphicsView):
         parked aircraft costs near-zero CPU."""
         if not self.isVisible() or self.__dict__.get("scene") is None:
             return
-        sampled = self._pose.sample()
+        sampled = self._pose.sample() if self._pose is not None else None
         if sampled is not None:
             lat, lon, alt = sampled
             self._svs_lat = lat
