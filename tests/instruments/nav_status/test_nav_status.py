@@ -135,10 +135,26 @@ def test_synthetic_plan_idents_and_colours(chip, fix):
     assert not stale
 
 
-@pytest.mark.parametrize("state,label", [(1, "LEG"), (2, "DIRECT"), (3, "SUSP")])
+@pytest.mark.parametrize("state,label", [(1, "LEG"), (2, "DIRECT"), (3, "SUSP"),
+                                         (4, "OBS")])
 def test_badge_follows_fplstate(chip, fix, state, label):
     _leg(fix, state=state)
     assert chip.fields()[0] == label
+
+
+def test_obs_keeps_the_from_to_next_idents(chip, fix):
+    """GPS OBS (FPLSTATE = 4, OBS3) still has a TO waypoint: the chip shows
+    it, as for SUSP, rather than the no-active-leg underscores."""
+    _leg(fix, state=4)
+    _, runs, _, _ = chip.fields()
+    assert _texts(runs)[0::2] == ["KSBA", "GVO", "RZS"]
+
+
+@pytest.mark.parametrize("state", [0, 5, 9])
+def test_no_obs_badge_from_any_other_state(chip, fix, state):
+    """OBS is shown from FPLSTATE = 4 only; nothing else reads as OBS."""
+    _leg(fix, state=state)
+    assert chip.fields()[0] != "OBS"
 
 
 def test_colour_options_apply(chip, fix):
