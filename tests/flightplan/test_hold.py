@@ -222,3 +222,21 @@ def test_the_hold_survives_a_route_file_round_trip():
     again = model.FlightPlan.from_json(plan.to_json())
     assert again == plan
     assert (again.waypoints[2].pt, again.waypoints[2].crs) == ("HM", 310.0)
+
+
+def test_arrival_course_looks_past_the_junction_slot():
+    # Bench, AER-6210: FLOUT5 ends at VTU and V485 starts from VTU, so the
+    # airway's VTU follows a slot at the same point. The leg into VTU is
+    # the departure's, not a zero-length one (which read as "no leg").
+    flout = model.Waypoint(id="FLOUT", type="fix", lat=34.0, lon=-119.5)
+    vtu = model.Waypoint(id="VTU", type="vor", lat=34.1, lon=-119.0)
+    plan = model.FlightPlan(segments=[
+        model.Segment(kind="departure", ident="FLOUT5", legs=[flout, vtu.copy(flags=0x20)]),
+        model.Segment(kind="airway", ident="V485", legs=[vtu, C, D])])
+    back = geo.initial_bearing(vtu.lat, vtu.lon, flout.lat, flout.lon)
+    want = (back + 180.0 + 12.0) % 360.0
+    assert hold.arrival_course(plan, 2, magvar=12.0) == pytest.approx(want)
+    assert hold.arrival_course(plan, 1, magvar=12.0) == pytest.approx(want)
+    # A coded course on the departure's leg into VTU is used as coded.
+    plan.segments[0].legs[1] = vtu.copy(pt="CF", crs=86.5, flags=0x20)
+    assert hold.arrival_course(plan, 2, magvar=12.0) == 86.5
