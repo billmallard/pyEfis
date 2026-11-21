@@ -4000,6 +4000,18 @@ class FlightPlan(QWidget):
 
     _NEST_ROLE_TEXT = {"from": "from", "to": "", "next": ""}
 
+    @staticmethod
+    def _fix_label(wp):
+        """A fix inside a segment as its rows, sheet and menu title name it:
+        the leg label, the role, and HOLD on a hold the pilot built (HOLDFIX1),
+        so it never reads as the same fix listed twice."""
+        label = fp_proc.leg_label(wp)
+        if ROLE_ABBREV.get(wp.role):
+            label = f"{label} {ROLE_ABBREV[wp.role]}"
+        if fp_hold.is_pilot_hold(wp):
+            label = f"{label} HOLD"
+        return label
+
     def _paint_nested_fix_row(self, p, w, y, rh, i, role, active_idx, cols, interactive):
         wp = self._plan.waypoints[i]
         color = {"from": self.past_color, "to": self.active_color}.get(role, self.future_color)
@@ -4007,11 +4019,7 @@ class FlightPlan(QWidget):
         ir, icx, lx = self._row_icon_geometry(rh)
         dx = self._nest_indent(rh)
         self._draw_type_icon(p, icx + dx, y + rh / 2, ir * 0.85, wp.type)
-        label = fp_proc.leg_label(wp)
-        if ROLE_ABBREV.get(wp.role):
-            label = f"{label} {ROLE_ABBREV[wp.role]}"
-        if fp_hold.is_pilot_hold(wp):
-            label = f"{label} HOLD"
+        label = self._fix_label(wp)
         if role == "from":
             label = f"{label}  (from)"
         p.drawText(QRectF(lx + dx, y, w * 0.42 - lx - dx, rh),
@@ -4211,7 +4219,7 @@ class FlightPlan(QWidget):
                  if (wp.id or attr == "_seg_fix_activate_leg")
                  and self._menu_item_offered(attr, i)]
         self._paint_menu_list(p, w, h, items, self._close_seg_fix_menu,
-                              scroll_key="seg_fix_menu", title=fp_proc.leg_label(wp))
+                              scroll_key="seg_fix_menu", title=self._fix_label(wp))
 
     def _seg_fixes_scroll_by(self, delta):
         self._menu_scroll_by("seg_fixes", delta)
@@ -4291,8 +4299,7 @@ class FlightPlan(QWidget):
             self._draw_type_icon(p, box_x + icx, y + row_h / 2, ir * 0.85, wp.type)
             p.drawText(QRectF(box_x + lx, y, box_w * 0.4 - lx, row_h),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       fp_proc.leg_label(wp) + (f" {ROLE_ABBREV[wp.role]}"
-                                                if ROLE_ABBREV.get(wp.role) else ""))
+                       self._fix_label(wp))
             leg = self._leg_in(i) if (i > first or procedure) else None
             texts = ("", "", "") if leg is None else (
                 f"{leg[0]:03.0f}°", f"{leg[1]:.0f}", wp.alt if procedure else self._mea_text(wp))
