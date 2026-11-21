@@ -190,12 +190,21 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   valid `LAT`/`LONG` it first asks `FROM <fix> <n> NM / ACTIVATE LEG?`,
   and No or a tap off the box sends nothing -- FPACT1, AER-5801; the same
   applies to Show Fixes and a segment's Activate (to entry)),
-  Direct To (stages + `DTO k`), WPT Info (full detail, see below), Set Role
+  Direct To (stages + `DTO k`), **Hold...** (HOLDFIX1, AER-6210: a hold
+  editor in clearance form -- side of the fix, radial or inbound course
+  defaulting to the course of the leg into the fix, turns R by default, leg
+  in minutes (1.0 at or below 14,000 ft `ALT`, 1.5 above, AIM 5-3-8) or nm.
+  Minutes become `FPLfDST` at `hold_speed_kt` with `hold.minutes_to_nm`,
+  the conversion `proc_load` uses for `T010`. Insert puts an `HM` slot at
+  the same fix right after it, magnetic `FPLfCRS`, in the fix's own segment
+  (`FlightPlan.insert_hold`); a plain fix gets a waypoint row of its own.
+  Offered only where `hold.can_hold_at` says so), WPT Info (full detail, see below), Set Role
   (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
   Direct To (the DTO page), PROC (the PROC page, PA7), Catalog (the Catalog
   page), Menu (Invert, Store,
-  Clear, Suspend/Resume, CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
+  Clear, Suspend/Resume ("Exit hold", sending RESUME, while `FPLPHASE` is
+  HOLD on an `HM` slot), CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
   Delete both confirm and both reset the working plan; a distinct "Delete"
   semantic can be added if the guide's usage turns out to need one).
   Result and error messages (STORED, NO AIRWAYS AT x, ROUTE FULL, ...) show
@@ -254,7 +263,9 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   Remove Airway (`remove_segment`, which leaves the entry fix). **Show
   Fixes** is a read-only sheet of every fix with the magnetic course,
   distance and MEA of the leg into it; tapping a fix (there, or a nested
-  working row) offers Direct To, Activate Leg and WPT Info for that one fix.
+  working row) offers Direct To, Activate Leg, Hold... and WPT Info for that one fix, and
+  Remove Hold on a hold the pilot built (`FlightPlan.remove_hold`, which
+  leaves the segment whole).
   Renders: `docs/images/rs3_fpl_segments/` (`tools/render_fpl_segments.py`).
 - **Procedure segment rows** (PA7) -- a loaded departure, arrival, approach
   and missed approach are each one segment row, the same two-line row as an
