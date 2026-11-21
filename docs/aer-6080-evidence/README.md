@@ -1,8 +1,9 @@
 # AER-6080 (CERT12b): bench strips, SVS on and off, dev vs branch
 
 The seam must not change a pixel. Each bench renders the attitude widget at
-four pinned poses in three modes, once from `dev` (4146d4ca, the branch base)
-and once from the branch, and the pairs are compared pixel for pixel.
+four pinned poses in three modes, once from `dev` and once from the branch,
+and the pairs are compared pixel for pixel. The strips below compare `dev`
+at ea09204f with the branch at 236b08ea, which has `dev` merged in.
 
 | Mode | What it is |
 |---|---|
@@ -21,20 +22,27 @@ All frames are 800x480, rendered offscreen (QOffscreenSurface + FBO, no
 window, no DRM master) with the bench's own GL stack and the
 `/data/makerplane-data` terrain, water, airport and obstacle packs.
 
-## Beelink (X11, Intel ADL-N) -- 2026-11-20
+## Beelink (X11, Intel ADL-N) -- 2026-11-21
 
 ![Beelink strip: rows coastal, mountains, approach, final; columns svs, symbology, none; each cell is the branch frame at half scale, captioned with its dev-vs-branch pixel count](beelink/strip-beelink.png)
 
-23 of 24 pairs are identical. `approach/svs` differs in one pixel, (480, 330),
-by 1 LSB per channel. Three repeat runs per tree show the same pixel flipping
-between the same two values on `dev` alone (`beelink/repeat-approach-svs.txt`):
-it is run-to-run variation in the renderer, not the change.
+24 of 24 pairs are identical. The first Beelink run (2026-11-20, `dev`
+4146d4ca against branch 08901ad8) had 23 of 24. In that run `approach/svs`
+differed at one pixel, (480, 330), by 1 LSB per channel. Three repeat runs
+per tree showed that pixel flipping between the same two values on `dev`
+alone (`beelink/repeat-approach-svs.txt`). It is run-to-run variation in the
+renderer, and this run happened not to hit it.
 
-## Pi 5 (eglfs, V3D 7.1) -- not yet run
+## Pi 5 (eglfs, V3D 7.1) -- 2026-11-21
 
-Both benches are held by the DEMO6 72 h show soak (AER-5995) until about
-2026-11-21 19:30Z. The Pi soak measures CMA headroom, which an eglfs GL
-capture would perturb, so the Pi strips wait for the soak to end.
+![Pi 5 strip: same layout as the Beelink strip, rendered under eglfs](pi5/strip-pi5.png)
+
+24 of 24 pairs are identical. The frames were rendered under
+`QT_QPA_PLATFORM=eglfs` while the bench's live `pyefis.service` held the
+display. The service kept the same MainPID (1391040), and its restart count
+stayed at 0 before and after (`pi5/run.log`). Its journal showed no
+traceback, segfault or GL out-of-memory error. The probe frame ran first,
+on its own, to check this before the full set.
 
 ## Regenerate
 
