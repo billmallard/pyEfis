@@ -209,7 +209,12 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   semantic can be added if the guide's usage turns out to need one).
   Result and error messages (STORED, NO AIRWAYS AT x, ROUTE FULL, ...) show
   as a toast that clears itself after `TOAST_MS` (4 s; each new message
-  restarts it) or on the next tap anywhere on the page (pyEfis #323).
+  restarts it) or on the next tap anywhere on the page (pyEfis #323). On the
+  FPL page the toast is a yellow strip directly above the soft keys, and
+  above the SUSP AT MAP and EDIT REFUSED strips when they are up. It covers
+  the bottom of the list while it shows and never touches the header. A tap
+  on the strip only dismisses it, so the row under it is not selected. Text
+  too long for two lines steps down in size to fit (AER-6156).
 - **Scrolling the list** (PA15, AER-2087) — rows keep their physical height
   (`row_height_mm`) however long the route; a route taller than the pane
   scrolls under a finger instead of shrinking every row. A press on the list

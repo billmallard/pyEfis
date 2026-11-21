@@ -95,8 +95,11 @@ KEYPAD_ROWS = ("ABCDEFG", "HIJKLMN", "OPQRSTU", "VWXYZ01", "23456789")
 KEYPAD_NUMERIC_ROWS = ("789", "456", "123", "0.-", "NSEW")
 KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
 
-_STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP"}
+_STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP", 4: "OBS"}
 _STATE_SUSP = 3
+# GPS OBS (fix-gateway OBS2, pyEfis OBS3): a pilot course through the TO
+# waypoint, set by FPLCMD OBS <deg> and left by FPLCMD OBS OFF.
+_STATE_OBS = 4
 _APR_TEXT = {0: "", 1: "APR ARM", 2: "LNAV", 3: "MISSED"}
 # Expired procedure data (PA9): the data-status screen's expired amber.
 _EXPIRED_COLOR = "#ffb000"
@@ -232,6 +235,9 @@ class FlightPlan(QWidget):
     # client thread on a live bus); a QTimer may only be started from the
     # thread it lives in, so the commit timer is armed through this signal.
     _arm_commit_timer = pyqtSignal()
+    # An OBS command's refusal text, re-emitted onto the GUI thread: the
+    # FPLCMDACK callback runs on the gateway client's thread.
+    _obs_refused = pyqtSignal(str)
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  font_percent=None):
@@ -402,6 +408,8 @@ class FlightPlan(QWidget):
         self.scroll_hold_s = SCROLL_HOLD_S
         self._list_scroll = 0.0
         self._list_view = None
+        # The FPL message strip's rect as last painted (AER-6156), or None.
+        self._message_rect = None
         self._press = None
         self._last_pilot_scroll = None
         self._followed_active = None
@@ -445,6 +453,7 @@ class FlightPlan(QWidget):
         self._commit_timer.setSingleShot(True)
         self._commit_timer.timeout.connect(self._on_commit_timeout)
         self._arm_commit_timer.connect(self._start_commit_timer)
+        self._obs_refused.connect(self._show_obs_refusal)
 
         self._bridge = fp_fixbridge.FixBridge(fix)
         if self._bridge.available:
@@ -1805,6 +1814,39 @@ class FlightPlan(QWidget):
         self._menu_open = False
         self.update()
 
+    def _obs_label(self):
+        """The menu's OBS item: "OBS" to enter GPS OBS, "OBS Off" while the
+        engine is in it (FPLSTATE = 4)."""
+        state = int(self._engine_value("FPLSTATE", 0) or 0)
+        return "OBS Off" if state == _STATE_OBS else "OBS"
+
+    def _menu_obs(self):
+        """Enter GPS OBS on the current desired track (FPLCRS), so the
+        needle does not move until the pilot turns CRS; or leave it. The
+        engine decides whether OBS is possible here, and a refusal shows
+        its FPLMSG text."""
+        if self._bridge.available:
+            state = int(self._engine_value("FPLSTATE", 0) or 0)
+            if state == _STATE_OBS:
+                arg = "OFF"
+            else:
+                try:
+                    arg = "%d" % (int(round(float(self._engine_value("FPLCRS", 0.0) or 0.0))) % 360)
+                except (TypeError, ValueError):
+                    arg = "0"
+            self._bridge.command("OBS", arg, on_ack=self._on_obs_ack)
+        self._menu_open = False
+        self.update()
+
+    def _on_obs_ack(self, _seq, ok, msg):
+        if not ok:
+            self._obs_refused.emit(str(msg or ""))
+
+    @pyqtSlot(str)
+    def _show_obs_refusal(self, msg):
+        self._message = fp_refusal.plain_reason(msg) or "OBS REFUSED"
+        self.update()
+
     def _menu_cdi_scale(self):
         cur = self._cdi_scale_choice
         idx = _CDI_SCALE_CHOICES.index(cur) if cur in _CDI_SCALE_CHOICES else -1
@@ -3002,8 +3044,15 @@ class FlightPlan(QWidget):
     def mousePressEvent(self, event):
         # Any tap dismisses the toast; a callback that raises a new one below
         # sets it again (and restarts the timer).
-        self._clear_toast()
         x, y = event.position().x(), event.position().y()
+        on_message = (bool(self._message) and self._message_rect is not None
+                      and self._message_rect.contains(x, y))
+        self._clear_toast()
+        if on_message:
+            # The FPL message strip covers the bottom list row: a tap on it
+            # only dismisses it, never selects the row hidden under it.
+            event.accept()
+            return
         flinging = self._fling_timer.isActive()
         self._stop_fling()
         if self._hit(x, y) is None and self._plate_drag_start(x, y):
@@ -3305,6 +3354,7 @@ class FlightPlan(QWidget):
         self._tap_kinds = []
         self._list_view = None
         self._plate_view = None
+        self._message_rect = None
         self._enc_layer_start = 0
         self._enc_field = None
         p = QPainter(self if device is None else device)
@@ -3409,7 +3459,36 @@ class FlightPlan(QWidget):
                 self._paint_modal(p, w, h)
 
         if self._message:
-            self._paint_toast(p, w, h, self._message)
+            # Above the soft keys and any alert strip, never on the header
+            # (AER-6156): drawn over the bottom of the list while it is up.
+            self._paint_message_strip(p, w, h - footer_h - banner_h - refusal_h,
+                                      footer_h, self._message)
+
+    def _paint_message_strip(self, p, w, bottom, strip_h, text):
+        """An FPL-page message (STORED, ROUTE FULL, an OBS refusal) in a
+        strip above the soft keys, where the refused-commit banner sits, so
+        every answer to a press shows in one place (AER-6156; Bill chose the
+        place). It was drawn at pane fractions over the header, which is
+        physical, so on a short pane it printed over the LEG/DIRECT badge.
+        Text too long for two lines at the banner's size steps down."""
+        top = bottom - strip_h
+        rect = QRectF(1, top, w - 2, strip_h - 1)
+        self._message_rect = rect
+        p.setBrush(QBrush(QColor("#302c00")))
+        p.setPen(QPen(QColor("#ffff00"), 2))
+        p.drawRect(rect)
+        text_rect = QRectF(8, top, w - 16, strip_h)
+        flags = (Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap)
+        f = QFont(self.font_family)
+        size = self._px(int(strip_h * 0.40), 9)
+        while True:
+            f.setPixelSize(size)
+            p.setFont(f)
+            fits = p.boundingRect(text_rect, int(flags.value), text).height() <= strip_h
+            if fits or size <= 9:
+                break
+            size -= 1
+        p.drawText(text_rect, flags, text)
 
     def _hold_summary(self):
         """``(text, colour)``: the hold as it will be flown, or why it
@@ -4303,6 +4382,7 @@ class FlightPlan(QWidget):
             ("Store", self._menu_store),
             ("Clear", self._menu_clear_request),
             (susp_label, self._menu_suspend_resume),
+            (self._obs_label(), self._menu_obs),
             (f"CDI Scale ({self._cdi_scale_choice})", self._menu_cdi_scale),
             ("Delete", self._menu_delete_request),
         ]
