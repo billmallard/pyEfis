@@ -67,7 +67,8 @@ def build_altimeter_tape(
               "font_mask", "round_to", "numeric_box", "font_scale",
               "show_trend", "trend_lookahead", "show_baro", "altsel_box",
               "alt_bug_enabled", "alt_bug_color", "alt_bug_alert_color",
-              "alt_bug_dbkey"):
+              "alt_bug_dbkey", "vs_bug", "vs_bug_color", "vs_bug_dbkey",
+              "altsel_capture_color"):
         if k in opts:
             kwargs[k] = opts[k]
     return instrument("Altimeter_Tape")(
@@ -609,6 +610,19 @@ _register(InstrumentSpec(
         Prop("trend_lookahead", "number", default=6.0,
              label="Trend look-ahead (s)",
              help="seconds ahead the trend vector projects current accel"),
+        # AFC4: the autopilot's selected airspeed.
+        Prop("ias_bug", "boolean", default=True, label="IASSEL bug and box",
+             help="the IASSEL bug and a target box at the top of the tape, "
+                  "shown while the autopilot reports IAS active or armed"),
+        Prop("ias_bug_color", "color", default="#00ffff",
+             label="IASSEL bug color",
+             help="colour of the IASSEL bug and the target box value"),
+        Prop("touch_edit", "boolean", default=True,
+             label="Touch to set IASSEL",
+             help="touch the IASSEL box, then turn the knob to set the "
+                  "autopilot's target airspeed: inner ring 1 kt, outer ring "
+                  "10 kt, push syncs to the current airspeed. Only while the "
+                  "box is shown (IAS active or armed)"),
     ],
     # V-speeds come from the IAS item's aux (fix-gateway), not the panel editor.
     fix_values=[
@@ -727,6 +741,22 @@ _register(InstrumentSpec(
         Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
              label="Selected-altitude key", apply="special",
              help="FIX key holding the selected altitude (default ALTSEL)"),
+        # AFC4 autopilot cues.
+        Prop("altsel_capture_color", "color", default="#00ff00",
+             label="Altitude capture color", apply="special",
+             help="selected-altitude box border while the autopilot "
+                  "captures it (APALTCAP)"),
+        Prop("vs_bug", "boolean", default=True, label="VSSEL bug",
+             apply="special",
+             help="on a VS tape, the VSSEL bug while the autopilot reports "
+                  "VS active (on for a VS tape, off for an ALT tape)"),
+        Prop("vs_bug_color", "color", default="#00ffff",
+             label="VSSEL bug color", apply="special",
+             help="colour of the VSSEL bug"),
+        Prop("vs_bug_dbkey", "fixkey", default="VSSEL",
+             label="Selected-VS key", apply="special",
+             help="FIX key holding the selected vertical speed "
+                  "(default VSSEL)"),
     ],
     preview={"value": 3500},
 ))
@@ -738,6 +768,14 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: instrument("VSI_PFD")(screen, font_family=font_family)),
     dbkeys=["VS"],
+    properties=[
+        # AFC4: the autopilot's selected vertical speed.
+        Prop("vs_bug", "boolean", default=True, label="VSSEL bug",
+             help="the VSSEL bug on the scale while the autopilot reports "
+                  "VS active"),
+        Prop("vs_bug_color", "color", default="#00ffff",
+             label="VSSEL bug color", help="colour of the VSSEL bug"),
+    ],
     preview={"value": -350},
 ))
 
@@ -1612,6 +1650,55 @@ _register(InstrumentSpec(
     ],
     preview={"state": "LEG", "from": "KSBA", "to": "GVO", "next": "RZS",
              "dis": "12.4 NM", "ete": "0:06", "phase": "TERM"},
+))
+
+# AFC4 (makerplane brief autopilot_control_head_plan.md section 5.5 item 1):
+# the autopilot mode annunciation strip, across the top of the attitude
+# display. Reads the AFC1 state keys only; writes APCMD DISC solely to
+# acknowledge a disconnect alert.
+def build_ap_annunciator(screen, config, font_percent=None, font_family=None,
+                         replace=None):
+    return instrument("ModeAnnunciator")(screen, font_family=font_family,
+                                         font_percent=font_percent)
+
+
+_register(InstrumentSpec(
+    type="ap_annunciator",
+    label="Autopilot Mode Annunciator",
+    category="attitude",
+    builder=build_ap_annunciator,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=["APENG", "YDENG", "APLAT", "APLATARM", "APVERT", "APVERTARM",
+            "APALTCAP", "APALTREF", "APDISC", "VSSEL", "IASSEL"],
+    properties=[
+        Prop("ap_position", "enum", default="left", enum=["left", "center"],
+             label="AP/YD position",
+             help="left: AP YD | lateral | vertical; center: lateral | "
+                  "AP YD | vertical, the control head's order"),
+        Prop("mode_flash_s", "number", default=10.0,
+             label="Mode change flash (s)",
+             help="how long a new active mode is boxed and flashes"),
+        Prop("touch_ack", "boolean", default=True,
+             label="Tap acknowledges disconnect",
+             help="a tap on the strip sends APCMD DISC while a disconnect "
+                  "alert (APDISC) is shown and the autopilot is disengaged"),
+        Prop("active_color", "color", default="#00ff00",
+             label="Active mode colour",
+             help="active modes and AP/YD engaged (AC 25-11B Table 5-1: "
+                  "engaged modes green)"),
+        Prop("armed_color", "color", default="#ffffff",
+             label="Armed mode colour", help="armed modes"),
+        Prop("warning_color", "color", default="#ff0000",
+             label="Disconnect warning colour",
+             help="the flashing AP of a disconnect alert (APDISC)"),
+        Prop("background_color", "color", default="#000000",
+             label="Background colour", help="the strip's fill"),
+        Prop("background_opacity", "number", default=0.75,
+             label="Background opacity", help="0 (clear) to 1 (opaque)"),
+    ],
+    preview={"lat": "HDG", "lat_arm": "GPS", "ap": "AP", "yd": "YD",
+             "vert": "VS +500", "vert_arm": "ALT"},
 ))
 
 # The autopilot mode controller (AFC3, brief autopilot_control_head_plan.md

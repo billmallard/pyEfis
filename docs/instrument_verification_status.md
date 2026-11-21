@@ -6,7 +6,7 @@ Each instrument is held to FAA Part 23 / AC / TSO material as an **engineering t
 FAA corpus, and closed with an executable test catalog. See
 [`avionics_reference.md`](avionics_reference.md) for the standards basis and the framing.
 
-Branch: **`dev`** (billmallard/pyEfis fork). Last updated: 2026-10-31.
+Branch: **`dev`** (billmallard/pyEfis fork). Last updated: 2026-11-16.
 
 ## The template (repeated per instrument)
 
@@ -22,7 +22,7 @@ Run one widget's suite:
 
 ## Status by instrument
 
-All seven areas below are **verified + deployed to the Pi**. "Code gaps" counts
+The first seven areas below are **verified + deployed to the Pi**; the autopilot row is verified offscreen, with its Pi 5 capture and X-Plane bench run still to come (AFC4, AER-5808). "Code gaps" counts
 *implementable* gaps still open; data-blocked items are tracked separately.
 
 | Instrument | Spec | Suite | Open code gaps | Data-blocked (tracked) |
@@ -34,6 +34,7 @@ All seven areas below are **verified + deployed to the Pi**. "Code gaps" counts
 | **VSI** | [vsi_widget_spec.md](vsi_widget_spec.md) | 11 pass | none | — |
 | **Turn coordinator / slip-skid** | [tc_widget_spec.md](tc_widget_spec.md) | 9 pass | none | — |
 | **Heading / compass** | [heading_widget_spec.md](heading_widget_spec.md) | (in HSI suite) 29 pass | none | — |
+| **Autopilot annunciation + target cues** (AFC4) | [ap_annunciator_widget_spec.md](ap_annunciator_widget_spec.md) | 96 pass, no xfail (`tests/instruments/autopilot/`; AP-ANN-002 gap closed by `APALTREF`, AER-5808) | none | Pi 5 and X-Plane bench pending |
 
 **Net: no implementable code gap is open.** EFIS-ALTSEL-006 is implemented (below). The last
 data-blocked item, AI-LIM-001, closed with AER-5086 (further below).

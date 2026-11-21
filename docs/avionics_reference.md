@@ -38,6 +38,7 @@ note in §4.3).
 | **AC 23.1311-1C** Electronic Displays, Part 23 | `AC_23_1311-1C.txt` | **Normative (AMC)** | GA analog: §17 Symbology, §18 Annunciation, §22 Colour Standardization |
 | **14 CFR Title 14 Vol 1** | `CFR-2025-title14-vol1.txt` | **Normative (rule)** | Part 23 airworthiness incl. §23.2600/.2605/.2615 (flightcrew interface) |
 | Airplane Flying Handbook | `00_afh_full.txt` | Behavioral | Maneuvers; secondary for instruments |
+| **AC 25.1329-1C** Approval of Flight Guidance Systems | not yet in the corpus (§12 source note) | **Normative (AMC)** | Autopilot / FD engagement, disconnect warning, mode annunciation (§27, §28, §44) |
 
 **Pending (user is sourcing):** TSO-C113b (multipurpose displays), TSO-C6e (HSI/direction),
 TSO-C36e (glideslope), TSO-C34e (localizer). These set minimum performance and invoke
@@ -625,3 +626,69 @@ AC 25-11B p.43       HSI-COLOR-001          HSI-TC-###             test_hsi_... 
 - [ ] Extract the four **TSOs** into the corpus when available; reconcile with the ACs.
 - [ ] Pin IFH/IPH pages for deviation full-scale values (§4.2).
 - [ ] Extend this file per instrument as verification rolls out beyond the HSI.
+
+## 12. Autopilot mode annunciation and target cues (AFC4) -- source material
+
+**Source note.** AC 25.1329-1C (Approval of Flight Guidance Systems, 10/27/14) is the
+FAA's guidance for mode annunciation and is not yet in the MAOS corpus. AER-5808 read it
+from the public copy at `faa.gov/documentLibrary/media/Advisory_Circular/AC_25_1329-1C.pdf`
+(119 pages, md5 `b371f02dd6e039b1966996466f033673`), with the same `===== PAGE N =====`
+text extraction; page numbers below are PDF pages. Add it to the corpus with the next
+regeneration. Like AC 25-11B it is transport-category material used as best practice.
+
+### 12.1 What the strip must say
+
+- **State, not switches.** "Mode annunciation must indicate the state of the system ...
+  Mode selector switch position or status is not acceptable as the sole means of mode
+  annunciation" (**AC 25.1329-1C §44.c, p.41**). Engagement likewise: "The selector switch
+  position is not acceptable as a means of indication" (**§27.a(2), p.30**).
+- **Active vs armed, plus targets.** Annunciations "must effectively and unambiguously
+  indicate the active and armed modes," conveying "what the FGS is doing (for active
+  modes), what it will be doing (for armed modes), and target information (such as
+  selected speed, heading, and altitude)" (**§44.c(1), p.41**). "Engaged modes should be
+  annunciated at different locations than armed modes" (**§44.c(2), p.41**) "and with
+  different colors" (**§44.c(4), p.42**).
+- **Where.** In the forward field of view, "a suitable location is on the PFD"
+  (**§44.c(2), p.41**). AC 23.1311-1C **Table 3 (p.37)** puts "Autopilot and Flight
+  Director Modes" within 15 deg of the pilot's centreline. Annunciations should be
+  positioned like their controls (**AC 25.1329-1C §43.b(4), p.41**).
+
+### 12.2 Mode changes and capture
+
+- **Operationally relevant changes** "should be clearly and positively annunciated";
+  "Altitude Capture is an example of an operationally relevant mode that should be
+  annunciated" (**§44.d(1), p.42**).
+- **Attention-getting.** "The transition from an armed mode to an engaged mode should
+  provide an additional attention-getting feature, such as boxing and flashing on an
+  electronic display ... for a suitable, but brief, period (for example, ten seconds)"
+  (**§44.d(2), p.42**). AC 23.1311-1C **§18.3 (p.45)** lists flashing, boxing and outlining
+  as ways to make abnormal indications unmistakable.
+- **Failure to engage or arm** "should be apparent" (**§44.e, p.42**).
+
+### 12.3 Disconnect
+
+- "Since it is necessary for a pilot to immediately assume manual control following
+  disengagement ... a warning (both visual and aural) must be given" (**§27.b(2)(a),
+  p.32**). The aural part continues until silenced by the quick-disengage control,
+  re-engagement, or "another acceptable means" (**§27.b(2)(b), p.32**). Red is the warning
+  colour (**AC 25-11B Table 5-1, p.43**, §3 above).
+
+### 12.4 Invalid data and targets on the tapes
+
+- "The FD guidance cue(s) should be removed when guidance is determined to be invalid"
+  (**AC 25.1329-1C §28.a(2)(c), p.35**); the strip applies the same rule to stale mode
+  state, with §2's "do not display misleading information" (AC 25-11B §4.2, p.21-22).
+- **Airspeed target.** "The design of an airspeed indicator should include the
+  capability to incorporate a reference mark that will reflect the current target
+  airspeed of the flight guidance system" (**AC 25-11B App. A, A.4.2, p.71**).
+- **Corpus silent** on a VS target bug and on a capture look for the selected-altitude
+  box; those follow the brief (§5.5 items 3 and 5), not a cited requirement.
+
+### 12.5 Citation self-check (Stage 1 Verify)
+
+Re-grepped against the page-marked extraction (AER-5808); each reproduces on the page
+cited: §44.c "Mode selector switch position or status is not" (p.41); §44.d(2) "for a
+suitable, but brief, period" (p.42); §27.b(2)(a) "a warning (both visual" (p.32);
+AC 25-11B A.4.2 "reference mark that will reflect the current target" (p.71). **PASS.**
+
+Spec: [`ap_annunciator_widget_spec.md`](ap_annunciator_widget_spec.md).
