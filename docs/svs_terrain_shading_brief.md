@@ -1,8 +1,21 @@
 # SVSSHADE1: one terrain shading for the SVS and the map, with the hazard colours kept
 
-Design brief for BACKLOG `SVSSHADE1` (board AER-6140, 2026-11-20). It proposes a
-look and asks for a decision. It changes no code. The implementation becomes a
-follow-on item sized from the choice made here.
+Design brief for BACKLOG `SVSSHADE1` (board AER-6140, 2026-11-20). It changes no
+code. The implementation is a follow-on item sized from the decision below.
+
+## Decision (Bill, 2026-11-21)
+
+Bill accepted the recommendation on AER-6140:
+
+- **The look:** candidate B, solid hazard bands on the map's natural relief
+  base in both views, with the 0.7 lighting floor on hazard bands.
+- **The thresholds:** the SVS numbers in both views. That is amber under
+  1,000 ft, red under 500 ft, magenta above ownship, and the airport-proximity
+  collapse. The map's red start moves from 100 ft to 500 ft.
+- **The default:** B is the default, and today's all-over clearance colouring
+  stays available as `terrain_shading: clearance`.
+
+The rest of this note is the brief as it was put to him.
 
 ## What the pilot sees today
 
@@ -268,7 +281,7 @@ decision 2 above.
   water still come from `palette`. `COLOR_SAFE` still paints terrain under
   `terrain_shading: clearance`, so the stock look is still available.
 
-## Follow-on implementation (to be sized after the choice)
+## Follow-on implementation (candidate B, as decided)
 
 Rough size: **M**, one repo (pyEfis), plus the configurator twin in
 makerplane-data. The pieces:
