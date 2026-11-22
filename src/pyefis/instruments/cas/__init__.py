@@ -33,6 +33,7 @@ import time
 
 from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter
+from PyQt6 import sip
 from PyQt6.QtWidgets import QWidget
 
 import pyavtools.fix as fix
@@ -408,7 +409,7 @@ class CASList(_CASWidget):
     def open_over(cls, widget):
         top = widget.window()
         existing = getattr(top, "_cas_list", None)
-        if existing is not None:
+        if existing is not None and not sip.isdeleted(existing):
             existing.raise_()
             existing._close.start()
             return existing
@@ -418,8 +419,10 @@ class CASList(_CASWidget):
         for name in ("warning_color", "caution_color", "advisory_color"):
             setattr(lst, name, getattr(widget, name))
         lst.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        # Forgotten in closeEvent. Never from the destroyed signal: that fires
+        # while the parent itself may be mid-destruction, and touching it
+        # then crashes the process.
         top._cas_list = lst
-        lst.destroyed.connect(lambda *_: setattr(top, "_cas_list", None))
         lst.fit_to_parent()
         lst.show()
         lst.raise_()
@@ -475,6 +478,12 @@ class CASList(_CASWidget):
                              | Qt.AlignmentFlag.AlignVCenter,
                              flash_blank=False)
         p.end()
+
+    def closeEvent(self, event):
+        top = self.parentWidget()
+        if top is not None and getattr(top, "_cas_list", None) is self:
+            top._cas_list = None
+        super().closeEvent(event)
 
     def press(self):
         self._close.start()

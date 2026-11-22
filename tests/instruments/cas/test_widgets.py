@@ -241,6 +241,24 @@ def test_plus_k_opens_the_list_and_the_list_acknowledges_then_closes(
     assert lst.press() == "close"
 
 
+def test_list_closes_and_reopens_and_survives_its_host(cas_db, qtbot):
+    """CASW-WIN-005: closing the list forgets it, a later touch opens a new
+    one, and deleting the host window with a list open does not crash (the
+    list once reset its host from the destroyed signal, mid-destruction)."""
+    cas_db(["2|1|NAVFAIL|NAV FAIL|"])
+    clock = Clock()
+    host = QWidget()
+    host.resize(800, 480)
+    m = cas.CASMarker(host, model=_model(clock), clock=clock)
+    first = m.open_full_list()
+    first.close()
+    assert host._cas_list is None
+    second = m.open_full_list()
+    assert second is not first and host._cas_list is second
+    host.deleteLater()
+    qtbot.wait(50)
+
+
 def test_touch_on_a_quiet_window_does_nothing(cas_db, qtbot):
     """CASW-WIN-005: a quiet window and marker are transparent to touch, so a
     tap reaches what they overlay; with a message they take the touch."""
