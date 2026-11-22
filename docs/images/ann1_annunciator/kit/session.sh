@@ -1,6 +1,6 @@
 #!/bin/sh
 # AER-6347 private annunciator session on the Beelink. Touches nothing live:
-# private fixgw on 3497, private Xvfb :47, scratch copies of both configs, my
+# private fixgw on 3497, private Xvfb :47, scratch copies of both configs, this
 # branch's src on PYTHONPATH. Cleans up on exit.
 D=$HOME/bench-scratch/aer6347
 PY=$HOME/pyefis-venv/bin/python
