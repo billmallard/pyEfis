@@ -230,6 +230,35 @@ def test_no_autopilot_data_when_a_state_key_goes_stale(panel, db, flag):
     assert panel.display_state("AP") == ap.ACTIVE
 
 
+def test_the_state_keys_include_the_health_keys():
+    # The per-key tests below run over STATE_KEYS: a key dropped from it would
+    # drop its test too.
+    assert {"APENG", "FDENG", "YDENG", "APLAT", "APLATARM", "APVERT",
+            "APVERTARM", "APALTCAP", "APCAPS", "APMSG"} <= set(ap.STATE_KEYS)
+
+
+@pytest.mark.parametrize("key", ap.STATE_KEYS)
+def test_every_state_key_gates_the_data(panel, db, key):
+    """Per key, the health keys APCAPS and APMSG included: one key old puts
+    the panel in "no autopilot data", and fresh again takes it out."""
+    _report(db, APENG=True, APLAT="HDG")
+    assert panel.has_data()
+    db.db.get_item(key).old = True
+    assert panel.display_state("AP") == ap.NO_DATA, key
+    assert panel.message() == (ap.NO_DATA_TEXT, AMBER), key
+    db.db.get_item(key).old = False
+    assert panel.display_state("AP") == ap.ACTIVE, key
+
+
+@pytest.mark.parametrize("key", ap.STATE_KEYS)
+def test_one_undefined_state_key_is_no_data(fix, qtbot, key):
+    _define(fix, keys=set(CONTRACT) - {key})
+    _report(fix, **{k: v for k, v in (("APCAPS", ALL_CAPS), ("APENG", True))
+                    if k != key})
+    w = _panel(qtbot)
+    assert w.display_state("AP") == ap.NO_DATA, key
+
+
 def test_no_autopilot_data_when_the_gateway_lacks_the_keys(fix, qtbot):
     _define(fix, keys={"APCMD", "APCMDSEQ"})
     w = _panel(qtbot)
