@@ -93,6 +93,39 @@ _NEEDS_DBKEY = {
     "arc_gauge", "horizontal_bar_gauge", "vertical_bar_gauge", "numeric_display",
 }
 
+# The annunciator draws nothing until a tile is bound to a fresh key, so a
+# bare palette render would be blank: give it a 2x3 demo block (ANN1) over
+# demo keys, one tile per level and binding kind.
+_DEMO_ANNUNCIATOR = {
+    "rows": 2,
+    "tiles": [
+        {"label": "GEAR DN", "key": "DEMOANN1", "level": "status"},
+        {"label": "PITOT HT", "key": "DEMOANN2", "level": "advisory"},
+        {"label": "FUEL PUMP", "key": "DEMOANN3", "level": "status"},
+        {"label": "ALT2 ON", "key": "DEMOANN4", "level": "info"},
+        {"label": "TRIM", "key": "DEMOANN5", "flag": "annunciate",
+         "level": "caution"},
+        {"label": "NAV", "key": "DEMOANN6", "level": "info",
+         "enum": {0: "GPS", 1: "VLOC1", 2: "VLOC2"}},
+    ],
+}
+_DEMO_ANNUNCIATOR_SEED = {"DEMOANN1": 1, "DEMOANN2": 1, "DEMOANN3": 0,
+                          "DEMOANN4": 1, "DEMOANN5": 1, "DEMOANN6": 0}
+
+
+def _demo_annunciator(instrument_type, options):
+    """Fill the demo block (and its keys) when no tiles were given."""
+    if instrument_type != "annunciator" or options.get("tiles"):
+        return
+    for name, value in _DEMO_ANNUNCIATOR.items():
+        options.setdefault(name, value)
+    for key, value in _DEMO_ANNUNCIATOR_SEED.items():
+        it = fix.db.get_item(key)
+        fix.db.set_value(key, value)
+        it.bad = it.fail = it.old = False
+    fix.db.get_item("DEMOANN5").annunciate = True
+
+
 # Types whose appearance is driven by an external config file (button actions,
 # listbox lists) and whose conditions/state aren't meaningful as a standalone
 # thumbnail -- always shown as a labelled placeholder in previews.
@@ -269,6 +302,7 @@ def render_instrument(instrument_type, options=None, seed=None,
     if instrument_type in _NEEDS_DBKEY and "dbkey" not in options:
         options["dbkey"] = "DEMOGAUGE"
         options.setdefault("name", "DEMO")
+    _demo_annunciator(instrument_type, options)
 
     instrument = {"type": instrument_type, "row": 0, "column": 0,
                   "span": {"rows": 10, "columns": 10}}
@@ -332,6 +366,7 @@ def render_instrument_svg(instrument_type, options=None, seed=None,
     if instrument_type in _NEEDS_DBKEY and "dbkey" not in options:
         options["dbkey"] = "DEMOGAUGE"
         options.setdefault("name", "DEMO")
+    _demo_annunciator(instrument_type, options)
     for key, value in (seed or {}).items():
         it = fix.db.get_item(key)
         fix.db.set_value(key, value)

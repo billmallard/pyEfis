@@ -1810,6 +1810,86 @@ _register(InstrumentSpec(
              "vert": "VS +500", "vert_arm": "ALT"},
 ))
 
+# ANN1 (makerplane BACKLOG): a block of lamps, each bound to one FIX key by a
+# Button-grammar condition, one of the key's own flags, or an enum-to-text map.
+# Reads only. Red and amber light only from the key's own annunciate flag
+# (Bill, 2026-11-22); a local condition asking for them draws at advisory.
+def build_annunciator(screen, config, font_percent=None, font_family=None,
+                      replace=None):
+    opts = config.get("options", {}) or {}
+    return instrument("Annunciator")(screen, font_family=font_family,
+                                     font_percent=font_percent,
+                                     tiles=opts.get("tiles") or [])
+
+
+_register(InstrumentSpec(
+    type="annunciator",
+    label="Annunciator",
+    category="text",
+    builder=build_annunciator,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    properties=[
+        # Structured option (a list of tile mappings); represented as a
+        # single config value until the Prop model grows a list/object kind,
+        # as checklist's `checklists`. The configurator edits it with the
+        # Button's conditions editor (ANN2).
+        Prop("tiles", "string", default=None, apply="setter:setTiles",
+             label="Tiles",
+             help="list of lamps: label, key, and at most one of when (a "
+                  "Button-grammar condition), flag (annunciate, old, bad, "
+                  "fail) or enum (value -> text); plus on_text, off_text, "
+                  "level and flash_on_change seconds. Red/amber levels only "
+                  "with flag: annunciate"),
+        Prop("rows", "integer", default=1, minimum=1, maximum=12, step=1,
+             label="Rows", help="rows of tiles"),
+        Prop("cols", "integer", default=0, minimum=0, maximum=12, step=1,
+             label="Columns",
+             help="columns of tiles; 0 = as many as the tiles need"),
+        Prop("gap_px", "integer", default=4, minimum=0, maximum=40, step=1,
+             label="Tile gap (px)", help="space between and around tiles"),
+        Prop("border_width", "integer", default=2, minimum=1, maximum=20,
+             step=1, label="Tile outline (px)",
+             help="tile outline thickness; doubled while a change flashes"),
+        Prop("corner_radius", "integer", default=4, minimum=0, maximum=40,
+             step=1, label="Corner radius (px)",
+             help="tile corner rounding; 0 = square"),
+        Prop("bg_color", "color", default="#000000",
+             label="Background colour", help="the block's fill",
+             token="surface.base"),
+        Prop("bg_opacity", "integer", default=75, minimum=0, maximum=100,
+             step=1, label="Background opacity (%)",
+             help="0 = transparent (show what's behind), 100 = solid"),
+        Prop("status_color", "color", default="#00ff00",
+             label="Status colour", help="level status: on, normal",
+             token="state.valid"),
+        Prop("advisory_color", "color", default="#ffffff",
+             label="Advisory colour", help="level advisory",
+             token="ink.primary"),
+        Prop("info_color", "color", default="#00ffff",
+             label="Info colour", help="level info", token="accent"),
+        Prop("off_color", "color", default="#aaaaaa",
+             label="Off colour", help="a tile that is off",
+             token="ink.muted"),
+        Prop("caution_color", "color", default="#ffaa00",
+             label="Caution colour",
+             help="level caution (flag: annunciate only)",
+             token="state.caution"),
+        Prop("warning_color", "color", default="#ff0000",
+             label="Warning colour",
+             help="level warning (flag: annunciate only)",
+             token="state.warning"),
+    ],
+    preview={"tiles": [
+        {"text": "GEAR DN", "level": "status"},
+        {"text": "PITOT HT", "level": "advisory"},
+        {"text": "FUEL PUMP", "level": "off"},
+        {"text": "ALT2 ON", "level": "status"},
+        {"text": "TRIM", "level": "caution"},
+        {"text": "GPS", "level": "info"},
+    ]},
+))
+
 # The autopilot mode controller (AFC3, brief autopilot_control_head_plan.md
 # sections 5.1-5.4). Presses write APCMD + APCMDSEQ; every key is drawn from
 # the state the autopilot source reports, never from the press.
