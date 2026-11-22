@@ -170,6 +170,7 @@ You can also go direct from the map: touch the waypoint there and choose
 | **Invert** | Reverse the plan. |
 | **Store** | Save it to the catalog. |
 | **Clear** | Empty the plan, after a confirmation. |
+| **Hold at PPOS** | Hold where you are now. The hold editor opens on a waypoint named `PPOS` at your position, inbound on your present track, right turns. Insert puts it ahead of the waypoint you were flying to and starts the hold at once; exiting the hold flies on to that waypoint. Without a GPS position it says NO GPS POSITION. |
 | **Suspend** / **Resume** | Stop or restart sequencing. At the missed approach point, Resume reads **Fly the missed**; in a hold you built (`HM`), it reads **Exit hold**. |
 | **CDI Scale** | Step the HSI's full-scale deflection through 0.3, 1.0 and 2.0 nm and back to **AUTO**, which scales by phase of flight. See [The HSI](The-HSI#how-far-off-course-cdi-scaling). |
 | **Delete** | Delete the plan, after a confirmation. |

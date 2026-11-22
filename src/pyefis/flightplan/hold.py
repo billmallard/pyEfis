@@ -40,6 +40,12 @@ What it decides, so a reviewer can see each choice:
   (``COINCIDENT_FIX_NM``). It carries no role and no flags, so it is never
   mistaken for a leg from a coded procedure.
 
+Hold at present position (HOLDFIX2, AER-6322) is the same hold at a
+fix that is not in the plan yet: a user waypoint ``PPOS`` where the
+aircraft is, then the ``HM`` on it, inbound on the present track. Both go
+in front of the active leg's TO fix, so exiting the hold flies on to the
+fix the aircraft was going to (:func:`ppos_insert_index`).
+
 Qt-free: nothing here may import PyQt6.
 """
 
@@ -78,6 +84,13 @@ HOLD_PTS = frozenset({"HM", "HF", "HA"})
 #: FPLfFLAGS 0x20, "from a coded procedure" (``proc_load.FLAG_FROM_PROCEDURE``;
 #: not imported, since ``proc_load`` imports this module).
 FLAG_FROM_PROCEDURE = 0x20
+
+
+#: The ident of the user waypoint a hold at present position is built on.
+PPOS_IDENT = "PPOS"
+#: How close a slot read back from the bus must be to the PPOS fix built
+#: here to be that fix (about 10 m; the bus may not carry every digit).
+PPOS_MATCH_DEG = 1e-4
 
 
 #: Short names for the charts a published hold is on, for its line in the
@@ -294,3 +307,37 @@ def can_hold_at(plan: model.FlightPlan, i: int) -> bool:
 def is_pilot_hold(wp: model.Waypoint) -> bool:
     """A hold slot the pilot built here, not one coded in a procedure."""
     return wp.pt in HOLD_PTS and not wp.flags & FLAG_FROM_PROCEDURE
+
+
+def present_position_waypoint(lat: float, lon: float) -> model.Waypoint:
+    """The user waypoint a hold at present position holds at: ``PPOS``
+    at *lat*, *lon*. It lives in the plan only; the pilot's user waypoint
+    file is not written, so a second PPOS hold never collides with the
+    first one or with a waypoint the pilot named PPOS."""
+    return model.Waypoint(id=PPOS_IDENT, type="user", lat=float(lat), lon=float(lon))
+
+
+def ppos_insert_index(plan: model.FlightPlan, active_leg: int | None) -> int:
+    """The flat index the ``PPOS`` fix goes at, with its hold right after.
+
+    In front of the active leg's TO fix (``FPLACTLEG`` *active_leg*,
+    1-based), so the hold sits on the way there and exiting it flies on
+    to that fix. When the active slot is itself a hold, after it: a new
+    hold clearance replaces that one, and its fix and hold slot stay one
+    pair. With nothing active, at the start of the plan."""
+    wps = plan.waypoints
+    if not active_leg or not (1 <= active_leg <= len(wps)):
+        return 0
+    i = active_leg - 1
+    return i + 1 if wps[i].pt in HOLD_PTS else i
+
+
+def is_ppos_pair(plan: model.FlightPlan, i: int, fix: model.Waypoint) -> bool:
+    """Flat slots *i* and *i* + 1 are the ``PPOS`` fix *fix* and its hold."""
+    wps = plan.waypoints
+    if not (0 <= i and i + 1 < len(wps)):
+        return False
+    a, h = wps[i], wps[i + 1]
+    return (a.id == fix.id and a.pt not in HOLD_PTS and h.pt in HOLD_PTS
+            and abs(a.lat - fix.lat) < PPOS_MATCH_DEG and abs(a.lon - fix.lon) < PPOS_MATCH_DEG
+            and model.same_fix(a, h))

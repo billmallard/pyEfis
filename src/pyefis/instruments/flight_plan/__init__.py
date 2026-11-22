@@ -143,6 +143,8 @@ TOAST_MS = 4000
 # cycle -- FPLLDSEQ when it loads the route, FPLMSG when it refuses it -- so
 # this only fires when no answer arrives at all.
 COMMIT_ANSWER_MS = 2000
+# Why a hold at present position is refused with no usable LAT/LONG.
+NO_GPS_POSITION = "NO GPS POSITION"
 # The route is read when FPLSEQ / FPLLDSEQ / the counts change, not on every
 # engine output write. This is how often, at most, a write also checks the
 # slots on the bus against the route last read, so a slot value that arrived
@@ -238,6 +240,11 @@ class FlightPlan(QWidget):
     # An OBS command's refusal text, re-emitted onto the GUI thread: the
     # FPLCMDACK callback runs on the gateway client's thread.
     _obs_refused = pyqtSignal(str)
+    # Hold at present position (HOLDFIX2): the ACT for the hold slot, sent
+    # from the GUI thread once the engine has loaded the route (the engine's
+    # answer arrives on the gateway client's thread), and its refusal text.
+    _send_hold_act = pyqtSignal(int)
+    _hold_act_refused = pyqtSignal(str)
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  font_percent=None):
@@ -357,6 +364,10 @@ class FlightPlan(QWidget):
         # Hold at a fix (HOLDFIX1, AER-6210): the clearance being entered,
         # or None. See _open_hold_editor for the fields.
         self._hold_edit = None
+        # Hold at present position (HOLDFIX2, AER-6322): the hold slot to
+        # ACT once the engine loads the commit that carries it, or None.
+        # See _take_pending_hold_act.
+        self._pending_hold_act = None
 
         self._waypoint_index = None
         self._waypoint_index_key = None
@@ -454,6 +465,8 @@ class FlightPlan(QWidget):
         self._commit_timer.timeout.connect(self._on_commit_timeout)
         self._arm_commit_timer.connect(self._start_commit_timer)
         self._obs_refused.connect(self._show_obs_refusal)
+        self._send_hold_act.connect(self._act_hold_slot)
+        self._hold_act_refused.connect(self._show_hold_act_refusal)
 
         self._bridge = fp_fixbridge.FixBridge(fix)
         if self._bridge.available:
@@ -631,6 +644,7 @@ class FlightPlan(QWidget):
             self._flown_plan = copy.deepcopy(plan)
             self._refusal = self._draft = self._pending_seq = None
             self._draft_open = False
+            self._take_pending_hold_act(seq)
             return
         if self._refusal is not None and self._refusal[0] == seq:
             return
@@ -646,6 +660,7 @@ class FlightPlan(QWidget):
 
     def _refuse(self, seq, plan, reason):
         self._pending_seq = None
+        self._pending_hold_act = None
         # G61a: the engine's code in plain words, naming the waypoint.
         self._refusal = (seq, fp_refusal.plain_reason(reason, plan) or "NO ENGINE ANSWER")
         self._draft = plan
@@ -1611,7 +1626,8 @@ class FlightPlan(QWidget):
             direction = fp_hold.nearest_direction(crs + 180.0)
             ref, course = "inbound", crs
         self._hold_edit = {
-            "index": i, "fix": self._plan.waypoints[i].id, "direction": direction,
+            "index": i, "ppos": False, "fix": self._plan.waypoints[i].id,
+            "direction": direction,
             "ref": ref, "course": course, "typed": False, "turn": fp_hold.DEFAULT_TURN,
             "leg": fp_hold.default_leg_minutes(self._aircraft_altitude()), "unit": "MIN",
             "message": "",
@@ -1758,8 +1774,14 @@ class FlightPlan(QWidget):
             else:
                 inbound = fp_hold.inbound_course(e["direction"], inbound=e["course"])
             dst = fp_hold.leg_nm(e["leg"], e["unit"], self._hold_speed())
-            wp = fp_hold.hold_waypoint(self._plan.waypoints[e["index"]], inbound,
-                                       e["turn"], dst)
+            if e["ppos"]:
+                pos = self._valid_aircraft_position()
+                if pos is None:
+                    return None, NO_GPS_POSITION
+                at = fp_hold.present_position_waypoint(*pos)
+            else:
+                at = self._plan.waypoints[e["index"]]
+            wp = fp_hold.hold_waypoint(at, inbound, e["turn"], dst)
         except (fp_hold.HoldError, IndexError) as ex:
             return None, str(ex)
         return wp, None
@@ -1775,6 +1797,9 @@ class FlightPlan(QWidget):
             e["message"] = error
             self.update()
             return
+        if e["ppos"]:
+            self._hold_insert_ppos(wp)
+            return
         try:
             self._plan.insert_hold(e["index"], wp)
         except fp_model.FlightPlanError as ex:
@@ -1785,6 +1810,118 @@ class FlightPlan(QWidget):
         self._message = f"HOLD AT {wp.id}"
         self._plan_dirty = True
         self._commit()
+
+    # -- FPL page: hold at present position (HOLDFIX2, AER-6322) ----------------
+    def _menu_hold_ppos(self):
+        self._menu_open = False
+        self._open_ppos_hold_editor()
+
+    def _present_track(self):
+        """The ground track now, magnetic: ``TRACKM``, else ``TRACK`` with
+        ``MAGVAR``. None when neither is usable."""
+        for key in ("TRACKM", "TRACK"):
+            try:
+                item = fix.db.get_item(key)
+            except KeyError:
+                continue
+            if item.fail or item.old:
+                continue
+            try:
+                trk = float(item.value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(trk):
+                continue
+            if key == "TRACK":
+                var = self._bridge.magvar_or_none() if self._bridge.available else None
+                if var is None:
+                    return None
+                trk += var
+            return fp_hold.norm_course(trk)
+        return None
+
+    def _open_ppos_hold_editor(self):
+        """The hold editor for a hold at present position, prefilled to
+        hold on the present track: inbound on it, the pattern on the far
+        side, right turns and the AIM leg time. The fix is ``PPOS`` where
+        the aircraft is when Insert is pressed, so the hold starts with a
+        direct entry at once. No usable GPS position: refused with a
+        message. With no track, the pattern lies north on the 360 radial,
+        as for a fix with no leg into it. A draft on the page gives way to
+        the flown plan: the hold is built on the route being flown."""
+        if self._valid_aircraft_position() is None:
+            self._message = NO_GPS_POSITION
+            self.update()
+            return
+        if self._draft_open:
+            self._show_flown_plan()
+        trk = self._present_track()
+        if trk is None:
+            direction, ref, course = "N", "radial", fp_hold.DIRECTION_BEARING["N"]
+        else:
+            direction = fp_hold.nearest_direction(trk + 180.0)
+            ref, course = "inbound", trk
+        self._hold_edit = {
+            "index": None, "ppos": True, "fix": fp_hold.PPOS_IDENT, "direction": direction,
+            "ref": ref, "course": course, "typed": False, "turn": fp_hold.DEFAULT_TURN,
+            "leg": fp_hold.default_leg_minutes(self._aircraft_altitude()), "unit": "MIN",
+            "message": "",
+        }
+        self.update()
+
+    def _hold_insert_ppos(self, wp):
+        """Put the ``PPOS`` fix and its hold slot *wp* in front of the
+        active leg's TO fix (:func:`fp_hold.ppos_insert_index`), commit, and
+        ACT the hold slot once the engine has loaded the route."""
+        e = self._hold_edit
+        at = fp_hold.present_position_waypoint(wp.lat, wp.lon)
+        active = self._active_index()
+        plan = copy.deepcopy(self._plan)
+        i = fp_hold.ppos_insert_index(plan, None if active is None else active + 1)
+        try:
+            plan.insert_before(i, at)
+            plan.insert_hold(i, wp)
+        except fp_model.FlightPlanError as ex:
+            e["message"] = str(ex)
+            self.update()
+            return
+        self._plan = plan
+        self._hold_edit = None
+        self._message = f"HOLD AT {at.id}"
+        self._plan_dirty = True
+        if self._bridge.available:
+            self._pending_hold_act = {"slot": i + 2, "fix": at,
+                                      "after_seq": self._bridge._get("FPLSEQ").value}
+        self._commit()
+
+    def _take_pending_hold_act(self, seq):
+        """The engine loaded route *seq*: ACT the PPOS hold slot if this is
+        the commit that carries it. A slot number means nothing on another
+        route, so it is sent only when the loaded plan has this PPOS fix
+        and its hold there. A refused commit (``_refuse``) or any other
+        route drops it; nothing is activated on a route the pilot did not
+        build. A route seen before the commit landed (*seq* still the one
+        before it) leaves it waiting."""
+        p = self._pending_hold_act
+        if p is None or seq == p["after_seq"]:
+            return
+        self._pending_hold_act = None
+        if fp_hold.is_ppos_pair(self._plan, p["slot"] - 2, p["fix"]):
+            self._send_hold_act.emit(p["slot"])
+
+    @pyqtSlot(int)
+    def _act_hold_slot(self, slot):
+        if self._bridge.available:
+            self._bridge.command("ACT", slot, on_ack=self._on_hold_act_ack)
+
+    def _on_hold_act_ack(self, _seq, ok, msg):
+        if not ok:
+            self._hold_act_refused.emit(str(msg or ""))
+
+    @pyqtSlot(str)
+    def _show_hold_act_refusal(self, msg):
+        self._message = fp_refusal.plain_reason(msg) or "HOLD NOT ACTIVATED"
+        self.update()
 
     # -- FPL page: footer / menu ---------------------------------------------
     def _footer_add(self):
@@ -4488,6 +4625,7 @@ class FlightPlan(QWidget):
             ("Invert", self._menu_invert),
             ("Store", self._menu_store),
             ("Clear", self._menu_clear_request),
+            ("Hold at PPOS", self._menu_hold_ppos),
             (susp_label, self._menu_suspend_resume),
             (self._obs_label(), self._menu_obs),
             (f"CDI Scale ({self._cdi_scale_choice})", self._menu_cdi_scale),

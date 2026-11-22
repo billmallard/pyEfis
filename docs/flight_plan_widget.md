@@ -211,7 +211,16 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
   Direct To (the DTO page), PROC (the PROC page, PA7), Catalog (the Catalog
   page), Menu (Invert, Store,
-  Clear, Suspend/Resume ("Exit hold", sending RESUME, while `FPLPHASE` is
+  Clear, Hold at PPOS (HOLDFIX2, AER-6322: the Hold... editor on a user
+  waypoint `PPOS` at the aircraft, inbound on the present track, `TRACKM`
+  or else `TRACK` + `MAGVAR`; no valid LAT/LONG is refused with NO GPS
+  POSITION. The fix is taken where the aircraft is when Insert is pressed.
+  `PPOS` and its `HM` go in front of the active leg's TO fix
+  (`hold.ppos_insert_index`: after the slot when a hold is being flown, at
+  the start with nothing active), and `ACT` for the hold slot is sent only
+  once `FPLLDSEQ` shows the engine loaded that route with the pair in
+  place, so a refused commit activates nothing. `PPOS` lives in the plan
+  only; the user waypoint file is not written), Suspend/Resume ("Exit hold", sending RESUME, while `FPLPHASE` is
   HOLD on an `HM` slot), CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
   Delete both confirm and both reset the working plan; a distinct "Delete"
   semantic can be added if the guide's usage turns out to need one).
