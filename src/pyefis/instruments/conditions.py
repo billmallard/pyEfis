@@ -31,7 +31,8 @@ The state dict holds, for every subscribed key ``K``::
     K.aux.<name>   each auxiliary value (highAlarm, lowWarn, ...)
 
 A ``when`` string is a pycond expression over those names, tokenized on
-spaces with ``[]`` brackets, e.g. ``OILP lt 25 and [ OILP.old is False ]``.
+spaces with ``[]`` brackets, e.g. ``OILP lt 25 and not OILP.old`` or
+``CLICKED eq true``. A bare name is true when its value is truthy.
 Callers may add their own names (the Button adds ``SCREEN``, ``CLICKED``,
 ``DBKEY`` and ``PREVIOUS_CONDITION``).
 """

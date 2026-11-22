@@ -140,6 +140,16 @@ def test_enum_binding_shows_the_mapped_text(db):
     assert only(m).text == "3"
 
 
+def test_enum_matches_a_whole_float_value(db):
+    """ANN-BIND-003: a float key carrying a whole value (1.0) finds the map
+    entry written as 1."""
+    db("OILT", 1.0)
+    m = model([{"label": "MODE", "key": "OILT", "enum": {1: "ONE"}}], db)
+    assert only(m).text == "ONE"
+    db("OILT", 1.5)
+    assert only(m).text == "1.5"
+
+
 def test_bare_key_is_lit_while_truthy(db):
     """ANN-BIND-004: with no when/flag/enum the tile is lit while the value is
     truthy; on/off text default to the label."""
