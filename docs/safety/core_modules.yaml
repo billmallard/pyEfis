@@ -166,8 +166,10 @@ primary_keys:
       - src/pyefis/instruments/hsi/
       - src/pyefis/hmi/functions.py
       - src/pyefis/instruments/button/
-    # Autopilot speed and vertical-speed targets, like ALTSEL and HEADBUG.
+    # Autopilot speed and vertical-speed targets, like ALTSEL and HEADBUG: the control
+    # head writes both, and the IAS box on the airspeed tape writes IASSEL (AFC4).
     IASSEL:
+      - src/pyefis/instruments/airspeed/iassel.py
       - src/pyefis/instruments/autopilot/
       - src/pyefis/hmi/functions.py
       - src/pyefis/instruments/button/

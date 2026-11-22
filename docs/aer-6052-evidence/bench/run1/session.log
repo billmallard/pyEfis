@@ -1,0 +1,7 @@
+2026-11-22T05:00:13Z start: fgw 16282cd Merge pull request #224 from billmallard/aer-6212/fplmsg-needs-pyefis-words | pyEfis af54d44f docs: AFC5 Pi 5 GL capture sheet, both styles over live terrain (AER-6052)
+2026-11-22T05:00:44Z fixgw 1108101, Xvfb 1108102, pyEfis 1108118, seq 1110251
+2026-11-22T05:07:35Z seq stopped: yes
+2026-11-22T05:07:38Z pyefis stopped: yes
+2026-11-22T05:07:41Z xvfb stopped: yes
+2026-11-22T05:07:44Z fixgw stopped: yes
+2026-11-22T05:07:44Z stop: done, display :6 gone

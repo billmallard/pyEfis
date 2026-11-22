@@ -72,6 +72,7 @@ from PyQt6.QtWidgets import QWidget
 from pyavtools import fix
 from pyefis.instruments import edit_focus, helpers
 from pyefis.instruments.altimeter.altsel import AltSelEditor, round_to_step
+from pyefis.instruments.autopilot.state import APState
 from pyefis.instruments.helpers import bugs
 
 logger = logging.getLogger(__name__)
@@ -88,8 +89,10 @@ DEFAULT_BUTTONS = ",".join(b for b in ALL_BUTTONS if b != "TRK")
 
 REQUEST_KEY = "APCMD"
 SEQUENCE_KEY = "APCMDSEQ"
-#: The state and health keys. Any of them old, bad, failed or undefined puts
-#: the panel in the "no autopilot data" state.
+#: The state and health keys, read through :class:`state.APState`. Any of
+#: them old, bad, failed or undefined puts the panel in the "no autopilot
+#: data" state. The panel also reads FDENG, APCAPS and APMSG, which the mode
+#: annunciation does not.
 STATE_KEYS = ("APENG", "FDENG", "YDENG", "APLAT", "APLATARM", "APVERT",
               "APVERTARM", "APALTCAP", "APCAPS", "APMSG")
 
@@ -512,15 +515,8 @@ class AutopilotPanel(QWidget):
         self._timer.setInterval(_TICK_MS)
         self._timer.timeout.connect(self._tick)
 
-        self._items = {}
-        for key in STATE_KEYS:
-            item = self._get_item(key)
-            if item is None:
-                continue
-            self._items[key] = item
-            item.valueChanged[item.dtype].connect(self._state_changed)
-            for sig in (item.oldChanged, item.badChanged, item.failChanged):
-                sig.connect(self._state_changed)
+        self._state = APState(STATE_KEYS, self)
+        self._state.changed.connect(self._state_changed)
         self._cmd = self._get_item(REQUEST_KEY)
         self._seq = self._get_item(SEQUENCE_KEY)
 
@@ -609,12 +605,10 @@ class AutopilotPanel(QWidget):
 
     def has_data(self):
         """Every state and health key defined and fresh."""
-        if len(self._items) != len(STATE_KEYS):
-            return False
-        return not any(i.old or i.bad or i.fail for i in self._items.values())
+        return self._state.fresh
 
     def snapshot(self):
-        v = {k: i.value for k, i in self._items.items()}
+        v = {k: self._state.value(k) for k in STATE_KEYS}
         return Snapshot(ap=v.get("APENG"), fd=v.get("FDENG"),
                         yd=v.get("YDENG"), lat=v.get("APLAT"),
                         latarm=v.get("APLATARM"), vert=v.get("APVERT"),
@@ -657,7 +651,7 @@ class AutopilotPanel(QWidget):
             return NO_DATA_TEXT, QColor(self.caution_color)
         self._expire()
         now = self._clock()
-        msg = self._items["APMSG"].value or ""
+        msg = self._state.value("APMSG") or ""
         refused = [b for b, r in self._requests.items()
                    if now - r.at >= PENDING_S]
         if refused:
