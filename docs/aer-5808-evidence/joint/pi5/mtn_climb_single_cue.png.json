@@ -1,0 +1,59 @@
+{
+ "scene": "mtn_climb",
+ "caption": "Climb at 8500 ft: HDG (GPS armed), IAS 90 (ALT armed)",
+ "gl_frame": "gl/mtn_climb_single_cue.png",
+ "state": {
+  "APENG": true,
+  "YDENG": true,
+  "FDENG": true,
+  "BARO": 29.92,
+  "IAS": 92.0,
+  "TAS": 104.0,
+  "GS": 100.0,
+  "ALT": 8500.0,
+  "VS": 650.0,
+  "HEAD": 270.0,
+  "TRACK": 270.0,
+  "HEADBUG": 255.0,
+  "COURSE": 270.0,
+  "ALTSEL": 10500,
+  "APLAT": "HDG",
+  "APLATARM": "GPS",
+  "APVERT": "IAS",
+  "APVERTARM": "ALT",
+  "IASSEL": 90.0
+ },
+ "geometry": {
+  "Altimeter_Tape": [
+   1008,
+   65,
+   115,
+   655
+  ],
+  "Airspeed_Tape": [
+   144,
+   65,
+   115,
+   655
+  ],
+  "HSI": [
+   411,
+   742,
+   425,
+   425
+  ],
+  "Alt_Trend_Tape": [
+   1123,
+   175,
+   67,
+   436
+  ],
+  "ModeAnnunciator": [
+   144,
+   0,
+   1046,
+   55
+  ]
+ },
+ "live_screen": "/home/wpballard/makerplane/pyefis/config/screens/managed.yaml"
+}
