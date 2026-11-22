@@ -89,6 +89,20 @@ _OBS = {
 }
 _COMMAND.update(_OBS)
 
+# ACT onto a DF with a coded turn direction, refused where the coded turn
+# cannot be flown as ruled (fix-gateway AER-6294, Bill's ruling). Each points
+# the pilot to Direct-To, which flies straight at the fix. Whole messages.
+_ACT_DF = {
+    # The fix is within 90 deg of the nose on the side away from the coded
+    # turn: the turn toward it is already made, and the coded one would be
+    # most of a circle.
+    "ACT N/A TURNED": "ALREADY TURNED TOWARD FIX: USE DIRECT-TO",
+    "ACT N/A NO TRACK": "NO GPS TRACK FOR CODED TURN: USE DIRECT-TO",
+    # The fix is inside the coded turn's circle.
+    "ACT N/A TOO CLOSE": "TOO CLOSE FOR CODED TURN: USE DIRECT-TO",
+}
+_COMMAND.update(_ACT_DF)
+
 # An accepted commit that does not keep the active leg (fix-gateway HOLDFIX0):
 # the route loads and nothing is active. Not a refusal; whole messages.
 _ACTIVE_LEG = {

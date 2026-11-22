@@ -101,6 +101,8 @@ import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "tools"))
+from evidence_sidecar import describe_platform  # noqa: E402
 BASELINE_DIR = _ROOT / "tests" / "perf" / "baselines"
 
 #: MP8 DoD: "timing budgets assert against tests/perf/baselines/
@@ -437,6 +439,10 @@ def build_baseline(samples: list[dict], *, water_db=None, fixture_pin=None,
         "fixture_pin": fixture_pin or {},
         "config": config or {},
         "environment": environment(),
+        # Optional: the CPU state the samples were taken at (cores, governor,
+        # affinity, throttle, temperature). Not compared by ``check``; it is
+        # what a reader needs to tell whether two baselines are comparable.
+        "platform": describe_platform(),
         "tolerance": TOLERANCE,
         "metrics": metrics,
     }

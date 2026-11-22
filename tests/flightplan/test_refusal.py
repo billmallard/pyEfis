@@ -64,6 +64,10 @@ from pyefis.flightplan import refusal
     ("IN OBS", "NOT AVAILABLE IN OBS"),
     ("NOT IN OBS", "OBS IS NOT ON"),
     ("OBS N/A DATABASE", "OBS NOT AVAILABLE: GATEWAY CONFIG OUT OF DATE"),
+    # ACT onto a coded DF whose turn cannot be flown as ruled (AER-6294).
+    ("ACT N/A TURNED", "ALREADY TURNED TOWARD FIX: USE DIRECT-TO"),
+    ("ACT N/A NO TRACK", "NO GPS TRACK FOR CODED TURN: USE DIRECT-TO"),
+    ("ACT N/A TOO CLOSE", "TOO CLOSE FOR CODED TURN: USE DIRECT-TO"),
     # An accepted commit that drops the active leg (HOLDFIX0): not a refusal.
     ("ACTIVE LEG REMOVED", "ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE"),
     ("ACTIVE LEG CHANGED", "ACTIVE LEG CHANGED: NO LEG ACTIVE"),

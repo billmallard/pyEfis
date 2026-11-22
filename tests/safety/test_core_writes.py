@@ -74,7 +74,8 @@ def test_the_drive_reached_the_core_write_paths_of_the_pilot_set_keys(audit):
     """Not vacuous: the shipped PFD's baro box, selected altitude, heading bug and NAV1
     course are written during the drive, each from its owning instrument. NAVSRC is not:
     buttons/cdi-source.yaml ships, but no default screen places it. Nor are NAV2CRS,
-    IASSEL, VSSEL and BANKBUG: no default screen edits them."""
+    IASSEL, VSSEL and BANKBUG: no default screen edits them. The autopilot targets are
+    driven on their own below."""
     writers = collections.defaultdict(set)
     for w in audit["writes"]:
         writers[w["key"]].add(w["writer"])
@@ -171,3 +172,67 @@ def test_the_same_boot_without_the_plant_passes(doc, tmp_path):
 ])
 def test_key_classes(doc, key, cls):
     assert core_rules.key_class(key, doc) == cls
+
+
+# The autopilot targets. No shipped default screen edits IASSEL or VSSEL, and the IAS box
+# on the airspeed tape is editable only while the autopilot reports IAS mode, which the
+# boot drive never does. So the drive above cannot reach their writers: drive them here,
+# through the same recorder, on the real edit paths.
+AP_KEYS = [
+    ("IASSEL", "float", 0.0, 999.9, 0, 0.0), ("VSSEL", "int", -30000, 30000, 0, 0),
+    ("APCMD", "str", None, None, 0, ""), ("APCMDSEQ", "int", 0, 2147483647, 0, 0),
+    ("APENG", "bool", None, None, 2000, True), ("FDENG", "bool", None, None, 2000, False),
+    ("YDENG", "bool", None, None, 2000, False), ("APLAT", "str", None, None, 2000, "HDG"),
+    ("APLATARM", "str", None, None, 2000, ""), ("APVERT", "str", None, None, 2000, "IAS"),
+    ("APVERTARM", "str", None, None, 2000, ""), ("APALTCAP", "bool", None, None, 2000, False),
+    ("APCAPS", "str", None, None, 2000, "AP,HDG,IAS,VS,ALT"),
+    ("APMSG", "str", None, None, 2000, ""), ("APDISC", "bool", None, None, 2000, False),
+    ("IAS", "float", 0.0, 1000.0, 2000, 112.6), ("VS", "float", -30000, 30000, 2000, 480.0),
+]
+
+
+@pytest.fixture
+def target_writes(fix, monkeypatch):
+    from tests.safety import boot_probe
+    for key, dtype, lo, hi, tol, value in AP_KEYS:
+        fix.db.define_item(key, key, dtype, lo, hi, "", tol, "")
+        item = fix.db.get_item(key)
+        item.value = value
+        item.old = item.bad = item.fail = False
+    fix.db.get_item("IAS").set_aux_value("Vne", 160)
+    # record_writes replaces the class attributes; monkeypatch puts them back.
+    monkeypatch.setattr(fix.DB_Item, "value", fix.DB_Item.value)
+    monkeypatch.setattr(fix.DB_Item, "output_value", fix.DB_Item.output_value)
+    writes = []
+    boot_probe.record_writes(fix, writes)
+    return writes
+
+
+def test_the_autopilot_target_writers_are_core_write_paths(doc, target_writes, qtbot):
+    """IASSEL from the IAS box on the airspeed tape and from the control head, VSSEL
+    from the control head: each one a listed core write path, so a writer dropped from
+    pilot_set fails here."""
+    from pyefis.instruments import airspeed
+    from pyefis.instruments import autopilot as ap
+
+    tape = airspeed.Airspeed_Tape()
+    qtbot.addWidget(tape)
+    assert tape.enc_select()
+    assert tape.enc_changed(2)
+
+    panel = ap.AutopilotPanel()
+    qtbot.addWidget(panel)
+    for box in (ap.BOX_IAS, ap.BOX_VS):
+        panel._touch_pending = box     # what a touch on the box sets (_touch_box)
+        assert panel.enc_select()
+        panel._touch_pending = None
+        assert panel.enc_changed(1)
+        panel.enc_highlight(False)
+
+    writers = collections.defaultdict(set)
+    for w in target_writes:
+        writers[w["key"]].add(w["writer"])
+    assert writers["IASSEL"] == {"src/pyefis/instruments/airspeed/iassel.py",
+                                 "src/pyefis/instruments/autopilot/__init__.py"}, writers
+    assert writers["VSSEL"] == {"src/pyefis/instruments/autopilot/__init__.py"}, writers
+    assert core_rules.write_violations(doc, target_writes) == {}
