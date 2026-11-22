@@ -35,8 +35,12 @@ groups:
       - src/pyefis/instruments/__init__.py
       # The ai package is mixed: the attitude widget is core, the SVS beside it is not.
       # Its __init__ re-exports the widget lazily and imports nothing at module level.
+      # background.py is the seam the SVS plugs into, and projection.py the horizontal
+      # scale the widget shares with the SVS camera (CERT12b, brief U1 and U2).
       - src/pyefis/instruments/ai/__init__.py
       - src/pyefis/instruments/ai/ai_widget.py
+      - src/pyefis/instruments/ai/background.py
+      - src/pyefis/instruments/ai/projection.py
       - src/pyefis/instruments/airspeed/
       - src/pyefis/instruments/altimeter/
       - src/pyefis/instruments/vsi/
@@ -181,41 +185,12 @@ primary_keys:
 # deletes it.
 ratchet:
   # Static imports from a core module (tools/core_imports.py).
-  imports:
-    - edge: E1
-      removed_by: CERT12b
-      from: src/pyefis/instruments/ai/ai_widget.py
-      imports: [pyefis.instruments.ai.svs]
-    - edge: E2
-      removed_by: CERT12b
-      from: src/pyefis/instruments/ai/ai_widget.py
-      imports: [pyefis.instruments.ai.camera]
-    - edge: E3
-      removed_by: CERT12b
-      from: src/pyefis/instruments/ai/ai_widget.py
-      imports: [pyefis.instruments.ai.pose]
+  imports: []
 
   # Non-core modules (and watched packages) in sys.modules after the core-only boot
   # (tests/safety/test_core_boot.py). A module two edges bring in is listed under each,
   # and stays allowed until the last of them is removed.
-  runtime:
-    - edge: E1
-      removed_by: CERT12b
-      modules:
-        - pyefis.instruments.ai.svs
-        - pyefis.instruments.ai.road_ribbon
-        - pyefis.instruments.ai.highway_db
-        - numpy
-        - sqlite3
-    - edge: E2
-      removed_by: CERT12b
-      modules:
-        - pyefis.instruments.ai.camera
-        - numpy
-    - edge: E3
-      removed_by: CERT12b
-      modules:
-        - pyefis.instruments.ai.pose
+  runtime: []
 
   # Writes that break rule R5, as the write audit finds them
   # (tests/safety/test_core_writes.py): key, writer (the module path), edge, removed_by.

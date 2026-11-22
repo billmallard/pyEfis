@@ -1,0 +1,14 @@
+approach/svs, Beelink, 2026-11-20: run 0 is the strip run; runs 1-3 are repeats.
+Each frame compared with dev run 0 (differing pixels, then x, y, dev-0 RGB, other RGB):
+
+branch-0 vs dev-0: 1 [(480, 330, '0xff6ba26b', '0xff6aa16a')]
+branch-1 vs dev-0: 1 [(480, 330, '0xff6ba26b', '0xff6aa16a')]
+branch-2 vs dev-0: 1 [(480, 330, '0xff6ba26b', '0xff6aa16a')]
+branch-3 vs dev-0: 0 []
+dev-0 vs dev-0: 0 []
+dev-1 vs dev-0: 1 [(480, 330, '0xff6ba26b', '0xff6aa16a')]
+dev-2 vs dev-0: 1 [(480, 330, '0xff6ba26b', '0xff6aa16a')]
+dev-3 vs dev-0: 1 [(480, 330, '0xff6ba26b', '0xff6aa16a')]
+
+Both trees produce both variants of that pixel (1 LSB per channel). It is
+run-to-run variation on dev itself, not a difference the branch introduced.
