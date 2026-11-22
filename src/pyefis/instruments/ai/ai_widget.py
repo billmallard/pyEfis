@@ -40,6 +40,18 @@ log = logging.getLogger(__name__)
 BANK_BUG_STEP_DEG = 5
 BANK_BUG_MAX_DEG = 60
 
+# Flight director (AFC5, CAP-508). fix-gateway autopilot.yaml: FDPITCH and
+# FDROLL are the commanded attitude, absolute, in the same sense as PITCH and
+# ROLL; FDENG is "FD on". The autopilot source rewrites each at least once per
+# tol (FD 1 s, FDENG 2 s), so a key that goes old means the source went quiet.
+FD_KEYS = ("FDENG", "FDPITCH", "FDROLL")
+# fd_style: "single_cue" (a command chevron the aircraft symbol flies into,
+# the default, D4), "cross_pointer" (separate pitch and roll bars) or "off".
+FD_STYLES = ("single_cue", "cross_pointer", "off")
+FD_COLOR = "#ff00ff"
+# Cross-pointer roll bar: full deflection at this much bank error.
+FD_ROLL_FULL_SCALE_DEG = 30.0
+
 # TODO:
 #   Check TAS quality and revert to turn rate indication
 #   Fix quality indications
@@ -446,6 +458,31 @@ class AI(QGraphicsView):
         self._bank_bug = bugs.BugBinding("BANKBUG", self)
         self._bank_bug.changed.connect(
             lambda: setattr(self, "_frame_dirty", True))
+
+        # Flight director command (AFC5). Drawn only while FDENG is true and
+        # all three keys are current, not bad and not failed: a stale command
+        # is removed, never frozen in place (brief section 5.7). Every key
+        # starts invalid, so a missing key leaves the FD undrawn.
+        self.fd_style = "single_cue"
+        self._fd_value = {"FDENG": False, "FDPITCH": 0.0, "FDROLL": 0.0}
+        self._fd_flags = {k: {"old": True, "bad": True, "fail": True}
+                          for k in FD_KEYS}
+        self._fd_drawn = False
+        for key in FD_KEYS:
+            try:
+                _item = fix.db.get_item(key)
+            except KeyError:
+                log.warning(
+                    f"AI: FIX key '{key}' not defined — flight director "
+                    "disabled")
+                continue
+            _item.valueChanged[_item.dtype].connect(
+                lambda v, k=key: self._fdValueChanged(k, v))
+            for flag in ("old", "bad", "fail"):
+                getattr(_item, f"{flag}Changed")[bool].connect(
+                    lambda s, k=key, f=flag: self._fdFlagChanged(k, f, s))
+                self._fd_flags[key][flag] = getattr(_item, flag)
+            self._fd_value[key] = _item.value
 
         # We store all the pitch tick marks and text in a list so that
         # we can adjust the opacity of the items.
@@ -1034,6 +1071,41 @@ class AI(QGraphicsView):
             return None
         return self._aoa_warn - self._aoa
 
+    def _fdValueChanged(self, key, value):
+        self._fd_value[key] = value
+        self._frame_dirty = True
+
+    def _fdFlagChanged(self, key, flag, state):
+        """FDENG/FDPITCH/FDROLL old/bad/fail. Repaint at once: the frame
+        clock skips a frame whose pose did not move, and a bar left on the
+        glass after its command went stale is a frozen FD."""
+        self._fd_flags[key][flag] = state
+        self._frame_dirty = True
+        if self.isVisible():
+            self.update()
+
+    def flight_director_command(self):
+        """The commanded (pitch, roll) to draw, or None for no FD.
+
+        None when fd_style is off, when FDENG is false, when any FD key is
+        old, bad or failed, or when PITCH or ROLL is: the bars show the error
+        between the command and the attitude, so without a valid attitude
+        they point at nothing."""
+        if self._fd_style() == "off":
+            return None
+        if any(any(f.values()) for f in self._fd_flags.values()):
+            return None
+        if not self._fd_value["FDENG"]:
+            return None
+        for k in ("PITCH", "ROLL"):
+            if self._AIOld[k] or self._AIBad[k] or self._AIFail[k]:
+                return None
+        return self._fd_value["FDPITCH"], self._fd_value["FDROLL"]
+
+    def _fd_style(self):
+        style = str(getattr(self, "fd_style", "single_cue")).lower()
+        return style if style in FD_STYLES else "single_cue"
+
     def set_frame_rate(self, fps):
         """(Re)start the display frame clock at *fps* (clamped 5-60)."""
         fps = max(5.0, min(60.0, float(fps)))
@@ -1214,6 +1286,67 @@ class AI(QGraphicsView):
         p.drawLine(QPointF( sym_r * 1.1, 0.0), QPointF( sym_r * 2.4, 0.0))
         p.drawLine(QPointF(0.0, -sym_r * 1.1), QPointF(0.0, -sym_r * 2.0))
         p.restore()
+
+    def _draw_flight_director(self, p, w, h, command):
+        """Draw the flight director command bars for *command* (FDPITCH,
+        FDROLL) in fd_style.
+
+        Both styles show the error between the command and the attitude,
+        relative to the fixed aircraft symbol: the cue sits (FDPITCH - PITCH)
+        above it, on the pitch ladder's scale (so with wings level it is on
+        the ladder rung at FDPITCH), and shows the bank error FDROLL - ROLL.
+        Flying the command puts the symbol in the cue.
+
+        single_cue: a chevron that banks by the bank error, just above the
+        symbol when satisfied (the Garmin look). cross_pointer: a horizontal
+        pitch bar and a vertical roll bar that moves sideways, full deflection
+        at FD_ROLL_FULL_SCALE_DEG of bank error."""
+        fd_pitch, fd_roll = command
+        style = self._fd_style()
+        ss = max(0.3, min(3.0, float(getattr(self, "symbol_scale", 1.0))))
+        ppd = getattr(self, 'pixelsPerDeg', h / self.pitchDegreesShown)
+        cx, cy = w / 2.0, h / 2.0 - self._horizon_offset_px()
+        y = self._pitch_px(self._pitchAngle - fd_pitch, ppd)
+        roll_err = fd_roll - self._rollAngle
+        roll_err = (roll_err + 180.0) % 360.0 - 180.0
+        span = w * 0.16 * ss                  # half-span of either cue
+        thick = max(3.0, h * 0.014 * ss)
+        # Pinned inside the glass, so a large error still points the way.
+        margin = thick * 3.0
+        ay = max(margin - cy, min(h - margin - cy, y))
+        self._fd_y_px = y                     # pre-clamp; observability
+        self._fd_roll_err = roll_err
+
+        pen = QPen(QColor(Qt.GlobalColor.black))
+        pen.setWidthF(1.5)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        p.save()
+        p.resetTransform()
+        p.translate(cx, cy + ay)
+        p.setPen(pen)
+        p.setBrush(QBrush(QColor(FD_COLOR)))
+        if style == "cross_pointer":
+            x = max(-1.0, min(1.0, roll_err / FD_ROLL_FULL_SCALE_DEG)) * span
+            self._fd_x_px = x
+            # Pitch bar moves with the pitch error, roll bar sideways with
+            # the bank error; they cross at the symbol when satisfied.
+            p.drawRect(QRectF(-span, -thick / 2.0, 2.0 * span, thick))
+            p.translate(0.0, -ay)
+            p.drawRect(QRectF(x - thick / 2.0, -span, thick, 2.0 * span))
+        else:
+            self._fd_x_px = 0.0
+            p.rotate(roll_err)
+            gap = max(2.0, h * 0.006)
+            drop = span * 0.30                # the garmin symbol's anhedral
+            p.drawPolygon(QPolygonF([
+                QPointF(0.0, -gap),
+                QPointF(span, drop - gap),
+                QPointF(span, drop - gap - thick),
+                QPointF(0.0, -gap - thick * 1.6),
+                QPointF(-span, drop - gap - thick),
+                QPointF(-span, drop - gap)]))
+        p.restore()
+        self._fd_drawn = True
 
     def _draw_recovery_chevrons(self, p, w, h):
         """AC 25-11B App A A.2.2: at an unusual pitch attitude, large chevrons
@@ -1583,7 +1716,8 @@ class AI(QGraphicsView):
     def _paint_overlays(self, p):
         """Draw everything paintEvent adds on top of the composited scene:
         the static overlay image, the SVS-unavailable annunciation, the bank
-        cluster, FPM, horizon heading scale and recovery chevrons.
+        cluster, flight director, FPM, horizon heading scale and recovery
+        chevrons.
 
         Painted directly with a QPainter rather than as QGraphicsItems, so it
         always lands in front of the SVS terrain (a low-z scene item added
@@ -1598,8 +1732,36 @@ class AI(QGraphicsView):
         r = self.bankAngleRadius
         m = self.bankMarkSize
 
+        # Unusual-attitude regime (AC 25-11B App A A.2.2 / p.47) OR the
+        # horizon line having scrolled off the glass (AC 23.1311-1C 8.5(b),
+        # AER-1805) -- drives both the recovery chevrons and the de-clutter.
+        # The two are independent conditions: a wide pitchDegreesShown /
+        # centred horizon_position can hold an extreme pitch on-glass past
+        # 30/-20 (still unusual -- the constants govern), while a raised
+        # horizon_position can lose the horizon line well inside 30/-20
+        # (the geometric term governs). Computed up front so the
+        # non-essential overlays below can be suppressed this frame; the
+        # chevrons themselves are drawn last (on top).
+        self._show_recovery_chevrons = (
+            self._pitchAngle > self.unusualPitchHighDeg
+            or self._pitchAngle < self.unusualPitchLowDeg
+            or self._horizon_off_glass())
+        self._decluttered = (self._show_recovery_chevrons
+                             or abs(self._rollAngle) > self.unusualBankDeg)
+
+        # Flight director (AFC5): non-essential at an unusual attitude, so
+        # de-cluttered like the FPM. The single cue goes under the aircraft
+        # symbol, which nests in it; the cross-pointer bars cross over it.
+        self._fd_drawn = False
+        fd = None if self._decluttered else self.flight_director_command()
+        if fd is not None and self._fd_style() == "single_cue":
+            self._draw_flight_director(p, w, h, fd)
+
         # Put the static overlay image on the view
         p.drawImage(self.rect(), self.overlay)
+
+        if fd is not None and self._fd_style() == "cross_pointer":
+            self._draw_flight_director(p, w, h, fd)
 
         # SVS UNAVAIL annunciation. The SVS is GL-required; if the GL
         # renderer failed to initialise or draw (e.g. SVS enabled on a
@@ -1632,23 +1794,6 @@ class AI(QGraphicsView):
 
         # Bank-cluster anchor (bank_position; 50 = the classic centre).
         p.translate(w / 2, self._bank_anchor_y(h))
-
-        # Unusual-attitude regime (AC 25-11B App A A.2.2 / p.47) OR the
-        # horizon line having scrolled off the glass (AC 23.1311-1C 8.5(b),
-        # AER-1805) -- drives both the recovery chevrons and the de-clutter.
-        # The two are independent conditions: a wide pitchDegreesShown /
-        # centred horizon_position can hold an extreme pitch on-glass past
-        # 30/-20 (still unusual -- the constants govern), while a raised
-        # horizon_position can lose the horizon line well inside 30/-20
-        # (the geometric term governs). Computed up front so the
-        # non-essential overlays below can be suppressed this frame; the
-        # chevrons themselves are drawn last (on top).
-        self._show_recovery_chevrons = (
-            self._pitchAngle > self.unusualPitchHighDeg
-            or self._pitchAngle < self.unusualPitchLowDeg
-            or self._horizon_off_glass())
-        self._decluttered = (self._show_recovery_chevrons
-                             or abs(self._rollAngle) > self.unusualBankDeg)
 
         # Caution states are computed even when the bank cluster is drawn
         # transparent -- other logic (annunciations, tests) reads them.

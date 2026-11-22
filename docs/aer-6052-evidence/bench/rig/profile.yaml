@@ -1,0 +1,15 @@
+# AER-6052 (AFC5): flight director glass check. The AFC2 route (aer5806),
+# en route only, so the driver never commands the vertical axis after
+# engaging. The bench sequencer (seq.py) presses HDG, offsets 40 deg right
+# for 60 s, turns to a 30 deg intercept and arms NAV (a capture with an
+# intercept turn), then VS to ALTSEL 500 ft up, then DISC. The disconnect
+# trips the servo guard and ends the session: expected, and it lets the
+# private glass show the FD keys going old.
+name: afc5-flight-director
+destination: KSMX
+departure: KSBA
+start: {fix: HENER, before_nm: 3, alt_ft: 7500}
+route:
+  - waypoint: GVO
+  - airway: {id: V27, exit: AVOLS}
+end: {after_fix: DOYLE, max_s: 2100}
