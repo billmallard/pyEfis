@@ -15,6 +15,7 @@ def _arc_widget(qtbot, heading):
     w = hsi.HSI()
     qtbot.addWidget(w)
     w.orientation = "arc"
+    w.turn_rate_enabled = False    # its trend points sit on the band too (ATT1b)
     w.resize(320, 320)
     w.show()
     qtbot.waitExposed(w)
@@ -26,8 +27,8 @@ def _arc_widget(qtbot, heading):
 
 def _paint_recording(w, monkeypatch):
     """Paint once; return (band bearings drawn, drawText strings). With no CDI,
-    bearing needle, heading bug or track diamond enabled, only the tick and
-    numeral loops place anything on the band."""
+    bearing needle, heading bug, track diamond or turn-rate trend enabled,
+    only the tick and numeral loops place anything on the band."""
     bearings, texts = [], []
     real_band = w._arc_band_point
 

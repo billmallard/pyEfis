@@ -1,0 +1,94 @@
+13:  STRATUX: true  # AER-6139 one-off SVS traffic evidence; reverted by the same session
+fixgw restarted 20:44:59
+== glass pyEfis dbdc2991 load 0.15 0.33 0.31
+grab /home/pyefis/bench-scratch/aer6139/out/glass_t0_before.png 20:46:00 rev=dbdc2991
+grab /home/pyefis/bench-scratch/aer6139/out/glass_t12.png 20:46:12 rev=dbdc2991
+dump /home/pyefis/bench-scratch/aer6139/out/glass_t12.txt 20:46:12
+grab /home/pyefis/bench-scratch/aer6139/out/glass_t22.png 20:46:22 rev=dbdc2991
+dump /home/pyefis/bench-scratch/aer6139/out/glass_t22.txt 20:46:22
+grab /home/pyefis/bench-scratch/aer6139/out/glass_t24.png 20:46:24 rev=dbdc2991
+dump /home/pyefis/bench-scratch/aer6139/out/glass_end.txt 20:46:36
+t= 15.0s sent 6 reports
+t= 20.0s sent 5 reports (stale stopped)
+t= 25.0s sent 5 reports (stale stopped)
+t= 30.0s sent 5 reports (stale stopped)
+RC=done
+== A0_1 ntgt=0 pyEfis dbdc2991 load 0.69 0.43 0.35
+process CPU: 66.70%
+GUI thread CPU: 43.30%
+launcher restored
+load 0.70 0.62 0.44
+reports in window: 11
+  paints_s       mean   30.69  min   30.40  max   31.20
+  ticks_s        mean  121.02  min  120.00  max  121.60
+  ticks_upd_s    mean   30.25  min   30.00  max   30.40
+  paint_ms_med   mean    5.45  min    4.50  max    7.10
+  paint_ms_p90   mean    8.51  min    8.30  max    9.10
+  tick_gap_p90   mean   31.94  min   31.40  max   32.20
+  tick_gap_max   mean   57.71  min   54.90  max   60.80
+  ur_busy_pct    mean   47.03  min   41.00  max   52.70
+  tfc_frames     mean  153.45  min  152.00  max  156.00
+  tfc_drawn_max  mean    0.00  min    0.00  max    0.00
+  tfc_drawn_med  mean    0.00  min    0.00  max    0.00
+SUMMARY A0_1.jsonl paints_s_mean=30.69 n=11 tfc_drawn_max=0
+RC=done
+== B20_1 ntgt=20 pyEfis dbdc2991 load 0.70 0.62 0.44
+process CPU: 75.30%
+GUI thread CPU: 48.90%
+launcher restored
+load 0.59 0.57 0.45
+reports in window: 11
+  paints_s       mean   30.33  min   29.20  max   31.40
+  ticks_s        mean  119.56  min  116.00  max  121.60
+  ticks_upd_s    mean   29.89  min   29.00  max   30.40
+  paint_ms_med   mean    5.34  min    4.70  max    6.00
+  paint_ms_p90   mean   10.19  min    9.80  max   10.70
+  tick_gap_p90   mean   32.31  min   31.90  max   33.00
+  tick_gap_max   mean   63.18  min   56.70  max   76.20
+  ur_busy_pct    mean   56.96  min   50.60  max   63.20
+  tfc_frames     mean  151.64  min  146.00  max  157.00
+  tfc_drawn_max  mean   20.00  min   20.00  max   20.00
+  tfc_drawn_med  mean   20.00  min   20.00  max   20.00
+SUMMARY B20_1.jsonl paints_s_mean=30.33 n=11 tfc_drawn_max=20
+RC=done
+== A0_2 ntgt=0 pyEfis dbdc2991 load 0.59 0.57 0.45
+process CPU: 68.80%
+GUI thread CPU: 44.50%
+launcher restored
+load 0.48 0.52 0.45
+reports in window: 11
+  paints_s       mean   30.58  min   30.00  max   31.00
+  ticks_s        mean  120.65  min  120.00  max  121.60
+  ticks_upd_s    mean   30.16  min   30.00  max   30.40
+  paint_ms_med   mean    4.98  min    4.50  max    6.50
+  paint_ms_p90   mean    8.51  min    8.20  max    9.10
+  tick_gap_p90   mean   31.96  min   31.50  max   32.20
+  tick_gap_max   mean   58.55  min   50.80  max   70.30
+  ur_busy_pct    mean   46.31  min   42.30  max   49.90
+  tfc_frames     mean  152.91  min  150.00  max  155.00
+  tfc_drawn_max  mean    0.00  min    0.00  max    0.00
+  tfc_drawn_med  mean    0.00  min    0.00  max    0.00
+SUMMARY A0_2.jsonl paints_s_mean=30.58 n=11 tfc_drawn_max=0
+RC=done
+== B20_2 ntgt=20 pyEfis dbdc2991 load 0.48 0.52 0.45
+process CPU: 72.40%
+GUI thread CPU: 47.70%
+launcher restored
+load 1.51 0.88 0.60
+reports in window: 11
+  paints_s       mean   30.42  min   29.20  max   31.20
+  ticks_s        mean  119.85  min  116.00  max  120.80
+  ticks_upd_s    mean   29.96  min   29.00  max   30.20
+  paint_ms_med   mean    5.54  min    4.80  max    6.70
+  paint_ms_p90   mean   10.15  min    9.60  max   10.90
+  tick_gap_p90   mean   32.28  min   31.90  max   32.60
+  tick_gap_max   mean   64.57  min   55.50  max   74.50
+  ur_busy_pct    mean   52.59  min   45.90  max   58.70
+  tfc_frames     mean  152.09  min  146.00  max  156.00
+  tfc_drawn_max  mean   20.00  min   20.00  max   20.00
+  tfc_drawn_med  mean   20.00  min   20.00  max   20.00
+SUMMARY B20_2.jsonl paints_s_mean=30.42 n=11 tfc_drawn_max=20
+RC=done
+SESSION-DONE
+REVERTED STRATUX 20:57:01: 0 STRATUX:true lines; launcher stock: yes
+RC=0

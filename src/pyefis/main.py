@@ -26,7 +26,6 @@ from PyQt6.QtGui import *
 from PyQt6.QtWidgets import *
 
 import yaml
-import importlib
 from os import environ
 import shutil
 import hashlib 
@@ -56,6 +55,7 @@ import pyefis.hmi as hmi
 import pyefis.gui as gui
 import pyefis.kiosk as kiosk
 import pyefis.system_menu as system_menu
+import pyefis.screens.instrument_table as instrument_table
 
 
 config_filename = "default.yaml"
@@ -236,7 +236,7 @@ def main():
 
     if 'FMS' in config:
         sys.path.insert(0, config["FMS"]["module_dir"])
-        fms = importlib.import_module ("FixIntf")
+        fms = instrument_table.external_module("FixIntf")
         fms.start(config["FMS"]["aircraft_config"])
 
     # DEMO4: the kiosk lock is read by instruments as they build and paint.

@@ -6,7 +6,7 @@ Experimental Amateur-Built use. A severity in this document describes the worst 
 a failure in an airplane; it is not a classification of the software, and it is not a software
 level. The classification of any real installation is the installer's, made per airplane.
 
-**Maintained by:** Safety and Compliance. **Edition:** 4, 2026-11-18. Edition 3 was dated earlier the same day, edition 2 2026-11-10 and the first edition 2026-11-07. A living document: a change that adds a display function adds or updates
+**Maintained by:** Safety and Compliance. **Edition:** 5, 2026-11-21. Edition 4 was dated 2026-11-18, edition 3 earlier the same day, edition 2 2026-11-10 and the first edition 2026-11-07. A living document: a change that adds a display function adds or updates
 a row here (section 6).
 
 ---
@@ -30,7 +30,9 @@ a row here (section 6).
   implemented is listed as such. **A mitigation is not credited until it has a test.**
 - **Open:** what is still not mitigated, not tested or not assessed. Open items are collected in
   section 5.
-- **Read against:** pyEfis `dev` at 5bb6dec2 (2026-11-18), plus the fixes named in the rows.
+- **Read against:** pyEfis `dev` at 5bb6dec2 (2026-11-18), plus the fixes named in the rows. What
+  edition 5 adds or changes (A8, PFD-9 to PFD-15, CFG-2, GW-5, section 4 item 3) was read against
+  pyEfis `dev` at bb2d25be and fix-gateway `dev` at 10c0f768 (both 2026-11-21).
 
 ## 2. Architecture assumptions
 
@@ -78,6 +80,17 @@ airspeed and altitude after a single host failure, which is why A1 names all thr
 **A7. Experimental Amateur-Built.** E-AB carries no design standard and no software level. These
 assumptions are good engineering practice, not regulatory compliance.
 
+**A8. A source flags data it knows is invalid as `fail`, not `bad` (added in edition 5).** pyEfis
+draws the two flags differently. A `fail` or `old` value is removed: red XXX, no number. A `bad`
+value stays on the glass as a suspect display: the airspeed and altitude tapes keep their moving
+scale and show the readout in amber inside an amber frame, and the VS readout is amber, never a
+white, live-looking value (AS-ANN-001, AL-ANN-001, VSI-ANN-001). That is right for data that may be
+good, and wrong for data the source knows is garbage: a plugin that marks a dead sensor only `bad`
+puts an amber number on the glass where a red XXX belongs. fix-gateway holds to this today. `bad`
+comes from a source's quality bit (CAN-FIX, netfix) or is carried by `compute.py` from a bad input;
+no shipped computed output writes `IAS`, `ALT` or `VS`. A source or computed key that sets `bad`
+for data it knows is invalid breaks this assumption, and is raised before it is built.
+
 ## 3. The assessment
 
 ### 3.1 pyEfis: primary flight display
@@ -85,21 +98,21 @@ assumptions are good engineering practice, not regulatory compliance.
 | ID | Function | Mode | Sev. | Mechanism (where in the stack) | Mitigating requirements | Open |
 |---|---|---|---|---|---|---|
 | PFD-1 | Attitude | L | Cat (App. 1: met by an independent standby, A2) | Host, process or gateway failure; AHRS plugin loss (A6) | AI-ANN-001 (fail display), AI-FAIL-001 (greyed when old or bad); A1, A2 | Only an independent standby lowers this cell (A1, A2) |
-| PFD-2 | Attitude | M | Cat | Frozen last value after a hung gateway or socket error (fixed on `dev`, H1); a primary key with no time-to-live never goes old (fixed on `dev`, H2); a bad AHRS solution flagged valid; two sources fighting on `PITCH`/`ROLL` (A5); a hung display (section 3.1.1) | AI-ANN-001 and AI-FAIL-001 act only when the flags are set. Recovery aids once the pilot knows: AI-CHEV-001, AI-BANK-001, AI-DCL-001 | No comparator against the standby; detection of a bad solution flagged valid rests on the pilot's scan (O2); a hung display has no mitigation in pyEfis (O8) |
+| PFD-2 | Attitude | M | Cat | Frozen last value after a hung gateway or socket error (fixed on `dev`, H1); a primary key with no time-to-live never goes old (fixed on `dev`, H2); a bad AHRS solution flagged valid; two sources fighting on `PITCH`/`ROLL` (A5); a hung display (section 3.1.1); a pitch offset mis-dialled on the gateway encoder (GW-5) | AI-ANN-001 and AI-FAIL-001 act only when the flags are set. Recovery aids once the pilot knows: AI-CHEV-001, AI-BANK-001, AI-DCL-001 | No comparator against the standby; detection of a bad solution flagged valid rests on the pilot's scan (O2); a hung display has no mitigation in pyEfis (O8); a pitch offset has no bound or display (O10) |
 | PFD-3 | Altitude | L | Haz | As PFD-1 (A6) | AL-ANN-001 | Covered by the A1 standby scope for a host loss. A blocked static port is not a loss: it is ADS-1, and the standby goes with it |
 | PFD-4 | Altitude | M | Cat | Frozen value (H1, H2); a misset baro setting; a hung display (section 3.1.1); a blocked static port, shared with the standby (ADS-1) | AL-ANN-001; AL-BARO-001 (baro setting shown on the tape); AL-TREND-001 (a frozen trend is a cue only in climb or descent) | A hung display has no mitigation in pyEfis (O8). A blocked static port is not caught by the standby (ADS-1, O9) |
 | PFD-5 | Airspeed | L | Maj (Haz at higher performance) | As PFD-1 (A6) | AS-ANN-001 | Covered by the A1 standby scope for a host loss. A blocked pitot is not a loss: it is ADS-1, and the standby goes with it |
 | PFD-6 | Airspeed | M | Maj to Cat | Frozen value (H1, H2); wrong V-speed bands from a bad aircraft profile (H4); a hung display (section 3.1.1); a blocked pitot or static port, shared with the standby (ADS-1) | AS-ANN-001; AS-MARK-001, AS-LSA-001, AS-HSA-001 (bands drawn as specified, but from configured values); AI-LIM-001 (pitch-limit marker, implemented; shown only when an `AOA` source such as the onspeed plugin is present) | A3 means stall warning never depends on the display. A hung display has no mitigation in pyEfis (O8). A blocked pitot or static port is not caught by the standby (ADS-1, O9) |
 | PFD-7 | Heading | L | Maj | As PFD-1 (A6); magnetometer or CAN-FIX `HEAD` loss | HDG-ANN-001, HSI-ANN-001 | |
 | PFD-8 | Heading | M | Maj | Undetected error over 10 deg (App. 1 definition); magnetic interference; frozen value (H1, H2); a hung display (section 3.1.1) | HDG-ANN-001, HDG-FMT-001, HSI-FAIL-001 | A hung display has no mitigation in pyEfis (O8) |
-| PFD-9 | Vertical speed | L | TBD | As PFD-1 | VSI-ANN-001 | App. 1 row not checked (O3) |
-| PFD-10 | Vertical speed | M | Maj (per AC 25-11B Table 4-6, as the VSI spec cites it) | Frozen value; a trend computed from a frozen altitude; a blocked static port reads zero (ADS-1) | VSI-ANN-001, VSI-DISP-001 | App. 1 row not checked (O3) |
-| PFD-11 | Turn rate and slip | L | TBD | As PFD-1 | TC-ANN-001 | Severity not assessed (O3) |
-| PFD-12 | Turn rate and slip | M | TBD | Frozen or biased lateral acceleration | TC-DISP-001, TC-SLIP-001, TC-SLIP-002, AI-SLIP-001, AI-SLIP-002 | Severity not assessed (O3) |
-| PFD-13 | Flight path, wind, TAS, airspeed trend | L | Min (provisional) | As PFD-1; derived keys missing | EFIS-FPM-008 (FPM removed when an input is missing), EFIS-TAS-002 (dashes when TAS is unavailable), EFIS-WIND-011 (wind keys not defined) | Provisional (O3) |
-| PFD-14 | Flight path, wind, TAS, airspeed trend | M | TBD (a flight-path marker used as guidance in IMC may exceed Maj) | Derived from wrong inputs with valid flags | EFIS-FPM-011 (FPM colour when an input is degraded), EFIS-WIND-009 (wind state by colour and content). No airspeed-trend requirement handles a bad input | **Assess before any guidance use of the FPM** (O3) |
+| PFD-9 | Vertical speed | L | Min (App. 1, A1-6) | As PFD-1 (A6) | VSI-ANN-001 | |
+| PFD-10 | Vertical speed | M | Min (App. 1, A1-6: Maj only where the operating rules require VS, which Part 91 outside Category II does not) | Frozen value; a trend computed from a frozen altitude; a blocked static port reads zero (ADS-1); a gauge configured to be editable writes VS itself (CFG-2) | VSI-ANN-001, VSI-DISP-001 | A VS that is wrong because altitude is frozen or the static port is blocked is graded on PFD-4 and ADS-1, not here |
+| PFD-11 | Turn rate and slip | L | Min (App. 1, A1-3) | As PFD-1 (A6) | TC-ANN-001 | App. 1 notes that rate of turn is generally required for Part 91 IFR unless a third attitude is installed. A6 means a host loss takes it with attitude; whether the installation then meets that rule is the installer's |
+| PFD-12 | Turn rate and slip | M | Min (App. 1, A1-3: Minor in IMC while an attitude display works) | Frozen or biased lateral acceleration | TC-DISP-001, TC-SLIP-001, TC-SLIP-002, AI-SLIP-001, AI-SLIP-002 | Minor rests on a working attitude display: the standby (A1) |
+| PFD-13 | Flight path, wind, TAS, airspeed trend | L | Min (App. 1, A1-3, flight path vector; no App. 1 row for wind, TAS or trend) | As PFD-1; derived keys missing | EFIS-FPM-008 (FPM removed when an input is missing), EFIS-TAS-002 (dashes when TAS is unavailable), EFIS-WIND-011 (wind keys not defined) | Wind, TAS and trend: graded Minor here, because none is flown to and each sits beside the primary value it derives from |
+| PFD-14 | Flight path, wind, TAS, airspeed trend | M | Maj (App. 1, A1-3, flight path vector: a misleading marker "could cause the pilot to temporarily maneuver the aircraft using erroneous guidance information") | Derived from wrong inputs with valid flags | EFIS-FPM-011 (FPM colour when an input is degraded), EFIS-WIND-009 (wind state by colour and content). No airspeed-trend requirement handles a bad input | Maj holds while the FPM is a display cue only. Driving a flight director or coupled guidance from it is a new row, assessed first. The airspeed trend has no requirement for a bad input (O4) |
+| PFD-15 | Selected altitude and deviation alert | L/M | L: Min. M: Maj (App. 1 has no altitude-alerting row; its visual-alert row, A1-11, grades by what is monitored) | Gateway-computed flag (`ALTSEL`, fix-gateway annunciate plugin) not delivered or not set; a false alert; a bug drawn away from the value set | AL-BUG-001, EFIS-ALTSEL-002, EFIS-ALTSEL-005, EFIS-ALTSEL-006, EFIS-ALTSEL-009, EFIS-ALTSEL-010 | The alert supplements the altimeter (A3). A missed alert the pilot relied on is graded one step above an annunciated loss. Both grades assume the altitude itself is right; a wrong altitude is PFD-4 |
 | ADS-1 | Air data: altitude, airspeed, vertical speed (common pitot or static blockage) | M | Cat (as PFD-4; PFD-6 up to Cat) | A blocked pitot or static port, shared by the pyEfis air data source and the standby (A2, section 3.1.2). Both show the same wrong value, each valid | Outside this stack: a heated pitot for IFR, an alternate static source, the preflight inspection. In this stack: none implemented. A GPS plausibility cue is the candidate (O9) | The standby cross-check does not detect it (A2); the GPS cue is not built (O9) |
-| PFD-15 | Selected altitude and deviation alert | L/M | TBD | Gateway-computed flag (`ALTSEL`, fix-gateway annunciate plugin) not delivered or not set | AL-BUG-001, EFIS-ALTSEL-002, EFIS-ALTSEL-005, EFIS-ALTSEL-006, EFIS-ALTSEL-009, EFIS-ALTSEL-010 | Severity not assessed; A3 applies to any altitude alerting (O3) |
 
 #### 3.1.1 A hung display: one mechanism behind PFD-2, 4, 6 and 8
 
@@ -164,9 +177,11 @@ not set here. A cue of this kind only converts the M cell toward L once it has a
 | ID | Function | Mode | Sev. | Mechanism | Mitigating requirements | Open |
 |---|---|---|---|---|---|---|
 | EMS-1 | Powerplant parameters | L | Min to Haz | CAN-FIX node, bus, gateway or host loss | none with an ID | No requirement IDs for the engine widgets (O4) |
-| EMS-2 | Powerplant parameters | M | Haz | Wrong limits from a bad aircraft profile, so a missed exceedance (H4); frozen value (H1, H2) | none with an ID | No IDs (O4); A3 for engine alerting |
+| EMS-2 | Powerplant parameters | M | Haz | Wrong limits from a bad aircraft profile, so a missed exceedance (H4); frozen value (H1, H2); a gauge configured to be editable writes the engine value itself (CFG-2) | none with an ID | No IDs (O4); A3 for engine alerting |
 | NAV-1 | Navigation guidance (HSI, flight plan, procedures) | L | Maj | Source or flight-plan engine loss | HSI-ANN-002 (NAV flag), HSI-ANN-003 (GS flag), HSI-FAIL-001 | |
-| NAV-2 | Navigation guidance | M | Maj (LP/LPV Haz in TSO-C146e terms) | Wrong source shown; deviation scaled wrong; stale procedure data | HSI-SRC-001 (active source always annunciated), HSI-DEV-001 (normalised deviation), HSI-FAIL-001; A4. Bearing pointers are cyan, fixed to VOR1 / VOR2, never GPS and never on the CDI's own source, so a bearing needle cannot read as a second course pointer (HSI-COLOR-001, spec 6.8; HSIBRG1, HSIBRG4) | Flight-plan engine and procedures pack have no requirement IDs (O4) |
+| NAV-2 | Navigation guidance | M | Maj (LP/LPV Haz in TSO-C146e terms) | Wrong source shown; a supplemental receiver read as a primary nav radio; deviation scaled wrong; stale procedure data | HSI-SRC-001 (active source always annunciated), HSI-SRC-002 (a supplemental source, `NAVSUPP` = 1 from the gateway, is marked `SUPP`; SDRVOR3), HSI-DEV-001 (normalised deviation), HSI-FAIL-001; A4. Bearing pointers are cyan, fixed to VOR1 / VOR2, never GPS and never on the CDI's own source, so a bearing needle cannot read as a second course pointer (HSI-COLOR-001, spec 6.8; HSIBRG1, HSIBRG4) | Flight-plan engine and procedures pack have no requirement IDs (O4) |
+| NAV-3 | Supplemental-source coupling caution (planned: BACKLOG SDRVOR4, not built) | L | TBD | The caution is not raised while the autopilot is coupled to a supplemental source: the gateway `cas` row is missing or its inputs are lost. The source stays marked `SUPP` on the HSI (HSI-SRC-002) | none yet: the row is specified in SDRVOR4 | Not built. No adapter couples to a bus NAV source today. Severity is for Safety and Compliance. By the project owner's ruling (SDRVOR3, 2026-11-21) coupling is never refused on `NAVSUPP`, so this caution is the only autopilot-side cue |
+| NAV-4 | Supplemental-source coupling caution | M | TBD | The caution is raised with a primary nav radio coupled (a nuisance caution), or it stays up after the source changes | none yet | Not built; as NAV-3 |
 | TER-1 | Terrain and obstacle awareness (SVS, map) | L | Min (advisory) | GL failure; no position; pack missing | AI-SVS-001 (no terrain without a valid position, SVS UNAVAIL), EFIS-SVS-002 (terrain viewpoint from FIX position), EFIS-SVS-006 (fallback to the sky/ground gradient when terrain is unavailable) | |
 | TER-2 | Terrain and obstacle awareness | M | Up to Haz if trusted like TAWS | Wrong or stale pack; datum or registration error; replayed manifest (H3) | AI-SVS-001; signed manifest and publish gate (makerplane-data); A3 (no TAWS) | Per-kind data quality requirements are not written (O7) |
 | MAP-1 | Moving map | L/M | Min / TBD | As TER-1, TER-2 | none with an ID | No requirement IDs (O4) |
@@ -186,6 +201,7 @@ source, so a gateway change can find its row.
 | GW-2 | Hang, deadlock or socket error | All PFD values frozen and shown valid (PFD-2, 4, 6, 8) | Cat | Client watchdog marks every key failed after 2 s of silence (H1); every displayed key has a time-to-live (H2) | The watchdog runs on the display's GUI thread, so it does not cover a hung display (section 3.1.1, O8) |
 | GW-3 | Two sources write one key | Value alternates between sources, each flagged valid | Cat for attitude, by PFD-2 | A5 (configuration rule only) | Source selection is a roadmap item; no interlock (O5) |
 | GW-4 | Computed key from bad inputs | Derived value wrong but valid | as PFD-14 | none with an ID | fix-gateway has no requirement IDs (O4) |
+| GW-5 | Pitch offset mis-dialled on a gateway encoder | Attitude biased by the offset, shown valid (PFD-2) | Cat, by PFD-2 | pyEfis never writes `PITCHSET`: it is in the sensed and computed class, and the write audit fails on a pyEfis write (core_modules.yaml) | The shipped `rpi_rotary_encoder` connection writes `BARO` when the knob is turned with the push held, and `PITCHSET` when it is turned without. `rpi_bno055` adds `int(PITCHSET)` to the sensor pitch before it writes `PITCH`. The key's range is -180 to +180 deg, and nothing displays the offset. Only the standby cross-check catches it (A1, O10) |
 
 ### 3.4 CAN-FIX, makerplane-data and the configurator
 
@@ -197,6 +213,7 @@ source, so a gateway change can find its row.
 | PKG-2 | Older valid manifest replayed | DAT-2, TER-2 | Maj | The updater refuses a signed manifest older than its cache (H3) | |
 | PKG-3 | Source data wrong at ingest | TER-2, NAV-2 | as those rows | `schema_guard`, publish gate, pack reports bound into the manifest | Data quality requirements per kind (O7) |
 | CFG-1 | Wrong V-speeds or engine limits saved | PFD-6, EMS-2 | Haz to Cat | The configurator server rejects an out-of-order or out-of-range profile (H4) | The profile reaches the aircraft by a manual install; the human check against the POH leaves no record (tool inventory, row C1) |
+| CFG-2 | Screen config makes a gauge editable | The gauge writes the value it displays: a knob or touch edit sets `VS` or an engine value to the dialled number and sends it to the gateway, shown valid until the source next writes (PFD-10, EMS-2). pyEfis becomes a second writer of a sensed key (A5) | as those rows | No shipped config makes a sensed gauge editable. The write audit fails on a VS readout given an `encoder_order` (`tests/safety/test_core_writes.py`) | The rule holds by config, not by code: `gauges/abstract.py` defaults a gauge's `encoder_set_key` to its own `dbkey`, and `encoder_order` or `touch_edit` makes it an editor. The audit covers the shipped configs only, not an installer's own |
 
 ### 3.5 Fixes cited in the rows
 
@@ -224,8 +241,13 @@ repository's `dev` branch with tests; this document does not say which release c
    in-stack detection would be a GPS comparison that does not exist yet (O9).
 3. **The instrument specs are a real mitigation record.** Every primary instrument has an
    annunciation requirement (AI-ANN-001, AL-ANN-001, AS-ANN-001, HDG-ANN-001, VSI-ANN-001,
-   TC-ANN-001, HSI-ANN-001, HSI-ANN-002, HSI-ANN-003), each with tests. Those requirements convert
-   M into L, but only once the flag reaches them.
+   TC-ANN-001, HSI-ANN-001, HSI-ANN-002, HSI-ANN-003), each with tests. They take a value off
+   "valid, without warning", but only once the flag reaches them, and what they leave depends on
+   the flag. Under `fail` or `old` the value is removed: an L. Under `bad` the airspeed, altitude
+   and VS readouts stay on the glass in amber: an annunciated suspect display, not an L
+   (AS-ANN-001, AL-ANN-001 and VSI-ANN-001, cited by PFD-3, PFD-4, PFD-5, PFD-6, PFD-9 and PFD-10).
+   That is not an M either, because it carries a warning. The argument holds only while sources
+   use `fail` for data they know is invalid (A8).
 
 ## 5. Open items
 
@@ -233,13 +255,14 @@ repository's `dev` branch with tests; this document does not say which release c
 |---|---|---|---|
 | O1 | **Closed 2026-11-08.** The standby's scope is attitude, airspeed and altitude (A1, A6); the user documentation carries it | PFD-1, PFD-3, PFD-5, GW-1 | Done |
 | O2 | No comparator between pyEfis and the standby; detection of an unflagged M rests on the pilot | PFD-2 | Not proposed now |
-| O3 | Severity not checked against an App. 1 row: VSI, turn and slip, FPM and derived vectors, altitude alerting | PFD-9 to PFD-15 | Safety and Compliance, next edition |
-| O4 | Functions with no requirement IDs: engine widgets, moving map, data annunciation, flight-plan engine, fix-gateway | EMS-1, EMS-2, NAV-2, MAP-1, DAT-1, DAT-2, GW-4 | Owners of each spec |
+| O3 | **Closed 2026-11-21 (edition 5).** PFD-9 to PFD-15 are graded against AC 23.1309-1E Appendix 1; where App. 1 has no row (wind, TAS, trend, altitude alerting) the cell says so | PFD-9 to PFD-15 | Done |
+| O4 | Functions with no requirement IDs: engine widgets, moving map, data annunciation, flight-plan engine, fix-gateway; and no requirement for the airspeed trend under a bad input | EMS-1, EMS-2, NAV-2, MAP-1, DAT-1, DAT-2, GW-4, PFD-14 | Owners of each spec |
 | O5 | No interlock against two sources on one key | GW-3 | Source selection on the fix-gateway roadmap |
 | O6 | CAN-FIX requirements bind senders only: nothing specifies that a receiver flags a silent node or an out-of-range frame | CAN-1, CAN-2 | fix-gateway CAN-FIX plugin |
 | O7 | No data quality requirements per pack kind (accuracy, resolution, completeness, timeliness) | TER-2, PKG-3 | makerplane-data check catalogue |
-| O8 | A hung GUI thread freezes every PFD value with valid flags, and the client watchdog cannot trip because it runs on that thread (section 3.1.1). Candidate remedy: a frame-liveness check off the GUI thread, for example a separate thread or a service-manager watchdog fed from the paint loop, that blanks or flags the display after N seconds without a repaint. N is a safety-cue threshold and is the project owner's decision. Also held here: an assumption A8, that the primary-flight code is separable from the rest, is entered in section 2 only once the import check that enforces it has no exceptions left; until then it would be false | PFD-2, PFD-4, PFD-6, PFD-8, GW-2 | pyEfis maintainers, with Safety and Compliance |
+| O8 | A hung GUI thread freezes every PFD value with valid flags, and the client watchdog cannot trip because it runs on that thread (section 3.1.1). Candidate remedy: a frame-liveness check off the GUI thread, for example a separate thread or a service-manager watchdog fed from the paint loop, that blanks or flags the display after N seconds without a repaint. N is a safety-cue threshold and is the project owner's decision. Also held here: an assumption A9, that the primary-flight code is separable from the rest, is entered in section 2 only once the import check that enforces it has no exceptions left; until then it would be false | PFD-2, PFD-4, PFD-6, PFD-8, GW-2 | pyEfis maintainers, with Safety and Compliance |
 | O9 | A blocked pitot or static port, shared with the standby, gives both the same wrong air data with valid flags (section 3.1.2). Candidate cue: a GPS plausibility check, `GPS_ELLIPSOID_ALT` against `ALT` and `GS` against `IAS`. Its thresholds and presentation are safety-cue choices and are the project owner's decision | ADS-1, PFD-4, PFD-6, PFD-10 | pyEfis maintainers, with Safety and Compliance |
+| O10 | A pitch offset set on a gateway encoder biases `PITCH` with valid flags, and the same knob sets `BARO` when pushed (GW-5). Candidates: a bound far narrower than -180 to +180 deg, a display of a non-zero offset, or taking the offset off the baro knob. Each is a safety-cue or control choice and is the project owner's decision | GW-5, PFD-2 | fix-gateway maintainers, with Safety and Compliance |
 
 ## 6. Keeping it current
 
@@ -252,14 +275,18 @@ repository's `dev` branch with tests; this document does not say which release c
 
 ## 7. Sources
 
-- FAA AC 23.1309-1E, Appendix 1 (severity by function) and Figure 2. Read.
-- FAA AC 25-11B Table 4-6, as cited by `docs/vsi_widget_spec.md`.
+- FAA AC 23.1309-1E, Appendix 1 (severity by function; pages A1-1 to A1-3, A1-6 and A1-11 for
+  the rows used here) and Figure 2. Read.
+- FAA AC 25-11B Table 4-6, as cited by `docs/vsi_widget_spec.md`. Edition 4 graded PFD-10 from it;
+  it is transport-category guidance, and edition 5 grades PFD-10 from AC 23.1309-1E instead.
 - 14 CFR 91.175 (IFR approach minimums and navigation).
 - This repository's `docs/ai_widget_spec.md`, `airspeed_widget_spec.md`, `altimeter_widget_spec.md`,
   `heading_widget_spec.md`, `hsi_widget_spec.md`, `tc_widget_spec.md`, `vsi_widget_spec.md`,
   `requirements.md`, `instrument_verification_status.md`, `README.rst`.
 - canfix-spec `src/requirements.rst` (32 IDs).
-- fix-gateway `src/fixgw/config/database/ahrs.yaml` (`ALT`, `IAS`, `GS`, `GPS_ELLIPSOID_ALT`).
+- fix-gateway `src/fixgw/config/database/ahrs.yaml` (`ALT`, `IAS`, `GS`, `GPS_ELLIPSOID_ALT`,
+  `PITCHSET`), `src/fixgw/plugins/rpi_bno055/__init__.py`, `src/fixgw/plugins/rpi_rotary_encoder/__init__.py`
+  and `src/fixgw/config/connections/baro_rpi_rotary_encoder.yaml`.
 - FAA-H-8083-25, Pilot's Handbook of Aeronautical Knowledge, chapter on flight instruments
   (pitot-static blockage behaviour).
 - The fix pull requests in section 3.5.

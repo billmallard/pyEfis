@@ -457,6 +457,11 @@ visitors can look and touch without changing anything. Add a top-level
 kiosk:
   enabled: true
   idle_return_s: 60
+  defaults:
+    NAVSRC: 2        # GPS
+    BARO: 29.92
+    ALTSEL: 3000
+    MAPRANGE: 2      # ladder index: 10 NM on the default ladder
 ```
 
 With the kiosk on:
@@ -470,8 +475,15 @@ With the kiosk on:
 - The Data Status **Update** button is off.
 - No keybindings load, and buttons cannot run `exit` or `evaluate`.
 
-Map pan and range, screen and tab buttons, and baro and selected-altitude
-edits still work.
+Map pan and range, screen and tab buttons, the HSI source tab, and baro and
+selected-altitude edits still work. While the demo is running, the kiosk puts
+the keys under `defaults` back to their configured values each time the demo
+route starts over (`DEMOLOOP`), when the demo starts, and on the idle return,
+so one visitor's change does not stay for the next. Only `NAVSRC`, `BARO`,
+`ALTSEL` and `MAPRANGE` are accepted; any other key is logged and dropped.
+Without `defaults` nothing is reset. A gateway whose database has no
+`DEMOLOOP` (an older `database/demo.yaml`) still gets the reset when the demo
+starts and on the idle return, but not at each loop.
 
 The DEMO marking does not need the kiosk. It shows on any panel while the
 gateway's demo source is running (`DEMOLIVE`).

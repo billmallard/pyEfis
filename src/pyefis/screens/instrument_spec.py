@@ -263,6 +263,45 @@ class ContainerSlot:
             self.label = self.name.replace("_", " ").capitalize()
 
 
+# The YAML option that enrols an instrument in a screen's knob walk. It is
+# ``apply="special"``: ``screenbuilder_options.apply_options`` appends the
+# instrument to ``screen.encoder_list`` instead of setting an attribute.
+ENCODER_ORDER = "encoder_order"
+
+
+def is_encoder_option(name):
+    """True for an option that configures how the knob edits an instrument:
+    the ``encoder_*`` family plus ``touch_edit`` (touch the instrument to give
+    it the knob). ``encoder_order`` is enrolment, not editing, so it is not
+    one."""
+    return name != ENCODER_ORDER and (
+        name.startswith("encoder_") or name == "touch_edit")
+
+
+@dataclass(frozen=True)
+class EncoderSupport:
+    """How an instrument takes the screen knob (pyEfis #97). Mirrors the
+    ``enc_*`` protocol the ``EncoderController`` drives; a test builds the
+    real widget and holds each flag to the methods it actually has.
+
+      * ``selectable`` -- it can join the knob walk through ``encoder_order``
+        (it has ``enc_selectable``). The widget may still decline at runtime,
+        e.g. an autopilot panel with no writable box;
+      * ``editable``   -- turning the inner knob acts on it once it has focus
+        (``enc_changed``). False for a button, whose push is the whole action;
+      * ``outer_ring`` -- the outer ring of a dual knob has its own action
+        (``enc_outer_changed``), usually a coarse step.
+
+    The options an instrument honours are not listed here: they are its own
+    declared properties (see :func:`is_encoder_option`), so they are written
+    once.
+    """
+
+    selectable: bool = False
+    editable: bool = False
+    outer_ring: bool = False
+
+
 @dataclass
 class InstrumentSpec:
     """The single source of truth for one instrument type.
@@ -298,6 +337,8 @@ class InstrumentSpec:
     # It stays in the exported schema -- so the editor can still understand and
     # render a config that already uses it -- but is filtered out of the palette.
     hidden: bool = False
+    # Knob support (pyEfis #97); None = the instrument ignores the knob.
+    encoder: EncoderSupport | None = None
 
     def __post_init__(self):
         names = [p.name for p in self.properties]
@@ -323,6 +364,28 @@ class InstrumentSpec:
             raise ValueError(
                 f"InstrumentSpec {self.type!r}: names used as both a "
                 f"property and a container slot {overlap}")
+        if self.encoder is not None and not isinstance(
+                self.encoder, EncoderSupport):
+            raise ValueError(
+                f"InstrumentSpec {self.type!r}: encoder must be an "
+                f"EncoderSupport")
+        selectable = self.encoder is not None and self.encoder.selectable
+        order = self.prop(ENCODER_ORDER)
+        if selectable != (order is not None):
+            raise ValueError(
+                f"InstrumentSpec {self.type!r}: declare {ENCODER_ORDER!r} "
+                f"exactly when encoder.selectable is set")
+        if order is not None and order.apply != "special":
+            raise ValueError(
+                f"InstrumentSpec {self.type!r}: {ENCODER_ORDER!r} is "
+                f"enrolment, handled by apply_options; apply must be "
+                f"'special'")
+        editable = self.encoder is not None and self.encoder.editable
+        knob_opts = sorted(n for n in names if is_encoder_option(n))
+        if knob_opts and not editable:
+            raise ValueError(
+                f"InstrumentSpec {self.type!r}: knob options {knob_opts} "
+                f"need encoder.editable")
 
     def prop(self, name):
         """Return the :class:`Prop` named *name*, or ``None``."""
@@ -330,6 +393,11 @@ class InstrumentSpec:
             if p.name == name:
                 return p
         return None
+
+    def encoder_options(self):
+        """Names of the knob options this instrument honours, in declared
+        order (``encoder_order`` excluded; see :func:`is_encoder_option`)."""
+        return [p.name for p in self.properties if is_encoder_option(p.name)]
 
     def defaults(self):
         """``{name: default}`` for every property that declares a default."""

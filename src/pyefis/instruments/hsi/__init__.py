@@ -65,6 +65,19 @@ CRS_EDIT_KEYS = {0: "NAV1CRS", 1: "NAV2CRS"}
 #: Bearing TO the station for each NAVSRC: what a push on CRS centres the CDI
 #: on (course = bearing to station gives a centred needle with TO).
 CRS_CENTRE_KEYS = {0: "VOR1BRG", 1: "VOR2BRG"}
+#: GPS OBS (OBS3, AER-6086). While the flight-plan engine is in OBS
+#: (FPLSTATE = 4, fix-gateway OBS2) and the CDI is on the internal plan, the
+#: CRS knob sets the OBS course by sending ``FPLCMD OBS <deg>``: there is no
+#: course key to write, the engine owns the course and publishes it back as
+#: FPLCRS. Outside OBS, CRS stays read-only on GPS (TK2).
+FPLSTATE_OBS = 4
+#: Shortest gap between two OBS commands, in milliseconds. A knob spin sends
+#: at most one command per gap, and the last value always goes out when the
+#: gap ends, so the engine ends on the course the readout shows.
+OBS_SEND_INTERVAL_MS = 250
+#: Bearing TO the active waypoint (magnetic, fix-gateway's compute from
+#: WPLAT/WPLON): what a push on CRS in OBS syncs the course to (G1000 p.62).
+OBS_CENTRE_KEY = "GPSBRG"
 
 
 class HSI(QGraphicsView):
@@ -117,6 +130,14 @@ class HSI(QGraphicsView):
         self.track_indicator_enabled = True
         self.track_color = "#ff00ff"
         self.track_min_speed = 5.0
+        # Turn-rate trend (ATT1b): a Garmin-style arc from the lubber line to
+        # the heading the aircraft will reach in TURN_TREND_SECONDS at the
+        # present rate of turn (ROT), with fixed marks at half and standard
+        # rate. Screen-fixed at the lubber, so it reads the same on any card
+        # heading. On by default; it self-hides when ROT is absent, old, bad
+        # or failed, so it is safe on panels without a turn-rate source.
+        self.turn_rate_enabled = True
+        self.turn_rate_color = "#ff00ff"
         self.gsi_enabled = gsi_enabled
         self.cdi_enabled = cdi_enabled
         # P5a redesign option defaults (must match the InstrumentSpec Prop
@@ -243,6 +264,16 @@ class HSI(QGraphicsView):
         self._edit_pending = None   # the field a touch is asking to focus
         self._edit_item = None      # the FIX item the focused field writes
         self._edit_rects = {}       # field -> (box, marks rect, marks bounds)
+        # GPS OBS course edit (OBS3): the course the knob has reached, the
+        # last one sent, and the send-rate gate (OBS_SEND_INTERVAL_MS).
+        self._obs_edit = False
+        self._obs_value = None
+        self._obs_sent = None
+        self._obs_sent_at = None
+        self._obs_clock = time.monotonic
+        self._obs_timer = QTimer(self)
+        self._obs_timer.setSingleShot(True)
+        self._obs_timer.timeout.connect(self._obs_flush)
 
         # GPS ground track (TRACK) + ground speed (GS) for the track diamond.
         # Subscribe always (the marker is drawn only when enabled); guarded so a
@@ -273,6 +304,24 @@ class HSI(QGraphicsView):
             self.gsdb.valueChanged[float].connect(self.setGs)
         except Exception:
             self.gsdb = None
+        # Rate of turn (ROT, deg/s, + = right) for the turn-rate trend. Starts
+        # failed so an absent key hides the trend; guarded like TRACKM/GS.
+        self._rot = 0.0
+        self._RotOld = True
+        self._RotBad = True
+        self._RotFail = True
+        try:
+            self.rotdb = fix.db.get_item("ROT")
+            self._rot = self.rotdb.value or 0.0
+            self.rotdb.valueChanged[float].connect(self.setRot)
+            self.rotdb.oldChanged[bool].connect(self.setRotOld)
+            self.rotdb.badChanged[bool].connect(self.setRotBad)
+            self.rotdb.failChanged[bool].connect(self.setRotFail)
+            self._RotOld = self.rotdb.old
+            self._RotBad = self.rotdb.bad
+            self._RotFail = self.rotdb.fail
+        except Exception:
+            self.rotdb = None
 
         # Selected nav source (NAVSRC: 0=NAV1, 1=NAV2, 2=GPS) for source-based
         # colouring of the course pointer + CDI (magenta GPS / green VLOC).
@@ -295,6 +344,18 @@ class HSI(QGraphicsView):
             self.navtypedb.valueChanged[float].connect(self.setNavtype)
         except Exception:
             self.navtypedb = None
+        # Supplemental source (NAVSUPP: 1 = the selected NAV slot's receiver is
+        # supplemental, not certified -- the SDR receiver, fix-gateway SDRVOR3).
+        # The gateway's source plugin says so; the HSI never infers it from a
+        # frequency or a config. Defensive; absent (an older gateway) or 0 ->
+        # nothing is drawn and the HSI is pixel-identical to before.
+        self._navsupp = None
+        try:
+            self.navsuppdb = fix.db.get_item("NAVSUPP")
+            self._navsupp = self.navsuppdb.value
+            self.navsuppdb.valueChanged[float].connect(self.setNavsupp)
+        except Exception:
+            self.navsuppdb = None
         # Glideslope/glidepath validity for the selected source (GSV: 1 = GS
         # present, 0 = none). A VOR has no glideslope, so GSV=0 hides the GS
         # needle while the lateral CDI stays. Defensive; absent -> the GS shows
@@ -318,6 +379,24 @@ class HSI(QGraphicsView):
             self.cdivdb.valueChanged[float].connect(self.setCdiv)
         except Exception:
             self.cdivdb = None
+        # Flight-plan engine state (FPLSTATE, 4 = OBS) and the GPS guidance
+        # source (GPSSRC, 0 = internal plan): together they say whether the
+        # CRS knob sets a GPS OBS course (OBS3). Defensive; absent FPLSTATE
+        # (an older gateway) -> CRS stays read-only on GPS, as before.
+        self._fplstate = None
+        try:
+            self.fplstatedb = fix.db.get_item("FPLSTATE")
+            self._fplstate = self.fplstatedb.value
+            self.fplstatedb.valueChanged[self.fplstatedb.dtype].connect(self.setFplstate)
+        except Exception:
+            self.fplstatedb = None
+        self._gpssrc = None
+        try:
+            self.gpssrcdb = fix.db.get_item("GPSSRC")
+            self._gpssrc = self.gpssrcdb.value
+            self.gpssrcdb.valueChanged[self.gpssrcdb.dtype].connect(self.setGpssrc)
+        except Exception:
+            self.gpssrcdb = None
         # VOR TO/FROM for the selected source (TOFROM: 0=off/flag, 1=TO, 2=FROM).
         # Drawn as a triangle on the course line; hidden when 0 (LOC/GPS or no
         # signal). Defensive; absent -> not shown.
@@ -779,6 +858,137 @@ class HSI(QGraphicsView):
         self._TrackFail = fail
         self._update_track()
 
+    # Turn-rate trend (ATT1b), after the Garmin G1000/G3X turn rate indicator:
+    # the arc ends where the heading will be in TURN_TREND_SECONDS, so a
+    # standard-rate turn (3 deg/s) reaches the 18-deg mark. Above
+    # TURN_TREND_MAX_DPS the arc stops at that rate's length and gains an
+    # arrowhead: the prediction no longer holds, only "faster than this".
+    TURN_TREND_SECONDS = 6.0
+    STANDARD_RATE_DPS = 3.0
+    TURN_TREND_MAX_DPS = 4.0
+
+    def _turn_trend_shown(self):
+        """The trend (and its rate marks) only with a live ROT. It does not
+        depend on HEAD: the arc hangs off the fixed lubber line, not the card."""
+        if not getattr(self, "turn_rate_enabled", False) or self.rotdb is None:
+            return False
+        return not (self._RotOld or self._RotBad or self._RotFail)
+
+    def _turn_trend_deg(self):
+        """(signed heading change in TURN_TREND_SECONDS, capped?). + = right."""
+        lim = self.TURN_TREND_MAX_DPS * self.TURN_TREND_SECONDS
+        d = float(self._rot) * self.TURN_TREND_SECONDS
+        if abs(d) > lim:
+            return math.copysign(lim, d), True
+        return d, False
+
+    def _turn_trend_marks(self):
+        """Screen-relative degrees of the fixed rate marks: (half, standard)
+        rate each side of the lubber."""
+        std = self.STANDARD_RATE_DPS * self.TURN_TREND_SECONDS
+        return (-std, -std / 2.0, std / 2.0, std)
+
+    def setRot(self, value):
+        if value != self._rot:
+            self._rot = value
+            if self.isVisible() and self._turn_trend_shown():
+                self.update()
+
+    # A ROT quality change repaints at once, whatever the value is doing: a
+    # stale rate sends no value changes (the VSI XXX lesson, AER-5178).
+    def setRotOld(self, old):
+        self._RotOld = old
+        self.update()
+
+    def setRotBad(self, bad):
+        self._RotBad = bad
+        self.update()
+
+    def setRotFail(self, fail):
+        self._RotFail = fail
+        self.update()
+
+    def _turn_trend_rose_radius(self):
+        """Radius of the trend arc on the rose: just outside the ring, under
+        the lubber, so it never crosses the ticks, bug or track diamond."""
+        return self.r + self.fontSize * 0.25
+
+    def _draw_turn_trend_rose(self, c):
+        """Rate marks + trend arc on the full rose, in screen space (0 deg =
+        the lubber, clockwise +)."""
+        col = QColor(getattr(self, "turn_rate_color", "#ff00ff"))
+        rt = self._turn_trend_rose_radius()
+        # Fixed marks: radial ticks OUTSIDE the ring (the compass ticks are all
+        # inside it, so the two scales never mix), white like the lubber; the
+        # standard-rate pair longer than the half-rate pair.
+        c.setPen(QPen(QColor(self.fg_color), max(1.0, self.fontSize * 0.08)))
+        std = self.STANDARD_RATE_DPS * self.TURN_TREND_SECONDS
+        r0 = self.r + self.fontSize * 0.08
+        for m in self._turn_trend_marks():
+            r1 = rt + self.fontSize * (0.4 if abs(m) >= std else 0.15)
+            a = math.radians(m)
+            sa, ca = math.sin(a), math.cos(a)
+            c.drawLine(QLineF(self.cx + r0 * sa, self.cy - r0 * ca,
+                              self.cx + r1 * sa, self.cy - r1 * ca))
+        d, capped = self._turn_trend_deg()
+        if abs(d) < 1e-6:
+            return
+        pen = QPen(col, max(2.0, self.fontSize * 0.2))
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        c.setPen(pen)
+        c.setBrush(Qt.BrushStyle.NoBrush)
+        rect = QRectF(self.cx - rt, self.cy - rt, rt * 2.0, rt * 2.0)
+        # Qt arcs: 1/16 deg, 0 = 3 o'clock, counter-clockwise +. Start at 12
+        # o'clock; a right turn (+d) sweeps clockwise, so the span is -d.
+        c.drawArc(rect, 90 * 16, int(round(-d * 16)))
+        if capped:
+            a = math.radians(d)
+            sgn = 1.0 if d > 0 else -1.0
+            tip = (self.cx + rt * math.sin(a), self.cy - rt * math.cos(a))
+            ux, uy = sgn * math.cos(a), sgn * math.sin(a)   # along the arc
+            px, py = math.sin(a), -math.cos(a)              # radial out
+            s = self.fontSize * 0.4
+            c.setPen(QPen(col, 1.0)); c.setBrush(QBrush(col))
+            c.drawPolygon(QPolygonF([
+                QPointF(tip[0] + ux * s, tip[1] + uy * s),
+                QPointF(tip[0] + px * s * 0.6, tip[1] + py * s * 0.6),
+                QPointF(tip[0] - px * s * 0.6, tip[1] - py * s * 0.6)]))
+
+    def _turn_trend_arc_point(self, rel):
+        """Arc-mode trend point `rel` deg off the lubber: on the compass band,
+        lifted clear of it toward the lubber side (up)."""
+        x, y = self._arc_band_point(self._heading + rel)
+        return x, y - self.fontSize * 0.35
+
+    def _draw_turn_trend_arc(self, c):
+        """Rate marks + trend on the arc band (orientation: arc)."""
+        col = QColor(getattr(self, "turn_rate_color", "#ff00ff"))
+        c.setPen(QPen(QColor(self.fg_color), max(1.0, self.fontSize * 0.08)))
+        std = self.STANDARD_RATE_DPS * self.TURN_TREND_SECONDS
+        for m in self._turn_trend_marks():
+            half = self.fontSize * (0.3 if abs(m) >= std else 0.2)
+            x, y = self._turn_trend_arc_point(m)
+            c.drawLine(QLineF(x, y - half, x, y + half))
+        d, capped = self._turn_trend_deg()
+        if abs(d) < 1e-6:
+            return
+        n = max(2, int(math.ceil(abs(d) / 0.5)) + 1)
+        pts = [QPointF(*self._turn_trend_arc_point(d * i / (n - 1)))
+               for i in range(n)]
+        pen = QPen(col, max(2.0, self.fontSize * 0.2))
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        c.setPen(pen)
+        c.setBrush(Qt.BrushStyle.NoBrush)
+        c.drawPolyline(QPolygonF(pts))
+        if capped:
+            sgn = 1.0 if d > 0 else -1.0
+            tx, ty = self._turn_trend_arc_point(d)
+            s = self.fontSize * 0.4
+            c.setPen(QPen(col, 1.0)); c.setBrush(QBrush(col))
+            c.drawPolygon(QPolygonF([QPointF(tx + sgn * s, ty),
+                                     QPointF(tx, ty - s * 0.6),
+                                     QPointF(tx, ty + s * 0.6)]))
+
     def _rose_image(self):
         """The static rose (disc, ticks, cardinal/numeral labels) baked
         UNROTATED at 2x supersample -- once per scene build (#94). The
@@ -909,14 +1119,20 @@ class HSI(QGraphicsView):
             c.drawPolygon(self._track_diamond_polygon())
         c.restore()
 
+        # Turn-rate trend (ATT1b), screen-fixed at the lubber; drawn before the
+        # overlay so the lubber triangle sits on the arc's root.
+        if self._turn_trend_shown():
+            self._draw_turn_trend_rose(c)
+
         # Put the static overlay image on the view
         c.drawImage(self.rect(), self.overlay)
 
         # Compass numerals/letters drawn screen-upright at their (count - heading)
         # positions so they stay HORIZONTAL as the card rotates (Bill 2026-08-02),
         # instead of being baked into the rotating rose. Size is configurable via
-        # numeral_scale. Hidden on fail, matching changeFail's label opacity.
-        if not self.isFail():
+        # numeral_scale. Hidden on an invalid heading alone, matching changeFail's
+        # label opacity: a nav fault never takes the numerals (CERT1f).
+        if self._heading_valid():
             nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
             nf = QFont(self.font_family)
             nf.setPixelSize(nsize)
@@ -1039,6 +1255,8 @@ class HSI(QGraphicsView):
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2*pad,
                                            fm.height() + 2*pad)
+                self._draw_supplemental_mark(c, lx, ly + fm.descent(),
+                                             fm.horizontalAdvance(label))
 
         # Per-pointer bearing-source labels (P5b.2), mirroring the tappable
         # nav-source annunciation: pointer 1 bottom-left, pointer 2 bottom-right,
@@ -1410,6 +1628,7 @@ class HSI(QGraphicsView):
         c.drawText(QRectF(left, top, tab_w, th),
                    int(Qt.AlignmentFlag.AlignCenter), label)
         self._source_label_rect = (left, top, tab_w, th)
+        self._draw_supplemental_mark(c, left, py + ph, tab_w)
 
     #: The BRG tab's states in tap order (HSIBRG4, Bill 2026-11-16): the
     #: label each shows and the pointers it turns on. _bearing_states() drops
@@ -1580,6 +1799,8 @@ class HSI(QGraphicsView):
             or self._HeadOld   or self._HeadBad\
             or self._CourseOld or self._CourseBad
 
+    # Any input failed. The numerals no longer follow this (CERT1f, Bill
+    # 2026-11-20): they follow HEAD alone, see changeFail.
     def isFail(self):
         return self._GsiFail\
             or self._CdiFail\
@@ -1587,7 +1808,7 @@ class HSI(QGraphicsView):
             or self._CourseBad
 
     def changeFail(self):
-        if self.isFail():
+        if not self._heading_valid():
             for l in self.labels:
                 l.setOpacity(0)
         else:
@@ -1643,9 +1864,36 @@ class HSI(QGraphicsView):
             if self.isVisible():
                 self.update()
 
+    def setFplstate(self, value):
+        if value != self._fplstate:
+            self._fplstate = value
+            self._end_obs_edit_if_gone()
+            if self.isVisible():
+                self.update()
+
+    def setGpssrc(self, value):
+        if value != self._gpssrc:
+            self._gpssrc = value
+            self._end_obs_edit_if_gone()
+            if self.isVisible():
+                self.update()
+
+    def _end_obs_edit_if_gone(self):
+        # OBS ended (OBS OFF, an ACT/DTO, the source moved to the external
+        # navigator): the knob has no OBS course to set, so the edit ends
+        # rather than turning a readout that no longer answers it.
+        if self._edit_field == "crs" and self._obs_edit and not self._gps_obs():
+            self._release_edit_focus()
+
     def setNavtype(self, value):
         if value != self._navtype:
             self._navtype = value
+            if self.isVisible():
+                self.update()
+
+    def setNavsupp(self, value):
+        if value != self._navsupp:
+            self._navsupp = value
             if self.isVisible():
                 self.update()
 
@@ -1987,7 +2235,6 @@ class HSI(QGraphicsView):
         c.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         cx, top_y, own_y, half_w, sag = self._arc_params()
         fg = QColor(self.fg_color)
-        fail = self.isFail()
 
         # 1. Compass band ticks (every 5 deg in-sector), weight/length hierarchy
         # matching the rose; each tick fans slightly toward ownship. The loops
@@ -2017,8 +2264,9 @@ class HSI(QGraphicsView):
             c.drawLine(QLineF(bx, by, ix, iy))
 
         # 2. Numerals (screen-upright) at 30-deg, cardinal letters at 90-deg,
-        # just inside the band. Hidden on fail (matches the rose label opacity).
-        if not fail:
+        # just inside the band. Hidden on an invalid heading alone (matches the
+        # rose label opacity; CERT1f).
+        if self._heading_valid():
             nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
             nf = QFont(self.font_family); nf.setPixelSize(nsize)
             c.setFont(nf); c.setPen(QPen(fg))
@@ -2035,6 +2283,10 @@ class HSI(QGraphicsView):
                 ly = by + dy / dl * (self.tickSize * 1.4 + nsize * 0.7)
                 c.drawText(QRectF(lx - _bw / 2, ly - _bh / 2, _bw, _bh),
                            int(Qt.AlignmentFlag.AlignCenter), txt)
+
+        # 2b. Turn-rate trend (ATT1b) along the band, under the lubber.
+        if self._turn_trend_shown():
+            self._draw_turn_trend_arc(c)
 
         # 3. Top lubber triangle at (cx, top_y), pointing UP at the band.
         _lub = self.fontSize * 0.7
@@ -2209,6 +2461,8 @@ class HSI(QGraphicsView):
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2 * pad,
                                            fm.height() + 2 * pad)
+                self._draw_supplemental_mark(c, lx, ly + fm.descent(),
+                                             fm.horizontalAdvance(label))
         self._brg_label_rect = {1: None, 2: None}
         for _n in (1, 2):
             txt, invalid = self._bearing_corner_label(_n)
@@ -2330,9 +2584,26 @@ class HSI(QGraphicsView):
         except (TypeError, ValueError):
             return None
 
+    def _gps_obs(self):
+        """True when the CRS knob sets a GPS OBS course (OBS3): the CDI is
+        on GPS, GPS guidance is the internal plan (GPSSRC 0, or no GPSSRC),
+        and the engine says it is in OBS (FPLSTATE = 4). Read from the
+        engine's state only; with no FPLSTATE key this is never true."""
+        if self._navsrc_index() != 2 or self._fplstate is None:
+            return False
+        try:
+            if int(self._fplstate) != FPLSTATE_OBS:
+                return False
+            if self._gpssrc is not None and int(round(self._gpssrc)) != 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+        return self._fix_item("FPLCMD") is not None
+
     def _edit_key(self, field):
         """The FIX key a readout writes, or None when it is not editable now:
-        CRS has no key on a GPS source (or with no NAVSRC)."""
+        CRS has no key on a GPS source (or with no NAVSRC). In GPS OBS it
+        has none either -- it sends commands (_gps_obs)."""
         if field == "hdg":
             return "HEADBUG" if self.hdgbugdb is not None else None
         if field == "crs":
@@ -2342,12 +2613,16 @@ class HSI(QGraphicsView):
     def _field_editable(self, field):
         if not getattr(self, "touch_edit", False):
             return False
+        if field == "crs" and self._gps_obs():
+            return True
         return self._fix_item(self._edit_key(field)) is not None
 
     def _crs_display(self):
         """The course the CRS readout shows. While CRS is being edited that is
         the edited key itself: COURSE only follows it after fix-gateway's
         select runs, and the knob has to answer at once."""
+        if self._edit_field == "crs" and self._obs_edit:
+            return self._obs_value
         if self._edit_field == "crs" and self._edit_item is not None:
             return self._edit_item.value
         if not self._course_valid():
@@ -2422,12 +2697,28 @@ class HSI(QGraphicsView):
         if not self._field_editable(field):
             return False
         self._edit_field = field
-        self._edit_item = self._fix_item(self._edit_key(field))
+        if field == "crs" and self._gps_obs():
+            # The knob starts from the course the readout shows: the
+            # engine's OBS course, through GPSCRS -> COURSE.
+            self._edit_item = None
+            self._obs_edit = True
+            try:
+                self._obs_value = int(round(float(self._courseSelect or 0.0))) % 360
+            except (TypeError, ValueError):
+                self._obs_value = 0
+            self._obs_sent = self._obs_value
+        else:
+            self._edit_item = self._fix_item(self._edit_key(field))
         self.update()
         return True
 
     def enc_highlight(self, onoff):
         if not onoff:
+            if self._obs_edit:
+                # A timeout or a tap away ends the edit on the last value
+                # turned to, not on whatever the rate gate let through.
+                self._obs_flush()
+                self._obs_edit = False
             self._edit_field = None
             self._edit_item = None
             self.update()
@@ -2439,6 +2730,9 @@ class HSI(QGraphicsView):
         return self._edit_step(steps * EDIT_COARSE_DEG)
 
     def _edit_step(self, delta):
+        if self._edit_field == "crs" and self._obs_edit:
+            self._obs_send((int(self._obs_value or 0) + int(delta)) % 360)
+            return True
         item = self._edit_item
         if self._edit_field is None or item is None:
             return False
@@ -2468,6 +2762,12 @@ class HSI(QGraphicsView):
                 return False
             self._write_edit(int(round(float(self._heading or 0.0))) % 360)
             return True
+        if self._edit_field == "crs" and self._obs_edit:
+            brg = self._obs_bearing()
+            if brg is None:
+                return False
+            self._obs_send(int(round(brg)) % 360)
+            return True
         if self._edit_field == "crs":
             brg = self._station_bearing()
             if brg is None:
@@ -2475,6 +2775,67 @@ class HSI(QGraphicsView):
             self._write_edit(int(round(brg)) % 360)
             return True
         return False
+
+    def _obs_send(self, value):
+        """Turn the OBS course to *value*: the readout follows at once, and
+        ``FPLCMD OBS <value>`` goes out now or, inside
+        OBS_SEND_INTERVAL_MS of the last one, when that gap ends."""
+        self._obs_value = value
+        self.update()
+        now = self._obs_clock()
+        gap = OBS_SEND_INTERVAL_MS / 1000.0
+        if self._obs_sent_at is None or now - self._obs_sent_at >= gap:
+            self._obs_flush()
+        elif not self._obs_timer.isActive():
+            wait = gap - (now - self._obs_sent_at)
+            self._obs_timer.start(max(1, int(math.ceil(wait * 1000.0))))
+
+    def _obs_flush(self):
+        """Send the course the knob has reached, if it is not the one last
+        sent. Nothing goes out once the engine has left OBS: a late command
+        would put it back in."""
+        self._obs_timer.stop()
+        value = self._obs_value
+        if value is None or value == self._obs_sent or not self._gps_obs():
+            return
+        if self._send_fpl_command("OBS %d" % value):
+            self._obs_sent = value
+            self._obs_sent_at = self._obs_clock()
+
+    def _send_fpl_command(self, text):
+        """Write ``FPLCMD = "<seq> <text>"`` straight to the bus. The HSI is
+        primary-flight core and may not import the flight-plan package (rule
+        R1, docs/safety/core_modules.yaml), so it keeps FixBridge's seq rule
+        here: one past the highest seq on the bus, the last FPLCMD or the
+        last FPLCMDACK, so this writer and the page's bridges never repeat
+        each other's seq. A test holds the two rules together. False when
+        the gateway does not define the command keys."""
+        cmd = self._fix_item("FPLCMD")
+        ack = self._fix_item("FPLCMDACK")
+        if cmd is None or ack is None:
+            return False
+        try:
+            last = int(str(cmd.value or "").split()[0])
+        except (IndexError, ValueError):
+            last = 0
+        try:
+            last = max(last, abs(int(ack.value or 0)))
+        except (TypeError, ValueError):
+            pass
+        cmd.value = "%d %s" % (last + 1, text)
+        cmd.output_value()
+        return True
+
+    def _obs_bearing(self):
+        """Bearing TO the active waypoint (GPSBRG), or None when there is
+        none valid to sync to."""
+        item = self._fix_item(OBS_CENTRE_KEY)
+        if item is None or item.old or item.bad or item.fail:
+            return None
+        try:
+            return float(item.value)
+        except (TypeError, ValueError):
+            return None
 
     def _station_bearing(self):
         """Bearing TO the selected VOR (VOR1BRG / VOR2BRG), or None when there
@@ -2507,6 +2868,40 @@ class HSI(QGraphicsView):
         if nt in (2, 3):
             return f"LOC{slot}"
         return f"VLOC{slot}"
+
+    #: Text of the supplemental-source mark under the source annunciation.
+    SUPPLEMENTAL_MARK = "SUPP"
+
+    def _supplemental(self):
+        """True when the selected NAV source is supplemental (NAVSUPP >= 0.5).
+        Never for GPS, and never when NAVSUPP is absent. The mark does not
+        drop on the key's quality flags: a supplemental source is never shown
+        as a certified one."""
+        if self._navsupp is None or self._navsrc is None:
+            return False
+        if int(round(self._navsrc)) == 2:
+            return False
+        try:
+            return float(self._navsupp) >= 0.5
+        except (TypeError, ValueError):
+            return False
+
+    def _draw_supplemental_mark(self, c, left, top, width):
+        """Amber "SUPP" centred under the source annunciation, `width` wide,
+        its top at `top` (SDRVOR3, AER-6245). Amber, the caution colour the
+        suspect tapes use (HSI-COLOR-002): the
+        needle is advisory, not an IFR source. The source label and colour
+        above it are unchanged, so VOR/LOC and NAV1/NAV2 still read as before.
+        Draws nothing unless _supplemental()."""
+        if not self._supplemental():
+            return
+        lf = QFont(self.font_family)
+        lf.setPixelSize(int(self.fontSize))
+        c.setFont(lf)
+        fm = c.fontMetrics()
+        c.setPen(QPen(QColor(helpers.SUSPECT_TAPE_COLOR)))
+        c.drawText(QRectF(left, top, width, fm.height()),
+                   int(Qt.AlignmentFlag.AlignCenter), self.SUPPLEMENTAL_MARK)
 
     def setCourseOld(self,old):
         self._CourseOld = old

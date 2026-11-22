@@ -21,6 +21,9 @@ fix-gateway ``doc/flightplan_keys.md``):
 - ``HM``/``HF``/``HA``: the leg into the fix, plus the racetrack the engine
   flies (``_hold_geometry``): turn out, outbound ``FPLfDST`` along-track,
   turn in, inbound to the fix.
+  :func:`hold_entry_pattern` adds the parallel or teardrop entry the
+  engine flies before it (HOLDENT2): the entry it reports on
+  ``FPLHOLDENT``, never one chosen here.
 - ``PI``: the leg into the fix, plus the 45/180 procedure turn shape: the
   engine's outbound point (reciprocal +-45 deg, ``FPLfDST`` out), the
   reversal, and the 45 deg intercept back to the inbound course.
@@ -70,6 +73,20 @@ CF_ANCHOR_NM = 50.0
 #: tail of an FA leg past its fix.
 VECTOR_STUB_NM = 3.0
 COURSE_STUB_NM = 2.0
+
+#: a hold's parallel or teardrop entry leg, as the engine flies it
+#: (fix-gateway engine ``HOLD_ENTRY_LEG_S``, ``HOLD_TEARDROP_OFFSET_DEG``):
+#: one minute from the fix, the teardrop 30 deg off the outbound course
+#: toward the holding side. Drawn at NOMINAL_GS_KT, 2 NM.
+HOLD_ENTRY_LEG_S = 60.0
+HOLD_TEARDROP_OFFSET_DEG = 30.0
+HOLD_ENTRY_NM = NOMINAL_GS_KT * HOLD_ENTRY_LEG_S / 3600.0
+
+#: the values of ``FPLHOLDENT`` (fix-gateway engine ``hold_entry``).
+HOLD_ENTRY_DIRECT = "DIRECT"
+HOLD_ENTRY_TEARDROP = "TEARDROP"
+HOLD_ENTRY_PARALLEL = "PARALLEL"
+HOLD_ENTRIES = (HOLD_ENTRY_DIRECT, HOLD_ENTRY_TEARDROP, HOLD_ENTRY_PARALLEL)
 
 #: legs with no fix of their own: no waypoint symbol, no label, no tap target.
 NO_FIX_PTS = frozenset({"CA", "VA", "VM", "VI"})
@@ -230,6 +247,38 @@ def hold_pattern(fix, inbound_true, turn, leg_nm, radius_nm=TURN_RADIUS_NM):
     pts += _semicircle(loc, ex + radius_nm * sx, ey + radius_nm * sy, side, clockwise, radius_nm)
     pts.append(fix)
     return pts
+
+
+def hold_entry_pattern(fix, inbound_true, turn, entry, leg_nm=HOLD_ENTRY_NM,
+                       radius_nm=TURN_RADIUS_NM):
+    """The entry the engine flies into the hold at *fix* before its first
+    turn out (``_hold_geometry``, phase ENTRY): from the fix *leg_nm* along
+    the outbound course (*entry* ``"PARALLEL"``) or 30 deg off it toward
+    the holding side (``"TEARDROP"``). Then the turn back: a parallel turns
+    toward the holding side, a teardrop in the hold's own direction, until
+    pointing at the fix, then straight to it (:func:`turn_to_fix`).
+
+    The engine steers the inbound course from the end of the entry leg and
+    leaves the turn to the pilot or autopilot; the turn drawn is the
+    standard-rate one at :data:`NOMINAL_GS_KT`, rejoining at the fix as
+    AIM 5-3-8 allows for a parallel entry. Returns ``[(lat, lon), ...]``
+    from the fix back to the fix, or ``[]`` for a direct entry, an empty
+    or unknown *entry*, or no turn direction: nothing is drawn but the
+    racetrack."""
+    if entry not in (HOLD_ENTRY_TEARDROP, HOLD_ENTRY_PARALLEL) or turn not in ("L", "R"):
+        return []
+    outbound = (inbound_true + 180.0) % 360.0
+    if entry == HOLD_ENTRY_TEARDROP:
+        # The holding side, seen along the outbound course, is left of it
+        # for a right-turn hold.
+        course = (outbound + (-HOLD_TEARDROP_OFFSET_DEG if turn == "R"
+                              else HOLD_TEARDROP_OFFSET_DEG)) % 360.0
+        back = turn
+    else:
+        course = outbound
+        back = "L" if turn == "R" else "R"
+    end = geo.destination_point(fix[0], fix[1], course, leg_nm)
+    return [fix] + turn_to_fix(end, course, back, fix, radius_nm)
 
 
 def procedure_turn_pattern(fix, inbound_true, turn, leg_nm, radius_nm=TURN_RADIUS_NM):

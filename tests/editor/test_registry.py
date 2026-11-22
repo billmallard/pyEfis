@@ -109,6 +109,10 @@ def test_schema_entry_matches_record():
         assert entry["preview"] == spec.preview
         assert [c["name"] for c in entry["containers"]] == [
             c.name for c in spec.containers]
+        enc = spec.encoder or ispec.EncoderSupport()
+        assert entry["encoder"] == {
+            "selectable": enc.selectable, "editable": enc.editable,
+            "outer_ring": enc.outer_ring, "options": spec.encoder_options()}
         # Options are exactly the declared properties, in order.
         assert list(entry["options"]) == [p.name for p in spec.properties]
         for p in spec.properties:
@@ -203,6 +207,83 @@ def test_action_catalogue_matches_hmi_registry(qtbot, hmi_actions):
         f"extra: {sorted(hmi_verbs - real)}")
     catalogue = {a["verb"] for a in eschema._ACTIONS}
     assert {"set bg color", "set fg color", "set text"} <= catalogue
+
+
+# Types that cannot be built standalone (builds_in_isolation=False), mapped to
+# the widget class their builder makes, so the knob gate below still reads
+# their real enc_* methods. A new such type fails the gate until it is added.
+_CLASS_OF_UNBUILDABLE = {
+    "about": "AboutSystem",
+    "button": "Button",
+    "data_annunciation": "DataAnnunciation",
+    "data_status": "DataStatus",
+    "listbox": "ListBox",
+    "tab_section": "TabSection",
+    "virtual_vfr": "AI",
+    "weston": "Weston",
+}
+
+
+def _widget_class(t, spec, qtbot):
+    from pyefis.screens.instrument_table import instrument
+    if not spec.builds_in_isolation:
+        return instrument(_CLASS_OF_UNBUILDABLE[t])
+    widget = spec.builder(
+        None, {"type": t, "options": _ctor_options(spec)}, font_percent=0.05,
+        font_family="DejaVu Sans Condensed", replace=None)
+    qtbot.addWidget(widget)
+    return type(widget)
+
+
+def test_encoder_support_matches_widget(fix, qtbot, hmi_actions):
+    """The knob catalogue (pyEfis #97) against the widgets, the way the
+    action catalogue is held to the HMI registry: each record's
+    EncoderSupport must match the enc_* methods the real widget has, so the
+    configurator can never offer the knob walk to an instrument that ignores
+    it, or miss one that takes it. ``selectable`` is exactly the test
+    apply_options uses to enrol an ``encoder_order``."""
+    unbuildable = {t for t, spec in factory.REGISTRY.items()
+                   if not spec.builds_in_isolation}
+    assert unbuildable == set(_CLASS_OF_UNBUILDABLE), (
+        "map every builds_in_isolation=False type to its widget class in "
+        "_CLASS_OF_UNBUILDABLE")
+    for t, spec in factory.REGISTRY.items():
+        cls = _widget_class(t, spec, qtbot)
+        real = {
+            "selectable": callable(getattr(cls, "enc_selectable", None)),
+            "editable": callable(getattr(cls, "enc_changed", None)),
+            "outer_ring": callable(getattr(cls, "enc_outer_changed", None)),
+        }
+        enc = spec.encoder or ispec.EncoderSupport()
+        declared = {"selectable": enc.selectable, "editable": enc.editable,
+                    "outer_ring": enc.outer_ring}
+        assert declared == real, (
+            f"{t}: record says {declared}, widget {cls.__name__} has {real}")
+
+
+def test_gauges_declare_every_knob_option_they_read(fix, qtbot, hmi_actions):
+    """Every AbstractGauge widget honours the same knob options, so each
+    declares the full set and nothing else; and every option in the set is
+    read by the gauge code, not just initialised (``encoder_num_excluded`` is
+    set in __init__ and never read, so it stays out)."""
+    import inspect
+    import re
+    from pyefis.instruments.gauges.abstract import AbstractGauge
+    source = inspect.getsource(AbstractGauge)
+    full = None
+    for t, spec in factory.REGISTRY.items():
+        cls = _widget_class(t, spec, qtbot)
+        opts = spec.encoder_options()
+        if not issubclass(cls, AbstractGauge):
+            assert not [o for o in opts if o != "touch_edit"], (
+                f"{t}: gauge knob options on a non-gauge widget: {opts}")
+            continue
+        full = full or opts
+        assert opts == full, f"{t}: knob options {opts} != {full}"
+    assert full, "no AbstractGauge type in the registry"
+    for name in full:
+        reads = len(re.findall(rf"self\.{name}\b(?!\s*=[^=])", source))
+        assert reads, f"AbstractGauge never reads {name}"
 
 
 def test_virtual_vfr_dbkeys_are_the_keys_the_widget_reads():

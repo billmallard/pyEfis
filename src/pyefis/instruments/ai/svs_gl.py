@@ -59,6 +59,7 @@ from pyefis.instruments.ai.camera import (  # noqa: E402
     view_projection, M_PER_DEG_LAT, M_PER_FT, EARTH_CURVATURE,
     TERRAIN_HFOV_PITCH_DEG,
 )
+from pyefis.instruments.ai import svs_traffic  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -464,8 +465,14 @@ void main() {
 # are 1-2 numeric digits + optional L/C/R; airport identifiers
 # (Phase 5) use the broader A-Z + 0-9 set.
 _TEXT_ATLAS_GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-"
+# Traffic relative-altitude tags (SVSTFC1) get their own glyphs, keyed
+# "t<ch>": the font's own "1" (not the FAA runway stroke), and UV boxes
+# that share one baseline and cap height and span the advance, so a sign
+# sits at mid-height beside the digits instead of being stretched to a
+# glyph's tight box.
+_TAG_GLYPHS = "0123456789+-"
 # Each glyph gets a 64x64 slot in a 512x512 atlas (8x8 grid, 64
-# slots, 37 used). 64 px / glyph is enough resolution that
+# slots: 37 designator glyphs, two obstacle symbols, 12 tag glyphs). 64 px / glyph is enough resolution that
 # stretching to a 60 ft runway designator on short final is crisp.
 _TEXT_ATLAS_SIZE = 512
 _TEXT_ATLAS_SLOT = 64
@@ -597,6 +604,25 @@ def build_text_atlas(font_family="DejaVu Sans Condensed"):
             uvs[name] = (sx / atlas_size, sy / atlas_size,
                          (sx + slot) / atlas_size,
                          (sy + slot) / atlas_size)
+        # Traffic tag glyphs, after the obstacle symbols.
+        p.setPen(QColor(255, 255, 255, 255))
+        p.setBrush(QBrush())
+        p.setFont(font)
+        cap = metrics.capHeight()
+        base_i += len(sym_specs)
+        for k, ch in enumerate(_TAG_GLYPHS):
+            i = base_i + k
+            sx = (i % grid) * slot
+            sy = (i // grid) * slot
+            baseline_y = sy + cap + (slot - cap) * 0.5
+            p.drawText(QPointF(sx, baseline_y), ch)
+            adv = metrics.horizontalAdvance(ch)
+            uvs["t" + ch] = (sx / atlas_size,
+                             (baseline_y - cap) / atlas_size,
+                             (sx + adv) / atlas_size,
+                             baseline_y / atlas_size)
+        if base_i + len(_TAG_GLYPHS) > grid * grid:
+            raise RuntimeError("text atlas grid too small for glyph set")
     finally:
         p.end()
 
@@ -1393,6 +1419,33 @@ class SVSGLRenderer:
         finally:
             prog.release()
 
+    def _render_text_list(self, items):
+        """Draw ``[(color_rgba, verts_np), ...]`` in list order through
+        the shared (uncached) text VBO, the program and atlas bound once.
+        For per-frame text such as traffic tags, whose quads move with
+        the camera, so a cached slot would re-upload every frame anyway;
+        list order (not a colour dict) keeps halos under ink."""
+        self._ensure_text_program()
+        prog = self._text_program
+        prog.bind()
+        try:
+            prog.setUniformValue(self._text_u["u_vp"], self._frame_vp)
+            prog.setUniformValue(
+                self._text_u["u_ac_e"], float(self._frame_ac_e))
+            prog.setUniformValue(
+                self._text_u["u_ac_n"], float(self._frame_ac_n))
+            prog.setUniformValue(
+                self._text_u["u_earth_curv"], float(self._frame_curv))
+            prog.setUniformValue(self._text_u["u_atlas"], 0)
+            gl.glActiveTexture(gl.GL_TEXTURE0)
+            gl.glBindTexture(gl.GL_TEXTURE_2D,
+                             int(self._text_atlas_tex_id))
+            for color, verts in items:
+                self._draw_text_quads(verts, color)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        finally:
+            prog.release()
+
     def _render_text_overlay(self, verts_np, color_rgba,
                              w, h, ac_lat, ac_lon, ac_alt_ft,
                              pitch_deg, roll_deg, heading_deg,
@@ -1685,6 +1738,32 @@ class SVSGLRenderer:
                                     w, h, ac_lat, ac_lon, ac_alt_ft,
                                     pitch_deg, roll_deg, heading_deg,
                                     pixels_per_deg)
+                            finally:
+                                prog.bind()
+
+            # Traffic (SVSTFC1): LAST, so nothing paints over a
+            # target, and with the depth test off (as for every
+            # overlay), so terrain never hides one. No haze.
+            traffic = getattr(p, "traffic", None)
+            if traffic is not None and traffic.available:
+                with p._perf.time("traffic"):
+                    self._ensure_text_program()
+                    geo = traffic.geometry(
+                        svs_traffic.Camera(
+                            ac_lat, ac_lon, ac_alt_ft, heading_deg,
+                            pitch_deg, pixels_per_deg,
+                            h / _TERRAIN_HFOV_PITCH_DEG, h),
+                        self._text_atlas_uvs)
+                    # One layer per symbol class, alerts last, each
+                    # symbols then tags: an alert is never covered.
+                    for tris_list, text_list in geo.layers:
+                        for color, tris in tris_list:
+                            self._draw_overlay_primitive(
+                                tris, color, gl.GL_TRIANGLES)
+                        if text_list:
+                            prog.release()
+                            try:
+                                self._render_text_list(text_list)
                             finally:
                                 prog.bind()
 

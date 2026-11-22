@@ -127,3 +127,14 @@ The script prints the FIX keys behind every picture as it saves it.
 `kill -USR1` under the bench lock on 2026-11-14 at 15:49 UTC, with no
 simulator running. It is cropped to the HSI from the 1920 x 1080 panel, box
 (420, 640, 840, 1060).
+
+## Turn-rate trend
+
+`turn_rate_trend.png` is rendered by `tools/render_hsi_turn_trend_evidence.py`
+(ATT1b, AER-6076) at the Pi 5 panel's HSI size (432 x 425) with the bench
+panel's options, at `ROT` -3 and +3 deg/s. It is the `turn_rate_trend.png`
+output of:
+
+```sh
+QT_QPA_PLATFORM=offscreen PYTHONPATH=src python3 tools/render_hsi_turn_trend_evidence.py OUTDIR
+```

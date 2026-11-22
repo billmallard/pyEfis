@@ -18,27 +18,14 @@ import os
 
 from PyQt6.QtCore import qRound
 
-from pyefis.instruments import ai
-from pyefis.instruments import airspeed
-from pyefis.instruments import autopilot
-from pyefis.instruments import altimeter
-from pyefis.instruments import button
-from pyefis.instruments import checklist
-from pyefis.instruments import flight_plan
-from pyefis.instruments import nav_status
-from pyefis.instruments import data_status
-from pyefis.instruments import about
-from pyefis.instruments import gauges
-from pyefis.instruments import hsi
-from pyefis.instruments import listbox
-from pyefis.instruments import map as moving_map
-from pyefis.instruments import misc
-from pyefis.instruments import tc
-from pyefis.instruments import vsi
-from pyefis.instruments import weston
-from pyefis.instruments import wind
+# CERT12c: instrument classes come from the lazy table, by name, so a screen
+# imports only the instruments it places. Only core modules may be imported
+# here directly (briefs/primary_flight_core.md, R1 and R2b).
+from pyefis.instruments.autopilot import DEFAULT_BUTTONS as AUTOPILOT_DEFAULT_BUTTONS
+from pyefis.screens.instrument_table import instrument
 from pyefis.screens.instrument_spec import (
-    Binding, ContainerSlot, InstrumentSpec, Prop, FixValue)
+    ENCODER_ORDER, Binding, ContainerSlot, EncoderSupport, InstrumentSpec, Prop,
+    FixValue)
 
 
 def build_weston(screen, config, font_percent=None, font_family=None, replace=None):
@@ -63,7 +50,7 @@ def build_weston(screen, config, font_percent=None, font_family=None, replace=No
         kwargs["wide"] = qRound(grid_width * config["span"]["columns"])
         kwargs["high"] = qRound(grid_height * config["span"]["rows"])
 
-    return weston.Weston(screen, **kwargs)
+    return instrument("Weston")(screen, **kwargs)
 
 
 def build_altimeter_tape(
@@ -84,7 +71,7 @@ def build_altimeter_tape(
               "alt_bug_dbkey"):
         if k in opts:
             kwargs[k] = opts[k]
-    return altimeter.Altimeter_Tape(
+    return instrument("Altimeter_Tape")(
         screen, font_family=font_family, **kwargs)
 
 
@@ -93,7 +80,7 @@ def build_atitude_indicator(
 ):
     opts = config.get("options", {}) or {}
     show_fpm = opts.get("show_fpm", True)
-    widget = ai.AI(
+    widget = instrument("AI")(
         screen, font_percent=font_percent, font_family=font_family,
         show_fpm=show_fpm,
     )
@@ -122,7 +109,7 @@ def build_virtual_vfr(
     # VVFR1 (AER-5417): the legacy CIFP screen-space overlay (VirtualVfr.py)
     # is gone; virtual_vfr is the attitude widget plus synthetic vision. The
     # type name stays because shipped screens and user configs name it.
-    widget = ai.AI(screen, font_percent=font_percent, font_family=font_family)
+    widget = instrument("AI")(screen, font_percent=font_percent, font_family=font_family)
     widget.aircraft_symbol = opts.get("aircraft_symbol", "classic")
     widget.symbol_color = opts.get("symbol_color", "yellow")
     # SVS config: the legacy nested `svs:` dict, overlaid with the flat svs_*
@@ -139,7 +126,7 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
     opts = config.get("options", {}) or {}
     # Legacy: an external button YAML referenced by path (hand-authored panels).
     if opts.get("config"):
-        return button.Button(
+        return instrument("Button")(
             screen,
             config_file=os.path.join(screen.parent.config_path, opts["config"]),
             font_family=font_family,
@@ -148,8 +135,8 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
     # Inline: the instrument's options ARE the button definition (authored in the
     # configurator). Needs at least a dbkey to bind to.
     if opts.get("dbkey"):
-        return button.Button(screen, config=dict(opts), font_family=font_family,
-                             font_percent=font_percent)
+        return instrument("Button")(screen, config=dict(opts), font_family=font_family,
+                                    font_percent=font_percent)
     raise ValueError(
         "button needs options: either 'config:' (an external YAML) or inline "
         "fields including 'dbkey:'")
@@ -158,9 +145,8 @@ def build_button(screen, config, font_percent=None, font_family=None, replace=No
 def build_tab_section(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
-    from pyefis.instruments.tab_section import TabSection
     opts = config.get("options", {}) or {}
-    return TabSection(
+    return instrument("TabSection")(
         screen,
         tabs=config.get("tabs") or [],
         default_tab=opts.get("default_tab", 0),
@@ -172,7 +158,7 @@ def build_tab_section(
 def build_static_text(
     screen, config, font_percent=None, font_family=None, replace=None
 ):
-    return misc.StaticText(
+    return instrument("StaticText")(
         text=config["options"]["text"], parent=screen, font_family=font_family,
         fontsize=(1.0 if font_percent is None else font_percent),
     )
@@ -192,7 +178,7 @@ def build_data_status(
         kwargs["update_command"] = opts["update_command"]
     if "about_screen" in opts:
         kwargs["about_screen"] = opts["about_screen"]
-    return data_status.DataStatus(**kwargs)
+    return instrument("DataStatus")(**kwargs)
 
 
 def build_about(
@@ -206,7 +192,7 @@ def build_about(
         kwargs["back_screen"] = opts["back_screen"]
     if "ack_path" in opts:
         kwargs["ack_path"] = opts["ack_path"]
-    return about.AboutSystem(**kwargs)
+    return instrument("AboutSystem")(**kwargs)
 
 
 def build_data_annunciation(
@@ -219,11 +205,11 @@ def build_data_annunciation(
         kwargs["status_path"] = opts["status_path"]
     if "target_screen" in opts:
         kwargs["target_screen"] = opts["target_screen"]
-    return data_status.DataAnnunciation(**kwargs)
+    return instrument("DataAnnunciation")(**kwargs)
 
 
 def build_listbox(screen, config, font_percent=None, font_family=None, replace=None):
-    return listbox.ListBox(
+    return instrument("ListBox")(
         screen,
         lists=config["options"]["lists"],
         replace=replace,
@@ -238,7 +224,7 @@ def build_checklist(screen, config, font_percent=None, font_family=None, replace
     # precedent. Absent/malformed config yields an empty "No checklist" widget
     # (construct-never-raises), which is why this type builds in isolation.
     opts = config.get("options", {}) or {}
-    return checklist.Checklist(
+    return instrument("Checklist")(
         screen,
         checklists=opts.get("checklists"),
         font_family=font_family,
@@ -251,23 +237,23 @@ def build_flight_plan(screen, config, font_percent=None, font_family=None, repla
     # screenbuilder_preferences). The widget reads it as a multiplier on its
     # built-in text sizes, not a fraction of its height -- see
     # FlightPlan._font_scale.
-    return flight_plan.FlightPlan(screen, font_family=font_family,
-                                  font_percent=font_percent)
+    return instrument("FlightPlan")(screen, font_family=font_family,
+                                    font_percent=font_percent)
 
 
 
 def build_nav_status(screen, config, font_percent=None, font_family=None, replace=None):
     # font_percent is a multiplier on the chip's height-derived text size, the
     # same reading build_flight_plan gives it.
-    return nav_status.NavStatus(screen, font_family=font_family,
-                                font_percent=font_percent)
+    return instrument("NavStatus")(screen, font_family=font_family,
+                                   font_percent=font_percent)
 
 def build_autopilot_panel(screen, config, font_percent=None, font_family=None,
                           replace=None):
     # font_percent is a multiplier on the panel's box-derived text sizes, the
     # reading build_nav_status gives it.
-    return autopilot.AutopilotPanel(screen, font_family=font_family,
-                                    font_percent=font_percent)
+    return instrument("AutopilotPanel")(screen, font_family=font_family,
+                                        font_percent=font_percent)
 
 # Every instrument type is migrated -- these legacy lookup tables are populated
 # entirely from REGISTRY by the fold-back below. They remain (empty here) for
@@ -300,6 +286,78 @@ REGISTRY: dict[str, InstrumentSpec] = {}
 def _register(spec: InstrumentSpec) -> InstrumentSpec:
     REGISTRY[spec.type] = spec
     return spec
+
+
+# --- The screen knob (pyEfis #97) --------------------------------------------
+# An instrument with ``enc_selectable`` joins the knob walk through
+# ``encoder_order``; its record says so with ``encoder=EncoderSupport(...)``.
+# tests/editor/test_registry.py holds every record's EncoderSupport to the
+# real widget's enc_* methods.
+
+def _encoder_order_prop():
+    return Prop(ENCODER_ORDER, "integer", step=1,
+                apply="special", label="Knob order",
+                help="place on the screen's knob walk: turning the knob "
+                     "visits instruments in ascending order, and push gives "
+                     "the highlighted one the knob; blank = not on the walk")
+
+
+# What each AbstractGauge-based widget (arc, bar and numeric gauges) does with
+# the knob: push takes focus, the inner knob steps the value, the outer ring
+# steps it coarse, push again writes it, and a timeout reverts it.
+_GAUGE_KNOB = EncoderSupport(selectable=True, editable=True, outer_ring=True)
+
+
+def _gauge_encoder_props():
+    """The knob options every AbstractGauge honours (gauges/abstract.py).
+
+    Not here, on purpose: ``encoder_revert`` (internal state, overwritten on
+    every push) and ``encoder_num_excluded`` (a list the widget never reads).
+    """
+    return [
+        _encoder_order_prop(),
+        Prop("encoder_set_key", "fixkey", label="Knob writes key",
+             help="FIX key the knob writes; blank = the key this gauge "
+                  "displays"),
+        Prop("encoder_multiplier", "number", default=1, label="Knob step",
+             help="value change per inner-knob detent"),
+        Prop("encoder_coarse_multiplier", "number", default=10,
+             label="Outer ring step factor",
+             help="the outer ring steps the value by knob step x this"),
+        Prop("encoder_set_real_time", "boolean", default=False,
+             label="Write while turning",
+             help="send each step to the FIX key as the knob turns; a "
+                  "timeout before push still reverts it. Ignored with a "
+                  "digit mask"),
+        Prop("touch_edit", "boolean", default=False, label="Touch to edit",
+             help="touch the gauge to give it the knob; it then marks focus "
+                  "with a ring and edit icon"),
+        Prop("encoder_num_mask", "string", label="Digit mask",
+             help="set the value one digit at a time, e.g. 000.000 for a "
+                  "radio frequency; push moves to the next digit. Blank = "
+                  "step the whole value"),
+        Prop("encoder_num_mask_blank_character", "string", default=" ",
+             label="Digit mask blank",
+             help="character drawn for the digits not yet set"),
+        Prop("encoder_num_enforce_multiplier", "boolean", default=False,
+             label="Digits follow knob step",
+             help="digit entry offers only digits that give a multiple of "
+                  "the knob step within the key's range"),
+        Prop("encoder_num_require_confirm", "boolean", default=False,
+             label="Confirm after last digit",
+             help="after the last digit the value flashes and one more push "
+                  "saves it"),
+        Prop("encoder_num_8khz_channels", "boolean", default=False,
+             label="8.33 kHz channels",
+             help="digit entry shows 8.33 kHz channel numbers; use with a "
+                  "knob step of 0.008333333333"),
+        Prop("encoder_num_blink_time_on", "integer", default=300,
+             label="Digit blink on (ms)",
+             help="how long the digit being set shows in each blink"),
+        Prop("encoder_num_blink_time_off", "integer", default=100,
+             label="Digit blink off (ms)",
+             help="how long the digit being set is hidden in each blink"),
+    ]
 
 
 def _bg_opacity_prop():
@@ -514,6 +572,14 @@ def _svs_props():
              help="draw the installed PAPI at its published glide path angle "
                   "and side, from the NASR airports pack (only where one is "
                   "installed)" + dev),
+        Prop("svs_traffic", "boolean", default=True, apply="special",
+             label="Traffic",
+             help="draw ADS-B traffic from the TFC block in the scene, "
+                  "with the moving map's symbols, relative-altitude tag "
+                  "and climb/descent arrow; never hidden by terrain" + dev),
+        Prop("svs_traffic_range_nm", "number", default=10.0, minimum=1.0,
+             maximum=50.0, apply="special", label="Traffic range (NM)",
+             help="targets farther than this are left to the map" + dev),
         Prop("svs_perf_log", "boolean", default=False, apply="special",
              label="Perf: log summary",
              help="print an SVS per-frame profiler summary every 2s "
@@ -548,7 +614,9 @@ _register(InstrumentSpec(
         Prop("show_fpm", "boolean", default=True, label="Flight-path marker",
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
     # Attitude is read directly (PITCH/ROLL); no FIX aux values.
     fix_values=[],
     # Representative pose for the twin (matches the render-tool demo so the
@@ -571,7 +639,7 @@ _register(InstrumentSpec(
     label="Arc Gauge",
     category="gauge",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.ArcGauge(
+             replace=None: instrument("ArcGauge")(
                  screen, min_size=False, font_family=font_family)),
     keep_aspect=True,
     properties=[
@@ -590,7 +658,9 @@ _register(InstrumentSpec(
              label="Name location",
              help="where the name label sits relative to the gauge"),
         _tank_prop(),
+        *_gauge_encoder_props(),
     ],
+    encoder=_GAUGE_KNOB,
     # The colour-band thresholds and the value range are FIX-database values
     # (item min/max + aux), set in fix-gateway, not in the panel editor (#64).
     fix_values=[
@@ -613,7 +683,7 @@ _register(InstrumentSpec(
     label="Airspeed Tape",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: airspeed.Airspeed_Tape(
+             replace=None: instrument("Airspeed_Tape")(
                  screen, font_percent=font_percent)),
     dbkeys=["IAS"],
     properties=[
@@ -649,7 +719,7 @@ _register(InstrumentSpec(
     label="VSI Dial",
     category="vertical_speed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.VSI_Dial(screen, font_family=font_family)),
+             replace=None: instrument("VSI_Dial")(screen, font_family=font_family)),
     dbkeys=["VS"],
     keep_aspect=True,
     # VSI_Dial is hard-wired to VS and exposes no editor options today; this
@@ -667,7 +737,7 @@ _register(InstrumentSpec(
     label="Airspeed Dial",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: airspeed.Airspeed(screen, font_family=font_family)),
+             replace=None: instrument("Airspeed")(screen, font_family=font_family)),
     dbkeys=["IAS"],
     keep_aspect=True,
     properties=[_bg_opacity_prop()],
@@ -687,7 +757,7 @@ _register(InstrumentSpec(
     label="Altimeter Dial",
     category="altitude",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: altimeter.Altimeter(screen, font_family=font_family)),
+             replace=None: instrument("Altimeter")(screen, font_family=font_family)),
     dbkeys=["ALT"],
     keep_aspect=True,
     properties=[_bg_opacity_prop()],
@@ -749,7 +819,9 @@ _register(InstrumentSpec(
         Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
              label="Selected-altitude key", apply="special",
              help="FIX key holding the selected altitude (default ALTSEL)"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     preview={"value": 3500},
 ))
 
@@ -758,7 +830,7 @@ _register(InstrumentSpec(
     label="VSI (PFD)",
     category="vertical_speed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.VSI_PFD(screen, font_family=font_family)),
+             replace=None: instrument("VSI_PFD")(screen, font_family=font_family)),
     dbkeys=["VS"],
     preview={"value": -350},
 ))
@@ -768,9 +840,9 @@ _register(InstrumentSpec(
     label="Horizontal Situation Indicator (HSI)",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: hsi.HSI(screen, font_percent=font_percent,
-                                    cdi_enabled=True, gsi_enabled=True,
-                                    font_family=font_family)),
+             replace=None: instrument("HSI")(screen, font_percent=font_percent,
+                                             cdi_enabled=True, gsi_enabled=True,
+                                             font_family=font_family)),
     dbkeys=["COURSE", "CDI", "GSI", "HEAD",
             "BRG1", "BRG2", "BRG1SRC", "BRG2SRC"],
     keep_aspect=True,
@@ -822,7 +894,9 @@ _register(InstrumentSpec(
              label="Touch to set HDG / CRS",
              help="touch the HDG or CRS readout, then turn the knob to set it: "
                   "HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the "
-                  "selected VLOC source (not editable on GPS). Inner ring 1 "
+                  "selected VLOC source. On GPS, CRS is editable only while "
+                  "the flight plan is in OBS: it sets the OBS course, and push "
+                  "syncs it to the bearing to the waypoint. Inner ring 1 "
                   "deg, outer ring 10 deg; push syncs HDG to the heading or "
                   "centres the CDI on CRS"),
         Prop("track_indicator_enabled", "boolean", default=True,
@@ -835,6 +909,15 @@ _register(InstrumentSpec(
         Prop("track_min_speed", "integer", default=5, minimum=0, maximum=50,
              step=1, label="Track min speed (kt)",
              help="hide the track diamond below this groundspeed (kt)"),
+        Prop("turn_rate_enabled", "boolean", default=True,
+             label="Turn-rate trend",
+             help="show the magenta turn-rate trend arc from the lubber line "
+                  "to the heading in 6 s at the present rate of turn (ROT), "
+                  "with marks at half and standard rate; hidden when ROT is "
+                  "absent, old, bad or failed"),
+        Prop("turn_rate_color", "color", default="#ff00ff",
+             label="Turn-rate trend color", help="turn-rate trend arc colour",
+             token="nav.course"),
         Prop("center_symbol", "enum", default="aircraft",
              enum=["aircraft", "none"], label="Center symbol",
              help="fixed ownship symbol at the rose centre; 'aircraft' is a "
@@ -885,6 +968,7 @@ _register(InstrumentSpec(
                   "tab, whatever the source (source colour is the CDI's)",
              token="nav.reference"),
     ],
+    encoder=EncoderSupport(editable=True, outer_ring=True),
     preview={"heading": 87, "course": 110, "track": 78, "gs": 120,
              "brg1": 30, "brg2": 250},
 ))
@@ -894,7 +978,7 @@ _register(InstrumentSpec(
     label="Heading Tape",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: hsi.DG_Tape(screen, font_family=font_family)),
+             replace=None: instrument("DG_Tape")(screen, font_family=font_family)),
     dbkeys=["HEAD"],
     # DG_Tape is hard-wired to HEAD (no setDbkey); the old curated dbkey option
     # was a no-op and is dropped.
@@ -930,6 +1014,7 @@ def _bar_gauge_props():
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
         _tank_prop(),
+        *_gauge_encoder_props(),
     ]
 
 
@@ -938,11 +1023,12 @@ _register(InstrumentSpec(
     label="Horizontal Bar Gauge",
     category="gauge",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.HorizontalBar(
+             replace=None: instrument("HorizontalBar")(
                  screen, min_size=False, font_family=font_family)),
     properties=_bar_gauge_props(),
     fix_values=_gauge_fix_values(),
     preview={"value": "72", "fill": 0.72},
+    encoder=_GAUGE_KNOB,
 ))
 
 _register(InstrumentSpec(
@@ -950,11 +1036,12 @@ _register(InstrumentSpec(
     label="Vertical Bar Gauge",
     category="gauge",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.VerticalBar(
+             replace=None: instrument("VerticalBar")(
                  screen, min_size=False, font_family=font_family)),
     properties=_bar_gauge_props(),
     fix_values=_gauge_fix_values(),
     preview={"value": "72", "fill": 0.72},
+    encoder=_GAUGE_KNOB,
 ))
 
 _register(InstrumentSpec(
@@ -962,7 +1049,7 @@ _register(InstrumentSpec(
     label="Turn Coordinator",
     category="attitude",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: tc.TurnCoordinator(screen, font_family=font_family)),
+             replace=None: instrument("TurnCoordinator")(screen, font_family=font_family)),
     dbkeys=["ROT", "ALAT"],
     keep_aspect=True,
     preview={"rate": 8, "ball": 2},
@@ -973,7 +1060,7 @@ _register(InstrumentSpec(
     label="Numeric Display",
     category="text",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: gauges.NumericDisplay(
+             replace=None: instrument("NumericDisplay")(
                  screen, font_family=font_family)),
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
@@ -985,8 +1072,10 @@ _register(InstrumentSpec(
              help="widest string the readout reserves space for (sizing)"),
         Prop("show_units", "boolean", default=False, label="Show units",
              help="append the FIX key's engineering units to the readout"),
+        *_gauge_encoder_props(),
     ],
     fix_values=_gauge_fix_values(),
+    encoder=_GAUGE_KNOB,
 ))
 
 _register(InstrumentSpec(
@@ -994,7 +1083,7 @@ _register(InstrumentSpec(
     label="Value Text",
     category="text",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: misc.ValueDisplay(
+             replace=None: instrument("ValueDisplay")(
                  screen, font_family=font_family, font_percent=font_percent)),
     properties=[
         Prop("dbkey", "fixkey", default="", label="FIX key",
@@ -1062,7 +1151,7 @@ _register(InstrumentSpec(
     label="Airspeed Box",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: airspeed.Airspeed_Box(screen, font_family=font_family)),
+             replace=None: instrument("Airspeed_Box")(screen, font_family=font_family)),
     dbkeys=["IAS", "GS", "TAS"],
     # Deprecated in favour of the Value Text widget (configurable prefix, value
     # colour and box). Hidden from the palette but kept in the schema so panels
@@ -1075,7 +1164,7 @@ _register(InstrumentSpec(
     label="Airspeed Trend Tape",
     category="airspeed",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.AS_Trend_Tape(screen, font_family=font_family)),
+             replace=None: instrument("AS_Trend_Tape")(screen, font_family=font_family)),
     dbkeys=["IAS"],
 ))
 
@@ -1084,7 +1173,7 @@ _register(InstrumentSpec(
     label="Altimeter Trend Tape",
     category="altitude",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: vsi.Alt_Trend_Tape(screen, font_family=font_family)),
+             replace=None: instrument("Alt_Trend_Tape")(screen, font_family=font_family)),
     # The widget reads VS (vertical speed) directly; the legacy curated default
     # was "ALT", a key it never consumes.
     dbkeys=["VS"],
@@ -1116,7 +1205,7 @@ _register(InstrumentSpec(
     label="Moving Map",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: moving_map.MovingMap(
+             replace=None: instrument("MovingMap")(
                  screen, font_family=font_family)),
     dbkeys=["LAT", "LONG", "TRACKM", "TRACK"],
     properties=[
@@ -1364,7 +1453,7 @@ _register(InstrumentSpec(
     label="Wind Display",
     category="wind",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: wind.WindDisplay(screen, font_family=font_family)),
+             replace=None: instrument("WindDisplay")(screen, font_family=font_family)),
     dbkeys=["HWIND", "XWIND"],
 ))
 
@@ -1438,7 +1527,9 @@ _register(InstrumentSpec(
         Prop("config", "string", default="", apply="special",
              label="Config file (legacy)",
              help="path to an external button YAML; blank = use the fields above"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True),
 ))
 
 _register(InstrumentSpec(
@@ -1452,7 +1543,9 @@ _register(InstrumentSpec(
         # config value until the Prop model grows an explicit list/object kind.
         Prop("lists", "string", required=True, apply="special",
              label="Lists", help="selectable lists -- list of {name, file} entries"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
 ))
 
 # Interactive checklist (CAP-115, backlog P1.1 -- Phase 1). Config is an inline
@@ -1497,7 +1590,9 @@ _register(InstrumentSpec(
              label="Section colour",
              help="colour of section subheaders and the progress line",
              token="ink.muted"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
 ))
 
 # `flight_plan` (FP5a/b, billmallard/pyEfis#185, #187): an app-like
@@ -1505,10 +1600,7 @@ _register(InstrumentSpec(
 # checklist, but reads the FP1 route block via flightplan.fixbridge.FixBridge
 # instead of taking its state inline -- missing FIX keys just mean
 # `available=False` (annunciate, read-only), never a raise. Touch,
-# physical-keyboard and encoder (FP5c) input are all wired. `encoder_order`
-# is not declared as a Prop -- no encoder instrument declares it yet; it is
-# read straight from screen YAML (screenbuilder_options.apply_options) until
-# #97 exports encoder options to the schema.
+# physical-keyboard and encoder (FP5c) input are all wired.
 _register(InstrumentSpec(
     type="flight_plan",
     label="Flight Plan",
@@ -1572,7 +1664,9 @@ _register(InstrumentSpec(
                   "icon and the row font. A taller pane shows MORE legs at "
                   "this height rather than fewer, larger ones. Needs "
                   "screenDiagonalInches to be correct for the device."),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     preview={"name": "KSBA-GVO-KSMX",
              "waypoints": [{"id": "KSBA"}, {"id": "GVO"}, {"id": "KSMX"}]},
 ))
@@ -1648,7 +1742,7 @@ _register(InstrumentSpec(
                   "with its value boxes over its keys; compact: two rows, "
                   "the boxes over one row of keys, for small panels and "
                   "side strips"),
-        Prop("buttons", "string", default=autopilot.DEFAULT_BUTTONS,
+        Prop("buttons", "string", default=AUTOPILOT_DEFAULT_BUTTONS,
              label="Buttons",
              help="comma list of the keys shown, from APR, NAV, HDG, TRK, "
                   "AP, FD, YD, LVL, IAS, VNAV, VS, ALT; drop YD for an "
@@ -1693,7 +1787,9 @@ _register(InstrumentSpec(
         Prop("bg_color", "color", default="#000000", label="Background",
              help="panel ground behind the keys and boxes",
              token="surface.base"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     preview={"hdg": "270", "vs": "+500", "ias": "---", "altsel": "8500",
              "active": ["AP", "FD", "HDG", "VS"], "armed": ["ALT", "NAV"],
              "unavailable": ["VNAV"], "message": ""},
@@ -1784,7 +1880,9 @@ _register(InstrumentSpec(
              help="GPS flight-path marker (needs VS/GS/TRACK/HEAD)"),
         *_ai_overlay_props(),
         *_svs_props(),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True),
 ))
 
 _register(InstrumentSpec(
@@ -1792,7 +1890,7 @@ _register(InstrumentSpec(
     label="Heading Display",
     category="navigation",
     builder=(lambda screen, config, font_percent=None, font_family=None,
-             replace=None: hsi.HeadingDisplay(screen, font_family=font_family)),
+             replace=None: instrument("HeadingDisplay")(screen, font_family=font_family)),
     dbkeys=["HEAD"],
     # Deprecated in favour of the Value Text widget (a HEAD-bound value with a
     # "HDG" prefix, colour and box). Hidden from the palette but kept in the

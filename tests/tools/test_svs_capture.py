@@ -589,3 +589,44 @@ def test_unsettled_reasons_terrain_and_unrequested_layer(svs_capture):
                        "airports: never requested"]
     assert svs_capture.unsettled_reasons(
         svs, {"airports"}, require_terrain=False) == ["airports: never requested"]
+
+
+def test_traffic_flag_defaults_off(svs_capture):
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+    ])
+    assert args.traffic is None and args.traffic_extra == 0
+
+
+def test_traffic_seeds_the_injector_scenario_on_the_bus(svs_capture):
+    """SVSTFC1: --traffic svs --traffic-extra 14 puts the bench injector's
+    six states plus 14 plain targets in a TFC block -- 20 targets -- that
+    the SVS's reader takes exactly as it takes the gateway writer's."""
+    from pyefis.instruments.ai import svs_traffic
+    from pyefis.instruments import traffic as tfc
+
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "34.4258", "--lon", "-119.8415",
+        "--alt", "4500", "--heading", "34", "--traffic", "svs",
+        "--traffic-extra", "14",
+    ])
+    svs_capture.seed_mock_fix(args)
+    written = svs_capture.seed_traffic(args)
+    assert len(written) == 20
+    tr = svs_traffic.SVSTraffic(svs_capture.fix.db)
+    by = {t.callsign: t for t in tr.targets()}
+    assert len(by) == 20
+    assert tr.palt_ft() == 4500.0
+    assert by["N222AL"].alert and by["N222AL"].vs_fpm == 1000
+    assert tfc.is_degraded(by["N333DG"])
+    assert by["N444ST"].stale and not by["N111NM"].stale
+    assert by["N555AI"].alt_ft is None
+    assert by["N666NT"].trk_deg is None and by["N666NT"].ttyp == 0
+    assert by["N111NM"].alt_ft == 5000.0
+    # every one inside the forward fan, so the SVS draws all 20
+    cam = svs_traffic.Camera(34.4258, -119.8415, 4500.0, 34.0, 0.0,
+                             480 / 50.0, 16.0, 480)
+    uvs = {"t" + c: (0, 0, 0.05, 0.1) for c in "0123456789+-"}
+    geo = svs_traffic.build(tr.targets(), cam, 4500.0, None,
+                            by["N444ST"].t_write, uvs)
+    assert len(geo.drawn) == 20
