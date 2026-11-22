@@ -1,0 +1,16 @@
+BEFORE MainPID=1051786 NRestarts=0 
+dev near on rc=0 rev=0e958c7d
+dev near off rc=0 rev=0e958c7d
+dev ridge on rc=0 rev=0e958c7d
+dev ridge off rc=0 rev=0e958c7d
+branch near on rc=0 rev=eddae225
+branch near off rc=0 rev=eddae225
+branch ridge on rc=0 rev=eddae225
+branch ridge off rc=0 rev=eddae225
+RUN_RC=0
+AFTER MainPID=1051786 NRestarts=0 
+near       on         differing pixels: 0
+near       off        differing pixels: 0
+ridge      on         differing pixels: 0
+ridge      off        differing pixels: 0
+CMP_RC=0
