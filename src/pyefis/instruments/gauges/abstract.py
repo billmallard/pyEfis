@@ -86,7 +86,10 @@ class AbstractGauge(QWidget):
         self.encoder_coarse_multiplier = 10
         self.enc_has_outer = False
  
-        self.encoder_num_mask = False # defines what digits can be set ie 000.0000
+        # Digits that can be set, ie 000.0000; blank = step the whole value.
+        # A str default, not False: apply_options coerces a YAML string to
+        # the default's type, and a bool default turned "000.000" into False.
+        self.encoder_num_mask = ""
         self.encoder_num_mask_blank_character = " "
         self.encoder_num_digit = 0 # current digit the user is setting
         self.encoder_num_selectors = dict() # dict that defines calid selections, used with multipl option

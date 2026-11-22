@@ -184,11 +184,56 @@ def test_declared_knob_options_reach_the_gauge(qtbot, fix, caplog,
     assert "not declared in its InstrumentSpec" not in caplog.text
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "pre-existing: _coerce_to_attr_type turns the string mask into False "
-    "because the gauge's default is the bool False, so digit entry never "
-    "starts (since 4083275b). Tracked as its own fix; strict, so this fails "
-    "loudly once that lands and the marker must come off."))
 def test_digit_mask_reaches_the_gauge(qtbot, fix, hmi_actions):
+    """A quoted mask in YAML lands as that string. The gauge's default used
+    to be the bool False, so _coerce_to_attr_type turned "000.000" into False
+    and digit entry never started (4083275b to G95a)."""
     screen = _build(qtbot, {"dbkey": "NUMOK", "encoder_num_mask": "000.000"})
     assert screen.instruments[0].encoder_num_mask == "000.000"
+
+
+@pytest.fixture
+def com_freq(fix):
+    fix.db.define_item("COMACTFREQ1", "COM active", "float", 118.0, 136.975,
+                       "MHz", 50000, "")
+    fix.db.set_value("COMACTFREQ1", 121.5)
+    item = fix.db.get_item("COMACTFREQ1")
+    item.bad = item.fail = item.old = False
+    return item
+
+
+def test_radio_digit_entry_push_turn_push(qtbot, com_freq, hmi_actions):
+    """The knob options of includes/mgl/v16/square-active-radio-display.yaml,
+    through the real screen path. Push starts digit entry, a turn moves the
+    current digit, a push takes it and moves on. The first digit of
+    118.000-136.975 can only be 1, so entry starts on the second."""
+    screen = _build(qtbot, {
+        "clipping": True, "font_mask": "000.000", "decimal_places": 3,
+        "dbkey": "COMACTFREQ1", "encoder_order": 400024,
+        "encoder_multiplier": 0.025, "encoder_num_enforce_multiplier": True,
+        "encoder_num_mask": "000.000",
+    })
+    w = screen.instruments[0]
+    assert w.enc_select() is True                     # push
+    assert w.encoder_num_digit == 1
+    assert w.encoder_num_digit_options == ["1", "2", "3"]
+    assert w.encoder_num_string.startswith("11")
+    assert w.enc_changed(1) is True                   # turn
+    assert w.encoder_num_string.startswith("12")
+    assert w.enc_clicked() is True                    # push: next digit
+    assert w.encoder_num_digit == 2
+    assert w.encoder_num_string.startswith("12")
+    assert w.encoder_num_digit_options == [str(d) for d in range(10)]
+    assert w.encoder_set_value is None                # not committed yet
+
+
+@pytest.mark.parametrize("inst_type", _GAUGES)
+def test_string_options_do_not_default_to_bool(qtbot, fix, hmi_actions,
+                                               inst_type):
+    """A declared string option whose widget default is a bool is coerced to
+    True/False by apply_options; that is how the digit mask died."""
+    w = _build(qtbot, {"dbkey": "NUMOK"}, inst_type).instruments[0]
+    bad = [p.name for p in REGISTRY[inst_type].properties
+           if p.kind == "string"
+           and isinstance(getattr(w, p.name, None), bool)]
+    assert bad == []
