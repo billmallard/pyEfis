@@ -35,6 +35,7 @@ The first seven areas below are **verified + deployed to the Pi**; the autopilot
 | **Turn coordinator / slip-skid** | [tc_widget_spec.md](tc_widget_spec.md) | 9 pass | none | — |
 | **Heading / compass** | [heading_widget_spec.md](heading_widget_spec.md) | (in HSI suite) 29 pass | none | — |
 | **Autopilot annunciation + target cues** (AFC4) | [ap_annunciator_widget_spec.md](ap_annunciator_widget_spec.md) | 96 pass, no xfail (`tests/instruments/autopilot/`; AP-ANN-002 gap closed by `APALTREF`, AER-5808) | none | Pi 5 GL sheet with AFC5, accepted by Bill (`docs/aer-5808-evidence/joint/`); a real AFC2 X-Plane session replayed through the adapter (`replay.png`). No live X-Plane session with the strip on glass yet |
+| **Annunciator lamps** (ANN1) | [annunciator_widget_spec.md](annunciator_widget_spec.md) | 75 pass, no xfail (`tests/instruments/annunciator/`; 13/13 guards mutation-killed, AER-6347) | none | Verified offscreen; Beelink bench captures of a 2x3 block on the ANN1 card (AER-6347). Not deployed to the Pi |
 
 **Net: no implementable code gap is open.** EFIS-ALTSEL-006 is implemented (below). The last
 data-blocked item, AI-LIM-001, closed with AER-5086 (further below).

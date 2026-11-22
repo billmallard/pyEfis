@@ -212,7 +212,7 @@ def test_missing_key_builds_and_draws_nothing(db, qtbot):
 ])
 def test_red_and_amber_only_from_the_annunciate_flag(db, caplog, level,
                                                      binding):
-    """ANN-LVL-002: a local condition (or any binding but the key's own
+    """ANN-LVL-001: a local condition (or any binding but the key's own
     annunciate flag) asking for warning/caution is drawn at advisory and
     logged, not refused."""
     db("OILP", 0.0)
@@ -230,20 +230,20 @@ def test_red_and_amber_only_from_the_annunciate_flag(db, caplog, level,
 
 @pytest.mark.parametrize("level", ["warning", "caution"])
 def test_annunciate_flag_may_use_red_and_amber(db, level):
-    """ANN-LVL-002: the key's own annunciate flag keeps warning/caution."""
+    """ANN-LVL-001: the key's own annunciate flag keeps warning/caution."""
     assert ann.TileSpec({"key": "OILP", "flag": "annunciate",
                          "level": level}).level == level
 
 
 @pytest.mark.parametrize("level", ["status", "advisory", "info", "off"])
 def test_status_levels_from_any_condition(level):
-    """ANN-LVL-002: the status levels are open to a local condition."""
+    """ANN-LVL-001: the status levels are open to a local condition."""
     assert ann.TileSpec({"key": "OILP", "when": "OILP lt 25",
                          "level": level}).level == level
 
 
 def test_unknown_level_is_advisory(caplog):
-    """ANN-LVL-002: an unknown level is drawn at advisory and logged."""
+    """ANN-LVL-001: an unknown level is drawn at advisory and logged."""
     with caplog.at_level(logging.WARNING):
         spec = ann.TileSpec({"key": "OILP", "level": "purple"})
     assert spec.level == lamp.ADVISORY
@@ -385,27 +385,27 @@ def _colors(img):
 
 
 def test_none_tile_paints_nothing():
-    """TILE-001: a ``None`` tile (nothing seen) paints no pixel."""
+    """ANN-TILE-001: a ``None`` tile (nothing seen) paints no pixel."""
     assert _colors(_paint(None)) == {"#000000"}
 
 
 @pytest.mark.parametrize("level", lamp.LEVELS)
 def test_each_level_paints_its_colour(level):
-    """TILE-002: each level is drawn in its colour."""
+    """ANN-TILE-002: each level is drawn in its colour."""
     img = _paint(lamp.Tile("AB", level))
     assert lamp.DEFAULT_COLORS[level] in _colors(img)
 
 
 @pytest.mark.parametrize("level", lamp.ALERT_LEVELS)
 def test_alert_levels_are_reverse_video(level):
-    """TILE-002: warning and caution fill the box in the level colour."""
+    """ANN-TILE-002: warning and caution fill the box in the level colour."""
     img = _paint(lamp.Tile("", level))
     assert QColor(img.pixel(60, 20)).name() == lamp.DEFAULT_COLORS[level]
 
 
 @pytest.mark.parametrize("level", (lamp.STATUS, lamp.ADVISORY, lamp.INFO))
 def test_status_levels_are_not_filled(level):
-    """TILE-002: status levels draw caption and outline, no fill."""
+    """ANN-TILE-002: status levels draw caption and outline, no fill."""
     img = _paint(lamp.Tile("", level))
     assert QColor(img.pixel(60, 20)).name() == "#000000"
     assert QColor(img.pixel(60, 1)).name() == lamp.DEFAULT_COLORS[level]
@@ -413,7 +413,7 @@ def test_status_levels_are_not_filled(level):
 
 @pytest.mark.parametrize("level", lamp.LEVELS)
 def test_stale_tile_is_grey_and_dashed_whatever_its_level(level):
-    """TILE-003 / ANN-STALE-001: a stale tile paints only the degraded grey,
+    """ANN-TILE-003 / ANN-STALE-001: a stale tile paints only the degraded grey,
     with a dashed outline (gaps along the top edge), never its level colour."""
     img = _paint(lamp.Tile("OIL", level, stale=True))
     cols = _colors(img) - {"#000000"}
@@ -426,7 +426,7 @@ def test_stale_tile_is_grey_and_dashed_whatever_its_level(level):
 
 
 def test_flash_hides_caption_and_fill_on_the_off_phase():
-    """TILE-004: a flashing tile keeps its outline and drops caption and
+    """ANN-TILE-004: a flashing tile keeps its outline and drops caption and
     fill on the off phase of the shared blink."""
     on = _paint(lamp.Tile("AB", lamp.CAUTION, flash=True), now=0.0)
     off = _paint(lamp.Tile("AB", lamp.CAUTION, flash=True), now=0.6)
@@ -436,7 +436,7 @@ def test_flash_hides_caption_and_fill_on_the_off_phase():
 
 
 def test_custom_colours_override_the_defaults():
-    """TILE-002: a caller's palette wins over the defaults."""
+    """ANN-TILE-002: a caller's palette wins over the defaults."""
     img = _paint(lamp.Tile("", lamp.STATUS), colors={lamp.STATUS: "#123456"})
     assert QColor(img.pixel(60, 1)).name() == "#123456"
 
