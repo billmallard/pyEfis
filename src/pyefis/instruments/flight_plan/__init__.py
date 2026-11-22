@@ -1866,6 +1866,9 @@ class FlightPlan(QWidget):
             "ref": ref, "course": course, "typed": False, "turn": fp_hold.DEFAULT_TURN,
             "leg": fp_hold.default_leg_minutes(self._aircraft_altitude()), "unit": "MIN",
             "message": "",
+            # Present position has no published hold (AER-6328).
+            "published": [], "choosing": False, "page": 0, "applied": None,
+            "std_time": False,
         }
         self.update()
 

@@ -605,3 +605,17 @@ def test_published_holds_never_raises_and_fills_a_missing_direction(tmp_path):
     (h,) = hold.published_holds(str(path), B)
     assert (h.direction, h.inbound, h.leg_nm, h.charts) == ("SW", 45.0, None, ())
     assert hold.published_text(h) == "SW INB 045° R STD TIME"
+
+
+def test_the_ppos_editor_paints_with_no_published_row(page, tmp_path):
+    """Hold at PPOS (HOLDFIX2) opens the same editor from its own state:
+    it paints whole, with no PUBLISHED row, and Back closes it. A paint
+    error is caught and logged, so assert on what was painted."""
+    _published(page, tmp_path, [BBB_ENR])
+    page._menu_open = True
+    page._menu_hold_ppos()
+    texts = _texts(page)
+    assert "HOLD AT PPOS" in texts and "Insert" in texts
+    assert not any(t.startswith("PUBLISHED") for t in texts)
+    page._enc_back()
+    assert page._hold_edit is None
