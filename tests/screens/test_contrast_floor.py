@@ -182,6 +182,7 @@ PAIRS = {
         ("vloc_color", "bg_color", GRAPHIC_FLOOR),
         ("heading_bug_color", "bg_color", GRAPHIC_FLOOR),
         ("track_color", "bg_color", GRAPHIC_FLOOR),
+        ("turn_rate_color", "bg_color", GRAPHIC_FLOOR),
         ("bearing_color", "bg_color", GRAPHIC_FLOOR),
     ],
     # checklist, nav_status and flight_plan fill their own face #000000

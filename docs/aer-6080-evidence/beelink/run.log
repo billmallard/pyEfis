@@ -1,0 +1,40 @@
+BEFORE MainPID=1051786 NRestarts=0 
+dev coastal svs rc=0 rev=0e958c7d
+dev coastal symbology rc=0 rev=0e958c7d
+dev coastal none rc=0 rev=0e958c7d
+dev mountains svs rc=0 rev=0e958c7d
+dev mountains symbology rc=0 rev=0e958c7d
+dev mountains none rc=0 rev=0e958c7d
+dev approach svs rc=0 rev=0e958c7d
+dev approach symbology rc=0 rev=0e958c7d
+dev approach none rc=0 rev=0e958c7d
+dev final svs rc=0 rev=0e958c7d
+dev final symbology rc=0 rev=0e958c7d
+dev final none rc=0 rev=0e958c7d
+branch coastal svs rc=0 rev=7a86613c
+branch coastal symbology rc=0 rev=7a86613c
+branch coastal none rc=0 rev=7a86613c
+branch mountains svs rc=0 rev=7a86613c
+branch mountains symbology rc=0 rev=7a86613c
+branch mountains none rc=0 rev=7a86613c
+branch approach svs rc=0 rev=7a86613c
+branch approach symbology rc=0 rev=7a86613c
+branch approach none rc=0 rev=7a86613c
+branch final svs rc=0 rev=7a86613c
+branch final symbology rc=0 rev=7a86613c
+branch final none rc=0 rev=7a86613c
+RUN_RC=0
+AFTER MainPID=1051786 NRestarts=0 
+coastal    svs        differing pixels: 0
+coastal    symbology  differing pixels: 0
+coastal    none       differing pixels: 0
+mountains  svs        differing pixels: 0
+mountains  symbology  differing pixels: 0
+mountains  none       differing pixels: 0
+approach   svs        differing pixels: 1
+approach   symbology  differing pixels: 0
+approach   none       differing pixels: 0
+final      svs        differing pixels: 0
+final      symbology  differing pixels: 0
+final      none       differing pixels: 0
+CMP_RC=1

@@ -1,0 +1,17 @@
+database file: "<fix-gateway checkout>/src/fixgw/config/database.yaml"
+connections:
+  netfix:
+    load: yes
+    module: fixgw.plugins.netfix
+    type: server
+    host: 127.0.0.1
+    port: 34977
+    buffer_size: 1024
+    timeout: 1.0
+  demo:
+    load: yes
+    module: fixgw.plugins.demo
+    profile: turn4-kmic-r32-faf30.yaml
+    traffic: false
+    watch_s: 1
+    restart_s: 5

@@ -78,11 +78,27 @@ INSTRUMENTS = {
 }
 
 
+# Background renderers the attitude widget can host (CERT12b, brief R2b):
+# kind -> "module:factory", the factory taking the renderer's config dict.
+# The interface they implement is in instruments/ai/background.py. Not core.
+RENDERERS = {
+    "svs": "pyefis.instruments.ai.svs:create_background_renderer",
+}
+
+
 def instrument(name):
     """Return the instrument class ``name``, importing its package now if no
     screen has needed it yet. An unknown name raises ``KeyError``: a builder
     asking for a class the table does not list is a coding error."""
     return getattr(importlib.import_module(INSTRUMENTS[name]), name)
+
+
+def renderer(kind):
+    """Return the factory for the background renderer ``kind``, importing
+    its module now if no screen has needed it yet. An AI that never asks for
+    one never loads it."""
+    module, _, attr = RENDERERS[kind].partition(":")
+    return getattr(importlib.import_module(module), attr)
 
 
 def screen_module(name):

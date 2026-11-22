@@ -1,0 +1,3 @@
+20:40:46 b1_before: NAVSRC=2.0 DEMOLOOP=2 pyEfis=d9f7066 fgw=16282cd
+20:40:50 b2_tapped: NAVSRC=0.0 DEMOLOOP=2 pyEfis=d9f7066 fgw=16282cd
+20:42:32 b3_next_loop: NAVSRC=2.0 DEMOLOOP=3 pyEfis=d9f7066 fgw=16282cd

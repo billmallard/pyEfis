@@ -87,9 +87,15 @@ ends when the engine loads a change. This needs an engine that publishes
 | Load Airway | Pick an airway through this waypoint, then its exit fix. The whole airway is inserted. |
 | Activate Leg | Fly the leg to this waypoint now. |
 | Direct To | Fly direct to this waypoint. |
+| Hold... | Build a hold here the way ATC gives it: the side of the fix, the radial or inbound course, the turns and the leg in minutes or miles. It is inserted right after the fix as a **HOLD** row. |
 | WPT Info | Its details: position, elevation, frequency, bearing and distance from you. |
 | Set Role | Mark it `IAF`, `FAF`, `MAP`, `MAHP` or none. |
 | Remove | Take it out of the plan. |
+
+A fix inside an airway or procedure offers **Hold...** too, and a hold you
+built there offers **Remove Hold**. While you fly a hold you built, the
+menu's Suspend item reads **Exit hold**: the hold ends at the next pass over
+the fix.
 
 Touch an airway row for **Change Exit**, **Change Entry**, **Show Fixes**
 (each fix with its course, distance and MEA), **Activate to** its entry, and
@@ -164,7 +170,7 @@ You can also go direct from the map: touch the waypoint there and choose
 | **Invert** | Reverse the plan. |
 | **Store** | Save it to the catalog. |
 | **Clear** | Empty the plan, after a confirmation. |
-| **Suspend** / **Resume** | Stop or restart sequencing. At the missed approach point, Resume reads **Fly the missed**. |
+| **Suspend** / **Resume** | Stop or restart sequencing. At the missed approach point, Resume reads **Fly the missed**; in a hold you built (`HM`), it reads **Exit hold**. |
 | **CDI Scale** | Step the HSI's full-scale deflection through 0.3, 1.0 and 2.0 nm and back to **AUTO**, which scales by phase of flight. See [The HSI](The-HSI#how-far-off-course-cdi-scaling). |
 | **Delete** | Delete the plan, after a confirmation. |
 

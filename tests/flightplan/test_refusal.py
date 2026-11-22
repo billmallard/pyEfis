@@ -53,6 +53,21 @@ from pyefis.flightplan import refusal
     ("BAD SLOT", "WAYPOINT NOT IN PLAN"),
     ("NO POSITION", "NO GPS POSITION"),
     ("PARSE", "COMMAND NOT UNDERSTOOD"),
+    # GPS OBS refusals (OBS2).
+    ("OBS N/A NO WPT", "OBS NOT AVAILABLE: NO ACTIVE WAYPOINT"),
+    ("OBS N/A NO POSITION", "OBS NOT AVAILABLE: NO GPS POSITION"),
+    ("OBS N/A FINAL APPROACH", "OBS NOT AVAILABLE ON FINAL APPROACH"),
+    ("OBS N/A HOLD", "OBS NOT AVAILABLE IN A HOLD"),
+    ("OBS N/A PROC TURN", "OBS NOT AVAILABLE ON A PROCEDURE TURN"),
+    ("OBS N/A VECTORS", "OBS NOT AVAILABLE ON VECTORS"),
+    ("OBS N/A NO FIX", "OBS NOT AVAILABLE ON A CLIMB LEG"),
+    ("IN OBS", "NOT AVAILABLE IN OBS"),
+    ("NOT IN OBS", "OBS IS NOT ON"),
+    ("OBS N/A DATABASE", "OBS NOT AVAILABLE: GATEWAY CONFIG OUT OF DATE"),
+    # An accepted commit that drops the active leg (HOLDFIX0): not a refusal.
+    ("ACTIVE LEG REMOVED", "ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE"),
+    ("ACTIVE LEG CHANGED", "ACTIVE LEG CHANGED: NO LEG ACTIVE"),
+    ("ACTIVE LEG AMBIGUOUS", "ACTIVE LEG REPEATED IN PLAN: NO LEG ACTIVE"),
 ])
 def test_each_engine_code_reads_in_plain_words(msg, plain):
     assert refusal.plain_reason(msg) == plain
@@ -109,15 +124,17 @@ def _str_code(node, constants):
 
 def engine_refusal_codes(source):
     """Every refusal code the flightplan engine's *source* can write to
-    FPLMSG: what the ``*_reason`` route checks return, what ``_Reject`` and
-    ``RouteRejected`` are raised with, and the reason beside a negative ack
-    ``handle_command`` returns directly."""
+    FPLMSG: what the ``*_reason`` and ``*_refusal`` checks return, every
+    module ``*_REASON`` constant, what ``_Reject`` and ``RouteRejected`` are
+    raised with, and the reason beside a negative ack ``handle_command``
+    returns directly."""
     tree = ast.parse(source)
     constants = {t.id: n.value for n in tree.body if isinstance(n, ast.Assign)
                  for t in n.targets if isinstance(t, ast.Name)}
-    found = set()
+    found = {_str_code(value, constants) for name, value in constants.items()
+             if name.endswith("_REASON")}
     for fn in ast.walk(tree):
-        if isinstance(fn, ast.FunctionDef) and fn.name.endswith("_reason"):
+        if isinstance(fn, ast.FunctionDef) and fn.name.endswith(("_reason", "_refusal")):
             for node in ast.walk(fn):
                 if isinstance(node, ast.Return) and node.value is not None:
                     found.add(_str_code(node.value, constants))
@@ -155,7 +172,9 @@ def test_engine_publishes_no_code_without_plain_words():
     codes = engine_refusal_codes(path.read_text())
     # The reader still finds the codes it was written against: a reader that
     # stopped matching the engine's source would otherwise pass on nothing.
-    assert {"UNSUPP", "BADTURN", "SEGENT", "NO POSITION", "PARSE"} <= codes
+    assert {"UNSUPP", "BADTURN", "SEGENT", "NO POSITION", "PARSE",
+            "OBS N/A HOLD", "NOT IN OBS", "OBS N/A DATABASE",
+            "ACTIVE LEG REMOVED"} <= codes
     assert codes - refusal.KNOWN_CODES == set(), (
         "the engine can publish these FPLMSG codes and plain_reason has no words for "
         "them: add them to pyefis/flightplan/refusal.py")
@@ -166,6 +185,11 @@ def test_the_engine_reader_catches_a_new_code():
     engine that adds a route check, a command rejection or a raw refusal."""
     source = '''
 NEW_REASON = "NO FUEL"
+UNRAISED_REASON = "NO OIL"
+def _obs_refusal(self):
+    if self.x:
+        return OBS_SOMETHING_ELSE
+    return "OBS N/A WIDGET"
 def _tier2_data_reason(w):
     if w.x:
         return "BADTURN"
@@ -180,5 +204,7 @@ def load(self, reason):
     raise RouteRejected(reason)
 '''
     codes = engine_refusal_codes(source)
-    assert codes == {"BADTURN", "BADWIDGET", "SEGFOO", "NOSUCH", "NO FUEL"}
-    assert codes - refusal.KNOWN_CODES == {"BADWIDGET", "SEGFOO", "NOSUCH", "NO FUEL"}
+    assert codes == {"BADTURN", "BADWIDGET", "SEGFOO", "NOSUCH", "NO FUEL",
+                     "NO OIL", "OBS N/A WIDGET"}
+    assert codes - refusal.KNOWN_CODES == {"BADWIDGET", "SEGFOO", "NOSUCH", "NO FUEL",
+                                           "NO OIL", "OBS N/A WIDGET"}

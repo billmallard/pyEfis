@@ -23,6 +23,7 @@ on:
     paths:
       - "src/pyefis/editor/**"
       - "src/pyefis/screens/screenbuilder_factory.py"
+      - "src/pyefis/screens/instrument_spec.py"
       - "src/pyefis/instruments/**"
       - "tools/build_editor_assets.py"
       - "tools/render_instrument.py"

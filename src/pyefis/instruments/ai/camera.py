@@ -32,6 +32,13 @@ painter's order (depth test off outside the terrain pass).
 import math
 import numpy as np
 
+# The terrain's horizontal scale and the bearing -> screen-x function live
+# in the core projection module, so the AI widget reaches them without
+# importing this one (CERT12 brief U2). Re-exported: svs_gl and the tests
+# import them from here.
+from pyefis.instruments.ai.projection import (  # noqa: F401
+    TERRAIN_HFOV_PITCH_DEG, terrain_horizontal_px)
+
 M_PER_DEG_LAT = 111139.0
 M_PER_FT = 0.3048
 DEG_PER_RAD = 57.29577951308232
@@ -45,27 +52,6 @@ EARTH_CURVATURE = 1.0 / (2.0 * 6371000.0)
 # occlusion the eye can see at those ranges.
 Z_NEAR = 2.0
 Z_FAR = 800e3
-
-
-# Terrain horizontal scale, as a pitchDegreesShown-equivalent: the
-# terrain projects h / TERRAIN_HFOV_PITCH_DEG pixels per degree across,
-# whatever the AI widget's live pitchDegreesShown is (AER-1799 settled the
-# field, AER-1806/AER-1973 pinned it). Lives here, not in svs_gl.py, so the
-# AI widget can place horizontal symbology on the same scale without
-# importing the GL renderer.
-TERRAIN_HFOV_PITCH_DEG = 30.0
-
-
-def terrain_horizontal_px(bearing_deg, viewport_h):
-    """Screen-x offset, in pixels from the roll pivot, at which the SVS
-    terrain draws a point on the horizon *bearing_deg* off the nose,
-    wings level and pitch 0: the same tangent projection view_projection
-    applies. Horizontal symbology that has to sit over terrain (heading
-    ticks, the FPM's drift) uses this instead of bearing * pixelsPerDeg,
-    which is the vertical scale and is linear (pyEfis #304)."""
-    ppd_h = viewport_h / TERRAIN_HFOV_PITCH_DEG
-    b = max(-89.0, min(89.0, float(bearing_deg)))
-    return DEG_PER_RAD * ppd_h * math.tan(math.radians(b))
 
 
 def view_projection(ac_e, ac_n, ac_u, heading_deg, pitch_deg, roll_deg,
