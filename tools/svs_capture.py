@@ -208,6 +208,23 @@ def parse_args(argv=None):
         "the key is not defined, so a capture is unchanged from before it",
     )
 
+    pose.add_argument(
+        "--fd",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("PITCH", "ROLL"),
+        help="flight director command, degrees (FIX keys FDPITCH/FDROLL, with "
+        "FDENG on; AFC5, AER-6052). Omitted: the keys are not defined, so a "
+        "capture is unchanged from before them",
+    )
+    pose.add_argument(
+        "--fd-style",
+        default="single_cue",
+        choices=["single_cue", "cross_pointer", "off"],
+        help="the AI's fd_style screen option (with --fd)",
+    )
+
     view = p.add_argument_group("view")
     view.add_argument("--range", type=float, default=30.0, dest="range_nm")
     view.add_argument(
@@ -759,6 +776,16 @@ def seed_mock_fix(args):
         item.bad = False
         item.fail = False
         values["BANKBUG"] = args.bank_bug
+    if getattr(args, "fd", None) is not None:
+        for key, dtype, lo, hi in (("FDENG", "bool", 0, 1),
+                                   ("FDPITCH", "float", -90.0, 90.0),
+                                   ("FDROLL", "float", -180.0, 180.0)):
+            fix.db.define_item(key, key, dtype, lo, hi, "deg", 50000, "")
+            item = fix.db.get_item(key)
+            item.bad = False
+            item.fail = False
+        values["FDENG"] = True
+        values["FDPITCH"], values["FDROLL"] = args.fd
     for key, value in values.items():
         fix.db.set_value(key, value)
     return values
@@ -953,6 +980,7 @@ def main(argv=None):
         widget = CapturingAI(win, show_fpm=not args.terrain_only)
 
     widget.terrain_only = args.terrain_only
+    widget.fd_style = args.fd_style
     widget.set_svs_config(svs_config)
 
     # Pin the pose. PoseSource dead-reckons from the seeded GS/TRACK, so without
