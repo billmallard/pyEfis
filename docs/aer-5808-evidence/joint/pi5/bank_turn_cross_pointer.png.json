@@ -1,0 +1,59 @@
+{
+ "scene": "bank_turn",
+ "caption": "Banked 25 right at 8500 ft: HDG, ALT 8500 (held)",
+ "gl_frame": "gl/bank_turn_cross_pointer.png",
+ "state": {
+  "APENG": true,
+  "YDENG": true,
+  "FDENG": true,
+  "BARO": 29.92,
+  "IAS": 110.0,
+  "TAS": 124.0,
+  "GS": 118.0,
+  "ALT": 8500.0,
+  "VS": 0.0,
+  "HEAD": 200.0,
+  "TRACK": 200.0,
+  "HEADBUG": 230.0,
+  "COURSE": 200.0,
+  "ALTSEL": 8500,
+  "APLAT": "HDG",
+  "APLATARM": "",
+  "APVERT": "ALT",
+  "APVERTARM": "",
+  "APALTREF": 8500
+ },
+ "geometry": {
+  "Altimeter_Tape": [
+   1008,
+   65,
+   115,
+   655
+  ],
+  "Airspeed_Tape": [
+   144,
+   65,
+   115,
+   655
+  ],
+  "HSI": [
+   411,
+   742,
+   425,
+   425
+  ],
+  "Alt_Trend_Tape": [
+   1123,
+   175,
+   67,
+   436
+  ],
+  "ModeAnnunciator": [
+   144,
+   0,
+   1046,
+   55
+  ]
+ },
+ "live_screen": "/home/wpballard/makerplane/pyefis/config/screens/managed.yaml"
+}
