@@ -454,7 +454,11 @@ def test_write_manifest_writes_sidecar_json_beside_the_frame(svs_capture, tmp_pa
         "run": written["run"],
         "device": written["device"],
         "created_utc": written["created_utc"],
+        # CERT20a: the CPU state the frame was drawn at, optional (absent when
+        # nothing is readable).
+        **({"platform": written["platform"]} if "platform" in written else {}),
     }
+    assert isinstance(written.get("platform", {}), dict)
     assert written["argv"]  # non-empty; exact value is the pytest invocation
     assert written["run"] and written["device"]
 
