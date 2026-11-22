@@ -1,10 +1,10 @@
 {
  "schema": "evidence-sidecar/1",
- "commit": "04917db2",
+ "commit": "de246ac1",
  "run": "local: tools/render_platform_example.py on the Pi 5 bench, pyEfis service live, AER-6324",
  "device": "Raspberry Pi 5 Model B Rev 1.1 (offscreen)",
- "sha256": "a9d66ed8c4c87987bbf7831a6e66653fcdbad4c11ea3cb6e4030b262f3a8668c",
- "created_utc": "2026-11-22T15:45:41Z",
+ "sha256": "938a0255fbfad484ad50f6080bbe45a75aabee74de3752b53272df5af0820341",
+ "created_utc": "2026-11-22T15:46:49Z",
  "platform": {
   "board": "Raspberry Pi 5 Model B Rev 1.1",
   "soc": "brcm,bcm2712",
@@ -23,7 +23,7 @@
     "max_khz": 2400000,
     "hw_min_khz": 1500000,
     "hw_max_khz": 2400000,
-    "cur_khz": 1700000
+    "cur_khz": 1600000
    }
   ],
   "governor": "ondemand",
@@ -40,8 +40,8 @@
    "under_voltage_alarm": false
   },
   "temperature_c": {
-   "cpu-thermal": 51.8
+   "cpu-thermal": 50.15
   },
-  "soc_temp_c": 51.8
+  "soc_temp_c": 50.15
  }
 }
