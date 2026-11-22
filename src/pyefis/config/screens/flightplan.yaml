@@ -49,3 +49,13 @@ FLIGHTPLAN:
         columns: 15
       options:
         config: buttons/screen-flightplan-pfd.yaml
+
+    # Crew alerting marker (CAS3, CAP-119): the highest active alert level,
+    # flashing while anything is unacknowledged; empty when there is none.
+    # Touch to open the full list. Map corner, beside the screen button.
+    - type: cas_marker
+      row: 0
+      column: 16
+      span:
+        rows: 6
+        columns: 22

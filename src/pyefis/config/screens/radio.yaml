@@ -82,3 +82,12 @@ RADIO:
         rows: 18
         columns: 75
 
+    # Crew alerting marker (CAS3, CAP-119): the highest active alert level,
+    # flashing while anything is unacknowledged; empty when there is none.
+    # Touch to open the full list. Top of the attitude display, where the PFD's window starts.
+    - type: cas_marker
+      row: 1
+      column: 38
+      span:
+        rows: 6
+        columns: 20

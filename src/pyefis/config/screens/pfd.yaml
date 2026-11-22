@@ -69,3 +69,16 @@ PFD:
       options:
         config: buttons/screen-flightplan-pfd.yaml
 
+    # Crew alerting window (CAS3, CAP-119): the gateway's alert list, warnings
+    # on top. Draws nothing and passes touches through while no message is
+    # active. Touch to acknowledge. Placement is provisional (option A, upper
+    # left of the attitude display under the wind box) until the project
+    # owner picks the shipped default.
+    - type: cas_window
+      row: 21
+      column: 16
+      span:
+        rows: 20
+        columns: 29
+      options:
+        lines: 4
