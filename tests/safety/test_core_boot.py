@@ -51,11 +51,10 @@ def test_the_core_only_boot_loads_nothing_non_core_but_the_allowlist(doc, boot):
                        "runtime: %s" % stale)
 
 
-def test_each_runtime_entry_is_attributed_to_the_edges_that_bring_it(doc):
-    allowed = core_rules.runtime_allowlist(doc)
-    assert allowed["pyefis.instruments.ai.svs"] == ["E1 (CERT12b)"]
-    assert "pyefis.instruments.map" not in allowed   # E4, removed by CERT12c
-    assert sorted(allowed["numpy"]) == ["E1 (CERT12b)", "E2 (CERT12b)"]
+def test_the_runtime_allowlist_is_empty(doc):
+    """CERT12c removed E4 and CERT12b removed E1 to E3: a core-only boot
+    loads no non-core module, numpy or sqlite3 at all."""
+    assert core_rules.runtime_allowlist(doc) == {}
 
 
 def test_a_planted_import_by_name_fails_the_runtime_check_but_not_the_static_one(doc, tmp_path):

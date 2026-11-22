@@ -10,9 +10,11 @@ longer occurs, so the allowlist only shrinks.
 The planted-violation tests run the same check over a copy of the source with one
 crossing added, and show it failing; the copy without the plant passes. No Qt."""
 
+import copy as copy_module
 import pathlib
 
 import pytest
+import yaml
 
 from tests.safety import core_rules
 
@@ -72,13 +74,11 @@ def test_the_core_imports_nothing_outside_rule_r1_but_the_allowlist(doc):
     assert not stale, "allowlisted imports that no longer occur: %s" % stale
 
 
-def test_the_allowlist_is_exactly_the_brief_edges_today(doc):
-    """E1 to E3 from the attitude widget, nothing else. CERT12c removed E4, the
-    composition root's top-level instrument imports."""
-    found = {(c["from"], c["imports"]) for c in ci.crossings(doc)}
-    assert {m for f, m in found if f.endswith("ai_widget.py")} == {
-        "pyefis.instruments.ai.svs", "pyefis.instruments.ai.camera", "pyefis.instruments.ai.pose"}
-    assert {f for f, m in found if not f.endswith("ai_widget.py")} == set()
+def test_the_core_crosses_nowhere_today(doc):
+    """CERT12c removed E4, the composition root's top-level instrument
+    imports; CERT12b removed E1 to E3, the attitude widget's SVS imports."""
+    assert ci.crossings(doc) == []
+    assert doc["ratchet"]["imports"] == []
 
 
 # ---------------------------------------------------------------- planted violations
@@ -117,11 +117,18 @@ def test_a_new_core_file_is_checked_without_being_listed(doc, copy):
 
 
 def test_an_allowlisted_import_that_is_gone_fails_until_its_entry_is_deleted(doc, copy):
-    p = pathlib.Path(copy, "src/pyefis/instruments/ai/ai_widget.py")
-    text = p.read_text(encoding="utf-8")
-    line = "from pyefis.instruments.ai.pose import PoseSource\n"
-    assert line in text
-    p.write_text(text.replace(line, ""), encoding="utf-8")
-    new, stale = ci.check(doc, copy)
+    """The allowlist only shrinks. CERT12b emptied it, so the stale entry is
+    planted: E3 as CERT12a listed it, for an import ai_widget.py no longer makes."""
+    stale_doc = copy_module.deepcopy(doc)
+    stale_doc["ratchet"]["imports"] = [{
+        "edge": "E3", "removed_by": "CERT12b",
+        "from": "src/pyefis/instruments/ai/ai_widget.py",
+        "imports": ["pyefis.instruments.ai.pose"]}]
+    new, stale = ci.check(stale_doc, copy)
     assert stale == [("src/pyefis/instruments/ai/ai_widget.py", "pyefis.instruments.ai.pose")]
-    assert ci.main(["check", "--root", str(copy)]) == 1
+    core_list = pathlib.Path(copy, "core_modules.yaml")
+    core_list.write_text(yaml.safe_dump(stale_doc), encoding="utf-8")
+    assert ci.main(["check", "--root", str(copy), "--core-list", str(core_list)]) == 1
+    stale_doc["ratchet"]["imports"] = []
+    core_list.write_text(yaml.safe_dump(stale_doc), encoding="utf-8")
+    assert ci.main(["check", "--root", str(copy), "--core-list", str(core_list)]) == 0
