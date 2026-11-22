@@ -122,6 +122,35 @@ def test_bank_bug_seeds_the_key(svs_capture):
     assert not (item.bad or item.fail)
 
 
+def test_fd_omitted_leaves_the_keys_undefined(svs_capture):
+    """No --fd: the FD keys are not seeded, so an existing capture is
+    unchanged (the AI draws no flight director)."""
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+    ])
+    assert args.fd is None
+    assert args.fd_style == "single_cue"
+    values = svs_capture.seed_mock_fix(_args())
+    assert not {"FDENG", "FDPITCH", "FDROLL"} & set(values)
+
+
+def test_fd_seeds_an_engaged_fresh_command(svs_capture):
+    """AFC5: --fd 5 -20 defines FDENG/FDPITCH/FDROLL, FD on, all valid."""
+    args = svs_capture.parse_args([
+        "--out", "x.png", "--lat", "0", "--lon", "0", "--alt", "0",
+        "--fd", "5", "-20", "--fd-style", "cross_pointer",
+    ])
+    assert args.fd == [5.0, -20.0]
+    assert args.fd_style == "cross_pointer"
+    values = svs_capture.seed_mock_fix(_args(fd=[5.0, -20.0]))
+    assert (values["FDENG"], values["FDPITCH"], values["FDROLL"]) == \
+        (True, 5.0, -20.0)
+    for key in ("FDENG", "FDPITCH", "FDROLL"):
+        item = svs_capture.fix.db.get_item(key)
+        assert item.value == values[key]
+        assert not (item.old or item.bad or item.fail)
+
+
 def test_magvar_direction_matches_west_positive_convention(svs_capture):
     """West-positive MAGVAR (FAA "West is best": MAG = TRUE + W_VAR) means
     the AI widget's ``head_true = HEAD - MAGVAR`` must read LOWER than the
