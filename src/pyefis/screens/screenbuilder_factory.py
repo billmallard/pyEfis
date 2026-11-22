@@ -708,7 +708,9 @@ _register(InstrumentSpec(
                   "autopilot's target airspeed: inner ring 1 kt, outer ring "
                   "10 kt, push syncs to the current airspeed. Only while the "
                   "box is shown (IAS active or armed)"),
+        _encoder_order_prop(),
     ],
+    encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     # V-speeds come from the IAS item's aux (fix-gateway), not the panel editor.
     fix_values=[
         FixValue("Vs", source="aux", label="Stall, clean (Vs)", units="kt"),
