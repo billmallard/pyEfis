@@ -1130,8 +1130,9 @@ class HSI(QGraphicsView):
         # Compass numerals/letters drawn screen-upright at their (count - heading)
         # positions so they stay HORIZONTAL as the card rotates (Bill 2026-08-02),
         # instead of being baked into the rotating rose. Size is configurable via
-        # numeral_scale. Hidden on fail, matching changeFail's label opacity.
-        if not self.isFail():
+        # numeral_scale. Hidden on an invalid heading alone, matching changeFail's
+        # label opacity: a nav fault never takes the numerals (CERT1f).
+        if self._heading_valid():
             nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
             nf = QFont(self.font_family)
             nf.setPixelSize(nsize)
@@ -1798,6 +1799,8 @@ class HSI(QGraphicsView):
             or self._HeadOld   or self._HeadBad\
             or self._CourseOld or self._CourseBad
 
+    # Any input failed. The numerals no longer follow this (CERT1f, Bill
+    # 2026-11-20): they follow HEAD alone, see changeFail.
     def isFail(self):
         return self._GsiFail\
             or self._CdiFail\
@@ -1805,7 +1808,7 @@ class HSI(QGraphicsView):
             or self._CourseBad
 
     def changeFail(self):
-        if self.isFail():
+        if not self._heading_valid():
             for l in self.labels:
                 l.setOpacity(0)
         else:
@@ -2232,7 +2235,6 @@ class HSI(QGraphicsView):
         c.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         cx, top_y, own_y, half_w, sag = self._arc_params()
         fg = QColor(self.fg_color)
-        fail = self.isFail()
 
         # 1. Compass band ticks (every 5 deg in-sector), weight/length hierarchy
         # matching the rose; each tick fans slightly toward ownship. The loops
@@ -2262,8 +2264,9 @@ class HSI(QGraphicsView):
             c.drawLine(QLineF(bx, by, ix, iy))
 
         # 2. Numerals (screen-upright) at 30-deg, cardinal letters at 90-deg,
-        # just inside the band. Hidden on fail (matches the rose label opacity).
-        if not fail:
+        # just inside the band. Hidden on an invalid heading alone (matches the
+        # rose label opacity; CERT1f).
+        if self._heading_valid():
             nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
             nf = QFont(self.font_family); nf.setPixelSize(nsize)
             c.setFont(nf); c.setPen(QPen(fg))

@@ -817,6 +817,9 @@ class AI(QGraphicsView):
             self._svs_item = None
 
         self.svs = SVSRenderer(config)
+        # ADS-B traffic in the scene (SVSTFC1): the renderer reads the TFC
+        # block itself; a bus without one leaves it inert.
+        self.svs.attach_traffic(getattr(fix, "db", None))
         # Canonical renderer handle. The screenbuilder assigns YAML `options`
         # as raw attributes, so `self.svs` is frequently overwritten with the
         # `svs:` config DICT after this runs (see the note in paintEvent). Keep
