@@ -106,11 +106,11 @@ _DEMO_ANNUNCIATOR = {
         {"label": "TRIM", "key": "DEMOANN5", "flag": "annunciate",
          "level": "caution"},
         {"label": "NAV", "key": "DEMOANN6", "level": "info",
-         "enum": {0: "GPS", 1: "VLOC1", 2: "VLOC2"}},
+         "enum": {0: "VLOC1", 1: "VLOC2", 2: "GPS"}},
     ],
 }
 _DEMO_ANNUNCIATOR_SEED = {"DEMOANN1": 1, "DEMOANN2": 1, "DEMOANN3": 0,
-                          "DEMOANN4": 1, "DEMOANN5": 1, "DEMOANN6": 0}
+                          "DEMOANN4": 1, "DEMOANN5": 1, "DEMOANN6": 2}
 
 
 def _demo_annunciator(instrument_type, options):

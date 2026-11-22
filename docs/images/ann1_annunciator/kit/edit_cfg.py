@@ -19,7 +19,7 @@ d["PFD"]["instruments"].append({
             {"label": "YD", "key": "YDENG", "level": "status"},
             {"label": "ALT CAP", "key": "APALTCAP", "level": "advisory"},
             {"label": "NAV", "key": "NAVSRC", "level": "info",
-             "enum": {0: "GPS", 1: "VLOC1", 2: "VLOC2"}},
+             "enum": {0: "VLOC1", 1: "VLOC2", 2: "GPS"}},
             {"label": "ALT ALERT", "key": "ALTSEL", "flag": "annunciate",
              "level": "caution"},
             {"label": "VS HIGH", "key": "VS", "when": "VS gt 1500",

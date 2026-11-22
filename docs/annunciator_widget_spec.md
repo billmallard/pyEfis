@@ -34,7 +34,7 @@ key shown as text (`NAVSRC` as `GPS`, `VLOC1`).
       - {label: FUEL PUMP, key: FUELPUMP, level: status}
       - {label: OIL PRESS, key: OILP, flag: annunciate, level: warning}
       - {label: OIL LOW, key: OILP, when: "OILP lt 25", level: info}
-      - {label: NAV, key: NAVSRC, level: info, enum: {0: GPS, 1: VLOC1, 2: VLOC2}}
+      - {label: NAV, key: NAVSRC, level: info, enum: {0: VLOC1, 1: VLOC2, 2: GPS}}
 ```
 
 - **A tile** has a `label` and a `key`, and at most one binding: `when` (a condition in the

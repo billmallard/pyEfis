@@ -128,13 +128,13 @@ def test_flag_binding(db):
 def test_enum_binding_shows_the_mapped_text(db):
     """ANN-BIND-003: an enum map turns the value into text; YAML may key the
     map by int or by string; an unmapped value shows itself."""
-    db("NAVSRC", 0)
+    db("NAVSRC", 2)      # NAVSRC: 0 NAV1, 1 NAV2, 2 GPS (hsi/__init__.py)
     m = model([{"label": "NAV", "key": "NAVSRC", "level": "info",
-                "enum": {0: "GPS", "1": "VLOC1", 2: "VLOC2"}}], db)
+                "enum": {0: "VLOC1", "1": "VLOC2", 2: "GPS"}}], db)
     assert (only(m).text, only(m).level) == ("GPS", lamp.INFO)
-    db("NAVSRC", 1)
+    db("NAVSRC", 0)
     assert only(m).text == "VLOC1"
-    db("NAVSRC", 2)
+    db("NAVSRC", 1)
     assert only(m).text == "VLOC2"
     db("NAVSRC", 3)
     assert only(m).text == "3"
@@ -361,7 +361,7 @@ def test_back_from_stale_flashes_only_a_changed_reading(db):
 def test_enum_text_change_flashes(db):
     """ANN-FLASH-001: an enum tile flashes when its text changes."""
     db("NAVSRC", 0)
-    m = model([{"label": "NAV", "key": "NAVSRC", "enum": {0: "GPS", 1: "VLOC1"},
+    m = model([{"label": "NAV", "key": "NAVSRC", "enum": {0: "VLOC1", 1: "VLOC2", 2: "GPS"},
                 "flash_on_change": 3}], db)
     db("NAVSRC", 1)
     assert only(m).flash
@@ -450,7 +450,7 @@ YAML_TILES = [
     {"label": "OIL LOW", "key": "OILP", "when": "OILP lt 25",
      "level": "warning"},
     {"label": "NAV", "key": "NAVSRC", "level": "info",
-     "enum": {0: "GPS", 1: "VLOC1"}},
+     "enum": {0: "VLOC1", 1: "VLOC2", 2: "GPS"}},
     {"label": "OILT", "key": "OILT", "level": "status"},
 ]
 

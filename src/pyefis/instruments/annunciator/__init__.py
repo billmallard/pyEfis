@@ -23,7 +23,7 @@ Each entry of the ``tiles`` option is one lamp::
       # ... and at most one of:
       when: "GEARDN eq true"  # a condition in the Button grammar
       flag: annunciate        # one of the key's own flags
-      enum: {0: GPS, 1: VLOC1}  # value -> text (the lamp shows the text)
+      enum: {0: VLOC1, 1: VLOC2, 2: GPS}  # value -> text (NAVSRC)
       # with none of them the lamp is lit while the value is truthy
       condition_keys: [OILT]  # other keys a `when` reads
       on_text: GEAR DN        # default: label

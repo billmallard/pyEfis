@@ -8,7 +8,7 @@ bg = {"PITCH": 2.0, "ROLL": 0.0, "IAS": 105.0, "TAS": 110.0, "ALT": 5500.0,
       "HEAD": 87.0, "TRACK": 88.0, "GS": 108.0, "LAT": 34.4275,
       "LONG": -119.8546, "ALAT": 0.0, "AGL": 5400.0, "BARO": 29.92,
       "OAT": 10.0}
-tiles = {"APENG": 0, "YDENG": 0, "APALTCAP": 0, "NAVSRC": 0, "ALTSEL": 6000,
+tiles = {"APENG": 0, "YDENG": 0, "APALTCAP": 0, "NAVSRC": 2, "ALTSEL": 6000,
          "VS": 0}
 ann = {"ALTSEL": 0}
 stale = set()
@@ -57,7 +57,7 @@ steps = [
     ("2_ap_on", lambda: tiles.update(APENG=1)),
     ("3_yd_on", lambda: tiles.update(YDENG=1)),
     ("4_altcap_on", lambda: tiles.update(APALTCAP=1)),
-    ("5_nav_vloc1", lambda: tiles.update(NAVSRC=1)),
+    ("5_nav_vloc1", lambda: tiles.update(NAVSRC=0)),
     ("6_altsel_annunciate", lambda: ann.update(ALTSEL=1)),
     ("7_vs_2000_local_red_is_advisory", lambda: tiles.update(VS=2000)),
 ]
