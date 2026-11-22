@@ -358,3 +358,29 @@ def test_the_inserted_slot_loads_on_the_engine_and_is_flown(page, engine_mod):
     assert e._hold_entry == engine_mod.HOLD_ENTRY_DIRECT
     ack, msg = e.handle_command("3 RESUME", (lat, lon, True))
     assert (ack, msg) == (3, "HOLD EXIT ARMED")
+
+
+def test_show_fixes_sheet_and_fix_menu_name_the_hold(page):
+    # Bench, AER-6210: a hold inside an airway listed as a second plain
+    # "VTU" in Show Fixes and in its menu title.
+    page._plan = fp_model.FlightPlan(name="T", segments=[
+        fp_model.Segment(kind="airway", ident="V27", legs=[A, B, C, D])])
+    page._commit()
+    page._open_hold_editor(1)
+    page._hold_insert()
+    hold_wp = page._plan.waypoints[2]
+    assert page._fix_label(hold_wp) == "BBB HOLD"
+    assert page._fix_label(page._plan.waypoints[1]) == "BBB"
+    seen = []
+    real = page._fix_label
+    page._fix_label = lambda wp: seen.append(wp) or real(wp)
+    try:
+        page._seg_fixes = 0
+        page.grab()
+        assert hold_wp in seen
+        seen.clear()
+        page._seg_fix_menu = 2
+        page.grab()
+        assert hold_wp in seen
+    finally:
+        del page._fix_label
