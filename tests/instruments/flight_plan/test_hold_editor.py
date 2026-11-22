@@ -503,7 +503,10 @@ def test_several_published_holds_open_a_chooser(page, tmp_path):
     """173 enroute fixes have more than one hold: PUBLISHED lists them,
     enroute first, and the one tapped fills the fields. Back returns to
     the editor without changing it."""
-    _published(page, tmp_path, [BBB_TIMED, BBB_ENR])
+    # The enroute hold has the higher NASR number, so only the enroute-first
+    # order puts it on top.
+    enr = BBB_ENR[:1] + (3,) + BBB_ENR[2:]
+    _published(page, tmp_path, [BBB_TIMED, enr])
     page._open_hold_editor(1)
     assert "PUBLISHED (2)" in _texts(page)
     before = dict(page._hold_edit)
