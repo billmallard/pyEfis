@@ -20,6 +20,10 @@ P3b definition of done names (plus the non-directional symbol):
   alt-invalid 2.5 NM, 230 deg relative, altitude 0xFFF
   no-track    3.5 NM, 130 deg relative, -1200 ft, track not valid (m = 00)
 
+``--layout svs`` puts the same six states inside the synthetic vision's
+forward fan (within 22 deg of the nose), and ``--extra N`` adds N plain
+targets ahead for a frame-budget run (SVSTFC1, AER-6139).
+
 With ``--ownship`` it also writes ownship LAT/LONG/ALT/BARO/TRACK/TRACKM
 over netfix once a second (fix-gateway's own ``fixgw.netfix`` client), for a
 bench with no simulator running. Run it with the bench venv's python:
@@ -130,16 +134,44 @@ SCENARIO = (
 )
 
 
-def reports(lat, lon, palt_ft, track, skip=()):
+#: the same six states inside the synthetic vision's forward fan (SVSTFC1):
+#: within 22 deg of the nose, so every one is drawn on a 50 deg-wide SVS.
+SVS_SCENARIO = (
+    ("normal", 348, 2.5, 500, dict(vs_fpm=0, trk_rel=150, callsign="N111NM")),
+    ("alert", 8, 2.0, -300, dict(vs_fpm=1000, trk_rel=200, alert=1, callsign="N222AL")),
+    ("degraded", 355, 4.5, 1500, dict(vs_fpm=0, trk_rel=90, nic=3, nacp=3, callsign="N333DG")),
+    ("stale", 16, 3.0, 800, dict(vs_fpm=-600, trk_rel=250, callsign="N444ST")),
+    ("alt-invalid", 2, 5.5, None, dict(vs_fpm=0, trk_rel=40, callsign="N555AI")),
+    ("no-track", 338, 3.5, -1200, dict(vs_fpm=0, trk_rel=0, ttyp=0, callsign="N666NT")),
+)
+
+
+def extra_targets(n):
+    """*n* more plain targets spread over the forward fan, 3 to 9 NM out,
+    for frame-budget runs (SVSTFC1: 20 targets on the scene)."""
     out = []
-    for i, (name, rel, nm, dalt, kw) in enumerate(SCENARIO):
+    for i in range(n):
+        # golden-ratio steps: spread evenly with no two coincident
+        rel = -20.0 + 40.0 * ((i * 0.618034) % 1.0)
+        nm = 3.0 + 6.0 * ((i * 0.381966 + 0.5) % 1.0)
+        dalt = (-2000, -800, 400, 1200, 2500)[i % 5]
+        out.append(("extra%d" % i, rel % 360.0, nm, dalt,
+                    dict(vs_fpm=(0, 700, -700)[i % 3], trk_rel=(37 * i) % 360,
+                         callsign="N%03dXT" % i)))
+    return tuple(out)
+
+
+def reports(lat, lon, palt_ft, track, skip=(), scenario=SCENARIO,
+            base_addr=0xA10000):
+    out = []
+    for i, (name, rel, nm, dalt, kw) in enumerate(scenario):
         if name in skip:
             continue
         kw = dict(kw)
         tlat, tlon = offset(lat, lon, track + rel, nm)
         trk = (track + kw.pop("trk_rel")) % 360.0
         alt = None if dalt is None else palt_ft + dalt
-        out.append(traffic(0xA10000 + i, tlat, tlon, alt, trk_deg=trk, **kw))
+        out.append(traffic(base_addr + i, tlat, tlon, alt, trk_deg=trk, **kw))
     return out
 
 
@@ -176,8 +208,14 @@ def main(argv=None):
                     help="seconds before the stale target's reports stop")
     ap.add_argument("--ownship", action="store_true",
                     help="also write ownship keys over netfix (no simulator)")
+    ap.add_argument("--layout", choices=("map", "svs"), default="map",
+                    help="svs: the six states inside the synthetic vision's "
+                         "forward fan instead of around ownship")
+    ap.add_argument("--extra", type=int, default=0,
+                    help="add this many plain targets ahead (frame budget)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
+    scenario = SVS_SCENARIO if a.layout == "svs" else SCENARIO
     selftest()
     if a.selftest:
         return 0
@@ -199,7 +237,11 @@ def main(argv=None):
                              ("MAGVAR", a.magvar)):
                     client.writeValue(k, v)
             skip = ("stale",) if el >= a.warmup else ()
-            msgs = [heartbeat()] + reports(a.lat, a.lon, a.alt, a.track, skip)
+            msgs = ([heartbeat()]
+                    + reports(a.lat, a.lon, a.alt, a.track, skip, scenario)
+                    + reports(a.lat, a.lon, a.alt, a.track,
+                              scenario=extra_targets(a.extra),
+                              base_addr=0xA20000))
             sock.sendto(b"".join(frame(m) for m in msgs), (a.host, a.port))
             if n % 5 == 0:
                 print("t=%5.1fs sent %d reports%s" % (

@@ -344,6 +344,18 @@ class HSI(QGraphicsView):
             self.navtypedb.valueChanged[float].connect(self.setNavtype)
         except Exception:
             self.navtypedb = None
+        # Supplemental source (NAVSUPP: 1 = the selected NAV slot's receiver is
+        # supplemental, not certified -- the SDR receiver, fix-gateway SDRVOR3).
+        # The gateway's source plugin says so; the HSI never infers it from a
+        # frequency or a config. Defensive; absent (an older gateway) or 0 ->
+        # nothing is drawn and the HSI is pixel-identical to before.
+        self._navsupp = None
+        try:
+            self.navsuppdb = fix.db.get_item("NAVSUPP")
+            self._navsupp = self.navsuppdb.value
+            self.navsuppdb.valueChanged[float].connect(self.setNavsupp)
+        except Exception:
+            self.navsuppdb = None
         # Glideslope/glidepath validity for the selected source (GSV: 1 = GS
         # present, 0 = none). A VOR has no glideslope, so GSV=0 hides the GS
         # needle while the lateral CDI stays. Defensive; absent -> the GS shows
@@ -1118,8 +1130,9 @@ class HSI(QGraphicsView):
         # Compass numerals/letters drawn screen-upright at their (count - heading)
         # positions so they stay HORIZONTAL as the card rotates (Bill 2026-08-02),
         # instead of being baked into the rotating rose. Size is configurable via
-        # numeral_scale. Hidden on fail, matching changeFail's label opacity.
-        if not self.isFail():
+        # numeral_scale. Hidden on an invalid heading alone, matching changeFail's
+        # label opacity: a nav fault never takes the numerals (CERT1f).
+        if self._heading_valid():
             nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
             nf = QFont(self.font_family)
             nf.setPixelSize(nsize)
@@ -1242,6 +1255,8 @@ class HSI(QGraphicsView):
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2*pad,
                                            fm.height() + 2*pad)
+                self._draw_supplemental_mark(c, lx, ly + fm.descent(),
+                                             fm.horizontalAdvance(label))
 
         # Per-pointer bearing-source labels (P5b.2), mirroring the tappable
         # nav-source annunciation: pointer 1 bottom-left, pointer 2 bottom-right,
@@ -1613,6 +1628,7 @@ class HSI(QGraphicsView):
         c.drawText(QRectF(left, top, tab_w, th),
                    int(Qt.AlignmentFlag.AlignCenter), label)
         self._source_label_rect = (left, top, tab_w, th)
+        self._draw_supplemental_mark(c, left, py + ph, tab_w)
 
     #: The BRG tab's states in tap order (HSIBRG4, Bill 2026-11-16): the
     #: label each shows and the pointers it turns on. _bearing_states() drops
@@ -1783,6 +1799,8 @@ class HSI(QGraphicsView):
             or self._HeadOld   or self._HeadBad\
             or self._CourseOld or self._CourseBad
 
+    # Any input failed. The numerals no longer follow this (CERT1f, Bill
+    # 2026-11-20): they follow HEAD alone, see changeFail.
     def isFail(self):
         return self._GsiFail\
             or self._CdiFail\
@@ -1790,7 +1808,7 @@ class HSI(QGraphicsView):
             or self._CourseBad
 
     def changeFail(self):
-        if self.isFail():
+        if not self._heading_valid():
             for l in self.labels:
                 l.setOpacity(0)
         else:
@@ -1870,6 +1888,12 @@ class HSI(QGraphicsView):
     def setNavtype(self, value):
         if value != self._navtype:
             self._navtype = value
+            if self.isVisible():
+                self.update()
+
+    def setNavsupp(self, value):
+        if value != self._navsupp:
+            self._navsupp = value
             if self.isVisible():
                 self.update()
 
@@ -2211,7 +2235,6 @@ class HSI(QGraphicsView):
         c.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         cx, top_y, own_y, half_w, sag = self._arc_params()
         fg = QColor(self.fg_color)
-        fail = self.isFail()
 
         # 1. Compass band ticks (every 5 deg in-sector), weight/length hierarchy
         # matching the rose; each tick fans slightly toward ownship. The loops
@@ -2241,8 +2264,9 @@ class HSI(QGraphicsView):
             c.drawLine(QLineF(bx, by, ix, iy))
 
         # 2. Numerals (screen-upright) at 30-deg, cardinal letters at 90-deg,
-        # just inside the band. Hidden on fail (matches the rose label opacity).
-        if not fail:
+        # just inside the band. Hidden on an invalid heading alone (matches the
+        # rose label opacity; CERT1f).
+        if self._heading_valid():
             nsize = max(10, int(self.fontSize * getattr(self, "numeral_scale", 1.5)))
             nf = QFont(self.font_family); nf.setPixelSize(nsize)
             c.setFont(nf); c.setPen(QPen(fg))
@@ -2437,6 +2461,8 @@ class HSI(QGraphicsView):
                 self._source_label_rect = (lx - pad, ly - fm.ascent() - pad,
                                            fm.horizontalAdvance(label) + 2 * pad,
                                            fm.height() + 2 * pad)
+                self._draw_supplemental_mark(c, lx, ly + fm.descent(),
+                                             fm.horizontalAdvance(label))
         self._brg_label_rect = {1: None, 2: None}
         for _n in (1, 2):
             txt, invalid = self._bearing_corner_label(_n)
@@ -2842,6 +2868,40 @@ class HSI(QGraphicsView):
         if nt in (2, 3):
             return f"LOC{slot}"
         return f"VLOC{slot}"
+
+    #: Text of the supplemental-source mark under the source annunciation.
+    SUPPLEMENTAL_MARK = "SUPP"
+
+    def _supplemental(self):
+        """True when the selected NAV source is supplemental (NAVSUPP >= 0.5).
+        Never for GPS, and never when NAVSUPP is absent. The mark does not
+        drop on the key's quality flags: a supplemental source is never shown
+        as a certified one."""
+        if self._navsupp is None or self._navsrc is None:
+            return False
+        if int(round(self._navsrc)) == 2:
+            return False
+        try:
+            return float(self._navsupp) >= 0.5
+        except (TypeError, ValueError):
+            return False
+
+    def _draw_supplemental_mark(self, c, left, top, width):
+        """Amber "SUPP" centred under the source annunciation, `width` wide,
+        its top at `top` (SDRVOR3, AER-6245). Amber, the caution colour the
+        suspect tapes use (HSI-COLOR-002): the
+        needle is advisory, not an IFR source. The source label and colour
+        above it are unchanged, so VOR/LOC and NAV1/NAV2 still read as before.
+        Draws nothing unless _supplemental()."""
+        if not self._supplemental():
+            return
+        lf = QFont(self.font_family)
+        lf.setPixelSize(int(self.fontSize))
+        c.setFont(lf)
+        fm = c.fontMetrics()
+        c.setPen(QPen(QColor(helpers.SUSPECT_TAPE_COLOR)))
+        c.drawText(QRectF(left, top, width, fm.height()),
+                   int(Qt.AlignmentFlag.AlignCenter), self.SUPPLEMENTAL_MARK)
 
     def setCourseOld(self,old):
         self._CourseOld = old

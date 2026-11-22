@@ -2369,3 +2369,79 @@ def test_shadow_enabled_paint_never_raises_any_readout_layout(fix, qtbot, layout
     qtbot.waitExposed(widget)
 
     widget.paintEvent(QPaintEvent(widget.rect()))     # must not raise
+
+
+# -- Supplemental source mark (SDRVOR3, AER-6245) -------------------------------
+
+def _supp_hsi(qtbot, **kw):
+    w = _mk_hsi(qtbot, cdi_enabled=True, **kw)
+    w.resize(528, 403)
+    w.setNavsrc(1)                                    # NAV2, the SDR slot
+    w.setNavtype(1)                                   # VOR
+    return w
+
+
+def _amber_pixels(img):
+    amber = helpers.SUSPECT_TAPE_COLOR
+    n = 0
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            if (abs(c.red() - amber.red()) < 8 and abs(c.green() - amber.green()) < 8
+                    and c.blue() < 40):
+                n += 1
+    return n
+
+
+def test_hsi_supplemental_only_when_navsupp_set_on_a_nav_source(fix, qtbot):
+    """HSI-SRC-002 | NAVSUPP = 1 marks a NAV source; absent, 0 or a GPS source
+    never does. The source label itself does not change."""
+    w = _supp_hsi(qtbot)
+    assert w.navsuppdb is None and w._navsupp is None   # the fixture has no NAVSUPP
+    assert w._supplemental() is False
+    w.setNavsupp(0)
+    assert w._supplemental() is False
+    w.setNavsupp(1)
+    assert w._supplemental() is True
+    assert w._source_label() == "VOR2"                # label unchanged
+    w.setNavtype(2)
+    assert w._supplemental() is True and w._source_label() == "LOC2"
+    w.setNavsrc(2)                                    # GPS: never supplemental
+    assert w._supplemental() is False
+
+
+@pytest.mark.parametrize("layout", ["top_panel", "corners", "split", "none"])
+def test_hsi_supplemental_mark_pixels(fix, qtbot, layout):
+    """HSI-SRC-002 | The HSI is pixel-identical with NAVSUPP absent or 0, and
+    with NAVSUPP = 1 on GPS. NAVSUPP = 1 on a NAV source adds an amber mark
+    under the source annunciation, in every readout layout."""
+    w = _supp_hsi(qtbot)
+    w.readout_layout = layout
+    w.resize(529, 403); w.resize(528, 403)
+    absent = w.grab().toImage()
+    w.setNavsupp(0)
+    assert w.grab().toImage() == absent
+    w.setNavsupp(1)
+    marked = w.grab().toImage()
+    assert marked != absent
+    assert _amber_pixels(absent) == 0
+    assert _amber_pixels(marked) > 20
+    # The mark sits under the annunciation: the left half, upper third.
+    left = marked.copy(0, 0, marked.width() // 2, marked.height() // 3)
+    assert _amber_pixels(left) == _amber_pixels(marked)
+    w.setNavsrc(2)
+    w.setNavsupp(1)
+    gps_marked = w.grab().toImage()
+    w.setNavsupp(0)
+    assert gps_marked == w.grab().toImage()
+
+
+def test_hsi_supplemental_mark_in_arc(fix, qtbot):
+    """HSI-SRC-002 | The arc presentation carries the same mark."""
+    w = _supp_hsi(qtbot)
+    w.orientation = "arc"
+    w.resize(529, 403); w.resize(528, 403)
+    absent = w.grab().toImage()
+    w.setNavsupp(1)
+    assert _amber_pixels(absent) == 0
+    assert _amber_pixels(w.grab().toImage()) > 20
