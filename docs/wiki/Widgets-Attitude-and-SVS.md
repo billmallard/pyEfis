@@ -86,6 +86,8 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `ALT`, `ROLL`, `ALAT`, `TA
 | `svs_road_lift_ft` | Road lift (ft) | `2` | 0 to 50 | height above sampled terrain the ribbon is drawn at (rendered on the device; not shown in the editor preview) |
 | `svs_road_max_vertices` | Road vertex cap | `400000` | 10000 to 1000000 | hard cap on extruded vertices per array (casing/fill each); over the cap, far-tier ramps are dropped first, then far-tier trunks (rendered on the device; not shown in the editor preview) |
 | `svs_papi` | PAPI lights | on | on / off | draw the installed PAPI at its published glide path angle and side, from the NASR airports pack (only where one is installed) (rendered on the device; not shown in the editor preview) |
+| `svs_traffic` | Traffic | on | on / off | draw ADS-B traffic from the TFC block in the scene, with the moving map's symbols, relative-altitude tag and climb/descent arrow; never hidden by terrain (rendered on the device; not shown in the editor preview) |
+| `svs_traffic_range_nm` | Traffic range (NM) | `10` | 1 to 50 | targets farther than this are left to the map (rendered on the device; not shown in the editor preview) |
 | `svs_perf_log` | Perf: log summary | off | on / off | print an SVS per-frame profiler summary every 2s (collector/draw timings) to the log -- mirrors map_perf_log. Dev/bench diagnostic; off by default (rendered on the device; not shown in the editor preview) |
 
 <!-- /generated -->

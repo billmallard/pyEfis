@@ -400,8 +400,11 @@ whenever the NAV flag shows, on the rose and the arc. A bad or failed `COURSE` h
 direction to draw, so it removes the pointer and the deviation scale rotated to it, and
 the CRS readout shows dashes rather than the failed value (000), and the NAV flag
 shows. A CRS edit in progress still shows the value being edited. A stale CDI or GSI
-now raises its flag too. Open items: the grey `old` treatments (`COURSE`,
-`HEADBUG`) and confirming `HEAD`/`HEADBUG` each fully honor the convention.
+now raises its flag too. The compass numerals follow `HEAD` alone (CERT1f, Bill
+2026-11-20): a failed CDI or GSI, or a bad or failed `COURSE`, removes only its own
+symbols (pointer, scale, bar, diamond), never the numerals over a valid heading. Open
+items: the grey `old` treatments (`COURSE`, `HEADBUG`) and confirming `HEAD`/`HEADBUG`
+each fully honor the convention.
 
 ### 7.3 Colour (HSI-COLOR)
 

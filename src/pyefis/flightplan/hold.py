@@ -151,11 +151,22 @@ def arrival_course(plan: model.FlightPlan, i: int, magvar: float,
     inbound course ("hold as you arrive"). A coded course (``CF``) is used
     as coded. Otherwise the great circle from the fix before, measured at
     the fix; for the first fix, from *aircraft* when known. None when there
-    is nothing to measure from."""
+    is nothing to measure from.
+
+    Slots just before *i* at the same point are the same arrival, not a
+    leg: a departure or airway that ends at the fix the next segment starts
+    from codes the fix twice (bench, AER-6210: VTU after FLOUT5, then
+    V485 from VTU). The leg into the fix is the one into the first of
+    them."""
     wps = plan.waypoints
     fix = wps[i]
     if fix.crs is not None:
         return norm_course(fix.crs)
+    while i > 0 and geo.distance_nm(wps[i - 1].lat, wps[i - 1].lon,
+                                    fix.lat, fix.lon) < model.SAME_FIX_NM:
+        i -= 1
+    if wps[i].crs is not None:
+        return norm_course(wps[i].crs)
     if i > 0:
         frm = (wps[i - 1].lat, wps[i - 1].lon)
     elif aircraft is not None:
