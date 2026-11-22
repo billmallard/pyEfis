@@ -150,6 +150,22 @@ def test_obs_keeps_the_from_to_next_idents(chip, fix):
     assert _texts(runs)[0::2] == ["KSBA", "GVO", "RZS"]
 
 
+@pytest.mark.parametrize("state", sorted(nav_status.STATE_LABELS))
+def test_every_badge_paints(chip, fix, state):
+    """Every badge has a colour: OBS once raised KeyError in paintEvent, which
+    ends the display (AER-6293). pytest-qt fails the test on that exception."""
+    _leg(fix, state=state)
+    assert chip.fields()[0] in nav_status._BADGE_COLORS
+    _paint(chip)
+
+
+def test_a_badge_with_no_colour_still_paints(chip, fix, monkeypatch):
+    monkeypatch.setitem(nav_status.STATE_LABELS, 7, "WIDGET")
+    _leg(fix, state=7)
+    assert chip.fields()[0] == "WIDGET"
+    _paint(chip)
+
+
 @pytest.mark.parametrize("state", [0, 5, 9])
 def test_no_obs_badge_from_any_other_state(chip, fix, state):
     """OBS is shown from FPLSTATE = 4 only; nothing else reads as OBS."""
