@@ -83,6 +83,7 @@ fix-gateway's; pyEfis adds no alert logic.
 | **ANN-LAYOUT-001** | Tiles fill a `rows` x `cols` grid row-major in fixed cells; a tile past the grid is not placed. | AC 23.1311-1C §18.1 p.45 (consistent location) | shipped |
 | **ANN-RO-001** | The instrument writes no FIX key. | ANN1 Guardrails; FHA A5 | shipped |
 | **ANN-CFG-001** | The YAML options reach the widget through `create_instrument` and `apply_options`; re-delivering the same `tiles` keeps the tiles' state. | pyEfis option path (AER-5807 lesson) | shipped |
+| **ANN-CFG-002** | The editor schema publishes the tile fields, levels, flags, binding kinds and the level rule (`annunciator` block of `schema.json`), held in lockstep with the instrument, so the configurator lists none by hand (ANN2). | ANN1 Context (schema metadata) | shipped |
 | **ANN-TILE-001** | A tile with nothing seen (`None`) paints nothing. | ANN-EMPTY-001 | shipped |
 | **ANN-TILE-002** | Each level is drawn in its colour; warning and caution are reverse video; a caller's palette overrides the defaults. | AC 23.1311-1C §22.7 p.49-50, §18.3 p.45; AC 25-11B Table 5-1 p.43 | shipped |
 | **ANN-TILE-003** | A stale tile paints only the degraded grey with a dashed outline, whatever its level. | AC 23.1311-1C §18.1 p.45, §22.6 p.49 | shipped |
@@ -109,6 +110,7 @@ Button's own suite (`tests/instruments/button/`) runs unchanged on the shared ev
 | ANN-LAYOUT-001 | `test_grid_lays_tiles_row_major` |
 | ANN-RO-001 | `test_writes_no_fix_key` |
 | ANN-CFG-001 | `test_builds_through_apply_options_with_the_yaml_shape`, `test_tiles_set_again_with_the_same_list_keeps_state` |
+| ANN-CFG-002 | `test_schema_tile_catalogue_matches_the_instrument` |
 | ANN-TILE-001..004 | `test_none_tile_paints_nothing`; `test_each_level_paints_its_colour`, `test_alert_levels_are_reverse_video`, `test_status_levels_are_not_filled`, `test_custom_colours_override_the_defaults`; `test_stale_tile_is_grey_and_dashed_whatever_its_level`; `test_flash_hides_caption_and_fill_on_the_off_phase` |
 | BTN-SHARED-001 | `test_button_conditions_use_the_shared_evaluator` |
 

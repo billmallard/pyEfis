@@ -579,3 +579,29 @@ def test_button_conditions_use_the_shared_evaluator(monkeypatch):
             getRunningScreen=lambda: "S")))
     button.Button.processConditions(b)
     assert calls == ["X eq 1"]
+
+
+# -- the editor schema's tile catalogue -------------------------------------
+
+def test_schema_tile_catalogue_matches_the_instrument():
+    """ANN-CFG-002: the schema's tile catalogue (for the configurator, ANN2)
+    lists exactly the levels, flags, binding kinds and level rule the
+    instrument applies."""
+    from pyefis.editor import schema as eschema
+    cat = eschema.build_schema()["annunciator"]
+    fields = {f["name"]: f for f in cat["tile_fields"]}
+    assert cat["levels"] == list(lamp.LEVELS)
+    assert cat["alert_levels"] == list(lamp.ALERT_LEVELS)
+    assert fields["level"]["enum"] == list(lamp.LEVELS)
+    assert sorted(fields["flag"]["enum"]) == sorted(ann.BINDABLE_FLAGS)
+    assert {n for n, f in fields.items() if f.get("binding")} == {
+        ann.KIND_WHEN, ann.KIND_FLAG, ann.KIND_ENUM}
+    assert cat["alert_bindings"] == [
+        {"field": ann.KIND_FLAG, "value": v} for v in ann.ALERT_FLAGS]
+    assert cat["alert_fallback_level"] == lamp.ADVISORY
+    # every field the parser reads is listed, and nothing else
+    assert set(fields) == {"label", "key", "when", "flag", "enum",
+                           "condition_keys", "on_text", "off_text", "level",
+                           "flash_on_change"}
+    spec = ann.TileSpec({f: None for f in fields} | {"key": "OILP"})
+    assert not spec.error
