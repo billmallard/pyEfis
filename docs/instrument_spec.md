@@ -77,6 +77,7 @@ InstrumentSpec(
     keep_aspect:          bool = False, # round/square -> editor letterboxes it
     offscreen_renderable: bool = True,  # False for GL/compositor widgets
     svs_capable:          bool = False, # can host the GL SVS overlay
+    encoder: EncoderSupport | None = None,  # how it takes the screen knob (section 8a)
 )
 ```
 
@@ -268,6 +269,48 @@ the schema's `common_options` block — do not redeclare them per record.
 
 ---
 
+## 8a. The screen knob: `EncoderSupport` and knob options
+
+A record with `encoder=EncoderSupport(...)` says how its widget takes the
+screen knob (pyEfis #97). The flags mirror the `enc_*` protocol the
+`EncoderController` drives (`screenbuilder_encoder.py`):
+
+| Flag | The widget has | Means |
+|------|----------------|-------|
+| `selectable` | `enc_selectable` | can join the knob walk through `encoder_order` (it may still decline at runtime, e.g. an autopilot panel with no writable box) |
+| `editable` | `enc_changed` | the inner knob acts on it once it has focus |
+| `outer_ring` | `enc_outer_changed` | the outer ring of a dual knob has its own action (a coarse step) |
+
+The knob options an instrument honours are its own declared properties: the
+`encoder_*` family plus `touch_edit` (`instrument_spec.is_encoder_option`).
+They are written once, as Props, and `spec.encoder_options()` lists them.
+`InstrumentSpec` refuses a record that declares `encoder_order` without
+`selectable` (or the reverse), an `encoder_order` that is not
+`apply="special"`, or knob options without `editable`.
+
+- Every selectable type declares `encoder_order` (integer, `apply="special"`):
+  `apply_options` appends the instrument to the screen's knob walk.
+- The arc, bar and numeric gauges declare the full `AbstractGauge` knob set
+  (`_gauge_encoder_props()`): `encoder_set_key`, `encoder_multiplier`,
+  `encoder_coarse_multiplier`, `encoder_set_real_time`, `touch_edit` and the
+  `encoder_num_*` digit-entry options. `encoder_revert` (internal state) and
+  `encoder_num_excluded` (never read) are deliberately not declared.
+- A button is selectable only: push is its whole action. A listbox and a
+  checklist take the inner knob but have no outer-ring action.
+
+The schema exports an `encoder` block on every instrument entry (all-false,
+no options, for a type that ignores the knob):
+
+```json
+"encoder": {"selectable": true, "editable": true, "outer_ring": true,
+            "options": ["encoder_set_key", "encoder_multiplier", "..."]}
+```
+
+The option names point into the entry's `options`, where their field metadata
+is. How the knob behaves at run time is in `docs/screenbuilder.md` ("Encoder control").
+
+---
+
 ## 9. The test gate
 
 [tests/editor/test_registry.py](../tests/editor/test_registry.py) makes drift
@@ -281,7 +324,10 @@ unmergeable:
   dbkeys, options, enums, required, flags, preview);
 - the **real widget**, constructed via its builder, exposes every `apply="attr"`
   property the record declares (a renamed/misspelt property fails CI instead of
-  silently doing nothing in the cockpit).
+  silently doing nothing in the cockpit);
+- each record's `EncoderSupport` matches the real widget's `enc_*` methods
+  (types that cannot build standalone are checked through their class), and
+  every gauge declares the same knob options, each one read by the gauge code.
 
 Run it: `PYTHONPATH="<pylib>;src" python -m pytest tests/editor --no-cov -q`.
 

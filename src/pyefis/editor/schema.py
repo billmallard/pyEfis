@@ -50,7 +50,9 @@ from pyefis.screens.screenbuilder_factory import (
 # their InstrumentSpec record; every instrument entry now also carries a
 # `preview` block (category 3) and a `fix_values` list (category 2). Types not
 # yet migrated still come from the curated metadata in this module.
-SCHEMA_VERSION = 3
+# v4: every instrument entry carries an `encoder` block -- how it takes the
+# screen knob and which knob options it honours (pyEfis #97).
+SCHEMA_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # Curated editor-affordance metadata. Keys MUST be real INSTRUMENT_FACTORIES
@@ -215,6 +217,22 @@ def _prop_to_field(p):
     return field
 
 
+def _encoder_entry(spec):
+    """The ``encoder`` block for one instrument (pyEfis #97): whether it can
+    join the knob walk (``encoder_order``), whether the knob edits it once it
+    has focus, whether the outer ring has its own action, and the knob options
+    it honours. The options are its own declared properties, so their field
+    metadata is under ``options``; this lists the names. ``None`` (or an
+    unmigrated type) exports all-false with no options."""
+    enc = getattr(spec, "encoder", None)
+    return {
+        "selectable": bool(enc and enc.selectable),
+        "editable": bool(enc and enc.editable),
+        "outer_ring": bool(enc and enc.outer_ring),
+        "options": spec.encoder_options() if spec is not None else [],
+    }
+
+
 def _entry_from_spec(spec):
     """Schema entry for a migrated instrument, sourced entirely from its
     registry record (category 1 properties + category 2 fix_values +
@@ -240,6 +258,7 @@ def _entry_from_spec(spec):
         "containers": [
             {"name": c.name, "label": c.label, "help": c.help}
             for c in spec.containers],
+        "encoder": _encoder_entry(spec),
     }
 
 
@@ -263,6 +282,7 @@ def _entry_from_curation(instrument_type):
         "preview": {},
         "fix_values": [],
         "containers": [],
+        "encoder": _encoder_entry(None),
     }
 
 

@@ -463,6 +463,11 @@ These options change how the encoder works with these gauges.
 `encoder_num_enforce_multiplier`: when set to true, encoder_num_mask option will only allow the user to set digits that would result in a valid number that is a multiple of the multiplier.
 `encoder_num_require_confirm`: when false, once the user selects the last digit, the value is saved. When True, after selecting the last digit all digits will flash and the user must pres the button once more to save the value.
 `encoder_set_key`: when set the defined dbkey will be updated with the new value instead of the db key being displayed. The MGL radio plugin that is still in development will use this. It will require one dbkey to be set to request the frequency. The plugin will output another dbkey with the actual frequency tuned.
+`encoder_num_mask_blank_character`: the character drawn for the digits not yet set (default a space).
+`encoder_num_8khz_channels`: when true, digit entry shows 8.33 kHz channel numbers; use it with an `encoder_multiplier` of 0.008333333333.
+`encoder_num_blink_time_on` / `encoder_num_blink_time_off`: how long, in ms, the digit being set shows and hides in each blink (defaults 300 and 100).
+
+Each gauge type's record declares these options, with `encoder_order`, `encoder_coarse_multiplier` and `touch_edit`, so the configurator schema lists them per instrument together with an `encoder` block saying how the instrument takes the knob (see `docs/instrument_spec.md` section 8a).
 
 ## button
 The buttons are simple, if you press the button while a on-screen button is highlighted, the action associated with that button will be performed. Since buttons can b disabled based on various conditions it is not possible to select disabled button.
