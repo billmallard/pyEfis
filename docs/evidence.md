@@ -25,6 +25,7 @@ dig out of a commit message:
 | `sha256` | The image's hash, so a sidecar left behind by an earlier run is caught. |
 | `schema` | `evidence-sidecar/1`. |
 | `created_utc` | When the sidecar was written. |
+| `platform` | Optional. The CPU state at the time (`describe_platform()`): board, SoC or CPU model, online cores, cpufreq governor and min/max frequency, the process's affinity, throttle state and SoC temperature. Written only when the sidecar is made on the machine that drew the image; any field that could not be read is absent. Example: `docs/images/cert20a_platform/`. |
 
 `commit`, `run` and `device` are required. A producer may add its own keys;
 `tools/svs_capture.py` adds `capture_mode`, `requested_size`, `actual_size` and `argv`.

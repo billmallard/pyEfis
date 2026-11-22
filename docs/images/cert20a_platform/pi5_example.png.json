@@ -1,0 +1,47 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "04917db2",
+ "run": "local: tools/render_platform_example.py on the Pi 5 bench, pyEfis service live, AER-6324",
+ "device": "Raspberry Pi 5 Model B Rev 1.1 (offscreen)",
+ "sha256": "a9d66ed8c4c87987bbf7831a6e66653fcdbad4c11ea3cb6e4030b262f3a8668c",
+ "created_utc": "2026-11-22T15:45:41Z",
+ "platform": {
+  "board": "Raspberry Pi 5 Model B Rev 1.1",
+  "soc": "brcm,bcm2712",
+  "cpu_part": "0x41:0xd0b",
+  "cpu_model": "Cortex-A76",
+  "revision": "d04171",
+  "cpus_online": "0-3",
+  "cpus_online_count": 4,
+  "cpufreq": [
+   {
+    "policy": "policy0",
+    "cpus": "0 1 2 3",
+    "driver": "cpufreq-dt",
+    "governor": "ondemand",
+    "min_khz": 1500000,
+    "max_khz": 2400000,
+    "hw_min_khz": 1500000,
+    "hw_max_khz": 2400000,
+    "cur_khz": 1700000
+   }
+  ],
+  "governor": "ondemand",
+  "affinity": "0-3",
+  "affinity_count": 4,
+  "throttle": {
+   "get_throttled": "0xe0000",
+   "now": [],
+   "since_boot": [
+    "arm_freq_capped",
+    "throttled",
+    "soft_temp_limit"
+   ],
+   "under_voltage_alarm": false
+  },
+  "temperature_c": {
+   "cpu-thermal": 51.8
+  },
+  "soc_temp_c": 51.8
+ }
+}
