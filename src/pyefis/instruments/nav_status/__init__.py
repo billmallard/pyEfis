@@ -70,8 +70,12 @@ _PHASE = QColor("#00ff00")
 _PHASE_LOI = QColor("#ffff00")
 # The data-status screen's expired colour (data_status SEVERITY_COLORS amber).
 _EXPIRED = QColor(255, 176, 0)
+# OBS (a pilot course through the TO waypoint) takes LEG's white. A badge with
+# no colour here draws white too: a KeyError in paintEvent ends the display
+# (AER-6293; tests/flightplan/test_engine_enums.py checks every badge has one).
 _BADGE_COLORS = {"LEG": QColor("#ffffff"), "DIRECT": QColor("#ff00ff"),
-                 "SUSP": QColor("#ffff00")}
+                 "SUSP": QColor("#ffff00"), "OBS": QColor("#ffffff")}
+_BADGE_DEFAULT = QColor("#ffffff")
 
 
 def format_distance(nm):
@@ -296,7 +300,7 @@ class NavStatus(QWidget):
         for x, adv, text, color, is_badge in placed:
             x += margin
             if is_badge:
-                color = _GREY if stale else _BADGE_COLORS[text]
+                color = _GREY if stale else _BADGE_COLORS.get(text, _BADGE_DEFAULT)
                 rect = QRectF(x, (h - bh) / 2.0, adv, bh)
                 p.setPen(QPen(color, max(1.0, h * 0.04)))
                 p.setBrush(Qt.BrushStyle.NoBrush)
