@@ -52,7 +52,8 @@ specs with requirement IDs: [ai](ai_widget_spec.md) ·
 [heading](heading_widget_spec.md) · [hsi](hsi_widget_spec.md) ·
 [tc](tc_widget_spec.md) · [vsi](vsi_widget_spec.md) ·
 [autopilot annunciation](ap_annunciator_widget_spec.md) ·
-[annunciator lamps](annunciator_widget_spec.md)
+[annunciator lamps](annunciator_widget_spec.md) ·
+[crew alerting (CAS)](cas_widget_spec.md)
 
 ## Plans & specs (open — not yet implemented)
 

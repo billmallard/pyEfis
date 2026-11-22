@@ -36,6 +36,7 @@ The first seven areas below are **verified + deployed to the Pi**; the autopilot
 | **Heading / compass** | [heading_widget_spec.md](heading_widget_spec.md) | (in HSI suite) 29 pass | none | — |
 | **Autopilot annunciation + target cues** (AFC4) | [ap_annunciator_widget_spec.md](ap_annunciator_widget_spec.md) | 96 pass, no xfail (`tests/instruments/autopilot/`; AP-ANN-002 gap closed by `APALTREF`, AER-5808) | none | Pi 5 GL sheet with AFC5, accepted by Bill (`docs/aer-5808-evidence/joint/`); a real AFC2 X-Plane session replayed through the adapter (`replay.png`). No live X-Plane session with the strip on glass yet |
 | **Annunciator lamps** (ANN1) | [annunciator_widget_spec.md](annunciator_widget_spec.md) | 76 pass, no xfail (`tests/instruments/annunciator/`; 13/13 guards mutation-killed, AER-6347) | none | Verified offscreen; Beelink bench captures of a 2x3 block on the ANN1 card (AER-6347). Not deployed to the Pi |
+| **Crew alerting window and marker** (CAS3) | [cas_widget_spec.md](cas_widget_spec.md) | 94 pass, no xfail (`tests/instruments/cas/`; 13 of 14 guard mutants killed, the survivor equivalent); CASW-AUR-001 deviation (no audio), CASW-RCL-001 gap (recall, a later slice) | none | Private gateway plus Xvfb run of the CAS1 brief's bench steps (`docs/aer-6346-evidence/`); placement and look go to Bill as renders. Not yet on the Beelink or the Pi |
 
 **Net: no implementable code gap is open.** EFIS-ALTSEL-006 is implemented (below). The last
 data-blocked item, AI-LIM-001, closed with AER-5086 (further below).
