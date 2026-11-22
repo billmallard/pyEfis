@@ -67,6 +67,13 @@ and proposes the follow-up.
 - `placements-ABC.png`, `placement-A.png`, `placement-B.png`, `placement-C.png`: the same
   three messages (a warning and a caution unacknowledged, a caution acknowledged) in each
   placement, on the shipped PFD at 1920 x 1080.
+- `beelink-placement-A.png`, `-B.png`, `-C.png`: the same renders on the Beelink (Intel GPU,
+  its fonts, 1920 x 1080), from `beelink_look.sh`: a private gateway on port 34991 and a
+  second pyEfis from this branch, windowed over the live display for about a minute per
+  placement under the bench lock. The live gateway (staged for another review) and the live
+  pyEfis were not restarted or reconfigured, and both read `active` afterwards. It shows the
+  shipped `pfd.yaml`, not the Beelink's own managed panel. The amber DATA flag is the
+  Beelink's real navdata state.
 - `step-*.png`: the frames the step checks measured.
 - Fonts are DejaVu from the sandbox's fontconfig, not the panel's; GL is llvmpipe, not the
   target GPU.
