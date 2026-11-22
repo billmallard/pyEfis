@@ -87,7 +87,7 @@ ends when the engine loads a change. This needs an engine that publishes
 | Load Airway | Pick an airway through this waypoint, then its exit fix. The whole airway is inserted. |
 | Activate Leg | Fly the leg to this waypoint now. |
 | Direct To | Fly direct to this waypoint. |
-| Hold... | Build a hold here the way ATC gives it: the side of the fix, the radial or inbound course, the turns and the leg in minutes or miles. It is inserted right after the fix as a **HOLD** row. |
+| Hold... | Build a hold here the way ATC gives it: the side of the fix, the radial or inbound course, the turns and the leg in minutes or miles. It is inserted right after the fix as a **HOLD** row. When the fix has a published hold, **PUBLISHED** at the top fills it in for you; with several, pick one from the list. A published hold with no leg time gets the standard time (1 minute at or below 14,000 ft, 1.5 above), marked **STD TIME** in amber: check the chart. |
 | WPT Info | Its details: position, elevation, frequency, bearing and distance from you. |
 | Set Role | Mark it `IAF`, `FAF`, `MAP`, `MAHP` or none. |
 | Remove | Take it out of the plan. |

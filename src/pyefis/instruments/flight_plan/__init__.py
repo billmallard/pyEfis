@@ -1590,7 +1590,14 @@ class FlightPlan(QWidget):
         (a compass point), ``ref`` (``radial`` or ``inbound``, what
         ``course`` is), ``typed`` (the pilot entered the course; until then
         a new direction moves it), ``turn``, ``leg`` and ``unit``
-        (``MIN``/``NM``), and ``message`` (why Insert refused)."""
+        (``MIN``/``NM``), and ``message`` (why Insert refused).
+
+        As published (HOLDFIX3, AER-6328): ``published`` lists the NASR
+        holds at the fix (``fp_hold.published_holds``), ``choosing`` is
+        True while the pilot picks one of several, ``page`` is the chooser
+        page, ``applied`` is the hold the fields were filled from (None
+        once the pilot changes one), and ``std_time`` says the leg is the
+        AIM standard time because NASR publishes none."""
         if not fp_hold.can_hold_at(self._plan, i):
             self._message = "NO HOLD HERE"
             self.update()
@@ -1608,8 +1615,53 @@ class FlightPlan(QWidget):
             "ref": ref, "course": course, "typed": False, "turn": fp_hold.DEFAULT_TURN,
             "leg": fp_hold.default_leg_minutes(self._aircraft_altitude()), "unit": "MIN",
             "message": "",
+            "published": fp_hold.published_holds(self.navaid_db_path,
+                                                 self._plan.waypoints[i]),
+            "choosing": False, "page": 0, "applied": None, "std_time": False,
         }
         self.update()
+
+    def _hold_published(self):
+        """PUBLISHED: fill the fields from the fix's one published hold, or
+        list them when there are several."""
+        e = self._hold_edit
+        if len(e["published"]) == 1:
+            self._hold_apply_published(e["published"][0])
+        elif e["published"]:
+            e["choosing"], e["page"] = True, 0
+            self.update()
+
+    def _hold_apply_published(self, ph):
+        """The clearance as NASR publishes it: side, inbound course, turns,
+        and the leg in miles, or for a timed hold the AIM standard time for
+        the present altitude, marked STD TIME."""
+        e = self._hold_edit
+        e.update(direction=ph.direction, ref="inbound", course=ph.inbound, typed=True,
+                 turn=ph.turn, choosing=False, applied=ph, message="")
+        if ph.leg_nm is not None:
+            e.update(leg=ph.leg_nm, unit="NM", std_time=False)
+        else:
+            e.update(leg=fp_hold.default_leg_minutes(self._aircraft_altitude()),
+                     unit="MIN", std_time=True)
+        self.update()
+
+    def _hold_close_chooser(self):
+        self._hold_edit["choosing"] = False
+        self.update()
+
+    def _hold_chooser_more(self):
+        e = self._hold_edit
+        e["page"] = (e["page"] + 1) % self._hold_chooser_pages()
+        self.update()
+
+    def _hold_chooser_pages(self):
+        per = self._HOLD_CHOOSER_ROWS
+        return max(1, -(-len(self._hold_edit["published"]) // per))
+
+    def _hold_changed(self):
+        """A field the pilot changed: the hold is no longer the published
+        one it was filled from."""
+        self._hold_edit["applied"] = None
 
     def _close_hold_editor(self):
         self._hold_edit = None
@@ -1618,6 +1670,7 @@ class FlightPlan(QWidget):
 
     def _hold_set_direction(self, direction):
         e = self._hold_edit
+        self._hold_changed()
         e["direction"] = direction
         if not e["typed"]:
             radial = fp_hold.DIRECTION_BEARING[direction]
@@ -1652,10 +1705,13 @@ class FlightPlan(QWidget):
         else:
             e["course"] = fp_hold.norm_course(course)
             e["typed"] = True
+            self._hold_changed()
             e["message"] = ""
         self.update()
 
     def _hold_set_turn(self, turn):
+        if turn != self._hold_edit["turn"]:
+            self._hold_changed()
         self._hold_edit["turn"] = turn
         self.update()
 
@@ -1676,6 +1732,8 @@ class FlightPlan(QWidget):
         else:
             e["leg"] = leg
             e["message"] = ""
+            e["std_time"] = False       # the pilot's time, not the standard
+            self._hold_changed()
         self.update()
 
     def _hold_toggle_unit(self):
@@ -2949,6 +3007,8 @@ class FlightPlan(QWidget):
         """Returns False when there is nothing left to back out of."""
         if self._modal is not None:
             self._modal_do_cancel()
+        elif self._hold_edit is not None and self._hold_edit["choosing"]:
+            self._hold_close_chooser()
         elif self._hold_edit is not None:
             self._close_hold_editor()
         elif self._entry_dupe_choices:
@@ -3504,16 +3564,22 @@ class FlightPlan(QWidget):
             leg = f"{e['leg']:g} MIN = {leg}"
         return f"INBOUND {fp_hold.course_text(wp.crs)}  {wp.turn} TURNS  {leg}", "#ffffff"
 
+    #: Published holds listed per chooser page (BGQ has ten in 2611).
+    _HOLD_CHOOSER_ROWS = 8
+    #: The STD TIME mark on a timed published hold's leg (Bill, AER-6328).
+    _HOLD_STD_TIME_COLOR = "#ffaa00"
+
     def _paint_hold_editor(self, p, w, h):
         """The hold clearance, in the order ATC gives it: the side of the
         fix (a compass rose around it), the radial or inbound course, the
         turns and the leg. Every field is a tap; the line above Insert says
-        what will be flown."""
+        what will be flown. When the fix has published holds, a PUBLISHED
+        row under the title fills the fields from one (AER-6328)."""
         self._paint_overlay_backdrop(p, w, h)
         e = self._hold_edit
         box_w = w * 0.9
         box_x = (w - box_w) / 2
-        rows = 9
+        rows = 10 if e["published"] else 9
         row_h = max(1.0, min(self._row_h_cap(), h * 0.84 / rows))
         box_h = row_h * rows
         box_y = (h - box_h) / 2
@@ -3543,8 +3609,35 @@ class FlightPlan(QWidget):
         y = box_y
         p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(box_x, y, box_w, row_h), Qt.AlignmentFlag.AlignCenter,
-                   f"HOLD AT {e['fix']}")
+                   f"PUBLISHED HOLDS AT {e['fix']}" if e["choosing"] else f"HOLD AT {e['fix']}")
         y += row_h
+
+        if e["choosing"]:
+            per = self._HOLD_CHOOSER_ROWS
+            shown = e["published"][e["page"] * per:(e["page"] + 1) * per]
+            for ph in shown:
+                button(box_x, y, box_w, fp_hold.published_text(ph),
+                       (lambda ph=ph: self._hold_apply_published(ph)), color="#ffffff")
+                y += row_h
+            y = box_y + row_h * (rows - 1)
+            if self._hold_chooser_pages() > 1:
+                button(box_x, y, box_w / 2, "More", self._hold_chooser_more, color="#ffffff")
+                button(box_x + box_w / 2, y, box_w / 2, "Back", self._hold_close_chooser,
+                       color="#ff8080")
+            else:
+                button(box_x, y, box_w, "Back", self._hold_close_chooser, color="#ff8080")
+            return
+
+        if e["published"]:
+            if e["applied"] is not None:
+                text = f"PUBLISHED: {fp_hold.published_text(e['applied'])}"
+            elif len(e["published"]) > 1:
+                text = f"PUBLISHED ({len(e['published'])})"
+            else:
+                text = "PUBLISHED"
+            button(box_x, y, box_w, text, self._hold_published,
+                   selected=e["applied"] is not None)
+            y += row_h
 
         # The side of the fix: a 3 x 3 rose with the fix in the middle.
         label(y + row_h, "SIDE")
@@ -3575,7 +3668,14 @@ class FlightPlan(QWidget):
                    (lambda t=turn: self._hold_set_turn(t)), selected=turn == e["turn"])
         y += row_h
 
-        label(y, "LEG")
+        if e["std_time"]:
+            # NASR publishes no leg time: say the time is the standard one.
+            label(y - row_h * 0.22, "LEG")
+            p.setPen(QPen(QColor(self._HOLD_STD_TIME_COLOR)))
+            p.drawText(QRectF(box_x + 10, y + row_h * 0.22, label_w - 10, row_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "STD TIME")
+        else:
+            label(y, "LEG")
         button(box_x + label_w, y, half, f"{e['leg']:g}", self._hold_edit_leg)
         button(box_x + label_w + half, y, half, e["unit"], self._hold_toggle_unit,
                color="#ffffff")
