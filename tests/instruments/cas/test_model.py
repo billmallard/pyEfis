@@ -198,6 +198,19 @@ def test_local_alert_leads_its_level(bus, clock):
     assert [x.id for x in m.messages()] == ["C1", cm.CATALOG_ID, "A1"]
 
 
+def test_unacknowledged_gateway_line_leads_an_acknowledged_local_one(bus, clock):
+    """CASW-ORD-001: within a level unacknowledged comes first, also across
+    local and gateway lines: an acknowledged CATALOG REFUSED sits below a new
+    gateway advisory."""
+    m = make(bus, clock, status=lambda: {"packs": [
+        {"status": "CATALOG REFUSED"}]})
+    m.acknowledge()
+    bus.publish(["1|0|A1|GW ADVISORY|"])
+    m.poll()
+    assert [(x.id, x.acked) for x in m.messages()] == [
+        ("A1", False), (cm.CATALOG_ID, True)]
+
+
 # -- CASW-LOC-001: GATEWAY LINK LOST ------------------------------------------
 
 def test_link_lost_is_a_warning_and_hides_the_gateway_list(bus, clock):

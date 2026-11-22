@@ -445,6 +445,22 @@ def test_no_cue_when_cas_is_not_live(fix, qtbot):
     assert watch.cue is None and watch._timer.isActive()
 
 
+def test_no_cue_while_the_cas_keys_are_old(cas_db, qtbot):
+    """CASW-LOC-004: the keys defined but old (plugin off) is not "live": no
+    cue yet; it appears once they are good."""
+    from pyefis import gui
+    cas_db([])
+    cas_db.flag("CASSEQ", old=True)
+    main = QWidget()
+    qtbot.addWidget(main)
+    watch = gui._CASCoverageWatch(main, {"PFD": 0})
+    watch.check()
+    assert watch.cue is None and watch._timer.isActive()
+    cas_db.flag("CASSEQ", old=False)
+    watch.check()
+    assert watch.cue is not None
+
+
 def test_one_surface_anywhere_means_no_cue_and_logs_bare_screens(
         cas_db, qtbot, caplog):
     """CASW-LOC-004: one window anywhere: no cue; each other flight screen
