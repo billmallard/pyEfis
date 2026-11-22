@@ -828,7 +828,6 @@ _register(InstrumentSpec(
         Prop("alt_bug_dbkey", "fixkey", default="ALTSEL",
              label="Selected-altitude key", apply="special",
              help="FIX key holding the selected altitude (default ALTSEL)"),
-<<<<<<< ours
         # AFC4 autopilot cues.
         Prop("altsel_capture_color", "color", default="#00ff00",
              label="Altitude capture color", apply="special",
@@ -845,9 +844,7 @@ _register(InstrumentSpec(
              label="Selected-VS key", apply="special",
              help="FIX key holding the selected vertical speed "
                   "(default VSSEL)"),
-=======
         _encoder_order_prop(),
->>>>>>> theirs
     ],
     encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
     preview={"value": 3500},
