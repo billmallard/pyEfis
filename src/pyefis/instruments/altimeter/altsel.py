@@ -135,6 +135,11 @@ class AltSelBox(QWidget):
         self.focused = False
         self.color = QColor(bugs.BUG_COLOR)
         self.alert_color = QColor(bugs.BUG_ALERT_COLOR)
+        # The autopilot is capturing this altitude (APALTCAP, AFC4): the box
+        # border turns the engaged-mode colour and thickens. The deviation
+        # alert still outranks it.
+        self.capturing = False
+        self.capture_color = QColor(0, 255, 0)
         self._font_pt = None
         binding.changed.connect(self.update)
 
@@ -163,10 +168,12 @@ class AltSelBox(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self.value_rect()
-        border = self.binding.color(self.color, self.alert_color)
+        border = self.border_color()
+        pen_ratio = 0.10 if self.capture_look() else 0.05
         helpers.draw_readout_panel(
             p, r, helpers.READOUT_RADIUS_RATIO * r.height(), border,
-            pen_width=max(1.0, r.height() * 0.05), fill_alpha=BOX_FILL_ALPHA)
+            pen_width=max(1.0, r.height() * pen_ratio),
+            fill_alpha=BOX_FILL_ALPHA)
         if self.highlighted and not self.focused:
             fg = QColor(HIGHLIGHT_COLOR)
         else:
@@ -178,6 +185,15 @@ class AltSelBox(QWidget):
             edit_focus.draw_edit_marks(p, r, focused=self.focused,
                                        bounds=QRectF(self.rect()))
         p.end()
+
+    def capture_look(self):
+        return (self.capturing and self.binding.drawable()
+                and not self.binding.alerting)
+
+    def border_color(self):
+        if self.capture_look():
+            return QColor(self.capture_color)
+        return self.binding.color(self.color, self.alert_color)
 
     def _editable(self):
         return self.tape._touch_edit and self.tape._altsel_touchable()

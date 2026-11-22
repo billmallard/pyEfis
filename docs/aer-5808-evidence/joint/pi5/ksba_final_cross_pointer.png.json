@@ -1,0 +1,59 @@
+{
+ "scene": "ksba_final",
+ "caption": "KSBA final, 700 ft: GPS just captured, VS -500",
+ "gl_frame": "gl/ksba_final_cross_pointer.png",
+ "state": {
+  "APENG": true,
+  "YDENG": true,
+  "FDENG": true,
+  "BARO": 29.92,
+  "IAS": 75.0,
+  "TAS": 76.0,
+  "GS": 72.0,
+  "ALT": 700.0,
+  "VS": -480.0,
+  "HEAD": 75.0,
+  "TRACK": 75.0,
+  "HEADBUG": 75.0,
+  "COURSE": 74.0,
+  "ALTSEL": 2000,
+  "APLAT": "GPS",
+  "APLATARM": "",
+  "APVERT": "VS",
+  "APVERTARM": "",
+  "VSSEL": -500
+ },
+ "geometry": {
+  "Altimeter_Tape": [
+   1008,
+   65,
+   115,
+   655
+  ],
+  "Airspeed_Tape": [
+   144,
+   65,
+   115,
+   655
+  ],
+  "HSI": [
+   411,
+   742,
+   425,
+   425
+  ],
+  "Alt_Trend_Tape": [
+   1123,
+   175,
+   67,
+   436
+  ],
+  "ModeAnnunciator": [
+   144,
+   0,
+   1046,
+   55
+  ]
+ },
+ "live_screen": "/home/wpballard/makerplane/pyefis/config/screens/managed.yaml"
+}
