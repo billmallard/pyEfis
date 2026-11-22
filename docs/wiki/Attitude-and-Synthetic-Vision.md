@@ -142,6 +142,15 @@ shows.
   lists one.
 - **Airport flags**: a yellow flag on a pole with the identifier (a leading `K`
   is dropped: `SMX`). A flag behind terrain is dimmed.
+- **Traffic**: ADS-B targets out to 10 nm, where the aircraft would be seen,
+  with the moving map's symbols: white, yellow and flashing for an alert, an
+  open outline when the position is degraded, grey and dashed when the
+  reports have stopped. The arrowhead points along the target's track
+  relative to your heading. The tag is its altitude relative to yours in
+  hundreds of feet (`+05`), with an arrow when it climbs or descends at
+  500 fpm or more. A target is never hidden by terrain. With no relative
+  altitude the tag reads `--` and the target is drawn at your level. Display
+  only: no advisories.
 
 Distance haze fades far terrain into the horizon. The haze distance grows with
 altitude, from the **Haze distance** (40 nm by default) upwards. Close in, a
@@ -221,6 +230,8 @@ The full list, including the tick sizes and opacities, is on
 | Distance haze (`svs_haze`) | on | | |
 | Haze distance (`svs_haze_distance_nm`) | 40 nm | 32 nm | |
 | PAPI lights (`svs_papi`) | on | | |
+| Traffic (`svs_traffic`) | on | | ADS-B targets in the scene; see Traffic below. |
+| Traffic range (`svs_traffic_range_nm`) | 10 nm | | Farther targets are left to the map. |
 | Road colour, casing and width options (`svs_road_*`) | | | The road ribbons' look. |
 
 Terrain is always drawn filled; there is no wireframe mode

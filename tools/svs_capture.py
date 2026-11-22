@@ -279,6 +279,21 @@ def parse_args(argv=None):
     data.add_argument("--dof", default=None)
     data.add_argument("--highways", default="")
     data.add_argument(
+        "--traffic",
+        choices=("svs", "map"),
+        default=None,
+        help="seed a TFC block with the bench injector's six targets "
+        "(tools/bench_traffic_inject.py; 'svs' = inside the forward fan): "
+        "normal, alerted, degraded, stale, altitude-invalid, no-track "
+        "(SVSTFC1)",
+    )
+    data.add_argument(
+        "--traffic-extra",
+        type=int,
+        default=0,
+        help="with --traffic, this many more plain targets ahead",
+    )
+    data.add_argument(
         "--water-max-vertices",
         type=int,
         default=1024,
@@ -749,6 +764,62 @@ def seed_mock_fix(args):
     return values
 
 
+def seed_traffic(args):
+    """Fill a ``TFC`` block in the mock FIX db with the bench injector's
+    scenario (SVSTFC1), written the way fix-gateway's traffic writer
+    writes it: every field, then ``TFCkTGT`` last (fix_dynamic_list_spec
+    2.5). Targets sit relative to ``--alt`` and ``--heading`` exactly as
+    the injector places them around ownship's pressure altitude and
+    track, and ``PALT`` is ``--alt`` (standard pressure). The stale target
+    is marked ``old`` after its write. Returns the identities written."""
+    import bench_traffic_inject as inj
+
+    scenario = inj.SVS_SCENARIO if args.traffic == "svs" else inj.SCENARIO
+    rows = [(0xA10000 + i, r) for i, r in enumerate(scenario)]
+    rows += [(0xA20000 + i, r)
+             for i, r in enumerate(inj.extra_targets(args.traffic_extra))]
+    fields = (("TGT", "int", -1, 268435455), ("LAT", "float", -90, 90),
+              ("LON", "float", -180, 180), ("ALT", "float", -1000, 101350),
+              ("VS", "float", -32640, 32640), ("TRK", "float", 0, 359.9),
+              ("TTYP", "int", 0, 3), ("NIC", "int", 0, 15),
+              ("NACP", "int", 0, 15), ("ALRT", "int", 0, 15),
+              ("CS", "str", 0, 0))
+    for k in range(1, len(rows) + 1):
+        for f, dtype, lo, hi in fields:
+            key = "TFC%d%s" % (k, f)
+            fix.db.define_item(key, key, dtype, lo, hi, "", 50000, "")
+            item = fix.db.get_item(key)
+            item.bad = item.fail = False
+    fix.db.define_item("TFCCOUNT", "TFCCOUNT", "int", 0, len(rows), "",
+                       50000, "")
+    fix.db.define_item("PALT", "PALT", "float", -1000, 60000, "ft", 50000, "")
+    for key in ("TFCCOUNT", "PALT"):
+        item = fix.db.get_item(key)
+        item.bad = item.fail = False
+    fix.db.set_value("PALT", args.alt)
+    written = []
+    for k, (addr, (name, rel, nm, dalt, kw)) in enumerate(rows, start=1):
+        lat, lon = inj.offset(args.lat, args.lon, args.heading + rel, nm)
+        vals = {"LAT": lat, "LON": lon,
+                "ALT": 0.0 if dalt is None else args.alt + dalt,
+                "VS": kw.get("vs_fpm", 0),
+                "TRK": (args.heading + kw.get("trk_rel", 0)) % 360.0,
+                "TTYP": kw.get("ttyp", 1), "NIC": kw.get("nic", 10),
+                "NACP": kw.get("nacp", 9), "ALRT": kw.get("alert", 0),
+                "CS": kw.get("callsign", "")}
+        for f, v in vals.items():
+            item = fix.db.get_item("TFC%d%s" % (k, f))
+            item.value = v
+            item.bad = (f == "ALT" and dalt is None) or (
+                f == "TRK" and vals["TTYP"] == 0)
+        fix.db.set_value("TFC%dTGT" % k, addr)
+        if name == "stale":
+            fix.db.get_item("TFC%dTGT" % k).old = True
+        written.append(addr)
+    fix.db.set_value("TFCCOUNT", len(rows))
+    return written
+
+
 def _same_source(module, reference):
     """True if ``module`` was loaded from the same file as ``reference``."""
     path = getattr(module, "__file__", None)
@@ -825,6 +896,8 @@ def main(argv=None):
         expect_layers.add("obstacles")
 
     seed_mock_fix(args)
+    if args.traffic:
+        seed_traffic(args)
 
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication([])

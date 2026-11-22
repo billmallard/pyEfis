@@ -1,0 +1,19 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "ce118355-dirty",
+ "run": "local: tools/svs_capture.py --out docs/aer-6139-evidence/sandbox_ridge20.png --lat 34.4258 --lon -119.8415 --alt 2000 --heading 0 --traffic svs --traffic-extra 14 --tiles /paperclip/instances/default/workspaces/0508322b-8f58-4fd4-8ed3-8cf49de65b52/AER-6139/tiles --nasr  --dof  --water  --offscreen --width 800 --height 480 --range 20",
+ "device": "Linux x86_64 (xcb)",
+ "sha256": "335f58b18773484be71b173c78a897cc13580bc260182049131969cde20cc0dc",
+ "created_utc": "2026-11-20T16:20:39Z",
+ "pyefis_rev": "ce118355-dirty",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  800,
+  480
+ ],
+ "actual_size": [
+  800,
+  480
+ ],
+ "argv": "tools/svs_capture.py --out docs/aer-6139-evidence/sandbox_ridge20.png --lat 34.4258 --lon -119.8415 --alt 2000 --heading 0 --traffic svs --traffic-extra 14 --tiles /paperclip/instances/default/workspaces/0508322b-8f58-4fd4-8ed3-8cf49de65b52/AER-6139/tiles --nasr  --dof  --water  --offscreen --width 800 --height 480 --range 20"
+}
