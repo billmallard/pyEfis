@@ -1,0 +1,8 @@
+   0.33 pyefis pid 2552 (pyEfis 40d8f9e3 + working tree), placement A
+  10.33 gateway pid 2883 (fix-gateway cf26588), 10 s after the display
+  24.24 PASS step 14: CAS NOT SHOWN logged as an error with no window or marker (['ERROR:20261122-22:20:18:pyefis.instruments.cas - CAS NOT SHOWN: the CAS keys are live but no screen carries a cas_window or cas_marker; no alert can reach the pilot'])
+  24.62 PASS step 14: the cue is drawn bottom centre (472 white samples)
+  24.68 pyefis exit -15
+  28.52 gateway exit 255
+  28.53 PASS no traceback and no CAS poll failure in the pyEfis log ([])
+  28.53 RESULT all checks passed
