@@ -473,7 +473,9 @@ class _CASCoverageWatch(QObject):
     POLL_MS = 1000
 
     def __init__(self, window, counts):
-        super().__init__(window)
+        # No Qt parent: the window holds it as an attribute, and the link
+        # monitor cue stays the window's topmost child.
+        super().__init__()
         self.window = window
         self.cue = None
         builtin = (DATA_STATUS_SCREEN, ABOUT_SCREEN)
