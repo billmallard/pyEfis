@@ -1,0 +1,16 @@
+frames by verdict: {'match': 376}
+per-slot margin of the expected look over the best other look (untied matches): ap min 0.957, lat min 0.226, lat_arm min 1.000, vert min 0.021, vert_arm min 0.565, yd min 1.000
+matches with a slot in the flash's off phase (text hidden): 16
+NO AP DATA frames: own look min 0.929, best rival max 0.002
+    68 frames (  68 with every slot's text showing)  (blank)
+     1 frames (   1 with every slot's text showing)  AP HDG PIT
+    71 frames (  67 with every slot's text showing)  AP GPS ALT 7450
+    83 frames (  83 with every slot's text showing)  AP HDG ALT 7450
+    63 frames (  58 with every slot's text showing)  AP GPS VS +500 [ALT]
+    18 frames (  16 with every slot's text showing)  AP GPS ALT 8000
+    34 frames (  32 with every slot's text showing)  AP GPS IAS 92 [ALT]
+    16 frames (  13 with every slot's text showing)  AP GPS ALT 8500
+     4 frames (   4 with every slot's text showing)  AP! GPS ALT 8500
+    18 frames (  18 with every slot's text showing)  NO AP DATA (nodata)
+sheet.png: 21 rows
+glass.png: 11 frames

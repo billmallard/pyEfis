@@ -25,6 +25,15 @@ What it decides, so a reviewer can see each choice:
   are turned into ``FPLfDST`` at the hold speed with :func:`minutes_to_nm`,
   the conversion ``proc_load`` applies to a coded ``T010``. The default is
   one minute at or below 14,000 ft MSL and 1.5 minutes above (AIM 5-3-8).
+- **As published** (HOLDFIX3, AER-6328). The navaids pack carries the
+  holds NASR publishes (``holds``, built by ``tools/build_navaid_db.py``).
+  :func:`published_holds` finds those at a fix, and the editor fills its
+  fields from one: side, inbound course (magnetic), turns and leg. NASR
+  never publishes a leg time, so a timed hold gets the AIM 5-3-8 standard
+  time and is marked STD TIME (Bill, AER-6328): the chart can say 2 MIN
+  and nothing in the data shows it. The fields go through the same checks
+  as a typed clearance, so a published hold whose direction contradicts
+  its inbound course (38 in AIRAC 2611) is refused, not corrected.
 - **The slot** is the fix again, as ``HM``, right after the fix it holds
   at (``TF X, HM X``, the way a procedure codes a hold). The engine starts
   such a slot on its outbound leg once the fix is reached
@@ -41,6 +50,10 @@ Qt-free: nothing here may import PyQt6.
 """
 
 from __future__ import annotations
+
+import logging
+import sqlite3
+from dataclasses import dataclass
 
 from . import geo
 from . import model
@@ -78,6 +91,75 @@ PPOS_IDENT = "PPOS"
 #: How close a slot read back from the bus must be to the PPOS fix built
 #: here to be that fix (about 10 m; the bus may not carry every digit).
 PPOS_MATCH_DEG = 1e-4
+
+
+#: Short names for the charts a published hold is on, for its line in the
+#: chooser. A name not listed is shown as NASR gives it.
+CHART_SHORT = {
+    "ENROUTE LOW": "ENR LOW", "ENROUTE HIGH": "ENR HIGH", "STAR": "STAR",
+    "MILITARY STAR": "MIL STAR", "AREA": "AREA", "SPECIAL ENROUTE": "SPC ENR",
+    "IAP": "IAP", "MILITARY IAP": "MIL IAP", "SPECIAL IAP": "SPC IAP",
+    "SID": "SID", "SPECIAL DP": "SPC DP", "NOT REQUIRED": "NOT REQ",
+}
+#: Charts that make a hold an enroute or arrival hold, listed first.
+ENROUTE_CHARTS = frozenset({"ENROUTE LOW", "ENROUTE HIGH", "STAR", "MILITARY STAR",
+                            "AREA", "SPECIAL ENROUTE"})
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PublishedHold:
+    """One NASR hold at a fix, as the editor needs it. ``leg_nm`` None is
+    a timed hold: the time is not published."""
+    hp_name: str
+    hp_no: int
+    direction: str
+    inbound: float
+    turn: str
+    leg_nm: float | None
+    charts: tuple[str, ...]
+
+
+def published_holds(db_path, fix: model.Waypoint) -> list[PublishedHold]:
+    """The published holds at *fix* in ``navaids.sqlite`` at *db_path*:
+    the ident must match and the point lie within ``model.SAME_FIX_NM``.
+    Enroute and arrival holds come first. Never raises: no path, an older
+    pack without the ``holds`` table, or a bad file all give ``[]``."""
+    if not db_path or not fix.id:
+        return []
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "SELECT hp_name, hp_no, lat, lon, hold_dir, inbound_crs, turn, leg_nm,"
+                " charts FROM holds WHERE point_id = ?", (fix.id,)).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        log.info("published_holds: %s: %s", db_path, e)
+        return []
+    out = []
+    for name, no, lat, lon, direction, inbound, turn, leg, charts in rows:
+        if (lat is None or lon is None or inbound is None or turn not in TURNS
+                or geo.distance_nm(lat, lon, fix.lat, fix.lon) >= model.SAME_FIX_NM):
+            continue
+        out.append(PublishedHold(
+            hp_name=name, hp_no=no,
+            direction=direction or nearest_direction(inbound + 180.0),
+            inbound=norm_course(inbound), turn=turn,
+            leg_nm=float(leg) if leg else None,
+            charts=tuple(c for c in (charts or "").split("|") if c)))
+    out.sort(key=lambda h: (not ENROUTE_CHARTS.intersection(h.charts), h.hp_no, h.hp_name))
+    return out
+
+
+def published_text(h: PublishedHold) -> str:
+    """The hold's line in the chooser: ``SE INB 310° R 10 NM ENR LOW``."""
+    leg = f"{h.leg_nm:g} NM" if h.leg_nm is not None else "STD TIME"
+    charts = "/".join(CHART_SHORT.get(c, c) for c in h.charts[:2])
+    return " ".join(t for t in (h.direction, "INB", course_text(h.inbound), h.turn,
+                                leg, charts) if t)
 
 
 class HoldError(ValueError):
