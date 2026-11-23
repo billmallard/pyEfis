@@ -1,0 +1,148 @@
+frames by verdict: {'match': 244, 'MISMATCH': 132}
+  f00069.png MISMATCH expected 'AP TRK PIT' lag_of None {"_margins": {"ap": 0.996, "yd": 1.0, "lat_arm": 1.0, "vert": 0.378, "vert_arm": 1.0}, "lat": ["HDG/active", 0.915, 0.36]}
+  f00109.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00110.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00111.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.836, 0.376]}
+  f00112.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00113.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00114-2-offset.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00115.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00116.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00117.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00118.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.912, 0.359]}
+  f00119.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.911, 0.359]}
+  f00120.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.984, 0.344]}
+  f00121.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.984, 0.344]}
+  f00122.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.984, 0.344]}
+  f00123.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.984, 0.344]}
+  f00124.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.984, 0.344]}
+  f00125.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.984, 0.344]}
+  f00126.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.984, 0.344]}
+  f00127.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00128.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00129.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00130.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00131.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00132.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00133.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00134.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00135.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00136.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00137.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00138.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00139.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00140.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00141.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00142.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00143.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00144.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00145.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00146.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00147.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00148.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00149.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00150.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00151.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00152.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00153.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00154.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00155.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00156.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00157.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00158.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00159.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00160.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00161.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00162.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00163.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00164.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00165.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00166.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00167.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00168.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00169.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00170.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00171.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00172.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00173.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00174.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00175.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00176.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00177.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00178.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00179.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00180.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00181.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00182.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00183.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00184.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00185.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00186.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00187.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00188.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00189.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00190.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00191-3-nav.png MISMATCH expected 'AP TRK ALT 7450' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat_arm": 1.0, "vert": 0.052, "vert_arm": 1.0}, "lat": ["HDG/active", 0.985, 0.343]}
+  f00287.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.818]}
+  f00289.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.818]}
+  f00290.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.423, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.819]}
+  f00291.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.423, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.819]}
+  f00292.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.423, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.819]}
+  f00293.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.423, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.819]}
+  f00294.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.425, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.819]}
+  f00295.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.425, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.889, 0.819]}
+  f00297.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.979, 0.849]}
+  f00298.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.979, 0.849]}
+  f00299.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.979, 0.849]}
+  f00300.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.98, 0.85]}
+  f00301.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.98, 0.85]}
+  f00302-5-ias.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.98, 0.85]}
+  f00303.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.98, 0.85]}
+  f00304.png MISMATCH expected 'AP GPS ALT 8100' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.426, "lat_arm": 1.0, "vert_arm": 1.0}, "vert": ["ALT 8000/active", 0.98, 0.85]}
+  f00306.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.425, "lat_arm": 1.0, "vert_arm": 0.569}, "vert": ["IAS 92/active", 0.88, 0.839]}
+  f00307.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.423, "lat_arm": 1.0, "vert_arm": 0.569}, "vert": ["IAS 92/active", 0.88, 0.839]}
+  f00308.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.569}, "vert": ["IAS 92/active", 0.879, 0.838]}
+  f00309.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.567}, "vert": ["IAS 92/active", 0.878, 0.837]}
+  f00310.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.877, 0.836]}
+  f00312.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.877, 0.836]}
+  f00313.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.877, 0.836]}
+  f00314.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.877, 0.836]}
+  f00315.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00316.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00317.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00318.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00319.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00320.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00321.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00322.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00323.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00324.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00325.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00326.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00327.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00328.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00329.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00330.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00331.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00332.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00333.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00334.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00335.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00336.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00337.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+  f00338.png MISMATCH expected 'AP GPS IAS 97 [ALT]' lag_of None {"_margins": {"ap": 0.985, "yd": 1.0, "lat": 0.422, "lat_arm": 1.0, "vert_arm": 0.565}, "vert": ["IAS 92/active", 0.964, 0.881]}
+per-slot margin of the expected look over the best other look (untied matches): ap min 0.957, lat min 0.226, lat_arm min 1.000, vert min 0.025, vert_arm min 0.565, yd min 1.000
+matches with a slot in the flash's off phase (text hidden): 16
+NO AP DATA frames: own look min 0.929, best rival max 0.002
+    68 frames (  68 with every slot's text showing)  (blank)
+     1 frames (   1 with every slot's text showing)  AP TRK PIT
+    71 frames (  67 with every slot's text showing)  AP GPS ALT 7450
+    83 frames (  83 with every slot's text showing)  AP TRK ALT 7450
+    63 frames (  58 with every slot's text showing)  AP GPS VS +500 [ALT]
+    18 frames (  16 with every slot's text showing)  AP GPS ALT 8100
+    34 frames (  32 with every slot's text showing)  AP GPS IAS 97 [ALT]
+    16 frames (  13 with every slot's text showing)  AP GPS ALT 8500
+     4 frames (   4 with every slot's text showing)  AP! GPS ALT 8500
+    18 frames (  18 with every slot's text showing)  NO AP DATA (nodata)
+sheet.png: 146 rows
+glass.png: 11 frames
