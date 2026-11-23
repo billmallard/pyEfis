@@ -135,3 +135,29 @@ the start-up), `tests/instruments/cas/test_model.py` (the Qt-free model) and
 queued bytes, the coverage watch, the registry build path). Every requirement ID above
 except the deviation and the gap appears in at least one test docstring. The bench run on a
 private gateway is `docs/aer-6346-evidence/`.
+
+## 7. Installation requirement
+
+**On every screen the pilot flies from, a `cas_marker` or `cas_window` must sit in the
+pilot's primary field of view.** This is a requirement on the builder's installation, not
+something pyEfis checks (project owner's ruling, 2026-11-23, AER-6355). Placement is the
+builder's choice in the configurator, and only the builder knows where each display is
+mounted and where the pilot's eyes are.
+
+- **Why.** Warnings and cautions are visual only in this slice (CASW-AUR-001, FHA O11): no
+  tone exists. The flashing marker or window is the only attention-getter, so it has to be
+  where the pilot's eye already is. The window itself may sit on its own screen: the marker
+  carries the attention, and a touch opens the list (CASW-MRK-001).
+- **A screen the pilot flies from** is any screen up on a display in front of the pilot in
+  flight, including one switched to (engine, map, radios).
+- **Primary field of view:** what the pilot sees by eye movement alone from the normal
+  seated eye position; within 15 degrees of the normal line of sight, about 8 inches from
+  the centre of the basic T at a 30-inch viewing distance. Warnings and cautions belong
+  there (AC 23.1311-1C §15.2, Table 3 and its Note 4; AC 25.1322-1 Appendix 5; quoted in
+  [`avionics_reference.md`](avionics_reference.md) §14.5).
+
+The builder-facing text, with how to check it from the seat, is the wiki page *Designing
+Your Panel*, section **Installation requirement: crew alerts in your primary field of view**
+(`docs/wiki/Designing-Your-Panel.md`). FHA rows CAS-1 and O11 cite that section as the
+discharge of the one-sense condition. The same requirement covers warning and caution
+`annunciator` lamps ([`annunciator_widget_spec.md`](annunciator_widget_spec.md) §8).

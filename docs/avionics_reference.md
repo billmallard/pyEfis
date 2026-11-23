@@ -826,4 +826,38 @@ cited: §9b "must be removed from the display when the condition no longer exist
 components of an aural alert, a flashing master warning, or a caution light" (p.14); §7d "(1)
 Loss of the complete alerting function" (p.9). **PASS.**
 
+### 14.5 Primary field of view (the installation requirement, CASDOC1)
+
+Basis for the installation requirement in [`cas_widget_spec.md`](cas_widget_spec.md) §7,
+[`annunciator_widget_spec.md`](annunciator_widget_spec.md) §8 and the wiki page *Designing Your
+Panel*. Both ACs re-read for AER-6416 from the public copies, whose md5s match §14's source
+note; page numbers are PDF pages.
+
+- **Definition.** "Primary optimum FOV is based on the vertical and horizontal visual fields
+  from the design eye reference point that can be accommodated with eye rotation only. With
+  the normal line-of-sight established at 15 degrees below the horizontal plane, the values
+  for the vertical and horizontal (relative to normal line-of-sight forward of the aircraft)
+  are +/-15 degrees" (**AC 23.1311-1C §15.2, p.35**). AC 25.1322-1 gives the same definition
+  (**Appendix 5, p.40**).
+- **Warnings and cautions belong there.** "This area is normally reserved for primary flight
+  information and high priority alerts ... warning or cautionary information that requires
+  immediate pilot action or awareness, should be placed in the primary FOV" (**§15.2, p.35**);
+  "Warnings and cautions should also be in the primary FOV" (**§10.1, p.29**). Master warning
+  and caution lights "should be located in each pilot's primary field of view" (**AC
+  25.1322-1 Appendix 1 §1a, p.20**).
+- **The figure a builder can measure.** Table 3 gives "System Warnings and Cautions-
+  Including Failure Annunciation" 15 degrees, approximately 8 inches from the reference
+  centre line, and "Advisories Annunciations" 35 degrees, 21 inches; Note 1 measures "based on
+  a viewing distance of 30 inches from the panel ... from the center of basic T", centre to
+  centre, horizontally (**AC 23.1311-1C Table 3, p.37**).
+- **Why 15 and not 35 here.** "Some annunciations may be acceptable within 35 degrees if they
+  are associated with a unique aural tone or a master warning/caution annunciations that is
+  within 15 degrees and with a pilot evaluation" (**Table 3 Note 4, p.37**). This stack has no
+  tone and no master light, so 15 degrees applies to the marker and to warning and caution
+  lamps.
+
+**Citation self-check.** Each quotation above reproduces on the PDF page cited (PyMuPDF
+extraction, AER-6416): AC 23.1311-1C md5 `7d7f6f430e00857c18cef792d60b018e`, AC 25.1322-1 md5
+`7f5714f71b0ff9199fc8aaf9b354e398`. **PASS.**
+
 Spec: [`cas_widget_spec.md`](cas_widget_spec.md).
