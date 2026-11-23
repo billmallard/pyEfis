@@ -450,6 +450,9 @@ class FlightPlan(QWidget):
         self._draft_open = False
         self._pending_seq = None
         self._seen_seq = None
+        # (FPLSEQ, plan) of this page's last commit: the plan as committed,
+        # with the fields the bus does not carry (_with_off_bus_fields).
+        self._committed = None
         # FixBridge.route_key() at the last plan sync: the bridge notifies
         # on every engine output write, and only a change of this is a
         # reason to read the route again (_on_bridge_change). _synced_route
@@ -635,8 +638,8 @@ class FlightPlan(QWidget):
             return
         self._synced_route = route
         self._route_checked_at = self._clock()
-        plan = fp_fixbridge.route_to_plan(route)
         seq = int(self._bridge._get("FPLSEQ").value)
+        plan = self._with_off_bus_fields(fp_fixbridge.route_to_plan(route), seq)
         first_look, self._seen_seq = self._seen_seq is None, seq
         loaded = self._loaded_seq()
         if loaded is None or loaded == seq:
@@ -657,6 +660,32 @@ class FlightPlan(QWidget):
         # On a first look the refusal happened before this widget existed,
         # and FPLMSG on the bus is the engine's answer to it.
         self._refuse(seq, plan, self._bridge._get("FPLMSG").value)
+
+    def _with_off_bus_fields(self, plan, seq):
+        """*plan*, read off the bus at *seq*, with the fields the bus does
+        not carry put back from this page's commit of it (FPA2, AER-6419):
+        each waypoint's name, alt_ft, comment and extra, each segment's
+        cycle and extra (the bus has one FPLDBCYC for the plan), and the
+        plan's comment, created, modified, source and extra. Without them
+        Store rewrote a stored route bare. Only when *seq* is that commit
+        and its fixes and segments are still the ones on the bus; a route
+        another writer committed (the map, a second display) is the bus's
+        alone. Every field the bus carries stays as read."""
+        if self._committed is None or self._committed[0] != seq:
+            return plan
+        mine = self._committed[1]
+        if ([(s.kind, s.ident, [w.id for w in s.legs]) for s in plan.segments]
+                != [(s.kind, s.ident, [w.id for w in s.legs]) for s in mine.segments]):
+            return plan
+        for seg, own in zip(plan.segments, mine.segments):
+            seg.cycle = own.cycle
+            seg.extra = dict(own.extra)
+            for wp, w in zip(seg.legs, own.legs):
+                wp.name, wp.alt_ft, wp.comment = w.name, w.alt_ft, w.comment
+                wp.extra = dict(w.extra)
+        plan.comment, plan.created, plan.modified = mine.comment, mine.created, mine.modified
+        plan.source, plan.extra = mine.source, dict(mine.extra)
+        return plan
 
     def _refuse(self, seq, plan, reason):
         self._pending_seq = None
@@ -766,6 +795,8 @@ class FlightPlan(QWidget):
     def _commit(self):
         if self._bridge.available:
             self._bridge.publish(self._plan)
+            self._committed = (int(self._bridge._get("FPLSEQ").value),
+                               copy.deepcopy(self._plan))
             self._sync_plan_from_bridge()
             self._sync_engine_from_bridge()
         self.update()

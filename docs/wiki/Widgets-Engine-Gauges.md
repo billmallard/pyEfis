@@ -43,6 +43,19 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `segments` | Segments | `0` |  | 0 = solid band; >0 draws a segmented (LED-style) band |
 | `name_location` | Name location | `top` | `top`, `right` | where the name label sits relative to the gauge |
 | `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
+| `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
+| `encoder_multiplier` | Knob step | `1` |  | value change per inner-knob detent |
+| `encoder_coarse_multiplier` | Outer ring step factor | `10` |  | the outer ring steps the value by knob step x this |
+| `encoder_set_real_time` | Write while turning | off | on / off | send each step to the FIX key as the knob turns; a timeout before push still reverts it. Ignored with a digit mask |
+| `touch_edit` | Touch to edit | off | on / off | touch the gauge to give it the knob; it then marks focus with a ring and edit icon |
+| `encoder_num_mask` | Digit mask | unset |  | set the value one digit at a time, e.g. 000.000 for a radio frequency; push moves to the next digit. Blank = step the whole value |
+| `encoder_num_mask_blank_character` | Digit mask blank | ` ` |  | character drawn for the digits not yet set |
+| `encoder_num_enforce_multiplier` | Digits follow knob step | off | on / off | digit entry offers only digits that give a multiple of the knob step within the key's range |
+| `encoder_num_require_confirm` | Confirm after last digit | off | on / off | after the last digit the value flashes and one more push saves it |
+| `encoder_num_8khz_channels` | 8.33 kHz channels | off | on / off | digit entry shows 8.33 kHz channel numbers; use with a knob step of 0.008333333333 |
+| `encoder_num_blink_time_on` | Digit blink on (ms) | `300` |  | how long the digit being set shows in each blink |
+| `encoder_num_blink_time_off` | Digit blink off (ms) | `100` |  | how long the digit being set is hidden in each blink |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -78,6 +91,19 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
 | `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
+| `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
+| `encoder_multiplier` | Knob step | `1` |  | value change per inner-knob detent |
+| `encoder_coarse_multiplier` | Outer ring step factor | `10` |  | the outer ring steps the value by knob step x this |
+| `encoder_set_real_time` | Write while turning | off | on / off | send each step to the FIX key as the knob turns; a timeout before push still reverts it. Ignored with a digit mask |
+| `touch_edit` | Touch to edit | off | on / off | touch the gauge to give it the knob; it then marks focus with a ring and edit icon |
+| `encoder_num_mask` | Digit mask | unset |  | set the value one digit at a time, e.g. 000.000 for a radio frequency; push moves to the next digit. Blank = step the whole value |
+| `encoder_num_mask_blank_character` | Digit mask blank | ` ` |  | character drawn for the digits not yet set |
+| `encoder_num_enforce_multiplier` | Digits follow knob step | off | on / off | digit entry offers only digits that give a multiple of the knob step within the key's range |
+| `encoder_num_require_confirm` | Confirm after last digit | off | on / off | after the last digit the value flashes and one more push saves it |
+| `encoder_num_8khz_channels` | 8.33 kHz channels | off | on / off | digit entry shows 8.33 kHz channel numbers; use with a knob step of 0.008333333333 |
+| `encoder_num_blink_time_on` | Digit blink on (ms) | `300` |  | how long the digit being set shows in each blink |
+| `encoder_num_blink_time_off` | Digit blink off (ms) | `100` |  | how long the digit being set is hidden in each blink |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -124,6 +150,19 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
 | `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
+| `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
+| `encoder_multiplier` | Knob step | `1` |  | value change per inner-knob detent |
+| `encoder_coarse_multiplier` | Outer ring step factor | `10` |  | the outer ring steps the value by knob step x this |
+| `encoder_set_real_time` | Write while turning | off | on / off | send each step to the FIX key as the knob turns; a timeout before push still reverts it. Ignored with a digit mask |
+| `touch_edit` | Touch to edit | off | on / off | touch the gauge to give it the knob; it then marks focus with a ring and edit icon |
+| `encoder_num_mask` | Digit mask | unset |  | set the value one digit at a time, e.g. 000.000 for a radio frequency; push moves to the next digit. Blank = step the whole value |
+| `encoder_num_mask_blank_character` | Digit mask blank | ` ` |  | character drawn for the digits not yet set |
+| `encoder_num_enforce_multiplier` | Digits follow knob step | off | on / off | digit entry offers only digits that give a multiple of the knob step within the key's range |
+| `encoder_num_require_confirm` | Confirm after last digit | off | on / off | after the last digit the value flashes and one more push saves it |
+| `encoder_num_8khz_channels` | 8.33 kHz channels | off | on / off | digit entry shows 8.33 kHz channel numbers; use with a knob step of 0.008333333333 |
+| `encoder_num_blink_time_on` | Digit blink on (ms) | `300` |  | how long the digit being set shows in each blink |
+| `encoder_num_blink_time_off` | Digit blink off (ms) | `100` |  | how long the digit being set is hidden in each blink |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -158,6 +197,19 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
 | `font_mask` | Font mask | `000` |  | widest string the readout reserves space for (sizing) |
 | `show_units` | Show units | off | on / off | append the FIX key's engineering units to the readout |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
+| `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
+| `encoder_multiplier` | Knob step | `1` |  | value change per inner-knob detent |
+| `encoder_coarse_multiplier` | Outer ring step factor | `10` |  | the outer ring steps the value by knob step x this |
+| `encoder_set_real_time` | Write while turning | off | on / off | send each step to the FIX key as the knob turns; a timeout before push still reverts it. Ignored with a digit mask |
+| `touch_edit` | Touch to edit | off | on / off | touch the gauge to give it the knob; it then marks focus with a ring and edit icon |
+| `encoder_num_mask` | Digit mask | unset |  | set the value one digit at a time, e.g. 000.000 for a radio frequency; push moves to the next digit. Blank = step the whole value |
+| `encoder_num_mask_blank_character` | Digit mask blank | ` ` |  | character drawn for the digits not yet set |
+| `encoder_num_enforce_multiplier` | Digits follow knob step | off | on / off | digit entry offers only digits that give a multiple of the knob step within the key's range |
+| `encoder_num_require_confirm` | Confirm after last digit | off | on / off | after the last digit the value flashes and one more push saves it |
+| `encoder_num_8khz_channels` | 8.33 kHz channels | off | on / off | digit entry shows 8.33 kHz channel numbers; use with a knob step of 0.008333333333 |
+| `encoder_num_blink_time_on` | Digit blink on (ms) | `300` |  | how long the digit being set shows in each blink |
+| `encoder_num_blink_time_off` | Digit blink off (ms) | `100` |  | how long the digit being set is hidden in each blink |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -189,12 +241,10 @@ for the unit switches, pyEFIS applies them and logs that they are undeclared.
 | `temperature: true`, `pressure: true` | off | Let the **Units** button switch this gauge between °C and °F, or inHg and hPa. |
 | `altitude: true` | off | The same for ft and m, on `numeric_display` only. |
 | `clipping` | off | Hold the value, and any edit, inside the item's range. |
-| `encoder_set_key` | the `dbkey` | The FIX key the knob edits. |
-| `encoder_multiplier` | 1 | Inner-knob step. |
-| `encoder_coarse_multiplier` | 10 | Outer ring step, as a multiple of the inner. |
-| `encoder_set_real_time` | off | Write each step at once, rather than on the push. |
-| `touch_edit` | off | Select it by touch as well as with the knob. |
-| `encoder_order` | unset | Its place in the knob's order. |
+
+The knob options (`encoder_order`, `encoder_set_key`, `encoder_multiplier`,
+`touch_edit` and the rest) are in the configurator; each gauge's table above
+lists them.
 
 Selected and turned, a gauge changes its value; a push keeps it; leaving it
 until the knob times out puts the old value back.

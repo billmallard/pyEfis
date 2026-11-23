@@ -21,7 +21,7 @@ fix-gateway, for scenes that flight did not fly. The
 |---|---|
 | **Source tab** (left of the readouts) | The selected nav source: `GPS` (magenta) or `VLOC1` / `VLOC2` (green). Tap it to change source. |
 | **HDG** (cyan) | The selected heading, the heading bug's value (`HEADBUG`). |
-| **MAG** (white) | Your magnetic heading (`HEAD`). |
+| **MAG** (white) | Your magnetic heading (`HEAD`). A red `XXX` under a red label when the heading is old or failed; blank under an orange label when it is bad. See [When data is missing](#when-data-is-missing). |
 | **CRS** (source colour) | The selected course of the selected source (`COURSE`). |
 | **Rose** | A compass card that turns so your heading is under the lubber mark at the top. The numerals stay upright as it turns. |
 | **Aircraft symbol** | Fixed at the centre of the rose. |
@@ -34,7 +34,7 @@ fix-gateway, for scenes that flight did not fly. The
 | **Turn-rate trend** (magenta arc, white marks) | Just outside the rim, from the lubber mark to the heading you will reach in 6 seconds at your present rate of turn (`ROT`). The short white marks are half rate (9 degrees) and the long ones standard rate (18 degrees), each side. See [Turn rate](#turn-rate). |
 | **Bearing pointers** (cyan) | Pointer 1 is a single bar and points at VOR1 (NAV 1); pointer 2 is a double bar and points at VOR2 (NAV 2). GPS is never a bearing pointer: it shows as the course pointer when the source tab selects it. Both are cyan: magenta and green belong to the course pointer. Each is off until you turn it on, and never on the course pointer's own source. |
 | **BRG tab** (right of the HDG / MAG / CRS panel) | The left source tab's mirror image, same size. It reads the pointers that are on: `NONE`, `BRG 1`, `BRG 2` or `BOTH`. Tap it to step NONE, BRG 1, BRG 2, BOTH, NONE. It skips a pointer on the course pointer's source: with VLOC1 selected the tab offers only NONE and BRG 2; with VLOC2, NONE and BRG 1. If you switch the source onto a pointer's VOR, that pointer turns off (BOTH becomes the other one). Filled cyan while a needle is on. |
-| **Bearing labels** (bottom corners) | `1 VOR1` and `2 VOR2`, in cyan, while a pointer is on. Without the top panel an off pointer reads `1 OFF`; tapping either label steps the same cycle as the BRG tab. |
+| **Bearing labels** (bottom corners) | `1 VOR1` and `2 VOR2`, in cyan, while a pointer is on. Without the top panel, an off pointer that can be turned on reads `1 OFF` (a pointer on the course pointer's source shows no label); tapping either label steps the same cycle as the BRG tab. |
 | **Glideslope scale** (right of centre) | Shown only when the source has vertical guidance. The diamond is your glidepath. |
 
 ## Nav sources
@@ -58,8 +58,13 @@ glideslope into the keys the HSI draws (`COURSE`, `CDI`, `TOFROM`, `GSI`,
 - **Colour follows the source** (`source_auto_color`, on by default): the
   course pointer, deviation bar, CRS readout and glideslope diamond are
   magenta for GPS and green for a NAV radio.
+- **SUPP** (amber) under the source tab or label means the selected NAV radio
+  is a supplemental receiver, not a certified one. The gateway says so by
+  setting `NAVSUPP` to 1. It never shows on GPS, and it goes with the source
+  label when `source_label_enabled` is off.
 - With a NAV radio selected, the course is yours to set (below). On GPS it is
-  the desired track of the active leg, and CRS cannot be edited.
+  the desired track of the active leg, and CRS cannot be edited, except in
+  [GPS OBS](#gps-obs).
 
 ![VOR1 selected, outbound: the triangle points to the tail of the course pointer (FROM)](../images/hsi/vor1_from.png)
 
@@ -161,7 +166,7 @@ the outer ring 10 degrees.
 - **CRS** sets the course on the selected NAV radio (`NAV1CRS` or `NAV2CRS`).
   Push sets it to the bearing to the station, which centres the bar with a TO
   indication. On a localizer, or with no usable bearing, push just ends the
-  edit. On GPS, CRS cannot be selected.
+  edit. On GPS, CRS can be selected only in [GPS OBS](#gps-obs).
 - Every step takes effect as you turn. Leaving the knob alone ends the edit and
   keeps the value.
 - Changing the nav source ends a CRS edit, so the knob is never left on a radio
@@ -173,6 +178,24 @@ The knob, the ring and the timeout work the same on every value you can set:
 see [Touch a value, then turn the knob](The-Panel-at-a-Glance#touch-a-value-then-turn-the-knob).
 On the X-Plane bench, X-Plane also drives `HEADBUG`, `NAV1CRS` and `NAV2CRS`,
 so it can overwrite a value you set here.
+
+### GPS OBS
+
+In OBS you choose the course the flight plan guides you on. Turn it on and off
+with **OBS** / **OBS Off** in the flight-plan menu
+([Flight Plan](Flight-Plan#the-menu)). OBS starts on the current desired track,
+so the needle does not move until you turn CRS. While it is on, CRS can be set
+on GPS:
+
+- It works only with pyEFIS's own flight plan (`GPSSRC` 0, or no `GPSSRC`),
+  while the engine reports OBS (`FPLSTATE` 4).
+- The inner knob steps 1 degree and the outer ring 10 degrees. The readout
+  follows at once; the course goes to the engine as an `FPLCMD` at most every
+  quarter second, and the last value is always sent when the edit ends.
+- Push sets the course to the bearing to the active waypoint (`GPSBRG`). With
+  no valid bearing, push just ends the edit.
+- The edit ends if OBS ends, `GPSSRC` moves to an external navigator, or you
+  change the nav source.
 
 ## Turn rate
 
@@ -200,15 +223,15 @@ The HSI never shows a needle it cannot trust.
 
 | Flag (red) | Shown when | What else changes |
 |---|---|---|
-| `HDG` | the heading is failed or bad | The bearing pointers are hidden. |
+| `HDG` | the heading is old, failed or bad | The rose numerals, heading bug, track diamond and bearing pointers are hidden, on the rose and the arc. MAG reads a red `XXX` (old or failed) or goes blank under an orange label (bad). |
 | `NAV` | the selected source's deviation is old, failed or bad, the radio is receiving no lateral signal (`CDIV` 0), or the course (`COURSE`) is failed or bad | The deviation bar and TO/FROM triangle go. With a failed or bad course the course pointer and deviation dots go too, and the CRS readout shows dashes. |
 | `GS` | the source has a glidepath but its deviation is old, failed or bad | The diamond goes. |
 
-- The rose numerals are hidden while the heading or course is bad, or the
-  deviation or glidepath has failed.
+- The rose numerals are hidden only while the heading is invalid. A nav fault
+  does not take them.
 - Treat a `NAV` flag as no guidance, whatever the course pointer shows.
 - A bearing pointer whose source is invalid is hidden, and its label turns
-  orange with an `X`: `2 VOR1 X`.
+  orange with an `X`: `2 VOR2 X`.
 - The track diamond hides when the track is invalid or you are below the
   speed gate.
 - The turn-rate arc and its marks hide when `ROT` is old, failed or bad, or
@@ -316,6 +339,8 @@ radio plugin only has to write the per-source keys:
 | External GPS navigator | `EXTCRS`, `EXTCDI`, `EXTTF`, with `GPSSRC` 1 |
 | Selected heading | `HEADBUG` |
 | Turn-rate trend | `ROT` (degrees a second, positive for a right turn), from the AHRS |
+| SUPP mark | `NAVSUPP` (1 when the selected NAV radio is a supplemental receiver) |
+| GPS OBS | `FPLSTATE` (4 is OBS) and `GPSSRC` from fix-gateway; the HSI sends the course as `FPLCMD`, and push syncs to `GPSBRG` |
 
 The internal flight plan writes its own guidance (`FPLCRS`, `FPLCDI`, `FPLTF`)
 and the active waypoint (`WPLAT`, `WPLON`), from which `compute` makes the GPS

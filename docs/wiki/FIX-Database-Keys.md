@@ -18,9 +18,9 @@ values work is on
 | `ALT` | ft | Indicated altitude | altitude tape and dial, synthetic vision, the moving map | |
 | `VS` | ft/min | Vertical speed | VSI instruments, the flight path marker | |
 | `BARO` | inHg | Altimeter setting, always in inHg on the bus | altitude tape | the altitude tape's box, the baro buttons |
-| `ALTSEL` | ft | Selected altitude | altitude tape | the altitude tape's box |
+| `ALTSEL` | ft | Selected altitude | altitude tape, `autopilot_panel` | the altitude tape's box, the autopilot panel's ALT SEL box |
 | `OAT` | °C | Outside air temperature | text readouts on the stock screens; switched by **Units** | |
-| `PALT`, `DALT` | ft | Pressure and density altitude | text readouts on the stock screens; `PALT` also the map's traffic layer | |
+| `PALT`, `DALT` | ft | Pressure and density altitude | text readouts on the stock screens; `PALT` also the traffic on the map and in synthetic vision | |
 
 **`IAS` aux values:** `Vs`, `Vs0`, `Vno`, `Vne` and `Vfe`. They draw the
 airspeed bands; see
@@ -33,8 +33,8 @@ airspeed bands; see
 | `PITCH` | deg | Pitch | attitude displays |
 | `ROLL` | deg | Bank | attitude displays |
 | `ALAT` | g | Lateral acceleration (slip) | attitude displays, `turn_coordinator` |
-| `ROT` | deg/s | Rate of turn | `turn_coordinator` |
-| `VPATH` | deg | Flight path angle, used before `VS`/`GS` when published | flight path marker |
+| `ROT` | deg/s | Rate of turn | `turn_coordinator`, the HSI (turn-rate trend) |
+| `VPATH` | deg | Flight path angle, used before `VS`/`GS` while it is current (not old, bad or failed) | flight path marker |
 | `AOA` | deg | Angle of attack; its `Warn` aux is the stall-warning AOA | the attitude displays' pitch-limit indicator |
 
 ## Heading, position and navigation
@@ -46,7 +46,7 @@ airspeed bands; see
 | `TRACK` | deg | GPS ground track, true | flight path marker, the moving map | |
 | `TRACKM` | deg | GPS ground track, magnetic | HSI (track diamond), the moving map | |
 | `LAT`, `LONG` | deg | Position | synthetic vision, the moving map, the flight plan page, listbox Nearest sort | |
-| `HEADBUG` | deg | Selected heading | HSI | the HSI's HDG edit, the heading-bug buttons |
+| `HEADBUG` | deg | Selected heading | HSI, `autopilot_panel` | the HSI's HDG edit, the heading-bug buttons, the autopilot panel's HDG box |
 | `NAVSRC` | | Selected nav source: `0` NAV1, `1` NAV2, `2` GPS | HSI | the HSI's source tab |
 | `COURSE` | deg | Course of the selected source | HSI | |
 | `CDI` | -1 to 1 | Lateral deviation of the selected source | HSI | |
@@ -55,11 +55,12 @@ airspeed bands; see
 | `GSI` | -1 to 1 | Vertical deviation of the selected source | HSI, `virtual_vfr` | |
 | `GSV` | | Vertical deviation valid | HSI | |
 | `NAVTYPE` | | VOR or LOC, for the source tab; nothing in fix-gateway publishes it today | HSI | |
+| `NAVSUPP` | | 1 when the selected NAV radio is a supplemental receiver | HSI (amber `SUPP` mark) | |
 | `NAV1CRS`, `NAV2CRS` | deg | Course set on each NAV radio | | the HSI's CRS edit |
 | `BRG1`, `BRG2` | deg | Bearing pointers 1 and 2 | HSI | |
 | `BRG1SRC`, `BRG2SRC` | | What each bearing pointer points at | HSI | the HSI's BRG tab and bearing labels |
 | `VOR1BRG`, `VOR2BRG` | deg | Bearing to each VOR | HSI (CRS push) | |
-| `TFCCOUNT`, `TFCnTGT` and the `TFCn` slot fields | | ADS-B traffic targets, from fix-gateway's traffic writer | the moving map's traffic layer | |
+| `TFCCOUNT`, `TFCnTGT` and the `TFCn` slot fields | | ADS-B traffic targets, from fix-gateway's traffic writer | the moving map's traffic layer, synthetic vision traffic | |
 | `HWIND`, `XWIND` | kt | Headwind (negative is tailwind), crosswind (positive is from the right) | `wind_display` | |
 
 **Nav-source selection.** `COURSE`, `CDI`, `TOFROM` and `GSI` always carry the
@@ -93,9 +94,9 @@ what pyEFIS touches.
 | `FPLAPRTYPE` | | Type of the loaded approach (`RNAV`, `ILS`, `VOR`), empty with none | pyEFIS |
 | `FPLSEQ` | | Commit counter, written last; the engine acts when it changes | pyEFIS |
 | `DTOID` / `DTOLAT` / `DTOLON` / `DTOTYPE` | | Direct-To target | pyEFIS |
-| `FPLCMD` | | `"<seq> VERB [arg]"`: `ACT`, `DTO`, `DTOX`, `SUSP`, `RESUME`, `SCALE` | pyEFIS |
+| `FPLCMD` | | `"<seq> VERB [arg]"`: `ACT`, `DTO`, `DTOX`, `SUSP`, `RESUME`, `SCALE`, `OBS <deg>`, `OBS OFF` (OBS from the flight plan menu, and from the HSI's CRS knob in OBS) | pyEFIS |
 | `FPLCMDACK` / `FPLMSG` | | Acknowledgement (negative is a rejection) / last message | engine |
-| `FPLSTATE` / `FPLACTLEG` | | 0 none, 1 leg, 2 direct, 3 suspended / slot of the TO waypoint | engine |
+| `FPLSTATE` / `FPLACTLEG` | | 0 none, 1 leg, 2 direct, 3 suspended, 4 OBS / slot of the TO waypoint | engine |
 | `FPLPHASE` / `FPLAPR` / `FPLINTEG` | | Phase / approach state / integrity | engine |
 | `FPLSUSPMAP` | | Suspended at the missed approach point | engine |
 | `FPLLDSEQ` | | The `FPLSEQ` of the route the engine has loaded; differs from `FPLSEQ` after a refused commit | engine |
@@ -114,7 +115,35 @@ what pyEFIS touches.
 | `GPSSRC` | | 0 pyEFIS's plan, 1 an external navigator | fix-gateway configuration |
 
 The `nav_status` line reads `FPLSTATE`, `FPLPHASE`, `WPFROM`, `WPNAME`,
-`WPNEXT`, `WPDIS`, `WPETE`, `FPLAPRTYPE`, `FPLDBCYC` and `FPLTURN`.
+`WPNEXT`, `WPDIS`, `WPETE`, `FPLAPRTYPE`, `FPLDBCYC` and `FPLTURN`. The HSI
+reads `FPLSTATE`, `GPSSRC` and `GPSBRG` for GPS OBS; see
+[The HSI](The-HSI#gps-obs).
+
+## Autopilot
+
+The autopilot is a fix-gateway source; see [Autopilot](Autopilot). pyEFIS
+reads its state and sends it requests.
+
+| Key | Meaning | Read by | Written by |
+|---|---|---|---|
+| `APENG`, `FDENG`, `YDENG` | Autopilot engaged, flight director on, yaw damper on | `autopilot_panel`; `ap_annunciator` (`APENG`, `YDENG`); the attitude displays' flight director (`FDENG`) | the autopilot |
+| `APLAT`, `APVERT` | The active lateral and vertical modes (`HDG`, `GPS`, `ALT`, `VS` and so on) | `autopilot_panel`, `ap_annunciator` | the autopilot |
+| `APLATARM`, `APVERTARM` | The armed lateral and vertical modes, a comma list (`GS,ALT`) | `autopilot_panel`, `ap_annunciator` | the autopilot |
+| `APALTCAP` | Capturing the selected altitude | `autopilot_panel`, `ap_annunciator`, the altitude tape (ALTSEL box border) | the autopilot |
+| `APALTREF` | The altitude ALT hold is holding | `ap_annunciator` | the autopilot |
+| `APDISC` | Disconnect alert, held by the autopilot until acknowledged | `ap_annunciator` | the autopilot |
+| `APCAPS` | The modes the autopilot can fly, a comma list | `autopilot_panel` | the autopilot |
+| `APMSG` | The autopilot's message | `autopilot_panel` | the autopilot |
+| `FDPITCH`, `FDROLL` | Flight director commanded pitch and bank | the attitude displays | the autopilot |
+| `APCMD` | A request: a key name (`HDG`, `AP`, `LVL` and so on), or `DISC` | | `autopilot_panel` (key presses), `ap_annunciator` (`DISC` to acknowledge a disconnect) |
+| `APCMDSEQ` | Request counter, written after `APCMD`; the autopilot acts when it changes | | `autopilot_panel`, `ap_annunciator` |
+| `VSSEL` | Selected vertical speed, ft/min | `autopilot_panel`, `ap_annunciator`, `vsi_pfd`, an altitude tape set to `VS` | the autopilot panel's VS box |
+| `IASSEL` | Selected airspeed, kt; 0 is no target | `autopilot_panel`, `ap_annunciator`, the airspeed tape | the autopilot panel's IAS box, the airspeed tape's IAS box |
+
+The airspeed tape, the altitude tape and `vsi_pfd` also check that `APENG`,
+`YDENG`, `APLAT`, `APLATARM`, `APVERT`, `APVERTARM`, `APALTCAP` and `APDISC`
+are current before they draw an autopilot cue. `HEADBUG` and `ALTSEL`, which
+the panel also sets, are in the tables above.
 
 ## Engine
 
@@ -148,7 +177,7 @@ Each key's range and limits are its aux values (`Min`, `Max`, `lowWarn`,
 | `ENC3`, `ENC4`, `BTN3` | The knob's turn, outer ring and push, as the stock `hmi/encoder_input.yaml` names them | the knob hardware |
 | `ENC1` | The menu's encoder | the knob hardware |
 | `HIDEBUTTON` | Hides the stock screens' buttons | pyEFIS (button timeout), the **Show Menu** button |
-| `SYSMENU` | Opens the [system menu](The-Panel-at-a-Glance#the-system-menu) when it changes from `false` to `true`. A momentary command, like a button: write `true` on the press and `false` on the release. A key held `true` does not reopen the menu once it is closed, and a press while the menu is open does nothing. pyEFIS only reads it | a control head or knob binding |
+| `SYSMENU` | Opens the [system menu](The-Panel-at-a-Glance#the-system-menu) when it changes from `false` to `true`. A momentary command, like a button: write `true` on the press and `false` on the release. A key held `true` does not reopen the menu once it is closed, and a press while the menu is open does nothing. pyEFIS only reads it. Without `SYSMENU` in the database this route is off, with a warning in the log; the corner swipe still works | a control head or knob binding |
 | `DIM` | Display brightness step | the dimmer buttons |
 | `TRIMP`, `TRIMR`, `TRIMY` | Trim position | the trim buttons |
 | `MAPRANGE`, `MAPORIENT`, `MAPTERRAIN`, `MAPNDMODE` | Map range, orientation, terrain layer and ND mode, when a panel binds them | map buttons |
@@ -159,6 +188,7 @@ Each key's range and limits are its aux values (`Min`, `Max`, `lowWarn`,
 | `GATEWAY_VERSION`, `ACID`, `TIMEZ`, `TIMEL` | Gateway version, aircraft ID, UTC and local time, shown on the stock screens | |
 | `DEMOLIVE` | The gateway's demo source is running. pyEFIS shows the DEMO marking while it is true and current | the demo source |
 | `DEMOPAGE` | The page the demo script wants up, `SCREEN` or `SCREEN/TAB`. Followed only in kiosk mode | the demo source |
+| `DEMOLOOP` | Changes each time the demo route starts over. In kiosk mode it triggers the visitor reset ([Demo kiosk](Customizing-Beyond-the-Configurator#demo-kiosk)) | the demo source |
 
 ## Quality flags
 

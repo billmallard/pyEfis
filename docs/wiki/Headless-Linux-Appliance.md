@@ -221,6 +221,12 @@ Continue target (or the first other screen) instead. A panel pulled from the con
 takes the `defaultScreen` name, so the device boots to it. See
 [Setting Up a Device](Setting-Up-a-Device#7-boot-to-the-efis).
 
+If a screen other than the flight screen fails to build, pyEFIS drops it,
+logs the error and carries on with the others. A fault in the flight screen
+still stops pyEFIS. If the dropped screen was the one it would boot to, it
+boots the flight screen (or the first screen left) instead. A button or flag
+that jumps to a dropped screen does nothing.
+
 ---
 
 ## The nav-data updater is a separate package

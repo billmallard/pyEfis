@@ -401,6 +401,11 @@ answers again, it re-reads every key. Both settings go in `main/default.yaml`:
 If the ping key is not in the database, the watchdog does not run and pyEFIS
 logs an error.
 
+Whenever the watchdog is not running (`FixLinkTimeout` set to `0` or below, no
+ping key in the database, or a failure to start), pyEFIS shows an amber
+**LINK MON OFF** box at the top centre of every screen. It stays until pyEFIS
+restarts with the watchdog running. Touches pass through it.
+
 ### Gauge colours
 
 The four gauges share two palettes, one for good data and one for old, bad or
@@ -424,8 +429,10 @@ colour past an alarm limit.
 
 With `encoder` and `encoder_button` set on a screen, a rotary encoder drives
 it. Instruments that can be selected, in the order of their `encoder_order`:
-gauges, `numeric_display`, `button`, `listbox`, `checklist`, `flight_plan` and
-the altitude tape's two boxes.
+gauges, `numeric_display`, `button`, `listbox`, `checklist`, `flight_plan`,
+the altitude tape's two boxes, the airspeed tape (while its IAS box is
+shown), the attitude displays' bank bug (when `BANKBUG` exists), and
+`autopilot_panel`.
 
 - Turning moves an orange highlight between them.
 - Pushing selects one. Turning then changes its value or scrolls its list.
@@ -466,14 +473,18 @@ kiosk:
 
 With the kiosk on:
 
-- The panel follows the demo script's page (`DEMOPAGE`). After any touch it
-  stays where the visitor left it for `idle_return_s` seconds, then returns
-  to the page the script is on.
+- The panel follows the demo script's page (`DEMOPAGE`). It goes to that page
+  at start and after a gateway reconnect, as well as when the page changes.
+  After any touch it stays where the visitor left it for `idle_return_s`
+  seconds, then returns to the page the script is on.
 - The flight plan page is read-only, and its soft keys are greyed out.
 - The map's pointer banner offers only INFO and X. DIRECT TO, INSERT and
   CREATE WPT are hidden.
 - The Data Status **Update** button is off.
 - No keybindings load, and buttons cannot run `exit` or `evaluate`.
+
+The [system menu](The-Panel-at-a-Glance#the-system-menu) still opens in kiosk
+mode.
 
 Map pan and range, screen and tab buttons, the HSI source tab, and baro and
 selected-altitude edits still work. While the demo is running, the kiosk puts
@@ -481,7 +492,10 @@ the keys under `defaults` back to their configured values each time the demo
 route starts over (`DEMOLOOP`), when the demo starts, and on the idle return,
 so one visitor's change does not stay for the next. Only `NAVSRC`, `BARO`,
 `ALTSEL` and `MAPRANGE` are accepted; any other key is logged and dropped.
-Without `defaults` nothing is reset. A gateway whose database has no
+Each value must be a number; one that is not is logged and dropped. A key the
+gateway's database does not have is skipped, with a warning. Without
+`defaults` nothing is reset. The idle-return reset needs `DEMOPAGE` in the
+database, because it comes from the page follower. A gateway whose database has no
 `DEMOLOOP` (an older `database/demo.yaml`) still gets the reset when the demo
 starts and on the idle return, but not at each loop.
 
@@ -501,7 +515,8 @@ handled specially:
 - `font_percent` as a whole number is read as a percent.
 
 Everything else is set on the instrument as an attribute, converted to the
-attribute's type. An option the [Instrument Reference](Widget-Reference) does
+attribute's type. A few options, such as `layout` on `autopilot_panel`, are
+passed to a method of the instrument instead. An option the [Instrument Reference](Widget-Reference) does
 not list is still applied, with a warning in the log that it may have no
 effect.
 

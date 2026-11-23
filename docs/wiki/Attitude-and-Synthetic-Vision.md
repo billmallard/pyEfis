@@ -27,13 +27,15 @@ terrain is `atitude_indicator`.
 | **Flight path marker** | A green circle with wings: where the aircraft is actually going, from GPS track, groundspeed and vertical speed. See [below](#flight-path-marker). |
 | **Horizon heading marks** | Optional compass ticks along the horizon line, with labels: `N`, `E`, `S`, `W`, or the heading in tens (`33` is 330). |
 | **Recovery chevrons** | Three amber chevrons pointing back to the horizon at an unusual attitude. |
+| **Flight director** | Magenta command bars with a black outline, while the flight director is on. Fly the aircraft symbol into them. See [below](#flight-director). |
 | **Pitch-limit indicator** | Two short bars, three ticks on each, either side of the aircraft symbol, at the pitch where `AOA` would reach the stall-warning AOA (the `Warn` aux of `AOA`). It appears once that margin is 8° or less, amber while there is margin left and red at or past it. It stays on at an unusual attitude, and is hidden while `AOA` is old, bad or failed or has no `Warn`. |
 
 ### At an unusual attitude
 
 Beyond 30° nose up, 20° nose down, or 65° of bank, or with the horizon off the
-screen, the display declutters. The flight path marker, the standard-rate marks,
-the bank bug and the horizon heading marks go, leaving what you need to recover.
+screen, the display declutters. The flight path marker, the flight director,
+the standard-rate marks, the bank bug and the horizon heading marks go, leaving
+what you need to recover.
 
 ### Bank bug
 
@@ -96,12 +98,33 @@ The bank bug then cannot be set above it.
 ### Flight path marker
 
 The marker sits where the aircraft is going, not where it points. Vertically,
-it uses the flight path angle (`VPATH` when published, otherwise vertical speed
-against groundspeed). Sideways, it shows drift: track against heading.
+it uses the flight path angle: `VPATH` while it is current (not old, bad or
+failed), otherwise vertical speed against groundspeed. Sideways, it shows
+drift: track against heading.
 
 - It hides below 30 kt groundspeed, when the track is meaningless.
 - It hides when `VS`, `GS`, `TRACK` or `HEAD` has failed or is missing.
 - It turns amber when one of them is flagged bad.
+
+### Flight director
+
+When an autopilot or flight director publishes a command (see
+[Autopilot](Autopilot)), the display draws it in magenta with a black outline.
+The colour is fixed. The cue sits above or below the aircraft symbol by the
+pitch error (`FDPITCH` against your pitch) and shows the bank error (`FDROLL`
+against your bank). Fly the symbol into the cue.
+
+- **Single cue** (`fd_style: single_cue`, the default): a chevron that banks
+  by the bank error. On the command it sits just above the aircraft symbol,
+  which is drawn over it.
+- **Cross pointer** (`cross_pointer`): a horizontal pitch bar that moves up
+  and down, and a vertical roll bar that moves sideways. The roll bar is at
+  full deflection at 30° of bank error.
+- `off` draws no flight director. Any other value is read as `single_cue`.
+
+It is drawn only while `FDENG` is on, `FDENG`, `FDPITCH` and `FDROLL` are all
+current (not old, bad or failed), and `PITCH` and `ROLL` are valid. It goes at
+an unusual attitude with the other declutter.
 
 ## Synthetic vision
 
@@ -145,12 +168,19 @@ shows.
 - **Traffic**: ADS-B targets out to 10 nm, where the aircraft would be seen,
   with the moving map's symbols: white, yellow and flashing for an alert, an
   open outline when the position is degraded, grey and dashed when the
-  reports have stopped. The arrowhead points along the target's track
-  relative to your heading. The tag is its altitude relative to yours in
-  hundreds of feet (`+05`), with an arrow when it climbs or descends at
-  500 fpm or more. A target is never hidden by terrain. With no relative
-  altitude the tag reads `--` and the target is drawn at your level. Display
-  only: no advisories.
+  reports have stopped. An alert flashes between filled and outline every
+  half second. The arrowhead points along the target's track relative to
+  your heading; with no usable track the symbol is a diamond. Inside 2 nm
+  the symbol grows, to twice its size at 1 nm. The tag is its altitude
+  relative to yours in hundreds of feet (`+05`), with an arrow when it
+  climbs or descends at 500 fpm or more. The tag sits above the symbol for
+  traffic above you and below it otherwise. A target is never hidden by
+  terrain. With no relative altitude the tag reads `--` and the target is
+  drawn at your level. Targets behind you are not drawn, and a target whose
+  reports have stopped is gone no later than 12 s after its last report. Display only: no
+  advisories. The synthetic vision has no traffic-failure indication: no
+  traffic drawn does not mean no traffic. Only the moving map shows
+  `TFC FAIL`.
 
 Distance haze fades far terrain into the horizon. The haze distance grows with
 altitude, from the **Haze distance** (40 nm by default) upwards. Close in, a
@@ -197,6 +227,7 @@ bench panel's value where it differs.
 | Pitch label range (`visiblePitchAngle`) | 25 | 8 | Ladder lines further than this from your pitch fade out. |
 | Pitch ladder opacity (`pitchOpacity`) | 0.6 | | 0 to 1. |
 | Ladder stops below bank arc (`pitch_ladder_avoid_bank`) | off | on | Keeps the ladder out of the slip indicator. |
+| Flight director style (`fd_style`) | `single_cue` | | `single_cue`, `cross_pointer` or `off`. See [Flight director](#flight-director). |
 | Bank scale position (`bank_position`) | 50 | 63 | Percent up the screen for the bank arc's centre. |
 | Bank scale radius (`bank_radius`) | 33.3 | 25 | Percent of the height. |
 | Standard-rate bank markers (`drawBankMarkers`) | on | | |
@@ -230,7 +261,7 @@ The full list, including the tick sizes and opacities, is on
 | Distance haze (`svs_haze`) | on | | |
 | Haze distance (`svs_haze_distance_nm`) | 40 nm | 32 nm | |
 | PAPI lights (`svs_papi`) | on | | |
-| Traffic (`svs_traffic`) | on | | ADS-B targets in the scene; see Traffic below. |
+| Traffic (`svs_traffic`) | on | | ADS-B targets in the scene; see Traffic above. |
 | Traffic range (`svs_traffic_range_nm`) | 10 nm | | Farther targets are left to the map. |
 | Road colour, casing and width options (`svs_road_*`) | | | The road ribbons' look. |
 
@@ -285,6 +316,7 @@ data paths are where `pyefis-data` installs each pack; see
 | `VS`, `GS`, `TRACK`, `VPATH` | Flight path marker |
 | `AOA` and its `Warn` aux | Pitch-limit indicator |
 | `BANKBUG` | Bank bug (written when you set it) |
+| `FDENG`, `FDPITCH`, `FDROLL` | Flight director |
 
 See [FIX Database Keys](FIX-Database-Keys).
 

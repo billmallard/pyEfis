@@ -104,7 +104,7 @@ instrument's options, refresh them with
 | Symptom | Fix |
 |---|---|
 | `ModuleNotFoundError: No module named 'PyQt6'` | Install the `qt` extra, or on a Pi `python3-pyqt6`. |
-| The Charts page shows `PLATE RENDERER NOT INSTALLED` | On a Pi, `sudo apt install python3-pyqt6.qtpdf`. The pip `qt` extra already includes Qt PDF. |
+| The Charts page shows `PLATE RENDERER NOT INSTALLED (python3-pyqt6.qtpdf)` | On a Pi, `sudo apt install python3-pyqt6.qtpdf`. The pip `qt` extra already includes Qt PDF. |
 | The attitude display shows `SVS UNAVAIL` | Expected without the `svs` extra, a usable GPU, or position data. |
 | No live values | fix-gateway is not running, or `FixServer`/`FixPort` in `main/default.yaml` do not point at it. |
 | Display errors from a terminal | Set `DISPLAY=:0`. |
