@@ -28,7 +28,8 @@ pointer). Already present:
   **digital read-out** (`NumericalDisplay`, `numeric_box`) — the §17.8 tape format.
 - **Failure annunciation** on the read-out: `fail`/`old` → `XXX`, `bad` → the value in
   amber (CERT1c) (`NumericalDisplay`), driven by the standard FIX signals; the round-dial `Altimeter`
-  greys on `old`/`bad` and shows `XXX` on `fail`.
+  follows the same convention: `fail`/`old` -> red `XXX` and no needles, `bad` -> needles and
+  markings in amber (CERT1g).
 - **Value rounding** (`round_to`) so a jittery source (e.g. VS) snaps the box without the
   tape scroll losing smoothness; **unit switching** (ft/m).
 
