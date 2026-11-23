@@ -435,6 +435,72 @@ def test_insert_bare_point_into_empty_plan_appends_mapwpt(fix, qtbot):
     assert [(w.id, w.type) for w in plan.waypoints] == [("MAPWPT", "map")]
 
 
+def _tap_beside_leg_2(m):
+    m.range_nm = 40.0
+    x = m._transform()
+    c = x.to_screen(LAT0 + 0.03, LON0 + 0.3)
+    _tap(m, c.x(), c.y())
+
+
+def test_insert_on_a_refused_route_publishes_nothing(fix, qtbot):
+    """FPA3: the engine flies one route, then refuses a commit (FPLLDSEQ
+    stays at the flown seq). The slots hold the refused route; inserting
+    into it would republish that route with "INSERTED" on screen while the
+    flown route is unchanged. Nothing goes on the bus and the pilot is sent
+    to the FPL page."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(_three_leg_plan())
+    flown = fix.db.get_item("FPLSEQ").value
+    _define(fix, "FPLLDSEQ", "int", flown)
+    refused = fp_model.FlightPlan(name="R", waypoints=[
+        fp_model.Waypoint(id=f"R{i}", type="fix", lat=LAT0, lon=LON0 + 0.2 * i)
+        for i in range(4)])
+    bridge.publish(refused)
+    seq = fix.db.get_item("FPLSEQ").value
+    assert seq != flown
+    m = _map(qtbot)
+    _tap_beside_leg_2(m)
+    sent = fix.db.clientthread.sendqueue.put.call_count
+    m.banner_insert()
+    assert fix.db.clientthread.sendqueue.put.call_count == sent
+    assert fix.db.get_item("FPLSEQ").value == seq
+    assert [w.id for w in bridge.read_plan().waypoints] == ["R0", "R1", "R2", "R3"]
+    assert m._toast == "ROUTE NOT LOADED: SEE FPL"
+    assert m.pointer is not None
+
+
+def test_insert_on_a_loaded_route_publishes(fix, qtbot):
+    """The same guard lets an insert through once the engine has loaded the
+    route on the bus."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    bridge.publish(_three_leg_plan())
+    _define(fix, "FPLLDSEQ", "int", fix.db.get_item("FPLSEQ").value)
+    m = _map(qtbot)
+    _tap_beside_leg_2(m)
+    m.banner_insert()
+    assert [w.id for w in bridge.read_plan().waypoints] == ["W0", "W1", "MAPWPT", "W2", "W3"]
+    assert m._toast == "INSERTED MAPWPT"
+
+
+def test_insert_when_the_bridge_reads_no_plan_is_a_message_not_a_crash(
+        fix, qtbot, monkeypatch):
+    """FPA3: ``read_plan`` returns None when the bridge is unavailable. The
+    map read it unguarded and raised AttributeError on ``None.waypoints``."""
+    _define_all_fp1_keys(fix)
+    m = _map(qtbot)
+    _tap_beside_leg_2(m)
+    bridge = m._flightplan_bridge()
+    assert bridge is not None
+    monkeypatch.setattr(bridge, "read_plan", lambda: None)
+    sent = fix.db.clientthread.sendqueue.put.call_count
+    m.banner_insert()
+    assert m._toast == "NO FLIGHT PLAN"
+    assert fix.db.clientthread.sendqueue.put.call_count == sent
+    assert m.pointer is not None
+
+
 def test_fpl_instrument_follows_a_map_insert(fix, qtbot):
     """The FPL page re-reads the bus on FPLSEQ: a map Insert shows there."""
     _define_all_fp1_keys(fix)
