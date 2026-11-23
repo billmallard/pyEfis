@@ -23,8 +23,10 @@ too. Each table is generated from pyEFIS's instrument registry; see
 | `turn_coordinator` | Rate-of-turn and slip. |
 | `wind_display` | Head/tail and cross wind components. |
 
-The altitude tape's altimeter-setting and selected-altitude boxes can be
-selected with the knob; give the tape an `encoder_order`. The other flight
+The altitude tape's altimeter-setting and selected-altitude boxes, and the
+airspeed tape's selected-airspeed box while it is shown, can be selected with
+the knob; give the tape an `encoder_order`. The HSI's HDG and CRS take the
+knob after a touch, but are not on the knob walk. The other flight
 instruments are not on the knob.
 
 ---
@@ -169,7 +171,9 @@ FIX keys it reads by default: `ALT`.
 
 With `altitude: true` the **Units** button switches it between ft and m. The
 same type draws a vertical-speed tape when its `dbkey` is `VS`; the trend
-arrow, altimeter setting and selected-altitude box are then off unless set.
+arrow, altimeter setting and selected-altitude box are then off unless set,
+and the `VSSEL` bug is on unless set. On an `ALT` tape the `VSSEL` bug is off
+unless set.
 
 ## `altimeter_dial`
 
@@ -239,7 +243,10 @@ Values it reads from the FIX item, set in fix-gateway (the aircraft parameters),
 
 A narrow strip with a dot that rides up and down with the rate, on a scale that
 spreads out the low rates. When `VS` is bad the dot turns amber inside an amber
-frame; when it is old or failed a red X across the strip replaces it.
+frame; when it is old or failed a red X across the strip replaces it. While
+the autopilot reports VS as the active vertical mode, a `VSSEL` bug sits on
+the left edge; see
+[Autopilot targets](Airspeed-Altitude-and-Vertical-Speed#autopilot-targets).
 
 ![VSI PFD](../images/vsi_pfd.png)
 
