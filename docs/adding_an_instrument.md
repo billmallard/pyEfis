@@ -184,6 +184,8 @@ explicit authorisation.
 - [ ] `fix_values` document the category-2 inputs; `preview` lets the twin draw.
 - [ ] If migrating: removed from every curated dict + the legacy literals.
 - [ ] `pytest tests/editor` green (the gate).
+- [ ] If it writes a FIX key: declared in fix-gateway's `writers.yaml` and the pin
+      bumped, so `python tools/check_fix_writers.py` passes ([key_writers.md](key_writers.md)).
 - [ ] Twin `build*` matches the real widget and honors every exposed option.
 - [ ] Assets regenerated + uploaded to R2; Worker deployed; verified at origin.
 - [ ] Committed in both repos with focused messages.
