@@ -606,7 +606,7 @@ def _slot_to_waypoint(slot: RouteSlot, coded_crs: bool) -> model.Waypoint:
 # back (the engine flies it). For every other leg the bridge derived CRS
 # from the great circle and the then-current MAGVAR, so reading it back as
 # a coded course would freeze a variation-dependent number into the plan.
-CODED_COURSE_PTS = frozenset({"CF", "CA", "FC", "VA", "VM", "VI", "FA", "HM", "HF", "HA", "PI"})
+CODED_COURSE_PTS = frozenset({"CF", "CA", "FC", "VA", "VM", "VI", "FM", "FA", "HM", "HF", "HA", "PI"})
 
 
 def route_to_plan(route: RouteBlock) -> model.FlightPlan:
