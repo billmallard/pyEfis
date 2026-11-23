@@ -384,3 +384,238 @@ def test_show_fixes_sheet_and_fix_menu_name_the_hold(page):
         assert hold_wp in seen
     finally:
         del page._fix_label
+
+
+# -- as published (HOLDFIX3, AER-6328) -------------------------------------------
+
+_HOLDS_SQL = """CREATE TABLE holds (hp_name TEXT, hp_no INTEGER, point_id TEXT,
+    point_icao TEXT, point_type TEXT, lat REAL, lon REAL, nav_id TEXT, nav_type TEXT,
+    hold_dir TEXT, hold_ref_deg INTEGER, azimuth TEXT, inbound_crs INTEGER, turn TEXT,
+    leg_nm INTEGER, charts TEXT)"""
+
+
+def _published(page, tmp_path, holds, *, table=True):
+    """A navaids.sqlite with *holds* as (name, no, id, lat, lon, dir,
+    inbound, turn, leg_nm, charts), the shape tools/build_navaid_db.py
+    writes."""
+    import sqlite3
+    path = tmp_path / "navaids.sqlite"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE fixes (id TEXT, use_code TEXT, lat REAL, lon REAL)")
+    if table:
+        con.execute(_HOLDS_SQL)
+        con.executemany(
+            "INSERT INTO holds VALUES (?,?,?,NULL,'FIX',?,?,NULL,NULL,?,NULL,'RNAV',?,?,?,?)",
+            holds)
+    con.commit()
+    con.close()
+    page.navaid_db_path = str(path)
+    return path
+
+
+BBB_ENR = ("BBB VORTAC*CA", 1, "BBB", 34.0, -119.0, "SE", 310, "L", 10, "ENROUTE LOW|STAR")
+BBB_TIMED = ("BBB INT*CA*K2", 2, "BBB", 34.0, -119.0, "W", 90, "R", None, "IAP")
+BBB_FAR = ("BBB NDB*ND", 1, "BBB", 47.0, -97.0, "N", 180, "R", 4, "ENROUTE LOW")
+
+
+def _painted(page):
+    """``(text, pen colour)`` for every string the page paints, from a
+    recording painter swapped in for the module's QPainter."""
+    from PyQt6.QtGui import QPainter
+    seen = []
+
+    class Recording(QPainter):
+        def drawText(self, *a):
+            if isinstance(a[-1], str):
+                seen.append((a[-1], self.pen().color().name()))
+            return super().drawText(*a)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(flight_plan, "QPainter", Recording)
+        page.grab()
+    return seen
+
+
+def _texts(page):
+    return [t for t, _ in _painted(page)]
+
+
+def test_no_published_holds_no_published_row(page, tmp_path):
+    """No pack, an older pack without the holds table, or no hold at the
+    fix: the editor is as it was, with no PUBLISHED row."""
+    page._open_hold_editor(1)
+    assert page._hold_edit["published"] == []
+    _published(page, tmp_path, [], table=False)
+    page._open_hold_editor(1)
+    assert page._hold_edit["published"] == []
+    (tmp_path / "navaids.sqlite").unlink()
+    _published(page, tmp_path, [BBB_FAR])
+    page._open_hold_editor(1)
+    assert page._hold_edit["published"] == []
+    assert not any(t.startswith("PUBLISHED") for t in _texts(page))
+
+
+def test_one_published_hold_fills_the_clearance(page, tmp_path):
+    """"Hold as published at BBB": one tap fills side, inbound course,
+    turns and the leg in miles, and Insert sends that hold."""
+    _published(page, tmp_path, [BBB_ENR])
+    page._open_hold_editor(1)
+    assert "PUBLISHED" in _texts(page)
+    page._hold_published()
+    e = page._hold_edit
+    assert (e["direction"], e["ref"], e["course"], e["turn"], e["leg"], e["unit"]) == (
+        "SE", "inbound", 310.0, "L", 10.0, "NM")
+    assert e["std_time"] is False
+    assert "PUBLISHED: SE INB 310° L 10 NM ENR LOW/STAR" in _texts(page)
+    page._hold_insert()
+    fix = page.fixdb
+    assert (_slot(fix, 3, "PT"), _slot(fix, 3, "CRS"), _slot(fix, 3, "TURN"),
+            _slot(fix, 3, "DST")) == ("HM", 310.0, "L", 10.0)
+
+
+def test_a_timed_published_hold_gets_the_standard_time_marked(page, tmp_path):
+    """NASR publishes no leg time: the leg is the AIM time for the altitude
+    and the editor says STD TIME, in amber, until the pilot types a time."""
+    _published(page, tmp_path, [BBB_TIMED])
+    _set(page.fixdb, "ALT", 16000.0)
+    page._open_hold_editor(1)
+    page._hold_published()
+    e = page._hold_edit
+    assert (e["direction"], e["course"], e["turn"], e["leg"], e["unit"], e["std_time"]) == (
+        "W", 90.0, "R", 1.5, "MIN", True)
+    assert "STD TIME" in _texts(page)
+    page._hold_edit_leg()
+    page._modal["value"] = "2"
+    page._modal_enter()
+    assert page._hold_edit["std_time"] is False and page._hold_edit["applied"] is None
+    assert "STD TIME" not in _texts(page)
+
+
+def test_std_time_is_painted_in_amber(page, tmp_path):
+    _published(page, tmp_path, [BBB_TIMED])
+    page._open_hold_editor(1)
+    page._hold_published()
+    colours = [c for t, c in _painted(page) if t == "STD TIME"]
+    assert colours == [page._HOLD_STD_TIME_COLOR] == ["#ffaa00"]
+
+
+def test_several_published_holds_open_a_chooser(page, tmp_path):
+    """173 enroute fixes have more than one hold: PUBLISHED lists them,
+    enroute first, and the one tapped fills the fields. Back returns to
+    the editor without changing it."""
+    # The enroute hold has the higher NASR number, so only the enroute-first
+    # order puts it on top.
+    enr = BBB_ENR[:1] + (3,) + BBB_ENR[2:]
+    _published(page, tmp_path, [BBB_TIMED, enr])
+    page._open_hold_editor(1)
+    assert "PUBLISHED (2)" in _texts(page)
+    before = dict(page._hold_edit)
+    page._hold_published()
+    assert page._hold_edit["choosing"]
+    texts = _texts(page)
+    assert texts.index("SE INB 310° L 10 NM ENR LOW/STAR") < texts.index(
+        "W INB 090° R STD TIME IAP")
+    page._enc_back()                       # Back closes the list, not the editor
+    assert page._hold_edit is not None and not page._hold_edit["choosing"]
+    assert page._hold_edit["course"] == before["course"]
+    page._hold_published()
+    page._hold_apply_published(page._hold_edit["published"][1])
+    assert (page._hold_edit["direction"], page._hold_edit["course"]) == ("W", 90.0)
+    assert not page._hold_edit["choosing"]
+
+
+def test_chooser_pages_when_the_list_is_long(page, tmp_path):
+    """BGQ has ten published holds in 2611; eight fit a page."""
+    holds = [("BBB INT*CA*K2", n, "BBB", 34.0, -119.0, "N", 180, "R", n, "IAP")
+             for n in range(1, 11)]
+    _published(page, tmp_path, holds)
+    page._open_hold_editor(1)
+    page._hold_published()
+    assert page._hold_chooser_pages() == 2
+    first = [t for t in _texts(page) if t.startswith("N INB")]
+    page._hold_chooser_more()
+    second = [t for t in _texts(page) if t.startswith("N INB")]
+    assert len(first) == 8 and len(second) == 2 and not set(first) & set(second)
+    page._hold_chooser_more()
+    assert page._hold_edit["page"] == 0
+
+
+def test_a_hold_with_the_same_ident_elsewhere_is_not_offered(page, tmp_path):
+    """Idents repeat: a hold at another BBB (in ND) is not a hold here."""
+    _published(page, tmp_path, [BBB_FAR])
+    page._open_hold_editor(1)
+    assert page._hold_edit["published"] == []
+
+
+def test_a_published_hold_that_contradicts_itself_is_refused(page, tmp_path):
+    """38 holds in 2611 name a side their inbound course puts the pattern
+    opposite to (BAHMM: N, inbound 357). The editor refuses it, as it
+    would a typed clearance, rather than pick one."""
+    _published(page, tmp_path, [("BAHMM WP*KS*K3", 1, "BBB", 34.0, -119.0, "N", 357, "R",
+                                 4, "IAP")])
+    page._open_hold_editor(1)
+    page._hold_published()
+    page._hold_insert()
+    assert page._hold_edit["message"] == "INBOUND 357° IS NOT N OF THE FIX"
+    assert page.fixdb.db.get_item("FPLCOUNT").value == 3
+
+
+def test_changing_a_field_drops_the_published_label(page, tmp_path):
+    _published(page, tmp_path, [BBB_ENR])
+    page._open_hold_editor(1)
+    page._hold_published()
+    page._hold_set_turn("L")               # unchanged: still the published hold
+    assert page._hold_edit["applied"] is not None
+    page._hold_set_turn("R")
+    assert page._hold_edit["applied"] is None
+    assert "PUBLISHED" in _texts(page)
+
+
+def test_published_row_and_chooser_taps_reach_their_handlers(page, tmp_path):
+    _published(page, tmp_path, [BBB_TIMED, BBB_ENR])
+    page._open_hold_editor(1)
+    page.grab()
+    names = {getattr(t[4], "__name__", "") for t in page._tap_targets[page._enc_layer_start:]}
+    assert "_hold_published" in names
+    page._hold_published()
+    page.grab()
+    calls = [t[4] for t in page._tap_targets[page._enc_layer_start:]]
+    assert "_hold_close_chooser" in {getattr(c, "__name__", "") for c in calls}
+    picks = [c for c in calls if getattr(c, "__name__", "") == "<lambda>"]
+    assert len(picks) == 2
+    picks[0]()
+    assert page._hold_edit["applied"] == page._hold_edit["published"][0]
+
+
+def test_published_holds_never_raises_and_fills_a_missing_direction(tmp_path):
+    """A file that is not sqlite gives no holds; a hold with no published
+    side (8 in 2611) takes the side its inbound course puts it on."""
+    bad = tmp_path / "bad.sqlite"
+    bad.write_bytes(b"not a database")
+    assert hold.published_holds(str(bad), B) == []
+    assert hold.published_holds("", B) == []
+    import sqlite3
+    path = tmp_path / "navaids.sqlite"
+    con = sqlite3.connect(path)
+    con.execute(_HOLDS_SQL)
+    con.execute("INSERT INTO holds VALUES ('BBB VORTAC*CA',1,'BBB',NULL,'VORTAC',34.0,-119.0,"
+                "'BBB','VORTAC',NULL,NULL,'RAD',45,'R',NULL,NULL)")
+    con.commit()
+    con.close()
+    (h,) = hold.published_holds(str(path), B)
+    assert (h.direction, h.inbound, h.leg_nm, h.charts) == ("SW", 45.0, None, ())
+    assert hold.published_text(h) == "SW INB 045° R STD TIME"
+
+
+def test_the_ppos_editor_paints_with_no_published_row(page, tmp_path):
+    """Hold at PPOS (HOLDFIX2) opens the same editor from its own state:
+    it paints whole, with no PUBLISHED row, and Back closes it. A paint
+    error is caught and logged, so assert on what was painted."""
+    _published(page, tmp_path, [BBB_ENR])
+    page._menu_open = True
+    page._menu_hold_ppos()
+    texts = _texts(page)
+    assert "HOLD AT PPOS" in texts and "Insert" in texts
+    assert not any(t.startswith("PUBLISHED") for t in texts)
+    page._enc_back()
+    assert page._hold_edit is None
