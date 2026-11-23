@@ -508,28 +508,73 @@ class _CASCoverageWatch(QObject):
                       exc_info=True)
 
 
-def start_tone_player(window, main_config, counts):
+class _TonePlayerWatch(QObject):
     """CAS4: the alert tones, on whatever audio device this host has.
-    ``AuralEnabled: false`` in the main config turns them off; ``AuralDevice``
-    names the ALSA device (default ``default``), ``AuralVolume`` the level
-    (0.0 to 1.0, default 0.8). Never raises into boot: a fault costs the
-    tones only, and is logged."""
-    if not main_config.get("AuralEnabled", True):
-        cas_log.info("aural: off (AuralEnabled is false)")
-        return None
-    try:
-        player = instrument_table.instrument("TonePlayer")(
-            window, cas_on_panel=bool(sum(counts.values())),
-            device=str(main_config.get("AuralDevice", "default")),
-            volume=float(main_config.get("AuralVolume", 0.8)))
-    except Exception:
-        cas_log.error("aural: the tone player failed to start; alerts are "
-                      "visual only", exc_info=True)
-        return None
-    app = QApplication.instance()
-    if app is not None:
-        app.aboutToQuit.connect(player.stop)
-    return player
+
+    The player (``instruments/cas/aural.py``) is not primary-flight core, so
+    it is built only once there is something it could sound for: at once
+    when the panel carries a CAS window or marker, otherwise when ``CASSEQ``
+    or ``APDISC`` is first read good. Until then this watch checks the keys
+    without importing it, so a panel and gateway with neither never load it
+    (the core-only boot). The player has no Qt parent: the window holds it as
+    an attribute, and the link monitor cue stays the window's topmost child.
+
+    ``AuralEnabled: false`` in the main config turns the tones off;
+    ``AuralDevice`` names the ALSA device (default ``default``),
+    ``AuralVolume`` the level (0.0 to 1.0, default 0.8). Never raises into
+    boot: a fault costs the tones only, and is logged."""
+
+    POLL_MS = 1000
+    KEYS = ("CASSEQ", "APDISC")
+
+    def __init__(self, main_config, counts):
+        super().__init__()
+        self.player = None
+        self._timer = None
+        self.enabled = bool(main_config.get("AuralEnabled", True))
+        if not self.enabled:
+            cas_log.info("aural: off (AuralEnabled is false)")
+            return
+        self.on_panel = bool(sum(counts.values()))
+        self.device = str(main_config.get("AuralDevice", "default"))
+        self.volume = float(main_config.get("AuralVolume", 0.8))
+        if self.on_panel:
+            self.build()
+            return
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.POLL_MS)
+        self._timer.timeout.connect(self.check)
+        self._timer.start()
+
+    def check(self):
+        for key in self.KEYS:
+            try:
+                item = fix.db.get_item(key, wait=False)
+            except Exception:
+                continue
+            if not (item.old or item.bad or item.fail):
+                self._timer.stop()
+                self.build()
+                return
+
+    def build(self):
+        try:
+            self.player = instrument_table.instrument("TonePlayer")(
+                None, cas_on_panel=self.on_panel, device=self.device,
+                volume=self.volume)
+        except Exception:
+            cas_log.error("aural: the tone player failed to start; alerts "
+                          "are visual only", exc_info=True)
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.player.stop)
+
+    def stop(self):
+        if self._timer is not None:
+            self._timer.stop()
+        if self.player is not None:
+            self.player.stop()
 
 
 class _GroundBootWatch(QObject):
@@ -702,8 +747,12 @@ def initialize(config, config_path, preferences):
     except Exception:
         log.error("CAS coverage check failed to start", exc_info=True)
         mainWindow.casCoverage = None
-    mainWindow.tonePlayer = start_tone_player(mainWindow, config["main"],
-                                              cas_surfaces(screens))
+    try:
+        mainWindow.tonePlayer = _TonePlayerWatch(config["main"],
+                                                 cas_surfaces(screens))
+    except Exception:
+        log.error("aural: tone watch failed to start", exc_info=True)
+        mainWindow.tonePlayer = None
 
 
     def button_timeout():

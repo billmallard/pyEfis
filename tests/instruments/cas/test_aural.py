@@ -417,46 +417,60 @@ def test_disconnect_input_is_the_mode_strips_rule(ap_keys, qtbot):
 
 # -- CASW-AUR-006: start-up from the main config -------------------------------
 
-def test_gui_starts_the_player_from_the_main_config(ap_keys, qtbot, caplog):
-    """CASW-AUR-001, CASW-AUR-006: gui.py builds the player through the
-    instrument table on every display host,
-    with AuralDevice and AuralVolume from the main config; a device that
-    cannot open is logged and boot goes on."""
-    from PyQt6.QtWidgets import QWidget
+def test_gui_starts_the_player_from_the_main_config(ap_keys, qtbot):
+    """CASW-AUR-001, CASW-AUR-006: with a CAS widget on the panel, gui.py
+    builds the player at once through the instrument table, with AuralDevice
+    and AuralVolume from the main config; a device that cannot open is
+    logged and boot goes on."""
     from pyefis import gui
-    caplog.set_level(logging.WARNING)
-    w = QWidget()
-    qtbot.addWidget(w)
-    tp = gui.start_tone_player(w, {"AuralDevice": "pyefis_no_such_device",
-                                   "AuralVolume": 0.5}, {"PFD": 1})
+    w = gui._TonePlayerWatch({"AuralDevice": "pyefis_no_such_device",
+                              "AuralVolume": 0.5}, {"PFD": 1})
+    tp = w.player
     try:
         assert isinstance(tp, aural.TonePlayer)
+        assert tp.parent() is None
         assert tp.player.sink.device == "pyefis_no_such_device"
         assert tp.cas_live.on
         from array import array
         assert max(array("h", tp.player.scheduler.cycles[W])) <= 0.5 * 32767
     finally:
-        tp.stop()
+        w.stop()
+
+
+def test_gui_waits_for_cas_or_autopilot_before_loading_the_player(fix, qtbot):
+    """CASW-AUR-006: with no CAS widget, the player (not core) is not built
+    until CASSEQ or APDISC is read good, so a core-only boot never loads
+    it."""
+    from pyefis import gui
+    w = gui._TonePlayerWatch({"AuralDevice": "pyefis_no_such_device"}, {})
+    try:
+        w.check()
+        assert w.player is None
+        fix.db.define_item("APDISC", "APDISC", "bool", None, None, "", 2000,
+                           "")
+        item = fix.db.get_item("APDISC")
+        item.old = item.bad = item.fail = False
+        w.check()
+        assert isinstance(w.player, aural.TonePlayer)
+        assert not w.player.cas_live.on
+    finally:
+        w.stop()
 
 
 def test_gui_aural_off_builds_nothing(qtbot):
-    """CASW-AUR-006: AuralEnabled false: no player, no thread."""
-    from PyQt6.QtWidgets import QWidget
+    """CASW-AUR-006: AuralEnabled false: no player, no watch timer."""
     from pyefis import gui
-    w = QWidget()
-    qtbot.addWidget(w)
-    assert gui.start_tone_player(w, {"AuralEnabled": False}, {}) is None
+    w = gui._TonePlayerWatch({"AuralEnabled": False}, {"PFD": 1})
+    assert w.player is None and w._timer is None
 
 
 def test_gui_player_fault_never_reaches_boot(qtbot, monkeypatch, caplog):
     """CASW-AUR-006: a fault building the player costs the tones only."""
-    from PyQt6.QtWidgets import QWidget
     from pyefis import gui
 
     def boom(*a, **k):
         raise RuntimeError("no")
     monkeypatch.setattr(gui.instrument_table, "instrument", lambda n: boom)
-    w = QWidget()
-    qtbot.addWidget(w)
-    assert gui.start_tone_player(w, {}, {}) is None
+    w = gui._TonePlayerWatch({}, {"PFD": 1})
+    assert w.player is None
     assert "alerts are visual only" in caplog.text
