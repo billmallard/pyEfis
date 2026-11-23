@@ -1,0 +1,22 @@
+# Where a class named for a route concept may be defined in pyEfis (ARCHG2,
+# AER-6403).  ARCH0 found seven shapes of a waypoint across fix-gateway and
+# pyEfis; fix-gateway's own list (ARCHG1) freezes its side, and this one freezes
+# pyEfis's: the names fix-gateway guards, plus the pyEfis shapes ARCH0 named
+# (the route slot and Direct-To of the FIX bridge, the segments, the procedure
+# leg).  tools/check_fix_writers.py fails on a class (or a namedtuple/TypedDict)
+# with one of these names in any other file under src/ or tools/, and on a file
+# listed here that no longer defines it.
+#
+# Adding a file, or a name, is a one-line edit, and it is an architecture change:
+# ORG-018 has INTEGRATOR hold a PR that extends this list for review.
+Waypoint: [src/pyefis/flightplan/model.py, src/pyefis/flightplan/waypoints.py]
+Point: []
+Position: []
+Leg: []
+Plan: []
+Route: []
+RouteSlot: [src/pyefis/flightplan/fixbridge.py]
+DirectTo: [src/pyefis/flightplan/fixbridge.py]
+Segment: [src/pyefis/flightplan/model.py]
+RouteSegment: [src/pyefis/flightplan/fixbridge.py]
+ProcedureLeg: [src/pyefis/flightplan/procedures.py]
