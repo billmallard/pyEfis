@@ -50,6 +50,7 @@ groups:
       - src/pyefis/instruments/NumericalDisplay/
       - src/pyefis/instruments/edit_focus.py
       - src/pyefis/instruments/button/
+      - src/pyefis/instruments/conditions.py
       - src/pyefis/instruments/autopilot/
       - src/pyefis/instruments/tab_section/
       - src/pyefis/common/

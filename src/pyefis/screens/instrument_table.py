@@ -56,6 +56,7 @@ INSTRUMENTS = {
     "Button": "pyefis.instruments.button",
     "AutopilotPanel": "pyefis.instruments.autopilot",
     "ModeAnnunciator": "pyefis.instruments.autopilot.fma",
+    "Annunciator": "pyefis.instruments.annunciator",
     "TabSection": "pyefis.instruments.tab_section",
     # Powerplant group.
     "ArcGauge": "pyefis.instruments.gauges",
