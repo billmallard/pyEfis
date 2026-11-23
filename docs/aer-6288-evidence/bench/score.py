@@ -360,8 +360,9 @@ def judge(o, state, run_texts, last_fresh):
         # A flash's off phase: the box is drawn, the text is not, and texts
         # of about the same width tie on the box alone. The frame shows a box
         # where the expected mode's box goes, and nothing that contradicts it.
-        hidden = (not tied and exp[0] and mine_off >= best - HIDDEN_TOL
-                  and mine_off == mine)
+        hidden = bool(exp[0]) and mine_off == mine and \
+            mine_off >= best - HIDDEN_TOL and \
+            (not tied or rival >= mine - 1e-9)
         if hidden:
             detail.setdefault("_hidden", []).append(slot)
         elif not tied:
@@ -474,7 +475,9 @@ def main():
     for row, fr in results:
         by_label.setdefault(row["expected"], []).append((row, fr))
     for k, v in by_label.items():
-        print("  %4d frames  %s" % (len(v), k))
+        shown = sum(1 for row, _ in v if not row["detail"].get("_hidden"))
+        print("  %4d frames (%4d with every slot's text showing)  %s" % (
+            len(v), shown, k))
     sheet(results)
     glass(results)
 
