@@ -125,6 +125,28 @@ are in hundreds, so `20` is 2,000 ft/min.
 **Range** sets full scale up and down: 2,500 ft/min by default, 2,000 on the
 bench panel. Pick it to suit the aircraft's climb and descent performance.
 
+## Autopilot targets
+
+When an autopilot publishes its state, the tapes show the targets it is
+flying to. See [Autopilot](Autopilot). Each cue shows only while the
+autopilot's state keys are all current; if any goes old, bad or failed, the
+cues go.
+
+- **Selected airspeed** (`IASSEL`). A box at the top of the airspeed tape and
+  a bug on its right edge, shown while IAS is the active or an armed vertical
+  mode. The box border is green while IAS is active and white while it is only
+  armed. `---` means no target is set (`IASSEL` 0), and there is no bug.
+  Touch the box, then turn the knob: the inner knob steps 1 kt and the outer
+  ring 10 kt, never below 1 kt. Push sets it to your current airspeed.
+- **Altitude capture.** While the autopilot captures the selected altitude
+  (`APALTCAP`), the selected-altitude box border turns green
+  (`altsel_capture_color`) and thickens. The amber deviation alert outranks it.
+- **Selected vertical speed** (`VSSEL`). A bug on the vertical speed scale
+  while VS is the active vertical mode: on the right edge of an
+  `altimeter_tape` showing `VS`, on the left edge of a `vsi_pfd`.
+
+pyEFIS shows these targets. It does not fly to them.
+
 ## When data is flagged
 
 A **bad** value is suspect: its source still sends it but has flagged it. An
@@ -133,9 +155,9 @@ the tapes treat it as failed.
 
 | Instrument | Bad | Old or failed |
 |---|---|---|
-| Airspeed or altitude tape | An amber frame round the tape; the scale stays. The readout digits blank, the box outline stays | A red X across the whole tape, with the scale, bands, bug and trend arrow removed. The readout is a grey box with a red `XXX` |
+| Airspeed or altitude tape | An amber frame round the tape; the scale stays. The readout digits and drum stay, in amber | A red X across the whole tape, with the scale, bands, bug and trend arrow removed. The readout is a grey box with a red `XXX` |
 | TAS box | `---` | `---`. It also reads `---` while `IAS` is old or failed |
-| VSI | An amber frame round the scale; the bar stays, the number blanks | The scale and bar removed, a red X across the scale, a red `XXX` |
+| VSI | An amber frame round the scale; the bar stays, the number stays in amber | The scale and bar removed, a red X across the scale, a red `XXX` |
 
 | Instrument | Old or bad | Failed |
 |---|---|---|
@@ -157,6 +179,9 @@ Defaults are shown, with the bench panel's value where it differs.
 | Show TAS box (`show_tas`) | on | off | The true-airspeed box at the bottom. |
 | Show trend arrow (`show_trend`) | on | | |
 | Trend look-ahead (`trend_lookahead`) | 6 s | | How far ahead the arrow projects. |
+| IASSEL bug and box (`ias_bug`) | on | | The [selected-airspeed](#autopilot-targets) box and bug. |
+| IASSEL bug color (`ias_bug_color`) | `#00ffff` | | |
+| Touch to set IASSEL (`touch_edit`) | on | | Touch the box, then turn the knob. |
 
 The tape always reads `IAS`. Its V-speeds are not panel options; they are
 [Aircraft parameters](Designing-Your-Panel#aircraft-parameters).
@@ -180,6 +205,10 @@ The tape always reads `IAS`. Its V-speeds are not panel options; they are
 | Altitude bug color (`alt_bug_color`) | `#00ffff` | | |
 | Altitude alert color (`alt_bug_alert_color`) | `#ffb000` | | Box and bug colour while `ALTSEL` annunciates. |
 | Selected-altitude key (`alt_bug_dbkey`) | `ALTSEL` | | |
+| Altitude capture color (`altsel_capture_color`) | `#00ff00` | | Box border while the autopilot captures `ALTSEL`. |
+| VSSEL bug (`vs_bug`) | on for a `VS` tape, off for `ALT` | | The [selected-VS bug](#autopilot-targets). |
+| VSSEL bug color (`vs_bug_color`) | `#00ffff` | | |
+| Selected-VS key (`vs_bug_dbkey`) | `VSSEL` | | |
 
 **Altimeter Trend Tape** (the VSI)
 
@@ -234,6 +263,9 @@ Each option is listed with the others for its type in
 | `BARO` | Altitude tape | yes, when you set it |
 | `ALTSEL` | Altitude tape | yes, when you set it |
 | `VS` | VSI | no |
+| `IASSEL` | Airspeed tape (selected-airspeed box and bug) | yes, when you set it |
+| `VSSEL` | VS tape, `vsi_pfd` (selected-VS bug) | no |
+| `APVERT`, `APVERTARM`, `APALTCAP`, and the other autopilot state keys | Airspeed tape, altitude tape, VS tape, `vsi_pfd` (when the targets show) | no |
 
 See [FIX Database Keys](FIX-Database-Keys).
 

@@ -23,8 +23,10 @@ too. Each table is generated from pyEFIS's instrument registry; see
 | `turn_coordinator` | Rate-of-turn and slip. |
 | `wind_display` | Head/tail and cross wind components. |
 
-The altitude tape's altimeter-setting and selected-altitude boxes can be
-selected with the knob; give the tape an `encoder_order`. The other flight
+The altitude tape's altimeter-setting and selected-altitude boxes, and the
+airspeed tape's selected-airspeed box while it is shown, can be selected with
+the knob; give the tape an `encoder_order`. The HSI's HDG and CRS take the
+knob after a touch, but are not on the knob walk. The other flight
 instruments are not on the knob.
 
 ---
@@ -45,6 +47,10 @@ FIX keys it reads by default: `IAS`.
 | `show_tas` | Show TAS box | on | on / off | show the true-airspeed readout box (from TAS) |
 | `show_trend` | Show trend arrow | on | on / off | show the acceleration trend vector along the tape |
 | `trend_lookahead` | Trend look-ahead (s) | `6` |  | seconds ahead the trend vector projects current accel |
+| `ias_bug` | IASSEL bug and box | on | on / off | the IASSEL bug and a target box at the top of the tape, shown while the autopilot reports IAS active or armed |
+| `ias_bug_color` | IASSEL bug color | `#00ffff` | colour | colour of the IASSEL bug and the target box value |
+| `touch_edit` | Touch to set IASSEL | on | on / off | touch the IASSEL box, then turn the knob to set the autopilot's target airspeed: inner ring 1 kt, outer ring 10 kt, push syncs to the current airspeed. Only while the box is shown (IAS active or armed) |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -155,12 +161,19 @@ FIX keys it reads by default: `ALT`.
 | `alt_bug_color` | Altitude bug color | `#00ffff` | colour | colour of the selected-altitude box text and bug |
 | `alt_bug_alert_color` | Altitude alert color | `#ffb000` | colour | box text and bug colour while fix-gateway flags an altitude deviation (the key's annunciate flag) |
 | `alt_bug_dbkey` | Selected-altitude key | `ALTSEL` | FIX key | FIX key holding the selected altitude (default ALTSEL) |
+| `altsel_capture_color` | Altitude capture color | `#00ff00` | colour | selected-altitude box border while the autopilot captures it (APALTCAP) |
+| `vs_bug` | VSSEL bug | on | on / off | on a VS tape, the VSSEL bug while the autopilot reports VS active (on for a VS tape, off for an ALT tape) |
+| `vs_bug_color` | VSSEL bug color | `#00ffff` | colour | colour of the VSSEL bug |
+| `vs_bug_dbkey` | Selected-VS key | `VSSEL` | FIX key | FIX key holding the selected vertical speed (default VSSEL) |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
 
 With `altitude: true` the **Units** button switches it between ft and m. The
 same type draws a vertical-speed tape when its `dbkey` is `VS`; the trend
-arrow, altimeter setting and selected-altitude box are then off unless set.
+arrow, altimeter setting and selected-altitude box are then off unless set,
+and the `VSSEL` bug is on unless set. On an `ALT` tape the `VSSEL` bug is off
+unless set.
 
 ## `altimeter_dial`
 
@@ -230,7 +243,10 @@ Values it reads from the FIX item, set in fix-gateway (the aircraft parameters),
 
 A narrow strip with a dot that rides up and down with the rate, on a scale that
 spreads out the low rates. When `VS` is bad the dot turns amber inside an amber
-frame; when it is old or failed a red X across the strip replaces it.
+frame; when it is old or failed a red X across the strip replaces it. While
+the autopilot reports VS as the active vertical mode, a `VSSEL` bug sits on
+the left edge; see
+[Autopilot targets](Airspeed-Altitude-and-Vertical-Speed#autopilot-targets).
 
 ![VSI PFD](../images/vsi_pfd.png)
 
@@ -240,7 +256,10 @@ frame; when it is old or failed a red X across the strip replaces it.
 
 FIX keys it reads by default: `VS`.
 
-No options in the configurator beyond the ones every instrument takes.
+| Option | Configurator label | Default | Values | What it does |
+|---|---|---|---|---|
+| `vs_bug` | VSSEL bug | on | on / off | the VSSEL bug on the scale while the autopilot reports VS active |
+| `vs_bug_color` | VSSEL bug color | `#00ffff` | colour | colour of the VSSEL bug |
 
 <!-- /generated -->
 
@@ -271,7 +290,7 @@ FIX keys it reads by default: `COURSE`, `CDI`, `GSI`, `HEAD`, `BRG1`, `BRG2`, `B
 | `source_label_enabled` | Source label | on | on / off | show the nav-source annunciation (GPS / VLOC1 / VLOC2, or VOR/LOC when NAVTYPE is available) on the rose face |
 | `heading_bug_enabled` | Heading bug | off | on / off | show the cyan heading bug at the selected heading (HEADBUG) |
 | `heading_bug_color` | Heading bug color | `#00ffff` | colour | heading-bug colour |
-| `touch_edit` | Touch to set HDG / CRS | on | on / off | touch the HDG or CRS readout, then turn the knob to set it: HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the selected VLOC source. On GPS, CRS is editable only while the flight plan is in OBS (FPLSTATE 4): it sends `FPLCMD OBS <deg>` at most every 250 ms, ending on the last value, and push syncs to the bearing to the waypoint (GPSBRG). Inner ring 1 deg, outer ring 10 deg; push syncs HDG to the heading or centres the CDI on CRS |
+| `touch_edit` | Touch to set HDG / CRS | on | on / off | touch the HDG or CRS readout, then turn the knob to set it: HDG sets HEADBUG, CRS sets NAV1CRS or NAV2CRS for the selected VLOC source. On GPS, CRS is editable only while the flight plan is in OBS: it sets the OBS course, and push syncs it to the bearing to the waypoint. Inner ring 1 deg, outer ring 10 deg; push syncs HDG to the heading or centres the CDI on CRS |
 | `track_indicator_enabled` | Track diamond | on | on / off | show the magenta GPS ground-track diamond (TRACK), above the speed gate |
 | `track_color` | Track diamond color | `#ff00ff` | colour | GPS ground-track diamond colour |
 | `track_min_speed` | Track min speed (kt) | `5` | 0 to 50, step 1 | hide the track diamond below this groundspeed (kt) |

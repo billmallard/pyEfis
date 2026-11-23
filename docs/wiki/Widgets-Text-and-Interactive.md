@@ -127,6 +127,7 @@ instrument, for example trim up and down over a trim bar.
 | `transparent` | Transparent background | off | on / off | draw no fill so what is behind the button shows through |
 | `hover_show` | Show only on hover | off | on / off | hide the button until the pointer is over it |
 | `config` | Config file (legacy) | empty |  | path to an external button YAML; blank = use the fields above |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
 
@@ -273,6 +274,7 @@ sort, including by distance from the aircraft.
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|
 | `lists` | Lists | unset |  | selectable lists -- list of {name, file} entries |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
 
@@ -351,6 +353,7 @@ malformed checklist shows `No checklist`.
 | `done_color` | Acknowledged colour | `#00ff00` | colour | colour of an item once it has been acknowledged |
 | `current_color` | Current-row colour | `#ffaa00` | colour | highlight colour of the current row while the encoder is controlling the checklist |
 | `section_color` | Section colour | `#aaaaaa` | colour | colour of section subheaders and the progress line |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
 

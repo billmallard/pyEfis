@@ -11,6 +11,7 @@
 - [Attitude and Synthetic Vision](Attitude-and-Synthetic-Vision)
 - [Airspeed, Altitude and Vertical Speed](Airspeed-Altitude-and-Vertical-Speed)
 - [The HSI](The-HSI)
+- [Autopilot](Autopilot)
 - [Moving Map](Moving-Map)
 - [Flight Plan](Flight-Plan)
 - [Engine Monitoring](Engine-Monitoring)
