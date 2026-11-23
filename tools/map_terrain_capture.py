@@ -116,7 +116,7 @@ def main(argv=None):
         return 3
     img.save(args.out)
     print(f"map: wrote {args.out} ({args.terrain_mode}, gate "
-          f"{terrain._apt_gate})")
+          f"{getattr(terrain, '_apt_gate', None)})")
     return 0
 
 
