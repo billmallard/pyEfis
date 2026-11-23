@@ -77,3 +77,20 @@ and proposes the follow-up.
 - `step-*.png`: the frames the step checks measured.
 - Fonts are DejaVu from the sandbox's fontconfig, not the panel's; GL is llvmpipe, not the
   target GPU.
+
+## Bench config (Bill's ruling, 2026-11-23)
+
+Placement is the builder's; on the two bench units the window gets its own tab next to the
+radio tab, and every other flight screen carries a marker. `bench_cas_config.py` made the
+change on each box (backups under `~/bench-scratch/aer6346-config-backup-*`), with this branch
+staged by `bench-deploy.sh --ref` and the gateway's `cas` plugin turned on in its site config.
+
+- **Beelink** (X11): `beelink-bench-pfd-marker.png` is the live PFD with the amber `CAUTION`
+  marker (top centre) and the new `CAS` tab after `Radio`; `beelink-bench-cas-tab.png` is the
+  same panel after a tap on that tab: the window shows the live `HDG FAIL` caution (X-Plane is
+  off, so no heading source). x11grab of the real display.
+- **Pi 5** (eglfs): no screenshot path exists there (bench rules). The boot screen
+  `managed.yaml` (MAP_CTL_TEST) now has tabs Flight Plan, Engine, Radios, CAS and a marker;
+  pyEfis and fixgw are active with no restart since, and the gateway serves fresh `CAS*` keys
+  (quiet: the sensor rig supplies heading). Its hand-edited fix-gateway `default.yaml`
+  predated the `cas` connection, so `CAS_CONFIG` was added to its list.
