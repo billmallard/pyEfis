@@ -54,6 +54,7 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `ALT`, `ROLL`, `ALAT`, `TA
 | `bankMarkSize` | Bank tick size (px) | `10` |  | length of the bank-arc ticks (auto-scale off) |
 | `bank_position` | Bank scale position (%) | `50` | 0 to 100 | vertical position of the bank-arc centre, percent up from the bottom (50 = centred, the classic look); the whole cluster incl. pointer and slip ball moves with it |
 | `bank_radius` | Bank scale radius (% height) | `33.333` | 10 to 60, step 0.1 | radius of the bank arc as a percent of widget height (33.3 = the classic height/3); an explicit bankAngleRadius px in YAML overrides it |
+| `fd_style` | Flight director style | `single_cue` | `single_cue`, `cross_pointer`, `off` | single_cue: a magenta command chevron the aircraft symbol flies into; cross_pointer: separate pitch and roll bars; off: no flight director. Drawn only while FDENG is on and FDPITCH/FDROLL are current |
 | `pitch_ladder_avoid_bank` | Ladder stops below bank arc | off | on / off | G1000-style declutter: the ladder climbs into the bank arch but stops below the slip/skid ball |
 | `horizon_heading_marks` | Horizon heading marks | off | on / off | tick marks + labels for compass heading along the horizon |
 | `horizon_heading_interval` | Heading tick interval (deg) | `10` | 1 to 45, step 1 | degrees of heading between the horizon ticks |
@@ -89,6 +90,7 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `ALT`, `ROLL`, `ALAT`, `TA
 | `svs_traffic` | Traffic | on | on / off | draw ADS-B traffic from the TFC block in the scene, with the moving map's symbols, relative-altitude tag and climb/descent arrow; never hidden by terrain (rendered on the device; not shown in the editor preview) |
 | `svs_traffic_range_nm` | Traffic range (NM) | `10` | 1 to 50 | targets farther than this are left to the map (rendered on the device; not shown in the editor preview) |
 | `svs_perf_log` | Perf: log summary | off | on / off | print an SVS per-frame profiler summary every 2s (collector/draw timings) to the log -- mirrors map_perf_log. Dev/bench diagnostic; off by default (rendered on the device; not shown in the editor preview) |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
 
@@ -227,12 +229,14 @@ FIX keys it reads by default: `PITCH`, `ROLL`, `ALAT`, `TAS`.
 | `bankMarkSize` | Bank tick size (px) | `10` |  | length of the bank-arc ticks (auto-scale off) |
 | `bank_position` | Bank scale position (%) | `50` | 0 to 100 | vertical position of the bank-arc centre, percent up from the bottom (50 = centred, the classic look); the whole cluster incl. pointer and slip ball moves with it |
 | `bank_radius` | Bank scale radius (% height) | `33.333` | 10 to 60, step 0.1 | radius of the bank arc as a percent of widget height (33.3 = the classic height/3); an explicit bankAngleRadius px in YAML overrides it |
+| `fd_style` | Flight director style | `single_cue` | `single_cue`, `cross_pointer`, `off` | single_cue: a magenta command chevron the aircraft symbol flies into; cross_pointer: separate pitch and roll bars; off: no flight director. Drawn only while FDENG is on and FDPITCH/FDROLL are current |
 | `pitch_ladder_avoid_bank` | Ladder stops below bank arc | off | on / off | G1000-style declutter: the ladder climbs into the bank arch but stops below the slip/skid ball |
 | `horizon_heading_marks` | Horizon heading marks | off | on / off | tick marks + labels for compass heading along the horizon |
 | `horizon_heading_interval` | Heading tick interval (deg) | `10` | 1 to 45, step 1 | degrees of heading between the horizon ticks |
 | `horizon_heading_label_interval` | Heading label interval (deg) | `20` | 5 to 90, step 5 | degrees of heading between the numeric labels |
 | `horizon_heading_tick_length` | Heading tick length (px) | `5` | 1 to 30, step 1 | length of the horizon heading ticks (px) |
 | `horizon_heading_color` | Heading mark colour | `#ffffff` | colour | colour of the horizon heading ticks and labels |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
 
