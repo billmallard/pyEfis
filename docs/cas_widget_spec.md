@@ -40,9 +40,10 @@ window, the design's first concern is that a quiet window can never be a failed 
   window or marker.
 - **Stale is never current.** During link loss or `CAS FAIL`, and for 2 s after they
   clear, only local alerts are drawn.
-- **Shipped config.** `pfd.yaml` and `pfd_ai_only.yaml` carry a window (placement A,
-  provisional until the project owner picks A, B or C); `radio.yaml`, `ems.yaml`,
-  `ems2.yaml` and `flightplan.yaml` carry a marker.
+- **Shipped config.** No shipped screen carries the window: where it goes is the builder's
+  choice in the configurator, on its own screen or beside the attitude display (project
+  owner, 2026-11-23). Every shipped screen but data status and About carries a marker, so
+  the shipped panel raises no `CAS NOT SHOWN` and the full list opens from any screen.
 
 ## 3. Data contract
 

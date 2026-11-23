@@ -286,7 +286,9 @@ def pyefis_config(tmp, port, placement, status_path, no_window=False):
     p = os.path.join(cfg, "screens/pfd.yaml")
     s = open(p).read()
     row, col, rows, cols, lines = PLACEMENTS[placement]
-    i = s.index("    - type: cas_window")
+    # The shipped PFD ends with a CAS marker (no shipped window): replace it
+    # with the window at the placement under test.
+    i = s.index("    # Crew alerting")
     block = ("    - type: cas_window\n      row: {}\n      column: {}\n"
              "      span:\n        rows: {}\n        columns: {}\n"
              "      options:\n        lines: {}\n        status_path: {}\n"
