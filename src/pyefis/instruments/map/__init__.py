@@ -23,6 +23,7 @@ from pyefis.flightplan import refusal as fp_refusal
 from pyefis.flightplan import model as fp_model
 from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
+from pyefis.instruments.ai import terrain_shading
 from pyefis.instruments.map import layers as map_layers
 from pyefis.instruments.map import nd as map_nd
 from pyefis.instruments.map.perf import MapPerfStats
@@ -232,6 +233,14 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.layer_terrain = True
         self.tile_path = ""                    # GLO-30/SRTM HGT tree
         self.terrain_mode = "relief"           # or "caution"
+        # Caution mode paints the SVS hazard bands over the relief
+        # (SVSSHADE2): the same thresholds, palette and airport collapse,
+        # defaults from pyefis.instruments.ai.terrain_shading.
+        self.terrain_palette = terrain_shading.DEFAULT_PALETTE
+        self.clearance_green_ft = terrain_shading.CLEARANCE_GREEN_FT
+        self.clearance_yellow_ft = terrain_shading.CLEARANCE_YELLOW_FT
+        self.airport_proximity_nm = terrain_shading.AIRPORT_PROXIMITY_NM
+        self.airport_gate_agl_ft = terrain_shading.AIRPORT_GATE_AGL_FT
         self.water_db_path = ""                # water.sqlite (#91)
         self.water_max_vertices = 512          # per-polygon raster cap
         # MP5 (#98): numpy even-odd scanline fill is the default; "qt"

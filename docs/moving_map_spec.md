@@ -115,8 +115,12 @@ class MapLayer:                    # pyefis/instruments/map/layers/base.py
   cached; the map is its second consumer). Rendered per-tile to
   QImage on the worker, LRU-cached; repaint = blit + rotate.
 - Option `terrain_mode`: `relief` (absolute hypsometric) or
-  `caution` (TAWS-style relative coloring vs ALT: amber <1000 ft,
-  red <100 ft below aircraft — the SVS clearance palette, top-down).
+  `caution`: the relief with the SVS hazard bands over it, by one rule
+  shared with the SVS (`ai/terrain_shading.py`, SVSSHADE2): magenta
+  above ownship, red under `clearance_yellow_ft` (500 ft), amber under
+  `clearance_green_ft` (1,000 ft), colours from `terrain_palette`, and
+  the airport-proximity collapse (within 5 NM, terrain below field
+  elevation + 400 ft gets no band).
 
 ### 5.2 Airports (z=30, default on)
 - Source: NASR `airports.sqlite` via the existing airport_db

@@ -1462,8 +1462,22 @@ _register(InstrumentSpec(
                   "when a working receiver stops (no database)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
-             help="relief = sectional-style hypsometric; caution = "
-                  "TAWS-style amber/red relative to altitude"),
+             help="relief = sectional-style hypsometric; caution = the "
+                  "same relief with the SVS hazard bands over it: amber "
+                  "and red by clearance below ownship, magenta above"),
+        Prop("terrain_palette", "enum", default="clearance",
+             enum=["clearance", "subdued", "high_contrast"],
+             label="Terrain hazard palette",
+             help="caution-mode band colours; the same schemes as the "
+                  "SVS palette"),
+        Prop("clearance_green_ft", "number", default=1000,
+             label="Caution clearance (ft)",
+             help="caution mode: amber below this height over terrain "
+                  "(the SVS default)"),
+        Prop("clearance_yellow_ft", "number", default=500,
+             label="Warning clearance (ft)",
+             help="caution mode: red below this height over terrain "
+                  "(the SVS default)"),
         Prop("water_db_path", "string", default="",
              label="Water db path",
              help="water.sqlite (the SVS water_db_path; on the Pi "
