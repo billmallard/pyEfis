@@ -198,7 +198,15 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   the conversion `proc_load` uses for `T010`. Insert puts an `HM` slot at
   the same fix right after it, magnetic `FPLfCRS`, in the fix's own segment
   (`FlightPlan.insert_hold`); a plain fix gets a waypoint row of its own.
-  Offered only where `hold.can_hold_at` says so), WPT Info (full detail, see below), Set Role
+  Offered only where `hold.can_hold_at` says so. **As published** (HOLDFIX3,
+  AER-6328): when `navaid_db_path`'s `holds` table has holds at the fix (same
+  ident, within 0.5 nm), a PUBLISHED row under the title fills side, inbound
+  course, turns and leg from one; with several it lists them, enroute and
+  arrival first, eight to a page. NASR publishes no leg time, so a timed hold
+  gets the AIM time for `ALT` and the leg is marked STD TIME in amber until
+  the pilot types a time. The fields go through the same checks as a typed
+  clearance, so a published hold whose side contradicts its inbound course is
+  refused), WPT Info (full detail, see below), Set Role
   (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
   Direct To (the DTO page), PROC (the PROC page, PA7), Catalog (the Catalog
