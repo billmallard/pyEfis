@@ -3260,3 +3260,8 @@ class DG_Tape(QGraphicsView):
     def wheelEvent(self, event):
         pass
 
+
+
+def _throwaway_second_baro_writer():
+    # ARCHG2 (AER-6403) throwaway: a second pyEfis BARO writer. Never merged.
+    fix.db.set_value("BARO", 29.92)
