@@ -80,7 +80,14 @@ gateway, `pyefis.service`, display `:0` or the live config trees.
 
 - A **private fix-gateway** (`dev`, the AFC2 adapter with `APALTREF`) on its
   own `udp_in` 49104 and netfix port 3594. It reads X-Plane over its own RREF
-  subscriptions. `mkconfig_fgw.py` is AER-6052's builder, unchanged.
+  subscriptions. `mkconfig_fgw.py` is AER-6052's builder, unchanged. It
+  enables only NETFIX, SYSTEM and XPLANE, so the compute stage is off.
+  **That is why the HSI shows a red NAV flag in every frame**, even while
+  the autopilot is coupled to GPS: `COURSE` and `CDI` are outputs of
+  compute's NAVSRC select (`connections/compute.yaml`), so nothing writes
+  them, and the HSI correctly flags a CDI it has no data for. The flag
+  belongs to the rig, not to the glass or the autopilot. The strip and the
+  autopilot keys do not depend on compute.
 - A **private pyEfis `dev`** on Xvfb `:7`, 1920x1080. `mkconfig_pyefis.py`
   takes the bench's live PFD screen (`managed.yaml` PFD) with its options
   unchanged, drops the tab section, and adds `ap_annunciator` across the top

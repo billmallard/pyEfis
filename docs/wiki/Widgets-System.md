@@ -95,9 +95,12 @@ No options in the configurator beyond the ones every instrument takes.
 
 <!-- /generated -->
 
-pyEFIS adds this screen to every configuration that lacks it, and never boots
-to it: a panel whose default screen is Data Status, or is not loaded, boots to
-the Continue target or the first other screen instead. At start-up Continue is
+pyEFIS adds this screen to every configuration that lacks it, and never uses
+it as the flight screen: a panel whose default screen is Data Status, or is
+not loaded, uses the Continue target or the first other screen instead. It
+boots to this screen only on the ground; see
+[Data Status, Updates and Notices](Data-Status-Updates-and-Notices). If it
+fails to build, it is dropped and pyEFIS boots the flight screen. At start-up Continue is
 pointed at the panel's default screen. Its options are set in YAML:
 
 | Option | Default | What it does |

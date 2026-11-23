@@ -34,10 +34,16 @@ obstacle layer on the map.
 | Dashed line | Missed-approach legs. |
 | Dotted line | Vector legs. |
 | Racetrack | A hold or procedure turn, drawn as its pattern. |
-| Entry at a hold | The parallel or teardrop entry fix-gateway's engine will fly into the next hold, and its name (`PARALLEL`, `TEARDROP` or `DIRECT`, or `PAR`/`TDP`/`DIR` on a small map) above the hold fix. Dashed while it is the engine's prediction, solid once the aircraft has reached the fix. A direct entry draws nothing but the name. With a gateway that does not publish the entry, the racetrack is drawn alone. |
+| Entry at a hold | The parallel or teardrop entry fix-gateway's engine will fly into the next hold, and its name (`PARALLEL`, `TEARDROP` or `DIRECT`, or `PAR`/`TDP`/`DIR` on a small map) above the hold fix, at 80 nm and below. Dashed while it is the engine's prediction, solid once the engine reports it is flying that entry. A direct entry draws nothing but the name. With a gateway that does not publish the entry, the racetrack is drawn alone. |
 | Rounded corner | A fly-by turn: the arc fix-gateway's engine will fly at that waypoint. The leg into it ends at the middle of the arc, where the engine moves on to the next leg. A corner stays square where the engine turns no arc, or where a leg next to it is too short or is a hold or vector. |
 | Magenta line from where you were | An off-route Direct-To. |
 | Dashed magenta line past the runway | The extended final course, 5 nm, while the plan is suspended at the missed approach point. |
+| Magenta line through the waypoint, in OBS | GPS OBS: the course you set, through the waypoint you are flying to. It runs 30 nm or 1.5 map ranges each side of the waypoint, whichever is longer. The plan's leg into that waypoint is then drawn white, like the legs ahead. See [Flight Plan](Flight-Plan#the-menu). |
+
+A line longer than 110 nm is drawn along its great circle, through points no
+more than 20 nm apart, so it shows the course the engine flies. This applies to
+plan legs, hold and procedure-turn patterns, the Direct-To line and the OBS
+line.
 
 Waypoint symbols follow their type: hexagon for a VOR, stippled disc for an
 NDB, triangle for a fix, circle for an airport, filled diamond for a user

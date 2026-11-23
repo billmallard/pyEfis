@@ -82,7 +82,8 @@ While this screen is up after a ground start, airspeed or groundspeed reaching
 the limit switches to the flight screen by itself, so a takeoff never waits on
 **Continue**. Otherwise it stays until you touch **Continue**. A panel that
 names this screen as its default uses the screen behind Continue as its flight
-screen.
+screen. If this screen fails to build, pyEFIS drops it and starts on the flight
+screen; a touch on the DATA flag then does nothing.
 
 ### Updating
 

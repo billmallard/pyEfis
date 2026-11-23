@@ -109,6 +109,7 @@ FIX keys it reads by default: `FPLCOUNT`, `FPLNAME`, `FPLSEQ`, `FPLSTATE`, `FPLA
 | `future_color` | Future leg colour | `#ffffff` | colour | colour of upcoming (not yet flown) legs |
 | `past_color` | Past leg colour | `#808080` | colour | colour of already-flown legs |
 | `row_height_mm` | List row height (mm) | `14` | 6 to 30, step 0.5 | physical height of one flight-plan row on the glass. Geometry, not text size: it sets the row pitch, the type icon and the row font. A taller pane shows MORE legs at this height rather than fewer, larger ones. Needs screenDiagonalInches to be correct for the device. |
+| `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
 
