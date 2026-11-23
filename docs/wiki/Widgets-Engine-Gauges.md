@@ -241,12 +241,10 @@ for the unit switches, pyEFIS applies them and logs that they are undeclared.
 | `temperature: true`, `pressure: true` | off | Let the **Units** button switch this gauge between °C and °F, or inHg and hPa. |
 | `altitude: true` | off | The same for ft and m, on `numeric_display` only. |
 | `clipping` | off | Hold the value, and any edit, inside the item's range. |
-| `encoder_set_key` | the `dbkey` | The FIX key the knob edits. |
-| `encoder_multiplier` | 1 | Inner-knob step. |
-| `encoder_coarse_multiplier` | 10 | Outer ring step, as a multiple of the inner. |
-| `encoder_set_real_time` | off | Write each step at once, rather than on the push. |
-| `touch_edit` | off | Select it by touch as well as with the knob. |
-| `encoder_order` | unset | Its place in the knob's order. |
+
+The knob options (`encoder_order`, `encoder_set_key`, `encoder_multiplier`,
+`touch_edit` and the rest) are in the configurator; each gauge's table above
+lists them.
 
 Selected and turned, a gauge changes its value; a push keeps it; leaving it
 until the knob times out puts the old value back.
