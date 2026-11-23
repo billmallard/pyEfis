@@ -101,9 +101,11 @@ strip itself only clears it.
 | Remove | Take it out of the plan. |
 
 A fix inside an airway or procedure offers **Hold...** too, and a hold you
-built there offers **Remove Hold**. While you fly a hold you built, the
-menu's Suspend item reads **Exit hold**: the hold ends at the next pass over
-the fix. In the list and its menus, such a hold reads `<fix> HOLD`.
+built there offers **Remove Hold**. While you fly a hold that ends only when
+you end it (`HM`), whether you built it or it came with a procedure such as a
+missed approach, the menu's Suspend item reads **Exit hold**: the hold ends at
+the next pass over the fix. In the list and its menus, a hold you built reads
+`<fix> HOLD`.
 
 Touch an airway row for **Change Exit**, **Change Entry**, **Show Fixes**
 (each fix with its course, distance and MEA), **Load Airway at** its exit
@@ -240,7 +242,7 @@ long push goes from a chart to the list, then to the flight plan page.
 | **Store** | Save it to the catalog. |
 | **Clear** | Empty the plan, after a confirmation. |
 | **Hold at PPOS** | Hold where you are now. The hold editor opens on `PPOS`, inbound on your present track (with no track, on the 360 radial, north of the fix), right turns. **Insert** makes a waypoint named `PPOS` where you are at that moment and puts it, with its hold, ahead of the waypoint you were flying to (after the hold you are in, if any; at the start of the plan with no active leg), and starts the hold at once. Exiting the hold flies on to that waypoint. If the engine does not start the hold, the message strip gives its reason or `HOLD NOT ACTIVATED`. Without a GPS position it says `NO GPS POSITION`. |
-| **Suspend** / **Resume** | Stop or restart sequencing. At the missed approach point, Resume reads **Fly the missed**; in a hold you built (`HM`), it reads **Exit hold**. |
+| **Suspend** / **Resume** | Stop or restart sequencing. At the missed approach point, Resume reads **Fly the missed**; in a hold that ends only when you end it (`HM`), it reads **Exit hold**. |
 | **OBS** / **OBS Off** | GPS OBS: fly a course of your choice through the waypoint you are flying to. **OBS** starts on the present desired track, so the needle does not move; then, with the HSI on GPS, turn CRS to set the course. See [The HSI](The-HSI). **OBS Off** goes back to the plan. If the engine refuses, the message strip says why, for example `OBS NOT AVAILABLE ON FINAL APPROACH`, or `OBS REFUSED`. The map draws the course; see [Moving Map](Moving-Map#the-flight-plan). |
 | **CDI Scale** | Step the HSI's full-scale deflection through 0.3, 1.0 and 2.0 nm and back to **AUTO**, which scales by phase of flight. See [The HSI](The-HSI#how-far-off-course-cdi-scaling). |
 | **Delete** | Delete the plan, after a confirmation. |
