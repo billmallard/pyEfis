@@ -314,6 +314,22 @@ class CASModel:
     def unacked(self):
         return any(not m.acked for m in self.messages())
 
+    def aural_level(self):
+        """The level whose tone sounds (CAS4, brief section 7): the gateway's
+        ``CASTOP`` while its list is shown, raised by any unacknowledged
+        local alert. ``CASTOP`` is the plugin's own answer, so it is read,
+        not recomputed from the slots. During link loss or ``CAS FAIL`` it is
+        not read at all: a stale ``CASTOP`` must not sound (C4)."""
+        level = max([m.level for m in self.local_messages() if not m.acked]
+                    or [0])
+        if not self.local_only:
+            try:
+                top = int(self._items["CASTOP"].value)
+            except (KeyError, TypeError, ValueError):
+                top = 0
+            level = max(level, min(WARNING, max(0, top)))
+        return level
+
     @property
     def seq(self):
         return None if self.local_only else self.snapshot[0]

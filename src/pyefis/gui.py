@@ -508,6 +508,30 @@ class _CASCoverageWatch(QObject):
                       exc_info=True)
 
 
+def start_tone_player(window, main_config, counts):
+    """CAS4: the alert tones, on whatever audio device this host has.
+    ``AuralEnabled: false`` in the main config turns them off; ``AuralDevice``
+    names the ALSA device (default ``default``), ``AuralVolume`` the level
+    (0.0 to 1.0, default 0.8). Never raises into boot: a fault costs the
+    tones only, and is logged."""
+    if not main_config.get("AuralEnabled", True):
+        cas_log.info("aural: off (AuralEnabled is false)")
+        return None
+    try:
+        player = instrument_table.instrument("TonePlayer")(
+            window, cas_on_panel=bool(sum(counts.values())),
+            device=str(main_config.get("AuralDevice", "default")),
+            volume=float(main_config.get("AuralVolume", 0.8)))
+    except Exception:
+        cas_log.error("aural: the tone player failed to start; alerts are "
+                      "visual only", exc_info=True)
+        return None
+    app = QApplication.instance()
+    if app is not None:
+        app.aboutToQuit.connect(player.stop)
+    return player
+
+
 class _GroundBootWatch(QObject):
     """Leave the boot data-status screen when the aircraft moves (BOOT1).
 
@@ -678,6 +702,8 @@ def initialize(config, config_path, preferences):
     except Exception:
         log.error("CAS coverage check failed to start", exc_info=True)
         mainWindow.casCoverage = None
+    mainWindow.tonePlayer = start_tone_player(mainWindow, config["main"],
+                                              cas_surfaces(screens))
 
 
     def button_timeout():
