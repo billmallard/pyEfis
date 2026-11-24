@@ -224,3 +224,12 @@ EMS2:
       row: 0
       column: 185.5
 
+    # Crew alerting marker (CAS3, CAP-119): the highest active alert level,
+    # flashing while anything is unacknowledged; empty when there is none.
+    # Touch to open the full list. Between the gauge captions, the one free band in the middle.
+    - type: cas_marker
+      row: 45
+      column: 26
+      span:
+        rows: 5
+        columns: 24

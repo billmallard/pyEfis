@@ -67,7 +67,8 @@ FIX keys it reads by default: `PITCH`, `LAT`, `LONG`, `ALT`, `ROLL`, `ALAT`, `TA
 | `svs_auto_range` | Auto range by altitude | on | on / off | (rendered on the device; not shown in the editor preview) |
 | `svs_min_range_nm` | Min auto range (NM) | `8` |  | (rendered on the device; not shown in the editor preview) |
 | `svs_palette` | Terrain palette | `clearance` | `clearance`, `subdued`, `high_contrast` | clearance-band colour scheme (rendered on the device; not shown in the editor preview) |
-| `svs_clearance_green_ft` | Safe clearance (ft) | `1000` |  | green at/above this height over terrain |
+| `svs_terrain_shading` | Terrain shading | `relief` | `relief`, `clearance` | relief = the moving map's elevation colours, with amber, red and magenta only where clearance is low; clearance = every patch coloured by its clearance (rendered on the device; not shown in the editor preview) |
+| `svs_clearance_green_ft` | Safe clearance (ft) | `1000` |  | amber below this height over terrain (green at/above it under clearance shading) |
 | `svs_clearance_yellow_ft` | Caution clearance (ft) | `500` |  | amber above this; red below |
 | `svs_terrain_grid` | Terrain grid | `0.35` | 0 to 1 | (rendered on the device; not shown in the editor preview) |
 | `svs_terrain_texture` | Terrain texture | `0.35` | 0 to 1 | (rendered on the device; not shown in the editor preview) |

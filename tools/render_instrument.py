@@ -126,6 +126,27 @@ def _demo_annunciator(instrument_type, options):
     fix.db.get_item("DEMOANN5").annunciate = True
 
 
+# The CAS window and marker draw nothing while no alert is active (CAS3), so a
+# palette render seeds the CAS2 keys with the spec's sample list: a warning
+# and a caution unacknowledged, an advisory acknowledged.
+_DEMO_CAS = ["3|0|APLINK|AP LINK LOST|", "2|0|NAVFAIL|NAV FAIL|",
+             "1|1|CASTEST|CAS TEST|"]
+
+
+def _demo_cas(instrument_type):
+    if instrument_type not in ("cas_window", "cas_marker"):
+        return
+    slots = _DEMO_CAS + [""] * (12 - len(_DEMO_CAS))
+    keys = [("CASMSG{}".format(n + 1), "str", v) for n, v in enumerate(slots)]
+    keys += [("CASCNT", "int", len(_DEMO_CAS)), ("CASTOP", "int", 3),
+             ("CASSEQ", "int", 1), ("CASACK", "int", 0)]
+    for key, dtype, value in keys:
+        fix.db.define_item(key, key, dtype, 0, 2147483647, "", 3000, "")
+        it = fix.db.get_item(key)
+        it.value = value
+        it.bad = it.fail = it.old = False
+
+
 # Types whose appearance is driven by an external config file (button actions,
 # listbox lists) and whose conditions/state aren't meaningful as a standalone
 # thumbnail -- always shown as a labelled placeholder in previews.
@@ -303,6 +324,7 @@ def render_instrument(instrument_type, options=None, seed=None,
         options["dbkey"] = "DEMOGAUGE"
         options.setdefault("name", "DEMO")
     _demo_annunciator(instrument_type, options)
+    _demo_cas(instrument_type)
 
     instrument = {"type": instrument_type, "row": 0, "column": 0,
                   "span": {"rows": 10, "columns": 10}}
@@ -367,6 +389,7 @@ def render_instrument_svg(instrument_type, options=None, seed=None,
         options["dbkey"] = "DEMOGAUGE"
         options.setdefault("name", "DEMO")
     _demo_annunciator(instrument_type, options)
+    _demo_cas(instrument_type)
     for key, value in (seed or {}).items():
         it = fix.db.get_item(key)
         fix.db.set_value(key, value)

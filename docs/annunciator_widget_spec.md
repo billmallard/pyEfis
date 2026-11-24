@@ -143,4 +143,24 @@ style-contract token (`state.warning`, `state.caution`, `state.valid`, `ink.prim
   configuration, like CFG-2 in the FHA; nothing proves a condition means what its label
   says. FHA rows ANN-1, ANN-2.
 - **Aural alerting**: none; a lamp is visual only (AC 23.1311-1C §18.5 p.46 asks for an
-  aural warning with visual warnings). The gateway's alerting path owns that.
+  aural warning with visual warnings). The gateway's alerting path owns that. Until a tone
+  exists, placement carries attention: see section 8.
+
+## 8. Installation requirement
+
+**Any tile that can show `warning` or `caution` must sit in the pilot's primary field of view
+on every screen that carries it.** A lamp is visual only, so where it sits is the only thing
+that draws the pilot's eye to it. This is a requirement on the builder's installation, not
+something pyEfis checks (project owner's ruling, 2026-11-23, AER-6355): only the builder
+knows where each display is mounted and where the pilot's eyes are.
+
+Primary field of view: what the pilot sees by eye movement alone from the normal seated eye
+position; within 15 degrees of the normal line of sight, about 8 inches from the centre of
+the basic T at a 30-inch viewing distance. AC 23.1311-1C Table 3 puts "System Warnings and
+Cautions" there, and advisories within 35 degrees (§15.2, Table 3 and its Note 4; AC
+25.1322-1 Appendix 5; quoted in [`avionics_reference.md`](avionics_reference.md) §14.5).
+
+The builder-facing text, with how to check it from the seat, is the wiki page *Designing
+Your Panel*, section **Installation requirement: crew alerts in your primary field of view**
+(`docs/wiki/Designing-Your-Panel.md`). It is the same requirement as the CAS marker's
+([`cas_widget_spec.md`](cas_widget_spec.md) §7).

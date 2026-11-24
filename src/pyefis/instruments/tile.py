@@ -129,12 +129,18 @@ def tile_color(tile, colors=None):
 
 
 def paint_tile(p, rect, tile, colors=None, family="DejaVu Sans Condensed",
-               px=12.0, border_px=2.0, radius=0.0, now=0.0):
+               px=12.0, border_px=2.0, radius=0.0, now=0.0,
+               align=Qt.AlignmentFlag.AlignCenter, flash_blank=True):
     """Paint *tile* into *rect* with painter *p*. ``None`` paints nothing.
 
     *colors* maps level -> colour (a hex string or QColor), falling back to
     :data:`DEFAULT_COLORS`. *px* is the caption's pixel size (use
-    :func:`fit_px` once for a block). *now* drives the flash phase."""
+    :func:`fit_px` once for a block). *now* drives the flash phase.
+
+    *align* places the caption (CAS lines are left-aligned, inset from the
+    border). With ``flash_blank=False`` a flashing tile never goes blank: it
+    swaps reverse video and outline each half-period, so its caption reads in
+    both phases (CAS3, where the flashing text is the message itself)."""
     if tile is None:
         return
     rect = QRectF(rect)
@@ -148,6 +154,9 @@ def paint_tile(p, rect, tile, colors=None, family="DejaVu Sans Condensed",
         width = max(1.0, width / 2.0)
     half = width / 2.0
     box = rect.adjusted(half, half, -half, -half)
+    if tile.flash and not flash_blank and not tile.stale:
+        reverse = reverse != (not lit)
+        lit = True
 
     p.save()
     pen = QPen(color, width)
@@ -165,5 +174,6 @@ def paint_tile(p, rect, tile, colors=None, family="DejaVu Sans Condensed",
     if lit and tile.text:
         p.setFont(font(family, px))
         p.setPen(QPen(QColor(REVERSE_TEXT_COLOR) if reverse else color))
-        p.drawText(box, Qt.AlignmentFlag.AlignCenter, str(tile.text))
+        inset = 0.0 if align & Qt.AlignmentFlag.AlignHCenter else px * 0.4
+        p.drawText(box.adjusted(inset, 0, -inset, 0), align, str(tile.text))
     p.restore()

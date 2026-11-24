@@ -15,6 +15,9 @@ Bill accepted the recommendation on AER-6140:
 - **The default:** B is the default, and today's all-over clearance colouring
   stays available as `terrain_shading: clearance`.
 
+Implemented by SVSSHADE2 (AER-6401): `ai/terrain_shading.py` holds the
+shared rule, `svs_gl.py` paints it, and the map's `caution` mode reads it.
+
 The rest of this note is the brief as it was put to him.
 
 ## What the pilot sees today

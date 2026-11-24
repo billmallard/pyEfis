@@ -754,3 +754,110 @@ cited: §18.1 "visual annunciators should be distinctive under all normal lighti
 25-11B Table 5-1 "Engaged modes/normal conditions Green" (p.43). **PASS.**
 
 Spec: [`annunciator_widget_spec.md`](annunciator_widget_spec.md).
+
+## 14. Crew alerting window and marker (CAS3) -- source material
+
+**Source note.** AC 25.1322-1 is not among the verification contract's corpus documents.
+AER-5842 (the CAS1 brief) and AER-6346 read it from the public copy
+(`faa.gov/documentLibrary/media/Advisory_Circular/AC_25.1322-1.pdf`, md5
+`7f5714f71b0ff9199fc8aaf9b354e398`), with AC 23.1311-1C (md5
+`7d7f6f430e00857c18cef792d60b018e`), the Garmin G3X Touch Pilot's Guide 190-01754-00 Rev Z and
+the Dynon SkyView HDX Pilot's User Guide Rev Q. Page numbers are PDF pages. AC 25.1322-1 is
+written for transport airplanes; it is used here as the most complete statement of alerting
+practice, not as a requirement on this stack (the brief's section 3 says why). The design it
+grounds is the makerplane brief `briefs/crew_alerting.md`.
+
+### 14.1 What an alert list must do
+
+- **Most urgent first.** "When multiple alerts exist in a specific category ... a means for
+  the flightcrew to determine the most recent or most urgent alert must be provided ... the
+  most recent or highest priority alert may be listed at the top of its own category"
+  (**AC 25.1322-1 §8, p.10-11**). AC 23.1311-1C repeats it for Part 23 displays (**§18.4,
+  p.46**). The gateway sorts warning, caution, advisory, then unacknowledged, then newest;
+  the window keeps that order.
+- **Removed when the condition clears.** "The visual alert message must be removed from the
+  display when the condition no longer exists" (**§9b, p.12**).
+- **Overflow is shown, with its urgency.** "Either through a positive indication on the
+  display or through normal flightcrew procedures, a means should be provided to identify if
+  alert messages are stored (or otherwise not in view)" (**§9, p.12**); "an overflow
+  indication ... Use indications to show the number and urgency levels of the alerts stored"
+  (**Appendix 1, p.22**). The window's last row is `+k` in the colour of the most urgent
+  hidden line.
+- **Acknowledge silences the cue, not the message.** "Reaching forward and pressing a switch
+  light is a common, acceptable means of suppressing the attention-getting components of an
+  aural alert, a flashing master warning, or a caution light" (**§12c, p.14**). Acknowledge
+  stops the flash; the line stays until the condition clears.
+- **Flashing is an attention-getting property**, with "outline boxes, brightness, and size"
+  (**Appendix 1, p.18**).
+- **Consistent location.** "The intent is to provide an intuitive and consistent location for
+  the display of information" (**Appendix 1, p.22**). AC 23.1311-1C §18.1 (p.45) asks the same
+  of annunciations. Placement is the builder's; the shipped default is the project owner's
+  pick (brief 6.6).
+- **Loss of the alerting function is assessed.** "Assess the reliability of the alerting
+  system by evaluating the reduction in the safety margin if the alerting system fails ...
+  (1) Loss of the complete alerting function" (**§7d, p.9**). Hence `CAS FAIL`, `GATEWAY
+  LINK LOST` and `CAS NOT SHOWN`.
+
+### 14.2 Colour by level
+
+- "Visual alert indications must conform to the following color convention: (1) Red for
+  warning-alert indications. (2) Amber or yellow for caution-alert indications. (3) Any color
+  except red or green for advisory alert indications" (**AC 25.1322-1 §11a, p.12**); Appendix 1
+  narrows advisories to "Any color except red, amber, yellow, or green" (**p.23**). White
+  advisories match G3X (**PG Rev Z p.106**) and SkyView (**PUG Rev Q p.12-1**).
+- Colour is not the only cue: the marker names its level in words (AC 23.1311-1C §22.6,
+  p.49, cited in §13.1).
+
+### 14.3 Corpus silent, or departed from
+
+- **Two senses.** AC 25.1322-1 §6 asks for warnings and cautions to reach two senses. There
+  is no audio output in this stack, so slice 1 is visual only: a recorded deviation
+  (CASW-AUR-001, FHA open item O11).
+- **Flash rate and style.** Neither AC sets a rate for a flashing message line. The window
+  uses the shared tile's 0.5 s half-period and swaps reverse video and outline so the text
+  stays legible; the look is the project owner's call.
+- **Recall and clear** (§9) are out of slice 1 (CASW-RCL-001).
+
+### 14.4 Citation self-check (Stage 1 Verify)
+
+Re-read against the PDF text (PyMuPDF extraction, AER-6346); each reproduces on the page
+cited: §9b "must be removed from the display when the condition no longer exists" (p.12);
+§11a "Red for warning-alert indications" (p.12); §12c "suppressing the attention-getting
+components of an aural alert, a flashing master warning, or a caution light" (p.14); §7d "(1)
+Loss of the complete alerting function" (p.9). **PASS.**
+
+### 14.5 Primary field of view (the installation requirement, CASDOC1)
+
+Basis for the installation requirement in [`cas_widget_spec.md`](cas_widget_spec.md) §7,
+[`annunciator_widget_spec.md`](annunciator_widget_spec.md) §8 and the wiki page *Designing Your
+Panel*. Both ACs re-read for AER-6416 from the public copies, whose md5s match §14's source
+note; page numbers are PDF pages.
+
+- **Definition.** "Primary optimum FOV is based on the vertical and horizontal visual fields
+  from the design eye reference point that can be accommodated with eye rotation only. With
+  the normal line-of-sight established at 15 degrees below the horizontal plane, the values
+  for the vertical and horizontal (relative to normal line-of-sight forward of the aircraft)
+  are +/-15 degrees" (**AC 23.1311-1C §15.2, p.35**). AC 25.1322-1 gives the same definition
+  (**Appendix 5, p.40**).
+- **Warnings and cautions belong there.** "This area is normally reserved for primary flight
+  information and high priority alerts ... warning or cautionary information that requires
+  immediate pilot action or awareness, should be placed in the primary FOV" (**§15.2, p.35**);
+  "Warnings and cautions should also be in the primary FOV" (**§10.1, p.29**). Master warning
+  and caution lights "should be located in each pilot's primary field of view" (**AC
+  25.1322-1 Appendix 1 §1a, p.20**).
+- **The figure a builder can measure.** Table 3 gives "System Warnings and Cautions-
+  Including Failure Annunciation" 15 degrees, approximately 8 inches from the reference
+  centre line, and "Advisories Annunciations" 35 degrees, 21 inches; Note 1 measures "based on
+  a viewing distance of 30 inches from the panel ... from the center of basic T", centre to
+  centre, horizontally (**AC 23.1311-1C Table 3, p.37**).
+- **Why 15 and not 35 here.** "Some annunciations may be acceptable within 35 degrees if they
+  are associated with a unique aural tone or a master warning/caution annunciations that is
+  within 15 degrees and with a pilot evaluation" (**Table 3 Note 4, p.37**). This stack has no
+  tone and no master light, so 15 degrees applies to the marker and to warning and caution
+  lamps.
+
+**Citation self-check.** Each quotation above reproduces on the PDF page cited (PyMuPDF
+extraction, AER-6416): AC 23.1311-1C md5 `7d7f6f430e00857c18cef792d60b018e`, AC 25.1322-1 md5
+`7f5714f71b0ff9199fc8aaf9b354e398`. **PASS.**
+
+Spec: [`cas_widget_spec.md`](cas_widget_spec.md).

@@ -1,0 +1,42 @@
+   0.39 pyefis pid 31924 (pyEfis 91b283a4 + working tree), placement A
+  10.40 gateway pid 32141 (fix-gateway cf26588), 10 s after the display
+  27.72 CAS TEST on the glass from None to None s after the gateway started
+  27.72 FAIL step 14: CAS TEST drawn in the window after the gateway starts (proves plugin, bus, widget and glass)
+  27.72 PASS step 1: window draws nothing once CAS TEST clears
+  27.74 PASS step 1: CASCNT 0 over raw netfix
+  28.24 PASS step 1: no red or amber in the window area ({'red': 0, 'amber': 0})
+  30.14 PASS step 2: NAV FAIL drawn within 1 s of the CDI fail (0.4 s)
+  33.27 PASS step 2: amber in the window ([0, 173, 173, 855, 173])
+  33.27 PASS step 2: the line flashes (amber fill comes and goes over five grabs 0.3 s apart: [0, 173, 173, 855, 173])
+  33.43 PASS step 3: after the touch NAV FAIL is drawn acknowledged (caution NAV FAIL)
+  33.83 CASACK 28160282 CASSEQ 28160283
+  33.83 PASS step 3: CASACK written by the touch, at the CASSEQ drawn
+  34.93 PASS step 3: the acknowledged line is steady: never redrawn unacked, amber the same 0.5 s apart ({'red': 0, 'amber': 855}, {'red': 0, 'amber': 855})
+  37.14 PASS step 5: AP LINK LOST (warning, engaged) drawn within 3 s of the last APENG (2.17)
+  37.14 PASS step 12: the new alert flashes while the acknowledged NAV FAIL stays steady (warning unacked AP LINK LOST; caution NAV FAIL)
+  38.53 PASS step 5: red in the window
+  51.53 PASS step 18: no gap in AP LINK LOST while the link drops every 3 s (0 gaps)
+  60.04 PASS step 18: AP LINK LOST cleared 5.48 s after the link went steady (5 s clear delay)
+  60.40 PASS step 4: NAV FAIL gone when the flag clears
+  62.53 PASS step 6: AP LINK LOST is a caution when the autopilot was disengaged (caution unacked AP LINK LOST)
+  72.03 PASS step 7: FUEL QTY 3 NO DATA drawn
+  72.03 PASS step 7: after the 60 s grace, not before (61.6 s after gateway start)
+  81.64 PASS step 10: CATALOG REFUSED (advisory) drawn from status.json (caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED)
+  85.23 watchdog trip logged 2.51 s after SIGSTOP; CAS drew the link alert 2.87 s after SIGSTOP
+  85.23 PASS step 9: GATEWAY LINK LOST drawn within 0.5 s of the watchdog trip (the CAS3 leg)
+  85.23 FAIL step 9: GATEWAY LINK LOST within 2.5 s of SIGSTOP end to end (brief; the watchdog leg is CERT1's, here on software GL)
+  86.23 PASS step 9: no CAS FAIL beside the link alert (['warning unacked GATEWAY LINK LOST; advisory unacked CATALOG REFUSED', 'warning unacked GATEWAY LINK LOST; advisory unacked CATALOG REFUSED'])
+  86.23 PASS step 9: only local alerts drawn during link loss (warning unacked GATEWAY LINK LOST; advisory unacked CATALOG REFUSED)
+  89.34 PASS step 9: SIGCONT recovers (warning unacked AP LINK LOST; caution unacked HDG FAIL; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED after 2.92 s)
+  89.34 before the plugin stop: warning unacked AP LINK LOST; caution unacked HDG FAIL; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED
+  89.34 PASS step 16: two gateway messages drawn before the stop
+  92.44 PASS step 8: CAS FAIL within 4 s of the plugin stopping (2.9 s)
+  92.44 PASS step 16: neither old message drawn with CAS FAIL (caution unacked CAS FAIL)
+  93.68 PASS step 16: amber CAS FAIL, no red (the old warning) ({'red': 0, 'amber': 856})
+  95.50 gateway (for the restart) exit 0
+ 115.54 FAIL step 14: after a gateway restart under a running display, CAS TEST drawn (None s after the restart)
+ 115.60 pyefis exit -15
+ 119.03 gateway exit 255
+ 119.04 PASS no traceback and no CAS poll failure in the pyEfis log ([])
+ 119.04 RESULT 3 checks failed: ['step 14: CAS TEST drawn in the window after the gateway starts (proves plugin, bus, widget and glass)', "step 9: GATEWAY LINK LOST within 2.5 s of SIGSTOP end to end (brief; the watchdog leg is CERT1's, here on software GL)", 'step 14: after a gateway restart under a running display, CAS TEST drawn (None s after the restart)']
+rc=1

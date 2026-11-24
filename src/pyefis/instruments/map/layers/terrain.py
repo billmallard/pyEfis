@@ -19,6 +19,7 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPolygonF)
 
+from pyefis.instruments.ai import terrain_shading
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
 from pyefis.instruments.map import raster
 from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
@@ -26,23 +27,9 @@ from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
                                            paint_window_images, range_bucket,
                                            register_layer)
 
-# Hypsometric stops: (elevation ft, r, g, b) -- sectional-inspired.
-_STOPS = [
-    (-1000, 60, 110, 160),      # water sentinel band
-    (0,     92, 130,  82),
-    (1000, 110, 145,  88),
-    (2000, 150, 160,  95),
-    (4000, 185, 160, 100),
-    (7000, 170, 130,  90),
-    (10000, 160, 120, 105),
-    (14000, 235, 235, 235),
-]
-
-
-_STOP_E = np.array([s[0] for s in _STOPS], np.float64)
-_STOP_R = np.array([s[1] for s in _STOPS], np.float64)
-_STOP_G = np.array([s[2] for s in _STOPS], np.float64)
-_STOP_B = np.array([s[3] for s in _STOPS], np.float64)
+# Hypsometric colour lookup (elev in FEET). The stops moved to
+# terrain_shading.HYPSO_STOPS (SVSSHADE2), the base the SVS paints too.
+_palette = terrain_shading.hypso_rgb
 
 
 def _decimate_to_pixel_grid(xs, ys, ring_ends):
@@ -88,21 +75,6 @@ def _decimate_to_pixel_grid(xs, ys, ring_ends):
 
     new_ring_ends = np.cumsum(counts[good_ring])
     return xs[keep], ys[keep], new_ring_ends
-
-
-def _palette(elev_ft):
-    """Vectorised hypsometric colour lookup (elev in FEET).
-
-    Piecewise-linear over _STOPS via np.interp -- one C pass per
-    channel (np.interp clamps to the end stops, matching the old
-    per-segment masking). #89: the masked-segment version was ~24% of
-    the terrain worker's GIL time."""
-    e = elev_ft.ravel()
-    shape = elev_ft.shape
-    r = np.interp(e, _STOP_E, _STOP_R).astype(np.float32).reshape(shape)
-    g = np.interp(e, _STOP_E, _STOP_G).astype(np.float32).reshape(shape)
-    b = np.interp(e, _STOP_E, _STOP_B).astype(np.float32).reshape(shape)
-    return r, g, b
 
 
 @register_layer
@@ -173,12 +145,31 @@ class TerrainLayer(MapLayer):
         # land left transparent so the widget's plain background shows.
         self._flat = False
         self._water_rgba = STANDARD_PALETTE["water"]
+        # Caution mode's airport collapse (SVSSHADE2): own NASR handle, the
+        # gate (MSL ft or None) and the ownship cell it was computed for.
+        self._apt_db = None
+        self._apt_gate = None
+        self._apt_cell = None
 
     def configure(self, owner):
         tile_path = str(getattr(owner, "tile_path", "") or "")
         self._mode = str(getattr(owner, "terrain_mode", "relief"))
         self._flat = map_style(owner) == "nav_only"
         self._water_rgba = palette(owner)["water"]
+        # Same airport source and filter as the SVS (make_airport_db:
+        # nasr_db_path, paved_only by default). Caution mode only.
+        self._apt_db = None
+        self._apt_gate = None
+        self._apt_cell = None
+        nasr_path = str(getattr(owner, "nasr_db_path", "") or "")
+        if self._mode == "caution" and nasr_path:
+            try:
+                from pyefis.instruments.ai.airport_db import NASRAirportDB
+                self._apt_db = NASRAirportDB(nasr_path, paved_only=True)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "map airport db unavailable")
         if tile_path:
             from pathlib import Path
             from pyefis.instruments.ai.svs import TileCache
@@ -207,12 +198,38 @@ class TerrainLayer(MapLayer):
         # Ownship altitude only shapes the image in caution mode (TAWS
         # tint). Keying on it in relief mode forced a full re-render
         # every 500 ft of climb/descent for an identical image (#89).
-        alt_band = (round(self._alt_ft / 500.0)
-                    if self._mode == "caution" and not self._flat else 0)
+        caution = self._mode == "caution" and not self._flat
+        alt_band = round(self._alt_ft / 500.0) if caution else 0
+        # The airport-collapse gate (MSL ft, or None) is the LAST element:
+        # _render reads it from the job's key, so an image is always
+        # painted with the gate it was keyed on.
+        gate = self._apt_gate if caution else None
         return (round(x.lat0 * M_PER_DEG_LAT / snap),
                 round(x.lon0 * M_PER_DEG_LAT / snap),
                 range_bucket(x.range_nm), round(x.w), round(x.cover_h), round(x.range_px),
-                "flat" if self._flat else self._mode, alt_band)
+                "flat" if self._flat else self._mode, alt_band, gate)
+
+    def _update_airport_gate(self):
+        """Caution mode: recompute the airport-collapse gate when ownship
+        moves to another 0.01 deg cell (the SVS's near_airport key), with
+        the rule the SVS uses (terrain_shading.nearest_field)."""
+        if self._apt_db is None:
+            self._apt_gate = None
+            return
+        o = self._owner
+        lat = float(getattr(o, "_lat", 0.0) or 0.0)
+        lon = float(getattr(o, "_lon", 0.0) or 0.0)
+        cell = (round(lat / 0.01), round(lon / 0.01))
+        if cell == self._apt_cell:
+            return
+        near, elev = terrain_shading.nearest_field(
+            self._apt_db, lat, lon,
+            float(getattr(o, "airport_proximity_nm",
+                          terrain_shading.AIRPORT_PROXIMITY_NM)))
+        self._apt_gate = terrain_shading.collapse_gate_ft(
+            near, elev, float(getattr(o, "airport_gate_agl_ft",
+                                      terrain_shading.AIRPORT_GATE_AGL_FT)))
+        self._apt_cell = cell
 
     def _has_source(self):
         """Something to draw: tiles, or (nav_only) a water pack alone --
@@ -234,6 +251,8 @@ class TerrainLayer(MapLayer):
         if not self._has_source():
             return
         self._alt_ft = float(getattr(self._owner, "_alt_ft", 0.0) or 0.0)
+        if self._mode == "caution" and not self._flat:
+            self._update_airport_gate()
         key = self._key(x)
         with self._lock:
             img = self._img
@@ -350,19 +369,37 @@ class TerrainLayer(MapLayer):
                                                       lats, lons)
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
+        bands = None
         if self._mode == "caution":
-            # TAWS-style: amber within 1000 ft below ownship, red above
-            # -100 ft relative. Keeps relief under the tint.
-            rel = self._alt_ft - elev_ft
-            amber = (rel < 1000) & (rel >= 100) & ~water
-            red = (rel < 100) & ~water
-            r[amber], g[amber], b[amber] = 220, 160, 40
-            r[red], g[red], b[red] = 200, 50, 40
+            # The SVS hazard bands over the relief (SVSSHADE2): one rule,
+            # thresholds, palette and airport collapse shared with the
+            # SVS via terrain_shading. The gate is the key's last element.
+            # Water is repainted after the hillshade, so it never shows a
+            # band (water is not a terrain hazard surface).
+            o = self._owner
+            bands = terrain_shading.band(
+                self._alt_ft - elev_ft, elev_ft, key[-1] if key else None,
+                float(getattr(o, "clearance_green_ft",
+                              terrain_shading.CLEARANCE_GREEN_FT)),
+                float(getattr(o, "clearance_yellow_ft",
+                              terrain_shading.CLEARANCE_YELLOW_FT)))
+            pal = terrain_shading.palette_rgb(
+                getattr(o, "terrain_palette",
+                        terrain_shading.DEFAULT_PALETTE))
+            for idx, rgb in ((terrain_shading.BAND_CAUTION, pal[1]),
+                             (terrain_shading.BAND_WARNING, pal[2]),
+                             (terrain_shading.BAND_CONFLICT, pal[3])):
+                m = bands == idx
+                r[m], g[m], b[m] = rgb
         # Hillshade: NW light, central differences on the sampled grid.
         gy, gx = np.gradient(elev_m, mpp)
         shade = 0.75 + 0.25 * np.clip(
             (-gx + gy) / np.maximum(1e-3, np.hypot(gx, gy) + 8.0) + 0.5,
             0, 1)
+        if bands is not None:
+            # The hazard lighting floor; a no-op while the hillshade
+            # stays >= 0.75, applied so both views share one rule.
+            shade = terrain_shading.hazard_light(bands, shade)
         r *= shade; g *= shade; b *= shade
         r[water], g[water], b[water] = 60, 110, 160
         rgbx = np.empty((n, n, 4), np.uint8)
