@@ -62,8 +62,8 @@ NAVAIDS = [
     ("ZZZ", "VOR",     "Zulu Zulu Zulu", "112.30", 900, 34.50000, -119.50000),  # dup ident w/ a fix
     # Real cycle-2611 rows, copied from the navaids pack (AER-6454): the
     # Albuquerque VORTAC and the VOR test facility of the same ident on the
-    # airport, 10.4 nm away; the Astoria VOR/DME and the Fort Stevens fan
-    # marker that shares its ident, 4.6 nm away.
+    # airport, 10.2 nm away; the Astoria VOR/DME and the Fort Stevens fan
+    # marker that shares its ident, 4.5 nm away.
     ("ABQ", "VORTAC",  "Albuquerque", "113.2", 5748.5, 35.04379558, -106.81631191),
     ("ABQ", "VOT",     "Albuquerque", "111",   5318.0, 35.03819, -106.60841805),
     ("AST", "VOR/DME", "Astoria",     "114",   11.3,   46.16169902, -123.88037527),
