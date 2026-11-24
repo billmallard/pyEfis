@@ -338,13 +338,14 @@ class ValueDisplay(QWidget):
         # set the axuliiary data and the value
         self.setValue(self.item.value)
 
-        try:
-            self.item.valueChanged[float].disconnect(self.setValue)
-            self.item.valueChanged[int].disconnect(self.setValue)
-            self.item.valueChanged[bool].disconnect(self.setValue)
-            self.item.valueChanged[str].disconnect(self.setValue)
-        except TypeError:
-            pass  # One will probably fail all the time
+        # One try per overload: only the dtype's overload is connected, so the
+        # others always raise, and a shared try would skip the real disconnect
+        # and stack another connection on every report (AER-6519).
+        for dtype in (float, int, bool, str):
+            try:
+                self.item.valueChanged[dtype].disconnect(self.setValue)
+            except TypeError:
+                pass
 
         self.item.valueChanged[self.item.dtype].connect(self.setValue)
 
