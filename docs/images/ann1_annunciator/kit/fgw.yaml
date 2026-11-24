@@ -1,0 +1,14 @@
+# AER-6347 private gateway: the bench's own database, netfix only, port 3497.
+database file: "{CONFIG}/database.yaml"
+auto start: true
+initialization files:
+   - "{CONFIG}/init_data/default.ini"
+connections:
+  netfix:
+    load: yes
+    module: fixgw.plugins.netfix
+    type: server
+    host: 127.0.0.1
+    port: 3497
+    buffer_size: 1024
+    timeout: 1.0

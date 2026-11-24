@@ -19,7 +19,6 @@
 # 
 import time
 import threading
-import pycond as pc
 
 from PyQt6.QtGui import *
 from PyQt6.QtCore import *
@@ -36,6 +35,7 @@ import re
 from pyefis import hmi
 import time
 from pyefis.instruments import helpers
+from pyefis.instruments import conditions
 
 class Button(QWidget):
     def __init__(self, parent=None, config_file=None, config=None, font_family="DejaVu Sans Condensed",
@@ -122,49 +122,20 @@ class Button(QWidget):
         return self._button.isEnabled()
 
     def initDB(self):
-        
-        # init self._db and connect to signals
+        # init self._db and connect to signals; the state dict is the shared
+        # conditions grammar's (instruments/conditions.py)
         for key in self.condition_keys:
             self._db[key] = fix.db.get_item(key)
             # Setup connections first
-            self._db[key].valueChanged[bool].connect(lambda valueChanged, key=key, signal='value': self.dataChanged(key=key,signal=signal))
-            self._db[key].valueChanged[int].connect(lambda valueChanged, key=key, signal='value': self.dataChanged(key=key,signal=signal))
-            self._db[key].valueChanged[str].connect(lambda valueChanged, key=key, signal='value': self.dataChanged(key=key,signal=signal))
-            self._db[key].valueChanged[float].connect(lambda valueChanged, key=key, signal='value': self.dataChanged(key=key,signal=signal))
-
-            self._db[key].oldChanged.connect(lambda oldChanged, key=key, signal='old': self.dataChanged(key=key,signal=signal))
-            self._db[key].badChanged.connect(lambda badChanged, key=key, signal='bad': self.dataChanged(key=key,signal=signal))
-            self._db[key].failChanged.connect(lambda failChanged, key=key, signal='fail': self.dataChanged(key=key,signal=signal))
-            self._db[key].annunciateChanged.connect(lambda annunciateChanged, key=key, signal='annunciate': self.dataChanged(key=key,signal=signal))
-            self._db[key].auxChanged.connect(lambda auxChanged, key=key, signal='aux': self.dataChanged(key=key,signal=signal))
-
-            self._db_data[key] = self._db[key].value
-            self._db_data[f"{key}.old"] = self._db[key].old
-            self._db_data[f"{key}.bad"] = self._db[key].bad
-            self._db_data[f"{key}.fail"] = self._db[key].fail
-            self._db_data[f"{key}.annunciate"] = self._db[key].annunciate
-            for aux in self._db[key].aux:
-                self._db_data[f"{key}.aux.{aux}"] = self._db[key].aux[aux]
+            conditions.connect_item(self._db[key], lambda key, signal: self.dataChanged(key=key, signal=signal))
+            self._db_data.update(conditions.item_fields(self._db[key]))
         self._db_data[self._dbkey.key] = self._dbkey.value
         time.sleep(0.01)
 
     def dataChanged(self,key=None,signal=None):
         logger.debug(f"dataChanged key={key} signal={signal}")
-        if signal == 'value':
-            self._db_data[key] = self._db[key].value
-        elif signal == 'old':
-            self._db_data[f"{key}.old"] = self._db[key].old
-        elif signal == 'bad':
-            self._db_data[f"{key}.bad"] = self._db[key].bad
-        elif signal == 'fail':
-            self._db_data[f"{key}.fail"] = self._db[key].fail
-        elif signal == 'annunciate':
-            self._db_data[f"{key}.annunciate"] = self._db[key].annunciate
-        elif signal == 'aux':
-            for aux in self._db[key].aux:
-                self._db_data[f"{key}.aux.{aux}"] = self._db[key].aux[aux]
-        else:
-            pass
+        if key in self._db:
+            conditions.refresh_field(self._db_data, self._db[key], signal)
         self.processConditions()
 
     def resizeEvent(self,event):
@@ -256,8 +227,7 @@ class Button(QWidget):
         for cond in self._conditions:
             if 'when' in cond:
                 if type(cond['when']) == str:
-                    expr = pc.to_struct(pc.tokenize(cond['when'], sep=' ', brkts='[]'))
-                    if pc.pycond(expr)(state=self._db_data) == True:
+                    if conditions.evaluate(cond['when'], self._db_data):
                         self._db_data["PREVIOUS_CONDITION"] = True
                         logger.debug(f"{self.parent.parent.getRunningScreen()}:{self._dbkey.key}:{cond['when']} = True")
                         self.processActions(cond['actions'])

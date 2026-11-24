@@ -170,6 +170,16 @@ PAIRS = {
     "airspeed_tape": [("ias_bug_color", "#000000", TEXT_FLOOR)],
     "vsi_pfd": [("vs_bug_color", "#000000", GRAPHIC_FLOOR)],
     # AFC4 mode strip: every annunciation is text on the strip's own fill.
+    # annunciator (ANN1): status/advisory/info/off captions on the block's
+    # fill; warning and caution are reverse video, black text on the level.
+    "annunciator": [
+        ("status_color", "bg_color", TEXT_FLOOR),
+        ("advisory_color", "bg_color", TEXT_FLOOR),
+        ("info_color", "bg_color", TEXT_FLOOR),
+        ("off_color", "bg_color", TEXT_FLOOR),
+        ("#000000", "caution_color", TEXT_FLOOR),
+        ("#000000", "warning_color", TEXT_FLOOR),
+    ],
     "ap_annunciator": [
         ("active_color", "background_color", TEXT_FLOOR),
         ("armed_color", "background_color", TEXT_FLOOR),

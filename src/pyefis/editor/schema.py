@@ -393,6 +393,56 @@ _ACTIONS = [
 ]
 
 
+# --- Annunciator tile catalogue (ANN1) ----------------------------------------
+# The fields of one `tiles` entry of the `annunciator` instrument and the level
+# rule, for the configurator's tile and binding editor (ANN2), so it lists none
+# of them by hand. pyEfis owns this; a test holds it in lockstep with
+# instruments/annunciator and instruments/tile (kept Qt-free here).
+#
+# kind vocabulary: string | fixkey | fixkey_list | condition (the Button
+# grammar) | enum | map (value -> text) | number.
+# At most one field with "binding": true may be set per tile; with none the
+# tile is lit while the key's value is truthy.
+_ANNUNCIATOR_LEVELS = ["warning", "caution", "status", "advisory", "info", "off"]
+_ANNUNCIATOR = {
+    "tile_fields": [
+        {"name": "label", "kind": "string", "label": "Label",
+         "help": "the caption; also the default on and off text"},
+        {"name": "key", "kind": "fixkey", "label": "FIX key", "required": True,
+         "help": "the key the tile follows"},
+        {"name": "when", "kind": "condition", "label": "Condition",
+         "binding": True,
+         "help": "lit while this Button-grammar condition is true"},
+        {"name": "flag", "kind": "enum", "label": "Key flag", "binding": True,
+         "enum": ["annunciate", "old", "bad", "fail"],
+         "help": "lit while the key's own flag is set"},
+        {"name": "enum", "kind": "map", "label": "Value to text",
+         "binding": True,
+         "help": "shows the text mapped to the key's value"},
+        {"name": "condition_keys", "kind": "fixkey_list",
+         "label": "Other keys read",
+         "help": "other keys the condition reads (each must be fresh too)"},
+        {"name": "on_text", "kind": "string", "label": "On text",
+         "help": "text while lit; blank = the label"},
+        {"name": "off_text", "kind": "string", "label": "Off text",
+         "help": "text while off (drawn dim); blank = the label"},
+        {"name": "level", "kind": "enum", "label": "Level",
+         "enum": _ANNUNCIATOR_LEVELS, "default": "advisory",
+         "help": "the colour while lit"},
+        {"name": "flash_on_change", "kind": "number",
+         "label": "Flash on change (s)", "default": 0, "minimum": 0,
+         "help": "seconds a change is boxed and flashes; 0 = never"},
+    ],
+    "levels": _ANNUNCIATOR_LEVELS,
+    # Bill, 2026-11-22: red and amber only from the key's own annunciate flag
+    # (and CAS messages, with CAS3). Any other binding asking for them is drawn
+    # at the fallback level and logged.
+    "alert_levels": ["warning", "caution"],
+    "alert_bindings": [{"field": "flag", "value": "annunciate"}],
+    "alert_fallback_level": "advisory",
+}
+
+
 def build_schema():
     """Return the full instrument schema as a JSON-serialisable dict.
 
@@ -424,6 +474,7 @@ def build_schema():
         "categories": sorted(categories),
         "instruments": instruments,
         "actions": _ACTIONS,
+        "annunciator": _ANNUNCIATOR,
     }
 
 

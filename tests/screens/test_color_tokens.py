@@ -58,6 +58,13 @@ CONTRACT_MAP = {
     ("checklist", "response_color"): "accent",
     ("moving_map", "road_color"): "map.road",
     ("moving_map", "river_color"): "map.water",
+    ("annunciator", "bg_color"): "surface.base",
+    ("annunciator", "status_color"): "state.valid",
+    ("annunciator", "advisory_color"): "ink.primary",
+    ("annunciator", "info_color"): "accent",
+    ("annunciator", "off_color"): "ink.muted",
+    ("annunciator", "caution_color"): "state.caution",
+    ("annunciator", "warning_color"): "state.warning",
 }
 
 
@@ -140,11 +147,11 @@ def test_unmigrated_type_resolves_by_option_name():
 
 
 def test_valueless_token_falls_back_to_widget_default(caplog):
-    config = {"type": "value_text", "options": {"value_color": "state.warning"}}
+    config = {"type": "value_text", "options": {"value_color": "map.terrain"}}
     with caplog.at_level(logging.WARNING):
         apply_preferences(config, _prefs())
     assert "value_color" not in config["options"]
-    assert "state.warning" in caplog.text
+    assert "map.terrain" in caplog.text
 
 
 # -- resolution order (DoD b) ------------------------------------------------
