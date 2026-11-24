@@ -78,6 +78,21 @@ OBS_SEND_INTERVAL_MS = 250
 #: Bearing TO the active waypoint (magnetic, fix-gateway's compute from
 #: WPLAT/WPLON): what a push on CRS in OBS syncs the course to (G1000 p.62).
 OBS_CENTRE_KEY = "GPSBRG"
+#: NAVSRC values (fix-gateway ``database/ahrs.yaml``, range 0..3). Each value
+#: is either a NAV radio (its slot: NAV1, NAV2), drawn in the VOR/LOC colour
+#: and labelled VOR/LOC/VLOC with the slot digit, or a GPS, drawn in the GPS
+#: colour under its own label. 3 is GPS2, as the database's own comment
+#: reserves it (ENUM2, Bill 2026-11-24): before this the first GPS2 would have
+#: been annunciated "VLOC4" in green, as a radio. Nothing writes 3 yet.
+#: tests/instruments/hsi/test_source_enums.py reads these from source and
+#: fails when a value in the gateway's range is in neither table.
+NAVSRC_NAV_SLOTS = {0: 1, 1: 2}
+NAVSRC_GPS_LABELS = {2: "GPS", 3: "GPS2"}
+#: BRG1SRC / BRG2SRC values (same database, range 0..3) as the bearing-source
+#: annunciation names; the two selectors share NAVSRC's numbering. Only VOR1
+#: and VOR2 are drawn as needles on this display (HSIBRG4), but every value in
+#: range has a name (ENUM2).
+BRGSRC_LABELS = {0: "VOR1", 1: "VOR2", 2: "GPS", 3: "GPS2"}
 
 
 class HSI(QGraphicsView):
@@ -1535,11 +1550,13 @@ class HSI(QGraphicsView):
             c.drawText(QRectF(sx, sy + sh * 0.40, sw, sh * 0.56),
                        int(Qt.AlignmentFlag.AlignCenter), value)
 
-    #: Every label _source_label() can produce (GPS, VOR/LOC/VLOC x NAV1/NAV2)
-    #: -- the full candidate set the constant tab width is measured against,
-    #: so the tab neither breathes as the source cycles nor special-cases the
-    #: slot digit (pyEfis#148).
-    _SOURCE_TAB_LABELS = ("GPS", "VOR1", "VOR2", "LOC1", "LOC2", "VLOC1", "VLOC2")
+    #: Every label _source_label() can produce (GPS, GPS2, VOR/LOC/VLOC x
+    #: NAV1/NAV2) -- the full candidate set the constant tab width is measured
+    #: against, so the tab neither breathes as the source cycles nor
+    #: special-cases the slot digit (pyEfis#148).
+    _SOURCE_TAB_LABELS = tuple(NAVSRC_GPS_LABELS.values()) + tuple(
+        "%s%d" % (kind, slot) for kind in ("VOR", "LOC", "VLOC")
+        for slot in NAVSRC_NAV_SLOTS.values())
 
     def _side_tab_metrics(self, c, py, ph):
         """(top, height, corner radius, width) shared by the two tabs hanging
@@ -1832,16 +1849,17 @@ class HSI(QGraphicsView):
         """Active-source colour for the course pointer and CDI/GSI when
         source_auto_color is on: course_color (magenta) for a GPS source,
         vloc_color (green) for a VOR/LOC source. Returns None when auto-colouring
-        is off or NAVSRC is unavailable, so callers fall back to the static
-        per-element colour."""
+        is off or NAVSRC is unavailable or outside both source tables, so
+        callers fall back to the static per-element colour."""
         if not getattr(self, "source_auto_color", False):
             return None
-        if self._navsrc is None:
-            return None
-        # NAVSRC 2 = GPS (magenta); 0/1 = NAV1/NAV2 (green).
-        if int(round(self._navsrc)) == 2:
+        src = self._navsrc_index()
+        # NAVSRC 2/3 = GPS/GPS2 (magenta); 0/1 = NAV1/NAV2 (green).
+        if src in NAVSRC_GPS_LABELS:
             return QColor(self.course_color)
-        return QColor(self.vloc_color)
+        if src in NAVSRC_NAV_SLOTS:
+            return QColor(self.vloc_color)
+        return None
 
     def _course_pointer_color(self):
         return self._source_color() or QColor(self.course_color)
@@ -2005,20 +2023,20 @@ class HSI(QGraphicsView):
         return QColor(self.bearing_color)
 
     def _brg_src_index(self, n):
-        """Pointer n's BRGnSRC as 0/1/2 (VOR1/VOR2/GPS), or None if unknown."""
+        """Pointer n's BRGnSRC as 0..3 (VOR1/VOR2/GPS/GPS2), or None if
+        unknown."""
         src = self._brgSrc[n]
         if src is None:
             return None
         s = int(round(src))
-        return s if s in (0, 1, 2) else None
+        return s if s in BRGSRC_LABELS else None
 
     def _cdi_src_index(self):
         """NAVSRC as the matching BRGnSRC index: NAV1 = VOR1 (0), NAV2 = VOR2
-        (1), GPS = GPS (2) -- the two selectors share their numbering."""
-        if self._navsrc is None:
-            return None
-        s = int(round(self._navsrc))
-        return s if s in (0, 1, 2) else None
+        (1), GPS = GPS (2), GPS2 = GPS2 (3) -- the two selectors share their
+        numbering."""
+        s = self._navsrc_index()
+        return s if s in BRGSRC_LABELS else None
 
     #: Each pointer's one source as its BRGnSRC value (HSIBRG4, Bill
     #: 2026-11-16): pointer 1 pairs only with NAV1 (VOR1), pointer 2 only with
@@ -2123,7 +2141,7 @@ class HSI(QGraphicsView):
         src = self._brgSrc[n]
         if src is None:
             return ""
-        name = {0: "VOR1", 1: "VOR2", 2: "GPS"}.get(int(round(src)), "")
+        name = BRGSRC_LABELS.get(int(round(src)), "")
         if not name:
             return ""
         return "%d %s" % (n, name)
@@ -2525,13 +2543,16 @@ class HSI(QGraphicsView):
 
     def mousePressEvent(self, event):
         # Tapping the nav-source annunciation cycles the source: GPS -> NAV1 ->
-        # NAV2 -> GPS (NAVSRC 2/0/1). Anywhere else, default handling.
+        # NAV2 -> GPS (NAVSRC 2/0/1). GPS2 (3) is not in the cycle (nothing
+        # writes it yet); a tap on it goes to NAV1, as from GPS. Anywhere
+        # else, default handling.
         r = getattr(self, "_source_label_rect", None)
         if r is not None and getattr(self, "navsrcdb", None) is not None:
             px, py = event.pos().x(), event.pos().y()
             if r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]:
-                cur = int(round(self._navsrc)) if self._navsrc is not None else 2
-                self._send_key("NAVSRC", float((cur + 1) % 3))
+                cur = self._navsrc_index()
+                nxt = 0 if cur is None or cur in NAVSRC_GPS_LABELS else (cur + 1) % 3
+                self._send_key("NAVSRC", float(nxt))
                 event.accept()
                 return
         # Tapping the BRG tab, or either bearing-source corner label where
@@ -2853,15 +2874,16 @@ class HSI(QGraphicsView):
             return None
 
     def _source_label(self):
-        """Nav-source annunciation text: "GPS" for a GPS source, "VOR{n}" /
-        "LOC{n}" when NAVTYPE identifies the NAV radio, else "VLOC{n}" from NAVSRC
-        alone. Empty when no source is available."""
-        if self._navsrc is None:
+        """Nav-source annunciation text: "GPS" / "GPS2" for a GPS source,
+        "VOR{n}" / "LOC{n}" when NAVTYPE identifies the NAV radio, else
+        "VLOC{n}" from NAVSRC alone. Empty when no source is available, or
+        NAVSRC is in neither source table."""
+        src = self._navsrc_index()
+        if src in NAVSRC_GPS_LABELS:
+            return NAVSRC_GPS_LABELS[src]
+        if src not in NAVSRC_NAV_SLOTS:
             return ""
-        src = int(round(self._navsrc))
-        if src == 2:
-            return "GPS"
-        slot = src + 1                          # NAVSRC 0->NAV1, 1->NAV2
+        slot = NAVSRC_NAV_SLOTS[src]            # NAVSRC 0->NAV1, 1->NAV2
         nt = None if self._navtype is None else int(round(self._navtype))
         if nt == 1:
             return f"VOR{slot}"
@@ -2877,9 +2899,7 @@ class HSI(QGraphicsView):
         Never for GPS, and never when NAVSUPP is absent. The mark does not
         drop on the key's quality flags: a supplemental source is never shown
         as a certified one."""
-        if self._navsupp is None or self._navsrc is None:
-            return False
-        if int(round(self._navsrc)) == 2:
+        if self._navsupp is None or self._navsrc_index() not in NAVSRC_NAV_SLOTS:
             return False
         try:
             return float(self._navsupp) >= 0.5

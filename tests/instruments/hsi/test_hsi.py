@@ -554,6 +554,42 @@ def test_hsi_cat_source_switch_tracks_colour_and_label(fix, qtbot):
     assert w._source_color() == QColor(w.vloc_color) and w._source_label() == "VLOC2"
 
 
+def test_hsi_navsrc_3_is_gps2_in_the_gps_colour(fix, qtbot):
+    """ENUM2 (Bill, 2026-11-24): NAVSRC 3 is GPS2, annunciated "GPS2" in the
+    GPS colour on the tab, course pointer and CDI. It was "VLOC4" in green,
+    a radio. Not supplemental (a GPS never is), no pilot CRS key (its course
+    is not pilot-set), and no GPS OBS (that is the internal plan's, NAVSRC 2).
+    The tab keeps one width across every label, GPS2 included."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    w.setNavsrc(3)
+    assert w._source_label() == "GPS2"
+    assert w._source_color() == QColor(w.course_color)
+    assert w._course_pointer_color() == QColor(w.course_color)
+    w._navsupp = 1.0
+    assert w._supplemental() is False
+    assert w._edit_key("crs") is None
+    w._fplstate = hsi.FPLSTATE_OBS
+    assert w._gps_obs() is False
+    assert "GPS2" in w._SOURCE_TAB_LABELS
+    w.paintEvent(QPaintEvent(w.rect()))
+
+
+def test_hsi_tap_on_gps2_goes_to_nav1(fix, qtbot, monkeypatch):
+    """The source tap cycles GPS -> NAV1 -> NAV2 -> GPS; GPS2 is not in the
+    cycle, and a tap on it goes to NAV1 as from GPS (it went to NAV2)."""
+    w = _mk_hsi(qtbot, cdi_enabled=True)
+    fix.db.define_item("NAVSRC", "NAVSRC", "float", 0.0, 3.0, "", 0, "")
+    w.navsrcdb = object()
+    w._navsrc = 3
+    w.paintEvent(QPaintEvent(w.rect()))
+    written = []
+    monkeypatch.setattr(hsi.fix.db, "queue_out", lambda b: written.append(
+        tuple(b.decode().split(";")[:2])))
+    r = w._source_label_rect
+    w.mousePressEvent(_Tap(r[0] + r[2] // 2, r[1] + r[3] // 2))
+    assert written == [("NAVSRC", "0.0")]
+
+
 def test_hsi_cat_hdg_flag_on_head_fail(fix, qtbot):
     """HSI-TC-101 | HSI-ANN-001 | On HEAD fail the HSI annunciates a heading (compass)
     warning flag (IFH p.118; AC 25-11B 4.2): paintEvent sets w._showHdgFlag and draws a
@@ -1220,6 +1256,10 @@ def test_bearing_source_label_text(fix, qtbot):
     assert widget._bearing_src_label(1) == "1 VOR2"
     widget._brgSrc[2] = 1.0
     assert widget._bearing_src_label(2) == "2 VOR2"
+    widget._brgSrc[1] = 2.0
+    assert widget._bearing_src_label(1) == "1 GPS"
+    widget._brgSrc[1] = 3.0                      # ENUM2: GPS2 had no name
+    assert widget._bearing_src_label(1) == "1 GPS2"
     widget._brgSrc[1] = None
     assert widget._bearing_src_label(1) == ""
 
@@ -1749,6 +1789,7 @@ def test_hsi_source_tab_width_is_constant_across_labels(fix, qtbot):
 
     widths = {
         "GPS": tab_width(2),
+        "GPS2": tab_width(3),
         "VOR1": tab_width(0, 1),
         "LOC1": tab_width(0, 2),
         "VLOC1": tab_width(0, None),
