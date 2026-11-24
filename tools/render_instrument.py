@@ -19,7 +19,7 @@
 
 Renders ONE screen-builder instrument to a PNG, offscreen, using the real
 widget code -- so the editor's palette/canvas thumbnails are faithful without
-reimplementing 43 widgets in JS. It wraps the same offscreen path as the
+reimplementing every widget in JS. It wraps the same offscreen path as the
 manual screenshot harness (tests/screenshots) plus the in-memory mock FIX
 database from the test fixtures, so no fix-gateway is required.
 
@@ -86,12 +86,36 @@ _DEMO_VALUES = {
     "HWIND": 9.0, "XWIND": -4.0,
 }
 
-# Gauges have no default FIX key (they're generic); without a dbkey they crash
-# at the C++ level. When the caller supplies none, inject a demo key (seeded
-# with bands in _setup_fix) so the palette still gets a representative render.
-_NEEDS_DBKEY = {
-    "arc_gauge", "horizontal_bar_gauge", "vertical_bar_gauge", "numeric_display",
-}
+
+def _needs_dbkey_types(registry=None):
+    """Types whose record has a ``dbkey`` ``fixkey`` property with no default.
+
+    Gauges and value displays are generic: with no dbkey they draw nothing, or
+    crash at the C++ level. Read from the specs rather than listed here, so a
+    new generic type gets the demo key the day its record lands (INS2).
+    """
+    if registry is None:
+        registry = eschema.REGISTRY
+    return frozenset(
+        t for t, spec in registry.items()
+        if any(p.name == "dbkey" and p.kind == "fixkey" and not p.default
+               for p in spec.properties))
+
+
+# When the caller supplies no dbkey, these get a demo key (seeded with bands in
+# _setup_fix) so the palette still gets a representative render.
+_NEEDS_DBKEY = _needs_dbkey_types()
+
+
+def _demo_dbkey(instrument_type, options):
+    """Inject the demo key (and a gauge name, where the type takes one)."""
+    if instrument_type not in _NEEDS_DBKEY or "dbkey" in options:
+        return
+    options["dbkey"] = "DEMOGAUGE"
+    spec = eschema.REGISTRY.get(instrument_type)
+    if spec is not None and any(p.name == "name" for p in spec.properties):
+        options.setdefault("name", "DEMO")
+
 
 # The annunciator draws nothing until a tile is bound to a fresh key, so a
 # bare palette render would be blank: give it a 2x3 demo block (ANN1) over
@@ -320,9 +344,7 @@ def render_instrument(instrument_type, options=None, seed=None,
         fix.db.set_value(key, value)
         it.bad = it.fail = it.old = False
 
-    if instrument_type in _NEEDS_DBKEY and "dbkey" not in options:
-        options["dbkey"] = "DEMOGAUGE"
-        options.setdefault("name", "DEMO")
+    _demo_dbkey(instrument_type, options)
     _demo_annunciator(instrument_type, options)
     _demo_cas(instrument_type)
 
@@ -385,9 +407,7 @@ def render_instrument_svg(instrument_type, options=None, seed=None,
     reason = _placeholder_reason(instrument_type, options)
     if reason:
         return "placeholder", out_path
-    if instrument_type in _NEEDS_DBKEY and "dbkey" not in options:
-        options["dbkey"] = "DEMOGAUGE"
-        options.setdefault("name", "DEMO")
+    _demo_dbkey(instrument_type, options)
     _demo_annunciator(instrument_type, options)
     _demo_cas(instrument_type)
     for key, value in (seed or {}).items():
