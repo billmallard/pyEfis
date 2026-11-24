@@ -140,6 +140,7 @@ import numpy as np
 from PyQt6.QtGui import QColor, QPainter
 
 from pyefis.instruments.ai import road_ribbon
+from pyefis.instruments.ai import terrain_shading
 from pyefis.instruments.ai.highway_db import FLAG_BRIDGE, FLAG_TUNNEL
 
 log = logging.getLogger(__name__)
@@ -148,28 +149,24 @@ log = logging.getLogger(__name__)
 SRTM3_SAMPLES = 1201          # samples per side (includes 1-sample overlap)
 SRTM3_VOID    = -32768        # void / no-data marker
 
-# Clearance colour thresholds (ft above terrain)
-COLOR_SAFE      = QColor(0,   100,  0)    # dark green  — ≥ green threshold
-COLOR_CAUTION   = QColor(180, 130,  0)    # amber       — yellow threshold to green
-COLOR_WARNING   = QColor(200,  40,  0)    # dark red    — 0 to yellow threshold
-COLOR_CONFLICT  = QColor(180,   0, 180)   # magenta     — aircraft at or below terrain
-COLOR_WATER     = QColor( 20,  80, 150)   # ocean blue  — SRTM void / open water
-
 # Named terrain palettes selectable via the `palette` SVS config key. Each maps
-# the five clearance bands (safe, caution, warning, conflict, water).
-# "clearance" is the stock scheme (the module COLOR_* constants); the others
-# tune saturation / contrast. set_svs_config copies the chosen set onto the
-# instance (self.c_*); palette_rgb01 hands them to the GL terrain shader as
-# its COLOR_* uniforms (issue #394), falling back to the module constants when
-# no palette was selected, so behaviour is identical unless a palette is named.
-_PALETTES = {
-    "clearance": (COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
-                  COLOR_WATER),
-    "subdued": (QColor(20, 70, 25), QColor(120, 95, 15), QColor(140, 45, 15),
-                QColor(150, 0, 150), QColor(25, 60, 105)),
-    "high_contrast": (QColor(0, 170, 0), QColor(245, 190, 0), QColor(235, 35, 0),
-                      QColor(230, 0, 230), QColor(0, 120, 215)),
-}
+# the five clearance bands (safe, caution, warning, conflict, water). The RGB
+# table lives in terrain_shading.PALETTES so the moving map reads the same
+# band colours (SVSSHADE2). "clearance" is the stock scheme (the module COLOR_*
+# constants); the others tune saturation / contrast. set_svs_config copies the
+# chosen set onto the instance (self.c_*); palette_rgb01 hands them to the GL
+# terrain shader as its COLOR_* uniforms (issue #394), falling back to the
+# module constants when no palette was selected, so behaviour is identical
+# unless a palette is named.
+_PALETTES = {name: tuple(QColor(*rgb) for rgb in bands)
+             for name, bands in terrain_shading.PALETTES.items()}
+
+# Clearance colour bands (ft above terrain), the stock palette:
+# safe (dark green, >= green threshold), caution (amber, yellow threshold to
+# green), warning (dark red, 0 to yellow threshold), conflict (magenta,
+# aircraft at or below terrain), water (ocean blue, SRTM void / open water).
+(COLOR_SAFE, COLOR_CAUTION, COLOR_WARNING, COLOR_CONFLICT,
+ COLOR_WATER) = _PALETTES[terrain_shading.DEFAULT_PALETTE]
 
 # Sentinel written into elevation arrays where the source tile was void (ocean).
 # Must be far enough negative that real below-sea-level terrain (≥ −430 m) is
@@ -520,6 +517,11 @@ class SVSRenderer:
         # — restores the texture gradient / optic flow the eye uses
         # to read slope and closure (0 disables).
         self.safe_gradient = bool(config.get("safe_gradient", True))
+        # SVSSHADE2: `relief` (default) paints the map's hypsometric base
+        # under the hazard bands; `clearance` is the all-over clearance
+        # colouring from before (safe_gradient applies only there).
+        self.terrain_shading = terrain_shading.shading_mode(
+            config.get("terrain_shading", terrain_shading.DEFAULT_SHADING))
         self.terrain_texture = float(config.get("terrain_texture", 0.35))
         # World-anchored surface grid (NASA-SVS style fishnet), 300 m
         # cells draped on the terrain and gaussian-faded by ~2 NM.
@@ -545,7 +547,9 @@ class SVSRenderer:
         # for terrain above. The 500/1000 ft warning/caution bands are
         # suppressed — they would otherwise paint the whole pattern area
         # red on a normal landing approach. Set to 0 to disable.
-        self.airport_proximity_nm = float(config.get("airport_proximity_nm", 5.0))
+        self.airport_proximity_nm = float(
+            config.get("airport_proximity_nm",
+                       terrain_shading.AIRPORT_PROXIMITY_NM))
         # Issue #32 Option B: the proximity collapse only applies to
         # terrain within this height above the nearest airport's field
         # elevation (the runway environment). Terrain rising above the
@@ -553,7 +557,8 @@ class SVSRenderer:
         # the proximity radius — a hillside a mile past the runway
         # must never render benign green.
         self.airport_gate_agl_ft = float(
-            config.get("airport_gate_agl_ft", 400.0))
+            config.get("airport_gate_agl_ft",
+                       terrain_shading.AIRPORT_GATE_AGL_FT))
 
         # Optional FAA DOF obstacle database. Renders towers, antennas,
         # tall buildings as vertical poles. ``obstacle_min_agl_ft`` filters
@@ -616,8 +621,11 @@ class SVSRenderer:
             config.get("road_color", "#535353"))
         self._road_casing_color = road_ribbon.hex_to_rgba01(
             config.get("road_casing_color", "#4a4a4a"))
-        self.green_ft     = float(config.get("clearance_green_ft",  1000))
-        self.yellow_ft    = float(config.get("clearance_yellow_ft",  500))
+        _ts = terrain_shading
+        self.green_ft = float(config.get("clearance_green_ft",
+                                         _ts.CLEARANCE_GREEN_FT))
+        self.yellow_ft = float(config.get("clearance_yellow_ft",
+                                          _ts.CLEARANCE_YELLOW_FT))
         # Terrain colour palette: copy the named band colours onto the instance
         # (default "clearance" == the stock COLOR_* constants -> no change).
         _pal = _PALETTES.get(str(config.get("palette", "clearance")).lower(),
@@ -2584,26 +2592,11 @@ class SVSRenderer:
                 and getattr(self, "_near_airport_cache_key", None)
                     == key):
             return self._near_airport_cache
-        hit = False
-        best_elev = None
-        best_d2 = None
-        for ap in self.airport_db.airports_in_range(
-                ac_lat, ac_lon, self.airport_proximity_nm):
-            hit = True
-            ap_lat = getattr(ap, "ref_lat", None)
-            ap_lon = getattr(ap, "ref_lon", None)
-            elev = getattr(ap, "elev_ft", None)
-            if elev is None:
-                continue
-            if ap_lat is None or ap_lon is None:
-                d2 = 0.0
-            else:
-                d2 = (ap_lat - ac_lat) ** 2 + (ap_lon - ac_lon) ** 2
-            if best_d2 is None or d2 < best_d2:
-                best_d2 = d2
-                best_elev = float(elev)
+        # The rule is shared with the moving map (SVSSHADE2).
+        hit, best_elev = terrain_shading.nearest_field(
+            self.airport_db, ac_lat, ac_lon, self.airport_proximity_nm)
         self._near_airport_cache = hit
-        self._near_airport_elev_ft = best_elev if hit else None
+        self._near_airport_elev_ft = best_elev
         self._near_airport_cache_key = key
         return hit
 
