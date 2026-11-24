@@ -210,8 +210,10 @@ class _CASWidget(QWidget):
             self.refresh()
         except Exception:
             # A fault in the alerting display must not stop the process or
-            # the other instruments; it shows as a frozen window, and is
-            # logged once per tick so it cannot pass unnoticed.
+            # the other instruments. A fault reading the list is CAS FAIL in
+            # the model (FHA CAS-4); one here, past the read, shows as a
+            # frozen window, and is logged once per tick so it cannot pass
+            # unnoticed.
             log.exception("CAS: poll failed")
 
     def drawn_state(self):
