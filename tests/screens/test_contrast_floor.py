@@ -180,6 +180,25 @@ PAIRS = {
         ("#000000", "caution_color", TEXT_FLOOR),
         ("#000000", "warning_color", TEXT_FLOOR),
     ],
+    # CAS3: a line is coloured text on the window's fill (outline phase) or
+    # dark text on the level colour (filled phase, tile.REVERSE_TEXT_COLOR);
+    # the marker the same.
+    "cas_window": [
+        ("warning_color", "background_color", TEXT_FLOOR),
+        ("caution_color", "background_color", TEXT_FLOOR),
+        ("advisory_color", "background_color", TEXT_FLOOR),
+        ("#000000", "warning_color", TEXT_FLOOR),
+        ("#000000", "caution_color", TEXT_FLOOR),
+        ("#000000", "advisory_color", TEXT_FLOOR),
+    ],
+    "cas_marker": [
+        ("warning_color", "background_color", TEXT_FLOOR),
+        ("caution_color", "background_color", TEXT_FLOOR),
+        ("advisory_color", "background_color", TEXT_FLOOR),
+        ("#000000", "warning_color", TEXT_FLOOR),
+        ("#000000", "caution_color", TEXT_FLOOR),
+        ("#000000", "advisory_color", TEXT_FLOOR),
+    ],
     "ap_annunciator": [
         ("active_color", "background_color", TEXT_FLOOR),
         ("armed_color", "background_color", TEXT_FLOOR),

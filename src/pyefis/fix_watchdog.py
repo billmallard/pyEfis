@@ -64,6 +64,8 @@ OFF_START_FAILED = "start-failed"   # start raised (bad FixLinkTimeout, ...)
 OFF_DISABLED = "disabled"           # FixLinkTimeout <= 0
 OFF_NO_PING_KEY = "no-ping-key"     # no ping candidate in the FIX database
 off_reason = None
+# The watchdog start() made, or None; read by link_lost().
+running = None
 
 # The cue's wording and look are a safety-cue decision for Bill (AER-5983);
 # this is the proposal on that card.
@@ -155,13 +157,21 @@ def start(db, config):
     Returns the running watchdog, or None with ``off_reason`` saying why.
     Never raises: a watchdog that cannot start must not stop the display.
     """
-    global off_reason
+    global off_reason, running
     try:
         watchdog, off_reason = _start(db, config)
     except Exception:
         log.critical("FIX link watchdog failed to start", exc_info=True)
         watchdog, off_reason = None, OFF_START_FAILED
+    running = watchdog
     return watchdog
+
+
+def link_lost():
+    """True while the running watchdog has tripped (CAS3: the display's
+    GATEWAY LINK LOST alert). False when it is not running: that case has its
+    own cue, LINK MON OFF."""
+    return running is not None and bool(running.tripped)
 
 
 def _start(db, config):

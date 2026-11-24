@@ -13,6 +13,14 @@
 > The reference flight unit is a Raspberry Pi 5 running Raspberry Pi OS
 > (Debian 13 "trixie"), 64-bit, Python 3.13.
 
+> **Installation requirement: crew alerts in your primary field of view.** If
+> your panel runs crew alerting or warning and caution annunciator lamps, they
+> are visual only. On every screen you fly from, a CAS marker or window, and
+> every warning or caution lamp, must sit in your primary field of view. Where
+> you mount each display is part of meeting it. pyEFIS does not check it. The
+> requirement and how to check it from the seat:
+> [docs/wiki/Designing-Your-Panel.md](docs/wiki/Designing-Your-Panel.md#installation-requirement-crew-alerts-in-your-primary-field-of-view).
+
 The snap instructions below were written for 64-bit Raspbian bullseye and may not work on other versions or operating systems.
 
 ### Install the latest updates

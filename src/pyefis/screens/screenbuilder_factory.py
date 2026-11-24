@@ -1913,6 +1913,77 @@ _register(InstrumentSpec(
     ]},
 ))
 
+# CAS3 (makerplane brief crew_alerting.md section 6): the crew alerting
+# window and its compact marker. Both read the CAS2 list (fix-gateway
+# database/cas.yaml) and write CASACK only, to acknowledge.
+def build_cas_window(screen, config, font_percent=None, font_family=None,
+                     replace=None):
+    return instrument("CASWindow")(screen, font_family=font_family,
+                                   font_percent=font_percent)
+
+
+def build_cas_marker(screen, config, font_percent=None, font_family=None,
+                     replace=None):
+    return instrument("CASMarker")(screen, font_family=font_family,
+                                   font_percent=font_percent)
+
+
+_CAS_DBKEYS = ["CASMSG{}".format(n) for n in range(1, 13)] + [
+    "CASCNT", "CASTOP", "CASSEQ", "CASACK"]
+
+
+def _cas_props():
+    return [
+        Prop("warning_color", "color", default="#ff0000",
+             label="Warning colour",
+             help="warning lines (red; AC 25.1322-1 reserves it)"),
+        Prop("caution_color", "color", default="#ffaa00",
+             label="Caution colour",
+             help="caution lines (amber; AC 25.1322-1 reserves it)"),
+        Prop("advisory_color", "color", default="#ffffff",
+             label="Advisory colour",
+             help="advisory lines (white, as G3X and SkyView)"),
+        Prop("background_color", "color", default="#000000",
+             label="Background colour",
+             help="the fill behind the lines while any is shown"),
+        Prop("background_opacity", "number", default=0.75,
+             label="Background opacity", help="0 (clear) to 1 (opaque)"),
+        Prop("status_path", "string", default="~/.makerplane/pyefis/status.json",
+             label="Updater status file",
+             help="the updater's status.json, read for CATALOG REFUSED"),
+    ]
+
+
+_register(InstrumentSpec(
+    type="cas_window",
+    label="CAS Window",
+    category="system",
+    builder=build_cas_window,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=_CAS_DBKEYS,
+    properties=[
+        Prop("lines", "integer", default=4, minimum=1, maximum=12, step=1,
+             label="Lines",
+             help="message lines the window holds; past that the last line "
+                  "is +k, and a touch on it opens the full list"),
+    ] + _cas_props(),
+    preview={"lines": ["3|0|APLINK|AP LINK LOST|", "2|0|NAVFAIL|NAV FAIL|",
+                       "1|1|CASTEST|CAS TEST|"]},
+))
+
+_register(InstrumentSpec(
+    type="cas_marker",
+    label="CAS Marker",
+    category="system",
+    builder=build_cas_marker,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=_CAS_DBKEYS,
+    properties=_cas_props(),
+    preview={"level": "caution", "text": "CAUTION"},
+))
+
 # The autopilot mode controller (AFC3, brief autopilot_control_head_plan.md
 # sections 5.1-5.4). Presses write APCMD + APCMDSEQ; every key is drawn from
 # the state the autopilot source reports, never from the press.

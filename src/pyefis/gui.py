@@ -15,7 +15,7 @@
 #  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import QObject, pyqtSignal, QEvent, QCoreApplication
+from PyQt6.QtCore import QObject, pyqtSignal, QEvent, QCoreApplication, QTimer
 from PyQt6.QtWidgets import QMainWindow, QApplication, QWidget
 
 import os
@@ -442,6 +442,72 @@ def _boot_on_ground(wait_s=BOOT_GROUND_WAIT_S, settle_s=BOOT_GROUND_SETTLE_S,
         return False
 
 
+# A module logger for the CAS coverage watch: the shared ``log`` is bound
+# only in initialize(), and the watch is built and tested apart from it.
+cas_log = logging.getLogger(__name__)
+
+
+def cas_surfaces(screen_list):
+    """{screen name: number of CAS windows and markers it carries}. A CAS
+    widget class sets ``cas_surface``; matching on that attribute keeps the
+    CAS package (not primary-flight core) out of this module's imports."""
+    out = {}
+    for scr in screen_list:
+        obj = getattr(scr, "object", None)
+        if obj is None:
+            continue
+        out[scr.name] = sum(1 for w in obj.findChildren(QWidget)
+                            if getattr(type(w), "cas_surface", False))
+    return out
+
+
+class _CASCoverageWatch(QObject):
+    """CAS NOT SHOWN (CAS3; brief section 6.4, C2). With no CAS window or
+    marker on any screen, no alert can reach the pilot; once the gateway's
+    CAS list is live that is itself an alert. This watch only checks that
+    ``CASSEQ`` is defined and good, then builds the cue through the
+    instrument table, so a panel or gateway without CAS never imports it.
+    A screen lacking a window or marker while others carry one is logged
+    only (R13 asks for one on every screen; the configurator warns)."""
+
+    POLL_MS = 1000
+
+    def __init__(self, window, counts):
+        # No Qt parent: the window holds it as an attribute, and the link
+        # monitor cue stays the window's topmost child.
+        super().__init__()
+        self.window = window
+        self.cue = None
+        builtin = (DATA_STATUS_SCREEN, ABOUT_SCREEN)
+        if sum(counts.values()):
+            for name, n in sorted(counts.items()):
+                if n == 0 and name not in builtin:
+                    cas_log.warning("CAS: screen %s has no cas_window or "
+                                "cas_marker; alerts do not show there", name)
+            self._timer = None
+            return
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.POLL_MS)
+        self._timer.timeout.connect(self.check)
+        self._timer.start()
+
+    def check(self):
+        try:
+            item = fix.db.get_item("CASSEQ", wait=False)
+        except Exception:
+            return
+        if item.old or item.bad or item.fail:
+            return
+        self._timer.stop()
+        try:
+            self.cue = instrument_table.instrument("CASNotShownCue")(self.window)
+            self.cue.raise_()
+        except Exception:
+            cas_log.error("CAS NOT SHOWN: no screen carries a cas_window or "
+                      "cas_marker, and the cue could not be built",
+                      exc_info=True)
+
+
 class _GroundBootWatch(QObject):
     """Leave the boot data-status screen when the aircraft moves (BOOT1).
 
@@ -604,6 +670,14 @@ def initialize(config, config_path, preferences):
     # AER-5983: a link watchdog that is not running is shown, not just logged.
     mainWindow.linkMonitorCue = fix_watchdog.show_off_cue(
         mainWindow, fix_watchdog.off_reason)
+    # CAS3: no CAS window or marker anywhere is CAS NOT SHOWN once CAS is live.
+    # Never raises into boot: a fault here is logged, and costs the cue only.
+    try:
+        mainWindow.casCoverage = _CASCoverageWatch(mainWindow,
+                                                   cas_surfaces(screens))
+    except Exception:
+        log.error("CAS coverage check failed to start", exc_info=True)
+        mainWindow.casCoverage = None
 
 
     def button_timeout():
