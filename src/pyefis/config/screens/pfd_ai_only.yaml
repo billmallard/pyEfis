@@ -37,3 +37,15 @@ PFD_AI_ONLY:
         columns: 18
       options:
         target_screen: DataStatus
+
+    # Crew alerting marker (CAS3, CAP-119): the highest active alert level,
+    # flashing while anything is unacknowledged; empty when there is none.
+    # Touch to open the full list. The CAS window itself has no shipped
+    # place: the builder places cas_window in the configurator (its own
+    # screen, or beside the attitude display). Project owner, 2026-11-23.
+    - type: cas_marker
+      row: 1
+      column: 38
+      span:
+        rows: 6
+        columns: 20

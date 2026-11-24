@@ -502,9 +502,18 @@ def _svs_props():
              enum=["clearance", "subdued", "high_contrast"], apply="special",
              label="Terrain palette",
              help="clearance-band colour scheme" + dev),
+        # SVSSHADE2: defaults mirror pyefis.instruments.ai.terrain_shading
+        # (screens/ is core and may not import it); a test pins them equal.
+        Prop("svs_terrain_shading", "enum", default="relief",
+             enum=["relief", "clearance"], apply="special",
+             label="Terrain shading",
+             help="relief = the moving map's elevation colours, with amber, "
+                  "red and magenta only where clearance is low; clearance = "
+                  "every patch coloured by its clearance" + dev),
         Prop("svs_clearance_green_ft", "number", default=1000, apply="special",
              label="Safe clearance (ft)",
-             help="green at/above this height over terrain"),
+             help="amber below this height over terrain (green at/above "
+                  "it under clearance shading)"),
         Prop("svs_clearance_yellow_ft", "number", default=500, apply="special",
              label="Caution clearance (ft)", help="amber above this; red below"),
         Prop("svs_terrain_grid", "number", default=0.35, minimum=0.0, maximum=1.0,
@@ -1453,8 +1462,22 @@ _register(InstrumentSpec(
                   "when a working receiver stops (no database)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
-             help="relief = sectional-style hypsometric; caution = "
-                  "TAWS-style amber/red relative to altitude"),
+             help="relief = sectional-style hypsometric; caution = the "
+                  "same relief with the SVS hazard bands over it: amber "
+                  "and red by clearance below ownship, magenta above"),
+        Prop("terrain_palette", "enum", default="clearance",
+             enum=["clearance", "subdued", "high_contrast"],
+             label="Terrain hazard palette",
+             help="caution-mode band colours; the same schemes as the "
+                  "SVS palette"),
+        Prop("clearance_green_ft", "number", default=1000,
+             label="Caution clearance (ft)",
+             help="caution mode: amber below this height over terrain "
+                  "(the SVS default)"),
+        Prop("clearance_yellow_ft", "number", default=500,
+             label="Warning clearance (ft)",
+             help="caution mode: red below this height over terrain "
+                  "(the SVS default)"),
         Prop("water_db_path", "string", default="",
              label="Water db path",
              help="water.sqlite (the SVS water_db_path; on the Pi "
@@ -1888,6 +1911,77 @@ _register(InstrumentSpec(
         {"text": "TRIM", "level": "caution"},
         {"text": "GPS", "level": "info"},
     ]},
+))
+
+# CAS3 (makerplane brief crew_alerting.md section 6): the crew alerting
+# window and its compact marker. Both read the CAS2 list (fix-gateway
+# database/cas.yaml) and write CASACK only, to acknowledge.
+def build_cas_window(screen, config, font_percent=None, font_family=None,
+                     replace=None):
+    return instrument("CASWindow")(screen, font_family=font_family,
+                                   font_percent=font_percent)
+
+
+def build_cas_marker(screen, config, font_percent=None, font_family=None,
+                     replace=None):
+    return instrument("CASMarker")(screen, font_family=font_family,
+                                   font_percent=font_percent)
+
+
+_CAS_DBKEYS = ["CASMSG{}".format(n) for n in range(1, 13)] + [
+    "CASCNT", "CASTOP", "CASSEQ", "CASACK"]
+
+
+def _cas_props():
+    return [
+        Prop("warning_color", "color", default="#ff0000",
+             label="Warning colour",
+             help="warning lines (red; AC 25.1322-1 reserves it)"),
+        Prop("caution_color", "color", default="#ffaa00",
+             label="Caution colour",
+             help="caution lines (amber; AC 25.1322-1 reserves it)"),
+        Prop("advisory_color", "color", default="#ffffff",
+             label="Advisory colour",
+             help="advisory lines (white, as G3X and SkyView)"),
+        Prop("background_color", "color", default="#000000",
+             label="Background colour",
+             help="the fill behind the lines while any is shown"),
+        Prop("background_opacity", "number", default=0.75,
+             label="Background opacity", help="0 (clear) to 1 (opaque)"),
+        Prop("status_path", "string", default="~/.makerplane/pyefis/status.json",
+             label="Updater status file",
+             help="the updater's status.json, read for CATALOG REFUSED"),
+    ]
+
+
+_register(InstrumentSpec(
+    type="cas_window",
+    label="CAS Window",
+    category="system",
+    builder=build_cas_window,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=_CAS_DBKEYS,
+    properties=[
+        Prop("lines", "integer", default=4, minimum=1, maximum=12, step=1,
+             label="Lines",
+             help="message lines the window holds; past that the last line "
+                  "is +k, and a touch on it opens the full list"),
+    ] + _cas_props(),
+    preview={"lines": ["3|0|APLINK|AP LINK LOST|", "2|0|NAVFAIL|NAV FAIL|",
+                       "1|1|CASTEST|CAS TEST|"]},
+))
+
+_register(InstrumentSpec(
+    type="cas_marker",
+    label="CAS Marker",
+    category="system",
+    builder=build_cas_marker,
+    builds_in_isolation=True,
+    offscreen_renderable=True,
+    dbkeys=_CAS_DBKEYS,
+    properties=_cas_props(),
+    preview={"level": "caution", "text": "CAUTION"},
 ))
 
 # The autopilot mode controller (AFC3, brief autopilot_control_head_plan.md

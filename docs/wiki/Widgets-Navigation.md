@@ -67,7 +67,10 @@ FIX keys it reads by default: `LAT`, `LONG`, `TRACKM`, `TRACK`.
 | `navaid_db_path` | Navaid db path | empty |  | navaids.sqlite (tools/build_navaid_db.py; on the Pi /data/makerplane-data/navaids/current/navaids.sqlite) |
 | `layer_flight_plan` | Layer: flight plan | on | on / off | active route: past/active/future legs, waypoint symbols, direct-to and the suspended-at-MAP extended final course (no database, reads the FIX flight-plan bus) |
 | `layer_traffic` | Layer: traffic | on | on / off | ADS-B traffic from the FIX TFC block: relative altitude (needs PALT), trend arrow, alerted targets flash yellow, degraded targets drawn open, stale ones grey; TFC FAIL when a working receiver stops (no database) |
-| `terrain_mode` | Terrain mode | `relief` | `relief`, `caution` | relief = sectional-style hypsometric; caution = TAWS-style amber/red relative to altitude |
+| `terrain_mode` | Terrain mode | `relief` | `relief`, `caution` | relief = sectional-style hypsometric; caution = the same relief with the SVS hazard bands over it: amber and red by clearance below ownship, magenta above |
+| `terrain_palette` | Terrain hazard palette | `clearance` | `clearance`, `subdued`, `high_contrast` | caution-mode band colours; the same schemes as the SVS palette |
+| `clearance_green_ft` | Caution clearance (ft) | `1000` |  | caution mode: amber below this height over terrain (the SVS default) |
+| `clearance_yellow_ft` | Warning clearance (ft) | `500` |  | caution mode: red below this height over terrain (the SVS default) |
 | `water_db_path` | Water db path | empty |  | water.sqlite (the SVS water_db_path; on the Pi /data/makerplane-data/water/current/water.sqlite). When set, lakes and coastline from the water pack are rasterized into the terrain image |
 | `water_max_vertices` | Water vertex cap | `512` | 16 to 1024, step 16 | per-polygon vertex cap for map water rasterization (higher = more coastline/lake detail per rebuild) |
 | `water_raster` | Water raster path | `numpy` | `numpy`, `qt` | numpy = vectorised even-odd scanline fill (MP5, default); qt = legacy per-vertex QPointF/QPolygonF/drawPath path, kept for one release of A/B |

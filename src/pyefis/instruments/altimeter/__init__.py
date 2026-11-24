@@ -94,14 +94,17 @@ class Altimeter(QWidget):
         _bg.setAlphaF(max(0.0, min(1.0, float(getattr(self, "bg_opacity", 100)) / 100.0)))
         dial.fillRect(0, 0, w, h, _bg)
         dialPen = QPen()
-        # Setup Pens
-        if self.item.old or self.item.bad:
-            warn_font = QFont(self.font_family, 30, QFont.Weight.Bold)
-            dialPen.setColor(QColor(Qt.GlobalColor.gray))
-            dialBrush = QBrush(QColor(Qt.GlobalColor.gray))
+        # Setup Pens. CERT1g: the dial follows the tapes. A failed or expired
+        # (old) altitude gets the red XXX and no needles; a suspect (bad) one
+        # keeps its reading, with needles and markings in the tape's suspect
+        # amber.
+        failed = helpers.tape_invalid(self.item)
+        if self.item.bad and not failed:
+            markColor = QColor(helpers.SUSPECT_TAPE_COLOR)
         else:
-            dialPen.setColor(QColor(Qt.GlobalColor.white))
-            dialBrush = QBrush(QColor(Qt.GlobalColor.white))
+            markColor = QColor(Qt.GlobalColor.white)
+        dialPen.setColor(markColor)
+        dialBrush = QBrush(markColor)
         dialPen.setWidth(2)
 
         # Dial Setup
@@ -139,7 +142,7 @@ class Altimeter(QWidget):
             dial.rotate(7.2)
             count += 7.2
 
-        if self.item.fail:
+        if failed:
             warn_font = QFont(self.font_family, 30, QFont.Weight.Bold)
             dial.resetTransform()
             dial.setPen(QPen(QColor(Qt.GlobalColor.red)))
@@ -183,21 +186,6 @@ class Altimeter(QWidget):
         dial.rotate(-lg_dial_angle)
         dial.rotate(outside_dial_angle)
         dial.drawPolygon(outside_dial)
-
-        """ Not sure if this is needed
-        if self.item.bad:
-            dial.resetTransform()
-            dial.setPen (QPen(QColor(255, 150, 0)))
-            dial.setBrush (QBrush(QColor(255, 150, 0)))
-            dial.setFont (warn_font)
-            dial.drawText (0,0,w,h, Qt.AlignmentFlag.AlignCenter, "BAD")
-        elif self.item.old:
-            dial.resetTransform()
-            dial.setPen (QPen(QColor(255, 150, 0)))
-            dial.setBrush (QBrush(QColor(255, 150, 0)))
-            dial.setFont (warn_font)
-            dial.drawText (0,0,w,h, Qt.AlignmentFlag.AlignCenter, "OLD")
-        """
 
     def setUnitSwitching(self):
         """When this function is called the unit switching features are used"""

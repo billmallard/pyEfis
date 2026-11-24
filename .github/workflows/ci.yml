@@ -25,6 +25,8 @@ jobs:
     # it can publish an FPLMSG refusal code the display has no plain words for.
     # HOLDENT2: tests/instruments/test_map_hold_entry.py loads the engine (it
     # needs only fixgw/geo.py) and checks the drawn hold entry against it.
+    # ENUM2: tests/instruments/hsi/test_source_enums.py reads ahrs.yaml's NAVSRC
+    # and BRGnSRC ranges and fails on a value the HSI has no label for.
     - name: Check out fix-gateway's flightplan engine
       uses: actions/checkout@v6
       with:
@@ -34,6 +36,7 @@ jobs:
         sparse-checkout: |
           src/fixgw/plugins/flightplan/engine.py
           src/fixgw/geo.py
+          src/fixgw/config/database/ahrs.yaml
         sparse-checkout-cone-mode: false
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
@@ -83,6 +86,7 @@ jobs:
       id: pytest
       env:
         FIXGW_FLIGHTPLAN_ENGINE: _fixgw/src/fixgw/plugins/flightplan/engine.py
+        FIXGW_AHRS_DB: _fixgw/src/fixgw/config/database/ahrs.yaml
       run: |
         # JUnit (xunit1 keeps each case's file and line) is the record the job summary
         # and the test-evidence page are built from (TV11).

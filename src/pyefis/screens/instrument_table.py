@@ -75,6 +75,9 @@ INSTRUMENTS = {
     "ValueDisplay": "pyefis.instruments.misc",
     "DataStatus": "pyefis.instruments.data_status",
     "DataAnnunciation": "pyefis.instruments.data_status",
+    "CASWindow": "pyefis.instruments.cas",
+    "CASMarker": "pyefis.instruments.cas",
+    "CASNotShownCue": "pyefis.instruments.cas",
     "AboutSystem": "pyefis.instruments.about",
 }
 

@@ -1,0 +1,4 @@
+CRITICAL:20261122-22:18:29:fixgw.demo - demo: not running: another source writes ALT (netfix), GS (netfix), HEAD (netfix), IAS (netfix), OAT (netfix), PITCH (netfix), ROLL (netfix), TAS (netfix), TRACK (netfix), VS (netfix)
+None
+bench: cas plugin stopped
+WARNING:20261122-22:19:46:fixgw - Plugin demo did not shutdown properly
