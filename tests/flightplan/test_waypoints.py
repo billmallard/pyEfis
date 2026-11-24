@@ -60,6 +60,14 @@ NAVAIDS = [
     ("RZS", "VOR/DME", "San Marcus",  "114.90", 1500, 34.50953, -119.77099),
     ("POM", "VOR/DME", "Pomona",      "110.40", 800,  34.07839, -117.78707),
     ("ZZZ", "VOR",     "Zulu Zulu Zulu", "112.30", 900, 34.50000, -119.50000),  # dup ident w/ a fix
+    # Real cycle-2611 rows, copied from the navaids pack (AER-6454): the
+    # Albuquerque VORTAC and the VOR test facility of the same ident on the
+    # airport, 10.4 nm away; the Astoria VOR/DME and the Fort Stevens fan
+    # marker that shares its ident, 4.6 nm away.
+    ("ABQ", "VORTAC",  "Albuquerque", "113.2", 5748.5, 35.04379558, -106.81631191),
+    ("ABQ", "VOT",     "Albuquerque", "111",   5318.0, 35.03819, -106.60841805),
+    ("AST", "VOR/DME", "Astoria",     "114",   11.3,   46.16169902, -123.88037527),
+    ("AST", "FAN MARKER", "Fort Stevens", "",  14.0,   46.20843611, -123.96542555),
 ]
 
 # (id, use_code, lat, lon)
@@ -110,6 +118,14 @@ def index(tmp_path):
                         recent_file=str(tmp_path / "recent.json"))
     assert idx.wait_ready(timeout=5) is True
     return idx
+
+
+def test_vor_test_facility_and_fan_marker_are_not_waypoints(index):
+    """Neither is a place to fly to, and indexing them made ABQ and AST two
+    places each (AER-6454)."""
+    matches = index.lookup("ABQ")
+    assert [(w.type, round(w.lon, 3)) for w in matches] == [("vor", -106.816)]
+    assert [(w.type, w.name) for w in index.lookup("AST")] == [("vor", "Astoria")]
 
 
 # ---------------------------------------------------------------------------
