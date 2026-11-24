@@ -15,7 +15,8 @@
 #  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 
 """The palette-thumbnail tools read the instrument records, not hand lists
-(INS2): render_instrument's demo-key set."""
+(INS2): render_instrument's demo-key set and build_editor_assets' check that
+every type which should render did."""
 
 import os
 import sys
@@ -24,6 +25,7 @@ _TOOLS = os.path.join(os.path.dirname(__file__), "..", "..", "tools")
 if _TOOLS not in sys.path:
     sys.path.insert(0, _TOOLS)
 
+import build_editor_assets  # noqa: E402
 import render_instrument  # noqa: E402
 
 from pyefis.screens import screenbuilder_factory as factory  # noqa: E402
@@ -74,3 +76,39 @@ def test_demo_dbkey_sets_a_name_only_where_the_type_takes_one():
     assert text == {"dbkey": "DEMOGAUGE"}
     assert given == {"dbkey": "OILP1"}
 
+
+# --- unexpected placeholders ---------------------------------------------------
+
+def test_unexpected_placeholder_rule():
+    """Only a type that builds standalone, renders offscreen and is not on
+    the placeholder list counts as a broken render."""
+    registry = {s.type: s for s in (
+        _spec("gauge"),
+        _spec("config_driven"),
+        _spec("needs_screen", isolation=False),
+        _spec("gl", offscreen=False),
+    )}
+    placeholders = ["gl", "needs_screen", "config_driven", "gauge", "unknown"]
+    assert build_editor_assets.unexpected_placeholders(
+        placeholders, registry, expected={"config_driven"}) == ["gauge"]
+
+
+def test_todays_placeholders_are_all_expected():
+    """The four types CI placeholders on dev today pass; a gauge does not.
+    The default placeholder list is render_instrument's _CONFIG_DRIVEN."""
+    today = ["button", "listbox", "virtual_vfr", "weston"]
+    assert build_editor_assets.unexpected_placeholders(today) == []
+    assert build_editor_assets.unexpected_placeholders(
+        today + ["arc_gauge"]) == ["arc_gauge"]
+
+
+def test_main_exits_1_on_an_unexpected_placeholder(monkeypatch, tmp_path,
+                                                   capsys):
+    out = str(tmp_path)
+    monkeypatch.setattr(build_editor_assets, "build",
+                        lambda *a: (3, ["weston", "value_text"]))
+    assert build_editor_assets.main(["--out", out]) == 1
+    assert "value_text" in capsys.readouterr().err
+    monkeypatch.setattr(build_editor_assets, "build",
+                        lambda *a: (3, ["weston"]))
+    assert build_editor_assets.main(["--out", out]) == 0
