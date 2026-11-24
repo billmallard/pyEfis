@@ -288,11 +288,12 @@ def test_gauges_declare_every_knob_option_they_read(fix, qtbot, hmi_actions):
 
 def test_virtual_vfr_dbkeys_are_the_keys_the_widget_reads():
     """The virtual_vfr record lists the FIX keys the widget consumes: the
-    attitude keys plus LAT/LONG/ALT for the SVS camera. COURSE went with the
+    attitude keys plus LAT/LONG/TALT for the SVS camera (TALT, not
+    the baro-corrected ALT: SVSALT1). COURSE went with the
     legacy CIFP overlay, its only reader (VVFR1, AER-5417); HEAD was never
     read (#46)."""
     dbkeys = factory.REGISTRY["virtual_vfr"].dbkeys
-    assert set(dbkeys) == {"PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "ALT"}
+    assert set(dbkeys) == {"PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "TALT"}
     assert "COURSE" not in dbkeys and "HEAD" not in dbkeys
 
 
