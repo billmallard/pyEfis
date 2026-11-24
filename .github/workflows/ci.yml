@@ -68,6 +68,17 @@ jobs:
       # entry fails. The runtime check (R4) and the write audit (R5) run in pytest,
       # tests/safety/.
       run: python tools/core_imports.py check
+    - name: Every FIX key pyEfis writes is declared in fix-gateway's writer register; no new route-concept class
+      # ARCHG2. Fetches fix-gateway's scanner and writers.yaml at the commit in
+      # tests/arch/fix_gateway.pin (the cache the pytest cases reuse); docs/key_writers.md
+      # says how to declare a write and how to bump the pin.
+      run: |
+        mkdir -p reports
+        rc=0; python tools/check_fix_writers.py > reports/key_writers.txt || rc=$?
+        cat reports/key_writers.txt
+        { echo "### FIX key writers and concept names (ARCHG2)"; echo; echo '```'
+          cat reports/key_writers.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        exit $rc
     - name: Test with pytest
       id: pytest
       env:

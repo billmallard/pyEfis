@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QApplication, QGraphicsLineItem
 from PyQt6.QtCore import Qt, qRound
 from PyQt6.QtGui import QColor, QBrush, QPen, QFont, QPainter, QPaintEvent, QFontMetrics
 from PyQt6 import QtGui
-from pyefis.instruments import altimeter
+from pyefis.instruments import altimeter, helpers
 import pyefis.hmi as hmi
 from tests.utils import track_calls
 
@@ -31,13 +31,16 @@ def test_altimeter(fix,qtbot):
     with track_calls(QPen, "setColor") as tracker:
         widget.paintEvent(None)
         assert tracker.was_called_with("setColor",QColor(Qt.GlobalColor.white))
+        # CERT1g: bad draws in the suspect amber, old reads failed (red XXX);
+        # test_dial_flags.py pins the rendered look.
         fix.db.get_item("ALT").bad = True
         widget.paintEvent(None)
-        assert tracker.was_called_with("setColor",QColor(Qt.GlobalColor.gray))
+        assert tracker.was_called_with("setColor",QColor(helpers.SUSPECT_TAPE_COLOR))
         fix.db.get_item("ALT").bad = False
         fix.db.get_item("ALT").old = True
-        widget.paintEvent(None)
-        assert tracker.was_called_with("setColor",QColor(Qt.GlobalColor.gray))
+        with track_calls(QPainter, "setBrush") as tracker2:
+            widget.paintEvent(None)
+            assert tracker2.was_called_with("setBrush",QBrush(QColor(Qt.GlobalColor.red)))
         fix.db.get_item("ALT").old = False
         fix.db.get_item("ALT").fail = True
         with track_calls(QPainter, "setBrush") as tracker2:

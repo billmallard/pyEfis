@@ -396,6 +396,22 @@ def test_pilot_name_survives_the_bus_and_later_edits(fix):
     assert fix.db.get_item("FPLNAME").value == "COAST RUN"
 
 
+def test_fm_leg_coded_heading_survives_a_bus_round_trip(fix):
+    """FPA1: the engine flies an FM leg on its coded heading and keys the
+    leg's identity on it. The FPL page re-reads its plan from the bus after
+    every commit, so a reader that dropped FM's CRS made the next publish
+    write the great-circle bearing (297 here) in its place."""
+    _define_all_fp1_keys(fix)
+    bridge = fixbridge.FixBridge(fix)
+    fm = model.Waypoint(id="GVO", type="fix", lat=34.531, lon=-120.091, pt="FM", crs=255.0)
+    bridge.publish(model.FlightPlan(name="FM", waypoints=[ROUTE_327[0], fm]))
+    assert fix.db.get_item("FPL2CRS").value == 255.0
+    plan = bridge.read_plan()
+    assert plan.waypoints[1].crs == 255.0
+    bridge.publish(plan)
+    assert fix.db.get_item("FPL2CRS").value == 255.0
+
+
 def test_route_to_plan_reads_default_name_as_unnamed():
     """A restarted display (no in-process state) sees the same thing: the
     rule is the bus name against the bus slots, nothing remembered."""

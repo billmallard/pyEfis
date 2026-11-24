@@ -1,0 +1,8 @@
+# The fix-gateway commit whose writer register (src/fixgw/database/writers.yaml)
+# and scanner (tools/check_key_writers.py) tools/check_fix_writers.py checks
+# pyEfis against (ARCHG2, AER-6403).  A commit on fix-gateway `dev`.
+#
+# To bump it, replace the one line below and open a one-line PR; the CI step
+# "Every FIX key pyEfis writes is declared ..." runs against the new commit.
+# docs/key_writers.md says when and how.
+29cd2ba7057defd120a578bf1151a025e867058f

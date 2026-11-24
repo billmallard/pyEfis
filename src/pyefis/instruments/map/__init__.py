@@ -1122,7 +1122,15 @@ class MovingMap(LiveBindingMixin, QWidget):
     def banner_insert(self):
         """Insert into the plan on the bus at the leg nearest the pointer
         (append when it has no leg yet) and publish -- every flight_plan
-        instrument re-reads it on ``FPLSEQ``."""
+        instrument re-reads it on ``FPLSEQ``.
+
+        The slots are the flight plan only once the engine has loaded them
+        (``FPLLDSEQ`` equal to ``FPLSEQ``, the FPL page's guard). Otherwise
+        they are a refused (or not yet answered) route, and inserting into
+        it would republish that route while the flown one is unchanged, so
+        nothing is published and the pilot is sent to the FPL page, which
+        shows why. A gateway without ``FPLLDSEQ`` keeps the behaviour from
+        before the key."""
         if kiosk.locked():
             return
         wp = self.pointer_waypoint()
@@ -1132,7 +1140,15 @@ class MovingMap(LiveBindingMixin, QWidget):
         if bridge is None:
             self.show_toast("NO FLIGHT PLAN")
             return
+        key = bridge.route_key()
         plan = bridge.read_plan()
+        if key is None or plan is None:
+            self.show_toast("NO FLIGHT PLAN")
+            return
+        seq, loaded = key[0], key[3]
+        if loaded is not None and loaded != seq:
+            self.show_toast("ROUTE NOT LOADED: SEE FPL")
+            return
         new = fp_model.Waypoint(id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon,
                                 name=wp.name or "")
         p = self._pointer
