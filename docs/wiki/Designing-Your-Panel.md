@@ -101,10 +101,12 @@ primary field of view too, on every screen that carries one.
   Radios: while it is up, you are flying from it, and its marker is the only
   alert cue in front of you.
 - **Your primary field of view** is what you can see by moving your eyes alone,
-  without turning your head, from your normal seated eye position. The FAA
-  figure is within 15 degrees of your normal line of sight. With the panel
-  about 30 inches from your eyes, that is within about 8 inches, centre to
-  centre, of the centre of the basic T on your PFD (AC 23.1311-1C section 15.2
+  without turning your head, from your normal seated eye position. FAA
+  guidance for certificated aircraft puts warnings and cautions within 15
+  degrees of your normal line of sight, and this requirement adopts that
+  figure. With the panel about 30 inches from your eyes, that is within about
+  8 inches, measured horizontally centre to centre, of the centre of the basic
+  T on your PFD (AC 23.1311-1C section 15.2
   and Table 3; AC 25.1322-1 Appendix 5).
 - **Both halves are yours:** where each display is mounted in the panel, and
   where you place the marker, window or lamp on its screen. A marker in the far
@@ -119,7 +121,7 @@ until you acknowledge, and a touch on it opens the list.
 so the flashing marker, window or lamp is the only thing that draws your eye to
 a new alert. Outside your primary field of view, a new caution can flash
 unnoticed until your scan happens to reach it. AC 23.1311-1C Table 3 Note 4
-allows warnings and cautions out to 35 degrees only with a unique aural tone,
+accepts warnings and cautions out to 35 degrees only with a unique aural tone,
 or a master warning or caution light within 15 degrees. This installation has
 neither, so the 15-degree figure applies. The requirement will be reviewed when
 pyEFIS gains an alert tone.

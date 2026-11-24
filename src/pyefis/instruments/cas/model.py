@@ -176,6 +176,7 @@ class CASModel:
         self._local = {}
         self.list_ok = False
         self.reason = "not read yet"
+        self._read_failed = False
         self.poll()
 
     # -- reading ------------------------------------------------------------
@@ -252,8 +253,21 @@ class CASModel:
 
     def poll(self):
         now = self.clock()
-        link_lost = bool(self.link_lost())
-        ok, reason = self._list_health(now)
+        try:
+            link_lost = bool(self.link_lost())
+            ok, reason = self._list_health(now)
+            snap = self._read_list() if ok and not link_lost else None
+        except Exception:
+            # A read that raises on every poll must not leave the last list
+            # drawn as current (FHA CAS-4): it is CAS FAIL, logged once.
+            if not self._read_failed:
+                logger.exception("CAS: reading the list failed; CAS FAIL")
+            self._read_failed = True
+            link_lost, ok, reason, snap = False, False, "read failed", None
+        else:
+            if self._read_failed:
+                logger.info("CAS: reading the list works again")
+            self._read_failed = False
         in_grace = now - self.started < BOOT_GRACE_S
         self.list_ok = ok
         self.reason = reason
@@ -266,13 +280,13 @@ class CASModel:
             self._local.pop(CAS_FAIL_ID, None)
         self._set_local(CAS_FAIL_ID, not link_lost and not ok and not in_grace,
                         now)
-        self._set_local(CATALOG_ID, catalog_refused(self.status()), now)
         if ok and not link_lost:
-            snap = self._read_list()
+            # None here is a write landing mid-read: keep the last whole list.
             if snap is not None:
                 self.snapshot = snap
         else:
             self.snapshot = None
+        self._set_local(CATALOG_ID, catalog_refused(self.status()), now)
 
     # -- what is shown --------------------------------------------------------
     @property

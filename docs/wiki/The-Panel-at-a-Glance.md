@@ -95,7 +95,7 @@ the screen you are on:
 |---|---|
 | **Data Status** | Opens the [Data Status](Data-Status-Updates-and-Notices#the-data-status-screen) screen. **Continue** brings you back to the screen you were on. |
 | **About** | Opens the [About](Data-Status-Updates-and-Notices#the-about-screen) screen. **Back** brings you back to the screen you were on. |
-| **Screens** | Lists every flight screen; the one you are on is outlined. Touch one to go there. |
+| **Screens** | Lists every loaded screen except Data Status and About, which have their own entries; the one you are on is outlined. Touch one to go there. Above 6 screens the list is two columns. **Back** returns to the menu. |
 | **Close** | Closes the menu. |
 
 A touch anywhere outside the menu closes it too, and it closes by itself after
@@ -104,7 +104,10 @@ and on the ground: every entry only shows information or changes the screen,
 and the Data Status **Update** button keeps its own rules.
 
 The swipe has to start within about 8 mm of the top edge and 25 mm of the right
-edge, move at least 15 mm down and 4 mm left, and finish within 1.5 seconds. A
+edge, move at least 15 mm down and 4 mm left, and finish within 1.5 seconds.
+On a small screen the corner is capped at a quarter of the width and 12% of
+the height. A swipe that goes more than twice as far left as down is not the
+menu. A
 tap on a button in that corner is still a tap, and a pan or pinch on the map or
 a scroll on the flight plan page does not open the menu. A gateway key opens
 the same menu, so a control head or a knob can be set up to open it too
@@ -184,9 +187,10 @@ Every value carries fix-gateway's quality flags, and each instrument shows them.
 | A grey selected altitude, altimeter setting or bug | That value is old or bad. |
 | An amber **SVS UNAVAIL** | Synthetic vision is on but has no usable position, so the ground is drawn plain brown. |
 | A red value on a gauge | That item is annunciating. See [Engine Monitoring](Engine-Monitoring). |
+| An amber **LINK MON OFF** box at the top centre of every screen | The FIX link watchdog is not running, so pyEFIS would not flag the values if fix-gateway stopped answering. It stays until pyEFIS restarts with the watchdog running, and touches pass through it. See the [link watchdog](Customizing-Beyond-the-Configurator#the-data). |
 
-These come from the data, not from the display: check the sensor or its
-fix-gateway plugin. If every value fails at once, pyEFIS has heard nothing from
+Apart from **LINK MON OFF**, these come from the data, not from the display:
+check the sensor or its fix-gateway plugin. If every value fails at once, pyEFIS has heard nothing from
 fix-gateway for 2 s (the default); see the
 [link watchdog](Customizing-Beyond-the-Configurator#the-data).
 

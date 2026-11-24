@@ -72,8 +72,10 @@ See [Engine & Data Gauges](Widgets-Engine-Gauges#ganged-gauges).
 | `altimeter_dial` | Altimeter Dial | altitude | `ALT` | [Flight Instruments](Widgets-Flight-Instruments#altimeter_dial) |
 | `altimeter_tape` | Altimeter Tape | altitude | `ALT` | [Flight Instruments](Widgets-Flight-Instruments#altimeter_tape) |
 | `altimeter_trend_tape` | Altimeter Trend Tape | altitude | `VS` | [Flight Instruments](Widgets-Flight-Instruments#altimeter_trend_tape) |
+| `ap_annunciator` | Autopilot Mode Annunciator | attitude | `APENG`, `YDENG`, `APLAT`, `APLATARM`, `APVERT`, `APVERTARM`, `APALTCAP`, `APALTREF`, `APDISC`, `VSSEL`, `IASSEL` | -- |
 | `arc_gauge` | Arc Gauge | gauge | -- | [Engine & Data Gauges](Widgets-Engine-Gauges#arc_gauge) |
 | `atitude_indicator` | Attitude Indicator | attitude | `PITCH`, `ROLL`, `ALAT`, `TAS` | [Attitude & SVS](Widgets-Attitude-and-SVS#atitude_indicator) |
+| `autopilot_panel` | Autopilot Panel | navigation | `APCMD`, `APCMDSEQ`, `APENG`, `FDENG`, `YDENG`, `APLAT`, `APLATARM`, `APVERT`, `APVERTARM`, `APALTCAP`, `APCAPS`, `APMSG`, `HEADBUG`, `VSSEL`, `IASSEL`, `ALTSEL`, `HEAD`, `VS`, `IAS`, `ALT` | -- |
 | `button` | Button | control | -- | [Text & Interactive](Widgets-Text-and-Interactive#button) |
 | `checklist` | Checklist | list | -- | [Text & Interactive](Widgets-Text-and-Interactive#checklist) |
 | `data_annunciation` | Data Annunciation | system | -- | [System & Containers](Widgets-System#data_annunciation) |

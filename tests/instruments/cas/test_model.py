@@ -362,6 +362,30 @@ def test_cas_fail_clears_after_its_delay_and_the_list_returns(bus, clock):
     assert [x.id for x in m.messages()] == ["NAVFAIL"]
 
 
+@pytest.mark.parametrize("break_it", ["casseq_not_a_number", "lookup_raises"])
+def test_cas_fail_when_every_read_raises(bus, clock, caplog, break_it):
+    """CASW-LOC-002, CASW-STALE-001 (FHA CAS-4): a read that raises on every
+    poll is CAS FAIL, and the last list is not left on screen as current. It
+    is logged once, not on every poll."""
+    bus.publish(["2|0|NAVFAIL|NAV FAIL|"])
+    m = make(bus, clock)
+    assert [x.id for x in m.messages()] == ["NAVFAIL"]
+    if break_it == "casseq_not_a_number":
+        bus.items["CASSEQ"]._value = "garbage"
+    else:
+        m._items.clear()
+        def lookup(key):
+            raise RuntimeError("client torn down")
+        m.lookup = lookup
+    with caplog.at_level("ERROR"):
+        m.poll()
+        m.poll()
+    assert lines(m) == [(2, False, cm.CAS_FAIL_ID, "CAS FAIL")]
+    assert m.seq is None
+    assert sum("reading the list failed" in r.message
+               for r in caplog.records) == 1
+
+
 def test_cas_fail_with_two_messages_shows_neither(bus, clock):
     """CASW-STALE-001 (bench step 16, C4): two messages active, the plugin
     stops; CAS FAIL, and neither old message is shown as current."""

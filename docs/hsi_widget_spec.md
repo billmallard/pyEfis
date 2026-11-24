@@ -418,6 +418,14 @@ each fully honor the convention.
 **HSI-SRC-001.** The active nav source is annunciated on the face at all times (e.g.
 "GPS", "VOR1", "LOC1"), coloured per HSI-COLOR-001, so the crew always knows what drives
 lateral/vertical guidance (14 CFR §23.2605(b); `avionics_reference.md` §4.1).
+*Every selector value has a label (ENUM2, AER-6457; Bill, 2026-11-24).* fix-gateway gives
+`NAVSRC`, `BRG1SRC` and `BRG2SRC` the range 0..3 and reserves 3 for GPS2. `NAVSRC` 3 reads
+`GPS2` in the GPS colour (it read `VLOC4` in the VOR/LOC colour, a radio), and a bearing
+source of 3 is named `GPS2`. GPS2 is not supplemental, has no pilot CRS key and no GPS OBS
+(OBS is the internal plan's, `NAVSRC` 2); it is not in the tap cycle, and a tap on it goes
+to NAV1, as from GPS. Nothing writes 3 yet. The values live in `NAVSRC_NAV_SLOTS`,
+`NAVSRC_GPS_LABELS` and `BRGSRC_LABELS`; `test_source_enums.py` reads the gateway's ranges
+and fails on a value in neither, and fix-gateway's CI runs it.
 *BRG tab (HSIBRG1, AER-5548; one button since HSIBRG4, AER-5847).* The panel's right
 edge carries the bearing-pointer selector (`HSI._draw_bearing_tab`), drawn only when
 `bearing1_enabled` or `bearing2_enabled` makes a pointer available. It is the source tab
@@ -558,7 +566,8 @@ will flip the run red the moment a flag is implemented, forcing removal of the m
 
 Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
 `quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;
-HSI-COLOR-001 → `source_auto_color`; HSI-SRC-001 → `source_label`, `source_label_tap_cycles_navsrc`;
+HSI-COLOR-001 → `source_auto_color`; HSI-SRC-001 → `source_label`, `source_label_tap_cycles_navsrc`,
+`navsrc_3_is_gps2_in_the_gps_colour`, `tap_on_gps2_goes_to_nav1`, `test_source_enums.py`;
 HSI-SRC-002 → `hsi_supplemental_only_when_navsupp_set_on_a_nav_source`, `hsi_supplemental_mark_pixels`,
 `hsi_supplemental_mark_in_arc`.
 

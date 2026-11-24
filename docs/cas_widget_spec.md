@@ -82,7 +82,7 @@ slice), **gap** (planned elsewhere).
 | CASW-MRK-001 | The marker shows the highest active level as a word and a colour, flashes while anything is unacknowledged, is empty when quiet, and a touch opens the list without acknowledging | brief 6.1; G3X p.373; AC 23.1311-1C §22.6 (colour not the sole cue) | shipped |
 | CASW-ACK-001 | A touch writes `CASACK` = the `CASSEQ` of the list drawn, never a newer one; local alerts are acknowledged on this display; nothing is written during link loss, `CAS FAIL`, or with every gateway line acknowledged | brief 5.3, 6.5 (C3) | shipped |
 | CASW-LOC-001 | `GATEWAY LINK LOST` (warning) while the CERT1 link watchdog has tripped | brief 6.4 | shipped |
-| CASW-LOC-002 | `CAS FAIL` (caution) when the gateway answers but a list key is missing, old, bad or failed, or `CASSEQ` was not rewritten for 4.5 s; not during link loss (the link alert replaces it at once); not in the first 5 s after start | AC 25.1322-1 §7d(1) (p.9, loss of the alerting function); brief 6.4, R12 | shipped |
+| CASW-LOC-002 | `CAS FAIL` (caution) when the gateway answers but a list key is missing, old, bad or failed, or `CASSEQ` was not rewritten for 4.5 s, or reading the list raises; not during link loss (the link alert replaces it at once); not in the first 5 s after start | AC 25.1322-1 §7d(1) (p.9, loss of the alerting function); brief 6.4, R12 | shipped |
 | CASW-LOC-003 | `CATALOG REFUSED` (advisory) while `status.json` carries the CERT3 rollback row | brief 6.4 | shipped |
 | CASW-LOC-004 | `CAS NOT SHOWN`: with the `CAS*` keys live and no window or marker on any screen, a cue over every screen and an error in the log; a screen lacking one while another has one is logged as a warning | brief 6.4, R13, C2 | shipped |
 | CASW-LOC-005 | `GATEWAY LINK LOST` and `CAS FAIL` stay 2 s after their condition clears | brief C6 | shipped |
@@ -112,8 +112,10 @@ slice), **gap** (planned elsewhere).
 - **The shared acknowledge is still not built** (brief 6.5). The disconnect tone stops when the
   disconnect is acknowledged on the autopilot mode strip, as the flashing `AP` does; a touch
   on the CAS window does not acknowledge it.
-- **The tone's own loss is logged, not annunciated.** With no device, an unplugged adapter or
-  a muted mixer the visual cues work as before, which is the slice-1 baseline. See FHA CAS-1.
+- **The tone's own loss is not annunciated.** A missing audio device or a pulled USB adapter is
+  logged and retried (CASW-AUR-006). A muted or zero mixer, a pulled audio cable, or a fault in
+  the intercom or headset is not detected at all: the tone is written and nothing is heard. The
+  visual cues work as before in every case, which is the slice-1 baseline. See FHA CAS-8.
 
 - **CAS TEST timing (found on the private bench, AER-6346).** The gateway raises `CAS TEST`
   for about 5 s from plugin start. A display that is still starting, or that boots the

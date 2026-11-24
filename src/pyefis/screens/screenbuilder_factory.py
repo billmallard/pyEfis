@@ -502,9 +502,18 @@ def _svs_props():
              enum=["clearance", "subdued", "high_contrast"], apply="special",
              label="Terrain palette",
              help="clearance-band colour scheme" + dev),
+        # SVSSHADE2: defaults mirror pyefis.instruments.ai.terrain_shading
+        # (screens/ is core and may not import it); a test pins them equal.
+        Prop("svs_terrain_shading", "enum", default="relief",
+             enum=["relief", "clearance"], apply="special",
+             label="Terrain shading",
+             help="relief = the moving map's elevation colours, with amber, "
+                  "red and magenta only where clearance is low; clearance = "
+                  "every patch coloured by its clearance" + dev),
         Prop("svs_clearance_green_ft", "number", default=1000, apply="special",
              label="Safe clearance (ft)",
-             help="green at/above this height over terrain"),
+             help="amber below this height over terrain (green at/above "
+                  "it under clearance shading)"),
         Prop("svs_clearance_yellow_ft", "number", default=500, apply="special",
              label="Caution clearance (ft)", help="amber above this; red below"),
         Prop("svs_terrain_grid", "number", default=0.35, minimum=0.0, maximum=1.0,
@@ -1453,8 +1462,22 @@ _register(InstrumentSpec(
                   "when a working receiver stops (no database)"),
         Prop("terrain_mode", "enum", default="relief",
              enum=["relief", "caution"], label="Terrain mode",
-             help="relief = sectional-style hypsometric; caution = "
-                  "TAWS-style amber/red relative to altitude"),
+             help="relief = sectional-style hypsometric; caution = the "
+                  "same relief with the SVS hazard bands over it: amber "
+                  "and red by clearance below ownship, magenta above"),
+        Prop("terrain_palette", "enum", default="clearance",
+             enum=["clearance", "subdued", "high_contrast"],
+             label="Terrain hazard palette",
+             help="caution-mode band colours; the same schemes as the "
+                  "SVS palette"),
+        Prop("clearance_green_ft", "number", default=1000,
+             label="Caution clearance (ft)",
+             help="caution mode: amber below this height over terrain "
+                  "(the SVS default)"),
+        Prop("clearance_yellow_ft", "number", default=500,
+             label="Warning clearance (ft)",
+             help="caution mode: red below this height over terrain "
+                  "(the SVS default)"),
         Prop("water_db_path", "string", default="",
              label="Water db path",
              help="water.sqlite (the SVS water_db_path; on the Pi "

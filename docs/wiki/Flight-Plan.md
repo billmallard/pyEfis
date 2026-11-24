@@ -22,6 +22,7 @@ a state badge in orange, and the remaining distance and time in cyan.
 | `LEG` | Flying the plan leg by leg. |
 | `DIRECT` | Flying a Direct-To. |
 | `SUSP` | Sequencing is suspended: the engine holds the current leg and does not move on. |
+| `OBS` | GPS OBS: you set the course through the waypoint you are flying to. See [the menu](#the-menu). |
 
 **Header, second line**, in green: the approach state, `APR ARM`, `LNAV` or
 `MISSED`. A red `LOI` means the GPS has lost integrity. On the right, in grey,
@@ -65,6 +66,8 @@ starts the missed approach.
 3. Touch **ENT**. The waypoint is added to the end of the plan and sent to the
    engine, and the page goes back to the list. `NO MATCHES` means nothing has
    that ident; `DUPLICATE FOUND` gives you a list to pick from.
+   `<ident> IS ALREADY THE PREVIOUS FIX` (or `NEXT FIX`) means that fix is
+   already right beside the place it would go.
 4. Repeat. Touch **X** to leave the entry page without adding anything.
 
 There is no separate step to activate a plan: each change is sent as you make
@@ -79,34 +82,70 @@ reads `DRAFT - NOT LOADED:` and its button, **Flown plan**, goes back. The draft
 ends when the engine loads a change. This needs an engine that publishes
 `FPLLDSEQ`.
 
+Other messages, such as `STORED`, `ROUTE FULL` or an OBS refusal, show in a
+strip just above the soft keys: yellow text and border on a dark yellow fill.
+The strip clears after 4 seconds, or at your next tap anywhere. A tap on the
+strip itself only clears it.
+
 **Touch a waypoint row** for its menu:
 
 | Item | What it does |
 |---|---|
 | Insert Before / Insert After | Open the entry page to add a waypoint there. |
 | Load Airway | Pick an airway through this waypoint, then its exit fix. The whole airway is inserted. |
-| Activate Leg | Fly the leg to this waypoint now. |
+| Activate Leg | Fly the leg to this waypoint now. If the leg starts more than 500 NM from you, it asks first: `FROM <ident> <n> NM`, `ACTIVATE LEG?`. |
 | Direct To | Fly direct to this waypoint. |
-| Hold... | Build a hold here the way ATC gives it: the side of the fix, the radial or inbound course, the turns and the leg in minutes or miles. It is inserted right after the fix as a **HOLD** row. When the fix has a published hold, **PUBLISHED** at the top fills it in for you; with several, pick one from the list. A published hold with no leg time gets the standard time (1 minute at or below 14,000 ft, 1.5 above), marked **STD TIME** in amber: check the chart. |
+| Hold... | Build a hold here the way ATC gives it: the side of the fix, the radial or inbound course, the turns and the leg in minutes or miles. It is inserted right after the fix as a **HOLD** row. When the fix has a published hold, **PUBLISHED** at the top fills it in for you; with several, pick one from the list. A published hold with no leg time gets the standard time (1 minute at or below 14,000 ft, 1.5 above), marked **STD TIME** in amber: check the chart. See [Building a hold](#building-a-hold). |
 | WPT Info | Its details: position, elevation, frequency, bearing and distance from you. |
 | Set Role | Mark it `IAF`, `FAF`, `MAP`, `MAHP` or none. |
 | Remove | Take it out of the plan. |
 
 A fix inside an airway or procedure offers **Hold...** too, and a hold you
-built there offers **Remove Hold**. While you fly a hold you built, the
-menu's Suspend item reads **Exit hold**: the hold ends at the next pass over
-the fix.
+built there offers **Remove Hold**. While you fly a hold that ends only when
+you end it (`HM`), whether you built it or it came with a procedure such as a
+missed approach, the menu's Suspend item reads **Exit hold**: the hold ends at
+the next pass over the fix. In the list and its menus, a hold you built reads
+`<fix> HOLD`.
 
 Touch an airway row for **Change Exit**, **Change Entry**, **Show Fixes**
-(each fix with its course, distance and MEA), **Activate to** its entry, and
-**Remove Airway**.
+(each fix with its course, distance and MEA), **Load Airway at** its exit
+fix (to join another airway there), **Activate to** its entry, and **Remove
+Airway**.
 
 A plan holds up to 100 waypoints. An airway that will not fit is refused with
 `ROUTE FULL`.
 
 Touch a departure, arrival or approach row for **Show Fixes**, **Activate
-to** its first fix, **Select** another of that kind, and **Remove** it. An
-approach and its missed approach are removed together.
+to** its first fix, **Select** another of that kind (the item reads, for
+example, **Select Departure**), and **Remove** it (**Remove Departure**). A
+departure also offers **Load Airway at** its last fix. An approach and its
+missed approach are removed together.
+
+**Activate to** asks the same far-fix question as Activate Leg. The question
+is not asked without a valid GPS position, or for the first waypoint. A tap
+off the box, or a long push of the knob, is No.
+
+### Building a hold
+
+The hold editor opens as `HOLD AT <fix>`, set up to hold as you arrive:
+inbound on the course of the leg into the fix, right turns, and a 1 minute
+leg (1.5 minutes above 14,000 ft on `ALT`). Change any field by touching it:
+
+- **SIDE:** the side of the fix the pattern lies on, on a compass rose around
+  the fix.
+- **RADIAL** / **INBOUND:** touch to switch which one the course is, then the
+  course itself.
+- **TURNS:** **LEFT** or **RIGHT**.
+- **LEG:** the length, and **MIN** / **NM**. Switching the unit converts the
+  length at the hold speed (`hold_speed_kt`).
+
+The line above **Insert** shows the hold as it will be flown, or in red why it
+cannot be, for example `RADIAL 130° IS NOT N OF THE FIX`. **Cancel** leaves
+without a hold.
+
+**PUBLISHED** shows only when the navaids pack carries published holds and
+the fix has one; an older pack shows no such row. With several, the list
+`PUBLISHED HOLDS AT <fix>` shows 8 a page.
 
 ## Departures, arrivals and approaches
 
@@ -161,6 +200,38 @@ active waypoint already chosen, so a second push flies direct to it.
 You can also go direct from the map: touch the waypoint there and choose
 **DIRECT TO** on its banner. See [Moving Map](Moving-Map#tap-something).
 
+## Charts
+
+With a plates pack set (`plates_path`), a **CHARTS** soft key sits between
+**CATALOG** and **MENU**. It opens the loaded approach's chart when exactly
+one chart matches that approach. Otherwise it opens the chart list for the
+airport the approach serves, with `NO SINGLE PLATE FOR <approach>` in red.
+With no approach loaded, the list is for the plan's last airport, or the
+nearest airport when the plan has none.
+
+The list starts with the airport diagram, then approaches, departures,
+arrivals and the other charts. Each row gives the chart's name and its kind:
+`DIAGRAM`, `APPROACH`, `DEPARTURE`, `OBST DP`, `ARRIVAL`, `MINIMUMS`,
+`HOT SPOTS`, `LAHSO` or `ALT MIN`. **AIRPORT** picks another airport; an
+airport with no ICAO ident is found by its FAA ident. The arrow keys page
+through the list. `NO CHARTS FOR <airport>` means the pack has none for it;
+`NO CHARTS DATABASE` means no pack could be opened.
+
+Touch a chart to view it, fitted to the pane. The line under its name gives
+the airport, the amendment and the AIRAC cycle, in amber with `EXPIRED` once
+the cycle has expired; an expired chart still opens. **ZOOM -** and **ZOOM +**
+step through 1, 1.5, 2 and 3 times the fitted size, **FIT** goes back to the
+whole page, and when zoomed in you drag to pan. **LIST** returns to the list.
+Your position is not drawn on any chart.
+
+`PLATE RENDERER NOT INSTALLED (python3-pyqt6.qtpdf)` means the PDF renderer
+is missing; see [Running from Source](Running-from-Source#troubleshooting).
+`CHART CANNOT BE DRAWN` means the renderer is there but could not draw this
+chart.
+
+**X** at the top right goes back to the flight plan page. With the knob, a
+long push goes from a chart to the list, then to the flight plan page.
+
 ## The menu
 
 ![MENU: Invert, Store, Clear, Suspend, CDI Scale (AUTO), Delete and Cancel](../images/flightplan/bench_fpl_menu.png)
@@ -170,8 +241,9 @@ You can also go direct from the map: touch the waypoint there and choose
 | **Invert** | Reverse the plan. |
 | **Store** | Save it to the catalog. |
 | **Clear** | Empty the plan, after a confirmation. |
-| **Hold at PPOS** | Hold where you are now. The hold editor opens on a waypoint named `PPOS` at your position, inbound on your present track, right turns. Insert puts it ahead of the waypoint you were flying to and starts the hold at once; exiting the hold flies on to that waypoint. Without a GPS position it says NO GPS POSITION. |
-| **Suspend** / **Resume** | Stop or restart sequencing. At the missed approach point, Resume reads **Fly the missed**; in a hold you built (`HM`), it reads **Exit hold**. |
+| **Hold at PPOS** | Hold where you are now. The hold editor opens on `PPOS`, inbound on your present track (with no track, on the 360 radial, north of the fix), right turns. **Insert** makes a waypoint named `PPOS` where you are at that moment and puts it, with its hold, ahead of the waypoint you were flying to (after the hold you are in, if any; at the start of the plan with no active leg), and starts the hold at once. Exiting the hold flies on to that waypoint. If the engine does not start the hold, the message strip gives its reason or `HOLD NOT ACTIVATED`. Without a GPS position it says `NO GPS POSITION`. |
+| **Suspend** / **Resume** | Stop or restart sequencing. At the missed approach point, Resume reads **Fly the missed**; in a hold that ends only when you end it (`HM`), it reads **Exit hold**. |
+| **OBS** / **OBS Off** | GPS OBS: fly a course of your choice through the waypoint you are flying to. **OBS** starts on the present desired track, so the needle does not move; then, with the HSI on GPS, turn CRS to set the course. See [The HSI](The-HSI). **OBS Off** goes back to the plan. If the engine refuses, the message strip says why, for example `OBS NOT AVAILABLE ON FINAL APPROACH`, or `OBS REFUSED`. The map draws the course; see [Moving Map](Moving-Map#the-flight-plan). |
 | **CDI Scale** | Step the HSI's full-scale deflection through 0.3, 1.0 and 2.0 nm and back to **AUTO**, which scales by phase of flight. See [The HSI](The-HSI#how-far-off-course-cdi-scaling). |
 | **Delete** | Delete the plan, after a confirmation. |
 
@@ -184,8 +256,10 @@ to the first waypoint, number of waypoints and any comment. A lock marks a
 route that is managed for you; it cannot be edited or deleted here.
 
 Touch a route for **Activate**, **Invert & Activate**, **Edit** (load it
-without flying it), **Copy** and **Delete**. **NEW** starts a new plan, asking first if the current one has unsaved edits;
-**DELETE ALL** removes every unlocked route.
+without flying it), **Copy** and **Delete**. **NEW** starts a new plan;
+**DELETE ALL** removes every unlocked route. **Activate**, **Invert &
+Activate** and **NEW** ask first if the current plan has unsaved edits, and
+**Delete** and **DELETE ALL** always ask. **No** leaves everything as it was.
 
 Routes live in `<flightplan_dir>/routes/` as JSON files, beside
 `user_waypoints.json` and `recent.json`. With no directory set, the catalog
@@ -219,7 +293,8 @@ The bench panel does not have one.
 
 It reads `[BADGE] FROM > TO > NEXT   distance  time  PHASE`:
 
-- The badge is `LEG` (white), `DIRECT` (magenta) or `SUSP` (yellow). With no
+- The badge is `LEG` (white), `DIRECT` (magenta), `SUSP` (yellow) or `OBS`
+  (white). With no
   plan there is no badge and the idents show as `____`.
 - The waypoint you are flying to is magenta.
 - Distance is in nm; time is `H:MM`, or a grey `--:--` when it is unknown.
@@ -292,8 +367,9 @@ A screen button can open the page with the action `flightplan page` (`fpl`,
 The page needs fix-gateway's flight-plan engine. It writes the whole route
 (`FPL1ID`..., `FPLCOUNT`, `FPLNAME`, then `FPLSEQ` last) on every edit, the
 Direct-To target (`DTOID`, `DTOLAT`, `DTOLON`, `DTOTYPE`), and commands to
-`FPLCMD`: `ACT`, `DTO`, `DTOX`, `SUSP`, `RESUME` and `SCALE`. It reads the
-engine's state back (`FPLSTATE`, `FPLACTLEG`, `FPLAPR`, `FPLINTEG`,
+`FPLCMD`: `ACT`, `DTO`, `DTOX`, `SUSP`, `RESUME`, `SCALE` and `OBS` (`OBS
+<course>` to enter GPS OBS, `OBS OFF` to leave it). It reads the
+engine's state back (`FPLSTATE`, `FPLACTLEG`, `FPLAPR`, `FPLINTEG`, `FPLCRS`,
 `FPLREMDIS`, `FPLREMETE`, `WPETE`, `FPLSUSPMAP`, `FPLLDSEQ`, `FPLMSG`). Without the engine's keys the
 page shows the plan read-only, with `FPL: GATEWAY KEYS MISSING` in red. See
 [FIX Database Keys](FIX-Database-Keys).

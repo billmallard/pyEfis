@@ -1,0 +1,12 @@
+2026-11-24T01:49:53Z run soak2 start; pyEfis 4d3c6d10fdd755c5ce5b24509e0d6f5cd7b33e20 aer-6415/cas4-aural-tone; fix-gateway 66dc8eb730052d443df00dd4a5a7facb7b7b163d
+2026-11-24T01:49:53Z load 0.04 0.25 0.29 1/243 1500386 soc 54550 throttled throttled=0xe0000
+2026-11-24T01:49:53Z pyefis.service failed
+Running as unit: cert20b-probe.service; invocation ID: 0fced037169b4a22b072f400fb6b5226
+2026-11-24T01:50:03Z probe pid 1500403 fixgw pid 1489878
+Running as unit: cert20b-thermal.service; invocation ID: 754be30191444e359ab295888dd3539d
+Running as unit: cert20b-feed.service; invocation ID: d1c0faa2ebc0402fb52ec70a27cbe468
+2026-11-24T01:51:33Z feed started; T0=1795485093
+2026-11-24T02:23:38Z stop: plateau at 1924s (soc 62.8)
+2026-11-24T02:23:38Z load 0.71 0.75 0.67 1/250 1505175 soc 63900 throttled throttled=0xe0000
+2026-11-24T02:23:38Z cleanup
+2026-11-24T02:23:38Z pyefis.service active MainPID=1505187

@@ -207,6 +207,12 @@ pyEFIS boots to the screen named by `defaultScreen` in
 panel takes that name, so the device boots to your panel. The Data Status
 screen stays loaded; its annunciation opens it.
 
+If a screen other than the flight screen fails to build, pyEFIS drops it,
+logs the error and carries on with the others. A fault in the flight screen
+still stops pyEFIS. If the dropped screen was the one it would boot to, it
+boots the flight screen (or the first screen left) instead. A button or flag
+that jumps to a dropped screen does nothing.
+
 ## Check it works
 
 - [ ] `ss -ltn | grep :3490` shows FIX-Gateway listening.
