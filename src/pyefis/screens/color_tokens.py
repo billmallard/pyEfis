@@ -66,7 +66,7 @@ TOKENS = {
     "accent":         ("#00ffff", "interactive / selected / focused"),
     "state.valid":    ("#00ff00", "received, complete, in-range"),
     "state.caution":  ("#ffaa00", "attention"),
-    "state.warning":  (None, "exceeded, failed"),
+    "state.warning":  ("#ff0000", "exceeded, failed"),
     "nav.course":     ("#ff00ff", "active course and track"),
     "nav.reference":  ("#00ffff", "bugs, selected values"),
     "nav.ownship":    ("#ffff00", "own-ship symbology"),

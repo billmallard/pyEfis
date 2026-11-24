@@ -187,6 +187,8 @@ not set here. A cue of this kind only converts the M cell toward L once it has a
 | MAP-1 | Moving map | L/M | Min / TBD | As TER-1, TER-2 | none with an ID | No requirement IDs (O4) |
 | DAT-1 | Data currency annunciation | L | Min | `DataAnnunciation` not shown | none with an ID | (O4) |
 | DAT-2 | Data currency annunciation | M | Maj (expired data shown as current) | Updater accepts an older signed manifest (fixed on `dev`, H3) | none with an ID | (O4) |
+| ANN-1 | Configurable annunciator lamps (`annunciator`, ANN1) | L | Min | A bound key missing from the database, never fresh, or old/bad/failed: the lamp is empty or drawn stale, so the pilot sees the loss; GL is not involved (QPainter) | ANN-STALE-001 (stale look, never the last state), ANN-EMPTY-001 (empty before first fresh data and for a missing key) | Minor holds while a lamp only repeats a state the pilot can confirm elsewhere (the switch, the gauge, the CAS window). A lamp that is the only indication of a system is graded by that system's function, not here |
+| ANN-2 | Configurable annunciator lamps | M | TBD (Maj if a lamp is the only indication of its system) | A condition the builder wrote wrong (an inverted test, the wrong key); a key with no time-to-live (`tol` 0) whose source died holds its last value and is never old; a local condition asking for red or amber | ANN-LVL-001 (red and amber only from the key's own `annunciate` flag, so the alert limit lives once, in the gateway; a local condition asking for them draws at advisory and logs); ANN-STALE-001; ANN-RO-001 (writes no key, so it cannot become a second writer, A5) | The binding is installer configuration, like CFG-2: no check proves a condition means what its label says. A `tol` 0 key's freshness is the gateway's (H2). Severity for Safety and Compliance |
 | MNU-1 | System menu overlay (any function under it) | L | Min | An unintended corner swipe or a `SYSMENU` write opens the overlay: the card covers the top-right of the panel and the scrim dims every instrument. It is obvious, and it ends on one tap outside the card (the tap is consumed, not passed through), on Close, or by itself after the idle timeout | none with an ID; A1 | Minor holds only while the overlay is bounded: it opens on a `SYSMENU` rising edge only, and nothing on the bus extends it (O4) |
 | MNU-2 | System menu overlay | M | n/a | None: the overlay shows no value of its own, and every value under it keeps its own flags | none | |
 
@@ -281,6 +283,7 @@ repository's `dev` branch with tests; this document does not say which release c
   it is transport-category guidance, and edition 5 grades PFD-10 from AC 23.1309-1E instead.
 - 14 CFR 91.175 (IFR approach minimums and navigation).
 - This repository's `docs/ai_widget_spec.md`, `airspeed_widget_spec.md`, `altimeter_widget_spec.md`,
+  `annunciator_widget_spec.md`,
   `heading_widget_spec.md`, `hsi_widget_spec.md`, `tc_widget_spec.md`, `vsi_widget_spec.md`,
   `requirements.md`, `instrument_verification_status.md`, `README.rst`.
 - canfix-spec `src/requirements.rst` (32 IDs).

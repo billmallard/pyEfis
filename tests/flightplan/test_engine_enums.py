@@ -28,6 +28,7 @@ _FLIGHT_PLAN = _SRC / "instruments" / "flight_plan" / "__init__.py"
 _NAV_STATUS = _SRC / "instruments" / "nav_status" / "__init__.py"
 _MAP_LAYER = _SRC / "instruments" / "map" / "layers" / "flight_plan.py"
 _LEG_PATHS = _SRC / "flightplan" / "leg_paths.py"
+_FIXBRIDGE = _SRC / "flightplan" / "fixbridge.py"
 
 
 def _engine_path():
@@ -79,6 +80,36 @@ def table(source, name, names=None):
                 and node.targets[0].id == name and isinstance(node.value, ast.Dict)):
             return {value(k): value(v) for k, v in zip(node.value.keys, node.value.values)}
     raise AssertionError(f"no module-level dict literal {name}")
+
+
+def string_sets(source):
+    """Module-level ``NAME = frozenset({...})`` of string literals, and the
+    ``|``/``-`` of such names, as {name: set}. Anything else is skipped."""
+    out = {}
+
+    def value(node):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "frozenset" and len(node.args) == 1
+                and isinstance(node.args[0], ast.Set)
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str)
+                        for e in node.args[0].elts)):
+            return {e.value for e in node.args[0].elts}
+        if isinstance(node, ast.Name):
+            return out.get(node.id)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Sub)):
+            a, b = value(node.left), value(node.right)
+            if a is None or b is None:
+                return None
+            return a | b if isinstance(node.op, ast.BitOr) else a - b
+        return None
+
+    for node in ast.parse(source).body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            v = value(node.value)
+            if v is not None:
+                out[node.targets[0].id] = v
+    return out
 
 
 @pytest.fixture(scope="module")
@@ -139,6 +170,27 @@ def test_every_fplholdent_has_a_map_label(engine):
         "label for them: add them to _ENTRY_LABELS in map/layers/flight_plan.py")
 
 
+def test_fixbridge_carries_back_every_course_the_engine_flies(engine):
+    """FPA1: ``route_to_plan`` keeps a slot's ``FPLfCRS`` only for
+    ``CODED_COURSE_PTS``; for any other leg the next publish replaces it
+    with the great-circle bearing. The engine flies a coded course or
+    heading on every leg it loads except the IF/TF/DF great circles and the
+    RF/AF arcs (``_leg_path_key``), and keys the leg's identity on it, so a
+    coded leg missing here turns on the map and drops its activation after
+    an unrelated edit. FM was the one missing."""
+    sets = string_sets(engine)
+    assert "FM" in sets["PT_VECTOR"] and "CF" in sets["PT_TIER1"]
+    derived = (sets["PT_TIER1"] - {"CF"}) | sets["PT_ARC"]
+    assert derived == {"IF", "TF", "DF", "RF", "AF"}
+    supported = sets["PT_SUPPORTED"]
+    coded = string_sets(_FIXBRIDGE.read_text())["CODED_COURSE_PTS"]
+    assert (supported - derived) - coded == set(), (
+        "the engine flies these path terminators on their coded course and the "
+        "editor drops it on read-back: add them to fixbridge.CODED_COURSE_PTS")
+    assert coded & derived == set(), (
+        "these legs' FPLfCRS is a derived bearing, not a coded course")
+
+
 def test_the_readers_catch_a_new_value():
     """The coverage tests above fail for the change they exist to catch: an
     engine that adds a state, an approach mode or a hold entry."""
@@ -159,3 +211,6 @@ STATE_NAME = some_call()
     labels = table('_ENTRY_LABELS = {fp_legs.HOLD_ENTRY_DIRECT: ("DIRECT", "DIR")}\n',
                    "_ENTRY_LABELS", names={"HOLD_ENTRY_DIRECT": "DIRECT"})
     assert set(labels) == {"DIRECT"}
+    sets = string_sets('A = frozenset({"X", "Y"})\nB = frozenset({"Z"})\n'
+                       'C = A | B\nD = C - frozenset({"Y"})\nE = make()\n')
+    assert sets == {"A": {"X", "Y"}, "B": {"Z"}, "C": {"X", "Y", "Z"}, "D": {"X", "Z"}}

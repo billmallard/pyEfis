@@ -692,3 +692,65 @@ suitable, but brief, period" (p.42); §27.b(2)(a) "a warning (both visual" (p.32
 AC 25-11B A.4.2 "reference mark that will reflect the current target" (p.71). **PASS.**
 
 Spec: [`ap_annunciator_widget_spec.md`](ap_annunciator_widget_spec.md).
+
+## 13. Configurable annunciator lamps (ANN1) -- source material
+
+**Source note.** The verification contract lists AC 23.1311-1C and AC 25-11B as corpus
+documents. AER-6347 read both from the public copies (`faa.gov/documentLibrary/media/Advisory_Circular/AC_23_1311-1C.pdf`,
+md5 `d6b980404fc419ea5d8bb93eaf1585ab`; `.../AC_25-11B.pdf`, md5
+`2644d861d79284ca1bde79163b9471da`) with the same `===== PAGE N =====` extraction; page
+numbers below are PDF pages. The `annunciator` is a builder-configured block of lamps, each
+bound to a FIX key, so the guidance that applies is the general annunciation and colour
+guidance, not a function-specific one.
+
+### 13.1 What a lamp must be
+
+- **Distinct and in one place.** "The visual annunciators should be distinctive under all
+  normal lighting conditions ... Consistently locate annunciations in a specific area of the
+  electronic display" (**AC 23.1311-1C §18.1, p.45**). Placement is the builder's; the
+  instrument draws each lamp in a fixed grid cell, so a lamp never moves as states change.
+- **Never misleading.** "The display is not to provide any misleading information"
+  (**§18.1, p.45**). A lamp whose source is old, bad or failed is drawn stale, never as its
+  last state; a lamp with no source ever seen draws nothing.
+- **Abnormal looks abnormal.** "Alerting messages should differentiate between normal and
+  abnormal indications ... using techniques such as different shapes, sizes, colors,
+  flashing, boxing, outlining, etc." (**§18.3, p.45**). Warning and caution are reverse video
+  (a filled box); a change can be boxed and flashed; stale is a dashed outline.
+- **Colour is not the only cue.** Colour "should not be the sole means of discrimination of
+  critical information. Use symbols or letters, as well as color" (**§22.6, p.49**). Every
+  lamp carries its caption; off is dim, not blank, unless the builder sets `off_text: ""`.
+
+### 13.2 Colour by level
+
+- **Red and amber are for warnings and cautions.** "Use red as the warning annunciation for
+  emergency operating conditions ... Use amber for the cautionary annunciation for abnormal
+  operating conditions ... Use white or another unique color for advisory annunciations ...
+  Use green for indication of safe operating conditions" (**§22.7, p.49-50**). "The use of
+  the colors red and yellow for other than warnings and cautions is discouraged" (**§22.1,
+  p.47**). AC 25-11B **Table 5-1 (p.43)**: warnings red, "Cautions, non-normal sources
+  Yellow/Amber", "Engaged modes/normal conditions Green".
+- **Exceedances follow the limits.** Supplementary displays should "clearly annunciate and/or
+  display any exceedance to the pilot in the appropriate color" (**§18.6, p.46**). In this
+  stack the limit lives once, in fix-gateway, and reaches the display as the key's
+  `annunciate` flag; a lamp may light red or amber only from that flag (Bill, 2026-11-22).
+- **Cyan** (`info`) is "another unique color" under §22.7; AC 23.1311-1C Table 5 (p.48)
+  already uses cyan for armed modes and selected values, so it does not collide with the
+  alert colours.
+
+### 13.3 Corpus silent
+
+On a lamp grid's layout, on how long a change should flash for a non-mode annunciation
+(AC 25.1329-1C §44.d(2) gives ten seconds as an example for mode changes, §12.2), and on
+how a configurable panel should guard its alert colours. The level rule is Bill's ruling,
+not a cited requirement.
+
+### 13.4 Citation self-check (Stage 1 Verify)
+
+Re-grepped against the page-marked extraction (AER-6347); each reproduces on the page
+cited: §18.1 "visual annunciators should be distinctive under all normal lighting conditions"
+(p.45); §18.3 "different shapes, sizes, colors, flashing, boxing, outlining" (p.45); §22.1
+"The use of the colors red and yellow for other than warnings and cautions is discouraged"
+(p.47); §22.7 "Use white or another unique color for advisory annunciations" (p.50); AC
+25-11B Table 5-1 "Engaged modes/normal conditions Green" (p.43). **PASS.**
+
+Spec: [`annunciator_widget_spec.md`](annunciator_widget_spec.md).
