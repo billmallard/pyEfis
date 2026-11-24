@@ -197,6 +197,39 @@ def test_set_db_key(mock_fix,qtbot):
 #    assert mock_item.
 
 
+class _CountingValueDisplay(ValueDisplay):
+    def __init__(self):
+        super().__init__()
+        self.set_value_calls = 0
+
+    def setValue(self, value):
+        self.set_value_calls += 1
+        super().setValue(value)
+
+
+@pytest.mark.parametrize("dtype,start,changed", [("int", 5, 7), ("str", "A", "B"), ("float", 5.0, 7.5)])
+def test_value_display_reports_do_not_stack_connections(fix, qtbot, dtype, start, changed):
+    # AER-6519: setupGauge runs on every reportReceived and re-connects
+    # valueChanged. For a non-float key the old single try/except stopped at
+    # the float disconnect, so each report added one more setValue connection.
+    key = "INS1" + dtype.upper()
+    fix.db.define_item(key, "Testing key", dtype, 0, 100, "", 50000, "")
+    fix.db.set_value(key, start)
+    item = fix.db.get_item(key)
+    item.bad = False
+    item.fail = False
+    widget = _CountingValueDisplay()
+    qtbot.addWidget(widget)
+    widget.setDbkey(key)
+
+    for _ in range(3):
+        item.reportReceived.emit()
+    widget.set_value_calls = 0
+    fix.db.set_value(key, changed)
+
+    assert widget.set_value_calls == 1
+    assert widget.getValue() == changed
+
 
 if __name__ == "__main__":
     pytest.main()
