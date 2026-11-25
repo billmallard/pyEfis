@@ -15,6 +15,11 @@ with no Qt imports, the way it runs ``test_refusal.py`` (fix-gateway #224).
 So a new engine value goes red in fix-gateway until pyEfis has its entry.
 ``FIXGW_FLIGHTPLAN_ENGINE`` points at the engine in CI; with it set, a missing
 file is a failure, not a skip.
+
+FPA7 (AER-6545) pins the shared vocabulary the same way: the ``FPLfTYPE``
+numbers, ``FPLfFLAGS`` bits, segment kinds, path-terminator sets and packed
+``FPLfALT`` grammar in ``pyefis/flightplan/vocab.py`` against the engine's
+``TYPE_*``, ``FLAG_*``, ``SEGKIND_*``, ``PT_*`` and ``_parse_alt_constraint``.
 """
 
 import ast
@@ -22,6 +27,8 @@ import os
 import pathlib
 
 import pytest
+
+from pyefis.flightplan import vocab
 
 _SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "pyefis"
 _FLIGHT_PLAN = _SRC / "instruments" / "flight_plan" / "__init__.py"
@@ -172,7 +179,7 @@ def test_every_fplholdent_has_a_map_label(engine):
 
 def test_fixbridge_carries_back_every_course_the_engine_flies(engine):
     """FPA1: ``route_to_plan`` keeps a slot's ``FPLfCRS`` only for
-    ``CODED_COURSE_PTS``; for any other leg the next publish replaces it
+    ``vocab.CODED_COURSE_PTS``; for any other leg the next publish replaces it
     with the great-circle bearing. The engine flies a coded course or
     heading on every leg it loads except the IF/TF/DF great circles and the
     RF/AF arcs (``_leg_path_key``), and keys the leg's identity on it, so a
@@ -183,10 +190,10 @@ def test_fixbridge_carries_back_every_course_the_engine_flies(engine):
     derived = (sets["PT_TIER1"] - {"CF"}) | sets["PT_ARC"]
     assert derived == {"IF", "TF", "DF", "RF", "AF"}
     supported = sets["PT_SUPPORTED"]
-    coded = string_sets(_FIXBRIDGE.read_text())["CODED_COURSE_PTS"]
+    coded = vocab.CODED_COURSE_PTS
     assert (supported - derived) - coded == set(), (
         "the engine flies these path terminators on their coded course and the "
-        "editor drops it on read-back: add them to fixbridge.CODED_COURSE_PTS")
+        "editor drops it on read-back: add them to vocab.CODED_COURSE_PTS")
     assert coded & derived == set(), (
         "these legs' FPLfCRS is a derived bearing, not a coded course")
 
@@ -214,3 +221,91 @@ STATE_NAME = some_call()
     sets = string_sets('A = frozenset({"X", "Y"})\nB = frozenset({"Z"})\n'
                        'C = A | B\nD = C - frozenset({"Y"})\nE = make()\n')
     assert sets == {"A": {"X", "Y"}, "B": {"Z"}, "C": {"X", "Y", "Z"}, "D": {"X", "Z"}}
+
+
+# --- FPA7: the vocabulary (pyefis/flightplan/vocab.py) against the engine's -----
+
+def test_vocab_type_numbers_are_the_engines(engine):
+    """``FPLfTYPE``: every ``TYPE_*`` the engine declares, by name and value,
+    and nothing the engine does not."""
+    theirs = {k: v for k, v in module_constants(engine).items() if k.startswith("TYPE_")}
+    ours = {k: v for k, v in vars(vocab).items() if k.startswith("TYPE_") and isinstance(v, int)}
+    assert {"TYPE_UNKNOWN", "TYPE_MAPPOINT"} <= set(theirs)
+    assert ours == theirs
+    assert sorted(vocab.TYPE_TO_FPLTYPE.values()) == sorted(theirs.values())
+
+
+def test_vocab_flag_bits_are_the_engines(engine):
+    theirs = {k: v for k, v in module_constants(engine).items() if k.startswith("FLAG_")}
+    ours = {k: v for k, v in vars(vocab).items() if k.startswith("FLAG_")}
+    assert {"FLAG_FLYOVER", "FLAG_FROM_PROCEDURE"} <= set(theirs)
+    assert ours == theirs
+    roles = {k for k in theirs if k not in ("FLAG_FLYOVER", "FLAG_FROM_PROCEDURE")}
+    assert vocab.ROLE_BITS == sum(theirs[k] for k in roles)
+    assert {r: b for r, b in vocab.ROLE_TO_FLAG.items() if b} == {
+        k.removeprefix("FLAG_").lower(): theirs[k] for k in roles}
+
+
+def test_vocab_segment_kinds_are_the_engines(engine):
+    theirs = {k: v for k, v in module_constants(engine).items() if k.startswith("SEGKIND_")}
+    assert len(theirs) >= 6
+    assert {f"SEGKIND_{kind.upper()}": n for n, kind in enumerate(vocab.SEGMENT_KINDS)} == theirs
+
+
+def test_vocab_path_terminator_sets_are_the_engines(engine):
+    sets = string_sets(engine)
+    assert vocab.HOLD_PTS == sets["PT_HOLD"]
+    assert vocab.ARC_PTS == sets["PT_ARC"]
+    assert vocab.ALT_TERM_PTS == sets["PT_ALT_TERM"]
+    assert vocab.VECTOR_PTS == sets["PT_VECTOR"]
+    assert vocab.HEADING_PTS < sets["PT_VECTOR"]
+    # Legs that end at no fix: the headings and the climb to an altitude.
+    assert vocab.NO_FIX_PTS <= sets["PT_SUPPORTED"]
+    assert vocab.NO_FIX_PTS - vocab.HEADING_PTS <= sets["PT_ALT_TERM"]
+
+
+def _engine_function(source, name):
+    """The engine's module-level function *name*, compiled on its own: it
+    must need nothing but builtins."""
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            namespace = {}
+            exec(compile(ast.Module(body=[node], type_ignores=[]), name, "exec"), namespace)
+            return node, namespace[name]
+    raise AssertionError(f"the engine has no function {name}")
+
+
+def test_vocab_packed_altitude_is_the_engines_grammar(engine):
+    """``FPLfALT``: the engine evaluates every prefix ``vocab.pack_alt``
+    writes, as the constraint it means, and knows no prefix we do not."""
+    node, parse = _engine_function(engine, "_parse_alt_constraint")
+    prefixes = {c.comparators[0].value for c in ast.walk(node)
+                if isinstance(c, ast.Compare) and isinstance(c.left, ast.Name)
+                and isinstance(c.comparators[0], ast.Constant)
+                and isinstance(c.comparators[0].value, str) and len(c.comparators[0].value) == 1}
+    assert prefixes == set(vocab.ALT_PREFIXES)
+    assert parse(vocab.pack_alt(vocab.ALT_AT_OR_ABOVE, 3500)) == (3500.0, True)
+    assert parse(vocab.pack_alt(vocab.ALT_AT_OR_BELOW, 5000)) == (5000.0, False)
+    assert parse(vocab.pack_alt(vocab.ALT_AT, 1800)) == (1800.0, True)
+    # A window terminates at its floor, which pack_alt writes first.
+    assert parse(vocab.pack_alt(vocab.ALT_BETWEEN, 4000, 2900)) == (2900.0, True)
+    assert parse("") is None
+
+
+def test_the_vocab_readers_catch_a_disagreement():
+    """The pins above read what they claim to: an engine that renumbers a
+    type, drops a hold PT or learns a new altitude prefix differs."""
+    source = (
+        "TYPE_UNKNOWN = 0\nTYPE_MAPPOINT = 7\n"
+        "PT_HOLD = frozenset({'HM', 'HF'})\n"
+        "def _parse_alt_constraint(alt_desc):\n"
+        "    sign = alt_desc[0]\n"
+        "    if sign == 'A':\n"
+        "        return 0.0, True\n"
+        "    return None\n")
+    assert module_constants(source)["TYPE_MAPPOINT"] != vocab.TYPE_MAPPOINT
+    assert string_sets(source)["PT_HOLD"] != vocab.HOLD_PTS
+    node, parse = _engine_function(source, "_parse_alt_constraint")
+    assert parse("A1") == (0.0, True)
+    with pytest.raises(AssertionError):
+        test_vocab_packed_altitude_is_the_engines_grammar(source)

@@ -850,7 +850,10 @@ _register(InstrumentSpec(
              label="Altitude capture color", apply="special",
              help="selected-altitude box border while the autopilot "
                   "captures it (APALTCAP)"),
-        Prop("vs_bug", "boolean", default=True, label="VSSEL bug",
+        # Off, matching the widget for the default ALT tape (G99, pyEfis
+        # #557): the editor shows this default, and a `vs_bug: true` it
+        # writes would put an ft/min bug on an altitude scale.
+        Prop("vs_bug", "boolean", default=False, label="VSSEL bug",
              apply="special",
              help="on a VS tape, the VSSEL bug while the autopilot reports "
                   "VS active (on for a VS tape, off for an ALT tape)"),

@@ -86,6 +86,7 @@ from pathlib import Path
 
 from . import geo
 from . import model
+from . import vocab
 
 log = logging.getLogger(__name__)
 
@@ -134,13 +135,8 @@ class AirwayLeg:
         return self.min_alt_ft
 
 
-#: Pack ``fix_type`` -> ``model.Waypoint.type``. Anything not listed
-#: (``waypoint``, ``runway``, blank) is a plain ``fix``.
-_PACK_FIX_TYPES = {"vor": "vor", "ndb": "ndb", "airport": "airport"}
-
-
-def _norm(ident: str) -> str:
-    return (ident or "").strip().upper()
+_PACK_FIX_TYPES = vocab.PACK_FIX_TYPES
+_norm = vocab.norm
 
 
 def _same_place(lat, lon, at) -> bool:
@@ -269,7 +265,7 @@ class AirwayGraph:
             out.append(model.Waypoint(id=leg.fix_id,
                                        type=_PACK_FIX_TYPES.get(leg.fix_type or "", "fix"),
                                        lat=leg.lat, lon=leg.lon,
-                                       alt=f"+{int(mea)}" if mea else ""))
+                                       alt=vocab.pack_alt(vocab.ALT_AT_OR_ABOVE, mea) if mea else ""))
         return out
 
     def cycle(self, ident: str) -> str | None:

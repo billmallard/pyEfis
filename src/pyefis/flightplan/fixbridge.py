@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from . import geo
 from . import model
 from . import proc_load
+from . import vocab
 
 log = logging.getLogger(__name__)
 
@@ -47,17 +48,13 @@ def _cmd_seq(text) -> int:
 
 MAX_SLOTS = 100
 
-TYPE_TO_FPLTYPE = {"unknown": 0, "airport": 1, "vor": 2, "ndb": 3, "fix": 4, "user": 5, "map": 6}
-FPLTYPE_TO_TYPE = {v: k for k, v in TYPE_TO_FPLTYPE.items()}
+TYPE_TO_FPLTYPE = vocab.TYPE_TO_FPLTYPE
+FPLTYPE_TO_TYPE = vocab.FPLTYPE_TO_TYPE
 
-# PA3 (fix-gateway#27) replaced the scalar FPLfROLE (0 none/1 iaf/2 faf/3
-# map/4 mahp) with a FPLfFLAGS bitfield shared with fly-over (0x01) and
-# from-a-coded-procedure (0x20) -- neither of which this module reads or
-# writes yet. The bit positions do NOT match the old scalar values (faf was
-# 2, IAF's bit is 0x02), so this has to be an explicit table in both
-# directions -- a straight rename/shift would silently turn faf into iaf.
-ROLE_TO_FLAG = {"none": 0x00, "iaf": 0x02, "faf": 0x04, "map": 0x08, "mahp": 0x10}
-_FLAG_TO_ROLE = ((0x02, "iaf"), (0x04, "faf"), (0x08, "map"), (0x10, "mahp"))
+# The role rides in FPLfFLAGS beside fly-over and from-a-coded-procedure,
+# which this module carries through untouched (vocab.ROLE_TO_FLAG).
+ROLE_TO_FLAG = vocab.ROLE_TO_FLAG
+_FLAG_TO_ROLE = tuple((bit, role) for role, bit in ROLE_TO_FLAG.items() if bit)
 
 
 def _flag_to_role(flags: int) -> str:
@@ -123,7 +120,7 @@ KIND_TO_WIRE = {kind: n for n, kind in enumerate(model.SEGMENT_KINDS)}
 
 # The FPLfFLAGS bits that are not the role (fly-over, from a coded
 # procedure): carried on Waypoint.flags.
-_ROLE_BITS = 0x02 | 0x04 | 0x08 | 0x10
+_ROLE_BITS = vocab.ROLE_BITS
 
 
 def _slot_key(n: int, name: str) -> str:
@@ -606,7 +603,7 @@ def _slot_to_waypoint(slot: RouteSlot, coded_crs: bool) -> model.Waypoint:
 # back (the engine flies it). For every other leg the bridge derived CRS
 # from the great circle and the then-current MAGVAR, so reading it back as
 # a coded course would freeze a variation-dependent number into the plan.
-CODED_COURSE_PTS = frozenset({"CF", "CA", "FC", "VA", "VM", "VI", "FM", "FA", "HM", "HF", "HA", "PI"})
+CODED_COURSE_PTS = vocab.CODED_COURSE_PTS
 
 
 def route_to_plan(route: RouteBlock) -> model.FlightPlan:
