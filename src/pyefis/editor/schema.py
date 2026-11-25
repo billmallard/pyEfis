@@ -48,6 +48,7 @@ from pyefis.screens.screenbuilder_factory import (
     INSTRUMENT_FACTORIES,
     REGISTRY,
 )
+from pyefis.screens.screenbuilder_preferences import DEFAULT_FONT_FAMILY
 
 # v3: instruments migrated to screenbuilder_factory.REGISTRY are sourced from
 # their InstrumentSpec record; every instrument entry now also carries a
@@ -120,7 +121,10 @@ _LAYOUT_FIELDS = {
 # segmented fonts (DSEG7/DSEG14) would need a delivered font pack first.
 _COMMON_OPTIONS = {
     "font_family": {
-        "type": "enum", "default": "DejaVu Sans Condensed", "label": "Font family",
+        # The screen builder's default, which every instrument draws in when
+        # its config names none -- including value_text, whose widget
+        # constructor says Open Sans but is always handed this one.
+        "type": "enum", "default": DEFAULT_FONT_FAMILY, "label": "Font family",
         # DejaVu ships on every Pi. The clean sans-serifs (B612 = the Airbus
         # cockpit font; Inter/Roboto/Open Sans/Noto) are delivered by the font
         # pack and loaded as web fonts in the editor for live preview.

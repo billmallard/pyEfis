@@ -161,3 +161,25 @@ def test_action_catalogue_is_well_formed():
             assert a.get(f), f"action {a.get('verb')!r} missing {f}"
         assert a["arg"]["kind"] in KINDS, \
             f"action {a['verb']!r}: unknown arg kind {a['arg'].get('kind')!r}"
+
+
+def test_common_font_default_is_the_screen_builders(qtbot):
+    """INS4: common_options.font_family is the font an instrument draws in when
+    its config names none. The screen builder hands every factory that font,
+    so a widget's own constructor default is never reached: value_text's says
+    Open Sans and still draws DejaVu Sans Condensed. No type needs a per-type
+    font_family default while this holds."""
+    from PyQt6.QtWidgets import QWidget
+    from pyefis.screens import screenbuilder_preferences as prefs
+
+    common = eschema.build_schema()["common_options"]["font_family"]["default"]
+    cfg = {"type": "value_text", "options": {"dbkey": "IAS"}}
+    font_percent, font_family = prefs.apply_preferences(cfg, {})
+    assert font_family == common
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    widget = factory.REGISTRY["value_text"].builder(
+        parent, cfg, font_percent=font_percent, font_family=font_family)
+    assert widget.font_family == common
+    assert not any("font_family" in meta["options"]
+                   for meta in eschema.build_schema()["instruments"].values())
