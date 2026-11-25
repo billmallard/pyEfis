@@ -104,14 +104,18 @@ On the knob walk the panel is one stop, and it starts on the first box.
 |---|---|---|---|---|
 | **HDG** | `HEADBUG` | 1° | 10° | Bug to current heading (`HEAD`); wraps through 360 |
 | **VS** | `VSSEL` | 100 ft/min | 500 ft/min | Current vertical speed (`VS`), rounded to 100 ft/min |
-| **IAS** | `IASSEL` | 1 kt | 5 kt | Current airspeed (`IAS`), rounded to 1 kt |
+| **IAS** | `IASSEL` | 1 kt | 10 kt | Current airspeed (`IAS`), rounded to 1 kt |
 | **ALT SEL** | `ALTSEL` | 100 ft | 1000 ft | Current altitude, rounded to 100 ft |
 
 - Every step is sent to the gateway at once.
 - A push syncs and ends the edit. With no valid value to sync to, nothing is
   written and the box keeps the knob.
 - An `IASSEL` of 0 means no target, and shows `---`. The first step from no
-  target starts from the current value.
+  target starts from the current value. With no valid airspeed either, the
+  step writes nothing.
+- The IAS box never writes 0: a step or a push stops at 1 kt, so the knob
+  cannot unset the target the autopilot is flying. These are the airspeed
+  tape's rules.
 - The ALT SEL box follows the same rules as the selected altitude on the
   altitude tape.
 - The VS or IAS box gets a green label and border while that is the active

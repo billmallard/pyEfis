@@ -1,0 +1,11 @@
+run_disconnect then run_warning, in order; aligned at byte 640
+caution       1.55 s of sound and gap chunks
+disconnect    2.88 s of sound and gap chunks
+chunks matching no tone: 0 of 1235
+run_disconnect then run_warning, in order; aligned at byte 0
+caution       2.40 s of sound and gap chunks
+warning       1.44 s of sound and gap chunks
+caution       0.85 s of sound and gap chunks
+warning       3.60 s of sound and gap chunks
+caution       0.85 s of sound and gap chunks
+chunks matching no tone: 0 of 3168

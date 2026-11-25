@@ -122,6 +122,13 @@ class APState(QObject):
 
     # -- the reading, valid only while fresh --------------------------------
     @property
+    def disconnected(self):
+        """A disconnect alert holds: ``APDISC`` set on a fresh reading. The
+        mode strip flashes on it and the disconnect tone sounds on it (CAS4),
+        one rule for both."""
+        return self.fresh and bool(self.value("APDISC"))
+
+    @property
     def lateral(self):
         return mode_name(self.value("APLAT"))
 
