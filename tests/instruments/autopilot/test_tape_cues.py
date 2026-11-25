@@ -374,6 +374,35 @@ def test_vsi_pfd_bug_only_while_vs_active(ap_db, qtbot):
     w.grab()                           # paints with and without the bug
 
 
+def test_alt_tape_registry_defaults_match_the_widget(ap_db, qtbot):
+    """G99 (pyEfis #557): every boolean the configurator shows for an
+    altimeter tape, written out at its registry default, builds the same
+    tape as leaving it unset -- for the registry's own default dbkey (ALT).
+    A `vs_bug: true` default drew the VSSEL bug on the altitude scale."""
+    ap_db("APVERT", "VS")
+    ap_db("VSSEL", 300)
+    _alt_tape(qtbot, ap_db.fix)  # defines ALT/ALTSEL
+    props = factory.REGISTRY["altimeter_tape"].properties
+    dbkey = next(p.default for p in props if p.name == "dbkey")
+    assert dbkey == "ALT"
+    written = {p.name: p.default for p in props
+               if p.kind == "boolean" and p.apply == "special"}
+    assert "vs_bug" in written
+    unset = factory.build_altimeter_tape(None, {"options": {}})
+    built = factory.build_altimeter_tape(None, {"options": written})
+    for w in (unset, built):
+        qtbot.addWidget(w)
+        w.resize(140, 520)
+    def shown(w, name):
+        # alt_bug_enabled=None follows the box (_bug_on).
+        return w._bug_on() if name == "alt_bug_enabled" else bool(
+            getattr(w, name))
+
+    for name in written:
+        assert shown(built, name) == shown(unset, name), name
+    assert built.vs_bug_y() is None
+
+
 # -- AL-CAP-001 ---------------------------------------------------------------
 
 def test_altsel_box_changes_look_while_capturing(ap_db, qtbot):
