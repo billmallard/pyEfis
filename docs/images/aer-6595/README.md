@@ -27,7 +27,9 @@ Three camera height inputs:
   `under40` differs in 1,808 pixels, the tag and the same horizon pixels.
 
 Each PNG has its `.png.json` sidecar with `pyefis_rev` (dev `48ac6d7`,
-branch `f3573a6`), the size and the exact command.
+branch `3f606aa`), the size and the exact command. The branch frames were
+first captured at `f3573a6`; recaptured at `3f606aa` (the cheaper per-frame
+surface sample) all three PNGs are byte-identical.
 
 ## Regenerate
 
