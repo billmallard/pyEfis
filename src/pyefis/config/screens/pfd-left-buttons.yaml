@@ -47,3 +47,14 @@ PFD:
       replace:
         radio_id: 1
 
+    # Crew alerting marker (CAS3, CAP-119), as on pfd.yaml: the highest active
+    # alert level, flashing while anything is unacknowledged; empty when
+    # there is none. Touch to open the full list. Where the stock file
+    # puts it on the attitude display (the top band, right of the autopilot
+    # label, above the HSI heading box); same size.
+    - type: cas_marker
+      row: 1
+      column: 83
+      span:
+        rows: 6
+        columns: 20
