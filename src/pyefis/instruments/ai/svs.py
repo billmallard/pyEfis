@@ -1715,9 +1715,13 @@ class SVSRenderer:
         height interpolated between the two threshold elevations."""
         if self.cache is None:
             return None
-        elev_m, _ = self._sample_elevations(np.array([[float(lat)]]),
-                                            np.array([[float(lon)]]))
-        surface = float(elev_m[0, 0]) * 3.28084
+        # One point, sampled the way _sample_elevations does: bilinear in
+        # the tile, and a missing tile or a void (the water sentinel) is
+        # sea-level water.
+        elev_m = self.cache.elevation(lat, lon)
+        if elev_m < _WATER_SENTINEL / 2.0:
+            elev_m = 0.0
+        surface = float(elev_m) * 3.28084
         rwy = self._runway_surface_ft(lat, lon)
         if rwy is not None and rwy > surface:
             surface = rwy
@@ -1730,12 +1734,22 @@ class SVSRenderer:
                 or not self.airport_db.ready):
             return None
         lat_cos = math.cos(math.radians(lat))
-        near_deg = _FLOOR_AIRPORT_NM * NM_TO_DEG
+        # The airports near enough to matter, refreshed when the cached list
+        # changes or the aircraft moves to another 0.01 deg cell. The radius
+        # carries a cell diagonal of margin, so the subset stays a superset
+        # anywhere in the cell; the per-frame test is then a few runways.
+        airports = self._get_airports_cached(lat, lon)
+        cell = (round(lat, 2), round(lon, 2))
+        if (getattr(self, "_floor_src", None) is not airports
+                or self._floor_cell != cell):
+            near_deg = _FLOOR_AIRPORT_NM * NM_TO_DEG + 0.015
+            self._floor_near = [
+                ap for ap in airports
+                if math.hypot(ap[1] - lat, (ap[2] - lon) * lat_cos) <= near_deg]
+            self._floor_src = airports
+            self._floor_cell = cell
         best = None
-        for _label, ref_lat, ref_lon, _elev, runways in \
-                self._get_airports_cached(lat, lon):
-            if math.hypot(ref_lat - lat, (ref_lon - lon) * lat_cos) > near_deg:
-                continue
+        for _label, _ref_lat, _ref_lon, _elev, runways in self._floor_near:
             for rwy in runways:
                 t1_elev = rwy.get("thr1_elev_ft")
                 t2_elev = rwy.get("thr2_elev_ft")

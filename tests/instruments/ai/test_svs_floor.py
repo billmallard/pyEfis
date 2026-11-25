@@ -255,3 +255,43 @@ def test_no_terrain_data_leaves_the_height_alone(tmp_path):
     assert r.surface_elevation_ft(LAT0, LON0) is None
     assert r.floor_camera_alt(-500.0, LAT0, LON0) == -500.0
     assert r.height_tag is False
+
+
+def test_the_near_airport_subset_follows_the_aircraft(tmp_path):
+    """The runway test runs on a cached subset of nearby airports; moving to
+    a field 12 NM away must find that field's runway, and a rebuilt airport
+    list must replace the subset."""
+    far_lat = LAT0 + 0.2
+    far = RunwayRecord(
+        airport_id="FAR", name="18/36",
+        thr1_lat=far_lat, thr1_lon=LON0, thr1_elev_ft=300.0,
+        thr2_lat=far_lat + RWY_LEN_FT / FT_PER_DEG, thr2_lon=LON0,
+        thr2_elev_ft=300.0, length_ft=RWY_LEN_FT, bearing_deg=0.0,
+        width_ft=RWY_W_FT)
+    r = _renderer(tmp_path, [_runway()])
+    near = list(r._get_airports_cached(LAT0, LON0))
+    both = near + [("FAR", far_lat, LON0, 300.0, [{
+        "thr1_lat": far.thr1_lat, "thr1_lon": far.thr1_lon,
+        "thr1_elev_ft": 300.0, "thr2_lat": far.thr2_lat,
+        "thr2_lon": far.thr2_lon, "thr2_elev_ft": 300.0,
+        "width_ft": RWY_W_FT}])]
+    r._get_airports_cached = lambda lat, lon: both
+    assert r.surface_elevation_ft(*_on_runway(0.5)) == pytest.approx(
+        _rwy_ft(0.5), abs=1e-6)
+    assert r.surface_elevation_ft(far_lat + 0.005, LON0) == pytest.approx(
+        300.0, abs=1e-6)
+    # Same cell, rebuilt list without the far field: the subset is replaced.
+    only_near = list(near)
+    r._get_airports_cached = lambda lat, lon: only_near
+    assert r.surface_elevation_ft(far_lat + 0.005, LON0) == pytest.approx(
+        TERRAIN_FT, abs=1e-3)
+
+
+def test_a_void_tile_sample_is_sea_level_water(tmp_path):
+    """SRTM marks a void -32768; the terrain path draws it as water at 0 ft,
+    so the floor there is 0 ft, not 107,000 ft under the sea."""
+    r = SVSRenderer({"enabled": True,
+                     "tile_path": str(_tile_root(tmp_path, elevation_m=-32768))})
+    assert r.surface_elevation_ft(LAT0, LON0) == 0.0
+    assert r.floor_camera_alt(-100.0, LAT0, LON0) == pytest.approx(
+        SVS_EYE_HEIGHT_FT)
