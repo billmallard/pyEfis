@@ -466,6 +466,22 @@ class TileCache:
 
 NM_TO_DEG = 1.0 / 60.0   # 1 NM ≈ 1/60 degree latitude
 
+# SVSFLOOR1 (AER-6595): the camera never goes below the drawn surface. An
+# aircraft cannot be under the ground, so a camera height under the terrain
+# or the runway we draw is an input that disagrees with our data: a sim
+# runway at a different height from NASR's threshold, DEM error, or a wrong
+# height source. The camera is lifted to the surface plus an eye height.
+# Up to the band it is lifted silently; past it, it is still lifted and the
+# AI shows SVS HGT. The band is Bill's ruling (30 ft; up to 50 ft only on
+# measured sim-versus-NASR runway differences). The tag clears a few feet
+# inside the band, so a height that hovers at the edge does not flicker it.
+SVS_EYE_HEIGHT_FT = 5.0
+SVS_FLOOR_BAND_FT = 30.0
+SVS_FLOOR_TAG_CLEAR_FT = 5.0
+# Only airports whose reference point is this close are tested for a runway
+# under the aircraft: the longest runway is under 3 NM.
+_FLOOR_AIRPORT_NM = 3.0
+
 class SVSRenderer:
     """
     Projects a terrain grid into the AI viewport.
@@ -656,6 +672,11 @@ class SVSRenderer:
         # above the synthetic terrain) ONLY when SVS is genuinely drawing — so
         # any failure/empty frame falls back to the brown attitude ground.
         self.drew_terrain        = False
+        # SVSFLOOR1: how far the camera height was under the drawn surface on
+        # the last frame (ft, <= 0 when it was not), and whether that is past
+        # the silent band. The AI reads height_tag to show SVS HGT.
+        self.height_below_surface_ft = 0.0
+        self.height_tag          = False
         # Cached airport-proximity boolean (see near_airport()).
         self._near_airport_cache = None
         self._near_airport_cache_time = 0.0
@@ -1684,6 +1705,83 @@ class SVSRenderer:
         *pose*, a ``FramePose`` captured by the host at paint time."""
         paint_svs_frame(self, painter, pose)
 
+    def surface_elevation_ft(self, lat, lon):
+        """Height of the surface we draw under (lat, lon), ft MSL: the
+        terrain, or the runway where the point is on a runway polygon and
+        the runway is higher. None when there is no terrain data at all.
+
+        The runway is the polygon ``_collect_runway_polygons`` draws: the
+        threshold-to-threshold rectangle at the published width, with its
+        height interpolated between the two threshold elevations."""
+        if self.cache is None:
+            return None
+        elev_m, _ = self._sample_elevations(np.array([[float(lat)]]),
+                                            np.array([[float(lon)]]))
+        surface = float(elev_m[0, 0]) * 3.28084
+        rwy = self._runway_surface_ft(lat, lon)
+        if rwy is not None and rwy > surface:
+            surface = rwy
+        return surface
+
+    def _runway_surface_ft(self, lat, lon):
+        """Height of the drawn runway under (lat, lon), or None when the
+        point is on no runway. Highest wins where runways cross."""
+        if (getattr(self, "airport_db", None) is None
+                or not self.airport_db.ready):
+            return None
+        lat_cos = math.cos(math.radians(lat))
+        near_deg = _FLOOR_AIRPORT_NM * NM_TO_DEG
+        best = None
+        for _label, ref_lat, ref_lon, _elev, runways in \
+                self._get_airports_cached(lat, lon):
+            if math.hypot(ref_lat - lat, (ref_lon - lon) * lat_cos) > near_deg:
+                continue
+            for rwy in runways:
+                t1_elev = rwy.get("thr1_elev_ft")
+                t2_elev = rwy.get("thr2_elev_ft")
+                if t1_elev is None or t2_elev is None:
+                    continue
+                dl = rwy["thr2_lat"] - rwy["thr1_lat"]
+                dm = (rwy["thr2_lon"] - rwy["thr1_lon"]) * lat_cos
+                len2 = dl * dl + dm * dm
+                if len2 < 1e-18:
+                    continue
+                pl = lat - rwy["thr1_lat"]
+                pm = (lon - rwy["thr1_lon"]) * lat_cos
+                f = (pl * dl + pm * dm) / len2
+                if f < 0.0 or f > 1.0:
+                    continue
+                off = abs(pl * dm - pm * dl) / math.sqrt(len2)
+                if off > (rwy["width_ft"] / 2.0) / 364491.0:
+                    continue
+                h = t1_elev + f * (t2_elev - t1_elev)
+                if best is None or h > best:
+                    best = h
+        return best
+
+    def floor_camera_alt(self, alt_ft, lat, lon):
+        """The camera height for *alt_ft* at (lat, lon): never below the
+        drawn surface plus SVS_EYE_HEIGHT_FT, and never moved when it is
+        above that (SVSFLOOR1). Sets ``height_below_surface_ft`` and
+        ``height_tag`` for the AI's SVS HGT annunciation. Camera only:
+        nothing here writes a FIX key."""
+        try:
+            surface = self.surface_elevation_ft(lat, lon)
+        except Exception:
+            log.exception("SVS: surface elevation lookup failed")
+            surface = None
+        if surface is None:
+            self.height_below_surface_ft = 0.0
+            self.height_tag = False
+            return alt_ft
+        below = surface - alt_ft
+        self.height_below_surface_ft = below
+        if below > SVS_FLOOR_BAND_FT:
+            self.height_tag = True
+        elif below <= SVS_FLOOR_BAND_FT - SVS_FLOOR_TAG_CLEAR_FT:
+            self.height_tag = False
+        return max(alt_ft, surface + SVS_EYE_HEIGHT_FT)
+
     def make_pose_source(self):
         """Background-renderer seam: the position interpolator the host
         feeds and samples per frame. GPS arrives at 1-10 Hz and the frame
@@ -2691,7 +2789,17 @@ def paint_svs_frame(renderer, painter, pose):
     # Clear drew_terrain so the AI falls back to its brown ground.
     if not pose.position_valid:
         renderer.drew_terrain = False
+        renderer.height_tag = False
         return
+    # SVSFLOOR1: the camera never goes below the surface we draw.
+    alt_ft = pose.alt_ft
+    # A stand-in renderer without the method (or a test double whose
+    # attributes are mocks) keeps the pose's own height.
+    floor = getattr(renderer, "floor_camera_alt", None)
+    if floor is not None:
+        floored = floor(alt_ft, pose.lat, pose.lon)
+        if isinstance(floored, (int, float)):
+            alt_ft = floored
     # The host raises the terrain to its raised reference with a lens
     # shift of horizon_position's pixel offset and gives the camera the
     # true pitch. The ladder puts zero pitch at offset_px - pitch * ppd;
@@ -2704,7 +2812,7 @@ def paint_svs_frame(renderer, painter, pose):
     # The heading is true: SVS projects in true-north coordinates.
     renderer.draw(
         painter, pose.width, pose.height,
-        pose.lat, pose.lon, pose.alt_ft,
+        pose.lat, pose.lon, alt_ft,
         pose.pitch_deg, pose.roll_deg, pose.heading_true_deg,
         pose.px_per_deg, pose.device_pixel_ratio,
         roll_pivot_px=pose.roll_pivot_px,
