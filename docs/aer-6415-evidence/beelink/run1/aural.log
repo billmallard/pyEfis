@@ -1,0 +1,3 @@
+Nov 23 16:06:27.694040 beelinkpyefis xinit[1382010]: INFO:20261123-16:06:27:pyefis.instruments.cas.aural - aural: disconnect tone
+Nov 23 16:06:33.710473 beelinkpyefis xinit[1382010]: INFO:20261123-16:06:33:pyefis.instruments.cas.aural - aural: caution tone
+Nov 23 16:06:39.705202 beelinkpyefis xinit[1382010]: INFO:20261123-16:06:39:pyefis.instruments.cas.aural - aural: silent

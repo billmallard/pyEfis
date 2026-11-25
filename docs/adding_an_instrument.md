@@ -33,7 +33,13 @@ Conventions every instrument follows:
 - It is a `QWidget` / `QGraphicsView` that consumes one or more FIX keys via
   `fix.db.get_item(KEY)` and the `valueChanged` / `oldChanged` / `badChanged` /
   `failChanged` signals.
-- It renders **fail** as a red "XXX", **old/bad** greyed — keep that convention.
+- By default it renders **fail** as a red "XXX" and **old/bad** greyed. A
+  widget spec under `docs/*_widget_spec.md` can override that on purpose, and
+  where one does, the spec wins: the airspeed and altimeter tapes treat old as
+  fail and show bad in amber (CERT1b/c, `airspeed_widget_spec.md`), the heading
+  readout shows old/bad as blank amber (`heading_widget_spec.md`), and the HSI
+  treats old as fail (`hsi_widget_spec.md`, HSI-ANN-001). Read the spec for the
+  widget you are touching before you apply the default.
 - **Each configurable knob is a plain attribute** set in `__init__` to its
   default (e.g. `self.show_tas = True`). The property `name` in the record maps
   to that attribute, and its `default` must equal the attribute's initial value
@@ -100,16 +106,22 @@ Rules of thumb:
   `setter:setDbkey`; unit-switching / encoder / nested `svs` are `special`.
 - Only declare a property you intend the twin to honor (the fidelity rule).
 - Don't redeclare `font_family` / `font_percent` — they are common options.
+- A runtime control key (`bindable=Binding(...)`) is restated in the widget's
+  `_live_binding_specs()`. The gate holds the two together field by field
+  (semantics, key option, ladder option, enum), so change both in one commit.
+- A generic type with a `dbkey` `fixkey` prop and no default gets a demo key in
+  `tools/render_instrument.py` (`_NEEDS_DBKEY`, derived from the records), so its
+  palette thumbnail draws a value. Nothing to add there by hand.
 
-## Step 3 — if migrating an existing instrument, remove the curated copy
+## Step 3 — keep the curated tables empty
 
-A type must live in exactly one place. When you move an instrument into the
-registry, delete its entries from the curated dicts in `editor/schema.py`
+Every instrument is migrated: the curated dicts in `editor/schema.py`
 (`_CATEGORIES`, `_LABELS`, `_OPTIONS`, `_REQUIRED_OPTIONS`, `_KEEP_ASPECT`,
-`_SVS_CAPABLE`, `_NOT_OFFSCREEN_RENDERABLE`) and from the `INSTRUMENT_FACTORIES`
-/ `INSTRUMENT_DEFAULTS` literals in `screenbuilder_factory.py` (the fold-back
-re-supplies them from the record). The gate fails if you forget — that's the
-point.
+`_SVS_CAPABLE`, `_NOT_OFFSCREEN_RENDERABLE`) and the `INSTRUMENT_FACTORIES` /
+`INSTRUMENT_DEFAULTS` / `INSTRUMENT_DEFAULT_OPTIONS` literals in
+`screenbuilder_factory.py` are empty, and the fold-back fills
+`INSTRUMENT_FACTORIES` and `INSTRUMENT_DEFAULTS` from the records. Do not add a type to them; put it in its record. The gate
+fails on a type defined in both places.
 
 ## Step 4 — run the gate
 
@@ -118,8 +130,9 @@ PYTHONPATH="<pylib>;src" python -m pytest tests/editor --no-cov -q
 ```
 
 It verifies the record is a real factory type, isn't double-defined, matches the
-exported schema, and that the **real widget exposes every `attr` property** you
-declared. Fix anything red before moving on.
+exported schema, that the **real widget exposes every `attr` property** you
+declared, and that its live bindings match the record's `bindable` props. Fix
+anything red before moving on.
 
 ## Step 5 — the configurator twin (fidelity)
 
@@ -136,6 +149,10 @@ first in Step 1) and read from the schema, not hard-code:
 
 For a brand-new type also add: a `renderCanvas()` dispatch branch, a palette
 entry is automatic (schema-driven), and a palette SVG is generated in Step 6.
+If the type carries an `aircraft_ref` prop (the gauges' `tank`), add it to
+`AIRCRAFT_REFS` in `configurator/public/aircraft_refs.js` and regenerate
+`configurator/test/fixtures/aircraft_refs_pyefis.json`: that table is still
+kept by hand, and nothing fails if you miss it.
 
 GL/SVS widgets (`virtual_vfr`) can't render in a browser; the twin uses a
 captured `svs/<scene>.webp` instead (see the configurator README).
@@ -147,7 +164,11 @@ captured `svs/<scene>.webp` instead (see the configurator README).
 offscreen, and uploads them to the branch's R2 prefix on a `dev`/`qa`/`master`
 push that touches the editor, the factory or `src/pyefis/instruments/`. Types the
 offscreen path cannot draw (GL/SVS/embedded-app) build as placeholders and are
-never uploaded by CI. The manual route below is for those, or for a local check:
+never uploaded by CI. A type whose record says it builds standalone and renders
+offscreen, and that is not on `render_instrument.py`'s placeholder list
+(`_CONFIG_DRIVEN`), must render: if it placeholders, `build_editor_assets.py`
+exits 1 and the job goes red. The manual route below is for the placeholder
+types, or for a local check:
 
 ```bash
 # pyEfis: rebuild schema.json (+ groups.json + palette/<type>.svg)
@@ -167,8 +188,9 @@ the edge cache serves the previous file for a few seconds.
 
 ## Step 7 — commit (two repos move together)
 
-- pyEfis (`display-changes`): the widget + record (+ curated removals) + tests.
-- makerplane-data (`feat/accounts-auth`): the twin change.
+- pyEfis (branch from `dev`, PR to `dev`): the widget + record + tests.
+- makerplane-data (branch from `dev`, PR to `dev`): the twin change, plus
+  `aircraft_refs.js` and its fixture if the type carries an `aircraft_ref` prop.
 
 Focused commit per change; note both SHAs when an editor change spans repos. No
 emojis in commit messages. Do not push to upstream `makerplane/*` without
@@ -182,7 +204,9 @@ explicit authorisation.
 - [ ] Each knob categorised (1 panel option vs 2 FIX value) — correctly.
 - [ ] `InstrumentSpec` registered; `properties` defaults match widget defaults.
 - [ ] `fix_values` document the category-2 inputs; `preview` lets the twin draw.
-- [ ] If migrating: removed from every curated dict + the legacy literals.
+- [ ] Nothing added to the curated dicts or the legacy literals.
+- [ ] Bindable props and `_live_binding_specs()` agree (the gate checks).
+- [ ] An `aircraft_ref` prop is in `aircraft_refs.js` and its fixture.
 - [ ] `pytest tests/editor` green (the gate).
 - [ ] If it writes a FIX key: declared in fix-gateway's `writers.yaml` and the pin
       bumped, so `python tools/check_fix_writers.py` passes ([key_writers.md](key_writers.md)).

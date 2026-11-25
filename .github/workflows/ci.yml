@@ -49,7 +49,10 @@ jobs:
         # reference a libegl1 dependency (.deb) that Ubuntu has since rotated off
         # the mirror, so a bare `apt install` 404s. `apt-get update` re-resolves it.
         sudo apt-get update
-        sudo apt install -y libegl1
+        # libasound2t64: the CAS tone tests drive the real libasound into a
+        # file device (tests/instruments/cas/test_aural.py fails, not skips,
+        # under CI when it is missing).
+        sudo apt install -y libegl1 libasound2t64
         python -m pip install --upgrade pip
         pip install flake8 pytest pytest-qt pytest-env pytest-cov
         pip install -e .[qt,svs,watertools]

@@ -78,6 +78,7 @@ INSTRUMENTS = {
     "CASWindow": "pyefis.instruments.cas",
     "CASMarker": "pyefis.instruments.cas",
     "CASNotShownCue": "pyefis.instruments.cas",
+    "TonePlayer": "pyefis.instruments.cas.aural",
     "AboutSystem": "pyefis.instruments.about",
 }
 

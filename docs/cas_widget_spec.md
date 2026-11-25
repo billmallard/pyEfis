@@ -8,7 +8,9 @@ holds the page-cited standards basis, and to the makerplane brief `briefs/crew_a
 (maos-workspace), sections 5.3, 6 and 11, which this implements. The hazard rows are CAS-1 to
 CAS-7 in [`safety/fha_avionics_stack.md`](safety/fha_avionics_stack.md) §3.2.1.
 
-Out of scope here (brief 12.1): sound (slice 3), engine limits (slice 2), recall and clear,
+The alert tones (CAS4) are in `instruments/cas/tones.py` (which tone sounds, Qt-free),
+`alsa.py` (the device) and `aural.py` (the player). Out of scope here (brief 12.1): engine
+limits (slice 2), recall and clear,
 phase-of-flight re-levelling, crew-set inhibits, and the shared acknowledge with the
 autopilot disconnect cue (an AFC4 follow-up, brief 6.5).
 
@@ -86,10 +88,34 @@ slice), **gap** (planned elsewhere).
 | CASW-LOC-005 | `GATEWAY LINK LOST` and `CAS FAIL` stay 2 s after their condition clears | brief C6 | shipped |
 | CASW-STALE-001 | During link loss or `CAS FAIL`, and while they clear, only local alerts are drawn: no gateway slot is ever shown as current | brief 6.4, C4; FHA CAS-4 | shipped |
 | CASW-REG-001 | `cas_window` and `cas_marker` are registered instruments that build in isolation and take their options through the screen-build path | CAS3 amendment (Bill, 2026-11-22) | shipped |
-| CASW-AUR-001 | Warnings and cautions reach a second sense (a tone) | AC 25.1322-1 §6 (two senses for warnings and cautions); brief 7 | deviation: no audio output exists; one-sense limit recorded as FHA open item O11 |
+| CASW-AUR-001 | Warnings and cautions reach a second sense (a tone) on every display host with an audio output | AC 25.1322-1 §6 (two senses for warnings and cautions); brief 7; BACKLOG CAS4 | shipped (CAS4). A host with no audio output stays one-sense; see FHA CAS-1 |
+| CASW-AUR-002 | Three tones: autopilot disconnect, warning, caution. Advisories have none. Each repeats while its condition holds; the disconnect tone is distinct from the warning and at warning level; `AuralVolume` sets the peak | AC 25.1322-1 §6, App. 1 (aural for warnings and cautions); G3X p.323-324 (a distinct AP disconnect cue); Bill, AER-6346 | shipped; the sounds themselves are the project owner's call (section 5) |
+| CASW-AUR-003 | Acknowledge silences: a tone whose condition goes (acknowledged on any display, or cleared) stops at once, mid-sound, and audio queued on the device is dropped | AC 25.1322-1 §12c (R5); brief 7 | shipped |
+| CASW-AUR-004 | One tone at a time (R9): a higher level interrupts at once; a lower one waits until every higher one is gone; two of one level (disconnect and warning) take turns, each finishing its sound first | AC 25.1322-1 §8b; AC 23.1311-1C §18.5; brief 7 | shipped |
+| CASW-AUR-005 | The inputs: `APDISC` on a fresh autopilot reading (the mode strip's rule, `APState.disconnected`); the gateway's `CASTOP`, read only while the list is shown (never during link loss or `CAS FAIL`); this display's unacknowledged local alerts. CAS tones only where CAS is in use (a window or marker on the panel, or `CASSEQ` seen good) | brief 5.4 (the engine decides, the display reads), 6.4, C4; BACKLOG CAS4 | shipped |
+| CASW-AUR-006 | The player never stops the display: with no audio library or device it logs once and retries every 5 s; `AuralEnabled: false` turns it off; a fault building it is logged and boot goes on | FHA A3; repo convention (construct-never-raises loaders) | shipped |
 | CASW-RCL-001 | Acknowledged messages can be cleared from view and recalled, with a stored indication | AC 25.1322-1 §9 (p.12) | gap: slice 1 has no clear; every active message stays listed (brief 5.2). Planned with recall, brief 12.1 |
 
 ## 5. Notes and deviations
+
+- **The tones (CAS4) are a proposal for the project owner.** BACKLOG CAS4 leaves the sounds to
+  him, judged from the recordings in `docs/aer-6415-evidence/`. Proposed: the autopilot
+  disconnect, three falling sweeps (1600 to 800 Hz, 0.16 s each), every 1.1 s; the warning,
+  three 1000 Hz beeps (0.12 s), every 1.2 s; the caution, a falling two-note chime (1100 Hz
+  then 880 Hz), every 5 s. All sit in 500 to 2000 Hz, where a headset and intercom pass the
+  most, with an odd harmonic against engine noise. Changing a sound is a data change in
+  `tones.TONES`; the scheduler does not depend on it.
+- **The tones play on the host's ALSA output through `libasound`, by ctypes.** No Python
+  package and no command-line player is needed; the Beelink bench has the library and no
+  `aplay`. The display user needs access to the sound device (the `audio` group on a kiosk
+  install) and an unmuted mixer; the wiki page "Customizing Beyond the Configurator" says how.
+- **The shared acknowledge is still not built** (brief 6.5). The disconnect tone stops when the
+  disconnect is acknowledged on the autopilot mode strip, as the flashing `AP` does; a touch
+  on the CAS window does not acknowledge it.
+- **The tone's own loss is not annunciated.** A missing audio device or a pulled USB adapter is
+  logged and retried (CASW-AUR-006). A muted or zero mixer, a pulled audio cable, or a fault in
+  the intercom or headset is not detected at all: the tone is written and nothing is heard. The
+  visual cues work as before in every case, which is the slice-1 baseline. See FHA CAS-8.
 
 - **CAS TEST timing (found on the private bench, AER-6346).** The gateway raises `CAS TEST`
   for about 5 s from plugin start. A display that is still starting, or that boots the
@@ -104,7 +130,9 @@ slice), **gap** (planned elsewhere).
 
 ## 6. Tests
 
-`tests/instruments/cas/test_model.py` (the Qt-free model) and
+`tests/instruments/cas/test_aural.py` (the tones: the scheduler on the audio clock, the R9
+order checked on the bytes the real `libasound` delivers to a `file` device, the inputs and
+the start-up), `tests/instruments/cas/test_model.py` (the Qt-free model) and
 `tests/instruments/cas/test_widgets.py` (paint per row on a real grab, touch writes on the
 queued bytes, the coverage watch, the registry build path). Every requirement ID above
 except the deviation and the gap appears in at least one test docstring. The bench run on a
