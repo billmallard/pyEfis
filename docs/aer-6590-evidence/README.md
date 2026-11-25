@@ -49,3 +49,20 @@ sh ~/bench-scratch/aer6590/dsp2_bench.sh
 `dsp2_bench.sh` clones fix-gateway `dev` and pyEfis `dev` and the branch
 under `~/bench-scratch/aer6590`, copies each one's stock config, sets the port
 and the boot screen, runs one side at a time and stops its stack after.
+
+## A bound button draws as before
+
+For each of the 17 bound button files (`*-invisible`, `heading-bug-*` and
+`cdi-source`), `draw_ab_test.py` renders the button showing, at rest and with
+its key held true, under the stock bindings. The A/B ran on 2026-11-25:
+branch `41f79367` plus the `setDown` change, against `dev` `2e64bcac`, offscreen
+Qt in the sandbox. **All 34 frames are byte-identical between the two trees.**
+The 15 transparent or simple buttons draw the same held as at rest. Heading
+bug - and + draw pressed while held, on both trees. A first run without
+`setDown` showed those two staying unpressed on the branch; that is what the
+`setDown` line restores, and what
+`test_bound_repeat_button_still_draws_pressed_while_its_key_is_held` pins.
+
+To rerun: copy `draw_ab_test.py` into `tests/hmi/` of each tree and run
+`AB_OUT=<dir> python -m pytest tests/hmi/draw_ab_test.py -s`, then compare the
+two `<dir>`s' PNGs.

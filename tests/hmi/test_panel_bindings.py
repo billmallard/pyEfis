@@ -227,3 +227,21 @@ def test_a_toggle_on_a_bound_key_switches_the_binding_off(panel_keys, qtbot, cap
     # The other bindings still act.
     _pulse("TSBTN12")
     assert panel_keys.db.get_item("BARO").value == pytest.approx(29.93)
+
+
+def test_bound_repeat_button_still_draws_pressed_while_its_key_is_held(panel_keys, qtbot):
+    # Before DSP2 a held key pressed the showing button, which drew its
+    # pressed look.  The binding now acts; the button must still look the
+    # same, without acting a second time.
+    _start()
+    w = _button(qtbot, "heading-bug-up.yaml", visible=True)
+    headbug = panel_keys.db.get_item("HEADBUG")
+    rest = w.grab().toImage()
+    panel_keys.db.set_value("TSBTN131", True)
+    assert w._button.isDown()
+    assert w.grab().toImage() != rest
+    assert headbug.value == 91.0
+    panel_keys.db.set_value("TSBTN131", False)
+    assert not w._button.isDown()
+    assert w.grab().toImage() == rest
+    assert headbug.value == 91.0
