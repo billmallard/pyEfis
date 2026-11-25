@@ -65,8 +65,13 @@ than present it as if valid.**
 - **AC 23.1311-1C** — "clearly distinguishable indications of malfunction or misleading
   information" are the acceptable warning means; see §18 (Annunciation).
 
-**pyEfis mapping.** Every widget already has the hooks: `fail` → remove + red flag (`XXX`);
-`old` → grey (stale); `bad` → grey/flag (invalid); plus `secfail`. The standards-work is to
+**pyEfis mapping.** Every widget can read three quality flags through the pyavtools
+`failChanged` / `oldChanged` / `badChanged` signals, and the default rendering is: `fail` →
+remove + red flag (`XXX`); `old` → grey (stale); `bad` → grey/flag (invalid). Some widget
+specs override that default on purpose (the tapes, heading and HSI; see
+[adding_an_instrument.md](adding_an_instrument.md) Step 1). fix-gateway's database also
+carries a `secfail` flag, but the pyavtools client exposes no attribute or signal for it, so
+no widget can react to it today. The standards-work is to
 (a) wire *every* signal a widget consumes to these, and (b) render an explicit **flag** on
 loss — not merely blank the element. (Silently hiding a needle is defensible for a needle
 that parks; a *primary* signal loss generally warrants an annunciation, not just absence.)

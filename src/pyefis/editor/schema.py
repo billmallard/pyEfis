@@ -21,14 +21,17 @@ can place: the palette of types, each type's default FIX dbkeys and options,
 which options are required, and whether the type can be previewed offscreen
 (GL/SVS widgets cannot -- they get a placeholder thumbnail instead).
 
-The authoritative source for the *type list, default dbkeys, and default
-options* is the screen-builder factory registry
-(:mod:`pyefis.screens.screenbuilder_factory`) -- this module reads those
-registries directly so the schema can never drift from what the screen builder
-will actually instantiate. The editor-affordance metadata (human label, palette
-category, required-options, offscreen-renderable / SVS-capable flags) is curated
-here because the registries don't carry it; the test suite asserts every curated
-key maps to a real registry type, so curation can't drift either.
+The single source is the instrument registry,
+``pyefis.screens.screenbuilder_factory.REGISTRY``: one ``InstrumentSpec`` record
+per type carries the type list, default dbkeys, options and the editor
+metadata (label, palette category, required options, offscreen-renderable /
+SVS-capable / keep-aspect flags). Each entry is built from its record by
+``_entry_from_spec``, so the schema cannot drift from what the screen builder
+instantiates.
+
+The curated tables below are empty: every type has a record. They and
+``_entry_from_curation`` remain only as the fallback shape for a factory type
+with no record, which tests/editor/test_registry.py does not allow.
 
 CLI::
 
@@ -48,16 +51,16 @@ from pyefis.screens.screenbuilder_factory import (
 
 # v3: instruments migrated to screenbuilder_factory.REGISTRY are sourced from
 # their InstrumentSpec record; every instrument entry now also carries a
-# `preview` block (category 3) and a `fix_values` list (category 2). Types not
-# yet migrated still come from the curated metadata in this module.
+# `preview` block (category 3) and a `fix_values` list (category 2). (Every
+# type is now migrated; the curated metadata in this module is empty.)
 # v4: every instrument entry carries an `encoder` block -- how it takes the
 # screen knob and which knob options it honours (pyEfis #97).
 SCHEMA_VERSION = 4
 
 # ---------------------------------------------------------------------------
-# Curated editor-affordance metadata. Keys MUST be real INSTRUMENT_FACTORIES
-# types (enforced by tests/editor/test_schema.py). Anything not listed falls
-# back to sensible defaults in build_schema().
+# Curated editor-affordance metadata -- the pre-registry source, now empty.
+# A migrated type may not appear here (tests/editor/test_registry.py); a new
+# type gets a REGISTRY record instead.
 # ---------------------------------------------------------------------------
 
 # Palette grouping for the editor's instrument picker.
@@ -263,10 +266,11 @@ def _entry_from_spec(spec):
 
 
 def _entry_from_curation(instrument_type):
-    """Schema entry for a not-yet-migrated instrument, from the curated
-    metadata in this module. Transitional: shrinks as instruments migrate to
-    ``screenbuilder_factory.REGISTRY``. ``preview``/``fix_values`` are empty
-    here so every entry has a uniform shape for the editor."""
+    """Schema entry for a factory type with no REGISTRY record, from the
+    curated metadata in this module. Every type has a record and the curated
+    tables are empty, so no shipped type takes this path; it keeps the entry
+    shape uniform should one ever appear. ``preview``/``fix_values`` are empty
+    here for that reason."""
     return {
         "label": _LABELS.get(instrument_type, _prettify(instrument_type)),
         "category": _CATEGORIES.get(instrument_type, "other"),
@@ -447,9 +451,9 @@ def build_schema():
     """Return the full instrument schema as a JSON-serialisable dict.
 
     The type list is exactly the keys of ``INSTRUMENT_FACTORIES`` so the schema
-    always matches what the screen builder can create. Migrated instruments are
-    sourced from ``screenbuilder_factory.REGISTRY`` (the single source of
-    truth); the rest fall back to the curated metadata in this module.
+    always matches what the screen builder can create. Each entry comes from
+    its ``screenbuilder_factory.REGISTRY`` record (the single source of truth);
+    a type with no record would fall back to the empty curated metadata here.
     """
     instruments = {}
     for instrument_type in sorted(INSTRUMENT_FACTORIES):
