@@ -110,5 +110,6 @@ are Pi local time (CST); `phases.log` uses epoch seconds (14:21:10 CST is 179563
 The card 2 PCM state agrees: it was `RUNNING` for 6.0 s in the disconnect run, and
 for 10.4, 4.4 and 16.2 s in the warning run, matching the spans above. It was
 `PREPARED` (open, silent) between them. Here `plughw` is not dmix, so `RUNNING`
-does mean samples were reaching the adapter. Whether they were loud enough at the
-speakers is for the ear at the bench. No tee was used, so this run has no byte match.
+does mean samples were reaching the adapter. No tee was used, so this run has no byte
+match. The project owner heard the run on the Pi's speakers, at this level, and
+approved the tones (AER-6415, 2026-11-25).
