@@ -2228,6 +2228,19 @@ _register(InstrumentSpec(
 # keep working AND migrated instruments are sourced from the registry (the
 # single source of truth). As instruments migrate, these literal dicts shrink;
 # once everything is migrated they can be removed entirely.
+# SEED (throwaway, AER-6596): a type with no configurator twin.
+_register(InstrumentSpec(
+    type="seed_twinless",
+    label="Seed Twinless",
+    category="text",
+    builder=build_static_text,
+    properties=[
+        Prop("text", "string", default="Text", label="Text", required=True,
+             apply="special", help="the fixed text to display"),
+    ],
+))
+
+
 for _t, _spec in REGISTRY.items():
     if _spec.builder is not None:
         INSTRUMENT_FACTORIES[_t] = _spec.builder
@@ -2257,15 +2270,3 @@ def get_instrument_defaults(instrument_type):
 def get_instrument_default_options(instrument_type):
     return INSTRUMENT_DEFAULT_OPTIONS.get(instrument_type, False)
 
-
-# SEED (throwaway, AER-6596): a type with no configurator twin.
-_register(InstrumentSpec(
-    type="seed_twinless",
-    label="Seed Twinless",
-    category="text",
-    builder=build_static_text,
-    properties=[
-        Prop("text", "string", default="Text", label="Text", required=True,
-             apply="special", help="the fixed text to display"),
-    ],
-))
