@@ -398,7 +398,7 @@ def _value(fix, key):
 @pytest.mark.parametrize("box,key,start,inner,outer", [
     (ap.BOX_HDG, "HEADBUG", 350.0, 351, 1),        # wraps through 360
     (ap.BOX_VS, "VSSEL", 500, 600, 1100),
-    (ap.BOX_IAS, "IASSEL", 100.0, 101.0, 106.0),
+    (ap.BOX_IAS, "IASSEL", 100.0, 101.0, 111.0),   # 10 kt, as the tape
     (ap.BOX_ALT, "ALTSEL", 4500, 4600, 5600),
 ])
 def test_inner_and_outer_steps(db, qtbot, box, key, start, inner, outer):
@@ -447,6 +447,42 @@ def test_ias_zero_is_unset_dashes_and_first_step_starts_from_ias(db, qtbot):
     _touch(qtbot, w.boxes[ap.BOX_IAS])
     host.encoder_controller.changed(1)
     assert _value(db, "IASSEL") == 114.0
+
+
+# G98 (pyEfis #556): IASSEL 0 means "not set" (AFC1). Like the tape's own
+# editor, the panel's IAS box never writes it: a knob must not unset the
+# target the autopilot is flying.
+
+def test_ias_inner_step_down_from_1_kt_floors_at_1_kt(db, qtbot):
+    db.db.set_value("IASSEL", 1.0)
+    host, w = _hosted(qtbot)
+    _touch(qtbot, w.boxes[ap.BOX_IAS])
+    host.encoder_controller.changed(-1)
+    assert _value(db, "IASSEL") == 1.0
+    host.encoder_controller.outer_changed(-1)
+    assert _value(db, "IASSEL") == 1.0
+    assert 0.0 not in [float(v) for _k, v in _sent(db, keys=("IASSEL",))]
+
+
+def test_ias_push_sync_below_half_a_knot_writes_1_kt_not_0(db, qtbot):
+    db.db.set_value("IASSEL", 85.0)
+    db.db.set_value("IAS", 0.3)
+    host, w = _hosted(qtbot)
+    _touch(qtbot, w.boxes[ap.BOX_IAS])
+    host.encoder_controller.button_changed(True)
+    assert _value(db, "IASSEL") == 1.0
+    assert 0.0 not in [float(v) for _k, v in _sent(db, keys=("IASSEL",))]
+
+
+def test_ias_step_from_unset_with_no_airspeed_writes_nothing(db, qtbot):
+    # The tape's rule: with no target and no usable airspeed to start from,
+    # a step writes nothing (it used to start from 0 and could write 0).
+    db.db.get_item("IAS").fail = True
+    host, w = _hosted(qtbot)
+    _touch(qtbot, w.boxes[ap.BOX_IAS])
+    host.encoder_controller.changed(-1)
+    assert _value(db, "IASSEL") == 0.0
+    assert _sent(db, keys=("IASSEL",)) == []
 
 
 def test_box_text_formats(panel, db):
