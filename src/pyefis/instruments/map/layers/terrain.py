@@ -214,7 +214,8 @@ class TerrainLayer(MapLayer):
 
     def _caution(self):
         """Caution mode is configured and its altitude is usable: the owner
-        has a current, valid TALT (MAPALT1). Without one -- or an owner that
+        has a current, valid TALT (MAPALT1; INS5's quality rule, AER-6588,
+        applied to TALT). Without one -- or an owner that
         cannot say -- the hazard bands are not drawn, since bands measured
         from a wrong height are worse than none; the relief stays."""
         if self._mode != "caution" or self._flat:
@@ -384,6 +385,8 @@ class TerrainLayer(MapLayer):
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
         bands = None
+        # The key carries the mode the image was keyed for: relief while
+        # TALT is missing, stale, bad or failed (see _key).
         if len(key) > 6 and key[6] == "caution":
             # The SVS hazard bands over the relief (SVSSHADE2): one rule,
             # thresholds, palette and airport collapse shared with the

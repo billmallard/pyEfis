@@ -356,8 +356,12 @@ class MovingMap(LiveBindingMixin, QWidget):
         # the SVSALT1 ruling). A TALT that is missing, old, bad or failed
         # makes caution mode unavailable: plain relief, annunciated.
         self._alt_ft = 0.0
-        self._talt_flags = {"old": True, "bad": True, "fail": True}
+        # Per-key quality of LAT, LONG, TRACKM, TALT and TRACK. _stale(key) is
+        # any of the three (INS5, AER-6588); a key the gateway does not define
+        # reads stale through _old, except TRACK, which is optional.
         self._old = {}
+        self._bad = {}
+        self._fail = {}
 
         # --- map pointer + banner (FP10, billmallard/pyEfis#186) -------------
         # _pointer is None, or {"lat", "lon", "objects": [Waypoint],
@@ -418,44 +422,36 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._perf_settle_pending = False
 
         for key, attr in (("LAT", "_lat"), ("LONG", "_lon"),
-                          ("TRACKM", "_track"), ("TALT", "_alt_ft")):
+                          ("TRACKM", "_track"), ("TALT", "_alt_ft"),
+                          ("TRACK", "_track_true")):
             try:
                 item = fix.db.get_item(key)
                 item.valueChanged[float].connect(
                     lambda v, a=attr: setattr(self, a, v))
-                item.oldChanged[bool].connect(
-                    lambda o, k=key: (self._old.__setitem__(k, o),
-                                      self.update()))
+                for flag, table in (("old", self._old), ("bad", self._bad),
+                                    ("fail", self._fail)):
+                    getattr(item, flag + "Changed")[bool].connect(
+                        lambda s, k=key, t=table: (t.__setitem__(k, s),
+                                                   self.update()))
+                    table[key] = getattr(item, flag)
                 setattr(self, attr, item.value)
-                self._old[key] = item.old
             except KeyError:
-                # Graceful missing-key pattern: run with what exists.
-                self._old[key] = True
-        try:
-            item = fix.db.get_item("TALT")
-        except KeyError:
-            import logging
-            logging.getLogger(__name__).warning(
-                "map: FIX key 'TALT' not defined -- terrain caution mode "
-                "unavailable")
-        else:
-            for flag in ("old", "bad", "fail"):
-                getattr(item, f"{flag}Changed")[bool].connect(
-                    lambda s, f=flag: self._talt_flag_changed(f, s))
-                self._talt_flags[flag] = getattr(item, flag)
-        try:
-            item = fix.db.get_item("TRACK")
-            item.valueChanged[float].connect(
-                lambda v: setattr(self, "_track_true", v))
-            self._track_true = item.value
-        except KeyError:
-            pass
+                # Graceful missing-key pattern: run with what exists. A
+                # gateway without TRACK turns the map by TRACKM instead.
+                if key != "TRACK":
+                    self._old[key] = True
 
-    def _talt_flag_changed(self, flag, state):
-        """TALT old/bad/fail: caution mode comes and goes with it, so the
-        layers repaint at once rather than at the next pose change."""
-        self._talt_flags[flag] = state
-        self.update()
+    def _stale(self, key):
+        """True when *key* is old, bad or failed, or the gateway lacks it:
+        the map's fail/old/bad rule, one predicate (INS5, AER-6588)."""
+        return (self._old.get(key, True) or self._bad.get(key, False)
+                or self._fail.get(key, False))
+
+    def _track_stale(self):
+        """The ground track is not current: TRACKM, or TRACK when the
+        gateway has it (the map turns by TRACK, see view_track)."""
+        return self._stale("TRACKM") or (
+            self._track_true is not None and self._stale("TRACK"))
 
     def terrain_caution_wanted(self):
         """Caution mode is configured and would be drawn: the terrain layer
@@ -473,7 +469,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         """TALT is defined, current, not bad and not failed (MAPALT1).
         Without it caution mode is unavailable: the terrain layer paints
         plain relief and the status chip says TERR UNAVAIL."""
-        return not any(self._talt_flags.values())
+        return not self._stale("TALT")
 
     # --- frame clock (#89) --------------------------------------------------
     @property
@@ -1515,9 +1511,10 @@ class MovingMap(LiveBindingMixin, QWidget):
         own = self._layer_own
 
         # Ownship: top-down aircraft arrow at the anchor, up = track
-        # (track_up) or rotated to track (north_up).
-        stale = self._old.get("LAT", True) or self._old.get("LONG", True)
-        col = QColor(Qt.GlobalColor.gray) if stale \
+        # (track_up) or rotated to track (north_up). Grey when the position
+        # or the track it points along is stale, bad or failed.
+        stale = self._stale("LAT") or self._stale("LONG")
+        col = QColor(Qt.GlobalColor.gray) if stale or self._track_stale() \
             else QColor(self.symbol_color)
         if not col.isValid():
             col = QColor(Qt.GlobalColor.yellow)

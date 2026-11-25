@@ -392,3 +392,65 @@ def test_draw_row_covers_failed_bad_and_no_arrow_branches(fix, qtbot):
     assert painter.polygons == []
     assert painter.text == ["HW", "---", "XW", "X"]
 
+
+
+# --- INS5 (AER-6588): a stale wind source must not draw as live --------------
+
+class _RecordingPainter(wind_module.QPainter):
+    """The module's QPainter, recording each drawn string with its pen colour."""
+    drawn = []
+
+    def drawText(self, *args):
+        _RecordingPainter.drawn.append((args[-1], self.pen().color().name()))
+        return super().drawText(*args)
+
+
+def _painted_rows(widget, monkeypatch):
+    _RecordingPainter.drawn = []
+    monkeypatch.setattr(wind_module, "QPainter", _RecordingPainter)
+    widget.grab()
+    return list(_RecordingPainter.drawn)
+
+
+@pytest.mark.parametrize("key", ["HWIND", "XWIND"])
+def test_old_wind_draws_as_bad(fix, qtbot, monkeypatch, key):
+    """An old HWIND/XWIND takes bad's look, amber label and an amber X for the
+    value (EFIS-WIND-009, INS5); the other row is untouched."""
+    for k in ("HWIND", "XWIND"):
+        fix.db.set_value(k, 12.0)
+        item = fix.db.get_item(k)
+        item.fail = item.bad = item.old = False
+    widget = WindDisplay()
+    qtbot.addWidget(widget)
+    widget.resize(100, 60)
+    good = _painted_rows(widget, monkeypatch)
+    assert good == [("HW", "#ffffff"), ("12", "#ffffff"),
+                    ("RX", "#ffffff"), ("12", "#ffffff")]
+
+    fix.db.get_item(key).old = True
+    stale = _painted_rows(widget, monkeypatch)
+    row = slice(0, 2) if key == "HWIND" else slice(2, 4)
+    other = slice(2, 4) if key == "HWIND" else slice(0, 2)
+    assert [c for _, c in stale[row]] == ["#ffa500", "#ffa500"]
+    assert [t for t, _ in stale[row]] == [good[row][0][0], "X"]
+    assert stale[other] == good[other]
+
+    # And exactly what bad draws.
+    fix.db.get_item(key).old = False
+    fix.db.get_item(key).bad = True
+    assert _painted_rows(widget, monkeypatch) == stale
+    fix.db.get_item(key).bad = False
+
+    fix.db.get_item(key).old = False
+    assert _painted_rows(widget, monkeypatch) == good
+
+
+def test_wind_reads_initial_old_and_bad(fix, qtbot):
+    """A source already stale or bad when the screen is built draws that way
+    from the first frame, not as good until the next flag edge."""
+    fix.db.get_item("HWIND").old = True
+    fix.db.get_item("XWIND").bad = True
+    widget = WindDisplay()
+    qtbot.addWidget(widget)
+    assert widget._hwind_old is True
+    assert widget._xwind_bad is True

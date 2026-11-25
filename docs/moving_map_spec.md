@@ -49,9 +49,15 @@ pyAvMap's tile logic can be mined if wanted.
   and the ownship arrow points along it; TRACKM only on a gateway without
   TRACK), TRACKM (the ND TRK box; the ND rose is labelled magnetic by
   MAGVAR), GS
-  (ground speed for the track vector), ALT (terrain-relative coloring,
-  later TAWS layer). Standard fail/old/bad handling: stale position
+  (ground speed for the track vector), TALT (GPS/EKF MSL height:
+  caution mode's terrain-relative coloring, later TAWS layer; never the
+  baro-corrected ALT, MAPALT1). Standard fail/old/bad handling: stale position
   greys the ownship + annunciates; the map does NOT freeze silently.
+  "Stale" is any of old, bad or fail (`_stale`, INS5): `LAT`/`LONG`
+  grey the ownship and add `NO POS` to the chip; `TRACKM`, or `TRACK`
+  where the gateway has it, greys the TRK box and the ownship (it points
+  along the track); `TALT`, or a gateway without it, drops caution
+  mode's bands to relief and adds `TERR UNAVAIL` to the chip.
 - **Projection**: local azimuthal-equidistant about the screen
   center — x = (lon-lon0)·M·cos(lat0), y = (lat-lat0)·M, the same
   small-area flat-earth math the SVS uses (`M_PER_DEG_LAT`, shared
