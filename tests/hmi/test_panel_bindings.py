@@ -198,3 +198,32 @@ def test_bindings_follow_the_display_node_id(panel_keys):
     _pulse("TSBTN21")
     assert baro.value == pytest.approx(29.91)
     assert data.binds("TSBTN21") and not data.binds("TSBTN11")
+
+
+def test_a_toggle_on_a_bound_key_switches_the_binding_off(panel_keys, qtbot, caplog):
+    # The configurator hands out TSBTN{id}1.. for its own buttons.  A toggle
+    # left on holds its key true; when that value arrives from the gateway
+    # (a reconnect, or a boot with the toggle on), the baro binding would read
+    # it as a press held forever and run BARO down every 100 ms.
+    _start()
+    parent = QWidget()
+    parent.screenName = "PFD"
+    parent.parent = mock.Mock()
+    parent.parent.nodeID = 1
+    w = button.Button(parent, config={"type": "toggle", "text": "LIGHTS",
+                                      "dbkey": "TSBTN{id}1"})
+    qtbot.addWidget(parent)
+    parent.resize(200, 200)
+    parent.show()
+    w.resize(100, 80)
+    w.show()
+    qtbot.waitExposed(w)
+    assert "TSBTN11 switched off: a toggle button uses it (LIGHTS)" in caplog.text
+    assert not data.binds("TSBTN11")
+    panel_keys.db.set_value("TSBTN11", True)   # the gateway's value arrives
+    assert w._button.isChecked()               # the toggle still follows it
+    qtbot.wait(500)
+    assert panel_keys.db.get_item("BARO").value == pytest.approx(29.92)
+    # The other bindings still act.
+    _pulse("TSBTN12")
+    assert panel_keys.db.get_item("BARO").value == pytest.approx(29.93)

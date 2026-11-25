@@ -87,6 +87,9 @@ class Button(QWidget):
             # However not using toggled for toggle buttons breaks
             # things such as encoder navigation
             self._button.toggled.connect(self.buttonToggled)
+            if hmi.data.binds(self._dbkey.key):
+                hmi.data.release(self._dbkey.key,
+                                 "a toggle button uses it ({})".format(self.config.get('text', '')))
 
         elif btype == 'simple':
             self._button.setCheckable(False)

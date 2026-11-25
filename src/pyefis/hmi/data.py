@@ -34,6 +34,19 @@ def binds(key):
     return key in _bound_keys
 
 
+def release(key, why):
+    """Stand down every binding on key.  A toggle button holds its key true,
+    which a binding would read as a press held forever."""
+    for b in __bindings:
+        if getattr(b, 'key', None) == key:
+            b.released = True
+            if b.timer is not None:
+                b.timer.stop()
+    if key in _bound_keys:
+        log.error("Data binding on {} switched off: {}".format(key, why))
+    _bound_keys.discard(key)
+
+
 class DataBinding(object):
     __COMPARE_FUNCTIONS = {"=": operator.eq,
                            "<": operator.lt,
@@ -56,6 +69,7 @@ class DataBinding(object):
         self.repeat_interval = config.get('repeat_interval')
         self.repeat_delay = config.get('repeat_delay', self.repeat_interval)
         self.timer = None
+        self.released = False
 
         a = config['action']
         if hmi.actions.findAction(a):
@@ -87,6 +101,7 @@ class DataBinding(object):
             cfunc = self.__COMPARE_FUNCTIONS[self.compare]
 
         def actionTrigger(value):
+            if self.released: return
             if self.args is None:
                 hmi.actions.trigger(self.action, str(value))
             else:
