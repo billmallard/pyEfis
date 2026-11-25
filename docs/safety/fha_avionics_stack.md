@@ -7,7 +7,7 @@ a failure in an airplane; it is not a classification of the software, and it is 
 level. The classification of any real installation is the installer's, made per airplane.
 
 **Maintained by:** Safety and Compliance. **Edition:** 5, 2026-11-21. Edition 4 was dated 2026-11-18, edition 3 earlier the same day, edition 2 2026-11-10 and the first edition 2026-11-07. A living document: a change that adds a display function adds or updates
-a row here (section 6).
+a row here (section 6). Evidence added between editions is noted in section 8.
 
 ---
 
@@ -318,3 +318,46 @@ repository's `dev` branch with tests; this document does not say which release c
 - The fix pull requests in section 3.5.
 - **Not read:** SAE ARP4761A and ARP4754B (paywalled). The shape here is from FAA public guidance
   and the SAE abstract.
+
+## 8. Edition notes
+
+Evidence added since the current edition. A note changes no row, severity or open item unless it
+says so.
+
+### 2026-11-25: display timing under sustained load on the bench Pi 5 (CERT20b)
+
+**Record:** [`docs/evidence/cert20b_hot_soak/README.md`](../evidence/cert20b_hot_soak/README.md),
+with the commands, scripts and raw logs beside it. The run is pyEfis#571; the pass line, verdict
+and scope were added to the record by pyEfis#577.
+
+- **Result.** The PFD keeps its rate on the bench Pi 5 at room ambient. The run was 32 min of
+  the full stack (fix-gateway and pyEfis on eglfs, cycling every screen), compared over a cool
+  window (the first 10 min) and a hot window (the last 10 min). The SoC was never throttled: the
+  `get_throttled` bits were 0 in every sample. It plateaued at 62-68 C, about 12 C under the
+  Pi 5's 80 C soft limit.
+- **Pass line (project owner, 2026-11-25),** for every SVS screen (PFD, PFD_AI_ONLY,
+  MAP_CTL_TEST) in both windows:
+
+  | Limit | Worst measured | Verdict |
+  |---|---|---|
+  | Median frame interval 66.7 ms or less | 44.1 ms | pass |
+  | p99 frame interval 100 ms or less | 70.8 ms | pass |
+  | Longest gap 150 ms or less, outside a screen switch | 96.5 ms | pass |
+  | Roll data-to-glass p99 120 ms or less | 104.2 ms | pass |
+  | Hot at most 10% worse than cool (median interval, p99 interval, roll p99) | +5.8% | pass |
+
+  Every limit passes. The tightest is roll data-to-glass p99: 104.2 ms against 120.
+- **The latency line covers the display only.** The 120 ms is data-to-glass inside the display:
+  from the gateway's input to the buffer swap. No sensor latency is in it, and the panel's
+  scanout is not in it either. Whether the full sensor-to-glass path meets the 100 ms in
+  AC 25-11B section 5.9 is unverified until a source's own latency is measured. A source can
+  exceed that budget on its own: CERT13h2's late OnSpeed altitude is one. "Passes the latency
+  line" is not a statement about the whole path.
+- **Hot-soak and thermal-limit testing is out of scope now** (project owner's ruling,
+  2026-11-25). It comes later in the program as environmental testing on flight-ready hardware,
+  not on this bench. This result says nothing about the display with the SoC held at its limit,
+  and no follow-on on this bench is planned.
+- **What it changes here.** No row. It is evidence that, on this bench, sustained load does not
+  slow the PFD past the pass line; it is not a mitigation for a hung display (section 3.1.1, O8),
+  which is a stall, not a slow frame. It does not close the CAS-7 measurement either: that asks
+  for CAS quiet against 12 unacknowledged messages flashing, and this run did not vary CAS.
