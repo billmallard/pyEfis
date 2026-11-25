@@ -55,6 +55,20 @@ forward MEA as before. V27 has no second MEA. The Direction Restriction conventi
 :meth:`AirwayGraph._resolve_segment`) is likewise unverified: FAACIFP18
 codes no direction restriction on any airway, so the data cannot settle it.
 
+Which place an ident names (FPA5, AER-6544). An airway's fix ident is not
+unique in the world: ``BR`` is an NDB in MN, TX and IA. The entry fix comes
+from the flight plan, where the pilot picked one particular place, so
+:meth:`AirwayGraph.expand` and :meth:`AirwayGraph.airways_through_fix` take
+that place's position (``entry_at``/``at``) and accept the airway's fix of
+that ident only within ``model.SAME_FIX_NM`` of it. Before FPA5 they matched
+the ident alone and spliced the airway's fix of that name, wherever it was,
+after the pilot's. The check is by position, not by ICAO region: in cycle
+2611 the one ambiguous ident on an airway, ``ZFP``, is an NDB and a VOR in
+the same country 4.5 nm apart, which no region code separates. The pack's
+``airway_legs.fix_region`` (the record's ICAO region, makerplane-data FPA5)
+is read into :attr:`AirwayLeg.fix_region` where present; it is additive,
+like ``min_alt2_ft``, and absent from older packs.
+
 Construction never raises: a missing or unreadable pack just leaves
 ``ready`` False and every query answers as if the airway table were empty
 -- mirrors ``ai/obstacle_db.py`` ``ObstacleDB`` (CLAUDE.md "construct-never-
@@ -70,6 +84,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import geo
 from . import model
 
 log = logging.getLogger(__name__)
@@ -108,6 +123,8 @@ class AirwayLeg:
     # MEA against seq order (RS6); None = blank or an old-shape pack, so
     # min_alt_ft applies both ways.
     min_alt2_ft: int | None = None
+    # ICAO region of the fix (``K2``); None in a pack built before FPA5.
+    fix_region: str | None = None
 
     def mea(self, backward: bool) -> int | None:
         """MEA of the leg this row starts, flown forward (ascending seq) or
@@ -126,6 +143,13 @@ def _norm(ident: str) -> str:
     return (ident or "").strip().upper()
 
 
+def _same_place(lat, lon, at) -> bool:
+    """True if the pack row at (*lat*, *lon*) is the place *at*."""
+    if lat is None or lon is None:
+        return False
+    return geo.distance_nm(lat, lon, at[0], at[1]) < model.SAME_FIX_NM
+
+
 class AirwayGraph:
     """Lookup + expansion service over one ``procedures`` pack's airway
     tables. One instance per pack; safe to hold for the process lifetime."""
@@ -134,6 +158,7 @@ class AirwayGraph:
         self._path = Path(procedures_db_path) if procedures_db_path else None
         self._con: sqlite3.Connection | None = None
         self._has_min_alt2 = False
+        self._has_fix_region = False
         if self._path is None or not self._path.is_file():
             log.info("AirwayGraph: %s not found -- airway lookup disabled",
                       self._path)
@@ -145,6 +170,7 @@ class AirwayGraph:
             con.execute("SELECT 1 FROM airways LIMIT 1")
             cols = {r["name"] for r in con.execute("PRAGMA table_info(airway_legs)")}
             self._has_min_alt2 = "min_alt2_ft" in cols
+            self._has_fix_region = "fix_region" in cols
             self._con = con
         except Exception as e:
             log.warning("AirwayGraph: cannot open %s: %s", self._path, e)
@@ -173,19 +199,21 @@ class AirwayGraph:
     # ------------------------------------------------------------------
     # Lookup
     # ------------------------------------------------------------------
-    def airways_through_fix(self, fix_id: str) -> list[str]:
+    def airways_through_fix(self, fix_id: str, at: tuple[float, float] | None = None) -> list[str]:
         """Idents of every airway passing through *fix_id*, sorted --
-        drives the "LOAD AIRWAY" fix-selection step. Hits
-        ``idx_awyleg_fix``. Empty if not ready or the fix is on no
-        airway."""
+        drives the "LOAD AIRWAY" fix-selection step. With *at* (the
+        ``(lat, lon)`` of the place the pilot picked), only airways whose
+        fix of that ident is that place. Hits ``idx_awyleg_fix``. Empty if
+        not ready or the fix is on no airway."""
         if not self.ready:
             return []
         norm = _norm(fix_id)
         rows = self._con.execute(
-            "SELECT DISTINCT a.ident FROM airway_legs al "
+            "SELECT a.ident, al.fix_lat, al.fix_lon FROM airway_legs al "
             "JOIN airways a ON a.id = al.airway_id "
-            "WHERE al.fix_id = ? ORDER BY a.ident", (norm,)).fetchall()
-        return [r["ident"] for r in rows]
+            "WHERE al.fix_id = ?", (norm,)).fetchall()
+        return sorted({r["ident"] for r in rows
+                       if at is None or _same_place(r["fix_lat"], r["fix_lon"], at)})
 
     def legs(self, ident: str) -> list[AirwayLeg]:
         """Every leg of *ident*, in published (ascending ``seq``) order --
@@ -198,7 +226,8 @@ class AirwayGraph:
         rows = self._con.execute(
             "SELECT al.seq, al.fix_id, al.fix_lat, al.fix_lon, al.fix_type, "
             "al.min_alt_ft, al.max_alt_ft, al.direction, "
-            + ("al.min_alt2_ft " if self._has_min_alt2 else "NULL AS min_alt2_ft ") +
+            + ("al.min_alt2_ft, " if self._has_min_alt2 else "NULL AS min_alt2_ft, ")
+            + ("al.fix_region " if self._has_fix_region else "NULL AS fix_region ") +
             "FROM airway_legs al JOIN airways a ON a.id = al.airway_id "
             "WHERE a.ident = ? ORDER BY al.seq", (norm,)).fetchall()
         return [AirwayLeg(seq=r["seq"], fix_id=r["fix_id"],
@@ -206,13 +235,15 @@ class AirwayGraph:
                            fix_type=r["fix_type"],
                            min_alt_ft=r["min_alt_ft"], max_alt_ft=r["max_alt_ft"],
                            direction=(r["direction"] or None),
-                           min_alt2_ft=r["min_alt2_ft"])
+                           min_alt2_ft=r["min_alt2_ft"],
+                           fix_region=(r["fix_region"] or None))
                 for r in rows]
 
     # ------------------------------------------------------------------
     # Expansion
     # ------------------------------------------------------------------
-    def expand(self, ident: str, entry_fix_id: str, exit_fix_id: str) -> list[model.Waypoint]:
+    def expand(self, ident: str, entry_fix_id: str, exit_fix_id: str,
+               entry_at: tuple[float, float] | None = None) -> list[model.Waypoint]:
         """The published fix sequence of *ident* between *entry_fix_id* and
         *exit_fix_id*, inclusive of both ends, in the direction of travel
         implied by their order on the airway (reversed if *entry_fix_id*
@@ -221,8 +252,10 @@ class AirwayGraph:
         :class:`FixNotOnAirwayError` if either fix is not on *ident*,
         :class:`AirwayError` if entry and exit are the same fix, and
         :class:`AirwayDirectionError` if the requested direction crosses a
-        leg coded one-way against it."""
-        segment = self._resolve_segment(ident, entry_fix_id, exit_fix_id)
+        leg coded one-way against it. With *entry_at* (the ``(lat, lon)``
+        of the entry the pilot picked), an airway fix of the same ident
+        somewhere else is :class:`FixNotOnAirwayError` too."""
+        segment = self._resolve_segment(ident, entry_fix_id, exit_fix_id, entry_at)
         # The MEA of a leg is coded on the row of the fix that STARTS it in
         # published (ascending seq) order -- the lower seq of the pair, in
         # either direction of travel; flown backward, that row's second MEA
@@ -271,7 +304,7 @@ class AirwayGraph:
         return (max(mins) if mins else None, min(maxs) if maxs else None)
 
     def _resolve_segment(self, ident: str, entry_fix_id: str,
-                          exit_fix_id: str) -> list[AirwayLeg]:
+                          exit_fix_id: str, entry_at=None) -> list[AirwayLeg]:
         if not self.ready:
             raise AirwayNotFoundError(
                 f"no procedures pack loaded -- cannot resolve airway {ident!r}")
@@ -287,6 +320,11 @@ class AirwayGraph:
         entry_idx = next((i for i, r in enumerate(rows) if _norm(r.fix_id) == entry_norm), None)
         if entry_idx is None:
             raise FixNotOnAirwayError(f"{entry_fix_id!r} is not on airway {ident}")
+        entry = rows[entry_idx]
+        if entry_at is not None and not _same_place(entry.lat, entry.lon, entry_at):
+            raise FixNotOnAirwayError(
+                f"this {_norm(entry_fix_id)} is not on airway {ident}: its "
+                f"{_norm(entry_fix_id)} is {geo.distance_nm(entry.lat, entry.lon, *entry_at):.0f} nm away")
         exit_idx = next((i for i, r in enumerate(rows) if _norm(r.fix_id) == exit_norm), None)
         if exit_idx is None:
             raise FixNotOnAirwayError(f"{exit_fix_id!r} is not on airway {ident}")

@@ -542,3 +542,100 @@ def test_expand_reverse_yields_full_published_airway_reversed(graph):
 def test_expand_a509_published_sequence(graph):
     wps = graph.expand("A509", "URSUS", "MARCI")
     assert [wp.id for wp in wps] == ["URSUS", "ELLEE", "EONNS", "JURER", "DHP", "MARCI"]
+
+
+# ---------------------------------------------------------------------------
+# Which place an entry ident names (FPA5, AER-6544)
+# ---------------------------------------------------------------------------
+# Real cycle-2611 AR23 (procedures pack; the ICAO regions are the ER records'
+# own, read with makerplane-data packtools.arinc424.iter_airway_legs from
+# FAACIFP18 2026-10-29), which passes
+# through the Freeport VOR/DME. NASR also has the Freeport NDB of the same
+# ident 4.5 nm away, in the same country: the one ambiguous ident on any
+# airway in cycle 2611.
+ZFP_VOR = (26.55534722, -78.69784722)
+ZFP_NDB = (26.51839166, -78.77506666)
+_AR23_LEGS = [
+    (100, "URSUS", (24.00005278, -79.0698), "waypoint", 24000, 60000, None, "K"),
+    (110, "ZFP",   ZFP_VOR,                 "vor",      24000, 60000, None, "MY"),
+    (120, "CANIT", (29.56250556, -78.42585), "waypoint", 24000, 60000, None, "K"),
+    (130, "OZENA", (30.41943889, -78.34834167), "waypoint", None, None, None, "K"),
+]
+# Synthetic: the airway's DUPEE is in California, a fix of the same ident
+# in Colorado is not on it.
+DUPEE_CA = (34.30, -119.80)
+DUPEE_CO = (39.90, -105.10)
+_T999_LEGS = [
+    (100, "DUPEE", DUPEE_CA,         "waypoint", 5000, 17500, None, "K2"),
+    (110, "KWANG", (34.30911, -119.51415), "waypoint", 4000, 17500, None, "K2"),
+]
+
+
+@pytest.fixture(params=[True, False], ids=["fix_region", "pre_fpa5"])
+def region_graph(request, tmp_path):
+    """The same airways in a pack with ``airway_legs.fix_region`` and in one
+    built before it: the position check needs neither."""
+    with_region = request.param
+    path = tmp_path / "procedures-fpa5.pack"
+    con = sqlite3.connect(str(path))
+    schema = _SCHEMA
+    if with_region:
+        schema = schema.replace("    direction   TEXT\n",
+                                "    direction   TEXT,\n    fix_region  TEXT\n")
+    con.executescript(schema)
+    for ident, legs in (("AR23", _AR23_LEGS), ("T999", _T999_LEGS)):
+        airway_id = con.execute("INSERT INTO airways (ident, cycle) VALUES (?, '2611')",
+                                (ident,)).lastrowid
+        for seq, fix_id, (lat, lon), fix_type, mn, mx, direction, region in legs:
+            con.execute(
+                "INSERT INTO airway_legs (airway_id, seq, fix_id, fix_lat, fix_lon, "
+                "fix_type, min_alt_ft, max_alt_ft, direction) VALUES (?,?,?,?,?,?,?,?,?)",
+                (airway_id, seq, fix_id, lat, lon, fix_type, mn, mx, direction))
+            if with_region:
+                con.execute("UPDATE airway_legs SET fix_region = ? WHERE rowid = "
+                            "last_insert_rowid()", (region,))
+    con.commit()
+    con.close()
+    g = AirwayGraph(path)
+    g.with_region = with_region
+    yield g
+    g.close()
+
+
+def test_airways_through_fix_only_where_the_picked_place_is(region_graph):
+    assert region_graph.airways_through_fix("ZFP", at=ZFP_VOR) == ["AR23"]
+    # Before FPA5 the Freeport NDB offered AR23 too, an airway it is not on.
+    assert region_graph.airways_through_fix("ZFP", at=ZFP_NDB) == []
+    assert region_graph.airways_through_fix("DUPEE", at=DUPEE_CO) == []
+    assert region_graph.airways_through_fix("DUPEE", at=DUPEE_CA) == ["T999"]
+    # No position: by ident, as before.
+    assert region_graph.airways_through_fix("ZFP") == ["AR23"]
+
+
+def test_expand_refuses_an_entry_of_the_same_ident_elsewhere(region_graph):
+    with pytest.raises(FixNotOnAirwayError, match="not on airway AR23"):
+        region_graph.expand("AR23", "ZFP", "OZENA", entry_at=ZFP_NDB)
+    with pytest.raises(FixNotOnAirwayError, match="not on airway T999"):
+        region_graph.expand("T999", "DUPEE", "KWANG", entry_at=DUPEE_CO)
+    assert [w.id for w in region_graph.expand("AR23", "ZFP", "OZENA", entry_at=ZFP_VOR)] == [
+        "ZFP", "CANIT", "OZENA"]
+
+
+def test_insert_airway_from_a_same_named_fix_elsewhere_is_refused(region_graph):
+    """The plan's DUPEE is the Colorado one. Before FPA5 the airway was
+    spliced on after it, from the California DUPEE, 870 nm away."""
+    plan = model.FlightPlan(name="T", waypoints=[
+        model.Waypoint(id="DUPEE", type="fix", lat=DUPEE_CO[0], lon=DUPEE_CO[1])])
+    with pytest.raises(model.FlightPlanError, match="not on airway T999"):
+        plan.insert_airway(0, "T999", "KWANG", region_graph)
+    assert [w.id for w in plan.waypoints] == ["DUPEE"]
+
+    plan = model.FlightPlan(name="T", waypoints=[
+        model.Waypoint(id="DUPEE", type="fix", lat=DUPEE_CA[0], lon=DUPEE_CA[1])])
+    plan.insert_airway(0, "T999", "KWANG", region_graph)
+    assert [w.id for w in plan.waypoints] == ["DUPEE", "KWANG"]
+
+
+def test_legs_carry_the_fix_region_where_the_pack_has_it(region_graph):
+    regions = [leg.fix_region for leg in region_graph.legs("AR23")]
+    assert regions == (["K", "MY", "K", "K"] if region_graph.with_region else [None] * 4)

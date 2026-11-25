@@ -426,7 +426,8 @@ class FlightPlan:
             raise FlightPlanError(
                 f"{seg.legs[j].id} is inside {seg.ident or seg.kind}; load the airway "
                 f"from its exit, or change its exit first")
-        expansion = self._expand(graph, ident, seg.legs[j].id, exit_fix)
+        entry = seg.legs[j]
+        expansion = self._expand(graph, ident, entry.id, exit_fix, (entry.lat, entry.lon))
         if seg.kind == "waypoint":
             legs = [seg.legs[0].copy(alt=expansion[0].alt)] + expansion[1:]
             replace = k
@@ -459,7 +460,8 @@ class FlightPlan:
 
     def change_exit(self, k: int, exit_fix: str, graph) -> Segment:
         """Re-expand airway *k* from its current entry to *exit_fix*."""
-        return self._reexpand(k, self._airway(k).entry, exit_fix, graph)
+        seg = self._airway(k)
+        return self._reexpand(k, seg.entry, exit_fix, graph, (seg.legs[0].lat, seg.legs[0].lon))
 
     def change_entry(self, k: int, entry_fix: str, graph) -> Segment:
         """Re-expand airway *k* from *entry_fix* to its current exit."""
@@ -490,9 +492,10 @@ class FlightPlan:
             raise FlightPlanError(f"segment {k} is not an airway")
         return seg
 
-    def _reexpand(self, k: int, entry_fix: str, exit_fix: str, graph) -> Segment:
+    def _reexpand(self, k: int, entry_fix: str, exit_fix: str, graph,
+                  entry_at=None) -> Segment:
         seg = self._airway(k)
-        expansion = self._expand(graph, seg.ident, entry_fix, exit_fix)
+        expansion = self._expand(graph, seg.ident, entry_fix, exit_fix, entry_at)
         self._check_cap(len(expansion) - len(seg.legs))
         if _norm(expansion[0].id) == _norm(seg.entry):
             expansion[0] = seg.legs[0].copy(alt=expansion[0].alt)
@@ -502,10 +505,14 @@ class FlightPlan:
         return new
 
     @staticmethod
-    def _expand(graph, ident, entry_fix, exit_fix) -> list[Waypoint]:
+    def _expand(graph, ident, entry_fix, exit_fix, entry_at=None) -> list[Waypoint]:
+        """*entry_at*: the ``(lat, lon)`` of the entry the pilot picked, so an
+        airway fix of the same ident elsewhere is refused (FPA5)."""
         from .airways import AirwayError  # lazy: airways imports this module
         try:
-            return graph.expand(ident, entry_fix, exit_fix)
+            if entry_at is None:
+                return graph.expand(ident, entry_fix, exit_fix)
+            return graph.expand(ident, entry_fix, exit_fix, entry_at=entry_at)
         except AirwayError as e:
             raise FlightPlanError(str(e)) from e
 
