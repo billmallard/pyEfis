@@ -19,10 +19,32 @@ import operator
 import logging
 log = logging.getLogger(__name__)
 
+from PyQt6.QtCore import QTimer
+
 import pyavtools.fix as fix
 from pyefis import hmi
 
 __bindings = []
+# Keys a binding acts on.  A button on one of these keys leaves the key to the
+# binding, so a press acts once whether or not the button is on screen (DSP2).
+_bound_keys = set()
+
+
+def binds(key):
+    return key in _bound_keys
+
+
+def release(key, why):
+    """Stand down every binding on key.  A toggle button holds its key true,
+    which a binding would read as a press held forever."""
+    for b in __bindings:
+        if getattr(b, 'key', None) == key:
+            b.released = True
+            if b.timer is not None:
+                b.timer.stop()
+    if key in _bound_keys:
+        log.error("Data binding on {} switched off: {}".format(key, why))
+    _bound_keys.discard(key)
 
 
 class DataBinding(object):
@@ -32,13 +54,22 @@ class DataBinding(object):
                            ">": operator.gt,
                            ">=": operator.ge}
 
-    def __init__(self, config):
-        self.key = config['key']
+    def __init__(self, config, node_id=1):
+        # {id} is the display's nodeID, as in a button's dbkey, so one
+        # bindings file serves several displays (TSBTN{id}12 -> TSBTN112).
+        self.key = str(config['key']).replace('{id}', str(node_id))
         self.compare = None
         self.args = ""
         self.value = None
         self.item = fix.db.get_item(self.key)
         self.lastResult = False
+        # Hold-to-repeat, as a repeat button: while the condition stays true
+        # the action fires again after repeat_delay ms, then every
+        # repeat_interval ms.  Without repeat_interval a binding fires once.
+        self.repeat_interval = config.get('repeat_interval')
+        self.repeat_delay = config.get('repeat_delay', self.repeat_interval)
+        self.timer = None
+        self.released = False
 
         a = config['action']
         if hmi.actions.findAction(a):
@@ -70,18 +101,31 @@ class DataBinding(object):
             cfunc = self.__COMPARE_FUNCTIONS[self.compare]
 
         def actionTrigger(value):
+            if self.released: return
             if self.args is None:
                 hmi.actions.trigger(self.action, str(value))
             else:
                 hmi.actions.trigger(self.action, self.args)
+
+        def repeat():
+            actionTrigger(self.item.value)
+            self.timer.start(int(self.repeat_interval))
 
         def compareFunction(value):
             if cfunc(value, self.value):
                 if self.lastResult: return
                 actionTrigger(value)
                 self.lastResult = True
+                if self.repeat_interval:
+                    if self.timer is None:
+                        self.timer = QTimer()
+                        self.timer.setSingleShot(True)
+                        self.timer.timeout.connect(repeat)
+                    self.timer.start(int(self.repeat_delay))
             else:
                 self.lastResult = False
+                if self.timer is not None:
+                    self.timer.stop()
 
         if self.compare is None:
             return actionTrigger
@@ -117,11 +161,17 @@ class DataBinding(object):
         return(s)
 
 
-def initialize(config):
+def initialize(config, node_id=1):
+    del __bindings[:]
+    _bound_keys.clear()
     if config is None: return
     for x in config:
         try:
-            d = DataBinding(x)
+            d = DataBinding(x, node_id)
         except:
             log.error("Unable to load Data Binding {}".format(x))
             raise
+        # Kept so a repeat timer lives as long as the app does
+        __bindings.append(d)
+        if hasattr(d, 'action'):
+            _bound_keys.add(d.key)
