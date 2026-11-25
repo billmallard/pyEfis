@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import geo
+from . import vocab
 
 SCHEMA = "mp-route/2"
 SCHEMA_V1 = "mp-route/1"
@@ -43,19 +44,13 @@ SCHEMA_V1 = "mp-route/1"
 # routinely needs more than 50 total waypoints.
 MAX_WAYPOINTS = 100
 
-WAYPOINT_TYPES = ("airport", "vor", "ndb", "fix", "user", "map")
-ROLES = ("none", "iaf", "faf", "map", "mahp")
+WAYPOINT_TYPES = vocab.WAYPOINT_TYPES
+ROLES = vocab.ROLES
 
 # The segment table's FPLSsKIND, in wire order (RS1, fix-gateway
-# doc/flightplan_keys.md). Kind 0 is one waypoint the pilot entered -- not a
-# Direct-To, which never touches the table.
-SEGMENT_KINDS = ("waypoint", "airway", "departure", "arrival", "approach", "missed")
+# doc/flightplan_keys.md).
+SEGMENT_KINDS = vocab.SEGMENT_KINDS
 SEGMENT_IDENT_MAX_LEN = 24
-
-# Appendix A: FPLfTYPE 0..6. Role<->FPLfFLAGS translation lives in
-# fixbridge.py, the only module that talks to the bus.
-TYPE_TO_FPLTYPE = {"unknown": 0, "airport": 1, "vor": 2, "ndb": 3, "fix": 4, "user": 5, "map": 6}
-FPLTYPE_TO_TYPE = {v: k for k, v in TYPE_TO_FPLTYPE.items()}
 
 NAME_MAX_LEN = 32
 # Two slots with one ident this close are one fix: the waypoint database
@@ -222,8 +217,7 @@ def same_fix(a: Waypoint, b: Waypoint) -> bool:
     return bool(a.id) and a.id == b.id and geo.distance_nm(a.lat, a.lon, b.lat, b.lon) < SAME_FIX_NM
 
 
-def _norm(ident: str) -> str:
-    return (ident or "").strip().upper()
+_norm = vocab.norm
 
 
 def _pieces(kind: str, ident: str, cycle: str, legs: list[Waypoint]) -> list[Segment]:
@@ -370,14 +364,14 @@ class FlightPlan:
         -- and it joins *i*'s own segment: a hold at a fix on an airway or a
         procedure flies the same path, so the segment is not cut. After a
         plain waypoint it is a waypoint row of its own."""
-        if wp.pt not in ("HM", "HF", "HA"):
+        if wp.pt not in vocab.HOLD_PTS:
             raise FlightPlanError(f"{wp.pt} is not a hold")
         if not (0 <= i < self.count):
             raise FlightPlanError(f"index {i} out of range")
         legs = self.waypoints
         if not same_fix(legs[i], wp):
             raise FlightPlanError(f"a hold at {wp.id} must follow {wp.id}")
-        if i + 1 < len(legs) and legs[i + 1].pt in ("HM", "HF", "HA") \
+        if i + 1 < len(legs) and legs[i + 1].pt in vocab.HOLD_PTS \
                 and same_fix(legs[i + 1], wp):
             raise FlightPlanError(f"ALREADY A HOLD AT {wp.id}")
         self._check_cap()
@@ -397,7 +391,7 @@ class FlightPlan:
         k, j = self.locate(i)
         seg = self.segments[k]
         wp = seg.legs[j]
-        if wp.pt not in ("HM", "HF", "HA"):
+        if wp.pt not in vocab.HOLD_PTS:
             raise FlightPlanError(f"{wp.id or wp.pt} is not a hold")
         if len(seg.legs) == 1:
             del self.segments[k]

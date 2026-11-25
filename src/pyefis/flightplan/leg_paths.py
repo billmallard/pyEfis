@@ -54,6 +54,7 @@ import math
 from dataclasses import dataclass, field
 
 from . import geo
+from . import vocab
 
 #: the groundspeed the drawn turn and racetrack radii are sized for. A
 #: standard-rate (3 deg/s) turn at 120 kt has a 0.64 NM radius.
@@ -89,10 +90,10 @@ HOLD_ENTRY_PARALLEL = "PARALLEL"
 HOLD_ENTRIES = (HOLD_ENTRY_DIRECT, HOLD_ENTRY_TEARDROP, HOLD_ENTRY_PARALLEL)
 
 #: legs with no fix of their own: no waypoint symbol, no label, no tap target.
-NO_FIX_PTS = frozenset({"CA", "VA", "VM", "VI"})
-VECTOR_PTS = frozenset({"VA", "VM", "VI", "FM"})
-ARC_PTS = frozenset({"RF", "AF"})
-HOLD_PTS = frozenset({"HM", "HF", "HA"})
+NO_FIX_PTS = vocab.NO_FIX_PTS
+VECTOR_PTS = vocab.VECTOR_PTS
+ARC_PTS = vocab.ARC_PTS
+HOLD_PTS = vocab.HOLD_PTS
 
 
 @dataclass
@@ -334,7 +335,7 @@ def build_leg_paths(slots, magvar=0.0):
         fix = (w.lat, w.lon)
         leg = LegPath(to_slot=i + 1, origin=pos)
         pt = (w.pt or "TF").upper()
-        if pt in ("CA", "VA", "VM", "VI"):
+        if pt in NO_FIX_PTS:
             crs = _true(w.crs, magvar)
             if pt == "CA":
                 d = geo.distance_nm(pos[0], pos[1], *fix) if _has_point(w) else 0.0

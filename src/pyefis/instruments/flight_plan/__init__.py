@@ -79,6 +79,7 @@ from pyefis.flightplan import plates as fp_plates
 from pyefis.flightplan import proc_load as fp_proc
 from pyefis.flightplan import procedures as fp_procedures
 from pyefis.flightplan import refusal as fp_refusal
+from pyefis.flightplan import vocab as fp_vocab
 from pyefis.flightplan import waypoints as fp_waypoints
 from pyefis.instruments.flight_plan import plate_render
 
@@ -1399,7 +1400,8 @@ class FlightPlan(QWidget):
     @staticmethod
     def _mea_text(wp):
         alt = (wp.alt or "").strip()
-        return alt.lstrip("+") if alt.startswith("+") else alt
+        above = fp_vocab.ALT_AT_OR_ABOVE
+        return alt.lstrip(above) if alt.startswith(above) else alt
 
     def _segment_mea(self, k):
         """Highest leg minimum inside the segment -- the altitude that keeps
