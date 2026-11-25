@@ -122,11 +122,35 @@ class _IndexEntry:
 _norm_ident = vocab.norm
 
 
-def _airport_id_aliases(raw: str) -> tuple[str, list[str]]:
-    """Canonical ICAO id + alias idents for an airport's raw NASR ``icao``
-    column value, expanding the K+3-letter normalisation both directions
-    (mirrors ``ai/airport_db.py`` NASRAirportDB.airports_in_range)."""
+def airport_pack_has_icao_id(con) -> bool:
+    """True when an ``airports.sqlite`` connection carries a populated
+    ``icao_id`` column (packs built since FPA4, AER-6543). Older packs hold
+    only NASR's FAA ``ARPT_ID`` in ``icao``. A column with no value in it (a
+    NASR cycle that shipped without ``ICAO_ID``) counts as absent, so the
+    readers fall back to the K rule rather than naming KSBA plain SBA."""
+    if not any(row[1] == "icao_id"
+               for row in con.execute("PRAGMA table_info(airports)")):
+        return False
+    return con.execute("SELECT 1 FROM airports WHERE icao_id IS NOT NULL "
+                       "AND icao_id != '' LIMIT 1").fetchone() is not None
+
+
+def airport_idents(raw: str, icao_id=None, *,
+                   legacy: bool = False) -> tuple[str, list[str]]:
+    """Canonical id + alias idents for an airport row: ``raw`` is the pack's
+    ``icao`` column (NASR ``ARPT_ID``), ``icao_id`` its ``icao_id`` column.
+
+    A pack with the ``icao_id`` column names the airport by its ICAO ident
+    when it has one (PANC, KSBA) and keeps the FAA ident as the alias (ANC,
+    SBA); an airport with no ICAO ident keeps its FAA ident. ``legacy=True``
+    is for a pack built before that column: it guesses K plus a three-letter
+    ident, which is right in the contiguous US and wrong in Alaska, Hawaii
+    and the territories (KANC for PANC). Shared by ``WaypointIndex`` and the
+    SVS loader (``ai/airport_db.py``), so the two cannot drift."""
     norm = _norm_ident(raw)
+    if not legacy:
+        canonical = _norm_ident(icao_id) or norm
+        return canonical, [norm] if norm and norm != canonical else []
     if len(norm) == 3 and norm.isalpha():
         return "K" + norm, [norm]
     if len(norm) == 4 and norm[0] == "K" and norm[1:].isalpha():
@@ -427,12 +451,16 @@ class WaypointIndex:
             con.row_factory = sqlite3.Row
             runway_len = dict(con.execute(
                 "SELECT site_no, MAX(length_ft) FROM runways GROUP BY site_no"))
+            legacy = not airport_pack_has_icao_id(con)
+            icao_id_col = "NULL" if legacy else "icao_id"
             for row in con.execute(
-                    "SELECT site_no, icao, name, lat, lon, elev_ft FROM airports"):
+                    f"SELECT site_no, icao, {icao_id_col} AS icao_id, name, "
+                    "lat, lon, elev_ft FROM airports"):
                 raw_id = row["icao"] or ""
                 if not raw_id:
                     continue
-                canonical, aliases = _airport_id_aliases(raw_id)
+                canonical, aliases = airport_idents(raw_id, row["icao_id"],
+                                                    legacy=legacy)
                 wp = Waypoint(id=canonical, type="airport",
                               lat=row["lat"], lon=row["lon"],
                               name=(row["name"] or "").strip(),
