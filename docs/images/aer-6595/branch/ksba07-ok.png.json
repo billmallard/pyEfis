@@ -1,0 +1,97 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "f3573a6",
+ "run": "local: branch/tools/svs_capture.py --offscreen --width 1024 --height 600 --lat 34.427568 --lon -119.851317 --alt 16.5 --heading 88.6 --magvar 0 --pitch 0 --range 15 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --nasr /data/makerplane-data/navdata/current/airports.sqlite --dof /data/makerplane-data/obstacles/current/obstacles.sqlite --out out/branch/ksba07-ok.png",
+ "device": "AZW MINI S",
+ "sha256": "f126b9475dcdf7ff57b668a8d63c5052fa0a328ad713feb11a4d81339e796530",
+ "created_utc": "2026-11-25T15:55:20Z",
+ "platform": {
+  "board": "AZW MINI S",
+  "cpu_model": "Intel(R) N150",
+  "cpu_stepping": "0",
+  "microcode": "0x21",
+  "cpus_online": "0-3",
+  "cpus_online_count": 4,
+  "cpufreq": [
+   {
+    "policy": "policy0",
+    "cpus": "0",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 700000
+   },
+   {
+    "policy": "policy1",
+    "cpus": "1",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 700000
+   },
+   {
+    "policy": "policy2",
+    "cpus": "2",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 700000
+   },
+   {
+    "policy": "policy3",
+    "cpus": "3",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 3587549
+   }
+  ],
+  "governor": "powersave",
+  "intel_pstate": {
+   "status": "active",
+   "no_turbo": 0,
+   "min_perf_pct": 19,
+   "max_perf_pct": 100
+  },
+  "affinity": "0-3",
+  "affinity_count": 4,
+  "throttle": {
+   "core_throttle_count": [
+    5525,
+    5525,
+    5525,
+    5525
+   ],
+   "package_throttle_count": 5525
+  },
+  "temperature_c": {
+   "acpitz": 27.8,
+   "iwlwifi_1": 48.0,
+   "x86_pkg_temp": 60.0
+  },
+  "soc_temp_c": 60.0
+ },
+ "pyefis_rev": "f3573a6",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  1024,
+  600
+ ],
+ "actual_size": [
+  1024,
+  600
+ ],
+ "argv": "branch/tools/svs_capture.py --offscreen --width 1024 --height 600 --lat 34.427568 --lon -119.851317 --alt 16.5 --heading 88.6 --magvar 0 --pitch 0 --range 15 --tiles /data/makerplane-data/terrain/tiles --water /data/makerplane-data/water/current/water.sqlite --nasr /data/makerplane-data/navdata/current/airports.sqlite --dof /data/makerplane-data/obstacles/current/obstacles.sqlite --out out/branch/ksba07-ok.png"
+}
