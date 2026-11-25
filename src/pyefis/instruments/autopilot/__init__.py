@@ -71,6 +71,7 @@ from PyQt6.QtWidgets import QWidget
 
 from pyavtools import fix
 from pyefis.instruments import edit_focus, helpers
+from pyefis.instruments.airspeed import iassel
 from pyefis.instruments.altimeter.altsel import AltSelEditor, round_to_step
 from pyefis.instruments.autopilot.state import APState
 from pyefis.instruments.helpers import bugs
@@ -134,8 +135,8 @@ BOX_LABELS = {BOX_HDG: "HDG", BOX_VS: "VS", BOX_IAS: "IAS",
               BOX_ALT: "ALT SEL"}
 #: The aircraft value a push syncs each target to.
 SYNC_KEYS = {BOX_HDG: "HEAD", BOX_VS: "VS", BOX_IAS: "IAS", BOX_ALT: "ALT"}
-#: (inner, outer) knob steps.
-BOX_STEPS = {BOX_HDG: (1, 10), BOX_VS: (100, 500), BOX_IAS: (1, 5),
+#: (inner, outer) knob steps. IAS matches the airspeed tape, 1 and 10 kt (G98).
+BOX_STEPS = {BOX_HDG: (1, 10), BOX_VS: (100, 500), BOX_IAS: (1, 10),
              BOX_ALT: (100, 1000)}
 #: The vertical mode whose box carries the active accent.
 BOX_ACCENT_MODE = {BOX_VS: "VS", BOX_IAS: "IAS"}
@@ -229,16 +230,21 @@ class TargetEditor:
     ``current`` returns ``(value, valid)`` for the push sync. ``wrap`` makes
     the value wrap through 0..359 (the heading bug, as the HSI writes it).
     ``unset`` is the value that means "no target" (``IASSEL`` 0): it draws
-    dashes, and the first knob step starts from the synced value."""
+    dashes, and the first knob step starts from the synced value; with no
+    synced value either, a step writes nothing. ``floor`` is the lowest value
+    ever written, over the key's own min: the IAS box passes 1 so it never
+    writes ``IASSEL`` 0 and unsets the autopilot's target (G98, pyEfis #556,
+    the airspeed tape's rule in :mod:`airspeed.iassel`)."""
 
     def __init__(self, binding, current, sync_round=1, wrap=False,
-                 unset=None, limits=(None, None)):
+                 unset=None, limits=(None, None), floor=None):
         self.binding = binding
         self.current = current
         self.sync_round = sync_round
         self.wrap = wrap
         self.unset = unset
         self._limits = limits
+        self.floor = floor
 
     @property
     def writable(self):
@@ -258,7 +264,10 @@ class TargetEditor:
         lo = getattr(item, "min", None)
         hi = getattr(item, "max", None)
         dlo, dhi = self._limits
-        return (dlo if lo is None else lo), (dhi if hi is None else hi)
+        lo = dlo if lo is None else lo
+        if self.floor is not None:
+            lo = self.floor if lo is None else max(self.floor, lo)
+        return lo, (dhi if hi is None else hi)
 
     def clamp(self, value):
         if self.wrap:
@@ -283,6 +292,8 @@ class TargetEditor:
         if base is None:
             base = self.synced_value()
             if base is None:
+                if self.unset is not None:
+                    return False
                 base = 0
         self.write(base + delta)
         return True
@@ -539,7 +550,8 @@ class AutopilotPanel(QWidget):
                     limits=(-30000, 30000))
             else:
                 self._editors[box] = TargetEditor(
-                    binding, current, unset=0, limits=(0, 999.9))
+                    binding, current, unset=0, limits=(0, 999.9),
+                    floor=iassel.MIN_SET_KT)
         for item in self._sync_items.values():
             if item is not None:
                 item.failChanged.connect(self._repaint_boxes)
