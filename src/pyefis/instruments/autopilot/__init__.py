@@ -301,7 +301,9 @@ class TargetEditor:
         item.bad = False
         item.fail = False
         item.value = self.clamp(value)
-        item.output_value()
+        # The HDG, VS and IAS boxes' keys (BOX_KEYS; ALT uses AltSelEditor),
+        # which fix-gateway's writer scan cannot follow here (ARCHG2b).
+        item.output_value()  # writes: HEADBUG, VSSEL, IASSEL
 
 
 class TargetBox(QWidget):
