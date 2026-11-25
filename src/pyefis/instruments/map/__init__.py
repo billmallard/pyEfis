@@ -350,7 +350,13 @@ class MovingMap(LiveBindingMixin, QWidget):
         # the map then turns by TRACKM, as it did before.
         self._track = 0.0
         self._track_true = None
+        # _alt_ft is TALT, the GPS/EKF MSL height, never ALT: caution mode
+        # measures terrain clearance from it, and ALT is indicated altitude,
+        # so 1 inHg of baro error moves every band about 900 ft (MAPALT1,
+        # the SVSALT1 ruling). A TALT that is missing, old, bad or failed
+        # makes caution mode unavailable: plain relief, annunciated.
         self._alt_ft = 0.0
+        self._talt_flags = {"old": True, "bad": True, "fail": True}
         self._old = {}
 
         # --- map pointer + banner (FP10, billmallard/pyEfis#186) -------------
@@ -412,7 +418,7 @@ class MovingMap(LiveBindingMixin, QWidget):
         self._perf_settle_pending = False
 
         for key, attr in (("LAT", "_lat"), ("LONG", "_lon"),
-                          ("TRACKM", "_track"), ("ALT", "_alt_ft")):
+                          ("TRACKM", "_track"), ("TALT", "_alt_ft")):
             try:
                 item = fix.db.get_item(key)
                 item.valueChanged[float].connect(
@@ -426,12 +432,48 @@ class MovingMap(LiveBindingMixin, QWidget):
                 # Graceful missing-key pattern: run with what exists.
                 self._old[key] = True
         try:
+            item = fix.db.get_item("TALT")
+        except KeyError:
+            import logging
+            logging.getLogger(__name__).warning(
+                "map: FIX key 'TALT' not defined -- terrain caution mode "
+                "unavailable")
+        else:
+            for flag in ("old", "bad", "fail"):
+                getattr(item, f"{flag}Changed")[bool].connect(
+                    lambda s, f=flag: self._talt_flag_changed(f, s))
+                self._talt_flags[flag] = getattr(item, flag)
+        try:
             item = fix.db.get_item("TRACK")
             item.valueChanged[float].connect(
                 lambda v: setattr(self, "_track_true", v))
             self._track_true = item.value
         except KeyError:
             pass
+
+    def _talt_flag_changed(self, flag, state):
+        """TALT old/bad/fail: caution mode comes and goes with it, so the
+        layers repaint at once rather than at the next pose change."""
+        self._talt_flags[flag] = state
+        self.update()
+
+    def terrain_caution_wanted(self):
+        """Caution mode is configured and would be drawn: the terrain layer
+        is on, in ``caution`` mode, and not the nav_only style (which
+        draws no relief at all)."""
+        if (str(self.terrain_mode) != "caution"
+                or map_layers.map_style(self) == "nav_only"):
+            return False
+        for layer in self._layers:
+            if layer.id == "terrain":
+                return bool(layer.enabled)
+        return self.layer_enabled("terrain")
+
+    def terrain_caution_available(self):
+        """TALT is defined, current, not bad and not failed (MAPALT1).
+        Without it caution mode is unavailable: the terrain layer paints
+        plain relief and the status chip says TERR UNAVAIL."""
+        return not any(self._talt_flags.values())
 
     # --- frame clock (#89) --------------------------------------------------
     @property
@@ -1444,11 +1486,15 @@ class MovingMap(LiveBindingMixin, QWidget):
         return x
 
     def _status_chip_text(self, stale):
-        """The top-left status chip: range + orientation (+ NO POS)."""
+        """The top-left status chip: range + orientation (+ NO POS, + TERR
+        UNAVAIL while caution mode is configured and TALT is unusable)."""
         mode = "TRK UP" if self.view_orientation() == "track_up" else "NORTH UP"
         chip = "%s NM  %s" % (map_layers.format_range_nm(self.range_nm), mode)
         if stale:
             chip += "  NO POS"
+        if (self.terrain_caution_wanted()
+                and not self.terrain_caution_available()):
+            chip += "  TERR UNAVAIL"
         return chip
 
     def paintEvent(self, event):

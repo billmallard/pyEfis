@@ -111,6 +111,21 @@ def fix():
     fix.db.get_item("ALT").bad = False 
     fix.db.get_item("ALT").fail = False
 
+    # The SVS camera height (SVSALT1): geometric MSL, not indicated ALT.
+    fix.db.define_item(
+        "TALT",
+        "True Altitude",
+        "float",
+        -2000.0,
+        60000.0,
+        "ft",
+        50000,
+        ""
+    )
+    fix.db.set_value("TALT", 0)
+    fix.db.get_item("TALT").bad = False
+    fix.db.get_item("TALT").fail = False
+
 
     fix.db.define_item(
         "LAT",

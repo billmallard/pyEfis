@@ -198,16 +198,30 @@ class TerrainLayer(MapLayer):
         # Ownship altitude only shapes the image in caution mode (TAWS
         # tint). Keying on it in relief mode forced a full re-render
         # every 500 ft of climb/descent for an identical image (#89).
-        caution = self._mode == "caution" and not self._flat
+        caution = self._caution()
         alt_band = round(self._alt_ft / 500.0) if caution else 0
         # The airport-collapse gate (MSL ft, or None) is the LAST element:
         # _render reads it from the job's key, so an image is always
-        # painted with the gate it was keyed on.
+        # painted with the gate it was keyed on. The mode is element 6, for
+        # the same reason: caution mode without TALT keys (and paints) as
+        # relief.
         gate = self._apt_gate if caution else None
+        mode = "flat" if self._flat else ("caution" if caution else "relief")
         return (round(x.lat0 * M_PER_DEG_LAT / snap),
                 round(x.lon0 * M_PER_DEG_LAT / snap),
                 range_bucket(x.range_nm), round(x.w), round(x.cover_h), round(x.range_px),
-                "flat" if self._flat else self._mode, alt_band, gate)
+                mode, alt_band, gate)
+
+    def _caution(self):
+        """Caution mode is configured and its altitude is usable: the owner
+        has a current, valid TALT (MAPALT1). Without one -- or an owner that
+        cannot say -- the hazard bands are not drawn, since bands measured
+        from a wrong height are worse than none; the relief stays."""
+        if self._mode != "caution" or self._flat:
+            return False
+        ok = getattr(getattr(self, "_owner", None),
+                     "terrain_caution_available", None)
+        return bool(ok()) if callable(ok) else False
 
     def _update_airport_gate(self):
         """Caution mode: recompute the airport-collapse gate when ownship
@@ -251,7 +265,7 @@ class TerrainLayer(MapLayer):
         if not self._has_source():
             return
         self._alt_ft = float(getattr(self._owner, "_alt_ft", 0.0) or 0.0)
-        if self._mode == "caution" and not self._flat:
+        if self._caution():
             self._update_airport_gate()
         key = self._key(x)
         with self._lock:
@@ -370,7 +384,7 @@ class TerrainLayer(MapLayer):
         elev_ft = elev_m * 3.28084
         r, g, b = _palette(elev_ft)
         bands = None
-        if self._mode == "caution":
+        if len(key) > 6 and key[6] == "caution":
             # The SVS hazard bands over the relief (SVSSHADE2): one rule,
             # thresholds, palette and airport collapse shared with the
             # SVS via terrain_shading. The gate is the key's last element.
