@@ -355,10 +355,12 @@ class AI(QGraphicsView):
         # the missing-key guard below.
         # A VPATH that nothing writes is old, not failed: it sits at 0.0
         # and would pin the marker to the horizon, so old VPATH falls back
-        # too (AER-5799). Only VPATH tracks old; the four required keys
-        # keep their fail/bad gating unchanged.
+        # too (AER-5799). The four required keys track old as well (INS5,
+        # AER-6588): a stale one draws the marker in its degraded amber, as
+        # a bad one does, rather than as a live solution.
         self._fpm_fail = {k: True for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
         self._fpm_bad  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
+        self._fpm_old  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD')}
         self._fpm_vpath_old = True
         self._fpm_vs    = 0.0
         self._fpm_gs    = 0.0
@@ -378,6 +380,10 @@ class AI(QGraphicsView):
             if key == 'VPATH':
                 _item.oldChanged[bool].connect(self._fpmVpathOldChanged)
                 self._fpm_vpath_old = _item.old
+            else:
+                _item.oldChanged[bool].connect(
+                    lambda o, k=key: self._fpmOldChanged(k, o))
+                self._fpm_old[key] = _item.old
             self._fpm_fail[key] = _item.fail
             self._fpm_bad[key]  = _item.bad
             setattr(self, f'_fpm_{key.lower()}', _item.value)
@@ -421,13 +427,26 @@ class AI(QGraphicsView):
         # constant rotational offset equal to local variation — small
         # error in low-variation regions, larger near the magnetic
         # poles.
+        #
+        # A bad or failed MAGVAR turns the terrain by an unknown amount, so it
+        # removes the SVS (SVS UNAVAIL) the way an invalid position does, and
+        # puts the FPM (whose drift uses it) in its degraded amber (INS5,
+        # AER-6588). An old one keeps its last value: variation moves about a
+        # degree per 60 NM, and a MAGVAR nothing writes ages to old at 0.0,
+        # which is the "not published" case above -- gating on old would
+        # remove the SVS on every install without a MAGVAR writer.
         self._magvar = 0.0
+        self._magvar_flags = {"bad": False, "fail": False}
         try:
             _item = fix.db.get_item("MAGVAR")
             _item.valueChanged[float].connect(
                 lambda v: (setattr(self, "_magvar", v),
                            setattr(self, "_frame_dirty", True)))
             self._magvar = _item.value
+            for flag in ("bad", "fail"):
+                getattr(_item, f"{flag}Changed")[bool].connect(
+                    lambda s, f=flag: self._magvarFlagChanged(f, s))
+                self._magvar_flags[flag] = getattr(_item, flag)
         except KeyError:
             log.warning(
                 "AI: FIX key 'MAGVAR' not defined — SVS heading "
@@ -944,7 +963,7 @@ class AI(QGraphicsView):
             device_pixel_ratio=vp.devicePixelRatioF(),
             roll_pivot_px=offset_px,
             lens_shift_px=offset_px,
-            position_valid=self._svs_position_valid())
+            position_valid=self._svs_geometry_valid())
 
     def _attach_svs_item_if_ready(self):
         """Idempotently add the background renderer's scene item to the
@@ -997,6 +1016,29 @@ class AI(QGraphicsView):
         self._fpm_bad[key] = bad
         if self.isVisible():
             self.update()
+
+    def _fpmOldChanged(self, key, old):
+        self._fpm_old[key] = old
+        if self.isVisible():
+            self.update()
+
+    def _magvarFlagChanged(self, flag, state):
+        """MAGVAR bad/fail. Repaint at once, like the position flags: the
+        terrain goes and SVS UNAVAIL shows."""
+        self._magvar_flags[flag] = state
+        self._frame_dirty = True
+        self._update_land_brush()
+        if self.isVisible():
+            self.update()
+
+    def _magvar_valid(self):
+        """False while MAGVAR is bad or failed (old is still usable)."""
+        return not any(self._magvar_flags.values())
+
+    def _svs_geometry_valid(self):
+        """What the SVS needs to place terrain: a valid position and a
+        usable MAGVAR for the true heading."""
+        return self._svs_position_valid() and self._magvar_valid()
 
     def _fpmVpathOldChanged(self, old):
         self._fpm_vpath_old = old
@@ -1174,7 +1216,7 @@ class AI(QGraphicsView):
         return (getattr(s, "enabled", False)
                 and getattr(s, "ready", False)
                 and not getattr(s, "gl_failed", False)
-                and self._svs_position_valid()
+                and self._svs_geometry_valid()
                 and getattr(s, "drew_terrain", False))
 
     def _update_land_brush(self):
@@ -1217,7 +1259,8 @@ class AI(QGraphicsView):
         if not self.show_fpm or not self._fpm_solution_valid():
             return
         required = ('VS', 'GS', 'TRACK', 'HEAD')
-        fpm_bad = any(self._fpm_bad[k] for k in required)
+        fpm_bad = (any(self._fpm_bad[k] or self._fpm_old[k] for k in required)
+                   or not self._magvar_valid())
 
         # Vertical flight path angle. Prefer the authoritative VPATH
         # FIX key when the source publishes it (X-Plane idx 18 slot 3
@@ -1491,7 +1534,8 @@ class AI(QGraphicsView):
         # up with the SVS terrain (the magnetic variation cancels out).
         if not getattr(self, "horizon_heading_marks", False):
             return
-        if self._fpm_bad.get("HEAD") or self._fpm_fail.get("HEAD"):
+        if self._fpm_bad.get("HEAD") or self._fpm_fail.get("HEAD") \
+                or self._fpm_old.get("HEAD"):
             return
         ppd = getattr(self, "pixelsPerDeg",
                       self.height() / self.pitchDegreesShown)
@@ -1776,7 +1820,7 @@ class AI(QGraphicsView):
         if (_svs is not None
                 and getattr(_svs, "enabled", False)
                 and (getattr(_svs, "gl_failed", False)
-                     or not self._svs_position_valid())):
+                     or not self._svs_geometry_valid())):
             p.save()
             _af = QFont(self.font_family, -1, QFont.Weight.Bold)
             _af.setPixelSize(max(12, qRound(self.fontSize * 0.9)))

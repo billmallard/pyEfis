@@ -51,10 +51,13 @@ ladder). Already present:
 | `VS`,`GS`,`TRACK`,`HEAD`,`VPATH` | FPM solution | GPS/AHRS |
 | `LAT`,`LONG`,`ALT` | SVS camera position; `LAT`/`LONG` quality gates the terrain (AI-SVS-001) | GPS / ADC |
 | `AOA` + aux `AOA.Warn` | pitch-limit (AI-LIM-001): margin = `AOA.Warn - AOA`; `AOA` old/bad/fail or `AOA.Warn` None removes the marker | fix-gateway `onspeed` plugin ([`fixgw_onspeed_in_spec.md`](fixgw_onspeed_in_spec.md)) |
+| `MAGVAR` | true heading for the SVS and the FPM drift (`HEAD - MAGVAR`); missing = 0; bad/fail gates the terrain (AI-SVS-003) | GPS / sim |
 
 Quality is tracked per key in `_AIOld`/`_AIBad`/`_AIFail` (`PITCH`/`ROLL`/`ALAT`/`TAS`);
 `getAIFail()`/`getAIOld()`/`getAIBad()` aggregate. `AOA` quality is tracked separately
-(`_aoa_flags`) and gates only the pitch-limit marker.
+(`_aoa_flags`) and gates only the pitch-limit marker. The FPM keys carry their own
+(`_fpm_fail`/`_fpm_bad`/`_fpm_old`, AI-FAIL-002), and `MAGVAR` its bad/fail
+(`_magvar_flags`, AI-SVS-003).
 
 ## 4. Flags, alerts, and recovery annunciation (requirements)
 
@@ -79,6 +82,8 @@ test catalog (§5). **Status** is the widget as of this writing.
 | **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **DONE** — amber ball |
 | **AI-LIM-001** | **Pitch-limit / stall-margin** indication | approaching stall AOA | Pitch-limit marker `AOA.Warn - AOA` deg above the aircraft symbol | App A §A.2.4 p.70 | **DONE** — `_draw_pitch_limit` (AER-5086); look pending Bill's call on the PR renders |
 | **AI-BUG-001** | **Target-bank bug** (ATT1, AER-5149) | `BANKBUG` > 0 | Cyan arrow at ±`BANKBUG` outside the bank scale and a ±`bankBugTolerance` band over it, rolling with the scale, so on target the fixed pointer sits inside the band; hidden by the de-clutter; greyed when old/bad, absent when failed. Touch the scale + knob: 5° detents, 0 to 60 or `excessiveBankDeg` if lower | ACS steep turns (Private 45° ±5°, Commercial 50° ±5°) | **DONE** — `_draw_bank_bug`, `bank_bug_step` |
+| **AI-FAIL-002** | FPM never drawn from a stale or invalid solution (INS5, AER-6588) | `VS`/`GS`/`TRACK`/`HEAD` fail; old or bad; `MAGVAR` bad or fail | fail: no marker. Old or bad, or a bad/failed `MAGVAR`: the marker in its degraded amber. `HEAD` old, bad or fail also removes the horizon heading marks | `adding_an_instrument.md` fail/old/bad convention (Bill, packet AER-6493); old drawn as the widget's own bad look | **DONE** — `_drawFPM`, `_draw_horizon_heading` |
+| **AI-SVS-003** | No synthetic terrain turned by an invalid variation (INS5, AER-6588) | `MAGVAR` bad or fail | As AI-SVS-001: remove the terrain, brown ground, amber **SVS UNAVAIL**. `MAGVAR` old changes nothing: variation moves about 1 deg per 60 NM, and a `MAGVAR` nothing writes ages to old at 0.0, the documented "not published" case | `svs_rendering.md` failure policy | **DONE** — `_svs_geometry_valid` |
 
 **Thresholds.** "Unusual attitude" follows common EFIS/Part 25 convention — all
 configurable attributes:
@@ -138,6 +143,8 @@ removal. No `xfail` remains: `AI-LIM-001` left it with AER-5086.
 | 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | pass |
 | 105 | **AI-LIM-001** | `pitch_limit_indication`; `test_ai_pitch_limit_hidden_on_degraded_aoa`, `_hidden_without_warn_setpoint`, `_disabled_without_aoa_key`, `_survives_declutter` | pass |
 | 106 | **AI-BUG-001** | `test_bank_bug.py` (band under the pointer inside tolerance, outside it off target, de-clutter, knob detents and cap, touch focus, missing key) | pass |
+| 107 | AI-FAIL-002 | `test_ai_input_quality.py` (VS/GS/TRACK/HEAD old through the fix item; horizon marks on old HEAD) | pass |
+| 108 | AI-SVS-003 | `test_ai_input_quality.py` (MAGVAR bad/fail removes the terrain and annunciates; old keeps it) | pass |
 
 ## 6. Conventions and standards basis
 
