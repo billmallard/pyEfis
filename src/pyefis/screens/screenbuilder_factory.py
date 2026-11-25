@@ -275,11 +275,12 @@ INSTRUMENT_DEFAULT_OPTIONS = {}
 # config properties (category 1), the FIX-database values the instrument reads
 # (category 2), twin preview hints (category 3), and the editor flags. The
 # editor schema exporter and (by derivation) the configurator twins read from
-# here -- so the three mirrors can no longer drift. Instruments not yet
-# migrated fall back to the curated metadata in pyefis.editor.schema.
+# here -- so the three mirrors can no longer drift. Every instrument type has a
+# record; the curated dicts in pyefis.editor.schema are empty.
 #
-# Migration pattern (see docs/adding_an_instrument.md): move an instrument's
-# entries out of the curated dicts in editor/schema.py and into a record here.
+# A new instrument gets a record here and nowhere else (see
+# docs/adding_an_instrument.md). A bindable Prop is restated by the widget's
+# _live_binding_specs(); tests/editor/test_registry.py holds them together.
 # ---------------------------------------------------------------------------
 REGISTRY: dict[str, InstrumentSpec] = {}
 
