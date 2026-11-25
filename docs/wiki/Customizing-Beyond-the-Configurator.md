@@ -547,7 +547,8 @@ handled specially:
 - any option whose name contains `dbkey` binds the instrument to that key;
 - `encoder_order` puts it in the knob's order;
 - `egt_mode_switching: true` on a vertical bar connects the EGT buttons;
-- `temperature`, `pressure` and `altitude: true` turn on unit switching;
+- `temperature`, `pressure` and `altitude: true` turn on unit switching, on
+  the types whose [reference](Widget-Reference) tables list them;
 - `font_percent` as a whole number is read as a percent.
 
 Everything else is set on the instrument as an attribute, converted to the
