@@ -1,0 +1,12 @@
+Nov 23 16:08:28.584726 beelinkpyefis xinit[1382514]: INFO:20261123-16:08:28:pyefis.instruments.cas.aural - aural: caution tone
+Nov 23 16:08:39.194555 beelinkpyefis xinit[1382514]: INFO:20261123-16:08:39:pyefis.instruments.cas.aural - aural: silent
+Nov 23 16:08:43.684912 beelinkpyefis xinit[1382514]: INFO:20261123-16:08:43:pyefis.instruments.cas.aural - aural: warning tone
+Nov 23 16:08:48.197313 beelinkpyefis xinit[1382514]: INFO:20261123-16:08:48:pyefis.instruments.cas.aural - aural: silent
+Nov 23 16:08:52.264667 beelinkpyefis xinit[1382514]: INFO:20261123-16:08:52:pyefis.instruments.cas.aural - aural: caution tone
+Nov 23 16:08:55.009338 beelinkpyefis xinit[1382514]: WARNING:20261123-16:08:55:pyefis.instruments.cas.model - CAS: local warning GATEWAY LINK LOST
+Nov 23 16:08:55.009942 beelinkpyefis xinit[1382514]: INFO:20261123-16:08:55:pyefis.instruments.cas - CAS: CASWindow shows warning unacked GATEWAY LINK LOST
+Nov 23 16:08:55.088380 beelinkpyefis xinit[1382514]: INFO:20261123-16:08:55:pyefis.instruments.cas.aural - aural: warning tone
+Nov 23 16:09:04.840572 beelinkpyefis xinit[1382514]: INFO:20261123-16:09:04:pyefis.instruments.cas - CAS: CASWindow shows warning unacked GATEWAY LINK LOST; caution unacked CAS FAIL
+Nov 23 16:09:06.860035 beelinkpyefis xinit[1382514]: INFO:20261123-16:09:06:pyefis.instruments.cas.model - CAS: local GATEWAY LINK LOST cleared
+Nov 23 16:09:06.885523 beelinkpyefis xinit[1382514]: INFO:20261123-16:09:06:pyefis.instruments.cas.aural - aural: caution tone
+Nov 23 16:09:08.399765 beelinkpyefis xinit[1382514]: INFO:20261123-16:09:08:pyefis.instruments.cas.aural - aural: silent

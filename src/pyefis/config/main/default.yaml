@@ -10,6 +10,13 @@
   # PITCH, ROLL, ALT, IAS present in the FIX database.
   # FixLinkPingKey: PITCH
 
+  # Crew alert tones (CAS4): the autopilot disconnect, warning and caution
+  # tones play on this host's audio output while unacknowledged. On by
+  # default; the device is an ALSA name ("default", "plughw:1", ...).
+  #AuralEnabled: true
+  #AuralDevice: default
+  #AuralVolume: 0.8
+
   # nodeID, currently only used in touchscreen buttons
   # the value will replace {id} in the button's dbkey
   nodeID: 1
