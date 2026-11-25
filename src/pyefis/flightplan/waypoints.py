@@ -123,11 +123,16 @@ def _norm_ident(s) -> str:
 
 
 def airport_pack_has_icao_id(con) -> bool:
-    """True when an ``airports.sqlite`` connection carries the ``icao_id``
-    column (packs built since FPA4, AER-6543). Older packs hold only NASR's
-    FAA ``ARPT_ID`` in ``icao``."""
-    return any(row[1] == "icao_id"
-               for row in con.execute("PRAGMA table_info(airports)"))
+    """True when an ``airports.sqlite`` connection carries a populated
+    ``icao_id`` column (packs built since FPA4, AER-6543). Older packs hold
+    only NASR's FAA ``ARPT_ID`` in ``icao``. A column with no value in it (a
+    NASR cycle that shipped without ``ICAO_ID``) counts as absent, so the
+    readers fall back to the K rule rather than naming KSBA plain SBA."""
+    if not any(row[1] == "icao_id"
+               for row in con.execute("PRAGMA table_info(airports)")):
+        return False
+    return con.execute("SELECT 1 FROM airports WHERE icao_id IS NOT NULL "
+                       "AND icao_id != '' LIMIT 1").fetchone() is not None
 
 
 def airport_idents(raw: str, icao_id=None, *,

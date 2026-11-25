@@ -128,11 +128,17 @@ def test_builder_stores_the_icao_ident_beside_the_faa_ident(tmp_path):
                     "SBA": "KSBA", "HNL": "PHNL"}
 
 
-def test_builder_tolerates_a_nasr_file_without_icao_id(tmp_path):
+def test_nasr_file_without_icao_id_falls_back_to_the_k_rule(tmp_path):
+    """A NASR cycle without ICAO_ID still builds, and the empty column reads
+    as an old pack: KSBA stays KSBA, it does not become plain SBA."""
     pack = _build_pack(tmp_path / "pack", with_icao_column=False)
     con = sqlite3.connect(str(pack))
     assert {r[0] for r in con.execute("SELECT icao_id FROM airports")} == {None}
     con.close()
+    idx = _index(tmp_path, pack)
+    assert [w.id for w in idx.lookup("SBA")] == ["KSBA"]
+    assert [w.id for w in idx.lookup("KSBA")] == ["KSBA"]
+    assert _svs_idents(pack)["Santa Barbara Muni"] == "KSBA"
 
 
 def test_rebuilt_pack_resolves_alaska_by_icao_and_faa_ident(tmp_path):
