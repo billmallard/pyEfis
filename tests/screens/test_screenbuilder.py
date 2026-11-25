@@ -1710,12 +1710,13 @@ class TestScreenBuilderPreferencesAndOptions:
         assert screen.get_instrument_defaults("turn_coordinator") == ["ROT", "ALAT"]
         assert screen.get_instrument_defaults("vsi_pfd") == ["VS"]
         # virtual_vfr: the attitude keys plus the SVS camera's position keys
-        # (COURSE went with the legacy CIFP overlay, VVFR1).
+        # (COURSE went with the legacy CIFP overlay, VVFR1). The camera
+        # height is TALT, not the baro-corrected ALT (SVSALT1).
         assert screen.get_instrument_defaults("virtual_vfr") == [
             "PITCH",
             "LAT",
             "LONG",
-            "ALT",
+            "TALT",
             "ROLL",
             "ALAT",
             "TAS",

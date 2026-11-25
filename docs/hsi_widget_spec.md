@@ -389,7 +389,7 @@ convention, and no element is left showing its last-good value after loss:
 | `CDI` | normal | hide + NAV flag | hide + NAV flag (ANN-002) | remove + NAV flag | no bar |
 | `CDIV` | CDI on its own quality | — | — | — | CDI on its own quality; `CDIV` = 0 → hide bar + NAV flag (ANN-002) |
 | `GSI`/`GSV` | normal | hide + GS flag | hide + GS flag | hide + GS flag (ANN-003) | no scale |
-| `HEADBUG` | normal | grey bug | grey bug | remove bug | no bug |
+| `HEADBUG` | normal | grey bug + grey HDG readout | grey bug + grey HDG readout | remove bug; HDG readout `---°` | no bug |
 | `TRACKM`/`GS` | normal | hide diamond | hide diamond | hide diamond | no diamond |
 | `TOFROM` | normal | hide | hide | hide | hide |
 | `BRG1`/`BRG2` | normal | hide needle | hide needle | hide needle | no needle |
@@ -402,9 +402,11 @@ the CRS readout shows dashes rather than the failed value (000), and the NAV fla
 shows. A CRS edit in progress still shows the value being edited. A stale CDI or GSI
 now raises its flag too. The compass numerals follow `HEAD` alone (CERT1f, Bill
 2026-11-20): a failed CDI or GSI, or a bad or failed `COURSE`, removes only its own
-symbols (pointer, scale, bar, diamond), never the numerals over a valid heading. Open
-items: the grey `old` treatments (`COURSE`, `HEADBUG`) and confirming `HEAD`/`HEADBUG`
-each fully honor the convention.
+symbols (pointer, scale, bar, diamond), never the numerals over a valid heading.
+`HEADBUG` and `GS` follow their rows (INS5, AER-6588): before it both were read for
+their value alone, so a stale or failed selected heading still drew a cyan bug and
+readout, and a stale ground speed kept the track diamond up. Open item: the grey `old`
+treatment of `COURSE`.
 
 ### 7.3 Colour (HSI-COLOR)
 
@@ -563,6 +565,7 @@ will flip the run red the moment a flag is implemented, forcing removal of the m
 | 103 | **HSI-ANN-003** (GS flag) | `gs_flag_on_gs_lost` | pass |
 | 104 | **HSI-ANN-002** (no lateral signal) | `nav_flag_on_no_lateral_signal` | pass |
 | 105 | **HSI-ANN-001** + HSI-FAIL-001 (`HEAD` fail/old/bad, CERT1e) | `test_hsi_heading_quality.py` | pass |
+| 106 | HSI-FAIL-001 (`HEADBUG`, `GS` old/bad/fail, INS5) | `test_hsi_headbug_gs_quality.py` | pass |
 
 Existing tests also map in: HSI-FAIL-001 → `cdi_gsi_old_tracks_oldchanged_not_failchanged`,
 `quality_flags_hide_and_restore_labels`; HSI-ANN-003 (no-GS) → `gsi_hidden_when_no_glideslope`;

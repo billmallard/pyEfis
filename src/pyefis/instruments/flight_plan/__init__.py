@@ -613,6 +613,14 @@ class FlightPlan(QWidget):
             self._bridge.command("DTO")
             self._page = "fpl"
             self.update()
+        elif matches:
+            # An ident that names two places is shown, never guessed (FPA5):
+            # the DTO page opens on its chooser, and the pick goes direct.
+            self._open_dto_page()
+            self._entry_field = ident.strip().upper()
+            self._entry_message = "DUPLICATE FOUND"
+            self._entry_dupe_choices = matches
+            self._reveal()
 
     # -- bridge sync -------------------------------------------------------
     def _sync_plan_from_bridge(self, answered=False):
@@ -1006,12 +1014,7 @@ class FlightPlan(QWidget):
         idx = self._ensure_waypoint_index()
         types = TYPE_FILTERS.get(self._entry_type_filter)
         if self._entry_tab == "Recent":
-            out = []
-            for ident in idx.recent.list():
-                matches = idx.lookup(ident)
-                if matches and (not types or matches[0].type in types):
-                    out.append(matches[0])
-            return out
+            return idx.recent_waypoints(types)
         if self._entry_tab == "Nearest":
             ref_lat, ref_lon = self._entry_ref()
             return [r[0] for r in idx.nearest(ref_lat, ref_lon, types=types)]
@@ -1108,12 +1111,12 @@ class FlightPlan(QWidget):
         new_wp = fp_model.Waypoint(id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon,
                                     name=getattr(wp, "name", "") or "")
         if kind == "proc_airport":
-            self._ensure_waypoint_index().recent.push(wp.id)
+            self._ensure_waypoint_index().recent.push(wp.id, wp)
             self._close_entry()
             self._proc_set_airport(wp.id)
             return
         if kind == "charts_airport":
-            self._ensure_waypoint_index().recent.push(wp.id)
+            self._ensure_waypoint_index().recent.push(wp.id, wp)
             self._close_entry()
             self._charts_set_airport(wp.id)
             return
@@ -1135,7 +1138,7 @@ class FlightPlan(QWidget):
             self._entry_message = str(e)
             self.update()
             return
-        self._ensure_waypoint_index().recent.push(wp.id)
+        self._ensure_waypoint_index().recent.push(wp.id, wp)
         self._plan_dirty = True
         self._commit()
         self._close_entry()
@@ -1271,7 +1274,7 @@ class FlightPlan(QWidget):
 
     def _open_airway_picker(self, i, wp):
         graph = self._ensure_airway_graph()
-        idents = graph.airways_through_fix(wp.id)
+        idents = graph.airways_through_fix(wp.id, at=(wp.lat, wp.lon))
         if not idents:
             self._message = f"NO AIRWAYS AT {wp.id}"
             self.update()
@@ -1300,7 +1303,9 @@ class FlightPlan(QWidget):
         picker = self._airway_picker
         graph = self._ensure_airway_graph()
         try:
-            expansion = graph.expand(picker["ident"], picker["entry_wp"].id, exit_fix_id)
+            entry = picker["entry_wp"]
+            expansion = graph.expand(picker["ident"], entry.id, exit_fix_id,
+                                     entry_at=(entry.lat, entry.lon))
         except fp_airways.AirwayError as e:
             picker["message"] = str(e)
             self.update()
@@ -5506,7 +5511,8 @@ class FlightPlan(QWidget):
 
     def _paint_dupe_chooser(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
-        items = [(f"{wp.id} {wp.type} {wp.name or ''}".strip(),
+        items = [(" ".join(t for t in (wp.id, wp.type, getattr(wp, "region", ""),
+                                       wp.name or "") if t),
                   (lambda w_=wp: self._choose_duplicate(w_)))
                  for wp in self._entry_dupe_choices]
         self._paint_menu_list(p, w, h, items, self._cancel_dupe_chooser, scroll_key="dupe_chooser")

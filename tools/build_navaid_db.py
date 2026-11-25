@@ -15,8 +15,8 @@ plain stdlib, produces a self-contained sqlite consumed on-device.
     python tools/build_navaid_db.py --nasr-dir extracted/ -o navaids.sqlite
 
 Tables:
-  navaids(id, type, name, freq, elev_ft, lat, lon)
-  fixes(id, use_code, lat, lon)
+  navaids(id, type, name, freq, elev_ft, lat, lon, state, country)
+  fixes(id, use_code, lat, lon, icao_region, state, country)
   awy_segments(awy_id, seq, p1, lat1, lon1, p2, lat2, lon2)
 
 Airway geometry comes from AWY_BASE.AIRWAY_STRING (ordered point
@@ -55,6 +55,15 @@ def _f(row, key):
         return None
 
 
+# Where a record is (FPA5, AER-6544): ``state`` and ``country`` are NASR's
+# STATE_CODE and COUNTRY_CODE, and ``icao_region`` is FIX_BASE's
+# ICAO_REGION_CODE (``K2``, ``PA``). NAV_BASE carries no ICAO region (its
+# REGION_CODE is the FAA administrative region, ``AWP``), so navaids have
+# none. The state is what tells the pilot which of two same-named places is
+# meant: in cycle 2611, 37 idents name more than one place, almost all of them
+# NDBs in different states (``BR``: MN, TX, IA), and FIX_BASE repeats no ident
+# at all. The columns come last, so a reader that selects by name is
+# unaffected, and a pack built before them simply lacks them.
 def load_navaids(path):
     out = []
     with open(path, encoding="utf-8-sig", newline="") as fh:
@@ -66,7 +75,9 @@ def load_navaids(path):
                         (r.get("NAV_TYPE") or "").strip(),
                         (r.get("NAME") or "").strip().title(),
                         (r.get("FREQ") or "").strip(),
-                        _f(r, "ELEV"), lat, lon))
+                        _f(r, "ELEV"), lat, lon,
+                        (r.get("STATE_CODE") or "").strip(),
+                        (r.get("COUNTRY_CODE") or "").strip()))
     return out
 
 
@@ -78,7 +89,10 @@ def load_fixes(path):
             if lat is None or lon is None:
                 continue
             out.append(((r.get("FIX_ID") or "").strip(),
-                        (r.get("FIX_USE_CODE") or "").strip(), lat, lon))
+                        (r.get("FIX_USE_CODE") or "").strip(), lat, lon,
+                        (r.get("ICAO_REGION_CODE") or "").strip(),
+                        (r.get("STATE_CODE") or "").strip(),
+                        (r.get("COUNTRY_CODE") or "").strip()))
     return out
 
 
@@ -86,9 +100,9 @@ def point_lookup(navaids, fixes):
     """name -> (lat, lon); ambiguous names (conflicting coords beyond
     ~1 NM) are dropped so airways never jump continents."""
     pts, dead = {}, set()
-    for name, _t, _n, _f2, _e, lat, lon in navaids:
+    for name, _t, _n, _f2, _e, lat, lon, *_where in navaids:
         _add(pts, dead, name, lat, lon)
-    for name, _u, lat, lon in fixes:
+    for name, _u, lat, lon, *_where in fixes:
         _add(pts, dead, name, lat, lon)
     for name in dead:
         pts.pop(name, None)
@@ -153,14 +167,16 @@ def main(argv=None):
         DROP TABLE IF EXISTS fixes;
         DROP TABLE IF EXISTS awy_segments;
         CREATE TABLE navaids (id TEXT, type TEXT, name TEXT, freq TEXT,
-                              elev_ft REAL, lat REAL, lon REAL);
-        CREATE TABLE fixes (id TEXT, use_code TEXT, lat REAL, lon REAL);
+                              elev_ft REAL, lat REAL, lon REAL,
+                              state TEXT, country TEXT);
+        CREATE TABLE fixes (id TEXT, use_code TEXT, lat REAL, lon REAL,
+                            icao_region TEXT, state TEXT, country TEXT);
         CREATE TABLE awy_segments (awy_id TEXT, seq INTEGER,
                                    p1 TEXT, lat1 REAL, lon1 REAL,
                                    p2 TEXT, lat2 REAL, lon2 REAL);
     """)
-    cur.executemany("INSERT INTO navaids VALUES (?,?,?,?,?,?,?)", navaids)
-    cur.executemany("INSERT INTO fixes VALUES (?,?,?,?)", fixes)
+    cur.executemany("INSERT INTO navaids VALUES (?,?,?,?,?,?,?,?,?)", navaids)
+    cur.executemany("INSERT INTO fixes VALUES (?,?,?,?,?,?,?)", fixes)
     cur.executemany("INSERT INTO awy_segments VALUES (?,?,?,?,?,?,?,?)",
                     segs)
     cur.executescript("""

@@ -49,12 +49,15 @@ ladder). Already present:
 | `TAS` | standard-rate bank marker | ADC |
 | `BANKBUG` | target-bank bug (AI-BUG-001); 0 = off, missing = no bug and no touch edit | the pilot, through pyEfis (touch + knob) |
 | `VS`,`GS`,`TRACK`,`HEAD`,`VPATH` | FPM solution | GPS/AHRS |
-| `LAT`,`LONG`,`ALT` | SVS camera position; `LAT`/`LONG` quality gates the terrain (AI-SVS-001) | GPS / ADC |
+| `LAT`,`LONG`,`TALT` | SVS camera position; `TALT` is the GPS/EKF MSL height, never the baro-corrected `ALT` (AI-SVS-002); quality of all three gates the terrain (AI-SVS-001) | GPS |
 | `AOA` + aux `AOA.Warn` | pitch-limit (AI-LIM-001): margin = `AOA.Warn - AOA`; `AOA` old/bad/fail or `AOA.Warn` None removes the marker | fix-gateway `onspeed` plugin ([`fixgw_onspeed_in_spec.md`](fixgw_onspeed_in_spec.md)) |
+| `MAGVAR` | true heading for the SVS and the FPM drift (`HEAD - MAGVAR`); missing = 0; bad/fail gates the terrain (AI-SVS-003) | GPS / sim |
 
 Quality is tracked per key in `_AIOld`/`_AIBad`/`_AIFail` (`PITCH`/`ROLL`/`ALAT`/`TAS`);
 `getAIFail()`/`getAIOld()`/`getAIBad()` aggregate. `AOA` quality is tracked separately
-(`_aoa_flags`) and gates only the pitch-limit marker.
+(`_aoa_flags`) and gates only the pitch-limit marker. The FPM keys carry their own
+(`_fpm_fail`/`_fpm_bad`/`_fpm_old`, AI-FAIL-002), and `MAGVAR` its bad/fail
+(`_magvar_flags`, AI-SVS-003).
 
 ## 4. Flags, alerts, and recovery annunciation (requirements)
 
@@ -71,7 +74,8 @@ test catalog (§5). **Status** is the widget as of this writing.
 |----|-------------|---------|-------------------|------|--------|
 | **AI-ANN-001** | Attitude-fail annunciation | `PITCH`/`ROLL` fail | Remove attitude; show a clear fail display ("XXX") | Table 4-1 p.27; §25.1301 | **DONE** — `fail_scene` |
 | **AI-FAIL-001** | Degraded (stale/invalid) attitude greyed | `PITCH`/`ROLL`/`ALAT`/`TAS` old or bad | Grey sky/land | widget convention; AC 25-11B §4.2 | **DONE** |
-| **AI-SVS-001** | No synthetic terrain without a valid position | `LAT`/`LONG` old, bad or fail | Remove the terrain, brown attitude ground, amber **SVS UNAVAIL**; restore when both are valid | widget convention (same state as a GL failure); `svs_rendering.md` failure policy | **DONE** — `_svs_position_valid` |
+| **AI-SVS-001** | No synthetic terrain without a valid position | `LAT`/`LONG`/`TALT` old, bad, fail or undefined | Remove the terrain, brown attitude ground, amber **SVS UNAVAIL**; restore when all three are valid | widget convention (same state as a GL failure); `svs_rendering.md` failure policy | **DONE** — `_svs_position_valid` |
+| **AI-SVS-002** | SVS camera height is geometric, not indicated | always | The camera height is `TALT`; `ALT` and the baro setting never move the terrain, and there is no `ALT` fallback (an install with no `TALT` writer gets AI-SVS-001's **SVS UNAVAIL**) | Bill's ruling SVSALT1 (AER-6409); a baro setting 1 inHg off moves indicated altitude about 900 ft | **DONE** — `_positionValueChanged` |
 | **AI-SLIP-001** | Sideslip shown (slip/skid ball) | `ALAT` | Ball deflects with lateral accel | App A §A.2.6 p.70 | **DONE** |
 | **AI-CHEV-001** | Unusual-attitude **recovery chevrons** | pitch beyond the unusual-attitude threshold, OR the true horizon line off-scale | Large chevrons pointing to the nearest horizon, enabling recovery < 1 s | App A §A.2.2 p.70; AC 23.1311-1C 8.5(b) | **DONE** — amber chevrons, `_draw_recovery_chevrons` |
 | **AI-BANK-001** | **Excessive-bank** annunciation | roll beyond threshold (before stall buffet) | Salient bank alert (amber/red) | App A §A.2.5 p.70 | **DONE** — amber bank scale |
@@ -79,6 +83,8 @@ test catalog (§5). **Status** is the widget as of this writing.
 | **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **DONE** — amber ball |
 | **AI-LIM-001** | **Pitch-limit / stall-margin** indication | approaching stall AOA | Pitch-limit marker `AOA.Warn - AOA` deg above the aircraft symbol | App A §A.2.4 p.70 | **DONE** — `_draw_pitch_limit` (AER-5086); look pending Bill's call on the PR renders |
 | **AI-BUG-001** | **Target-bank bug** (ATT1, AER-5149) | `BANKBUG` > 0 | Cyan arrow at ±`BANKBUG` outside the bank scale and a ±`bankBugTolerance` band over it, rolling with the scale, so on target the fixed pointer sits inside the band; hidden by the de-clutter; greyed when old/bad, absent when failed. Touch the scale + knob: 5° detents, 0 to 60 or `excessiveBankDeg` if lower | ACS steep turns (Private 45° ±5°, Commercial 50° ±5°) | **DONE** — `_draw_bank_bug`, `bank_bug_step` |
+| **AI-FAIL-002** | FPM never drawn from a stale or invalid solution (INS5, AER-6588) | `VS`/`GS`/`TRACK`/`HEAD` fail; old or bad; `MAGVAR` bad or fail | fail: no marker. Old or bad, or a bad/failed `MAGVAR`: the marker in its degraded amber. `HEAD` old, bad or fail also removes the horizon heading marks | `adding_an_instrument.md` fail/old/bad convention (Bill, packet AER-6493); old drawn as the widget's own bad look | **DONE** — `_drawFPM`, `_draw_horizon_heading` |
+| **AI-SVS-003** | No synthetic terrain turned by an invalid variation (INS5, AER-6588) | `MAGVAR` bad or fail | As AI-SVS-001: remove the terrain, brown ground, amber **SVS UNAVAIL**. `MAGVAR` old changes nothing: variation moves about 1 deg per 60 NM, and a `MAGVAR` nothing writes ages to old at 0.0, the documented "not published" case | `svs_rendering.md` failure policy | **DONE** — `_svs_geometry_valid` |
 
 **Thresholds.** "Unusual attitude" follows common EFIS/Part 25 convention — all
 configurable attributes:
@@ -131,13 +137,16 @@ removal. No `xfail` remains: `AI-LIM-001` left it with AER-5086.
 | 001 | AI-ANN-001 | `attitude_fail_shows_fail_scene` | pass |
 | 002 | AI-FAIL-001 | `degraded_attitude_stays_greyed` | pass |
 | 003 | AI-SLIP-001 | `slip_ball_tracks_lateral_accel` | pass |
-| 004 | AI-SVS-001 | `test_svs_position_quality.py` (drives LAT/LONG old/bad/fail through the fix item) | pass |
+| 004 | AI-SVS-001 | `test_svs_position_quality.py` (drives LAT/LONG/TALT old/bad/fail through the fix item; TALT undefined) | pass |
+| 005 | AI-SVS-002 | `test_svs_position_quality.py::test_svs_camera_height_is_talt_not_alt` (TALT and ALT 900 ft apart; a baro-driven ALT change leaves the pose alone) | pass |
 | 101 | **AI-CHEV-001** | `recovery_chevrons_at_extreme_pitch`, `recovery_chevrons_at_horizon_off_scale` | pass |
 | 102 | **AI-BANK-001** | `excessive_bank_annunciation` | pass |
 | 103 | **AI-DCL-001** | `declutter_at_unusual_attitude` | pass |
 | 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | pass |
 | 105 | **AI-LIM-001** | `pitch_limit_indication`; `test_ai_pitch_limit_hidden_on_degraded_aoa`, `_hidden_without_warn_setpoint`, `_disabled_without_aoa_key`, `_survives_declutter` | pass |
 | 106 | **AI-BUG-001** | `test_bank_bug.py` (band under the pointer inside tolerance, outside it off target, de-clutter, knob detents and cap, touch focus, missing key) | pass |
+| 107 | AI-FAIL-002 | `test_ai_input_quality.py` (VS/GS/TRACK/HEAD old through the fix item; horizon marks on old HEAD) | pass |
+| 108 | AI-SVS-003 | `test_ai_input_quality.py` (MAGVAR bad/fail removes the terrain and annunciates; old keeps it) | pass |
 
 ## 6. Conventions and standards basis
 

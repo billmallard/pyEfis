@@ -26,6 +26,7 @@ from pyefis.flightplan.waypoints import (
     WaypointCapacityError,
     WaypointInUseError,
     WaypointIndex,
+    Waypoint,
     WaypointNotFoundError,
 )
 
@@ -371,6 +372,138 @@ def test_recent_persists_across_instances(tmp_path):
     path = str(tmp_path / "recent.json")
     RecentList(path).push("KSBA")
     assert RecentList(path).list() == ["KSBA"]
+
+
+# ---------------------------------------------------------------------------
+# region (FPA5, AER-6544): two places of one ident
+# ---------------------------------------------------------------------------
+# Two fixes of one ident in two ICAO regions -- synthetic, because FIX_BASE
+# repeats no ident in cycle 2611 -- and two of the real cycle-2611 ``BR``
+# NDBs, which repeat across states.
+REGION_FIXES = [
+    ("DUPEE", "RP", 34.30, -119.80, "K2", "CA", "US"),
+    ("DUPEE", "RP", 39.90, -105.10, "K7", "CO", "US"),
+]
+REGION_NAVAIDS = [
+    ("BR", "NDB", "Larew", "251", 1260, 46.4566203, -94.02243002, "MN", "US"),
+    ("BR", "NDB", "Depoo", "393", 28.5, 25.98366283, -97.50909794, "TX", "US"),
+    ("ZFP", "VOR/DME", "Freeport", "113.2", 7, 26.55534722, -78.69784722, "", "BS"),
+]
+
+
+def _region_index(tmp_path, recent=None):
+    path = tmp_path / "navaids-fpa5.sqlite"
+    if path.exists():  # a second index over the same pack: a restart
+        return _open_index(path, recent or str(tmp_path / "recent.json"))
+    con = sqlite3.connect(str(path))
+    con.executescript(
+        "CREATE TABLE navaids (id TEXT, type TEXT, name TEXT, freq TEXT, "
+        "  elev_ft REAL, lat REAL, lon REAL, state TEXT, country TEXT);"
+        "CREATE TABLE fixes (id TEXT, use_code TEXT, lat REAL, lon REAL, "
+        "  icao_region TEXT, state TEXT, country TEXT);")
+    con.executemany("INSERT INTO navaids VALUES (?,?,?,?,?,?,?,?,?)", REGION_NAVAIDS)
+    con.executemany("INSERT INTO fixes VALUES (?,?,?,?,?,?,?)", REGION_FIXES)
+    con.commit()
+    con.close()
+    return _open_index(path, recent or str(tmp_path / "recent.json"))
+
+
+def _open_index(path, recent):
+    idx = WaypointIndex(None, str(path), recent_file=recent)
+    assert idx.wait_ready(timeout=5) is True
+    return idx
+
+
+def test_two_same_ident_fixes_carry_their_regions(tmp_path):
+    idx = _region_index(tmp_path)
+    got = sorted((w.region, w.icao_region, w.lat) for w in idx.lookup("DUPEE"))
+    assert got == [("CA", "K2", 34.30), ("CO", "K7", 39.90)]
+    assert sorted(w.region for w in idx.lookup("BR")) == ["MN", "TX"]
+    # No state: the country stands in.
+    assert [w.region for w in idx.lookup("ZFP")] == ["BS"]
+
+
+def test_lookup_by_region_names_one_place(tmp_path):
+    idx = _region_index(tmp_path)
+    assert [w.lat for w in idx.lookup("DUPEE", region="CO")] == [39.90]
+    assert [w.lat for w in idx.lookup("DUPEE", region="k2")] == [34.30]
+    assert [w.name for w in idx.lookup("BR", region="TX")] == ["Depoo"]
+    assert idx.lookup("DUPEE", region="NM") == []
+
+
+def test_pack_without_region_columns_still_loads(index):
+    """Every pack built before FPA5 lacks the columns: it loads, with blank
+    regions."""
+    assert {(w.type, w.region, w.icao_region) for w in index.lookup("ZZZ")} == {
+        ("vor", "", ""), ("fix", "", "")}
+    assert [w.region for w in index.lookup("KSMX")] == [""]
+
+
+def test_airport_region_is_its_state(tmp_path):
+    path = tmp_path / "airports.sqlite"
+    con = sqlite3.connect(str(path))
+    con.executescript(
+        "CREATE TABLE airports (site_no TEXT PRIMARY KEY, icao TEXT, name TEXT, "
+        "  lat REAL, lon REAL, elev_ft REAL, mag_var REAL, state TEXT, city TEXT);"
+        "CREATE TABLE runways (site_no TEXT, rwy_id TEXT, length_ft REAL);")
+    con.execute("INSERT INTO airports VALUES ('1','KSBA','Santa Barbara Muni',"
+                "34.42621,-119.84037,10,12.0,'CA','Santa Barbara')")
+    con.commit()
+    con.close()
+    idx = WaypointIndex(str(path), None)
+    assert idx.wait_ready(timeout=5) is True
+    assert [w.region for w in idx.lookup("KSBA")] == ["CA"]
+
+
+def test_recent_finds_the_place_that_was_picked(tmp_path):
+    """Before FPA5 the Recent tab kept only the ident and showed the first
+    match: picking the Colorado DUPEE listed the California one."""
+    idx = _region_index(tmp_path)
+    colorado = idx.lookup("DUPEE", region="CO")[0]
+    idx.recent.push(colorado.id, colorado)
+    assert [(w.id, w.region) for w in idx.recent_waypoints()] == [("DUPEE", "CO")]
+
+
+def test_recent_keeps_two_same_named_places_apart(tmp_path):
+    path = str(tmp_path / "recent.json")
+    idx = _region_index(tmp_path, recent=path)
+    for wp in sorted(idx.lookup("DUPEE"), key=lambda w: w.lat):
+        idx.recent.push(wp.id, wp)
+    assert [w.region for w in idx.recent_waypoints()] == ["CO", "CA"]
+    # Picking one again moves that one, and only that one, to the front.
+    idx.recent.push("DUPEE", idx.lookup("DUPEE", region="CA")[0])
+    assert [w.region for w in idx.recent_waypoints()] == ["CA", "CO"]
+    # And it survives a restart.
+    assert [w.region for w in _region_index(tmp_path, recent=path).recent_waypoints()] == [
+        "CA", "CO"]
+
+
+def test_recent_from_an_older_file_shows_every_match(tmp_path):
+    """A recent.json written before places were kept names an ident only;
+    which DUPEE was meant is unknown, so both are listed, never one guessed."""
+    path = tmp_path / "recent.json"
+    path.write_text('{"idents": ["DUPEE", "ZFP"]}', encoding="utf-8")
+    idx = _region_index(tmp_path, recent=str(path))
+    assert sorted(w.region for w in idx.recent_waypoints() if w.id == "DUPEE") == ["CA", "CO"]
+    assert [w.id for w in idx.recent_waypoints()][-1] == "ZFP"
+
+
+def test_recent_place_no_longer_in_the_database_is_dropped(tmp_path):
+    """A recorded place the database no longer holds is not replaced by a
+    same-named place somewhere else."""
+    idx = _region_index(tmp_path)
+    gone = Waypoint(id="DUPEE", type="fix", lat=45.0, lon=-110.0)
+    idx.recent.push(gone.id, gone)
+    assert idx.recent_waypoints() == []
+    assert idx.recent.list() == ["DUPEE"]
+
+
+def test_recent_type_filter_applies_to_each_place(tmp_path):
+    idx = _region_index(tmp_path)
+    for wp in idx.lookup("BR") + idx.lookup("DUPEE"):
+        idx.recent.push(wp.id, wp)
+    assert {w.type for w in idx.recent_waypoints(types={"ndb"})} == {"ndb"}
+    assert len(idx.recent_waypoints(types={"ndb"})) == 2
 
 
 # ---------------------------------------------------------------------------
