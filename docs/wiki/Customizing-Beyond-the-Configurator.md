@@ -23,7 +23,7 @@ then, and `preferences.yaml` must sit beside it.
 | `default.yaml` | The top of the configuration. Each section is a pointer into the `includes:` map of the preferences. |
 | `preferences.yaml` | The shipped preferences: styles, gauge slots, feature flags, includes. |
 | `preferences.yaml.custom` | Your changes to the preferences. |
-| `main/default.yaml` | Display-wide settings: the FIX-Gateway address (`FixServer`, `FixPort`), the [link watchdog](#the-data) (`FixLinkTimeout`, `FixLinkPingKey`), `nodeID`, `screenFullSize`, `screenColor` and `defaultScreen`. |
+| `main/default.yaml` | Display-wide settings: the FIX-Gateway address (`FixServer`, `FixPort`), the [link watchdog](#the-data) (`FixLinkTimeout`, `FixLinkPingKey`), the [alert tones](#alert-tones) (`AuralEnabled`, `AuralDevice`, `AuralVolume`), `nodeID`, `screenFullSize`, `screenColor` and `defaultScreen`. |
 | `screens/` | One file per screen, plus `default_list.yaml`, the list of screens to load. |
 | `includes/` | Reusable groups of instruments. |
 | `buttons/` | Button definitions. |
@@ -405,6 +405,42 @@ Whenever the watchdog is not running (`FixLinkTimeout` set to `0` or below, no
 ping key in the database, or a failure to start), pyEFIS shows an amber
 **LINK MON OFF** box at the top centre of every screen. It stays until pyEFIS
 restarts with the watchdog running. Touches pass through it.
+
+### Alert tones
+
+pyEFIS plays the crew alert tones on the computer's own audio output: the
+headphone jack, HDMI audio, or a USB audio adapter. Feed it into the intercom
+or a speaker. There are three tones:
+
+- **Autopilot disconnect**: three falling sweeps, repeating until the
+  disconnect is acknowledged (a tap on the autopilot mode strip).
+- **Warning**: three quick beeps, repeating until acknowledged.
+- **Caution**: a two-note chime every 5 seconds until acknowledged.
+
+Advisories have no tone. One tone plays at a time: a warning cuts a caution
+off, and a caution waits for every warning to be acknowledged. Acknowledging
+on any display silences every display, because the tones follow the alert
+state fix-gateway publishes (`CASTOP`, `APDISC`). The display's own alerts,
+`GATEWAY LINK LOST` and `CAS FAIL`, sound from the display itself.
+
+The tones are not a replacement for the CAS window and marker: with no audio
+device, or the device unplugged, pyEFIS logs it and the visual alerts work as
+before. It keeps trying the device every 5 seconds. A muted mixer, a pulled
+audio cable or an intercom input turned down is not detected at all, so listen
+for a tone when you install it.
+
+| Key | Default | What it does |
+|---|---|---|
+| `AuralEnabled` | `true` | `false` turns the tones off on this display |
+| `AuralDevice` | `default` | The ALSA device to play on. `default` follows PipeWire or PulseAudio when they run. `aplay -L` lists the others |
+| `AuralVolume` | `0.8` | Tone level, `0.0` to `1.0`, before the system mixer |
+
+The user that runs pyEFIS must be allowed to open the sound device: on a
+kiosk install without a desktop session, add it to the `audio` group
+(`sudo usermod -aG audio <user>`, then restart pyEFIS). The system mixer must
+also be unmuted (`alsamixer`, or `amixer sset Master unmute`). The log line
+`aural: playing on ALSA device 'default'` confirms the device opened;
+`aural: cannot open ALSA device ...` says why it did not.
 
 ### Gauge colours
 
