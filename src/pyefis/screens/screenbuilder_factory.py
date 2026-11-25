@@ -449,7 +449,7 @@ def _ai_overlay_props():
                   "(33.3 = the classic height/3); an explicit "
                   "bankAngleRadius px in YAML overrides it"),
         Prop("fd_style", "enum", default="single_cue",
-             enum=["single_cue", "cross_pointer", "off"],
+             enum=["single_cue", "cross_pointer", "off", "seed_red"],
              label="Flight director style",
              help="single_cue: a magenta command chevron the aircraft symbol "
                   "flies into; cross_pointer: separate pitch and roll bars; "
