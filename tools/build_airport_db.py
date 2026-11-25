@@ -6,8 +6,8 @@ Build airports.sqlite from FAA NASR CSV data for the SVS renderer.
 NASR (National Airspace System Resource) is the FAA's free public airport
 database. We use three of its CSV files:
 
-    APT_BASE.csv     — one row per airport: ICAO/FAA ident, name, location,
-                       elevation, magnetic variation
+    APT_BASE.csv     — one row per airport: FAA ident, ICAO ident, name,
+                       location, elevation, magnetic variation
     APT_RWY.csv      — one row per runway: dimensions, surface, lighting
     APT_RWY_END.csv  — two rows per runway (one per end): exact threshold
                        lat/lon, true alignment, marking type, displaced
@@ -48,14 +48,15 @@ _DEFAULT_OUT  = _REPO_ROOT / "nasr" / "airports.sqlite"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS airports (
     site_no   TEXT PRIMARY KEY,
-    icao      TEXT NOT NULL,         -- ARPT_ID, e.g. "KSBA"
+    icao      TEXT NOT NULL,         -- ARPT_ID (FAA ident), e.g. "SBA", "ANC"
     name      TEXT,
     lat       REAL NOT NULL,
     lon       REAL NOT NULL,
     elev_ft   REAL,
     mag_var   REAL,                  -- signed: +E, -W
     state     TEXT,
-    city      TEXT
+    city      TEXT,
+    icao_id   TEXT                   -- ICAO_ID, e.g. "KSBA", "PANC"; NULL if none
 );
 
 CREATE INDEX IF NOT EXISTS idx_airports_lat ON airports(lat);
@@ -165,9 +166,10 @@ def build(nasr_dir: Path, out_path: Path) -> dict:
                 _signed_mag_var(r.get("MAG_VARN", ""), r.get("MAG_HEMIS", "")),
                 r.get("STATE_CODE", "").strip(),
                 r.get("CITY", "").strip(),
+                _s(r.get("ICAO_ID", "")),
             ))
         con.executemany(
-            "INSERT OR REPLACE INTO airports VALUES (?,?,?,?,?,?,?,?,?)", rows)
+            "INSERT OR REPLACE INTO airports VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
         counts["airports"] = len(rows)
 
     # --- Runways -----------------------------------------------------------

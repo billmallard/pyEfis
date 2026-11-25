@@ -30,6 +30,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pyefis.flightplan.waypoints import airport_idents, airport_pack_has_icao_id
+
 log = logging.getLogger(__name__)
 
 NM_PER_DEG_LAT = 60.0           # 1° of latitude ≈ 60 NM
@@ -114,6 +116,7 @@ class NASRAirportDB:
         self._paved_only = bool(paved_only)
         self._path = Path(sqlite_path) if sqlite_path else None
         self._con: sqlite3.Connection | None = None
+        self._legacy_idents = True
         if self._path is None or not self._path.is_file():
             log.info("NASRAirportDB: %s not found — falling back", self._path)
             return
@@ -124,6 +127,11 @@ class NASRAirportDB:
         except Exception as e:
             log.warning("NASRAirportDB: cannot open %s: %s", self._path, e)
             self._con = None
+            return
+        try:
+            self._legacy_idents = not airport_pack_has_icao_id(self._con)
+        except Exception as e:
+            log.warning("NASRAirportDB: cannot read %s: %s", self._path, e)
 
     @property
     def ready(self) -> bool:
@@ -142,9 +150,10 @@ class NASRAirportDB:
         lon_hi = ac_lon + range_deg_lon
 
         # First pass: airports within the bounding box.
+        icao_id_col = "NULL" if self._legacy_idents else "icao_id"
         cur = self._con.execute(
-            "SELECT site_no, icao, name, lat, lon, elev_ft "
-            "FROM airports "
+            f"SELECT site_no, icao, {icao_id_col} AS icao_id, name, lat, lon, "
+            "elev_ft FROM airports "
             "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
             (lat_lo, lat_hi, lon_lo, lon_hi))
         airport_rows = cur.fetchall()
@@ -160,11 +169,10 @@ class NASRAirportDB:
             runways = list(self._runways_for(ar["site_no"]))
             if not runways:
                 continue
-            icao = ar["icao"]
-            # NASR's ARPT_ID is FAA-style (no leading K for CONUS); add it
-            # so labels and lookup keys match how pilots refer to airports.
-            if icao and len(icao) == 3 and icao.isalpha():
-                icao = "K" + icao
+            # The ICAO ident (PANC, KSBA) so labels and lookup keys match how
+            # pilots refer to airports; same rule as the waypoint index.
+            icao, _aliases = airport_idents(ar["icao"] or "", ar["icao_id"],
+                                            legacy=self._legacy_idents)
             yield AirportRecord(
                 icao=icao,
                 name=(ar["name"] or "").title(),
