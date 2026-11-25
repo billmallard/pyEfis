@@ -75,6 +75,7 @@ Format: `EFIS-<AREA>-<NNN>`
 - **EFIS-WIND-009:** State shall be communicated by colour and content:
   - **Healthy** — white label and value (e.g., `HW 12`).
   - **Bad** (data flagged unreliable) — amber label and an amber `X` in place of the value, hiding the suspect number while flagging the condition.
+  - **Stale** (data flagged old: the source stopped updating) — drawn as Bad (INS5, AER-6588).
   - **Failed** (data unavailable) — dim grey label and `---` in place of the value; the label reverts to the positive-side default (`HW`, `RX`) since sign cannot be trusted.
 - **EFIS-WIND-010:** The wind display shall be independently enable/disable-able via the `WIND_DISPLAY` preference key (default disabled), paralleling the existing `TRIM_CONTROLS` pattern. Disabling it shall not raise errors when `HWIND`/`XWIND` are absent from the FIX database.
 - **EFIS-WIND-011:** When the wind display is enabled but `HWIND`/`XWIND` are not defined in the FIX database (e.g., gateway has not deployed the `wind_components` compute function), the widget shall display the failed state and shall not raise exceptions.

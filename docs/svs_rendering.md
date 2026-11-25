@@ -238,6 +238,11 @@ terrain returns when both keys are valid again (AER-4243). Terrain
 held at the last fix while the aircraft flies on would look live and
 be wrong.
 
+A bad or failed `MAGVAR` does the same (INS5, AER-6588): the terrain is
+turned by the variation, so an invalid one would place it wrong by an
+unknown angle. An old `MAGVAR` keeps its last value; variation changes
+slowly, and an install with no `MAGVAR` writer has it old at 0.0.
+
 ### Heightmap texture
 
 A 2x2-tile patch (2402×2402 R32F = ~22 MB) is uploaded once per
