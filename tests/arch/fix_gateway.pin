@@ -5,4 +5,4 @@
 # To bump it, replace the one line below and open a one-line PR; the CI step
 # "Every FIX key pyEfis writes is declared ..." runs against the new commit.
 # docs/key_writers.md says when and how.
-09b1bd889ccf119114be09666f03021ec21f56ab
+cba673f2177690322e798da7cea34b98968b2115
