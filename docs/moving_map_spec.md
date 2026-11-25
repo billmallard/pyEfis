@@ -120,7 +120,12 @@ class MapLayer:                    # pyefis/instruments/map/layers/base.py
   above ownship, red under `clearance_yellow_ft` (500 ft), amber under
   `clearance_green_ft` (1,000 ft), colours from `terrain_palette`, and
   the airport-proximity collapse (within 5 NM, terrain below field
-  elevation + 400 ft gets no band).
+  elevation + 400 ft gets no band). Clearance is measured from `TALT`,
+  the GPS/EKF MSL height, never from indicated `ALT`, which moves with
+  the baro setting (MAPALT1, AER-6591; Bill's ruling, the same as the
+  SVS's SVSALT1). A `TALT` that is missing, old, bad or failed makes
+  caution mode unavailable: the relief is drawn without bands and the
+  status chip reads `TERR UNAVAIL`. There is no `ALT` fallback.
 
 ### 5.2 Airports (z=30, default on)
 - Source: NASR `airports.sqlite` via the existing airport_db
