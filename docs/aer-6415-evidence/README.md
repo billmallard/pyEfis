@@ -79,3 +79,36 @@ traceback. Its monitor (Dell 2407WFP) reports no audio support over HDMI
 to open (`Unknown error 524`). pyEfis logs it once and retries every 5 s. The visual
 CAS is unchanged. That is the no-device path (CASW-AUR-006). It is not a tone on the
 Pi; that needs a USB audio adapter (the project owner's purchase, asked on AER-6415).
+
+### The Pi 5 with a USB audio adapter (2026-11-25)
+
+The project owner plugged in a USB audio adapter (`0c76:1203` JMTek "USB PnP Audio
+Device", ALSA card 2) and speakers. The Pi runs `dev` at `89282f8d`, which carries
+#567, so nothing was deployed. Install facts:
+
+- PipeWire takes the adapter as its default sink, but the Pi has no PipeWire ALSA
+  plugin, so ALSA `default` still means HDMI. The live `main/default.yaml` now sets
+  `AuralDevice: plughw:CARD=Device`. pyEfis logged
+  `aural: playing on ALSA device 'plughw:CARD=Device'`.
+- The level is unchanged. `plughw` bypasses PipeWire, so the adapter's hardware
+  `Speaker` control sets the loudness. It sits at 626/1008 (62%, -23.9 dB), where
+  PipeWire put its 0.40, and `AuralVolume` is the default 0.8.
+
+`bench_tones.py` ran on the Pi with two substitutions: the status path is `card2`,
+and fix-gateway is the user unit (`systemctl --user stop|start fixgw.service`, not
+sudo). `pi5/` holds the same three logs as the Beelink runs. The `aural.log` times
+are Pi local time (CST); `phases.log` uses epoch seconds (14:21:10 CST is 1795638070).
+
+    14:20:52 caution    a standing caution, which cleared at 14:21:08 before the run
+    14:21:16 disconnect APDISC raised; silent at 14:21:22 when it is acknowledged
+    14:21:33 caution    AP LINK LOST (disengaged at the loss); silent when the link returns
+    14:21:48 warning    AP LINK LOST (engaged at the loss); silent at 14:21:53 on CASACK
+    14:21:56 caution    fix-gateway stopped: CAS FAIL, then
+    14:21:58 warning    GATEWAY LINK LOST interrupts it, with no bus at all
+    14:22:10 caution    the link is back, and CAS FAIL sounds until it clears at 14:22:12
+
+The card 2 PCM state agrees: it was `RUNNING` for 6.0 s in the disconnect run, and
+for 10.4, 4.4 and 16.2 s in the warning run, matching the spans above. It was
+`PREPARED` (open, silent) between them. Here `plughw` is not dmix, so `RUNNING`
+does mean samples were reaching the adapter. Whether they were loud enough at the
+speakers is for the ear at the bench. No tee was used, so this run has no byte match.
