@@ -48,7 +48,7 @@ def app(qtbot):
 
 
 def _reset_items(fix):
-    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG"):
+    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "TALT"):
         item = fix.db.get_item(key)
         item.old = item.bad = item.fail = False
 
