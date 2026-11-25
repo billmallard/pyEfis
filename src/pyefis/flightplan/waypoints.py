@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import geo
+from .model import SAME_FIX_NM
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +103,15 @@ class Waypoint:
     elev_ft: float | None = None
     freq: str | None = None
     comment: str = ""
+    # Where the record says it is (FPA5, AER-6544): the NASR state code,
+    # else the country code. This is what tells the pilot which of two
+    # same-named places is meant (``BR`` is an NDB in MN, TX and IA). Blank
+    # for a user waypoint, and for every record of a pack built before the
+    # column.
+    region: str = ""
+    # The ICAO region code (``K2``, ``PA``) where the source codes one: NASR
+    # fixes do, NASR navaids and airports do not.
+    icao_region: str = ""
 
 
 @dataclass
@@ -120,6 +130,21 @@ class _IndexEntry:
 
 def _norm_ident(s) -> str:
     return (s or "").strip().upper()
+
+
+def _region(state, country) -> str:
+    """``Waypoint.region`` from a record's state and country codes."""
+    return _norm_ident(state) or _norm_ident(country)
+
+
+def _columns(con, table) -> set[str]:
+    return {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+
+
+def _opt(cols, name) -> str:
+    """*name* when the table has the column, else a NULL standing in for it,
+    so a pack built before FPA5 still loads."""
+    return name if name in cols else f"NULL AS {name}"
 
 
 def _airport_id_aliases(raw: str) -> tuple[str, list[str]]:
@@ -325,13 +350,21 @@ class UserWaypointStore:
 
 
 class RecentList:
-    """``<userdir>/recent.json`` — ``{"idents": [...]}``, most-recent first,
-    capped at ``RECENT_CAP``."""
+    """``<userdir>/recent.json``, most-recent first, capped at
+    ``RECENT_CAP``: ``{"idents": [...], "places": [{"id", "type", "lat",
+    "lon"}]}``.
+
+    An ident alone cannot say which of two same-named places the pilot
+    picked (FPA5, AER-6544), so each pick is stored with its type and
+    position, and :meth:`WaypointIndex.recent_waypoints` finds that place
+    again. ``idents`` is kept beside it for an older reader. A file written
+    before ``places`` loads as idents with no position, and those are
+    resolved by ident alone, every match shown."""
 
     def __init__(self, path=None):
         self._path = Path(path) if path else None
         self._lock = threading.Lock()
-        self._idents: list[str] = []
+        self._places: list[dict] = []
         self._load()
 
     def _load(self):
@@ -339,32 +372,64 @@ class RecentList:
             return
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-            self._idents = [_norm_ident(i) for i in data.get("idents", []) if i][:RECENT_CAP]
+            if "places" in data:
+                places = [self._place(p.get("id"), p.get("type"), p.get("lat"), p.get("lon"))
+                          for p in data["places"]]
+            else:
+                places = [self._place(i) for i in data.get("idents", [])]
+            self._places = [p for p in places if p["id"]][:RECENT_CAP]
         except Exception as e:
             log.warning("RecentList: failed to load %s: %s", self._path, e)
+
+    @staticmethod
+    def _place(ident, wtype=None, lat=None, lon=None) -> dict:
+        try:
+            lat, lon = float(lat), float(lon)
+        except (TypeError, ValueError):
+            lat = lon = None
+        return {"id": _norm_ident(ident), "type": wtype or None, "lat": lat, "lon": lon}
+
+    @staticmethod
+    def _same(a: dict, b: dict) -> bool:
+        if a["id"] != b["id"]:
+            return False
+        if a["lat"] is None or b["lat"] is None:
+            return True
+        return (a["type"] == b["type"]
+                and geo.distance_nm(a["lat"], a["lon"], b["lat"], b["lon"]) < SAME_FIX_NM)
 
     def _save(self):
         if self._path is None:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps({"idents": self._idents}, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps({"idents": [p["id"] for p in self._places],
+                                   "places": self._places}, indent=2), encoding="utf-8")
         os.replace(tmp, self._path)
 
-    def push(self, ident: str) -> None:
-        norm = _norm_ident(ident)
-        if not norm:
+    def push(self, ident, wp=None) -> None:
+        """Put *ident* first. Pass the chosen *wp* (anything with ``type``,
+        ``lat`` and ``lon``) so the list can find that place again; a
+        same-named place somewhere else is a separate entry."""
+        place = self._place(ident, getattr(wp, "type", None),
+                            getattr(wp, "lat", None), getattr(wp, "lon", None))
+        if not place["id"]:
             return
         with self._lock:
-            if norm in self._idents:
-                self._idents.remove(norm)
-            self._idents.insert(0, norm)
-            del self._idents[RECENT_CAP:]
+            self._places = [p for p in self._places if not self._same(p, place)]
+            self._places.insert(0, place)
+            del self._places[RECENT_CAP:]
             self._save()
 
     def list(self) -> list[str]:
         with self._lock:
-            return list(self._idents)
+            return [p["id"] for p in self._places]
+
+    def places(self) -> list[dict]:
+        """Every entry as ``{"id", "type", "lat", "lon"}``; ``lat`` is
+        ``None`` for an entry stored without its place."""
+        with self._lock:
+            return [dict(p) for p in self._places]
 
 
 # ---------------------------------------------------------------------------
@@ -427,8 +492,9 @@ class WaypointIndex:
             con.row_factory = sqlite3.Row
             runway_len = dict(con.execute(
                 "SELECT site_no, MAX(length_ft) FROM runways GROUP BY site_no"))
+            state = _opt(_columns(con, "airports"), "state")
             for row in con.execute(
-                    "SELECT site_no, icao, name, lat, lon, elev_ft FROM airports"):
+                    f"SELECT site_no, icao, name, lat, lon, elev_ft, {state} FROM airports"):
                 raw_id = row["icao"] or ""
                 if not raw_id:
                     continue
@@ -436,7 +502,7 @@ class WaypointIndex:
                 wp = Waypoint(id=canonical, type="airport",
                               lat=row["lat"], lon=row["lon"],
                               name=(row["name"] or "").strip(),
-                              elev_ft=row["elev_ft"])
+                              elev_ft=row["elev_ft"], region=_region(row["state"], ""))
                 entry = _IndexEntry(waypoint=wp,
                                      runway_len_ft=runway_len.get(row["site_no"]))
                 entries.append(entry)
@@ -449,8 +515,10 @@ class WaypointIndex:
         con = sqlite3.connect(str(self._navaids_db_path))
         try:
             con.row_factory = sqlite3.Row
+            cols = _columns(con, "navaids")
+            where = ", ".join(_opt(cols, c) for c in ("state", "country"))
             for row in con.execute(
-                    "SELECT id, type, name, freq, elev_ft, lat, lon FROM navaids"):
+                    f"SELECT id, type, name, freq, elev_ft, lat, lon, {where} FROM navaids"):
                 ident = _norm_ident(row["id"])
                 if not ident:
                     continue
@@ -459,16 +527,21 @@ class WaypointIndex:
                 wtype = "ndb" if "NDB" in (row["type"] or "").upper() else "vor"
                 wp = Waypoint(id=ident, type=wtype, lat=row["lat"], lon=row["lon"],
                               name=(row["name"] or "").strip(),
-                              elev_ft=row["elev_ft"], freq=(row["freq"] or None))
+                              elev_ft=row["elev_ft"], freq=(row["freq"] or None),
+                              region=_region(row["state"], row["country"]))
                 entry = _IndexEntry(waypoint=wp)
                 entries.append(entry)
                 by_ident.setdefault(ident, []).append(entry)
 
-            for row in con.execute("SELECT id, use_code, lat, lon FROM fixes"):
+            cols = _columns(con, "fixes")
+            where = ", ".join(_opt(cols, c) for c in ("icao_region", "state", "country"))
+            for row in con.execute(f"SELECT id, use_code, lat, lon, {where} FROM fixes"):
                 ident = _norm_ident(row["id"])
                 if not ident:
                     continue
-                wp = Waypoint(id=ident, type="fix", lat=row["lat"], lon=row["lon"])
+                wp = Waypoint(id=ident, type="fix", lat=row["lat"], lon=row["lon"],
+                              region=_region(row["state"], row["country"]),
+                              icao_region=_norm_ident(row["icao_region"]))
                 entry = _IndexEntry(waypoint=wp)
                 entries.append(entry)
                 by_ident.setdefault(ident, []).append(entry)
@@ -493,13 +566,40 @@ class WaypointIndex:
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
-    def lookup(self, ident: str) -> list[Waypoint]:
+    def lookup(self, ident: str, region: str | None = None) -> list[Waypoint]:
         """Exact match across all types (duplicates are returned, caller
-        disambiguates)."""
+        disambiguates). With *region*, only the places in that region: it
+        matches either ``Waypoint.region`` (``TX``) or
+        ``Waypoint.icao_region`` (``K2``). A user waypoint has no region, so
+        a region excludes it."""
         self._wait_built()
         norm = _norm_ident(ident)
         out = [e.waypoint for e in self._by_ident.get(norm, [])]
         out.extend(self.user.lookup(norm))
+        if region:
+            want = _norm_ident(region)
+            out = [w for w in out if want in (w.region, w.icao_region)]
+        return out
+
+    def recent_waypoints(self, types=None) -> list[Waypoint]:
+        """The recent list as places, most recent first (FPA5, AER-6544).
+
+        An entry stored with its place resolves to that place: the record
+        of the same ident and type within ``model.SAME_FIX_NM``, and to
+        nothing if this database no longer holds it -- another place of the
+        same name would be a guess. An entry stored before places were
+        kept resolves by ident alone, and when that ident names more than
+        one place every one of them is listed."""
+        type_set = set(types) if types else None
+        out: list[Waypoint] = []
+        for place in self.recent.places():
+            matches = self.lookup(place["id"])
+            if place["lat"] is not None:
+                matches = [w for w in matches
+                           if w.type == place["type"]
+                           and geo.distance_nm(w.lat, w.lon, place["lat"], place["lon"])
+                           < SAME_FIX_NM][:1]
+            out.extend(w for w in matches if not type_set or w.type in type_set)
         return out
 
     def prefix(self, text: str, ref_lat: float, ref_lon: float,
