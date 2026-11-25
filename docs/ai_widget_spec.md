@@ -79,6 +79,7 @@ test catalog (§5). **Status** is the widget as of this writing.
 | **AI-SLIP-002** | **Excessive-sideslip** indication | `ALAT` beyond threshold | Salient slip alert | App A §A.2.6 p.70 | **DONE** — amber ball |
 | **AI-LIM-001** | **Pitch-limit / stall-margin** indication | approaching stall AOA | Pitch-limit marker `AOA.Warn - AOA` deg above the aircraft symbol | App A §A.2.4 p.70 | **DONE** — `_draw_pitch_limit` (AER-5086); look pending Bill's call on the PR renders |
 | **AI-BUG-001** | **Target-bank bug** (ATT1, AER-5149) | `BANKBUG` > 0 | Cyan arrow at ±`BANKBUG` outside the bank scale and a ±`bankBugTolerance` band over it, rolling with the scale, so on target the fixed pointer sits inside the band; hidden by the de-clutter; greyed when old/bad, absent when failed. Touch the scale + knob: 5° detents, 0 to 60 or `excessiveBankDeg` if lower | ACS steep turns (Private 45° ±5°, Commercial 50° ±5°) | **DONE** — `_draw_bank_bug`, `bank_bug_step` |
+| **AI-SVS-003** | The SVS camera never goes below the drawn surface (SVSFLOOR1) | camera height below the terrain, or below the runway polygon when the point is on one and it is higher | Lift the camera to that surface plus a 5 ft eye height (`SVS_EYE_HEIGHT_FT`). Silent up to 30 ft below (`SVS_FLOOR_BAND_FT`); past that, still lift and show amber **SVS HGT** where SVS UNAVAIL shows, clearing 5 ft back inside the band. Camera only: no FIX key is written, a camera above the floor is never moved, and the terrain stays drawn | Bill's ruling SVSFLOOR1 (AER-6595): an aircraft cannot be under the ground, so a large lift means the height input is wrong; annunciate, never restrict (AER-6245) | **DONE** — `SVSRenderer.floor_camera_alt`; tag text and placement pending Bill's look on the bench |
 
 **Thresholds.** "Unusual attitude" follows common EFIS/Part 25 convention — all
 configurable attributes:
@@ -138,6 +139,7 @@ removal. No `xfail` remains: `AI-LIM-001` left it with AER-5086.
 | 104 | **AI-SLIP-002** | `excessive_sideslip_annunciation` | pass |
 | 105 | **AI-LIM-001** | `pitch_limit_indication`; `test_ai_pitch_limit_hidden_on_degraded_aoa`, `_hidden_without_warn_setpoint`, `_disabled_without_aoa_key`, `_survives_declutter` | pass |
 | 106 | **AI-BUG-001** | `test_bank_bug.py` (band under the pointer inside tolerance, outside it off target, de-clutter, knob detents and cap, touch focus, missing key) | pass |
+| 006 | AI-SVS-003 | `test_svs_floor.py` (40 ft under the threshold lands the camera on the runway plus eye height; past the band under terrain lifts and shows SVS HGT; silent inside the band; tag hysteresis; a camera above the floor is not moved; no FIX key written; runway slope and drawn width) | pass |
 
 ## 6. Conventions and standards basis
 
