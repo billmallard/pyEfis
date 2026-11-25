@@ -11,6 +11,7 @@ from PyQt6.QtGui import QColor
 from pyefis.instruments import airspeed, altimeter, edit_focus, vsi
 from pyefis.instruments.airspeed import iassel
 from pyefis.screens import screenbuilder_factory as factory
+from pyefis.screens.screenbuilder_options import UNIT_SWITCHES
 from tests.instruments.altimeter.test_altsel import _Host
 from tests.instruments.autopilot.conftest import sent
 
@@ -385,8 +386,12 @@ def test_alt_tape_registry_defaults_match_the_widget(ap_db, qtbot):
     props = factory.REGISTRY["altimeter_tape"].properties
     dbkey = next(p.default for p in props if p.name == "dbkey")
     assert dbkey == "ALT"
+    # The unit switch (`altitude`) is applied after construction by
+    # apply_options, not by the builder, so it is not a tape attribute
+    # (AER-6586; tests/screens/test_unit_switch_options.py covers it).
     written = {p.name: p.default for p in props
-               if p.kind == "boolean" and p.apply == "special"}
+               if p.kind == "boolean" and p.apply == "special"
+               and p.name not in UNIT_SWITCHES}
     assert "vs_bug" in written
     unset = factory.build_altimeter_tape(None, {"options": {}})
     built = factory.build_altimeter_tape(None, {"options": written})
