@@ -131,6 +131,14 @@ attitude indicator. Without turning your head, you must be able to see the
 marker (or the window) and every warning or caution lamp. Repeat for each
 screen you switch to in flight.
 
+**At every power-up, before taxi.** Confirm `CAS TEST` on every screen you fly
+from: the white line in a CAS window, or the flashing advisory marker. Then
+acknowledge it once: touch the window, or touch the marker and then the list
+it opens. One acknowledge clears `CAS TEST` on every screen, so look at each
+screen before you touch. A screen that never showed it has lost its window or
+marker, or is clipping it off the glass. The gateway holds `CAS TEST` until it
+is acknowledged, for up to 10 minutes after it starts.
+
 If your panel runs no crew alerting and no warning or caution lamps, this
 requirement does not apply. Each instrument still shows its own failure flags.
 

@@ -38,6 +38,12 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 W, H = 1920, 1080   # --size overrides
+# CAS TEST must still be on the glass this long after the gateway starts:
+# past the old fixed 5 s and the 11 s reconnect re-read (AER-6497).
+HELD_S = 20.0
+# How long the display may take to draw it: the first boot here took 16 s
+# under software GL (AER-6497), so the old 15 s wait no longer fits.
+DRAW_WAIT_S = 60.0
 T0 = time.monotonic()
 FAILS = []
 
@@ -196,6 +202,13 @@ def window_rect(placement):
     row, col, rows, cols, _lines = PLACEMENTS[placement]
     x0, y0 = col * W / 200.0, row * H / 110.0
     return int(x0), int(y0), int(cols * W / 200.0), int(rows * H / 110.0)
+
+
+def first_line(placement):
+    """Where a touch on the window's first line lands."""
+    rect = window_rect(placement)
+    line_h = rect[3] / float(PLACEMENTS[placement][4])
+    return rect[0] + rect[2] / 2.0, rect[1] + line_h / 2.0
 
 
 def colour_counts(path, rect):
@@ -383,25 +396,34 @@ class Feeder:
 
 def run_steps(args, tmp, nf, gw, pe, plog, grab, touch, out):
     rect = window_rect(args.placement)
-    row, col, rows, cols, lines = PLACEMENTS[args.placement]
-    line_h = rect[3] / float(lines)
-    tap_xy = (rect[0] + rect[2] / 2.0, rect[1] + line_h / 2.0)
+    tap_xy = first_line(args.placement)
 
     def frame(name):
         return grab.grab(os.path.join(out, name + ".png"))
 
     # 14 (first half) and 1. CAS TEST at boot, then quiet.
-    t, text = plog.wait(lambda s: "CAS TEST" in s, 15, args._gw_start)
+    t, text = plog.wait(lambda s: "CAS TEST" in s, DRAW_WAIT_S, args._gw_start)
     shown = [tt for tt, x in plog.window() if "CAS TEST" in x]
     log("CAS TEST on the glass from {} to {} s after the gateway started".format(
         round(shown[0] - args._gw_start, 2) if shown else None,
         round(shown[-1] - args._gw_start, 2) if shown else None))
     check(t is not None, "step 14: CAS TEST drawn in the window after the "
           "gateway starts (proves plugin, bus, widget and glass)")
+    since = time.monotonic()
     if t is not None:
         frame("14a-cas-test-at-boot")
-    t, text = plog.wait(lambda s: s == "nothing", 15, args._gw_start + 1.0)
-    check(t is not None, "step 1: window draws nothing once CAS TEST clears")
+        # The gateway holds CAS TEST until acknowledged (fix-gateway
+        # AER-6497): still drawn well past the old 5 s, until the touch.
+        while time.monotonic() - max(args._gw_start + HELD_S, shown[0] + 2.0) < 0:
+            time.sleep(0.1)
+        check("CAS TEST" in (plog.latest() or ""), "step 14: CAS TEST still "
+              "drawn {:.0f} s after the gateway started".format(HELD_S))
+        frame("14a-cas-test-held-at-boot")
+        since = time.monotonic()
+        touch.tap(*tap_xy)
+    t, text = plog.wait(lambda s: s == "nothing", 5, since)
+    check(t is not None, "step 1: window draws nothing once CAS TEST is "
+          "touched ({} s)".format(None if t is None else round(t, 2)))
     check(nf.read("CASCNT")[0] == "0", "step 1: CASCNT 0 over raw netfix")
     f1 = frame("01-quiet")
     c = colour_counts(f1, rect)
@@ -602,16 +624,25 @@ def run_failures(args, tmp, nf, gw, pe, plog, grab, out, feed):
     stop(gw, "gateway (for the restart)")
     gw2 = start_gateway(os.path.abspath(args.fgw), args._gcfg, args._tmp)
     since = time.monotonic()
-    t, text = plog.wait(lambda s: "CAS TEST" in s, 20, since)
+    t, text = plog.wait(lambda s: "CAS TEST" in s, DRAW_WAIT_S, since)
     check(t is not None, "step 14: after a gateway restart under a running "
           "display, CAS TEST drawn ({} s after the restart)".format(
               None if t is None else round(t, 2)))
     shown = [tt for tt, x in plog.window(since) if "CAS TEST" in x]
     if t is not None:
         frame("14a-cas-test-after-gateway-restart")
-        t2, _ = plog.wait(lambda s: "CAS TEST" not in s, 15, shown[0])
-        log("CAS TEST on the glass for {} s".format(
-            None if t2 is None else round(t2, 2)))
+        while time.monotonic() - max(since + HELD_S, shown[0] + 2.0) < 0:
+            time.sleep(0.1)
+        check("CAS TEST" in (plog.latest() or ""), "step 14: after the "
+              "restart, CAS TEST still drawn {:.0f} s later".format(HELD_S))
+        frame("14a-cas-test-held-after-gateway-restart")
+        tapped = time.monotonic()
+        Touch().tap(*first_line(args.placement))
+        t2, _ = plog.wait(lambda s: "CAS TEST" not in s, 5, tapped)
+        check(t2 is not None, "step 14: after the restart, the touch takes "
+              "CAS TEST off ({} s)".format(None if t2 is None else round(t2, 2)))
+        log("CAS TEST on the glass from {:.2f} s to the touch at {:.2f} s "
+            "after the restart".format(shown[0] - since, tapped - since))
     return gw2
 
 
