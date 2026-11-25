@@ -41,6 +41,9 @@ CLI::
 
 import argparse
 import json
+import re
+import subprocess
+from pathlib import Path
 
 from pyefis.screens.screenbuilder_factory import (
     INSTRUMENT_DEFAULT_OPTIONS,
@@ -451,6 +454,32 @@ _ANNUNCIATOR = {
 }
 
 
+def _build_commit(here=None):
+    """The 40-hex pyEfis commit this schema is built from, or None.
+
+    The editor shows it in its header tooltip, so a served schema.json says
+    which pyEfis it describes. None when this module is not in a git checkout
+    (an installed wheel), when git is unavailable, or when a tracked file
+    differs from HEAD: such a tree is not that commit, and a stamp naming it
+    would be wrong. Untracked files (build output) do not count.
+    """
+    here = Path(here or __file__).resolve()
+    try:
+        def git(*args):
+            r = subprocess.run(["git", "-C", str(here.parent), *args],
+                               capture_output=True, text=True, timeout=10)
+            return r.stdout.strip() if r.returncode == 0 else None
+        top = git("rev-parse", "--show-toplevel")
+        if top is None or (Path(top) / "src/pyefis/editor/schema.py").resolve() != here:
+            return None  # not pyEfis's own checkout
+        sha = git("rev-parse", "HEAD")
+        if git("status", "--porcelain", "--untracked-files=no") != "":
+            return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return sha if sha and re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
 def build_schema():
     """Return the full instrument schema as a JSON-serialisable dict.
 
@@ -468,7 +497,7 @@ def build_schema():
 
     categories = set(_CATEGORIES.values()) | {
         spec.category for spec in REGISTRY.values()}
-    return {
+    out = {
         "schema_version": SCHEMA_VERSION,
         "generated_from": "pyefis.screens.screenbuilder_factory",
         "grid": {
@@ -484,6 +513,10 @@ def build_schema():
         "actions": _ACTIONS,
         "annunciator": _ANNUNCIATOR,
     }
+    commit = _build_commit()
+    if commit:
+        out["pyefis_commit"] = commit
+    return out
 
 
 def to_json(indent=2):
