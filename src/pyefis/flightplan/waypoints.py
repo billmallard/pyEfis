@@ -49,6 +49,14 @@ USER_WAYPOINT_CAP = 1000
 USER_DEDUPE_DEG = 0.0001
 RECENT_CAP = 20
 
+# NASR navaid types that are not a place to fly to: a VOR test facility (VOT)
+# transmits a fixed test radial on an airport, and a fan marker marks a point
+# on a course it does not define. The navaids pack carries 78 VOTs and 11 fan
+# markers (cycle 2611), and 25 VOTs share the ident of the VOR they test,
+# a few miles off -- ABQ, ALB, BOI -- so indexing them made those VORs read
+# as two places to every lookup (RTE1, AER-6454).
+_NOT_WAYPOINT_NAVAID_TYPES = frozenset({"VOT", "FAN MARKER"})
+
 _USER_ID_RE = re.compile(r"^[A-Z0-9]+$")
 
 
@@ -445,6 +453,8 @@ class WaypointIndex:
                     "SELECT id, type, name, freq, elev_ft, lat, lon FROM navaids"):
                 ident = _norm_ident(row["id"])
                 if not ident:
+                    continue
+                if (row["type"] or "").strip().upper() in _NOT_WAYPOINT_NAVAID_TYPES:
                     continue
                 wtype = "ndb" if "NDB" in (row["type"] or "").upper() else "vor"
                 wp = Waypoint(id=ident, type=wtype, lat=row["lat"], lon=row["lon"],
