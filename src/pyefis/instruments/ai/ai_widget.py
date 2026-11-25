@@ -355,10 +355,12 @@ class AI(QGraphicsView):
         # the missing-key guard below.
         # A VPATH that nothing writes is old, not failed: it sits at 0.0
         # and would pin the marker to the horizon, so old VPATH falls back
-        # too (AER-5799). Only VPATH tracks old; the four required keys
-        # keep their fail/bad gating unchanged.
+        # too (AER-5799). The four required keys track old as well (INS5,
+        # AER-6588): a stale one draws the marker in its degraded amber, as
+        # a bad one does, rather than as a live solution.
         self._fpm_fail = {k: True for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
         self._fpm_bad  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD', 'VPATH')}
+        self._fpm_old  = {k: False for k in ('VS', 'GS', 'TRACK', 'HEAD')}
         self._fpm_vpath_old = True
         self._fpm_vs    = 0.0
         self._fpm_gs    = 0.0
@@ -378,13 +380,20 @@ class AI(QGraphicsView):
             if key == 'VPATH':
                 _item.oldChanged[bool].connect(self._fpmVpathOldChanged)
                 self._fpm_vpath_old = _item.old
+            else:
+                _item.oldChanged[bool].connect(
+                    lambda o, k=key: self._fpmOldChanged(k, o))
+                self._fpm_old[key] = _item.old
             self._fpm_fail[key] = _item.fail
             self._fpm_bad[key]  = _item.bad
             setattr(self, f'_fpm_{key.lower()}', _item.value)
 
-        # SVS position inputs: LAT, LONG, ALT (disabled by default; renderer
+        # SVS position inputs: LAT, LONG, TALT (disabled by default; renderer
         # set via set_svs_config). Missing keys leave the SVS position at 0
         # and the renderer's ready gate will skip drawing if no tiles match.
+        # SVSALT1 (AER-6458): the camera height is TALT, the GPS/EKF MSL
+        # height, never ALT. ALT is indicated altitude and moves with the
+        # baro setting: 1 inHg off puts the terrain about 900 ft wrong.
         self._svs_lat  = 0.0
         self._svs_lon  = 0.0
         self._svs_alt  = 0.0
@@ -392,15 +401,17 @@ class AI(QGraphicsView):
         # AER-4243: position quality. A LAT/LONG that is old, bad or failed
         # removes the terrain (SVS UNAVAIL), the way a GL failure does --
         # terrain held at a frozen position while the aircraft flies on is
-        # hazardously misleading. A missing key counts as invalid.
+        # hazardously misleading. A missing key counts as invalid. TALT is
+        # gated the same way (Bill's ruling, SVSALT1): no silent fallback to
+        # ALT, so an install with no TALT writer shows SVS UNAVAIL.
         self._svs_pos_flags = {k: {"old": True, "bad": True, "fail": True}
-                               for k in ("LAT", "LONG")}
-        for key, attr in (("LAT", "_svs_lat"), ("LONG", "_svs_lon"), ("ALT", "_svs_alt")):
+                               for k in ("LAT", "LONG", "TALT")}
+        for key, attr in (("LAT", "_svs_lat"), ("LONG", "_svs_lon"), ("TALT", "_svs_alt")):
             try:
                 _item = fix.db.get_item(key)
             except KeyError:
                 log.warning(
-                    f"AI: FIX key '{key}' not defined — SVS will use 0.0 for {attr}")
+                    f"AI: FIX key '{key}' not defined — SVS will show SVS UNAVAIL")
                 continue
             _item.valueChanged[float].connect(
                 lambda v, k=key: self._positionValueChanged(k, v))
@@ -421,13 +432,26 @@ class AI(QGraphicsView):
         # constant rotational offset equal to local variation — small
         # error in low-variation regions, larger near the magnetic
         # poles.
+        #
+        # A bad or failed MAGVAR turns the terrain by an unknown amount, so it
+        # removes the SVS (SVS UNAVAIL) the way an invalid position does, and
+        # puts the FPM (whose drift uses it) in its degraded amber (INS5,
+        # AER-6588). An old one keeps its last value: variation moves about a
+        # degree per 60 NM, and a MAGVAR nothing writes ages to old at 0.0,
+        # which is the "not published" case above -- gating on old would
+        # remove the SVS on every install without a MAGVAR writer.
         self._magvar = 0.0
+        self._magvar_flags = {"bad": False, "fail": False}
         try:
             _item = fix.db.get_item("MAGVAR")
             _item.valueChanged[float].connect(
                 lambda v: (setattr(self, "_magvar", v),
                            setattr(self, "_frame_dirty", True)))
             self._magvar = _item.value
+            for flag in ("bad", "fail"):
+                getattr(_item, f"{flag}Changed")[bool].connect(
+                    lambda s, f=flag: self._magvarFlagChanged(f, s))
+                self._magvar_flags[flag] = getattr(_item, flag)
         except KeyError:
             log.warning(
                 "AI: FIX key 'MAGVAR' not defined — SVS heading "
@@ -944,7 +968,7 @@ class AI(QGraphicsView):
             device_pixel_ratio=vp.devicePixelRatioF(),
             roll_pivot_px=offset_px,
             lens_shift_px=offset_px,
-            position_valid=self._svs_position_valid())
+            position_valid=self._svs_geometry_valid())
 
     def _attach_svs_item_if_ready(self):
         """Idempotently add the background renderer's scene item to the
@@ -998,6 +1022,29 @@ class AI(QGraphicsView):
         if self.isVisible():
             self.update()
 
+    def _fpmOldChanged(self, key, old):
+        self._fpm_old[key] = old
+        if self.isVisible():
+            self.update()
+
+    def _magvarFlagChanged(self, flag, state):
+        """MAGVAR bad/fail. Repaint at once, like the position flags: the
+        terrain goes and SVS UNAVAIL shows."""
+        self._magvar_flags[flag] = state
+        self._frame_dirty = True
+        self._update_land_brush()
+        if self.isVisible():
+            self.update()
+
+    def _magvar_valid(self):
+        """False while MAGVAR is bad or failed (old is still usable)."""
+        return not any(self._magvar_flags.values())
+
+    def _svs_geometry_valid(self):
+        """What the SVS needs to place terrain: a valid position and a
+        usable MAGVAR for the true heading."""
+        return self._svs_position_valid() and self._magvar_valid()
+
     def _fpmVpathOldChanged(self, old):
         self._fpm_vpath_old = old
         if self.isVisible():
@@ -1012,9 +1059,9 @@ class AI(QGraphicsView):
         self.viewport().update()
 
     def _positionValueChanged(self, key, value):
-        """GPS/baro position inputs: store raw and timestamp into the
-        pose source, if a renderer brought one. The frame clock samples
-        the interpolated pose."""
+        """GPS position inputs (LAT, LONG, TALT): store raw and timestamp
+        into the pose source, if a renderer brought one. The frame clock
+        samples the interpolated pose."""
         pose = self._pose
         if key == "LAT":
             self._svs_lat = value
@@ -1024,14 +1071,14 @@ class AI(QGraphicsView):
             self._svs_lon = value
             if pose is not None:
                 pose.set_position(self._svs_lat, value)
-        elif key == "ALT":
+        elif key == "TALT":
             self._svs_alt = value
             if pose is not None:
                 pose.set_altitude(value)
         self._frame_dirty = True
 
     def _positionFlagChanged(self, key, flag, state):
-        """LAT/LONG old/bad/fail. Repaint at once, like the attitude flags:
+        """LAT/LONG/TALT old/bad/fail. Repaint at once, like the attitude flags:
         dropping the terrain is an alert, not a frame-clock sample."""
         self._svs_pos_flags[key][flag] = state
         self._frame_dirty = True
@@ -1040,7 +1087,8 @@ class AI(QGraphicsView):
             self.update()
 
     def _svs_position_valid(self):
-        """True when LAT and LONG are both current, not bad and not failed."""
+        """True when LAT, LONG and TALT are all current, not bad and not
+        failed."""
         return not any(any(f.values()) for f in self._svs_pos_flags.values())
 
     def _aoaValueChanged(self, value):
@@ -1174,7 +1222,7 @@ class AI(QGraphicsView):
         return (getattr(s, "enabled", False)
                 and getattr(s, "ready", False)
                 and not getattr(s, "gl_failed", False)
-                and self._svs_position_valid()
+                and self._svs_geometry_valid()
                 and getattr(s, "drew_terrain", False))
 
     def _update_land_brush(self):
@@ -1217,7 +1265,8 @@ class AI(QGraphicsView):
         if not self.show_fpm or not self._fpm_solution_valid():
             return
         required = ('VS', 'GS', 'TRACK', 'HEAD')
-        fpm_bad = any(self._fpm_bad[k] for k in required)
+        fpm_bad = (any(self._fpm_bad[k] or self._fpm_old[k] for k in required)
+                   or not self._magvar_valid())
 
         # Vertical flight path angle. Prefer the authoritative VPATH
         # FIX key when the source publishes it (X-Plane idx 18 slot 3
@@ -1491,7 +1540,8 @@ class AI(QGraphicsView):
         # up with the SVS terrain (the magnetic variation cancels out).
         if not getattr(self, "horizon_heading_marks", False):
             return
-        if self._fpm_bad.get("HEAD") or self._fpm_fail.get("HEAD"):
+        if self._fpm_bad.get("HEAD") or self._fpm_fail.get("HEAD") \
+                or self._fpm_old.get("HEAD"):
             return
         ppd = getattr(self, "pixelsPerDeg",
                       self.height() / self.pitchDegreesShown)
@@ -1770,13 +1820,13 @@ class AI(QGraphicsView):
         # as if terrain awareness were available. Resolve the renderer
         # clobber-safe (self.svs is often the YAML config DICT, on which
         # every getattr returns False — which would suppress this warning).
-        # A LAT/LONG that is old, bad or failed removes the terrain too
-        # (AER-4243), so it gets the same annunciation.
+        # A LAT/LONG/TALT that is old, bad or failed removes the terrain too
+        # (AER-4243, SVSALT1), so it gets the same annunciation.
         _svs = self._live_svs()
         if (_svs is not None
                 and getattr(_svs, "enabled", False)
                 and (getattr(_svs, "gl_failed", False)
-                     or not self._svs_position_valid())):
+                     or not self._svs_geometry_valid())):
             p.save()
             _af = QFont(self.font_family, -1, QFont.Weight.Bold)
             _af.setPixelSize(max(12, qRound(self.fontSize * 0.9)))

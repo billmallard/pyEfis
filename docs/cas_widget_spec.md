@@ -44,8 +44,10 @@ window, the design's first concern is that a quiet window can never be a failed 
   clear, only local alerts are drawn.
 - **Shipped config.** No shipped screen carries the window: where it goes is the builder's
   choice in the configurator, on its own screen or beside the attitude display (project
-  owner, 2026-11-23). Every shipped screen but data status and About carries a marker, so
-  the shipped panel raises no `CAS NOT SHOWN` and the full list opens from any screen.
+  owner, 2026-11-23). Every screen in the default list but data status and About carries a
+  marker, so the shipped panel raises no `CAS NOT SHOWN` and the full list opens from any
+  screen. So does each portrait and left-buttons layout of them that `preferences.yaml` or
+  the Legacy page offers (AER-6602); the Android screens, outside the default list, do not.
 
 ## 3. Data contract
 

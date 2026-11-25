@@ -56,8 +56,10 @@ class FramePose:
     *heading_true_deg* is already corrected for magnetic variation.
     *roll_pivot_px* and *lens_shift_px* are pixels above the viewport
     centre (the AI's raised horizon reference, horizon_position).
-    *position_valid* is False when LAT or LONG is old, bad or failed: the
-    renderer must not draw terrain for that position (AER-4243).
+    *position_valid* is False when LAT, LONG or TALT is old, bad or failed:
+    the renderer must not draw terrain for that position (AER-4243,
+    SVSALT1). *alt_ft* is TALT, the geometric MSL height, never the
+    baro-corrected ALT.
     """
     width: int
     height: int
