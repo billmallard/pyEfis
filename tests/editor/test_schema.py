@@ -17,6 +17,8 @@
 """Tests for the config-editor instrument schema exporter."""
 
 import json
+import re
+import subprocess
 
 from pyefis.editor import schema as eschema
 from pyefis.screens import screenbuilder_factory as factory
@@ -161,3 +163,85 @@ def test_action_catalogue_is_well_formed():
             assert a.get(f), f"action {a.get('verb')!r} missing {f}"
         assert a["arg"]["kind"] in KINDS, \
             f"action {a['verb']!r}: unknown arg kind {a['arg'].get('kind')!r}"
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), *args], check=True,
+                   capture_output=True, text=True)
+
+
+def _checkout(root):
+    """A throwaway git checkout laid out like pyEfis, one commit deep."""
+    mod = root / "src" / "pyefis" / "editor" / "schema.py"
+    mod.parent.mkdir(parents=True)
+    mod.write_text("# stand-in\n")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c")
+    sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                         capture_output=True, text=True).stdout.strip()
+    return mod, sha
+
+
+def test_schema_stamps_the_commit_it_was_built_from(tmp_path):
+    """INS4: schema.json names the pyEfis commit it describes (the editor's
+    header tooltip). A clean checkout is stamped with HEAD's full SHA, and
+    untracked build output does not change that."""
+    mod, sha = _checkout(tmp_path)
+    assert re.fullmatch(r"[0-9a-f]{40}", sha)
+    assert eschema._build_commit(mod) == sha
+    (tmp_path / "work").mkdir()
+    (tmp_path / "work" / "schema.json").write_text("{}")
+    assert eschema._build_commit(mod) == sha
+
+
+def test_schema_is_not_stamped_from_a_tree_that_is_not_the_commit(tmp_path):
+    """A tracked change means the tree is not HEAD: no stamp rather than a
+    wrong one. Neither is a module outside a checkout, or one sitting inside
+    some other repository."""
+    mod, _ = _checkout(tmp_path / "repo")
+    mod.write_text("# edited\n")
+    assert eschema._build_commit(mod) is None
+
+    loose = tmp_path / "loose" / "schema.py"
+    loose.parent.mkdir()
+    loose.write_text("")
+    assert eschema._build_commit(loose) is None
+
+    other, _ = _checkout(tmp_path / "other")
+    vendored = other.parent / "site" / "schema.py"
+    vendored.parent.mkdir()
+    vendored.write_text("")
+    _git(tmp_path / "other", "add", "-A")
+    _git(tmp_path / "other", "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-qm", "v")
+    assert eschema._build_commit(vendored) is None
+
+
+def test_build_schema_carries_the_stamp_only_when_there_is_one(monkeypatch):
+    monkeypatch.setattr(eschema, "_build_commit", lambda: "a" * 40)
+    assert eschema.build_schema()["pyefis_commit"] == "a" * 40
+    monkeypatch.setattr(eschema, "_build_commit", lambda: None)
+    assert "pyefis_commit" not in eschema.build_schema()
+
+
+def test_common_font_default_is_the_screen_builders(qtbot):
+    """INS4: common_options.font_family is the font an instrument draws in when
+    its config names none. The screen builder hands every factory that font,
+    so a widget's own constructor default is never reached: value_text's says
+    Open Sans and still draws DejaVu Sans Condensed. No type needs a per-type
+    font_family default while this holds."""
+    from PyQt6.QtWidgets import QWidget
+    from pyefis.screens import screenbuilder_preferences as prefs
+
+    common = eschema.build_schema()["common_options"]["font_family"]["default"]
+    cfg = {"type": "value_text", "options": {"dbkey": "IAS"}}
+    font_percent, font_family = prefs.apply_preferences(cfg, {})
+    assert font_family == common
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    widget = factory.REGISTRY["value_text"].builder(
+        parent, cfg, font_percent=font_percent, font_family=font_family)
+    assert widget.font_family == common
+    assert not any("font_family" in meta["options"]
+                   for meta in eschema.build_schema()["instruments"].values())

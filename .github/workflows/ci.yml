@@ -38,6 +38,26 @@ jobs:
           src/fixgw/geo.py
           src/fixgw/config/database/ahrs.yaml
         sparse-checkout-cone-mode: false
+    # INS4: the configurator's twins restate some of what schema.json says (an enum,
+    # a colour default, which types draw a live preview). Its checker reads the real
+    # editor.html; makerplane-data docs/schema_twin_check.md is the contract. dev,
+    # not main: main lags dev and lacks twins for types pyEfis dev declares.
+    - name: Check out the configurator's twins
+      uses: actions/checkout@v6
+      with:
+        repository: billmallard/makerplane-data
+        ref: dev
+        path: _mpd
+        sparse-checkout: |
+          configurator/package.json
+          configurator/tools/schema_twin_check.mjs
+          configurator/public/aircraft_refs.js
+          configurator/public/editor.html
+          configurator/test/support/extract.mjs
+        sparse-checkout-cone-mode: false
+    - uses: actions/setup-node@v5
+      with:
+        node-version: "22"
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
       with:
@@ -74,6 +94,15 @@ jobs:
       # entry fails. The runtime check (R4) and the write audit (R5) run in pytest,
       # tests/safety/.
       run: python tools/core_imports.py check
+    - name: The configurator's twins agree with the schema just built
+      # INS4. Fails on an error, and (--strict) on a warning such as a missing
+      # pyefis_commit stamp. A new type with no twin goes onto PLACEHOLDER_ONLY in
+      # makerplane-data first.
+      env:
+        QT_QPA_PLATFORM: offscreen
+      run: |
+        python -m pyefis.editor.schema -o "$RUNNER_TEMP/schema.json"
+        node _mpd/configurator/tools/schema_twin_check.mjs "$RUNNER_TEMP/schema.json" --strict
     - name: Every FIX key pyEfis writes is declared in fix-gateway's writer register; no new route-concept class
       # ARCHG2. Fetches fix-gateway's scanner and writers.yaml at the commit in
       # tests/arch/fix_gateway.pin (the cache the pytest cases reuse); docs/key_writers.md
