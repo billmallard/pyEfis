@@ -21,7 +21,11 @@ themselves). Every DB-backed object is construct-never-raises with
   cannot drift apart.
 - **`waypoints.py`** (FP3) — `WaypointIndex`: in-memory identifier index over
   the on-device `airports.sqlite`/`navaids.sqlite` packs, FastFind (`prefix`),
-  `nearest`, plus `UserWaypointStore` and `RecentList`.
+  `nearest`, plus `UserWaypointStore` and `RecentList`. Each `Waypoint`
+  carries `region` (the NASR state, else the country) and `icao_region`
+  (fixes only) from packs built since FPA5; `lookup(ident, region=)`
+  narrows by either. `RecentList` stores each pick's type and position, so
+  `recent_waypoints()` returns that place, not the first of its ident.
 - **`airways.py`** (PA2, procedures epic) — `AirwayGraph`: lookup + expansion
   over the `procedures` pack's `airways`/`airway_legs` tables. `expand()`
   emits `type="fix"` legs, each carrying the MEA of the airway leg that ends
@@ -496,7 +500,7 @@ screen, the `checklist` broadcast precedent).
 | Verb | Payload |
 |------|---------|
 | `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc`/`charts` open those pages |
-| `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
+| `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut); an ident that names more than one place opens the DTO page on the duplicate chooser (FPA5) |
 
 ### From the moving map (FP10)
 
