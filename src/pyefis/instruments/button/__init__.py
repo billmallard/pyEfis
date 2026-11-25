@@ -87,6 +87,9 @@ class Button(QWidget):
             # However not using toggled for toggle buttons breaks
             # things such as encoder navigation
             self._button.toggled.connect(self.buttonToggled)
+            if hmi.data.binds(self._dbkey.key):
+                hmi.data.release(self._dbkey.key,
+                                 "a toggle button uses it ({})".format(self.config.get('text', '')))
 
         elif btype == 'simple':
             self._button.setCheckable(False)
@@ -184,6 +187,15 @@ class Button(QWidget):
         #self._dbkey.output_value()
 
         if not self.isVisible(): return
+        # A data binding on this key acts on every screen (DSP2); acting here
+        # too would step twice while the button shows.  The button still
+        # draws pressed while the key is held, as before; setDown emits no
+        # signal, so nothing runs.  A touch still acts through buttonToggled.
+        # A toggle keeps following its key.
+        if not self._toggle and hmi.data.binds(self._dbkey.key):
+            if self._repeat:
+                self._button.setDown(bool(self._dbkey.value))
+            return
         #self._db_data[self._dbkey.key] = self._dbkey.value
         if self._toggle and self._button.isChecked() == self._dbkey.value:
             #This is a recursive call do nothing

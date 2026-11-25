@@ -200,21 +200,27 @@ def test_terrain_process_job_supersede_when_job_moves_on(qapp, monkeypatch):
     assert lay._img is not None and lay._img[1] == key
 
 
-def test_terrain_request_counts_once_for_same_key_repost(qapp, qtbot):
+def test_terrain_request_counts_once_for_same_key_repost(qapp):
     """The #89 same-key dedup in ``_request`` must not double-count a
     repost as a second ``jobs_requested``. Uses a real background worker
     (unlike the ``_process_job`` tests above), so the owner needs a real
     ``update()`` -- a bare stub makes the worker thread's completion
-    callback raise on a delayed background thread."""
+    callback raise on a delayed background thread.
+
+    The worker loop never exits, so it cannot be joined; instead the
+    owner's ``update()`` -- which the worker calls after publishing --
+    sets an event. The wait is a hang guard, not a performance bound: a
+    1 s ``waitUntil`` flaked on a loaded CI runner (AER-6613)."""
     lay = TerrainLayer()
     lay._cache = _FakeCache()
+    published = threading.Event()
 
     class Owner:
         _alt_ft = 0.0
         perf = MapPerfStats()
 
         def update(self):
-            pass
+            published.set()
     owner = Owner()
     lay._owner = owner
     x = _xform()
@@ -222,7 +228,11 @@ def test_terrain_request_counts_once_for_same_key_repost(qapp, qtbot):
     lay._request(key, x)
     lay._request(key, x)
     assert owner.perf.layer("terrain").jobs_requested == 1
-    qtbot.waitUntil(lambda: lay._img is not None, timeout=1000)
+    assert published.wait(timeout=60), "terrain worker never published"
+    assert lay._img is not None and lay._img[1] == key
+    ls = owner.perf.layer("terrain")
+    assert ls.jobs_requested == 1
+    assert ls.jobs_published == 1
 
 
 # --- water-path counters (brief: polys/verts before+after, QPointF) -----

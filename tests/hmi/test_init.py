@@ -34,7 +34,7 @@ def test_initialize_with_databindings(log_mock):
             # Check that ActionClass was instantiated
             mock_action_class.assert_called_once()
             # Check that data.initialize was called with correct config
-            mock_data_initialize.assert_called_once_with(config["databindings"])
+            mock_data_initialize.assert_called_once_with(config["databindings"], 1)
 
 
 def test_initialize_without_databindings(log_mock):
@@ -52,5 +52,5 @@ def test_initialize_without_databindings(log_mock):
             log_mock.return_value.info.assert_called_once_with("Initializing Actions")
             # Check that ActionClass was instantiated
             mock_action_class.assert_called_once()
-            # Check that data.initialize was not called
-            mock_data_initialize.assert_not_called()
+            # data.initialize still runs, to clear the last set of bindings
+            mock_data_initialize.assert_called_once_with(None, 1)
