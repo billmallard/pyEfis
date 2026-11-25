@@ -172,6 +172,20 @@ external YAML) or inline fields including 'dbkey:'`.
 | `toggle` | On and off; fires on both. The button and `dbkey` stay in step. |
 | `repeat` | Like `simple`, but repeats while held. |
 
+A button acts on its `dbkey` only while its screen shows. The stock panel
+commands are therefore also data bindings, in `databindings/default.yaml`: baro
++/-, dimmer +/-, the nine trim buttons, heading bug -/sync/+ and CDI source.
+Each runs its button file's command on that button's key (`TSBTN{id}1` to
+`TSBTN{id}11` and `TSBTN{id}27` to `TSBTN{id}33`), on every screen, and a key
+held true repeats with the button's `repeat_delay` and `repeat_interval`. So a
+panel key or a GPIO button that writes the key works whatever screen is up. A
+`simple` or `repeat` button on a bound key leaves the key to the binding, so a
+press acts once while the button shows; touching the button still acts, as
+before. An install whose `databindings/default.yaml` predates these bindings
+keeps the old behaviour until the file is replaced. A binding's `key` takes
+`{id}` as a button's `dbkey` does; `repeat_delay` and `repeat_interval` (ms) on
+a binding with a `condition` repeat its action while the condition stays true.
+
 ### Conditions
 
 `conditions:` is an ordered list of rules. Each has a `when:` and `actions:`.
