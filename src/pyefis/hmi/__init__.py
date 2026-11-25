@@ -31,5 +31,6 @@ def initialize(config):
     log.info("Initializing Actions")
     actions = actionclass.ActionClass()
 
-    if "databindings" in config:
-        data.initialize(config["databindings"])
+    # Always called, so a restart without bindings clears the last set
+    data.initialize(config.get("databindings"),
+                    (config.get("main") or {}).get("nodeID", 1))
