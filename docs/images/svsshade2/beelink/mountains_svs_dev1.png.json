@@ -1,0 +1,96 @@
+{
+ "schema": "evidence-sidecar/1",
+ "commit": "de10421e-dirty",
+ "run": "local: tools/svs_capture.py --out /home/pyefis/bench-scratch/aer6401/out/mountains_svs_dev1.png --lat 39.20 --lon -106.85 --alt 12500 --heading 150 --tiles /data/makerplane-data/terrain/tiles --nasr /data/makerplane-data/navdata/current/airports.sqlite --water /data/makerplane-data/water/current/water.sqlite --offscreen --width 800 --height 480 --range 15",
+ "device": "AZW MINI S (xcb)",
+ "sha256": "01c1786621125e9d7c842e9bbc50dd9d86520e0a581fb03a074bfcab67527680",
+ "created_utc": "2026-11-23T14:56:04Z",
+ "platform": {
+  "board": "AZW MINI S",
+  "cpu_model": "Intel(R) N150",
+  "cpu_stepping": "0",
+  "microcode": "0x21",
+  "cpus_online": "0-3",
+  "cpus_online_count": 4,
+  "cpufreq": [
+   {
+    "policy": "policy0",
+    "cpus": "0",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 3600034
+   },
+   {
+    "policy": "policy1",
+    "cpus": "1",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 3142298
+   },
+   {
+    "policy": "policy2",
+    "cpus": "2",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 3374888
+   },
+   {
+    "policy": "policy3",
+    "cpus": "3",
+    "driver": "intel_pstate",
+    "governor": "powersave",
+    "min_khz": 700000,
+    "max_khz": 3600000,
+    "hw_min_khz": 700000,
+    "hw_max_khz": 3600000,
+    "cur_khz": 1951786
+   }
+  ],
+  "governor": "powersave",
+  "intel_pstate": {
+   "status": "active",
+   "no_turbo": 0,
+   "min_perf_pct": 19,
+   "max_perf_pct": 100
+  },
+  "affinity": "0-3",
+  "affinity_count": 4,
+  "throttle": {
+   "core_throttle_count": [
+    5525,
+    5525,
+    5525,
+    5525
+   ],
+   "package_throttle_count": 5525
+  },
+  "temperature_c": {
+   "acpitz": 27.8,
+   "x86_pkg_temp": 57.0
+  },
+  "soc_temp_c": 57.0
+ },
+ "pyefis_rev": "de10421e-dirty",
+ "capture_mode": "offscreen",
+ "requested_size": [
+  800,
+  480
+ ],
+ "actual_size": [
+  800,
+  480
+ ],
+ "argv": "tools/svs_capture.py --out /home/pyefis/bench-scratch/aer6401/out/mountains_svs_dev1.png --lat 39.20 --lon -106.85 --alt 12500 --heading 150 --tiles /data/makerplane-data/terrain/tiles --nasr /data/makerplane-data/navdata/current/airports.sqlite --water /data/makerplane-data/water/current/water.sqlite --offscreen --width 800 --height 480 --range 15"
+}

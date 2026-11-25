@@ -26,7 +26,9 @@ The catalog's single source of truth is ``screenbuilder_factory.REGISTRY``
   * the exported schema for a migrated type comes verbatim from its record;
   * the widget actually exposes every ``apply="attr"`` property the record
     declares -- so a renamed/typo'd property fails CI instead of silently
-    doing nothing on the panel.
+    doing nothing on the panel;
+  * a widget's runtime ``LiveBind`` list matches its record's ``bindable``
+    props field by field.
 
 See docs/instrument_spec.md and docs/adding_an_instrument.md.
 """
@@ -82,6 +84,14 @@ def test_registry_types_are_real_factory_types():
         assert callable(spec.builder), f"{t}: spec.builder is not callable"
         assert factory.INSTRUMENT_FACTORIES[t] is spec.builder, (
             f"{t}: INSTRUMENT_FACTORIES is not sourced from the registry")
+
+
+def test_every_factory_type_has_a_record():
+    """The curated fallback (eschema._entry_from_curation) is for a factory
+    type with no record. Every type is migrated, so none may take it."""
+    orphans = set(factory.INSTRUMENT_FACTORIES) - set(factory.REGISTRY)
+    assert not orphans, (
+        f"factory types with no REGISTRY record: {sorted(orphans)}")
 
 
 def test_migrated_types_are_not_double_defined_in_curation():
@@ -320,3 +330,108 @@ def test_superseded_types_are_hidden_from_the_palette():
         assert s["instruments"][t]["hidden"] is True, t
         # still present + buildable -- hidden only suppresses palette placement
         assert t in factory.INSTRUMENT_FACTORIES, t
+
+
+# --- Live bindings: the widget's LiveBind list against the record (INS2) ----
+# A widget that takes runtime control keys lists them in _live_binding_specs(),
+# which restates the semantics, key option, ladder and enum of each ``bindable``
+# Prop. These tests hold the two together, field by field.
+
+def _binding_mismatches(spec, binds):
+    """Every difference between *spec*'s bindable props and *binds* (a
+    widget's LiveBind list), as readable strings; empty when they agree."""
+    problems = []
+    names = {p.name for p in spec.properties}
+    fixkeys = {p.name for p in spec.properties if p.kind == "fixkey"}
+    declared = {p.name: p for p in spec.properties if p.bindable}
+    live = {}
+    for b in binds:
+        if b.attr in live:
+            problems.append(f"{b.attr}: two LiveBinds on the widget")
+        live[b.attr] = b
+    for name in sorted(set(declared) - set(live)):
+        problems.append(f"{name}: bindable in the record, no LiveBind")
+    for name in sorted(set(live) - set(declared)):
+        problems.append(f"{name}: LiveBind on the widget, not bindable in "
+                        "the record")
+    for name in sorted(set(declared) & set(live)):
+        p, b = declared[name], live[name]
+        enum = (tuple(p.enum or ()) if p.bindable.semantics == "enum"
+                else ())
+        want = {"semantics": p.bindable.semantics,
+                "key_option": p.bindable.key_option or f"{name}_key",
+                "ladder_option": p.bindable.ladder_option,
+                "enum": enum}
+        got = {"semantics": b.semantics, "key_option": b.key_option,
+               "ladder_option": b.ladder_option, "enum": tuple(b.enum)}
+        for field_name, value in want.items():
+            if got[field_name] != value:
+                problems.append(f"{name}.{field_name}: record {value!r}, "
+                                f"widget {got[field_name]!r}")
+        if want["key_option"] not in fixkeys:
+            problems.append(f"{name}: key option {want['key_option']!r} is "
+                            "not a fixkey prop of the record")
+        if want["ladder_option"] and want["ladder_option"] not in names:
+            problems.append(f"{name}: ladder option "
+                            f"{want['ladder_option']!r} is not a prop of the "
+                            "record")
+    return problems
+
+
+def _live_binds(t, spec, qtbot):
+    """The widget's LiveBind list, or None if its class takes no live
+    bindings."""
+    cls = _widget_class(t, spec, qtbot)
+    if not hasattr(cls, "_live_binding_specs"):
+        return None
+    assert spec.builds_in_isolation, (
+        f"{t}: {cls.__name__} has _live_binding_specs but cannot be built "
+        "standalone; teach this test to read its bindings")
+    widget = spec.builder(
+        None, {"type": t, "options": _ctor_options(spec)}, font_percent=0.05,
+        font_family="DejaVu Sans Condensed", replace=None)
+    qtbot.addWidget(widget)
+    return widget._live_binding_specs()
+
+
+def test_live_bindings_match_the_record(fix, qtbot, hmi_actions):
+    """Every widget with _live_binding_specs agrees with its record's
+    bindable props on semantics, key option, ladder option and enum; and a
+    record with bindable props has a widget that reads them."""
+    checked = []
+    for t, spec in factory.REGISTRY.items():
+        binds = _live_binds(t, spec, qtbot)
+        if binds is None:
+            bindable = [p.name for p in spec.properties if p.bindable]
+            assert not bindable, (
+                f"{t}: record marks {bindable} bindable, but the widget has "
+                "no _live_binding_specs to read them")
+            continue
+        assert _binding_mismatches(spec, binds) == [], t
+        checked.append(t)
+    assert "moving_map" in checked     # the check is not vacuous
+
+
+@pytest.mark.parametrize("change", [
+    {"semantics": "scalar"},
+    {"key_option": "range_ctl_key"},
+    {"ladder_option": "range_steps"},
+    {"enum": ("north_up", "track_up")},
+    {"attr": "range_nautical"},
+])
+def test_live_binding_check_catches_a_seeded_mismatch(fix, qtbot,
+                                                      hmi_actions, change):
+    """Seed one wrong field into the map's real LiveBind list: the check
+    must name it. ``enum`` is seeded on the orientation binding (reordered,
+    so 0 would select north-up), the rest on range."""
+    import dataclasses
+    spec = factory.REGISTRY["moving_map"]
+    binds = _live_binds("moving_map", spec, qtbot)
+    attr = "orientation" if "enum" in change else "range_nm"
+    seeded = [dataclasses.replace(b, **change) if b.attr == attr else b
+              for b in binds]
+    problems = _binding_mismatches(spec, seeded)
+    assert problems, change
+    field_name = next(iter(change))
+    if field_name != "attr":
+        assert any(f".{field_name}:" in p for p in problems), problems

@@ -147,7 +147,7 @@ class FMAModel:
 
     @property
     def disconnect(self):
-        return self.ap.fresh and bool(self.ap.value("APDISC"))
+        return self.ap.disconnected
 
     def animating(self, now=None):
         """Does anything on the strip still flash (the widget's timer)?"""

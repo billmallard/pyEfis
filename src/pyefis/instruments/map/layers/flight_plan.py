@@ -92,6 +92,7 @@ from pyavtools import fix as pyavtools_fix
 from pyefis.flightplan import fixbridge as fp_fixbridge
 from pyefis.flightplan import geo as fp_geo
 from pyefis.flightplan import leg_paths as fp_legs
+from pyefis.flightplan import vocab as fp_vocab
 from pyefis.flightplan.waypoints import WAYPOINT_TYPES, Waypoint
 from pyefis.instruments.map.layers import (STANDARD_PALETTE, MapLayer,
                                            find_drawn, hit_distance, qcolor,
@@ -580,12 +581,14 @@ def parse_alt_constraint(alt):
     ``[]`` for an empty or unreadable field."""
     alt = (alt or "").strip()
     try:
-        if alt[:1] == "B":
+        if alt[:1] == fp_vocab.ALT_BETWEEN:
             lo, hi = sorted(int(float(v)) for v in alt[1:].split(","))
             return [(str(hi), True, False), (str(lo), False, True)]
-        if alt[:1] in "+-@":
+        if alt[:1] and alt[:1] in fp_vocab.ALT_PREFIXES:
             n = str(int(float(alt[1:])))
-            return [(n, alt[0] in "-@", alt[0] in "+@")]
+            over = alt[0] in (fp_vocab.ALT_AT_OR_BELOW, fp_vocab.ALT_AT)
+            under = alt[0] in (fp_vocab.ALT_AT_OR_ABOVE, fp_vocab.ALT_AT)
+            return [(n, over, under)]
         if alt:
             return [(str(int(float(alt))), False, False)]
     except ValueError:

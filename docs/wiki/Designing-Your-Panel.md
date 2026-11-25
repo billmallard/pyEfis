@@ -82,6 +82,70 @@ button so a touch-only panel can step through them. With one screen, the
 panel replaces the device's default screen and the stock screens stay
 available. See [Setting Up a Device](Setting-Up-a-Device#5-pull-your-panel).
 
+## Installation requirement: crew alerts in your primary field of view
+
+This applies if your panel runs crew alerting (the fix-gateway `cas` plugin,
+shown by the `cas_window` and `cas_marker` instruments), or carries
+`annunciator` lamps that can show a warning or a caution. It is a requirement
+on how you install the displays and lay out the screens. pyEFIS does not
+check it, and the configurator cannot: only you know where each display sits
+in your panel and where your eyes are.
+
+**The requirement.** On every screen you fly from, a CAS marker (`cas_marker`)
+or the CAS window (`cas_window`) **must** sit in your primary field of view.
+Any annunciator lamp that can show a warning or a caution **must** sit in your
+primary field of view too, on every screen that carries one.
+
+- **A screen you fly from** is any screen that is up on a display in front of
+  you in flight. That includes a screen you switch to, such as Engine, Map or
+  Radios: while it is up, you are flying from it, and its marker is the only
+  alert cue in front of you.
+- **Your primary field of view** is what you can see by moving your eyes alone,
+  without turning your head, from your normal seated eye position. FAA
+  guidance for certificated aircraft puts warnings and cautions within 15
+  degrees of your normal line of sight, and this requirement adopts that
+  figure. With the panel about 30 inches from your eyes, that is within about
+  8 inches, measured horizontally centre to centre, of the centre of the basic
+  T on your PFD (AC 23.1311-1C section 15.2
+  and Table 3; AC 25.1322-1 Appendix 5).
+- **Both halves are yours:** where each display is mounted in the panel, and
+  where you place the marker, window or lamp on its screen. A marker in the far
+  corner of a display mounted out on the right side of the panel can fail on
+  either count.
+
+The full CAS window does not have to be in your primary field of view. It can
+sit on its own screen: the marker shows the highest active level, flashes
+until you acknowledge, and a touch on it opens the list.
+
+**Why.** pyEFIS has no alert tone yet. Warnings and cautions are visual only,
+so the flashing marker, window or lamp is the only thing that draws your eye to
+a new alert. Outside your primary field of view, a new caution can flash
+unnoticed until your scan happens to reach it. AC 23.1311-1C Table 3 Note 4
+accepts warnings and cautions out to 35 degrees only with a unique aural tone,
+or a master warning or caution light within 15 degrees. This installation has
+neither, so the 15-degree figure applies. The requirement will be reviewed when
+pyEFIS gains an alert tone.
+
+**How to check it.** Sit in your normal flying position with your eyes on the
+attitude indicator. Without turning your head, you must be able to see the
+marker (or the window) and every warning or caution lamp. Repeat for each
+screen you switch to in flight.
+
+**At every power-up, before taxi.** Confirm `CAS TEST` on every screen you fly
+from: the white line in a CAS window, or the flashing advisory marker. Then
+acknowledge it once: touch the window, or touch the marker and then the list
+it opens. One acknowledge clears `CAS TEST` on every screen, so look at each
+screen before you touch. A screen that never showed it has lost its window or
+marker, or is clipping it off the glass. The gateway holds `CAS TEST` until it
+is acknowledged, for up to 10 minutes after it starts.
+
+If your panel runs no crew alerting and no warning or caution lamps, this
+requirement does not apply. Each instrument still shows its own failure flags.
+
+The hazard assessment cites this section as the mitigation for crew alerting
+being visual only (FHA rows CAS-1 and O11, in pyEFIS
+`docs/safety/fha_avionics_stack.md`).
+
 ## Getting the design to the aircraft
 
 1. **Save** in the editor. The status line shows the saved version.

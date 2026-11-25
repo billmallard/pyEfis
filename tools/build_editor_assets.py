@@ -18,7 +18,8 @@
 """Build the configuration manager's static editor-asset bundle:
 
     <out>/schema.json            the enriched instrument schema (palette + props)
-    <out>/palette/<type>.png     one thumbnail per instrument type
+    <out>/groups.json            the instrument groups
+    <out>/palette/<type>.svg     one thumbnail per instrument type
 
 Upload the result to R2 under assets/editor/ (served by the configurator Worker
 at /assets/editor/...). This is the pyEfis-side "CI -> R2 bridge": nothing Qt
@@ -27,6 +28,10 @@ runs at the edge; the browser editor consumes these static files.
 Usage (from the repo root)::
 
     python tools/build_editor_assets.py --out work/editor_assets
+
+Exits 1 when a type that should render offscreen came out as a placeholder
+(see unexpected_placeholders), so the editor-assets job goes red instead of
+skipping that type's upload in silence.
 """
 
 import argparse
@@ -60,6 +65,25 @@ def _placeholder_svg(out_path, label, w, h):
         fh.write(svg)
 
 
+def unexpected_placeholders(placeholders, registry=None, expected=None):
+    """The placeholdered types that should have rendered for real, sorted.
+
+    A type whose record says it builds standalone and renders offscreen, and
+    that is not on render_instrument's placeholder list (``_CONFIG_DRIVEN``),
+    has a real palette thumbnail. If it came out as a placeholder, the render
+    broke, and CI would quietly upload nothing for it (INS2).
+    """
+    if registry is None:
+        registry = eschema.REGISTRY
+    if expected is None:
+        from render_instrument import _CONFIG_DRIVEN as expected
+    return sorted(
+        t for t in placeholders
+        if t in registry and t not in expected
+        and registry[t].builds_in_isolation
+        and registry[t].offscreen_renderable)
+
+
 def build(out_dir, width, height):
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "schema.json"), "w", encoding="utf-8") as fh:
@@ -71,6 +95,7 @@ def build(out_dir, width, height):
     os.makedirs(palette_dir, exist_ok=True)
 
     types = sorted(eschema.build_schema()["instruments"])
+    placeholders = []
     for instrument_type in types:
         out = os.path.join(palette_dir, f"{instrument_type}.svg")
         if os.path.exists(out):
@@ -87,7 +112,8 @@ def build(out_dir, width, height):
         else:
             _placeholder_svg(out, instrument_type, width, height)
             print(f"  {instrument_type:<34} placeholder")
-    return len(types)
+            placeholders.append(instrument_type)
+    return len(types), placeholders
 
 
 def main(argv=None):
@@ -101,10 +127,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     print(f"Building editor assets into {args.out} ...")
-    count = build(args.out, args.width, args.height)
+    count, placeholders = build(args.out, args.width, args.height)
     print(f"\nWrote schema.json + {count} palette thumbnails. Upload to R2 "
           f"under assets/editor/.")
+    broken = unexpected_placeholders(placeholders)
+    if broken:
+        print(f"\nERROR: {len(broken)} type(s) should render offscreen but "
+              f"came out as placeholders: {', '.join(broken)}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

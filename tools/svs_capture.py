@@ -280,6 +280,13 @@ def parse_args(argv=None):
         "--terrain-only",
     )
     look.add_argument(
+        "--terrain-shading",
+        choices=("relief", "clearance"),
+        default=None,
+        help="the SVS terrain_shading option (SVSSHADE2). Omitted: the "
+        "renderer's default (relief)",
+    )
+    look.add_argument(
         "--msaa",
         type=int,
         default=1,
@@ -961,6 +968,8 @@ def main(argv=None):
         "terrain_texture": 0.0 if args.flat else 0.35,
         "terrain_grid": 0.0 if args.flat else 0.35,
     }
+    if args.terrain_shading:
+        svs_config["terrain_shading"] = args.terrain_shading
 
     # show_fpm follows terrain_only today; --symbology-only leaves it True
     # (the same as the plain default capture) because the FPM is real

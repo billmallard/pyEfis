@@ -1,0 +1,21 @@
+   0.30 pyefis pid 3238 (pyEfis 40d8f9e3 + working tree), placement A
+  10.30 gateway pid 6584 (fix-gateway cf26588), 10 s after the display
+  75.37 drawn: warning unacked AP LINK LOST; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA
+  76.90 pyefis exit -15
+  77.82 gateway exit 0
+  77.82 PASS no traceback and no CAS poll failure in the pyEfis log ([])
+  77.82 RESULT all checks passed
+   0.25 pyefis pid 9008 (pyEfis 40d8f9e3 + working tree), placement B
+  10.26 gateway pid 9112 (fix-gateway cf26588), 10 s after the display
+  75.48 drawn: warning unacked AP LINK LOST; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA
+  77.18 pyefis exit -15
+  78.98 gateway exit 0
+  78.98 PASS no traceback and no CAS poll failure in the pyEfis log ([])
+  78.98 RESULT all checks passed
+   0.26 pyefis pid 10791 (pyEfis 40d8f9e3 + working tree), placement C
+  10.27 gateway pid 10835 (fix-gateway cf26588), 10 s after the display
+  75.31 drawn: warning unacked AP LINK LOST; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA
+  76.83 pyefis exit -15
+  77.65 gateway exit 0
+  77.65 PASS no traceback and no CAS poll failure in the pyEfis log ([])
+  77.65 RESULT all checks passed

@@ -97,10 +97,16 @@ class Airspeed(QWidget):
         f.setPixelSize(fs)
         fontMetrics = QFontMetricsF(f)
 
-        dialPen = QPen(QColor(Qt.GlobalColor.white))
+        # CERT1g: the dial follows the tapes. A failed or expired (old) IAS
+        # gets the red XXX and no needle; a suspect (bad) one keeps its
+        # reading, with needle and markings in the tape's suspect amber.
+        failed = helpers.tape_invalid(self.item)
+        if self.item.bad and not failed:
+            markColor = QColor(helpers.SUSPECT_TAPE_COLOR)
+        else:
+            markColor = QColor(Qt.GlobalColor.white)
+        dialPen = QPen(markColor)
         dialPen.setWidthF(s * 0.01)
-
-        needleBrush = QBrush(QColor(Qt.GlobalColor.white))
 
         vnePen = QPen(QColor(Qt.GlobalColor.red))
         vnePen.setWidthF(s * 0.025)
@@ -169,7 +175,7 @@ class Airspeed(QWidget):
             dial.rotate(0.5)
             count += 0.5
 
-        if self.item.fail:
+        if failed:
             warn_font = QFont(self.font_family, 30, QFont.Weight.Bold)
             dial.resetTransform()
             dial.setPen(QPen(QColor(Qt.GlobalColor.red)))
@@ -179,13 +185,8 @@ class Airspeed(QWidget):
             dial.restore()
             return
 
-        if self.item.old or self.item.bad:
-            warn_font = QFont(self.font_family, 30, QFont.Weight.Bold)
-            dial.setPen(QPen(QColor(Qt.GlobalColor.gray)))
-            dial.setBrush(QBrush(QColor(Qt.GlobalColor.gray)))
-        else:
-            dial.setPen(QPen(QColor(Qt.GlobalColor.white)))
-            dial.setBrush(QBrush(QColor(Qt.GlobalColor.white)))
+        dial.setPen(QPen(markColor))
+        dial.setBrush(QBrush(markColor))
         # Needle Movement
         needle = QPolygon(
             [QPoint(5, 0), QPoint(0, +5), QPoint(-5, 0), QPoint(0, -(radius - 15))]
@@ -198,21 +199,6 @@ class Airspeed(QWidget):
 
         dial.rotate(needle_angle)
         dial.drawPolygon(needle)
-
-        """ Not sure if this is needed
-        if self.item.bad:
-            dial.resetTransform()
-            dial.setPen (QPen(QColor(255, 150, 0)))
-            dial.setBrush (QBrush(QColor(255, 150, 0)))
-            dial.setFont (warn_font)
-            dial.drawText (0,0,w,h, Qt.AlignmentFlag.AlignCenter, "BAD")
-        elif self.item.old:
-            dial.resetTransform()
-            dial.setPen (QPen(QColor(255, 150, 0)))
-            dial.setBrush (QBrush(QColor(255, 150, 0)))
-            dial.setFont (warn_font)
-            dial.drawText (0,0,w,h, Qt.AlignmentFlag.AlignCenter, "OLD")
-        """
 
         dial.restore()
 

@@ -1,0 +1,123 @@
+INFO:20261122-22:17:50:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+INFO:20261122-22:17:52:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+INFO:20261122-22:17:54:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+INFO:20261122-22:17:56:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+INFO:20261122-22:17:58:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+INFO:20261122-22:18:00:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+INFO:20261122-22:18:00:pyavtools.fix.client - Connected to 127.0.0.1:34990
+INFO:20261122-22:18:01:pyefis.fix_watchdog - FIX link watchdog: ping PITCH, fail after 2.0 s
+INFO:20261122-22:18:01:pyefis.gui - Initializing Graphics
+INFO:20261122-22:18:01:pyefis.gui - data-status: flight screen is PFD
+INFO:20261122-22:18:04:pyefis.gui - data-status: booting PFD (data status reachable from the annunciation)
+INFO:20261122-22:18:08:pyefis.instruments.cas - CAS: CASWindow shows nothing
+WARNING:20261122-22:18:08:pyefis.instruments.cas - CAS: status_path ~/.makerplane/pyefis/status.json ignored; this display reads <tmp>/status.json
+INFO:20261122-22:18:08:pyefis.instruments.cas - CAS: CASWindow shows nothing
+WARNING:20261122-22:18:08:pyefis.instruments.cas - CAS: status_path ~/.makerplane/pyefis/status.json ignored; this display reads <tmp>/status.json
+WARNING:20261122-22:18:08:pyefis.instruments.cas - CAS: status_path ~/.makerplane/pyefis/status.json ignored; this display reads <tmp>/status.json
+WARNING:20261122-22:18:08:pyefis.instruments.cas - CAS: status_path ~/.makerplane/pyefis/status.json ignored; this display reads <tmp>/status.json
+WARNING:20261122-22:18:08:pyefis.instruments.cas - CAS: status_path ~/.makerplane/pyefis/status.json ignored; this display reads <tmp>/status.json
+INFO:20261122-22:18:17:pyefis.instruments.cas - CAS: CASWindow shows caution unacked NAV FAIL
+INFO:20261122-22:18:17:pyefis.instruments.cas - CAS: CASWindow shows caution unacked NAV FAIL
+INFO:20261122-22:18:17:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:17:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:17:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:17:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:20:pyefis.instruments.cas.model - CAS: acknowledged up to CASSEQ 28160282
+INFO:20261122-22:18:20:pyefis.instruments.cas - CAS: CASWindow shows caution NAV FAIL
+INFO:20261122-22:18:20:pyefis.instruments.cas - CAS: CASWindow shows caution NAV FAIL
+INFO:20261122-22:18:20:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:20:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:20:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:20:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:24:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution NAV FAIL
+INFO:20261122-22:18:24:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution NAV FAIL
+INFO:20261122-22:18:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:18:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:18:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:18:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASWindow shows caution NAV FAIL
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASWindow shows caution NAV FAIL
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASWindow shows nothing
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASWindow shows nothing
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:47:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:50:pyefis.instruments.cas - CAS: CASWindow shows caution unacked AP LINK LOST
+INFO:20261122-22:18:50:pyefis.instruments.cas - CAS: CASWindow shows caution unacked AP LINK LOST
+INFO:20261122-22:18:50:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:50:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:50:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:50:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:55:pyefis.instruments.cas - CAS: CASWindow shows nothing
+INFO:20261122-22:18:55:pyefis.instruments.cas - CAS: CASWindow shows nothing
+INFO:20261122-22:18:55:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:55:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:55:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:55:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASWindow shows caution unacked FUEL QTY 3 NO DATA
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASWindow shows caution unacked FUEL QTY 3 NO DATA
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASWindow shows caution FUEL QTY 3 NO DATA
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASWindow shows caution FUEL QTY 3 NO DATA
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+INFO:20261122-22:18:59:pyefis.instruments.cas - CAS: CASMarker shows CAUTION steady
+WARNING:20261122-22:19:09:pyefis.instruments.cas.model - CAS: local advisory CATALOG REFUSED
+INFO:20261122-22:19:09:pyefis.instruments.cas - CAS: CASWindow shows caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:09:pyefis.instruments.cas - CAS: CASWindow shows caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:09:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:19:09:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:19:09:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:19:09:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+ERROR:20261122-22:19:12:pyefis.fix_watchdog - No frame from FIX gateway for 2.5 s: marking all data failed
+WARNING:20261122-22:19:12:pyefis.instruments.cas.model - CAS: local warning GATEWAY LINK LOST
+INFO:20261122-22:19:12:pyefis.instruments.cas - CAS: CASWindow shows warning unacked GATEWAY LINK LOST; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:12:pyefis.instruments.cas - CAS: CASWindow shows warning unacked GATEWAY LINK LOST; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:12:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:19:12:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:19:12:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:19:12:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+WARNING:20261122-22:19:14:pyefis.fix_watchdog - FIX gateway answering again: re-reading 3717 items
+INFO:20261122-22:19:16:pyefis.instruments.cas.model - CAS: local GATEWAY LINK LOST cleared
+INFO:20261122-22:19:16:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution unacked HDG FAIL; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:16:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution unacked HDG FAIL; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:16:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:16:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA; advisory unacked CATALOG REFUSED
+INFO:20261122-22:19:19:pyefis.instruments.cas.model - CAS: local CATALOG REFUSED cleared
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASWindow shows warning unacked AP LINK LOST; caution unacked NAV FAIL; caution FUEL QTY 3 NO DATA
+WARNING:20261122-22:19:19:pyefis.instruments.cas.model - CAS: local caution CAS FAIL
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASWindow shows caution unacked CAS FAIL
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASWindow shows caution unacked CAS FAIL
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:19:19:pyefis.instruments.cas - CAS: CASMarker shows CAUTION flashing
+INFO:20261122-22:19:23:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+ERROR:20261122-22:19:24:pyefis.fix_watchdog - No frame from FIX gateway for 2.5 s: marking all data failed
+WARNING:20261122-22:19:24:pyefis.instruments.cas.model - CAS: local warning GATEWAY LINK LOST
+INFO:20261122-22:19:24:pyefis.instruments.cas - CAS: CASWindow shows warning unacked GATEWAY LINK LOST
+INFO:20261122-22:19:24:pyefis.instruments.cas - CAS: CASWindow shows warning unacked GATEWAY LINK LOST
+INFO:20261122-22:19:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:19:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:19:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:19:24:pyefis.instruments.cas - CAS: CASMarker shows WARNING flashing
+INFO:20261122-22:19:25:pyavtools.fix.client - Attempting to Reconnect to 127.0.0.1:34990
+INFO:20261122-22:19:25:pyavtools.fix.client - Connected to 127.0.0.1:34990
+WARNING:20261122-22:19:27:pyefis.fix_watchdog - FIX gateway answering again: re-reading 3717 items
+INFO:20261122-22:19:31:pyefis.instruments.cas.model - CAS: local GATEWAY LINK LOST cleared
+INFO:20261122-22:19:31:pyefis.instruments.cas - CAS: CASWindow shows nothing
+INFO:20261122-22:19:31:pyefis.instruments.cas - CAS: CASWindow shows nothing
+INFO:20261122-22:19:31:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:19:31:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:19:31:pyefis.instruments.cas - CAS: CASMarker shows nothing
+INFO:20261122-22:19:31:pyefis.instruments.cas - CAS: CASMarker shows nothing

@@ -25,6 +25,8 @@ jobs:
     # it can publish an FPLMSG refusal code the display has no plain words for.
     # HOLDENT2: tests/instruments/test_map_hold_entry.py loads the engine (it
     # needs only fixgw/geo.py) and checks the drawn hold entry against it.
+    # ENUM2: tests/instruments/hsi/test_source_enums.py reads ahrs.yaml's NAVSRC
+    # and BRGnSRC ranges and fails on a value the HSI has no label for.
     - name: Check out fix-gateway's flightplan engine
       uses: actions/checkout@v6
       with:
@@ -34,6 +36,7 @@ jobs:
         sparse-checkout: |
           src/fixgw/plugins/flightplan/engine.py
           src/fixgw/geo.py
+          src/fixgw/config/database/ahrs.yaml
         sparse-checkout-cone-mode: false
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
@@ -46,7 +49,10 @@ jobs:
         # reference a libegl1 dependency (.deb) that Ubuntu has since rotated off
         # the mirror, so a bare `apt install` 404s. `apt-get update` re-resolves it.
         sudo apt-get update
-        sudo apt install -y libegl1
+        # libasound2t64: the CAS tone tests drive the real libasound into a
+        # file device (tests/instruments/cas/test_aural.py fails, not skips,
+        # under CI when it is missing).
+        sudo apt install -y libegl1 libasound2t64
         python -m pip install --upgrade pip
         pip install flake8 pytest pytest-qt pytest-env pytest-cov
         pip install -e .[qt,svs,watertools]
@@ -83,6 +89,7 @@ jobs:
       id: pytest
       env:
         FIXGW_FLIGHTPLAN_ENGINE: _fixgw/src/fixgw/plugins/flightplan/engine.py
+        FIXGW_AHRS_DB: _fixgw/src/fixgw/config/database/ahrs.yaml
       run: |
         # JUnit (xunit1 keeps each case's file and line) is the record the job summary
         # and the test-evidence page are built from (TV11).
