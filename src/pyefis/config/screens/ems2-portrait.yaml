@@ -238,3 +238,12 @@ EMS2:
       row: 100
       column: 0
 
+    # Crew alerting marker (CAS3, CAP-119), as on ems2.yaml: the highest active
+    # alert level, flashing while anything is unacknowledged; empty when
+    # there is none. Touch to open the full list. Between the two lower gauge captions, the free band in the middle.
+    - type: cas_marker
+      row: 72.5
+      column: 85
+      span:
+        rows: 3.5
+        columns: 30
