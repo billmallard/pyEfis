@@ -34,10 +34,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import geo
+from . import vocab
 
 log = logging.getLogger(__name__)
 
-WAYPOINT_TYPES = frozenset({"airport", "vor", "ndb", "fix", "user", "map"})
+WAYPOINT_TYPES = frozenset(vocab.WAYPOINT_TYPES)
 
 DEFAULT_PREFIX_LIMIT = 5
 DEFAULT_NEAREST_RADIUS_NM = 200.0
@@ -118,8 +119,7 @@ class _IndexEntry:
     runway_len_ft: float | None = None
 
 
-def _norm_ident(s) -> str:
-    return (s or "").strip().upper()
+_norm_ident = vocab.norm
 
 
 def _airport_id_aliases(raw: str) -> tuple[str, list[str]]:

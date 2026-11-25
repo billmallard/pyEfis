@@ -57,6 +57,7 @@ from dataclasses import dataclass
 
 from . import geo
 from . import model
+from . import vocab
 
 #: The eight directions a clearance gives, clockwise from north, and the
 #: bearing from the fix each one names (magnetic, like the radial).
@@ -80,10 +81,9 @@ LEG_UNITS = ("MIN", "NM")
 
 #: The hold path terminator this module builds (hold until the pilot exits).
 HOLD_PT = "HM"
-HOLD_PTS = frozenset({"HM", "HF", "HA"})
-#: FPLfFLAGS 0x20, "from a coded procedure" (``proc_load.FLAG_FROM_PROCEDURE``;
-#: not imported, since ``proc_load`` imports this module).
-FLAG_FROM_PROCEDURE = 0x20
+HOLD_PTS = vocab.HOLD_PTS
+#: FPLfFLAGS "from a coded procedure".
+FLAG_FROM_PROCEDURE = vocab.FLAG_FROM_PROCEDURE
 
 
 #: The ident of the user waypoint a hold at present position is built on.

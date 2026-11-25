@@ -48,6 +48,7 @@ import sqlite3
 import pytest
 
 from pyefis.flightplan import model
+from pyefis.flightplan import vocab
 from pyefis.flightplan.airways import (
     AirwayDirectionError,
     AirwayError,
@@ -259,7 +260,7 @@ def test_expand_types_each_fix_from_the_pack(graph):
         "GVO": "vor", "GOLET": "fix", "KWANG": "fix", "DEANO": "fix",
         "HENER": "fix", "VTU": "vor", "EXERT": "fix", "DOYLE": "fix",
         "PAROL": "fix", "SXC": "vor"}
-    assert model.TYPE_TO_FPLTYPE[wps[5].type] == 2  # VTU
+    assert vocab.TYPE_TO_FPLTYPE[wps[5].type] == 2  # VTU
 
 
 def test_expand_fix_type_fallback_is_fix(tmp_path):
