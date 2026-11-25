@@ -31,6 +31,11 @@ class FakeApp:
 class FakeFixItem:
     def __init__(self):
         self.value = None
+        # Real FIX items always carry the quality flags; gui's CAS-not-shown
+        # watch reads them on every poll.
+        self.old = False
+        self.bad = False
+        self.fail = False
 
 
 class FakeResource:

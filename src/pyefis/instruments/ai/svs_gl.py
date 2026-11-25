@@ -60,6 +60,7 @@ from pyefis.instruments.ai.camera import (  # noqa: E402
     TERRAIN_HFOV_PITCH_DEG,
 )
 from pyefis.instruments.ai import svs_traffic  # noqa: E402
+from pyefis.instruments.ai import terrain_shading  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -234,6 +235,9 @@ uniform float u_yellow_ft;       // clearance >= u_yellow_ft => CAUTION
 uniform float u_near_airport;    // 1.0 => collapse to 2-colour SAFE/CONFLICT
 uniform float u_apt_gate_ft;     // collapse only below this MSL elevation
 uniform float u_safe_grad;       // 1.0 => clearance-graded SAFE band
+uniform float u_relief;          // 1.0 => terrain_shading: relief (the
+                                 // hypsometric base under the bands);
+                                 // 0.0 => clearance colouring everywhere
 uniform float u_tex_amp;         // ground-texture amplitude, 0 = off
 uniform float u_grid_amp;        // world-grid darkening, 0 = off
 uniform float u_ac_alt_ft;       // aircraft altitude (shared w/ vertex)
@@ -282,27 +286,63 @@ float vnoise(vec2 p) {
                u.y);
 }
 
+// Airport-proximity collapse, elevation-gated (issue #32 Option B):
+// only the runway environment -- terrain below field elevation +
+// airport_gate_agl_ft -- has its warning bands suppressed. Rising
+// terrain inside the proximity radius keeps full red/amber treatment.
+bool apt_collapsed(float elev) {
+    return u_near_airport > 0.5 && elev < u_apt_gate_ft;
+}
+
+// The shared band rule (terrain_shading.band; the map uses the same).
+// Kept as one `if (...) return ...;` per line: the tests evaluate these
+// lines directly to pin each band edge.
+int terrain_band(float clr, float elev) {
+    if (clr < 0.0) return BAND_CONFLICT;
+    if (apt_collapsed(elev)) return BAND_NONE;
+    if (clr < u_yellow_ft) return BAND_WARNING;
+    if (clr < u_green_ft) return BAND_CAUTION;
+    return BAND_NONE;
+}
+
+// Hazard bands are never lit below HAZARD_LIGHT_FLOOR of full sun, so an
+// amber slope in shadow cannot sink into a sunlit tan one (SVSSHADE1).
+float hazard_light(int band, float lit) {
+    if (band > BAND_NONE) return max(lit, HAZARD_LIGHT_FLOOR);
+    return lit;
+}
+
+// The map's hypsometric base (terrain_shading.HYPSO_STOPS), linear
+// between stops and clamped at both ends, as np.interp does on the map.
+vec3 hypso(float e) {
+    if (e <= HYPSO[0].x) return HYPSO[0].yzw;
+    for (int i = 1; i < HYPSO_N; i++) {
+        if (e < HYPSO[i].x) {
+            float t = (e - HYPSO[i - 1].x) / (HYPSO[i].x - HYPSO[i - 1].x);
+            return mix(HYPSO[i - 1].yzw, HYPSO[i].yzw, t);
+        }
+    }
+    return HYPSO[HYPSO_N - 1].yzw;
+}
+
 void main() {
+    float elev_ft = u_ac_alt_ft - v_clearance_ft;
+    int band = terrain_band(v_clearance_ft, elev_ft);
     vec3 base;
+    float lit = v_intensity;
     if (v_is_water > 0.5) {
         base = COLOR_WATER;
-    } else if (v_clearance_ft < 0.0) {
+    } else if (band == BAND_CONFLICT) {
         base = COLOR_CONFLICT;
-    } else if (u_near_airport > 0.5
-               && (u_ac_alt_ft - v_clearance_ft) < u_apt_gate_ft) {
-        // Airport-proximity collapse, elevation-gated (issue #32
-        // Option B): only the runway environment — terrain below
-        // field elevation + airport_gate_agl_ft — has its warning
-        // bands suppressed. Rising terrain inside the proximity
-        // radius keeps full red/amber treatment.
-        base = COLOR_SAFE;
-    } else if (v_clearance_ft < u_yellow_ft) {
+    } else if (band == BAND_WARNING) {
         base = COLOR_WARNING;
-    } else if (v_clearance_ft < u_green_ft) {
+    } else if (band == BAND_CAUTION) {
         base = COLOR_CAUTION;
+    } else if (u_relief > 0.5) {
+        base = hypso(elev_ft);
     } else {
         base = COLOR_SAFE;
-        if (u_safe_grad > 0.5) {
+        if (u_safe_grad > 0.5 && !apt_collapsed(elev_ft)) {
             // Blend olive->green across 2,500 ft of clearance above
             // the green threshold: ground far below stays deep green,
             // ground rising toward the aircraft warms continuously.
@@ -311,7 +351,10 @@ void main() {
             base = mix(COLOR_SAFE_LOW, COLOR_SAFE, t);
         }
     }
-    vec3 shaded = base * v_intensity;
+    if (u_relief > 0.5 && v_is_water < 0.5) {
+        lit = hazard_light(band, lit);
+    }
+    vec3 shaded = base * lit;
 
     // World-anchored ground texture: two octaves of value noise,
     // strong in the near field and faded out by ~4 NM (the haze owns
@@ -915,16 +958,20 @@ class SVSGLRenderer:
                 near = self._near_airport(ac_lat, ac_lon)
                 self._program.setUniformValue(
                     self._u["u_near_airport"], 1.0 if near else 0.0)
-                _apt_elev = getattr(self._parent,
-                                    "_near_airport_elev_ft", None)
-                gate = ((_apt_elev + float(getattr(
-                    self._parent, "airport_gate_agl_ft", 400.0)))
-                    if (near and _apt_elev is not None) else 1.0e9)
+                gate = terrain_shading.collapse_gate_ft(
+                    near,
+                    getattr(self._parent, "_near_airport_elev_ft", None),
+                    float(getattr(self._parent, "airport_gate_agl_ft",
+                                  terrain_shading.AIRPORT_GATE_AGL_FT)))
                 self._program.setUniformValue(
-                    self._u["u_apt_gate_ft"], float(gate))
+                    self._u["u_apt_gate_ft"],
+                    float(terrain_shading.NO_FIELD_ELEV_GATE_FT
+                          if gate is None else gate))
                 self._program.setUniformValue(
                     self._u["u_safe_grad"],
                     1.0 if getattr(p, "safe_gradient", True) else 0.0)
+                self._program.setUniformValue(
+                    self._u["u_relief"], self._relief_uniform())
                 self._program.setUniformValue(
                     self._u["u_tex_amp"],
                     float(getattr(p, "terrain_texture", 0.35)))
@@ -1819,7 +1866,7 @@ class SVSGLRenderer:
             # ES 3.0 guarantees fragment highp support.
             fheader = ("#version 300 es\nprecision highp float;\n"
                        "precision mediump sampler2D;\n")
-        fsrc = fheader + _FRAG_BODY
+        fsrc = fheader + terrain_shading.glsl_constants() + _FRAG_BODY
         prog = QOpenGLShaderProgram()
         if not prog.addShaderFromSourceCode(
                 QOpenGLShader.ShaderTypeBit.Vertex, vsrc):
@@ -1842,13 +1889,21 @@ class SVSGLRenderer:
                      "u_level_half", "u_morph_on",
                      "u_heightmap",
                      "u_green_ft", "u_yellow_ft", "u_near_airport",
-                     "u_apt_gate_ft", "u_safe_grad", "u_tex_amp",
+                     "u_apt_gate_ft", "u_safe_grad", "u_relief",
+                     "u_tex_amp",
                      "u_grid_amp") + _PALETTE_UNIFORMS:
             loc = prog.uniformLocation(name)
             if loc < 0:
                 log.warning("uniform %s not found (optimised out?)", name)
             self._u[name] = loc
         self._program = prog
+
+    def _relief_uniform(self):
+        """u_relief: 1.0 for `terrain_shading: relief` (the hypsometric
+        base under the hazard bands), 0.0 for `clearance` (SVSSHADE2)."""
+        mode = getattr(self._parent, "terrain_shading",
+                       terrain_shading.DEFAULT_SHADING)
+        return 1.0 if mode == "relief" else 0.0
 
     def _set_palette_uniforms(self, prog):
         """Upload the selected terrain palette's band colours to the
