@@ -18,6 +18,10 @@ class WindDisplay(QWidget):
     Subscribes to HWIND and XWIND FIX database keys.
     HWIND > 0 = headwind, < 0 = tailwind.
     XWIND > 0 = from right, < 0 = from left.
+
+    Per row (EFIS-WIND-009): fail -> dim "---", bad or old -> amber "X".
+    Old takes bad's look (INS5, AER-6588): a value the source stopped
+    updating is as suspect as one it flagged.
     """
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed"):
@@ -28,8 +32,10 @@ class WindDisplay(QWidget):
         self._xwind = 0.0
         self._hwind_fail = True
         self._hwind_bad = False
+        self._hwind_old = False
         self._xwind_fail = True
         self._xwind_bad = False
+        self._xwind_old = False
 
         # Default font sizes (overridden in resizeEvent)
         self._row_h = 10
@@ -47,6 +53,10 @@ class WindDisplay(QWidget):
         self._xwind = self._xwind_item.value
         self._hwind_fail = self._hwind_item.fail
         self._xwind_fail = self._xwind_item.fail
+        self._hwind_bad = self._hwind_item.bad
+        self._xwind_bad = self._xwind_item.bad
+        self._hwind_old = self._hwind_item.old
+        self._xwind_old = self._xwind_item.old
 
         # Connected once here in __init__ (not resizeEvent), so a plain connect
         # is correct. UniqueConnection is a footgun under PyQt6 -- it raises
@@ -58,6 +68,8 @@ class WindDisplay(QWidget):
         self._xwind_item.failChanged.connect(self._on_xwind_fail)
         self._hwind_item.badChanged.connect(self._on_hwind_bad)
         self._xwind_item.badChanged.connect(self._on_xwind_bad)
+        self._hwind_item.oldChanged.connect(self._on_hwind_old)
+        self._xwind_item.oldChanged.connect(self._on_xwind_old)
 
     def _on_hwind_changed(self, value):
         self._hwind = value
@@ -81,6 +93,14 @@ class WindDisplay(QWidget):
 
     def _on_xwind_bad(self, bad):
         self._xwind_bad = bad
+        self.update()
+
+    def _on_hwind_old(self, old):
+        self._hwind_old = old
+        self.update()
+
+    def _on_xwind_old(self, old):
+        self._xwind_old = old
         self.update()
 
     def resizeEvent(self, event):
@@ -107,13 +127,13 @@ class WindDisplay(QWidget):
             return "RX"
         return "LX" if value < -self.DEADBAND_KT else "RX"
 
-    def _draw_row(self, p, y, label, value, fail, bad):
+    def _draw_row(self, p, y, label, value, fail, bad, old=False):
         w = self.width()
         rh = self._row_h
 
         if fail:
             text_color = QColor(100, 100, 100)
-        elif bad:
+        elif bad or old:
             text_color = QColor(255, 165, 0)
         else:
             text_color = QColor(Qt.GlobalColor.white)
@@ -141,7 +161,7 @@ class WindDisplay(QWidget):
         p.setPen(QPen(text_color))
         if fail:
             val_str = "---"
-        elif bad:
+        elif bad or old:
             val_str = "X"
         else:
             val_str = f"{abs(round(value))}"
@@ -158,13 +178,13 @@ class WindDisplay(QWidget):
         self._draw_row(
             p, 0,
             self._hw_label(self._hwind, self._hwind_fail),
-            self._hwind, self._hwind_fail, self._hwind_bad,
+            self._hwind, self._hwind_fail, self._hwind_bad, self._hwind_old,
         )
         # Tighten vertical spacing — second row stacks at ~0.65 row_h instead
         # of 1.0, pulling it ~10-15 px closer for typical PFD sizing.
         self._draw_row(
             p, qRound(self._row_h * 0.65),
             self._xw_label(self._xwind, self._xwind_fail),
-            self._xwind, self._xwind_fail, self._xwind_bad,
+            self._xwind, self._xwind_fail, self._xwind_bad, self._xwind_old,
         )
 

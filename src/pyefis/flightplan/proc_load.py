@@ -53,6 +53,7 @@ import copy
 from . import geo
 from . import hold
 from . import model
+from . import vocab
 
 #: The PROC page's three procedure kinds, as the pack names them.
 PAGE_KINDS = ("departure", "arrival", "approach")
@@ -77,8 +78,8 @@ PACK_MAP = 0x08
 PACK_FIRST_MISSED = 0x20
 
 #: FPLfFLAGS bits this module sets on a slot besides its role.
-FLAG_FLYOVER = 0x01
-FLAG_FROM_PROCEDURE = 0x20
+FLAG_FLYOVER = vocab.FLAG_FLYOVER
+FLAG_FROM_PROCEDURE = vocab.FLAG_FROM_PROCEDURE
 
 HOLD_PTS = hold.HOLD_PTS
 SAME_FIX_NM = model.SAME_FIX_NM
@@ -94,7 +95,7 @@ _APPROACH_NAMES = {
     "X": "LDA", "U": "SDF",
 }
 
-_FIX_TYPES = {"vor": "vor", "ndb": "ndb", "airport": "airport"}
+_FIX_TYPES = vocab.PACK_FIX_TYPES
 
 
 class ProcedureLoadError(ValueError):
@@ -102,8 +103,7 @@ class ProcedureLoadError(ValueError):
     is shown to the pilot as it is."""
 
 
-def _norm(ident):
-    return (ident or "").strip().upper()
+_norm = vocab.norm
 
 
 def runway_label(ident):
@@ -201,18 +201,17 @@ def _alt_text(leg):
     if a1 is None and a2 is None:
         return ""
     if desc in ("+", "H", "J", "V"):
-        return f"+{int(a1)}" if a1 is not None else ""
+        return vocab.pack_alt(vocab.ALT_AT_OR_ABOVE, a1) if a1 is not None else ""
     if desc in ("-", "Y"):
-        return f"-{int(a1)}" if a1 is not None else ""
+        return vocab.pack_alt(vocab.ALT_AT_OR_BELOW, a1) if a1 is not None else ""
     if desc in ("", "@", "G", "I", "X"):
-        return f"@{int(a1)}" if a1 is not None else ""
+        return vocab.pack_alt(vocab.ALT_AT, a1) if a1 is not None else ""
     if desc == "B":
         if a1 is None or a2 is None:
             return ""
-        lo, hi = sorted((int(a1), int(a2)))
-        return f"B{lo},{hi}"
+        return vocab.pack_alt(vocab.ALT_BETWEEN, a1, a2)
     if desc == "C":
-        return f"+{int(a2)}" if a2 is not None else ""
+        return vocab.pack_alt(vocab.ALT_AT_OR_ABOVE, a2) if a2 is not None else ""
     raise ProcedureLoadError(f"ALTITUDE CODE {desc!r} AT {_norm(leg.fix_id) or leg.path_term}")
 
 
@@ -512,8 +511,8 @@ def leg_label(wp):
     if wp.id:
         return wp.id
     crs = "" if wp.crs is None else "%03d°" % (int(round(wp.crs)) % 360 or 360)
-    if wp.pt in ("CA", "FA") and wp.alt:
+    if wp.pt in vocab.ALT_TERM_PTS and wp.alt:
         return f"{crs} TO {wp.alt}".strip()
-    if wp.pt in ("VA", "VI", "VM"):
+    if wp.pt in vocab.HEADING_PTS:
         return f"HDG {crs}".strip()
     return f"{wp.pt} {crs}".strip()

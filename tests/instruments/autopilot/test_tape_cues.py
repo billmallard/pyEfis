@@ -11,6 +11,7 @@ from PyQt6.QtGui import QColor
 from pyefis.instruments import airspeed, altimeter, edit_focus, vsi
 from pyefis.instruments.airspeed import iassel
 from pyefis.screens import screenbuilder_factory as factory
+from pyefis.screens.screenbuilder_options import UNIT_SWITCHES
 from tests.instruments.altimeter.test_altsel import _Host
 from tests.instruments.autopilot.conftest import sent
 
@@ -372,6 +373,39 @@ def test_vsi_pfd_bug_only_while_vs_active(ap_db, qtbot):
     ap_db("APVERT", "VS", old=True)
     assert w.vs_bug_y() is None
     w.grab()                           # paints with and without the bug
+
+
+def test_alt_tape_registry_defaults_match_the_widget(ap_db, qtbot):
+    """G99 (pyEfis #557): every boolean the configurator shows for an
+    altimeter tape, written out at its registry default, builds the same
+    tape as leaving it unset -- for the registry's own default dbkey (ALT).
+    A `vs_bug: true` default drew the VSSEL bug on the altitude scale."""
+    ap_db("APVERT", "VS")
+    ap_db("VSSEL", 300)
+    _alt_tape(qtbot, ap_db.fix)  # defines ALT/ALTSEL
+    props = factory.REGISTRY["altimeter_tape"].properties
+    dbkey = next(p.default for p in props if p.name == "dbkey")
+    assert dbkey == "ALT"
+    # The unit switch (`altitude`) is applied after construction by
+    # apply_options, not by the builder, so it is not a tape attribute
+    # (AER-6586; tests/screens/test_unit_switch_options.py covers it).
+    written = {p.name: p.default for p in props
+               if p.kind == "boolean" and p.apply == "special"
+               and p.name not in UNIT_SWITCHES}
+    assert "vs_bug" in written
+    unset = factory.build_altimeter_tape(None, {"options": {}})
+    built = factory.build_altimeter_tape(None, {"options": written})
+    for w in (unset, built):
+        qtbot.addWidget(w)
+        w.resize(140, 520)
+    def shown(w, name):
+        # alt_bug_enabled=None follows the box (_bug_on).
+        return w._bug_on() if name == "alt_bug_enabled" else bool(
+            getattr(w, name))
+
+    for name in written:
+        assert shown(built, name) == shown(unset, name), name
+    assert built.vs_bug_y() is None
 
 
 # -- AL-CAP-001 ---------------------------------------------------------------

@@ -48,6 +48,8 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import vocab
+
 log = logging.getLogger(__name__)
 
 #: The chart types the viewer lists, in the order it lists them: the airport
@@ -92,8 +94,7 @@ _NOTES = re.compile(r"\((?:SA )?CAT [^)]*\)|\(CONVERGING\)|^CONVERGING |^COPTER 
 _CHART_ALT = re.compile(r"^(?P<type>.+?)(?: (?P<suffix>[A-Z]))?(?: RWY (?P<rwy>\S+)|-(?P<circ>[A-Z]))?$")
 
 
-def _norm(ident: str | None) -> str:
-    return (ident or "").strip().upper()
+_norm = vocab.norm
 
 
 def _norm_runway(runway: str | None) -> str:

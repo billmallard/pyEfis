@@ -47,14 +47,15 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import vocab
+
 log = logging.getLogger(__name__)
 
 PROCEDURE_KINDS = frozenset({"sid", "star", "approach"})
 TRANSITION_ROLES = frozenset({"enroute", "runway", "common"})
 
 
-def _norm(ident: str | None) -> str:
-    return (ident or "").strip().upper()
+_norm = vocab.norm
 
 
 def _norm_runway(runway: str | None) -> str:

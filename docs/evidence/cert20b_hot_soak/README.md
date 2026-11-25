@@ -6,14 +6,18 @@ AER-6451, BACKLOG `CERT20b`. Platform records come from CERT20a's `describe_plat
 
 ## Result
 
+**Verdict: the PFD keeps its rate on the bench Pi 5 at room ambient.** All SVS screens pass
+the pass line Bill set on 2026-11-25 (see "Pass line"). Throttling was not reached, and testing
+at the thermal limit is out of scope for this bench. It belongs to environmental testing on
+flight-ready hardware, later in the program.
+
 - **The SoC never reached its thermal limit, and never throttled.** Under the full stack the
   SoC rose from 54.6 C to a plateau of about 62-66 C (one-minute means), with a highest single
   sample of 68.3 C. The run stopped on the plateau rule after 32 min. The `get_throttled` "now"
   bits were 0 in all 997 samples, every 2 s from launch to stop. The Pi 5 starts reducing its
   clock at a soft limit of about 80 C and drops to its lowest clock at 85 C (Raspberry Pi,
   "Heating and cooling Raspberry Pi 5", raspberrypi.com/news/heating-and-cooling-raspberry-pi-5). So this run answers "does the stack heat its own SoC into throttling on this bench?":
-  **no**. It does not answer the hot-cockpit case, an SoC held at its limit. Reaching that needs
-  a hotter ambient or less cooling on the bench, which is a physical change (see "Not covered").
+  **no**. It does not answer the hot-cockpit case, an SoC held at its limit (see "Scope").
 - **Cool and hot windows are the same within noise.** Frame intervals, paint times and ROLL
   data-to-glass agree between the first 10 min and the last 10 min to about 1 ms at the median,
   and to a few ms at p99 (table below). Nothing in the numbers moves with temperature over this
@@ -32,8 +36,7 @@ AER-6451, BACKLOG `CERT20b`. Platform records come from CERT20a's `describe_plat
   each time the screen is shown, `SVSGLRenderer initialised ... heightmap built` in the journal
   at each visit), and 115-204 ms on later visits. These are reported separately, not hidden.
 
-Two reference points, for reading the numbers only. Neither is a pass line; the pass line is
-Bill's (see "Pass line"). AC 25-11B section 5.9: "Data update rates for information elements
+Two reference points. Neither is the pass line, which is Bill's (see "Pass line"). AC 25-11B section 5.9: "Data update rates for information elements
 used in direct airplane or powerplant manual control tasks (such as attitude ...) equal to or
 greater than 15 Hertz have been found to be acceptable", and "display system lag (including the
 sensor) for attitude that does not exceed a first order equivalent time constant of 100
@@ -107,16 +110,49 @@ min 30-32: 62.4 66.1 64.8
 
 ## Pass line
 
-Not set here. Bill sets the frame-time and latency limits that count as "kept its update
-rate" (the row's guardrail), on the card on AER-6451. Whether an installed configuration should
-fix a governor, pin cores or require a cooler is a separate decision of his. This run changed
-nothing installed.
+Set by Bill on 2026-11-25 (AER-6451, the pass-line card accepted, with his notes on the issue).
+It applies to every SVS screen, PFD, PFD_AI_ONLY and MAP_CTL_TEST, in both windows:
 
-## Not covered
+| Limit | Worst measured (screen, window) | Verdict |
+|---|---|---|
+| Median frame interval 66.7 ms or less (15 Hz) | 44.1 ms (PFD, cool) | pass |
+| p99 frame interval 100 ms or less | 70.8 ms (MAP_CTL_TEST, hot) | pass |
+| Longest gap 150 ms or less, outside a screen switch | 96.5 ms (MAP_CTL_TEST, hot) | pass |
+| ROLL data-to-glass p99 120 ms or less | 104.2 ms (PFD_AI_ONLY, cool) | pass |
+| Hot window at most 10% worse than cool | +5.8% (PFD, p99 frame interval) | pass |
 
-- **The SoC at its thermal limit.** This bench, as fitted and at room ambient, plateaus 12 C
-  below where the Pi 5 starts throttling. A hot-cockpit case needs an enclosure, a warm box or
-  the heatsink removed, which is Bill's bench and his call.
+The 10% rule applies to three metrics on each SVS screen: median frame interval, p99 frame
+interval and ROLL data-to-glass p99. Hot against cool, in percent:
+
+| Screen | Median interval | p99 interval | ROLL p99 |
+|---|---|---|---|
+| PFD | -0.6 | +5.8 | +3.8 |
+| PFD_AI_ONLY | +1.2 | -5.3 | -8.0 |
+| MAP_CTL_TEST | +2.5 | +5.2 | +4.4 |
+
+The longest gap and the maximum latency are held to their absolute limits only. A single
+worst sample in a 10 min window is too noisy for a relative rule.
+
+Three things the line does not say:
+
+- **The latency line covers the display only.** The 120 ms is data-to-glass inside pyEfis and
+  the gateway hop, from the gateway's input to the buffer swap. No sensor latency is in it.
+  Whether the full sensor-to-glass path meets AC 25-11B's 100 ms is unverified until a
+  source's own latency is measured. A source can exceed that budget on its own: CERT13h2's
+  late OnSpeed altitude is one. "Passes the latency line" is not a statement about the whole
+  path.
+- **It is a room-ambient result.** The SoC plateaued at 62-68 C, about 12 C under the 80 C soft
+  limit, and never throttled. The record says "keeps its rate on the bench Pi 5 at room
+  ambient". It does not say "keeps its rate at the thermal limit".
+- **It changes nothing installed.** Whether an installed configuration should fix a governor,
+  pin cores or require a cooler is a separate decision of Bill's, not taken here.
+
+## Scope and not covered
+
+- **The SoC at its thermal limit is out of scope now** (Bill, 2026-11-25). This bench, as fitted
+  and at room ambient, plateaus 12 C below where the Pi 5 starts throttling. Hot-soak and
+  thermal-limit testing comes later in the program, as environmental testing on flight-ready
+  hardware, not on this bench.
 - **Sensor and scanout.** Data-to-glass starts at the gateway's input and ends at the buffer
   swap. A real AHRS adds its own filter and link delay before the gateway, and the panel adds up
   to one 60 Hz refresh. The Pi has no root access for `kmsgrab`, so the scanout was not read.

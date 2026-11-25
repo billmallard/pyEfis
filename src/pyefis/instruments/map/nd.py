@@ -561,7 +561,7 @@ def paint(widget, p, x, read, now=None, own=None):
                    Qt.AlignmentFlag.AlignCenter, label)
 
     # TRK box at the top centre with the lubber triangle under it.
-    trk_stale = widget._old.get("TRACKM", True)
+    trk_stale = widget._track_stale()
     col = GREY if trk_stale else WHITE
     apex_y = osp.y() - r
     box, runs, sp = trk_box(family, fs, g["box_h"], widget._track, osp.x(),
@@ -593,7 +593,7 @@ def paint(widget, p, x, read, now=None, own=None):
     pad = panel_pad(fs)
     top = 4.0 + status_chip_height(w) + 2.0
     tl_lines, arrow = top_left(read)
-    stale = widget._old.get("LAT", True) or widget._old.get("LONG", True)
+    stale = widget._stale("LAT") or widget._stale("LONG")
     chip_w = QFontMetrics(_font(family, max(9, int(w * 0.03)))) \
         .horizontalAdvance(widget._status_chip_text(stale))
     tl_bottom = top + lh * len(tl_lines) + (fs * 1.9 if arrow is not None

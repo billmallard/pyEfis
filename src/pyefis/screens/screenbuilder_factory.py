@@ -645,6 +645,30 @@ def _tank_prop():
                 label="Tank", help="Bind to a tank from the aircraft page")
 
 
+# Unit switching (AER-6586, INS3). screenbuilder_options switches an option's
+# units only on a type whose record declares it, so these declarations decide
+# which instruments switch. The readout starts in the first unit named here
+# unless the preferences ``units:`` block names the other.
+_UNIT_SWITCH_LABELS = {
+    "temperature": ("Switch temperature units", "deg F and deg C"),
+    "pressure": ("Switch pressure units", "inHg and hPa"),
+    "altitude": ("Switch altitude units", "feet and metres"),
+}
+
+
+def _unit_switch_prop(name):
+    label, units = _UNIT_SWITCH_LABELS[name]
+    return Prop(name, "boolean", default=False, apply="special", label=label,
+                help=f"the Units button switches the readout between {units}")
+
+
+def _egt_mode_prop():
+    return Prop("egt_mode_switching", "boolean", default=False,
+                apply="special", label="EGT mode buttons",
+                help="respond to the EGT mode buttons (Normalize, Peak, "
+                     "Lean)")
+
+
 _register(InstrumentSpec(
     type="arc_gauge",
     label="Arc Gauge",
@@ -668,6 +692,8 @@ _register(InstrumentSpec(
         Prop("name_location", "enum", default="top", enum=["top", "right"],
              label="Name location",
              help="where the name label sits relative to the gauge"),
+        _unit_switch_prop("temperature"),
+        _unit_switch_prop("pressure"),
         _tank_prop(),
         *_gauge_encoder_props(),
     ],
@@ -786,7 +812,7 @@ _register(InstrumentSpec(
              replace=None: instrument("Altimeter")(screen, font_family=font_family)),
     dbkeys=["ALT"],
     keep_aspect=True,
-    properties=[_bg_opacity_prop()],
+    properties=[_bg_opacity_prop(), _unit_switch_prop("altitude")],
     preview={"value": 3500},
 ))
 
@@ -850,7 +876,10 @@ _register(InstrumentSpec(
              label="Altitude capture color", apply="special",
              help="selected-altitude box border while the autopilot "
                   "captures it (APALTCAP)"),
-        Prop("vs_bug", "boolean", default=True, label="VSSEL bug",
+        # Off, matching the widget for the default ALT tape (G99, pyEfis
+        # #557): the editor shows this default, and a `vs_bug: true` it
+        # writes would put an ft/min bug on an altitude scale.
+        Prop("vs_bug", "boolean", default=False, label="VSSEL bug",
              apply="special",
              help="on a VS tape, the VSSEL bug while the autopilot reports "
                   "VS active (on for a VS tape, off for an ALT tape)"),
@@ -861,6 +890,7 @@ _register(InstrumentSpec(
              label="Selected-VS key", apply="special",
              help="FIX key holding the selected vertical speed "
                   "(default VSSEL)"),
+        _unit_switch_prop("altitude"),
         _encoder_order_prop(),
     ],
     encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
@@ -1063,6 +1093,8 @@ def _bar_gauge_props():
              help="append the FIX key's engineering units to the readout"),
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
+        _unit_switch_prop("temperature"),
+        _unit_switch_prop("pressure"),
         _tank_prop(),
         *_gauge_encoder_props(),
     ]
@@ -1088,7 +1120,7 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: instrument("VerticalBar")(
                  screen, min_size=False, font_family=font_family)),
-    properties=_bar_gauge_props(),
+    properties=[*_bar_gauge_props(), _egt_mode_prop()],
     fix_values=_gauge_fix_values(),
     preview={"value": "72", "fill": 0.72},
     encoder=_GAUGE_KNOB,
@@ -1122,6 +1154,9 @@ _register(InstrumentSpec(
              help="widest string the readout reserves space for (sizing)"),
         Prop("show_units", "boolean", default=False, label="Show units",
              help="append the FIX key's engineering units to the readout"),
+        _unit_switch_prop("temperature"),
+        _unit_switch_prop("pressure"),
+        _unit_switch_prop("altitude"),
         *_gauge_encoder_props(),
     ],
     fix_values=_gauge_fix_values(),
@@ -2104,7 +2139,7 @@ _register(InstrumentSpec(
     builder=build_virtual_vfr,
     # The attitude keys plus the position keys the SVS camera reads. COURSE
     # went with the legacy CIFP overlay (VVFR1, AER-5417), its only reader.
-    dbkeys=["PITCH", "LAT", "LONG", "ALT", "ROLL", "ALAT", "TAS"],
+    dbkeys=["PITCH", "LAT", "LONG", "TALT", "ROLL", "ALAT", "TAS"],
     svs_capable=True,
     offscreen_renderable=False,   # QOpenGLWidget SVS terrain; hangs offscreen
     builds_in_isolation=False,    # GL widget needs a real screen
