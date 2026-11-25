@@ -2256,3 +2256,16 @@ def get_instrument_defaults(instrument_type):
 
 def get_instrument_default_options(instrument_type):
     return INSTRUMENT_DEFAULT_OPTIONS.get(instrument_type, False)
+
+
+# SEED (throwaway, AER-6596): a type with no configurator twin.
+_register(InstrumentSpec(
+    type="seed_twinless",
+    label="Seed Twinless",
+    category="text",
+    builder=build_static_text,
+    properties=[
+        Prop("text", "string", default="Text", label="Text", required=True,
+             apply="special", help="the fixed text to display"),
+    ],
+))
