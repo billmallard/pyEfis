@@ -1,0 +1,12 @@
+side=dev fgw=bfb7e0a pyefis=48ac6d7b start=2026-11-25T15:58:53Z
+INFO:20261125-15:59:05:pyefis.gui - data-status: booting EMS (data status reachable from the annunciation)
+end=2026-11-25T15:59:38Z
+
+time 2026-11-25T15:59:24Z
+key 2 BARO -   pulse TSBTN11   BARO 29.92 -> 29.92 unchanged
+key 3 BARO +   pulse TSBTN12   BARO 29.92 -> 29.92 unchanged
+key 5 HDG -    pulse TSBTN129  HEADBUG 0.00 -> 0.00 unchanged
+key 6 HDG +    pulse TSBTN131  HEADBUG 0.00 -> 0.00 unchanged
+key 7 HDG SYNC pulse TSBTN130  HEADBUG 125.00 -> 125.00 unchanged HEAD=75.0
+key 9 CDI SRC  pulse TSBTN133  NAVSRC 2.00 -> 2.00 unchanged
+changed 0 of 6

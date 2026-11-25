@@ -2109,7 +2109,7 @@ _register(InstrumentSpec(
     builder=build_virtual_vfr,
     # The attitude keys plus the position keys the SVS camera reads. COURSE
     # went with the legacy CIFP overlay (VVFR1, AER-5417), its only reader.
-    dbkeys=["PITCH", "LAT", "LONG", "ALT", "ROLL", "ALAT", "TAS"],
+    dbkeys=["PITCH", "LAT", "LONG", "TALT", "ROLL", "ALAT", "TAS"],
     svs_capable=True,
     offscreen_renderable=False,   # QOpenGLWidget SVS terrain; hangs offscreen
     builds_in_isolation=False,    # GL widget needs a real screen

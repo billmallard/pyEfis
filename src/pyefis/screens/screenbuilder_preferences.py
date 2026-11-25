@@ -18,6 +18,12 @@ import re
 
 from pyefis.screens import color_tokens
 
+# The font every instrument draws in when its config names none: the screen
+# builder passes it to every factory, so a widget's own constructor default is
+# never reached on this path. The editor schema states it as
+# common_options.font_family (pyefis.editor.schema).
+DEFAULT_FONT_FAMILY = "DejaVu Sans Condensed"
+
 
 def normalize_font_percent(value):
     """Font height as a fraction of the widget height. Accept a whole-number
@@ -64,7 +70,7 @@ def apply_preferences(config, preferences):
             screenbuilder_factory.REGISTRY.get(config.get("type"))))
 
     font_percent = None
-    font_family = "DejaVu Sans Condensed"
+    font_family = DEFAULT_FONT_FAMILY
     if "options" in config:
         if "font_percent" in config["options"]:
             font_percent = normalize_font_percent(
