@@ -162,7 +162,7 @@ FIX keys it reads by default: `ALT`.
 | `alt_bug_alert_color` | Altitude alert color | `#ffb000` | colour | box text and bug colour while fix-gateway flags an altitude deviation (the key's annunciate flag) |
 | `alt_bug_dbkey` | Selected-altitude key | `ALTSEL` | FIX key | FIX key holding the selected altitude (default ALTSEL) |
 | `altsel_capture_color` | Altitude capture color | `#00ff00` | colour | selected-altitude box border while the autopilot captures it (APALTCAP) |
-| `vs_bug` | VSSEL bug | on | on / off | on a VS tape, the VSSEL bug while the autopilot reports VS active (on for a VS tape, off for an ALT tape) |
+| `vs_bug` | VSSEL bug | off | on / off | on a VS tape, the VSSEL bug while the autopilot reports VS active (on for a VS tape, off for an ALT tape) |
 | `vs_bug_color` | VSSEL bug color | `#00ffff` | colour | colour of the VSSEL bug |
 | `vs_bug_dbkey` | Selected-VS key | `VSSEL` | FIX key | FIX key holding the selected vertical speed (default VSSEL) |
 | `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
