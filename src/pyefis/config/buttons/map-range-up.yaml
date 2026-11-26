@@ -1,0 +1,12 @@
+type: simple
+text: "RNG\n+"
+dbkey: TSBTN{id}38
+bg_color: "#101418"
+fg_color: "#00ffff"
+# One step of the moving map's range ladder out, toward the longest range. MAPRANGE is
+# the ladder index; a map moves only if its range_key names MAPRANGE, and it
+# stops at the ends of its own ladder (TESS2).
+conditions:
+  - when: "CLICKED eq true"
+    actions:
+      - change value: "MAPRANGE, 1"
