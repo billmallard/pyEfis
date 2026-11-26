@@ -125,6 +125,26 @@ def merge_dict(dest,override):
         else:
             dest[k] = override[k]
 
+def save_screenshot(target, path):
+    """Grab *target* (the main window, or a screen) to *path* and return
+    whether the save worked.
+
+    AER-6639: on the Beelink (xcb), grab() renders each QOpenGLWidget
+    through Qt's own grab path, and after it the window composes that
+    widget black the next time anything over it repaints -- a touch on a
+    readout, a focus ring. The SVS AI only repaints when its data changes,
+    so on a static bus the attitude stayed black until restart. Asking
+    every GL widget to repaint right after the grab redraws it before it
+    can be composed black."""
+    pix = target.grab() if hasattr(target, "grab") else target.grabWindow(0)
+    ok = pix.save(path, "PNG")
+    find = getattr(target, "findChildren", None)
+    if find is not None:
+        from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+        for glw in find(QOpenGLWidget):
+            glw.update()
+    return ok
+
 def main():
     global config_path
     global preferences
@@ -313,9 +333,7 @@ def main():
             return
         try:
             target = gui.mainWindow if gui.mainWindow else app.primaryScreen()
-            pix = target.grab() if hasattr(target, "grab") \
-                else target.grabWindow(0)
-            ok = pix.save("/tmp/pyefis_screenshot.png", "PNG")
+            ok = save_screenshot(target, "/tmp/pyefis_screenshot.png")
             log.info(f"screenshot save -> /tmp/pyefis_screenshot.png ({ok})")
         except Exception as e:
             log.warning(f"screenshot failed: {e}")
