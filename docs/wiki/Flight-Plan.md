@@ -84,6 +84,17 @@ reads `DRAFT - NOT LOADED:` and its button, **Flown plan**, goes back. The draft
 ends when the engine loads a change. This needs an engine that publishes
 `FPLLDSEQ`.
 
+A plan sent from ForeFlight (*Send To*, then the panel's upload page or the
+*Send to Panel* shortcut) does not replace your route. A cyan strip above the
+soft keys reads `PLAN FROM EFB:` with its name and number of waypoints. Touch
+**Review** to see every fix, then **Accept** to make it your route, **Reject**
+to drop it, or **Later** to keep it waiting. Altitudes and speeds do not come
+across from ForeFlight, and airways and procedures arrive as plain fixes; the
+sheet says so. A user waypoint with a name longer than 6 characters loads with
+the first 6, and the sheet shows the full name beside it. If a newer plan
+arrives while you are reviewing, the sheet closes and the strip shows the new
+one.
+
 Other messages, such as `STORED`, `ROUTE FULL`, an OBS refusal, a refused
 Activate (`ALREADY TURNED TOWARD FIX: USE DIRECT-TO`) or a change that left no
 leg active (`ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE`), show in a

@@ -173,6 +173,33 @@ the draft. A gateway without `FPLLDSEQ` keeps the behaviour from before the key.
 An `FPLMSG` that answers a command (a refused DTO) can land while a commit is
 pending, and it then flags that commit until `FPLLDSEQ` arrives.
 
+**A plan from an EFB is offered, never taken by itself** (EFB4b, AER-6706).
+fix-gateway's `fpl_exchange` plugin writes a `.fpl` uploaded from ForeFlight to
+the pending-import block, `FPLIMP*` (fix-gateway `doc/flightplan_keys.md`,
+"Pending import"); it never touches the route block. While a plan is pending
+(`FPLIMPSEQ > 0` and `FPLIMPDONE` differs from it) a cyan strip above the soft
+keys reads `PLAN FROM EFB: <name>` and the waypoint count, with **Review**.
+Review opens a sheet listing every fix (type icon, ident, leg distance into it,
+running total) under the note `ALTITUDES AND SPEEDS DID NOT COME ACROSS`, with
+**Accept**, **Reject** and **Later**. Accept makes it the route the way a
+catalog Activate does: a plan of TF legs, one waypoint segment per fix, source
+`efb`, committed through `FixBridge.publish`, so the engine can refuse it like
+any edit (the refused route then becomes the draft, as above). Reject leaves
+the route alone. Either way the page then writes `FPLIMPDONE = FPLIMPSEQ`,
+which clears the offer on every display. Later, or a tap off the sheet, closes
+it and keeps the offer. A newer upload replaces the offer and closes an open
+sheet. Accept re-reads the import first and refuses with `PLAN CHANGED -
+REVIEW AGAIN` if any point differs from what the sheet showed: the plugin
+overwrites the points before it bumps `FPLIMPSEQ`. A Garmin identifier can run
+to 12 characters and a route slot holds 6 (`FPLfID`). Only a user waypoint is
+that long, and it is placed by its position, so it loads cut to 6 with the
+whole identifier kept as the waypoint's name; the sheet shows both
+(`BIGBEA (BIGBEAR12)`). A gateway without the import block offers nothing
+(`FixBridge.imports_available`). On a read-only page (a demo kiosk) the strip
+shows but cannot be answered. `fixbridge.import_to_plan` and the page's
+`_offer` take any `model.FlightPlan`, so a route typed as a string (RTE1) can
+reuse the same sheet.
+
 ### Pages
 
 - **FPL** (default) — header: route name, `FPLREMDIS`/`FPLREMETE`, a state
