@@ -1,0 +1,24 @@
+# Refused under B3: an input read through a boolean option.
+# Generated as valid/minimal.yaml with one change.
+
+format: makerplane.instrument/1
+type: user.minimal_dial
+label: Minimal dial
+family: scale_gauge
+
+options:
+  - {name: dbkey, kind: fixkey, default: OILP1}
+  - {name: show, kind: boolean, default: true}
+
+inputs:
+  value: {option: show}
+
+canvas: {width: 100, height: 100}
+
+scale:
+  input: value
+  range: {from: 0, to: 100}
+  angle: {start: -135, sweep: 270}
+
+draw:
+  - pointer: {pivot: {x: 50, y: 50}, shape: [[-2, 5], [0, -40], [2, 5]], fill: ink.primary}

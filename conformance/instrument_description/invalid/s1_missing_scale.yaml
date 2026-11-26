@@ -1,0 +1,18 @@
+# Refused under S1: the required scale mapping is absent.
+# Generated as valid/minimal.yaml with one change.
+
+format: makerplane.instrument/1
+type: user.minimal_dial
+label: Minimal dial
+family: scale_gauge
+
+options:
+  - {name: dbkey, kind: fixkey, default: OILP1}
+
+inputs:
+  value: {option: dbkey}
+
+canvas: {width: 100, height: 100}
+
+draw:
+  - pointer: {pivot: {x: 50, y: 50}, shape: [[-2, 5], [0, -40], [2, 5]], fill: ink.primary}

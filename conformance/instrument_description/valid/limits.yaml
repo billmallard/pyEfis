@@ -1,0 +1,41 @@
+# Every bound at its limit: 64 points, 32 characters, groups four deep,
+# yellow (#ffff00, hue 60) just outside B6's window, red and amber in
+# on_fail, band on a pointer, an explicit scale center and a label role.
+
+format: makerplane.instrument/1
+type: user.limits_dial
+label: Minimal dial
+family: scale_gauge
+
+options:
+  - {name: dbkey, kind: fixkey, default: OILP1}
+  - {name: show_extra, kind: boolean, default: false}
+  - {name: accent_color, kind: color, default: "#ffff00"}
+
+inputs:
+  value: {option: dbkey}
+
+canvas: {width: 100, height: 100}
+
+scale:
+  input: value
+  range: {from: 0, to: 100}
+  angle: {start: -135, sweep: 270, center: {x: 50, y: 50}}
+
+draw:
+  - pointer: {pivot: {x: 50, y: 50}, shape: [[-2, 5], [0, -40], [2, 5]], fill: band}
+  - polygon: {points: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 0], [8, 1], [9, 2], [10, 3], [11, 4], [12, 5], [13, 6], [14, 0], [15, 1], [16, 2], [17, 3], [18, 4], [19, 5], [20, 6], [21, 0], [22, 1], [23, 2], [24, 3], [25, 4], [26, 5], [27, 6], [28, 0], [29, 1], [30, 2], [31, 3], [32, 4], [33, 5], [34, 6], [35, 0], [36, 1], [37, 2], [38, 3], [39, 4], [40, 5], [41, 6], [42, 0], [43, 1], [44, 2], [45, 3], [46, 4], [47, 5], [48, 6], [49, 0], [50, 1], [51, 2], [52, 3], [53, 4], [54, 5], [55, 6], [56, 0], [57, 1], [58, 2], [59, 3], [60, 4], [61, 5], [62, 6], [63, 0]], fill: accent_color}
+  - text: {x: 50, y: 80, text: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, size: 6, fill: "#ffff00"}
+  - circle: {cx: 50, cy: 50, r: 45, stroke: nav.course, visible_if: show_extra}
+  - group:
+      draw:
+        - group:
+            draw:
+              - group:
+                  draw:
+                    - group:
+                        draw:
+                          - circle: {cx: 50, cy: 50, r: 2, fill: ink.muted}
+on_fail:
+  - text: {x: 50, y: 30, text: FAIL, size: 10, fill: "#ff0000", role: label}
+  - rect: {x: 10, y: 10, w: 80, h: 80, stroke: state.caution}

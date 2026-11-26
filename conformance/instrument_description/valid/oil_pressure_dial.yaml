@@ -1,0 +1,84 @@
+# The worked example of briefs/instrument_description_study.md (INS7, AER-6589),
+# the first valid case of the corpus. Two changes from the brief's draft: the
+# font names are the shipped font-family list (the draft used a symbolic
+# `sans_condensed`), and the comments now name the rule each part exercises
+# by its id in docs/instrument_description_spec.md.
+#
+# A vintage round oil-pressure dial of the kind a sim builder reproduces from
+# one aircraft's panel.
+
+format: makerplane.instrument/1     # B9: an unknown major version is refused
+type: user.oil_press_dial           # B9: third-party types live under user.; shipped names cannot be shadowed
+label: Oil pressure (round dial)
+category: engine
+family: scale_gauge                 # B7: the family owns the quality rule (spec section 6)
+author: Example Builder
+license: CC0-1.0
+
+# Options use the InstrumentSpec Prop vocabulary, so the configurator builds the
+# properties panel as it does for a shipped type. A fixkey option is the only
+# way a file names a key (B3): the builder binds it, the file never writes one.
+options:
+  - {name: dbkey, kind: fixkey, default: OILP1, label: Oil pressure key}
+  - {name: show_readout, kind: boolean, default: true, label: Digital readout}
+  - {name: show_bands, kind: boolean, default: true, label: Limit arcs}
+  - {name: face_color, kind: color, default: surface.base, token: surface.base, label: Face}
+  - {name: marking_color, kind: color, default: ink.primary, token: ink.primary, label: Markings}
+
+# One input per value the drawing reads. Here, one key.
+inputs:
+  value: {option: dbkey}
+
+# The file's own coordinate space, scaled to the instrument's span with the
+# aspect ratio kept.
+canvas: {width: 200, height: 200}
+
+# The family's single value mapping. Its range comes from the key's own Min and
+# Max (fix-gateway aux), so the dial and the gateway's limits cannot disagree
+# (B1: a closed set of source names, never an expression). Angles: degrees
+# clockwise from 12 o'clock.
+scale:
+  input: value
+  range: {from: aux.Min, to: aux.Max}
+  angle: {start: -135, sweep: 270}
+  clamp: true                       # a value past the range pins at the end stop
+
+draw:
+  # The face. Static geometry, literal numbers only.
+  - circle: {cx: 100, cy: 100, r: 97, fill: face_color, stroke: line.border, width: 2}
+
+  # Limit arcs. The file gives only the geometry. The interpreter places each
+  # arc from the key's lowAlarm, lowWarn, highWarn and highAlarm aux values and
+  # colours it state.valid, state.caution or state.warning. A file cannot draw
+  # red or amber at a value it chose itself (B6).
+  - bands: {r: 86, width: 9, visible_if: show_bands}
+
+  # Graduations, in value units, placed through the scale mapping.
+  - ticks: {r: 94, every: 10, length: 7, width: 1.5, stroke: marking_color}
+  - ticks: {r: 94, every: 50, length: 14, width: 3, stroke: marking_color}
+  - tick_labels: {r: 64, every: 50, font: DejaVu Sans Condensed, size: 15, fill: marking_color}
+
+  # Literal caption. Text is a literal string, never markup (B8). `role: label`
+  # lets the family turn it red when the key annunciates (spec section 6).
+  - text: {x: 100, y: 136, text: OIL PSI, font: DejaVu Sans Condensed, size: 12, fill: ink.secondary, anchor: middle, role: label}
+
+  # The pointer: a polygon in its own frame (pivot at the origin, pointing at
+  # 12 o'clock), rotated by the scale mapping. It is value-bound, so the
+  # family's quality rule decides whether and how it is drawn (B7).
+  - pointer:
+      pivot: {x: 100, y: 100}
+      shape: [[-3.5, 14], [0, -82], [3.5, 14]]
+      fill: marking_color
+  - circle: {cx: 100, cy: 100, r: 7, fill: line.border}
+
+  # A digital readout. Its colour `band` is the family's value colour: ink
+  # normally, amber or red when the value is past the key's own limits (B6).
+  # The mask is the value_text digit mask (`000` = three digits).
+  - readout: {x: 100, y: 172, mask: "000", font: DejaVu Sans Condensed, size: 20, fill: band, anchor: middle, visible_if: show_readout}
+
+# Drawn in addition to the family's fail rule, never instead of it (B7). A
+# real gauge of this vintage shows an OFF flag on a dead source; the file may
+# draw one, in red, because this layer is drawn only when the key is failed
+# or old (B6). "OFF" is quoted: unquoted, YAML reads it as the boolean false.
+on_fail:
+  - text: {x: 100, y: 66, text: "OFF", font: DejaVu Sans Condensed, size: 18, fill: state.warning, anchor: middle, box: true}

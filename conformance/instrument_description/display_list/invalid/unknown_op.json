@@ -1,0 +1,8 @@
+{
+  "format": "makerplane.display_list/1",
+  "width": 100,
+  "height": 100,
+  "ops": [
+    {"script": {"source": "draw()"}}
+  ]
+}

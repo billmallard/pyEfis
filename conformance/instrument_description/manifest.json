@@ -1,0 +1,242 @@
+{
+  "format": "makerplane.conformance/1",
+  "descriptions": [
+    {
+      "file": "valid/oil_pressure_dial.yaml",
+      "expect": "valid",
+      "why": "the worked example of the study"
+    },
+    {
+      "file": "valid/minimal.yaml",
+      "expect": "valid",
+      "why": "the required fields and one pointer"
+    },
+    {
+      "file": "valid/horizontal_bar.yaml",
+      "expect": "valid",
+      "why": "an axis scale: fill_bar, offset placement, literal range"
+    },
+    {
+      "file": "valid/limits.yaml",
+      "expect": "valid",
+      "why": "every bound at its limit, yellow just outside B6's window, red and amber in on_fail, band on a pointer"
+    },
+    {
+      "file": "valid/max_elements.yaml",
+      "expect": "valid",
+      "why": "exactly 256 elements"
+    },
+    {
+      "file": "invalid/s1_missing_scale.yaml",
+      "expect": "S1",
+      "why": "the required scale mapping is absent"
+    },
+    {
+      "file": "invalid/s1_offset_on_round_scale.yaml",
+      "expect": "S1",
+      "why": "ticks on an angle scale are placed by r, not offset"
+    },
+    {
+      "file": "invalid/s1_option_kind_string.yaml",
+      "expect": "S1",
+      "why": "version 1 options are boolean, color or fixkey"
+    },
+    {
+      "file": "invalid/s1_duplicate_field.yaml",
+      "expect": "S1",
+      "why": "a field given twice; YAML would silently keep the last"
+    },
+    {
+      "file": "invalid/b1_visible_if_expression.yaml",
+      "expect": "B1",
+      "why": "visible_if names a static option, never a condition on the value"
+    },
+    {
+      "file": "invalid/b1_range_expression.yaml",
+      "expect": "B1",
+      "why": "a range end is a number or aux.Min/aux.Max, never arithmetic"
+    },
+    {
+      "file": "invalid/b1_number_as_string.yaml",
+      "expect": "B1",
+      "why": "a coordinate given as a string is an expression"
+    },
+    {
+      "file": "invalid/b1_undeclared_colour_option.yaml",
+      "expect": "B1",
+      "why": "a colour name that is neither a token nor a declared colour option"
+    },
+    {
+      "file": "invalid/b1_calculate_element.yaml",
+      "expect": "B1",
+      "why": "an unknown element; the vocabulary is closed"
+    },
+    {
+      "file": "invalid/b2_hotspot.yaml",
+      "expect": "B2",
+      "why": "a touch target that writes a key"
+    },
+    {
+      "file": "invalid/b2_on_click_field.yaml",
+      "expect": "B2",
+      "why": "an action field on a drawn element"
+    },
+    {
+      "file": "invalid/b2_encoder_option.yaml",
+      "expect": "B2",
+      "why": "a knob option enrols the instrument as an input target"
+    },
+    {
+      "file": "invalid/b3_input_not_fixkey.yaml",
+      "expect": "B3",
+      "why": "an input read through a boolean option"
+    },
+    {
+      "file": "invalid/b3_undeclared_input.yaml",
+      "expect": "B3",
+      "why": "a pointer reading an input not declared"
+    },
+    {
+      "file": "invalid/b4_image.yaml",
+      "expect": "B4",
+      "why": "a raster image by URL"
+    },
+    {
+      "file": "invalid/b4_font_file.yaml",
+      "expect": "B4",
+      "why": "a font by file; fonts come from the shipped list"
+    },
+    {
+      "file": "invalid/b4_include.yaml",
+      "expect": "B4",
+      "why": "an include of another file"
+    },
+    {
+      "file": "invalid/b5_polygon_points.yaml",
+      "expect": "B5",
+      "why": "a pointer shape of 65 points (at most 64)"
+    },
+    {
+      "file": "invalid/b5_long_text.yaml",
+      "expect": "B5",
+      "why": "a text of 33 characters (at most 32)"
+    },
+    {
+      "file": "invalid/b5_group_depth.yaml",
+      "expect": "B5",
+      "why": "groups nested five deep (at most four)"
+    },
+    {
+      "file": "invalid/b5_yaml_alias.yaml",
+      "expect": "B5",
+      "why": "a YAML alias, which can multiply a file's size"
+    },
+    {
+      "file": "invalid/b5_too_many_elements.yaml",
+      "expect": "B5",
+      "why": "257 elements (at most 256)"
+    },
+    {
+      "file": "invalid/b6_literal_red_text.yaml",
+      "expect": "B6",
+      "why": "a literal red caption"
+    },
+    {
+      "file": "invalid/b6_literal_orange.yaml",
+      "expect": "B6",
+      "why": "a dark orange literal, inside the red-to-amber hue window"
+    },
+    {
+      "file": "invalid/b6_caution_token_ticks.yaml",
+      "expect": "B6",
+      "why": "graduations drawn in state.caution"
+    },
+    {
+      "file": "invalid/b6_amber_option_default.yaml",
+      "expect": "B6",
+      "why": "a colour option whose default is amber, used by the pointer"
+    },
+    {
+      "file": "invalid/b6_warning_option_token.yaml",
+      "expect": "B6",
+      "why": "a colour option reading the state.warning token"
+    },
+    {
+      "file": "invalid/b6_band_on_static.yaml",
+      "expect": "B6",
+      "why": "the band colour on a static element that has no value"
+    },
+    {
+      "file": "invalid/b7_on_old_layer.yaml",
+      "expect": "B7",
+      "why": "a layer drawn on old data; the family owns it"
+    },
+    {
+      "file": "invalid/b7_pointer_in_on_fail.yaml",
+      "expect": "B7",
+      "why": "a value-bound pointer in the on_fail layer would draw a failed value"
+    },
+    {
+      "file": "invalid/b7_readout_in_on_fail.yaml",
+      "expect": "B7",
+      "why": "a readout in the on_fail layer would draw a failed value"
+    },
+    {
+      "file": "invalid/b7_suppress_fail.yaml",
+      "expect": "B7",
+      "why": "an element that asks to hide the fail look"
+    },
+    {
+      "file": "invalid/b8_markup_text.yaml",
+      "expect": "B8",
+      "why": "markup in a drawn text"
+    },
+    {
+      "file": "invalid/b8_markup_label.yaml",
+      "expect": "B8",
+      "why": "an entity in the palette label"
+    },
+    {
+      "file": "invalid/b9_format_2.yaml",
+      "expect": "B9",
+      "why": "an unknown major format version"
+    },
+    {
+      "file": "invalid/b9_type_not_user.yaml",
+      "expect": "B9",
+      "why": "a type outside the user. namespace"
+    },
+    {
+      "file": "invalid/b9_shadows_shipped.yaml",
+      "expect": "B9",
+      "why": "user.arc_gauge shadows the shipped arc_gauge"
+    },
+    {
+      "file": "invalid/b9_unknown_family.yaml",
+      "expect": "B9",
+      "why": "a family version 1 does not define"
+    }
+  ],
+  "display_lists": [
+    {
+      "file": "display_list/valid/static_face.json",
+      "expect": "valid",
+      "why": "one of each op kind"
+    },
+    {
+      "file": "display_list/invalid/unresolved_token.json",
+      "expect": "invalid",
+      "why": "a token reached the display list unresolved"
+    },
+    {
+      "file": "display_list/invalid/unknown_op.json",
+      "expect": "invalid",
+      "why": "an op kind painters lack"
+    },
+    {
+      "file": "display_list/invalid/upper_case_hex.json",
+      "expect": "invalid",
+      "why": "colours are canonical lower-case hex"
+    }
+  ]
+}

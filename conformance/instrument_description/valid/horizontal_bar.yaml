@@ -1,0 +1,35 @@
+# A bar on an axis scale: the other shape of the scale_gauge family. Exercises
+# axis placement (offset, not r), fill_bar, a pointer moved along the axis
+# (no pivot), the band colour on a fill_bar, and literal limits in the range.
+
+format: makerplane.instrument/1
+type: user.fuel_bar
+label: Fuel quantity bar
+category: engine
+family: scale_gauge
+license: CC0-1.0
+
+options:
+  - {name: dbkey, kind: fixkey, default: FUELQ1, label: Fuel quantity key}
+  - {name: show_ticks, kind: boolean, default: true, label: Graduations}
+
+inputs:
+  qty: {option: dbkey}
+
+canvas: {width: 240, height: 60}
+
+scale:
+  input: qty
+  range: {from: 0, to: 30}
+  axis: {x1: 20, y1: 30, x2: 220, y2: 30}
+  clamp: true
+
+draw:
+  - rect: {x: 0, y: 0, w: 240, h: 60, fill: surface.raised}
+  - bands: {offset: 12, width: 4}
+  - fill_bar: {width: 14, fill: band}
+  - ticks: {offset: -10, every: 5, length: 6, stroke: ink.muted, visible_if: show_ticks}
+  - tick_labels: {offset: -20, every: 10, size: 10, fill: ink.secondary}
+  - pointer: {shape: [[-4, -12], [4, -12], [0, -4]], fill: ink.primary}
+  - readout: {x: 236, y: 54, mask: "00.0", decimals: 1, size: 12, fill: band, anchor: end}
+  - text: {x: 4, y: 54, text: FUEL GAL, size: 10, fill: ink.secondary}
