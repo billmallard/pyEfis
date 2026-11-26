@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import QWidget
 from pyavtools import fix
 from pyefis import hmi
 from pyefis.flightplan import airac
+from pyefis.instruments.helpers.bugs import BugBinding
 
 logger = logging.getLogger(__name__)
 
@@ -106,18 +107,17 @@ class NavStatus(QWidget):
         self.text_color = "#ffffff"
 
         self._items = {}
+        self._bindings = []
         for key in NAV_KEYS + OPTIONAL_KEYS:
-            try:
-                item = fix.db.get_item(key)
-            except KeyError:
+            binding = BugBinding(key, self, warn=False)
+            if binding.item is None:
                 logger.warning("nav_status: FIX key %s not defined by the "
                                "gateway; the chip shows it as absent", key)
                 continue
-            self._items[key] = item
-            item.valueChanged[item.dtype].connect(self._changed)
-            item.oldChanged.connect(self._changed)
-            item.badChanged.connect(self._changed)
-            item.failChanged.connect(self._changed)
+            self._items[key] = binding.item
+            self._bindings.append(binding)
+            binding.item.valueChanged[binding.item.dtype].connect(self._changed)
+            binding.qualityChanged.connect(self._changed)
 
     @property
     def available(self):
