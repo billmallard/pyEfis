@@ -52,6 +52,11 @@ pyAvMap's tile logic can be mined if wanted.
   (ground speed for the track vector), ALT (terrain-relative coloring,
   later TAWS layer). Standard fail/old/bad handling: stale position
   greys the ownship + annunciates; the map does NOT freeze silently.
+  "Stale" is any of old, bad or fail (`_stale`, INS5): `LAT`/`LONG`
+  grey the ownship and add `NO POS` to the chip; `TRACKM`, or `TRACK`
+  where the gateway has it, greys the TRK box and the ownship (it points
+  along the track); `ALT` drops caution mode's bands to relief and adds
+  `NO ALT` to the chip.
 - **Projection**: local azimuthal-equidistant about the screen
   center — x = (lon-lon0)·M·cos(lat0), y = (lat-lat0)·M, the same
   small-area flat-earth math the SVS uses (`M_PER_DEG_LAT`, shared
@@ -120,7 +125,9 @@ class MapLayer:                    # pyefis/instruments/map/layers/base.py
   above ownship, red under `clearance_yellow_ft` (500 ft), amber under
   `clearance_green_ft` (1,000 ft), colours from `terrain_palette`, and
   the airport-proximity collapse (within 5 NM, terrain below field
-  elevation + 400 ft gets no band).
+  elevation + 400 ft gets no band). The bands are clearance from `ALT`:
+  while `ALT` is old, bad or failed the layer draws relief and the status
+  chip reads `NO ALT` (INS5, AER-6588).
 
 ### 5.2 Airports (z=30, default on)
 - Source: NASR `airports.sqlite` via the existing airport_db

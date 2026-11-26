@@ -12,8 +12,8 @@ reason that names the waypoint where the code carries one.
 
 Three codes are not refusals: an accepted commit that drops the active leg
 says why with ``ACTIVE LEG REMOVED``, ``CHANGED`` or ``AMBIGUOUS`` (HOLDFIX0),
-written after ``FPLLDSEQ``, so the FPL page never reads them as a refusal.
-They are here so that any surface showing ``FPLMSG`` has words for them.
+written after ``FPLLDSEQ``, so the FPL page never reads them as a refusal;
+it shows them as a notice (:data:`ACTIVE_LEG_NOTICES`).
 
 A code this module does not know -- an engine newer than this display -- is
 shown as it came, never as nothing. ``tests/flightplan/test_refusal.py`` reads
@@ -113,6 +113,10 @@ _ACTIVE_LEG = {
     "ACTIVE LEG AMBIGUOUS": "ACTIVE LEG REPEATED IN PLAN: NO LEG ACTIVE",
 }
 _COMMAND.update(_ACTIVE_LEG)
+
+#: The accepted-commit notices above: the FPL page toasts one when it lands
+#: after ``FPLLDSEQ`` (G97, AER-6536).
+ACTIVE_LEG_NOTICES = frozenset(_ACTIVE_LEG)
 
 #: Every code :func:`plain_reason` has words for: the first word of a route
 #: refusal, or a whole command rejection.

@@ -3,6 +3,107 @@
 # pull requests on github are welcome!
 
 items:
+# Panel controls (DSP2).  Each line below is the command of the button file
+# named beside it, on that button's TSBTN key, so a panel key or a GPIO
+# button that writes the key acts on every screen, not only while the button
+# shows.  A button on a bound key leaves the key to its binding (it still
+# answers a touch), so a press acts once either way.  {id} is the display's
+# nodeID, as in the button files.  The repeat timing is the button's: a key
+# held true repeats as the button does while held.  The centre commands set a
+# value, so they fire once and do not repeat.
+  - key: TSBTN{id}1    # buttons/baro-down-invisible.yaml
+    condition: True
+    action: change value
+    args: "BARO, -0.01"
+    repeat_delay: 300
+    repeat_interval: 100
+  - key: TSBTN{id}2    # buttons/baro-up-invisible.yaml
+    condition: True
+    action: change value
+    args: "BARO, 0.01"
+    repeat_delay: 300
+    repeat_interval: 100
+  - key: TSBTN{id}3    # buttons/trim-up-invisible.yaml
+    condition: True
+    action: change value
+    args: "TRIMP,0.1"
+    repeat_delay: 50
+    repeat_interval: 5
+  - key: TSBTN{id}4    # buttons/trim-center-invisible.yaml
+    condition: True
+    action: set value
+    args: "TRIMP,0"
+  - key: TSBTN{id}5    # buttons/trim-down-invisible.yaml
+    condition: True
+    action: change value
+    args: "TRIMP,-0.1"
+    repeat_delay: 50
+    repeat_interval: 5
+  - key: TSBTN{id}6    # buttons/trim-roll-left-invisible.yaml
+    condition: True
+    action: change value
+    args: "TRIMR,-0.1"
+    repeat_delay: 50
+    repeat_interval: 5
+  - key: TSBTN{id}7    # buttons/trim-roll-center-invisible.yaml
+    condition: True
+    action: set value
+    args: "TRIMR,0"
+  - key: TSBTN{id}8    # buttons/trim-roll-right-invisible.yaml
+    condition: True
+    action: change value
+    args: "TRIMR,0.1"
+    repeat_delay: 50
+    repeat_interval: 5
+  - key: TSBTN{id}9    # buttons/trim-yaw-left-invisible.yaml
+    condition: True
+    action: change value
+    args: "TRIMY,-0.1"
+    repeat_delay: 50
+    repeat_interval: 5
+  - key: TSBTN{id}10    # buttons/trim-yaw-center-invisible.yaml
+    condition: True
+    action: set value
+    args: "TRIMY,1"
+  - key: TSBTN{id}11    # buttons/trim-yaw-right-invisible.yaml
+    condition: True
+    action: change value
+    args: "TRIMY,0.1"
+    repeat_delay: 50
+    repeat_interval: 5
+  - key: TSBTN{id}27    # buttons/dimmer-up-invisible.yaml
+    condition: True
+    action: change value
+    args: "DIM,1"
+    repeat_delay: 100
+    repeat_interval: 50
+  - key: TSBTN{id}28    # buttons/dimmer-down-invisible.yaml
+    condition: True
+    action: change value
+    args: "DIM,-1"
+    repeat_delay: 100
+    repeat_interval: 50
+  - key: TSBTN{id}29    # buttons/heading-bug-down.yaml
+    condition: True
+    action: change value wrap
+    args: "HEADBUG, -1"
+    repeat_delay: 300
+    repeat_interval: 60
+  - key: TSBTN{id}30    # buttons/heading-bug-sync.yaml
+    condition: True
+    action: sync value
+    args: "HEADBUG, HEAD"
+  - key: TSBTN{id}31    # buttons/heading-bug-up.yaml
+    condition: True
+    action: change value wrap
+    args: "HEADBUG, 1"
+    repeat_delay: 300
+    repeat_interval: 60
+  - key: TSBTN{id}33    # buttons/cdi-source.yaml
+    condition: True
+    action: change value wrap
+    args: "NAVSRC, 1"
+
 # These button examples map BTN1 and BTN2 to activating
 # the button of the legacy menu.
 # Since the legacy menu is disabled by default so are 

@@ -753,6 +753,8 @@ def seed_mock_fix(args):
         ("LAT", "Lat", -90.0, 90.0, "deg"),
         ("LONG", "Lon", -180.0, 180.0, "deg"),
         ("ALT", "Alt", -2000, 60000, "ft"),
+        # The SVS camera height (SVSALT1); ALT feeds only the altimeter.
+        ("TALT", "True Alt", -2000, 60000, "ft"),
         ("MAGVAR", "MagVar", -30.0, 30.0, "deg"),
     ):
         fix.db.define_item(key, desc, "float", lo, hi, units, 50000, "")
@@ -774,6 +776,7 @@ def seed_mock_fix(args):
         "LAT": args.lat,
         "LONG": args.lon,
         "ALT": args.alt,
+        "TALT": args.alt,
         "MAGVAR": args.magvar,
     }
     if getattr(args, "bank_bug", None) is not None:

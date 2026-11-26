@@ -21,7 +21,11 @@ themselves). Every DB-backed object is construct-never-raises with
   cannot drift apart.
 - **`waypoints.py`** (FP3) — `WaypointIndex`: in-memory identifier index over
   the on-device `airports.sqlite`/`navaids.sqlite` packs, FastFind (`prefix`),
-  `nearest`, plus `UserWaypointStore` and `RecentList`.
+  `nearest`, plus `UserWaypointStore` and `RecentList`. Each `Waypoint`
+  carries `region` (the NASR state, else the country) and `icao_region`
+  (fixes only) from packs built since FPA5; `lookup(ident, region=)`
+  narrows by either. `RecentList` stores each pick's type and position, so
+  `recent_waypoints()` returns that place, not the first of its ident.
 - **`airways.py`** (PA2, procedures epic) — `AirwayGraph`: lookup + expansion
   over the `procedures` pack's `airways`/`airway_legs` tables. `expand()`
   emits `type="fix"` legs, each carrying the MEA of the airway leg that ends
@@ -189,7 +193,10 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   when the leg's from-fix is more than `ACT_CONFIRM_NM`, 500 nm, from a
   valid `LAT`/`LONG` it first asks `FROM <fix> <n> NM / ACTIVATE LEG?`,
   and No or a tap off the box sends nothing -- FPACT1, AER-5801; the same
-  applies to Show Fixes and a segment's Activate (to entry)),
+  applies to Show Fixes and a segment's Activate (to entry); a refused
+  `ACT` from any of them toasts the engine's reason in plain words, e.g.
+  `ACT N/A TURNED` reads `ALREADY TURNED TOWARD FIX: USE DIRECT-TO`, else
+  `LEG NOT ACTIVATED` -- G97, AER-6536),
   Direct To (stages + `DTO k`), **Hold...** (HOLDFIX1, AER-6210: a hold
   editor in clearance form -- side of the fix, radial or inbound course
   defaulting to the course of the leg into the fix, turns R by default, leg
@@ -224,6 +231,10 @@ pending, and it then flags that commit until `FPLLDSEQ` arrives.
   HOLD on an `HM` slot), CDI Scale 0.3/1.0/2.0/AUTO, Delete — Clear and
   Delete both confirm and both reset the working plan; a distinct "Delete"
   semantic can be added if the guide's usage turns out to need one).
+  An accepted commit that drops the active leg (fix-gateway HOLDFIX0
+  writes `ACTIVE LEG REMOVED`, `CHANGED` or `AMBIGUOUS` on `FPLMSG` after
+  `FPLLDSEQ`) is toasted in plain words, e.g. `ACTIVE WAYPOINT REMOVED: NO
+  LEG ACTIVE`, once `FPLLDSEQ` equals `FPLSEQ` (G97, AER-6536).
   Result and error messages (STORED, NO AIRWAYS AT x, ROUTE FULL, ...) show
   as a toast that clears itself after `TOAST_MS` (4 s; each new message
   restarts it) or on the next tap anywhere on the page (pyEfis #323). On the
@@ -496,7 +507,7 @@ screen, the `checklist` broadcast precedent).
 | Verb | Payload |
 |------|---------|
 | `flightplan page` | `fpl` returns to the FPL page (closing any open menu/entry); `dto`/`catalog`/`proc`/`charts` open those pages |
-| `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut) |
+| `flightplan direct to` | blank opens the DTO page; an ident stages and activates direct-to that waypoint immediately (the guide's knob shortcut); an ident that names more than one place opens the DTO page on the duplicate chooser (FPA5) |
 
 ### From the moving map (FP10)
 

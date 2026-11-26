@@ -94,6 +94,37 @@ def test_skip_count_reported(tmp_path, capsys):
     assert "skipped 2 special routes" in capsys.readouterr().out
 
 
+def test_navaids_and_fixes_carry_their_region(tmp_path):
+    """FPA5 (AER-6544): the pack keeps where each record is, so a resolver
+    can tell two same-named places apart. Real cycle-2611 rows: two of the
+    three ``BR`` NDBs (MN, TX), the Freeport VOR/DME in the Bahamas (no
+    state), and GOLET, whose FIX_BASE row codes ICAO region K2."""
+    d = tmp_path / "nasr"
+    d.mkdir()
+    _write(d / "NAV_BASE.csv",
+           ["NAV_ID", "NAV_TYPE", "STATE_CODE", "COUNTRY_CODE", "REGION_CODE", "NAME",
+            "FREQ", "ELEV", "LAT_DECIMAL", "LONG_DECIMAL"],
+           [("BR", "NDB", "MN", "US", "AGL", "LAREW", "251", "1260", "46.4566203", "-94.02243002"),
+            ("BR", "NDB", "TX", "US", "ASW", "DEPOO", "393", "28.5", "25.98366283", "-97.50909794"),
+            ("ZFP", "VOR/DME", "", "BS", "", "FREEPORT", "113.2", "7", "26.55534722", "-78.69784722")])
+    _write(d / "FIX_BASE.csv",
+           ["FIX_ID", "ICAO_REGION_CODE", "STATE_CODE", "COUNTRY_CODE", "FIX_USE_CODE",
+            "LAT_DECIMAL", "LONG_DECIMAL"],
+           [("GOLET", "K2", "CA", "US", "RP", "34.28135", "-119.864375")])
+    _write(d / "AWY_BASE.csv", ["AWY_DESIGNATION", "AWY_ID", "AIRWAY_STRING"], [])
+    out = tmp_path / "navaids.sqlite"
+    bn.main(["--nasr-dir", str(d), "-o", str(out)])
+    con = sqlite3.connect(out)
+    _OPEN.append(con)
+
+    assert con.execute("SELECT name, state, country FROM navaids ORDER BY lat").fetchall() == [
+        ("Depoo", "TX", "US"), ("Freeport", "", "BS"), ("Larew", "MN", "US")]
+    # NAV_BASE's REGION_CODE is the FAA region, not an ICAO one: not stored.
+    assert "icao_region" not in {r[1] for r in con.execute("PRAGMA table_info(navaids)")}
+    assert con.execute("SELECT id, icao_region, state, country FROM fixes").fetchall() == [
+        ("GOLET", "K2", "CA", "US")]
+
+
 def test_no_sp_rows_is_a_noop(tmp_path, capsys):
     """Pre-DPN fixture (no SP rows): every airway is built and the skip count is
     zero -- the regression guard for backward safety (section 4.3)."""

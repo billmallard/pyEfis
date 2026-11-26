@@ -79,6 +79,7 @@ from pyefis.flightplan import plates as fp_plates
 from pyefis.flightplan import proc_load as fp_proc
 from pyefis.flightplan import procedures as fp_procedures
 from pyefis.flightplan import refusal as fp_refusal
+from pyefis.flightplan import vocab as fp_vocab
 from pyefis.flightplan import waypoints as fp_waypoints
 from pyefis.instruments.flight_plan import plate_render
 
@@ -245,6 +246,9 @@ class FlightPlan(QWidget):
     # answer arrives on the gateway client's thread), and its refusal text.
     _send_hold_act = pyqtSignal(int)
     _hold_act_refused = pyqtSignal(str)
+    # Activate Leg, Activate (to entry) and the far-fix Yes (G97, AER-6536):
+    # the engine's refusal of that ACT, re-emitted onto the GUI thread.
+    _act_refused = pyqtSignal(str)
 
     def __init__(self, parent=None, font_family="DejaVu Sans Condensed",
                  font_percent=None):
@@ -470,6 +474,7 @@ class FlightPlan(QWidget):
         self._obs_refused.connect(self._show_obs_refusal)
         self._send_hold_act.connect(self._act_hold_slot)
         self._hold_act_refused.connect(self._show_hold_act_refusal)
+        self._act_refused.connect(self._show_act_refusal)
 
         self._bridge = fp_fixbridge.FixBridge(fix)
         if self._bridge.available:
@@ -612,6 +617,14 @@ class FlightPlan(QWidget):
             self._bridge.command("DTO")
             self._page = "fpl"
             self.update()
+        elif matches:
+            # An ident that names two places is shown, never guessed (FPA5):
+            # the DTO page opens on its chooser, and the pick goes direct.
+            self._open_dto_page()
+            self._entry_field = ident.strip().upper()
+            self._entry_message = "DUPLICATE FOUND"
+            self._entry_dupe_choices = matches
+            self._reveal()
 
     # -- bridge sync -------------------------------------------------------
     def _sync_plan_from_bridge(self, answered=False):
@@ -710,12 +723,27 @@ class FlightPlan(QWidget):
 
     def _on_fplmsg(self, *_args):
         # The engine's answer to a commit it refused. Only a commit still
-        # waiting for an answer takes it: FPLMSG also answers commands.
-        if self._pending_seq is None:
-            return
-        self._sync_plan_from_bridge(answered=True)
-        self._sync_engine_from_bridge()
-        self.update()
+        # waiting for an answer takes it: FPLMSG also answers commands. An
+        # accepted commit's active-leg notice is toasted either way.
+        pending = self._pending_seq is not None
+        if pending:
+            self._sync_plan_from_bridge(answered=True)
+            self._sync_engine_from_bridge()
+        if self._show_active_leg_notice() or pending:
+            self.update()
+
+    def _show_active_leg_notice(self):
+        """An accepted commit that dropped the active leg says why on
+        ``FPLMSG``, after ``FPLLDSEQ`` (fix-gateway HOLDFIX0): toast it in
+        plain words (G97, AER-6536). Only once the route on the bus is the
+        one loaded, so a refusal is never read as a notice. True if shown."""
+        msg = str(self._bridge._get("FPLMSG").value or "").strip()
+        if msg not in fp_refusal.ACTIVE_LEG_NOTICES:
+            return False
+        if self._loaded_seq() != int(self._bridge._get("FPLSEQ").value):
+            return False
+        self._message = fp_refusal.plain_reason(msg)
+        return True
 
     @pyqtSlot()
     def _start_commit_timer(self):
@@ -1005,12 +1033,7 @@ class FlightPlan(QWidget):
         idx = self._ensure_waypoint_index()
         types = TYPE_FILTERS.get(self._entry_type_filter)
         if self._entry_tab == "Recent":
-            out = []
-            for ident in idx.recent.list():
-                matches = idx.lookup(ident)
-                if matches and (not types or matches[0].type in types):
-                    out.append(matches[0])
-            return out
+            return idx.recent_waypoints(types)
         if self._entry_tab == "Nearest":
             ref_lat, ref_lon = self._entry_ref()
             return [r[0] for r in idx.nearest(ref_lat, ref_lon, types=types)]
@@ -1107,12 +1130,12 @@ class FlightPlan(QWidget):
         new_wp = fp_model.Waypoint(id=wp.id, type=wp.type, lat=wp.lat, lon=wp.lon,
                                     name=getattr(wp, "name", "") or "")
         if kind == "proc_airport":
-            self._ensure_waypoint_index().recent.push(wp.id)
+            self._ensure_waypoint_index().recent.push(wp.id, wp)
             self._close_entry()
             self._proc_set_airport(wp.id)
             return
         if kind == "charts_airport":
-            self._ensure_waypoint_index().recent.push(wp.id)
+            self._ensure_waypoint_index().recent.push(wp.id, wp)
             self._close_entry()
             self._charts_set_airport(wp.id)
             return
@@ -1134,7 +1157,7 @@ class FlightPlan(QWidget):
             self._entry_message = str(e)
             self.update()
             return
-        self._ensure_waypoint_index().recent.push(wp.id)
+        self._ensure_waypoint_index().recent.push(wp.id, wp)
         self._plan_dirty = True
         self._commit()
         self._close_entry()
@@ -1185,13 +1208,27 @@ class FlightPlan(QWidget):
                 self._act_confirm = {"slot": slot, "from_id": frm.id, "dist_nm": dist}
                 self.update()
                 return
-        self._bridge.command("ACT", slot)
+        self._send_act(slot)
 
     def _act_confirm_yes(self):
         c = self._act_confirm
         self._act_confirm = None
         if c is not None and self._bridge.available:
-            self._bridge.command("ACT", c["slot"])
+            self._send_act(c["slot"])
+        self.update()
+
+    def _send_act(self, slot):
+        """``ACT slot``; a refusal shows the engine's reason in plain words,
+        as the PPOS hold's ACT does (G97, AER-6536)."""
+        self._bridge.command("ACT", slot, on_ack=self._on_act_ack)
+
+    def _on_act_ack(self, _seq, ok, msg):
+        if not ok:
+            self._act_refused.emit(str(msg or ""))
+
+    @pyqtSlot(str)
+    def _show_act_refusal(self, msg):
+        self._message = fp_refusal.plain_reason(msg) or "LEG NOT ACTIVATED"
         self.update()
 
     def _act_confirm_no(self):
@@ -1270,7 +1307,7 @@ class FlightPlan(QWidget):
 
     def _open_airway_picker(self, i, wp):
         graph = self._ensure_airway_graph()
-        idents = graph.airways_through_fix(wp.id)
+        idents = graph.airways_through_fix(wp.id, at=(wp.lat, wp.lon))
         if not idents:
             self._message = f"NO AIRWAYS AT {wp.id}"
             self.update()
@@ -1299,7 +1336,9 @@ class FlightPlan(QWidget):
         picker = self._airway_picker
         graph = self._ensure_airway_graph()
         try:
-            expansion = graph.expand(picker["ident"], picker["entry_wp"].id, exit_fix_id)
+            entry = picker["entry_wp"]
+            expansion = graph.expand(picker["ident"], entry.id, exit_fix_id,
+                                     entry_at=(entry.lat, entry.lon))
         except fp_airways.AirwayError as e:
             picker["message"] = str(e)
             self.update()
@@ -1399,7 +1438,8 @@ class FlightPlan(QWidget):
     @staticmethod
     def _mea_text(wp):
         alt = (wp.alt or "").strip()
-        return alt.lstrip("+") if alt.startswith("+") else alt
+        above = fp_vocab.ALT_AT_OR_ABOVE
+        return alt.lstrip(above) if alt.startswith(above) else alt
 
     def _segment_mea(self, k):
         """Highest leg minimum inside the segment -- the altitude that keeps
@@ -5504,7 +5544,8 @@ class FlightPlan(QWidget):
 
     def _paint_dupe_chooser(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
-        items = [(f"{wp.id} {wp.type} {wp.name or ''}".strip(),
+        items = [(" ".join(t for t in (wp.id, wp.type, getattr(wp, "region", ""),
+                                       wp.name or "") if t),
                   (lambda w_=wp: self._choose_duplicate(w_)))
                  for wp in self._entry_dupe_choices]
         self._paint_menu_list(p, w, h, items, self._cancel_dupe_chooser, scroll_key="dupe_chooser")

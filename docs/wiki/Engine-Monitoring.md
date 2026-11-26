@@ -110,11 +110,11 @@ The configurator also shows each gauge's range and limits, read-only, because
 they are set in the aircraft parameters, not on the panel.
 
 The knob options, including `encoder_set_key` and `touch_edit`, are in the
-configurator's list; see
-[Engine & Data Gauges](Widgets-Engine-Gauges).
-The EGT mode and highlight options (`egt_mode_switching`, `normalize_range`,
-`highlight_key`) and `clipping` are not. Add them in the YAML pane; pyEFIS
-applies them and logs that they are undeclared.
+configurator's list, and so are the unit switch (`temperature`) and
+`egt_mode_switching`; see [Engine & Data Gauges](Widgets-Engine-Gauges).
+The other EGT options (`normalize_range`, `highlight_key`) and `clipping` are
+not. Add them in the YAML pane; pyEFIS applies them and logs that they are
+undeclared.
 
 ### In YAML
 
