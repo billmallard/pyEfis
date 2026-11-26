@@ -1,1 +1,2 @@
 recursive-include src/pyefis/config *
+include src/pyefis/editor/*.schema.json

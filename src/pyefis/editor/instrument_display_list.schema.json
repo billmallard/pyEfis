@@ -1,0 +1,412 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://makerplane.org/schemas/instrument_display_list/1",
+  "title": "makerplane.display_list/1 -- the evaluator's output",
+  "description": "Resolved primitives in span pixels, back to front: absolute coordinates rounded to 0.01, lower-case hex colours, no tokens, no options, no logic. A painter is a switch over these seven kinds. docs/instrument_description_spec.md section 8.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "width",
+    "height",
+    "ops"
+  ],
+  "properties": {
+    "format": {
+      "const": "makerplane.display_list/1"
+    },
+    "width": {
+      "type": "number",
+      "minimum": 0
+    },
+    "height": {
+      "type": "number",
+      "minimum": 0
+    },
+    "ops": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "circle": {
+            "$ref": "#/$defs/op_circle"
+          },
+          "rect": {
+            "$ref": "#/$defs/op_rect"
+          },
+          "line": {
+            "$ref": "#/$defs/op_line"
+          },
+          "polyline": {
+            "$ref": "#/$defs/op_polyline"
+          },
+          "polygon": {
+            "$ref": "#/$defs/op_polygon"
+          },
+          "arc": {
+            "$ref": "#/$defs/op_arc"
+          },
+          "text": {
+            "$ref": "#/$defs/op_text"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "op_circle": {
+      "type": "object",
+      "properties": {
+        "cx": {
+          "type": "number"
+        },
+        "cy": {
+          "type": "number"
+        },
+        "r": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "stroke": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dash": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 8
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cx",
+        "cy",
+        "r"
+      ]
+    },
+    "op_rect": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "w": {
+          "type": "number",
+          "minimum": 0
+        },
+        "h": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rx": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "stroke": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dash": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 8
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ]
+    },
+    "op_line": {
+      "type": "object",
+      "properties": {
+        "x1": {
+          "type": "number"
+        },
+        "y1": {
+          "type": "number"
+        },
+        "x2": {
+          "type": "number"
+        },
+        "y2": {
+          "type": "number"
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "stroke": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dash": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 8
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "stroke"
+      ]
+    },
+    "op_polyline": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 2,
+          "maxItems": 256
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "stroke": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dash": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 8
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points",
+        "stroke"
+      ]
+    },
+    "op_polygon": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 2,
+          "maxItems": 256
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "stroke": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dash": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 8
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points"
+      ]
+    },
+    "op_arc": {
+      "type": "object",
+      "properties": {
+        "cx": {
+          "type": "number"
+        },
+        "cy": {
+          "type": "number"
+        },
+        "r": {
+          "type": "number",
+          "minimum": 0
+        },
+        "start": {
+          "type": "number"
+        },
+        "sweep": {
+          "type": "number"
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "stroke": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dash": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxItems": 8
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cx",
+        "cy",
+        "r",
+        "start",
+        "sweep",
+        "stroke"
+      ]
+    },
+    "op_text": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "font": {
+          "enum": [
+            "DejaVu Sans Condensed",
+            "DejaVu Sans",
+            "DejaVu Sans Mono",
+            "B612",
+            "Inter",
+            "Roboto",
+            "Open Sans"
+          ]
+        },
+        "size": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"
+        },
+        "anchor": {
+          "enum": [
+            "start",
+            "middle",
+            "end"
+          ]
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "text",
+        "font",
+        "size",
+        "fill",
+        "anchor"
+      ]
+    }
+  }
+}
