@@ -1,0 +1,6 @@
+KSMX 12/30: n=8 f=0.97-1.00 AGL 741-746 ft | XP-NASR med -1.7 min -2.0 max -1.3 | GLO30-NASR med -4.7 max -4.3 | XP-GLO30 med +3.1
+KDED 12/30: n=183 f=0.00-1.00 AGL 936-1195 ft | XP-NASR med -3.0 min -4.5 max -1.7 | GLO30-NASR med -2.8 max -1.2 | XP-GLO30 med +0.5
+KDED 05/23: n=2 f=0.77-0.78 AGL 989-991 ft | XP-NASR med -0.8 min -0.8 max -0.8 | GLO30-NASR med -1.3 max -1.3 | XP-GLO30 med +0.5
+KSSF 10/28: n=25 f=0.83-0.99 AGL 444-461 ft | XP-NASR med -7.9 min -8.7 max -6.6 | GLO30-NASR med -1.1 max +1.1 | XP-GLO30 med -6.5
+KSSF 14/32: n=5 f=0.58-0.61 AGL 454-458 ft | XP-NASR med -1.3 min -1.5 max -1.1 | GLO30-NASR med +2.2 max +2.5 | XP-GLO30 med -3.3
+kast-r26 airport not found

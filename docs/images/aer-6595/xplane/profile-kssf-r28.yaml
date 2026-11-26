@@ -1,0 +1,18 @@
+# SVSFLOOR1 (AER-6595): fly the RNAV approach and the missed approach out
+# over the runway, so the Beelink logs X-Plane's ground (ALT - AGL) across
+# it. Compared offline with the NASR threshold elevations and GLO-30.
+name: svsfloor1-kssf-r28
+description: >
+  KSSF RNAV R28 via XTEND from 2 nm before GEARE, missed approach over the runway,
+  ending at GANLE. Ground-elevation survey for the SVS camera floor.
+cifp: {cycle: "2611"}
+aircraft: {tas_kt: 110, climb_fpm: 700, descent_fpm: 600, bank_max_deg: 25}
+environment:
+  magvar_deg: -3.0
+  wind: {from_deg: 0, kt: 0}
+start: {fix: GEARE, before_nm: 2.0, alt_ft: 3100, heading: on_course}
+route:
+  - procedure: {airport: KSSF, approach: R28, transition: XTEND, missed: true}
+pilot:
+  missed_after_map_s: 5
+end: {after_fix: GANLE, max_s: 1500}
