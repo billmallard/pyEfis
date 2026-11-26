@@ -64,7 +64,7 @@ def _pulse(key):
 
 @pytest.fixture
 def panel_keys(fix):
-    for n in list(range(1, 12)) + list(range(27, 34)) + [36, 37, 38]:
+    for n in list(range(1, 12)) + list(range(27, 34)) + [36, 37, 38, 39]:
         for node in (1, 2):
             key = f"TSBTN{node}{n}"
             fix.db.define_item(key, "Touch Button", "bool", None, None, "", 0, "")
@@ -156,7 +156,7 @@ def test_each_binding_is_its_button_files_command():
         if cmd and cmd[0].startswith("TSBTN{id}"):
             commands[cmd[0]] = cmd
     bindings = _stock_bindings()
-    assert len(bindings) == 21
+    assert len(bindings) == 22
     for b in bindings:
         dbkey, action, args, (delay, interval) = commands[b["key"]]
         assert (b["action"], b["args"]) == (action, args), b["key"]
