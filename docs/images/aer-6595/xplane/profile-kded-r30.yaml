@@ -1,0 +1,18 @@
+# SVSFLOOR1 (AER-6595): fly the RNAV approach and the missed approach out
+# over the runway, so the Beelink logs X-Plane's ground (ALT - AGL) across
+# it. Compared offline with the NASR threshold elevations and GLO-30.
+name: svsfloor1-kded-r30
+description: >
+  KDED RNAV R30 via OAKIE from 2 nm before CUGAK, missed approach over the runway,
+  ending at XEHMO. Ground-elevation survey for the SVS camera floor.
+cifp: {cycle: "2611"}
+aircraft: {tas_kt: 110, climb_fpm: 700, descent_fpm: 600, bank_max_deg: 25}
+environment:
+  magvar_deg: 5.0
+  wind: {from_deg: 0, kt: 0}
+start: {fix: CUGAK, before_nm: 2.0, alt_ft: 2000, heading: on_course}
+route:
+  - procedure: {airport: KDED, approach: R30, transition: OAKIE, missed: true}
+pilot:
+  missed_after_map_s: 5
+end: {after_fix: XEHMO, max_s: 1500}
