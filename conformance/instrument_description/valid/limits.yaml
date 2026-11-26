@@ -6,6 +6,7 @@ format: makerplane.instrument/1
 type: user.limits_dial
 label: Minimal dial
 family: scale_gauge
+license: GPL-2.0-or-later
 
 options:
   - {name: dbkey, kind: fixkey, default: OILP1}

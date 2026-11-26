@@ -7,7 +7,6 @@ type: user.fuel_bar
 label: Fuel quantity bar
 category: engine
 family: scale_gauge
-license: CC0-1.0
 
 options:
   - {name: dbkey, kind: fixkey, default: FUELQ1, label: Fuel quantity key}

@@ -1,8 +1,10 @@
 # The worked example of briefs/instrument_description_study.md (INS7, AER-6589),
-# the first valid case of the corpus. Two changes from the brief's draft: the
+# the first valid case of the corpus. Three changes from the brief's draft: the
 # font names are the shipped font-family list (the draft used a symbolic
-# `sans_condensed`), and the comments now name the rule each part exercises
-# by its id in docs/instrument_description_spec.md.
+# `sans_condensed`), the comments now name the rule each part exercises by its
+# id in docs/instrument_description_spec.md, and the draft's `license: CC0-1.0`
+# is gone. This copy is part of pyEfis and carries the repository's licence;
+# a builder's own file names its own licence in the optional `license` field.
 #
 # A vintage round oil-pressure dial of the kind a sim builder reproduces from
 # one aircraft's panel.
@@ -13,7 +15,6 @@ label: Oil pressure (round dial)
 category: engine
 family: scale_gauge                 # B7: the family owns the quality rule (spec section 6)
 author: Example Builder
-license: CC0-1.0
 
 # Options use the InstrumentSpec Prop vocabulary, so the configurator builds the
 # properties panel as it does for a shipped type. A fixkey option is the only
