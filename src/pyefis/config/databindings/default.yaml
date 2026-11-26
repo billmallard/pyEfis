@@ -107,6 +107,10 @@ items:
     condition: True
     action: change value wrap
     args: "NAVSRC, 1"
+  - key: TSBTN{id}36    # buttons/baro-focus.yaml
+    condition: True
+    action: focus
+    args: BARO
 
 # These button examples map BTN1 and BTN2 to activating
 # the button of the legacy menu.

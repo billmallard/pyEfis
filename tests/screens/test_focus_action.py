@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 import pyefis.hmi as hmi
 from pyefis.hmi import data
 from pyefis.instruments import edit_focus
+from pyefis.instruments.altimeter import Altimeter_Tape
 from pyefis.instruments.autopilot import AutopilotPanel
 from pyefis.instruments.hsi import HSI
 from pyefis.screens.screenbuilder import Screen
@@ -51,7 +52,7 @@ def keys(fix, monkeypatch):
     fix.db.set_value("COURSE", 45.0)
     # Every key a stock binding names, so the bindings load.
     panel = [("TSBTN1%d" % n, "bool", None, None)
-             for n in list(range(1, 12)) + list(range(27, 34))]
+             for n in list(range(1, 12)) + list(range(27, 34)) + [36]]
     for key, dtype, lo, hi in [("ENC1", "int", -32768, 32767),
                                ("BTN1", "bool", None, None)] + panel:
         fix.db.define_item(key, key, dtype, lo, hi, "", 0, "")
@@ -282,12 +283,71 @@ def test_only_the_visible_screen_answers(keys, qtbot):
 def test_a_key_nothing_on_screen_edits_does_nothing(keys, qtbot, caplog):
     caplog.set_level(logging.INFO)
     screen = _screen(qtbot, [HSI_CFG])
-    hmi.actions.trigger("focus", "BARO")
+    hmi.actions.trigger("focus", "ALTSEL")
     assert edit_focus.owner() is None
-    assert "focus BARO: no value on screen PFD edits it" in caplog.text
+    assert "focus ALTSEL: no value on screen PFD edits it" in caplog.text
     # The heading readout is still there to take it.
     hmi.actions.trigger("focus", "HEADBUG")
     assert screen.encoder_controller.focused_instrument() is _of(screen, HSI)
+
+
+@pytest.fixture
+def baro(keys):
+    keys.db.define_item("BARO", "Altimeter Setting", "float", 0.0, 35.0,
+                        "inHg", 50000, "")
+    keys.db.set_value("BARO", 29.92)
+    keys.db.define_item("ALT", "ALT", "float", -1000.0, 60000.0, "ft",
+                        50000, "")
+    keys.db.define_item("ALTSEL", "ALTSEL", "int", -1000, 60000, "", 0, "")
+    keys.db.set_value("ALTSEL", 5000)
+    for key in ("BARO", "ALT", "ALTSEL"):
+        it = keys.db.get_item(key)
+        it.old = it.bad = it.fail = False
+    return keys
+
+
+ALT_CFG = {"type": "altimeter_tape", "row": 0, "column": 10,
+           "span": {"rows": 10, "columns": 3},
+           "options": {"dbkey": "ALT", "altsel_box": True}}
+
+
+def test_a_tsbtn136_pulse_gives_the_knob_to_the_baro_box(baro, qtbot):
+    # TESS2 on the bench: the panel's BARO key flashed red and the knob kept
+    # whatever it had until the altitude box on the glass was touched.
+    screen = _screen(qtbot, [HSI_CFG, ALT_CFG])
+    tape = _of(screen, Altimeter_Tape)
+    _pulse("TSBTN136")
+    assert tape._edit_box == "baro"
+    assert screen.encoder_controller.focused_instrument() is tape
+    assert edit_focus.owner() is screen.encoder_controller
+    _turn(baro, 2)
+    assert _sent(baro, "BARO")[-1] == pytest.approx(29.94)
+
+
+def test_the_altimeter_answers_for_each_box_by_its_key(baro, qtbot):
+    screen = _screen(qtbot, [ALT_CFG])
+    tape = _of(screen, Altimeter_Tape)
+    hmi.actions.trigger("focus", "ALTSEL")
+    assert tape._edit_box == "altsel"
+    _pulse("TSBTN136")                          # the other box: focus moves
+    assert tape._edit_box == "baro"
+    assert screen.encoder_controller.focused_instrument() is tape
+
+
+def test_heading_then_baro_moves_focus_between_instruments(baro, qtbot):
+    screen = _screen(qtbot, [HSI_CFG, ALT_CFG])
+    _pulse("TSBTN132")
+    assert screen.encoder_controller.focused_instrument() is _of(screen, HSI)
+    _pulse("TSBTN136")
+    assert screen.encoder_controller.focused_instrument() is \
+        _of(screen, Altimeter_Tape)
+    assert _of(screen, HSI)._edit_field is None
+
+
+def test_touch_edit_off_means_the_baro_box_cannot_be_named(baro, qtbot):
+    screen = _screen(qtbot, [_no_touch(ALT_CFG)])
+    _pulse("TSBTN136")
+    assert screen.encoder_controller.focused_instrument() is None
 
 
 def test_crs_answers_for_the_key_it_edits_now_and_hdg_takes_over(keys, qtbot):
@@ -317,10 +377,14 @@ def test_focus_times_out_like_a_touch(keys, qtbot):
     assert _of(screen, HSI)._edit_field is None
 
 
-def test_the_button_file_runs_the_same_action():
-    path = os.path.join("src/pyefis/config/buttons", "heading-bug-focus.yaml")
+@pytest.mark.parametrize("name, dbkey, key", [
+    ("heading-bug-focus.yaml", "TSBTN{id}32", "HEADBUG"),
+    ("baro-focus.yaml", "TSBTN{id}36", "BARO"),
+])
+def test_the_button_file_runs_the_same_action(name, dbkey, key):
+    path = os.path.join("src/pyefis/config/buttons", name)
     with open(path) as f:
         cfg = yaml.safe_load(f)
-    assert cfg["dbkey"] == "TSBTN{id}32"
+    assert cfg["dbkey"] == dbkey
     (cond,) = cfg["conditions"]
-    assert cond["actions"] == [{"focus": "HEADBUG"}]
+    assert cond["actions"] == [{"focus": key}]
