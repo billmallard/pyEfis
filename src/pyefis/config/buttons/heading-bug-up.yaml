@@ -9,4 +9,4 @@ repeat_delay: 300
 conditions:
   - when: "CLICKED eq true"
     actions:
-      - change value wrap: "HEADBUG, 1"
+      - change value wrap: "HEADBUG, 1, 360"

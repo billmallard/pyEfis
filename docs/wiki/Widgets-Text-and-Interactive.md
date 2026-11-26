@@ -239,7 +239,7 @@ case-sensitive.
 | `show next screen` / `show previous screen` | any | Step through the screens, wrapping. |
 | `set value` | `KEY,value` | Write a FIX value. |
 | `change value` | `KEY,delta` | Add to a FIX value, held within its range. |
-| `change value wrap` | `KEY,delta` | Add to a FIX value, wrapping through its range: `HEADBUG,-1` goes from 0 to 359. |
+| `change value wrap` | `KEY,delta[,period]` | Add to a FIX value, wrapping through its range (max - min). A circular key gives its circle as the period: `HEADBUG,-1,360` goes from 0 to 359. Without it, `HEADBUG` (0..359.9 on the bus) lands on 358.9. |
 | `sync value` | `DEST,SOURCE` | Copy one FIX value to another: `HEADBUG,HEAD`. |
 | `toggle bit` | `KEY` | Invert a boolean FIX value. |
 | `focus` | `KEY` | Give the knob to the value on the showing screen that edits `KEY`, as a touch on it would: `HEADBUG` focuses the HSI's HDG readout or the autopilot panel's HDG box, whichever comes first in the screen file. The HSI's CRS answers for the key it edits now (`NAV1CRS` or `NAV2CRS`). Nothing happens, and any focus stays, if no showing value edits it. `BARO` focuses the altimeter tape's baro box, and the tape's ALTSEL box answers for its `alt_bug_dbkey`. `MAPRANGE` gives the knob to a moving map whose `range_key` is `MAPRANGE` (or which has none): the inner knob zooms smoothly, 1.25x a detent and clockwise wider; the outer ring steps the range ladder; a push snaps to the nearest rung. `buttons/map-range-focus.yaml` (`TSBTN{id}39`) runs `focus: MAPRANGE`. `buttons/heading-bug-focus.yaml` (`TSBTN{id}32`) runs `focus: HEADBUG` and `buttons/baro-focus.yaml` (`TSBTN{id}36`) runs `focus: BARO`, and so do the stock bindings on those keys. |

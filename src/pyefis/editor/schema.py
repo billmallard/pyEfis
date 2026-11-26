@@ -315,8 +315,8 @@ _ACTIONS = [
      "help": "add a delta to a FIX key (clamped at its min/max)"},
     {"verb": "change value wrap", "label": "Change value (wrap)", "group": "value",
      "arg": {"kind": "fixkey_number", "number_label": "Delta"},
-     "help": "add a delta, wrapping within the key's range -- e.g. a heading "
-             "bug stepping down through 0 to just below max"},
+     "help": "add a delta, wrapping within the key's range. An optional third "
+             "field sets the circle: \"HEADBUG, -1, 360\" steps 000 to 359"},
     {"verb": "set value", "label": "Set value", "group": "value",
      "arg": {"kind": "fixkey_number", "number_label": "Value"},
      "help": "set a FIX key to a fixed value"},
