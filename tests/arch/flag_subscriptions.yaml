@@ -1,0 +1,29 @@
+# Hand-rolled FIX flag subscription sites per file under src/pyefis (ARCHG4,
+# AER-6678).  A site is a failChanged/oldChanged/badChanged reference, a string
+# naming one, or a name built as flag + "Changed" / f"{flag}Changed".  The
+# shared helpers (instruments/helpers/bugs.py, instruments/conditions.py,
+# instruments/gauges/abstract.py) are not counted.
+#
+# tests/arch/test_flag_subscriptions.py fails when a count here rises or a new
+# file appears, and warns when one falls.  These counts only go down: lower one
+# in the PR that removes the sites (INS6 folds them onto a helper).  Raising one
+# is an architecture change for review.  Regenerate with
+#   python -m tests.arch.test_flag_subscriptions
+total: 129
+files:
+  gui.py: 3
+  instruments/ai/ai_widget.py: 20
+  instruments/airspeed/__init__.py: 12
+  instruments/altimeter/__init__.py: 9
+  instruments/autopilot/__init__.py: 1
+  instruments/autopilot/state.py: 3
+  instruments/hsi/__init__.py: 33
+  instruments/listbox/__init__.py: 6
+  instruments/map/__init__.py: 1
+  instruments/misc/__init__.py: 3
+  instruments/nav_status/__init__.py: 3
+  instruments/tc/__init__.py: 6
+  instruments/traffic.py: 4
+  instruments/vsi/__init__.py: 12
+  instruments/wind/__init__.py: 6
+  kiosk.py: 7
