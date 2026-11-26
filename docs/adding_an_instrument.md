@@ -33,6 +33,15 @@ Conventions every instrument follows:
 - It is a `QWidget` / `QGraphicsView` that consumes one or more FIX keys via
   `fix.db.get_item(KEY)` and the `valueChanged` / `oldChanged` / `badChanged` /
   `failChanged` signals.
+- **Subscribe to the quality flags through `helpers.bugs.BugBinding`**, not
+  by connecting `oldChanged` / `badChanged` / `failChanged` by hand:
+  `BugBinding(KEY, self).qualityChanged.connect(self.repaint)` fires on any
+  old, bad or fail change (`changed` adds value and annunciate changes), and
+  `unbind()` drops the connections. It holds the subscription only; how a
+  flag is drawn stays in the widget (next bullet). A ratchet counts the
+  hand-rolled flag subscriptions per file and fails if one grows
+  (`tests/arch/test_flag_subscriptions.py`, baseline in
+  `tests/arch/flag_subscriptions.yaml`).
 - By default it renders **fail** as a red "XXX" and **old/bad** greyed. A
   widget spec under `docs/*_widget_spec.md` can override that on purpose, and
   where one does, the spec wins: the airspeed and altimeter tapes treat old as

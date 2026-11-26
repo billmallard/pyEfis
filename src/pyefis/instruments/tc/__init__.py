@@ -23,6 +23,8 @@ import math
 import pyavtools.fix as fix
 import pyavtools.filters as filters
 
+from pyefis.instruments.helpers.bugs import BugBinding
+
 class TurnCoordinator(QWidget):
     def __init__(self, parent=None, dial=True, ss_only=False, filter_depth=0, font_family="DejaVu Sans Condensed"):
         super(TurnCoordinator, self).__init__(parent)
@@ -44,14 +46,12 @@ class TurnCoordinator(QWidget):
             self.filter = None
         self.alat_item = fix.db.get_item("ALAT")
         self.alat_item.valueChanged[float].connect(self.setLatAcc)
-        self.alat_item.badChanged.connect(self.quality_change)
-        self.alat_item.oldChanged.connect(self.quality_change)
-        self.alat_item.failChanged.connect(self.quality_change)
+        self._alat_quality = BugBinding("ALAT", self)
+        self._alat_quality.qualityChanged.connect(self.quality_change)
         self.rot_item = fix.db.get_item("ROT")
         self.rot_item.valueChanged[float].connect(self.setROT)
-        self.rot_item.badChanged.connect(self.quality_change)
-        self.rot_item.oldChanged.connect(self.quality_change)
-        self.rot_item.failChanged.connect(self.quality_change)
+        self._rot_quality = BugBinding("ROT", self)
+        self._rot_quality.qualityChanged.connect(self.quality_change)
         self.alat_multiplier = 1.0 / (0.217)
         self.max_tc_displacement = 1.0 / self.alat_multiplier
         # Excessive-slip caution (AC 25-11B App A A.2.6): amber ball once the
@@ -252,7 +252,7 @@ class TurnCoordinator(QWidget):
 
     latAcc = property(getLatAcc, setLatAcc)
 
-    def quality_change(self, x):
+    def quality_change(self, *_):
         self.update()
 
 class TurnCoordinator_Tape(QWidget):

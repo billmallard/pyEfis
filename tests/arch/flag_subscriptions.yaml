@@ -9,21 +9,19 @@
 # in the PR that removes the sites (INS6 folds them onto a helper).  Raising one
 # is an architecture change for review.  Regenerate with
 #   python -m tests.arch.test_flag_subscriptions
-total: 129
+total: 99
 files:
   gui.py: 3
   instruments/ai/ai_widget.py: 20
-  instruments/airspeed/__init__.py: 12
-  instruments/altimeter/__init__.py: 9
+  instruments/airspeed/__init__.py: 3
+  instruments/altimeter/__init__.py: 3
   instruments/autopilot/__init__.py: 1
   instruments/autopilot/state.py: 3
   instruments/hsi/__init__.py: 33
   instruments/listbox/__init__.py: 6
   instruments/map/__init__.py: 1
   instruments/misc/__init__.py: 3
-  instruments/nav_status/__init__.py: 3
-  instruments/tc/__init__.py: 6
   instruments/traffic.py: 4
-  instruments/vsi/__init__.py: 12
+  instruments/vsi/__init__.py: 6
   instruments/wind/__init__.py: 6
   kiosk.py: 7
