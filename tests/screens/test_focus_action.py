@@ -10,12 +10,13 @@ built from config, and the pulse arrives the way fix-gateway writes it.
 
 import logging
 import os
+import threading
 
 import pytest
 import yaml
-from PyQt6.QtCore import QRect
+from PyQt6.QtCore import QRect, QThread
 from PyQt6.QtGui import QPaintEvent
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
 import pyefis.hmi as hmi
 from pyefis.hmi import data
@@ -151,6 +152,28 @@ def test_a_tsbtn_pulse_gives_the_knob_to_the_hsi_heading_bug(keys, qtbot):
     assert edit_focus.owner() is screen.encoder_controller
     _turn(keys, 3)
     assert _sent(keys, "HEADBUG")[-1] == pytest.approx(123.0)
+
+
+def test_a_pulse_from_the_fix_client_thread_focuses_on_the_gui_thread(
+        keys, qtbot, monkeypatch):
+    # On a display the pulse arrives on pyavtools' client thread. Focus
+    # moves widgets, so it must run on the GUI thread: PyQt's proxy for the
+    # binding's plain-function slot lives there and queues the call.
+    screen = _screen(qtbot, [HSI_CFG])
+    hsi = _of(screen, HSI)
+    ran_on = []
+    real = type(screen.encoder_controller).touch_focus
+
+    def recording(ctl, inst):
+        ran_on.append(QThread.currentThread())
+        return real(ctl, inst)
+
+    monkeypatch.setattr(type(screen.encoder_controller), "touch_focus", recording)
+    t = threading.Thread(target=_pulse, args=("TSBTN132",))
+    t.start()
+    t.join()
+    qtbot.waitUntil(lambda: hsi._edit_field == "hdg", timeout=2000)
+    assert ran_on == [QApplication.instance().thread()]
 
 
 def test_the_pulse_focuses_the_autopilot_hdg_box(keys, qtbot):
