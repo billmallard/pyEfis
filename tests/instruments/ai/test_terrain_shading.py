@@ -316,6 +316,7 @@ def _map_px(clearance_ft, palette="clearance", apt_db=None, mode="caution"):
         clearance_yellow_ft = ts.CLEARANCE_YELLOW_FT
         airport_proximity_nm = ts.AIRPORT_PROXIMITY_NM
         airport_gate_agl_ft = ts.AIRPORT_GATE_AGL_FT
+        terrain_caution_available = staticmethod(lambda: True)
     lay._owner = Owner
     lay._alt_ft = Owner._alt_ft
     lay._apt_db = apt_db
@@ -350,6 +351,7 @@ def test_map_caution_never_bands_water():
     class Owner:
         _alt_ft = 300.0
         _lat, _lon = 34.0, -120.0
+        terrain_caution_available = staticmethod(lambda: True)
     lay._owner = Owner
     lay._alt_ft = Owner._alt_ft
     x = moving_map.MapTransform(34.0, -120.0, 10.0, 0.0, 200, 200, 0.5)

@@ -12,8 +12,9 @@ annunciates" (moving_map_spec.md section 2):
 - `LAT`/`LONG` old, bad or fail: grey ownship and `NO POS` in the chip.
 - `TRACKM`, or `TRACK` where the gateway has it, old, bad or fail: grey TRK
   box (ND) and grey ownship (it points along the track); no `NO POS`.
-- `ALT` old, bad or fail in caution mode: the terrain draws relief, no bands,
-  and the chip says `NO ALT`.
+- `TALT` old, bad or fail in caution mode: the terrain draws relief, no
+  bands, and the chip says `TERR UNAVAIL`. (INS5 gated on `ALT` and said
+  `NO ALT`; MAPALT1, AER-6591, moved the caution height to `TALT`.)
 
 Flags are driven through the FIX item, so the subscription is under test too.
 """
@@ -39,7 +40,7 @@ def _define(fix, key, value):
 def _clean(fix):
     _define(fix, "TRACKM", 90.0)
     for key, value in (("LAT", 34.4), ("LONG", -119.8), ("TRACK", 78.0),
-                       ("ALT", 3000.0)):
+                       ("TALT", 3000.0)):
         fix.db.set_value(key, value)
         item = fix.db.get_item(key)
         item.old = item.bad = item.fail = False
@@ -87,7 +88,7 @@ def test_control_all_valid(fix, qtbot, monkeypatch):
     polys, rects, chip = _paint(m, monkeypatch)
     assert QColor(m.symbol_color).name() in polys and GRAY not in polys
     assert nd.GREY.name() not in rects
-    assert chip and "NO POS" not in chip[0] and "NO ALT" not in chip[0]
+    assert chip and "NO POS" not in chip[0] and "TERR UNAVAIL" not in chip[0]
 
 
 @pytest.mark.parametrize("key", ["LAT", "LONG"])
@@ -140,30 +141,30 @@ def test_gateway_without_track_follows_trackm_alone(fix, qtbot, monkeypatch):
     assert m._track_stale() is False
 
 
-# --- ALT and the caution bands ----------------------------------------------
+# --- TALT and the caution bands ----------------------------------------------
 
 @pytest.mark.parametrize("flag", ["old", "bad", "fail"])
-def test_degraded_alt_says_no_alt_in_caution_mode(fix, qtbot, monkeypatch,
+def test_degraded_talt_says_terr_unavail_in_caution_mode(fix, qtbot, monkeypatch,
                                                   flag):
     m = _map(fix, qtbot, terrain_mode="caution")
     _paint(m, monkeypatch)                         # builds the layers
-    assert m._terrain_caution_live()
-    setattr(fix.db.get_item("ALT"), flag, True)
-    assert "NO ALT" in _paint(m, monkeypatch)[2][0]
-    setattr(fix.db.get_item("ALT"), flag, False)
-    assert "NO ALT" not in _paint(m, monkeypatch)[2][0]
+    assert m.terrain_caution_wanted()
+    setattr(fix.db.get_item("TALT"), flag, True)
+    assert "TERR UNAVAIL" in _paint(m, monkeypatch)[2][0]
+    setattr(fix.db.get_item("TALT"), flag, False)
+    assert "TERR UNAVAIL" not in _paint(m, monkeypatch)[2][0]
 
 
-def test_degraded_alt_in_relief_mode_says_nothing(fix, qtbot, monkeypatch):
+def test_degraded_talt_in_relief_mode_says_nothing(fix, qtbot, monkeypatch):
     m = _map(fix, qtbot, terrain_mode="relief")
     _paint(m, monkeypatch)
-    fix.db.get_item("ALT").old = True
-    assert "NO ALT" not in _paint(m, monkeypatch)[2][0]
+    fix.db.get_item("TALT").old = True
+    assert "TERR UNAVAIL" not in _paint(m, monkeypatch)[2][0]
 
 
 def _caution_px(alt_stale):
     """The terrain layer's centre pixel 300 ft above flat terrain, in caution
-    mode: the warning band when ALT is good, relief when it is not."""
+    mode: the warning band when TALT is good, relief when it is not."""
     from tests.instruments.ai import test_terrain_shading as tts
     from pyefis.instruments.map.layers.terrain import TerrainLayer
     lay = TerrainLayer()
@@ -175,13 +176,12 @@ def _caution_px(alt_stale):
         _lat, _lon = 37.95, -107.91
 
         @staticmethod
-        def _stale(key):
-            return alt_stale and key == "ALT"
+        def terrain_caution_available():
+            return not alt_stale
     lay._owner = Owner
     lay._apt_db = None
     x = moving_map.MapTransform(37.95, -107.91, 10.0, 0.0, 200, 200, 0.5)
     lay._alt_ft = Owner._alt_ft
-    lay._alt_valid = not Owner._stale("ALT")
     key = lay._key(x)
     img, _meta = lay._render((key, x.lat0, x.lon0, x.range_nm, x.w, x.h,
                               x.cy))
@@ -189,7 +189,7 @@ def _caution_px(alt_stale):
     return (c.red(), c.green(), c.blue()), key
 
 
-def test_degraded_alt_drops_the_caution_bands_to_relief():
+def test_degraded_talt_drops_the_caution_bands_to_relief():
     import numpy as np
     from pyefis.instruments.ai import terrain_shading as ts
     from tests.instruments.ai import test_terrain_shading as tts
@@ -201,14 +201,14 @@ def test_degraded_alt_drops_the_caution_bands_to_relief():
     assert stale_key != good_key           # a new image, not the cached bands
 
 
-def test_terrain_layer_reads_alt_quality_from_the_map(fix, qtbot, monkeypatch):
-    """paint() takes the ALT verdict from the owning map each frame."""
+def test_terrain_layer_reads_talt_quality_from_the_map(fix, qtbot, monkeypatch):
+    """The layer takes the TALT verdict from the owning map each frame."""
     m = _map(fix, qtbot, terrain_mode="caution")
     _paint(m, monkeypatch)
     lay = next(l for l in m._layers if l.id == "terrain")
-    fix.db.get_item("ALT").bad = True
+    fix.db.get_item("TALT").bad = True
     _paint(m, monkeypatch)
-    assert lay._alt_valid is False
-    fix.db.get_item("ALT").bad = False
+    assert lay._caution() is False
+    fix.db.get_item("TALT").bad = False
     _paint(m, monkeypatch)
-    assert lay._alt_valid is True
+    assert lay._caution() is True

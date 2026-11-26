@@ -1500,7 +1500,9 @@ _register(InstrumentSpec(
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = the "
                   "same relief with the SVS hazard bands over it: amber "
-                  "and red by clearance below ownship, magenta above"),
+                  "and red by clearance below ownship, magenta above. "
+                  "Needs TALT (GPS MSL height); without it, relief and "
+                  "TERR UNAVAIL"),
         Prop("terrain_palette", "enum", default="clearance",
              enum=["clearance", "subdued", "high_contrast"],
              label="Terrain hazard palette",

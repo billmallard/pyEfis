@@ -182,7 +182,7 @@ used, with defaults and the bench panel's value where it differs:
 | Gesture auto-revert (`gesture_timeout`) | 30 s | | 0 stays where you leave it. |
 | Ownship position (`ownship_position`) | 50 | | Percent up from the bottom; 30 shows more ahead. |
 | Map style (`map_style`) | `standard` | | `nav_only` drops the relief for a black background. |
-| Terrain mode (`terrain_mode`) | `relief` | | `caution` lays the synthetic vision's hazard bands over the relief: amber within 1,000 ft below you, red within 500 ft, magenta above you. Near an airport, the runway environment gets no band. |
+| Terrain mode (`terrain_mode`) | `relief` | | `caution` lays the synthetic vision's hazard bands over the relief: amber within 1,000 ft below you, red within 500 ft, magenta above you. Near an airport, the runway environment gets no band. The height is the GPS altitude (`TALT`), never the altimeter, so the baro setting does not move the bands. Without a GPS altitude the bands are not drawn: the plain relief stays and the map shows TERR UNAVAIL. |
 | Terrain hazard palette (`terrain_palette`) | `clearance` | `subdued`, `high_contrast` | The band colours in `caution` mode, the same schemes as the synthetic vision palette. |
 | Caution and warning clearance (`clearance_green_ft`, `clearance_yellow_ft`) | 1,000 ft, 500 ft | | The band thresholds in `caution` mode, the same defaults as the synthetic vision. |
 | Layer: terrain / roads / rivers / airports / navaids / flight plan / traffic / range rings | on | | |
