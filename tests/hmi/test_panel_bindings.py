@@ -133,7 +133,7 @@ def test_each_binding_is_its_button_files_command():
         if cmd and cmd[0].startswith("TSBTN{id}"):
             commands[cmd[0]] = cmd
     bindings = _stock_bindings()
-    assert len(bindings) == 17
+    assert len(bindings) == 18
     for b in bindings:
         dbkey, action, args, (delay, interval) = commands[b["key"]]
         assert (b["action"], b["args"]) == (action, args), b["key"]
