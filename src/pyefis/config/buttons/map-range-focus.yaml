@@ -1,0 +1,13 @@
+type: simple
+text: "MAP\nRNG"
+dbkey: TSBTN{id}39
+bg_color: "#101418"
+fg_color: "#00ffff"
+# Momentary: give the knob to the moving map's range (TESS2). The inner knob
+# then zooms smoothly, the outer ring steps the ladder, a push snaps to the
+# nearest rung. Nothing happens if no map on the showing screen has range_key
+# MAPRANGE (or no range_key at all).
+conditions:
+  - when: "CLICKED eq true"
+    actions:
+      - focus: MAPRANGE
