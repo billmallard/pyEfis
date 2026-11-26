@@ -165,13 +165,11 @@ def test_visible_button_and_binding_step_once_per_press(panel_keys, qtbot):
 
 def test_visible_button_without_a_binding_still_acts_on_its_key(panel_keys, qtbot):
     # An install whose bindings file predates DSP2 keeps today's behaviour:
-    # the showing button acts on its key.  (Today that is three steps per
-    # pulse, not one -- a separate defect of the repeat button's key path,
-    # which the stock bindings bypass; not pinned here.)
+    # the showing button acts on its key, once per pulse (AER-6675).
     hmi.initialize({"main": {"nodeID": 1}})
     _button(qtbot, "baro-up-invisible.yaml", visible=True)
     _pulse("TSBTN12")
-    assert panel_keys.db.get_item("BARO").value > 29.92
+    assert panel_keys.db.get_item("BARO").value == pytest.approx(29.93)
 
 
 def test_held_key_repeats_like_the_button_and_stops_on_release(panel_keys, qtbot):
