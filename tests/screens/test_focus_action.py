@@ -52,9 +52,10 @@ def keys(fix, monkeypatch):
     fix.db.set_value("COURSE", 45.0)
     # Every key a stock binding names, so the bindings load.
     panel = [("TSBTN1%d" % n, "bool", None, None)
-             for n in list(range(1, 12)) + list(range(27, 34)) + [36]]
+             for n in list(range(1, 12)) + list(range(27, 34)) + [36, 37, 38]]
     for key, dtype, lo, hi in [("ENC1", "int", -32768, 32767),
-                               ("BTN1", "bool", None, None)] + panel:
+                               ("BTN1", "bool", None, None),
+                               ("MAPRANGE", "int", 0, 7)] + panel:
         fix.db.define_item(key, key, dtype, lo, hi, "", 0, "")
         fix.db.set_value(key, 0 if dtype == "int" else False)
         it = fix.db.get_item(key)

@@ -31,6 +31,8 @@ SPIKE_PAGE = {
     "TSBTN131": "HEADBUG",
     "TSBTN130": "HEADBUG",
     "TSBTN133": "NAVSRC",
+    "TSBTN137": "MAPRANGE",
+    "TSBTN138": "MAPRANGE",
 }
 
 
@@ -62,7 +64,7 @@ def _pulse(key):
 
 @pytest.fixture
 def panel_keys(fix):
-    for n in list(range(1, 12)) + list(range(27, 34)) + [36]:
+    for n in list(range(1, 12)) + list(range(27, 34)) + [36, 37, 38]:
         for node in (1, 2):
             key = f"TSBTN{node}{n}"
             fix.db.define_item(key, "Touch Button", "bool", None, None, "", 0, "")
@@ -81,6 +83,11 @@ def panel_keys(fix):
         fix.db.set_value(key, val)
         fix.db.get_item(key).bad = False
         fix.db.get_item(key).fail = False
+    # fix-gateway database/custom.yaml: the map's range ladder index.
+    fix.db.define_item("MAPRANGE", "MAPRANGE", "int", 0, 7, "index", 0, "")
+    fix.db.set_value("MAPRANGE", 2)
+    fix.db.get_item("MAPRANGE").bad = False
+    fix.db.get_item("MAPRANGE").fail = False
     fix.db.set_value("HEAD", 123.0)
     return fix
 
@@ -114,6 +121,22 @@ def test_baro_pulse_changes_baro_with_the_pfd_hidden(panel_keys, qtbot):
     assert panel_keys.db.get_item("BARO").value == pytest.approx(29.91)
 
 
+def test_map_range_keys_step_the_ladder_index_and_stop_at_its_ends(panel_keys):
+    # TESS2 (AER-6622): RNG - and RNG + on the panel step MAPRANGE once a
+    # press and do not wrap, so a pilot at the shortest range who presses
+    # RNG - is not thrown out to the longest.
+    _start()
+    item = panel_keys.db.get_item("MAPRANGE")
+    _pulse("TSBTN137")
+    assert item.value == 1
+    for _ in range(3):
+        _pulse("TSBTN137")
+    assert item.value == 0
+    for _ in range(9):
+        _pulse("TSBTN138")
+    assert item.value == 7
+
+
 @pytest.mark.parametrize("key, target", sorted(SPIKE_PAGE.items()))
 def test_every_spike_page_press_changes_its_key_on_a_stock_config(
     panel_keys, key, target
@@ -133,7 +156,7 @@ def test_each_binding_is_its_button_files_command():
         if cmd and cmd[0].startswith("TSBTN{id}"):
             commands[cmd[0]] = cmd
     bindings = _stock_bindings()
-    assert len(bindings) == 19
+    assert len(bindings) == 21
     for b in bindings:
         dbkey, action, args, (delay, interval) = commands[b["key"]]
         assert (b["action"], b["args"]) == (action, args), b["key"]
@@ -142,10 +165,10 @@ def test_each_binding_is_its_button_files_command():
             assert "repeat_interval" not in b, b["key"]
         else:
             assert (b["repeat_delay"], b["repeat_interval"]) == (delay, interval)
-    # Every invisible command button and the heading-bug, CDI-source and
-    # baro-focus buttons have a binding.
+    # Every invisible command button and the heading-bug, CDI-source,
+    # baro-focus and map-range buttons have a binding.
     names = ("*-invisible.yaml", "heading-bug-*.yaml", "cdi-source.yaml",
-             "baro-focus.yaml")
+             "baro-focus.yaml", "map-range-*.yaml")
     expected = {
         _button_command(p)[0]
         for name in names
