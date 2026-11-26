@@ -2754,6 +2754,26 @@ class HSI(QGraphicsView):
                 best = (d, field)
         return best[1] if best else None
 
+    def edit_focus_key(self, key):
+        """The ``focus`` action (EncoderController.focus_key): take focus on
+        the shown readout that edits ``key``, as a touch on it would. CRS
+        answers for the key it edits now, so it follows NAVSRC; the GPS OBS
+        course has no key and cannot be named."""
+        for field in ("hdg", "crs"):
+            if field in self._edit_rects and self._field_editable(field) \
+                    and self._edit_key(field) == key:
+                ctl = self._encoder_controller()
+                if ctl is None:
+                    return False
+                if ctl.focused_instrument() is self and self._edit_field != field:
+                    ctl.release_focus()
+                self._edit_pending = field
+                try:
+                    return ctl.touch_focus(self)
+                finally:
+                    self._edit_pending = None
+        return False
+
     def edit_focus_hit(self, global_pos):
         """EncoderController.focus_hit: is a press on the focused readout? A
         press anywhere else -- including the other readout -- releases focus,

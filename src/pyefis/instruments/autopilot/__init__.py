@@ -906,6 +906,14 @@ class AutopilotPanel(QWidget):
             self._touch_pending = None
         return True
 
+    def edit_focus_key(self, key):
+        """The ``focus`` action (EncoderController.focus_key): take focus on
+        the shown target box that edits ``key``, as a touch on it would."""
+        for which in BOXES:
+            if BOX_KEYS[which] == key and self.box_editable(which):
+                return self._touch_box(which)
+        return False
+
     def _active_box(self):
         if self._edit_box is not None:
             return self._edit_box

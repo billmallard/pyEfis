@@ -54,6 +54,13 @@ class EncoderController:
     focus (``edit_focus.claim``): only one value has focus across every
     screen, a press anywhere else releases it, and so does hiding the screen.
 
+    Focus by key (TESS2b, AER-6630): the ``focus`` HMI action names a FIX
+    key, and :meth:`focus_key` gives control to the visible screen's value
+    that edits it, so a panel key (a Tessera press on a ``TSBTN`` button) can
+    pick what the knob turns. Each instrument answers through
+    ``edit_focus_key(key)``, which takes focus by the same
+    :meth:`touch_focus` its own press uses, so everything after is a touch.
+
     Mouse (pyEfis #321): while a value has focus, the wheel over it is the
     inner knob, Shift + wheel or a horizontal wheel the outer ring, and a
     middle-click the push (:meth:`wheel_turn` / :meth:`wheel_push`, fed by
@@ -79,6 +86,7 @@ class EncoderController:
         # The timeout has to run for a touch focus even on a screen without
         # encoder keys (nothing would ever clear it otherwise).
         self._connect_timer()
+        self._connect_focus_action()
 
         if self.screen.encoder and self.screen.encoder_button:
             self.screen.encoder_list_sorted = [
@@ -106,6 +114,11 @@ class EncoderController:
         return [i for i in insts.values()
                 if getattr(i, "touch_edit", False)
                 and callable(getattr(i, "enc_select", None))]
+
+    def _connect_focus_action(self):
+        from pyefis import hmi
+        if hmi.actions is not None:
+            hmi.actions.focusValue.connect(self.focus_key)
 
     def _connect_timer(self):
         if not self._timer_connected:
@@ -315,6 +328,31 @@ class EncoderController:
             self._keep_control()
             return True
         self._end_control()
+        return False
+
+    def focus_key(self, key):
+        """The ``focus`` action: give control to the value on this screen
+        that edits FIX key ``key``, as a touch on it would. Only the visible
+        screen answers; where several values edit the key, the first
+        instrument in the screen's file wins, and one that is not showing
+        (on another tab) is passed over. Returns True when one took control;
+        a screen with none showing does nothing."""
+        key = str(key or "").strip()
+        if not key:
+            return False
+        insts = getattr(self.screen, "instruments", None) or {}
+        for inst in insts.values():
+            take = getattr(inst, "edit_focus_key", None)
+            try:
+                # False on a hidden screen as well as on a hidden tab.
+                if not callable(take) or not inst.isVisible():
+                    continue
+            except RuntimeError:   # the screen's Qt objects are gone
+                return False
+            if take(key):
+                return True
+        logger.info("focus %s: no value on screen %s edits it", key,
+                    getattr(self.screen, "screenName", "?"))
         return False
 
     def release_focus(self):

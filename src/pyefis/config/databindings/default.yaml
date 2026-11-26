@@ -99,6 +99,10 @@ items:
     args: "HEADBUG, 1"
     repeat_delay: 300
     repeat_interval: 60
+  - key: TSBTN{id}32    # buttons/heading-bug-focus.yaml
+    condition: True
+    action: focus
+    args: HEADBUG
   - key: TSBTN{id}33    # buttons/cdi-source.yaml
     condition: True
     action: change value wrap
@@ -151,6 +155,7 @@ items:
 # "menu encoder":self.menuEncoder,
 # "set menu focus":self.setMenuFocus,
 # "set instrument units":self.setInstUnits,
+# "focus":self.focusValue,
 # "exit":self.doExit,
 #
 # The button instrument can also call these as actions
