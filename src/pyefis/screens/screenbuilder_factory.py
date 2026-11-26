@@ -1547,6 +1547,8 @@ _register(InstrumentSpec(
              label="Perf: overlay chip",
              help="draw a small on-screen perf stats chip (dev only)"),
     ],
+    # The knob by the focus action only (TESS2, AER-6622): not in the walk.
+    encoder=EncoderSupport(editable=True, outer_ring=True),
 ))
 
 _register(InstrumentSpec(
