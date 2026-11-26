@@ -746,9 +746,6 @@ class MovingMap(LiveBindingMixin, QWidget):
             w = w.parent()
         return None
 
-    def enc_selectable(self):
-        return bool(self.touch_edit)
-
     def enc_highlight(self, onoff):
         self._knob_focus = bool(onoff)
         self._frame_dirty = True
