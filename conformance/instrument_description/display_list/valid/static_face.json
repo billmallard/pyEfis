@@ -1,0 +1,14 @@
+{
+  "format": "makerplane.display_list/1",
+  "width": 200,
+  "height": 200,
+  "ops": [
+    {"circle": {"cx": 100, "cy": 100, "r": 97, "fill": "#000000", "stroke": "#ffffff", "width": 2, "from": "draw[0]"}},
+    {"arc": {"cx": 100, "cy": 100, "r": 86, "start": -135, "sweep": 90, "stroke": "#00ff00", "width": 9, "from": "draw[1]"}},
+    {"line": {"x1": 33.53, "y1": 166.47, "x2": 38.48, "y2": 161.52, "stroke": "#ffffff", "width": 1.5, "from": "draw[2]"}},
+    {"polyline": {"points": [[10, 10], [20, 20], [30, 10]], "stroke": "#aaaaaa", "width": 1, "dash": [2, 2]}},
+    {"polygon": {"points": [[96.5, 114], [100, 18], [103.5, 114]], "fill": "#ffffff", "from": "draw[6]"}},
+    {"rect": {"x": 80, "y": 56, "w": 40, "h": 20, "stroke": "#ff0000", "width": 1, "from": "on_fail[0]"}},
+    {"text": {"x": 100, "y": 172, "text": "XXX", "font": "DejaVu Sans Condensed", "size": 20, "fill": "#ff0000", "anchor": "middle", "from": "draw[8]"}}
+  ]
+}

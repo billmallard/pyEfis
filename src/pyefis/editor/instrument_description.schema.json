@@ -1,0 +1,1043 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://makerplane.org/schemas/instrument_description/1",
+  "title": "makerplane.instrument/1 -- a draw-only instrument description",
+  "description": "docs/instrument_description_spec.md is the prose half of this contract. Every refusal names a rule id; `x-rule` annotates which keyword enforces which rule.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "type",
+    "label",
+    "family",
+    "inputs",
+    "canvas",
+    "scale",
+    "draw"
+  ],
+  "properties": {
+    "format": {
+      "const": "makerplane.instrument/1",
+      "x-rule": {
+        "const": "B9"
+      }
+    },
+    "type": {
+      "type": "string",
+      "maxLength": 48,
+      "pattern": "^user\\.[a-z][a-z0-9_]*$",
+      "x-rule": {
+        "pattern": "B9"
+      }
+    },
+    "label": {
+      "$ref": "#/$defs/label_text"
+    },
+    "category": {
+      "$ref": "#/$defs/name"
+    },
+    "family": {
+      "enum": [
+        "scale_gauge"
+      ],
+      "x-rule": {
+        "enum": "B9"
+      }
+    },
+    "author": {
+      "$ref": "#/$defs/label_text"
+    },
+    "license": {
+      "type": "string",
+      "maxLength": 48,
+      "pattern": "^[A-Za-z0-9.+-]+$"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/option"
+      },
+      "maxItems": 32
+    },
+    "inputs": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 8,
+      "propertyNames": {
+        "$ref": "#/$defs/name"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "option": {
+            "$ref": "#/$defs/name"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "option"
+        ]
+      }
+    },
+    "canvas": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 2000
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 2000
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height"
+      ]
+    },
+    "scale": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/name"
+        },
+        "range": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/number"
+                },
+                {
+                  "enum": [
+                    "aux.Min",
+                    "aux.Max"
+                  ]
+                }
+              ],
+              "x-rule": {
+                "anyOf": "B1"
+              }
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/number"
+                },
+                {
+                  "enum": [
+                    "aux.Min",
+                    "aux.Max"
+                  ]
+                }
+              ],
+              "x-rule": {
+                "anyOf": "B1"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "from",
+            "to"
+          ]
+        },
+        "angle": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "$ref": "#/$defs/angle"
+            },
+            "sweep": {
+              "$ref": "#/$defs/angle"
+            },
+            "center": {
+              "$ref": "#/$defs/xy"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "start",
+            "sweep"
+          ]
+        },
+        "axis": {
+          "type": "object",
+          "properties": {
+            "x1": {
+              "$ref": "#/$defs/number"
+            },
+            "y1": {
+              "$ref": "#/$defs/number"
+            },
+            "x2": {
+              "$ref": "#/$defs/number"
+            },
+            "y2": {
+              "$ref": "#/$defs/number"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "x1",
+            "y1",
+            "x2",
+            "y2"
+          ]
+        },
+        "clamp": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "range"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "angle"
+          ]
+        },
+        {
+          "required": [
+            "axis"
+          ]
+        }
+      ],
+      "description": "The family's one value mapping: to an angle (a round scale) or to a position on an axis (a bar). Exactly one of angle and axis."
+    },
+    "draw": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/element"
+      },
+      "minItems": 1,
+      "maxItems": 256
+    },
+    "on_fail": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fail_element"
+      },
+      "maxItems": 32
+    }
+  },
+  "$defs": {
+    "number": {
+      "type": "number",
+      "minimum": -10000,
+      "maximum": 10000,
+      "x-rule": {
+        "type": "B1"
+      }
+    },
+    "length": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 10000,
+      "x-rule": {
+        "type": "B1"
+      }
+    },
+    "stroke_width": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "x-rule": {
+        "type": "B1"
+      }
+    },
+    "angle": {
+      "type": "number",
+      "minimum": -360,
+      "maximum": 360,
+      "x-rule": {
+        "type": "B1"
+      }
+    },
+    "font_size": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 500,
+      "x-rule": {
+        "type": "B1"
+      }
+    },
+    "decimals": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "x-rule": {
+        "type": "B1"
+      }
+    },
+    "name": {
+      "description": "An option or input name.",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "option_ref": {
+      "description": "The name of a static option of this file. Never an expression (B1).",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "x-rule": {
+        "pattern": "B1"
+      }
+    },
+    "color": {
+      "description": "A style-contract token, a colour option of this file, a literal #rrggbb, or `band` (the family's value colour, value-bound elements only). B1, B6.",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^(#[0-9a-fA-F]{6}|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?)$",
+      "x-rule": {
+        "pattern": "B1"
+      }
+    },
+    "label_text": {
+      "description": "A literal string, never markup (B8).",
+      "type": "string",
+      "maxLength": 48,
+      "pattern": "^[^<>&\\u0000-\\u001f]*$",
+      "x-rule": {
+        "pattern": "B8"
+      }
+    },
+    "draw_text": {
+      "description": "A literal string drawn as text, never markup (B8). At most 32 characters (B5).",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[^<>&\\u0000-\\u001f]*$",
+      "x-rule": {
+        "pattern": "B8"
+      }
+    },
+    "font": {
+      "description": "A font family from the shipped list. No font files (B4).",
+      "enum": [
+        "DejaVu Sans Condensed",
+        "DejaVu Sans",
+        "DejaVu Sans Mono",
+        "B612",
+        "Inter",
+        "Roboto",
+        "Open Sans"
+      ],
+      "x-rule": {
+        "enum": "B4"
+      }
+    },
+    "anchor": {
+      "enum": [
+        "start",
+        "middle",
+        "end"
+      ]
+    },
+    "point": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/number"
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "x-rule": {
+        "maxItems": "S1"
+      }
+    },
+    "xy": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/number"
+        },
+        "y": {
+          "$ref": "#/$defs/number"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "dash": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/length"
+      },
+      "minItems": 1,
+      "maxItems": 8
+    },
+    "polyline_points": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/point"
+      },
+      "minItems": 2,
+      "maxItems": 64
+    },
+    "polygon_points": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/point"
+      },
+      "minItems": 3,
+      "maxItems": 64
+    },
+    "el_circle": {
+      "type": "object",
+      "properties": {
+        "cx": {
+          "$ref": "#/$defs/number"
+        },
+        "cy": {
+          "$ref": "#/$defs/number"
+        },
+        "r": {
+          "$ref": "#/$defs/length"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cx",
+        "cy",
+        "r"
+      ]
+    },
+    "el_rect": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/number"
+        },
+        "y": {
+          "$ref": "#/$defs/number"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "rx": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ]
+    },
+    "el_line": {
+      "type": "object",
+      "properties": {
+        "x1": {
+          "$ref": "#/$defs/number"
+        },
+        "y1": {
+          "$ref": "#/$defs/number"
+        },
+        "x2": {
+          "$ref": "#/$defs/number"
+        },
+        "y2": {
+          "$ref": "#/$defs/number"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "dash": {
+          "$ref": "#/$defs/dash"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "stroke"
+      ]
+    },
+    "el_polyline": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "$ref": "#/$defs/polyline_points"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "dash": {
+          "$ref": "#/$defs/dash"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points",
+        "stroke"
+      ]
+    },
+    "el_polygon": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "$ref": "#/$defs/polygon_points"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points"
+      ]
+    },
+    "el_arc": {
+      "type": "object",
+      "properties": {
+        "cx": {
+          "$ref": "#/$defs/number"
+        },
+        "cy": {
+          "$ref": "#/$defs/number"
+        },
+        "r": {
+          "$ref": "#/$defs/length"
+        },
+        "start": {
+          "$ref": "#/$defs/angle"
+        },
+        "sweep": {
+          "$ref": "#/$defs/angle"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "dash": {
+          "$ref": "#/$defs/dash"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cx",
+        "cy",
+        "r",
+        "start",
+        "sweep",
+        "stroke"
+      ]
+    },
+    "el_text": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/number"
+        },
+        "y": {
+          "$ref": "#/$defs/number"
+        },
+        "text": {
+          "$ref": "#/$defs/draw_text"
+        },
+        "font": {
+          "$ref": "#/$defs/font"
+        },
+        "size": {
+          "$ref": "#/$defs/font_size"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "box": {
+          "type": "boolean"
+        },
+        "role": {
+          "enum": [
+            "label"
+          ]
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "text",
+        "size"
+      ]
+    },
+    "el_bands": {
+      "type": "object",
+      "properties": {
+        "r": {
+          "$ref": "#/$defs/length"
+        },
+        "offset": {
+          "$ref": "#/$defs/number"
+        },
+        "width": {
+          "$ref": "#/$defs/length"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "width"
+      ]
+    },
+    "el_ticks": {
+      "type": "object",
+      "properties": {
+        "r": {
+          "$ref": "#/$defs/length"
+        },
+        "offset": {
+          "$ref": "#/$defs/number"
+        },
+        "every": {
+          "$ref": "#/$defs/length"
+        },
+        "length": {
+          "$ref": "#/$defs/length"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "every",
+        "length",
+        "stroke"
+      ]
+    },
+    "el_tick_labels": {
+      "type": "object",
+      "properties": {
+        "r": {
+          "$ref": "#/$defs/length"
+        },
+        "offset": {
+          "$ref": "#/$defs/number"
+        },
+        "every": {
+          "$ref": "#/$defs/length"
+        },
+        "decimals": {
+          "$ref": "#/$defs/decimals"
+        },
+        "font": {
+          "$ref": "#/$defs/font"
+        },
+        "size": {
+          "$ref": "#/$defs/font_size"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "every",
+        "size"
+      ]
+    },
+    "el_pointer": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/name"
+        },
+        "pivot": {
+          "$ref": "#/$defs/xy"
+        },
+        "shape": {
+          "$ref": "#/$defs/polygon_points"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "stroke": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/stroke_width"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "shape"
+      ]
+    },
+    "el_fill_bar": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/name"
+        },
+        "width": {
+          "$ref": "#/$defs/length"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "width"
+      ]
+    },
+    "el_readout": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/name"
+        },
+        "x": {
+          "$ref": "#/$defs/number"
+        },
+        "y": {
+          "$ref": "#/$defs/number"
+        },
+        "mask": {
+          "type": "string",
+          "maxLength": 8,
+          "pattern": "^[0-9]+(\\.[0-9]+)?$"
+        },
+        "decimals": {
+          "$ref": "#/$defs/decimals"
+        },
+        "font": {
+          "$ref": "#/$defs/font"
+        },
+        "size": {
+          "$ref": "#/$defs/font_size"
+        },
+        "fill": {
+          "$ref": "#/$defs/color"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "mask",
+        "size"
+      ]
+    },
+    "el_group": {
+      "type": "object",
+      "properties": {
+        "translate": {
+          "$ref": "#/$defs/point"
+        },
+        "rotate": {
+          "$ref": "#/$defs/angle"
+        },
+        "draw": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          },
+          "maxItems": 256
+        },
+        "visible_if": {
+          "$ref": "#/$defs/option_ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "draw"
+      ]
+    },
+    "element": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "x-rule": {
+        "minProperties": "S1",
+        "maxProperties": "S1"
+      },
+      "description": "One drawing primitive: an object with exactly one key, the primitive's name.",
+      "properties": {
+        "circle": {
+          "$ref": "#/$defs/el_circle"
+        },
+        "rect": {
+          "$ref": "#/$defs/el_rect"
+        },
+        "line": {
+          "$ref": "#/$defs/el_line"
+        },
+        "polyline": {
+          "$ref": "#/$defs/el_polyline"
+        },
+        "polygon": {
+          "$ref": "#/$defs/el_polygon"
+        },
+        "arc": {
+          "$ref": "#/$defs/el_arc"
+        },
+        "text": {
+          "$ref": "#/$defs/el_text"
+        },
+        "bands": {
+          "$ref": "#/$defs/el_bands"
+        },
+        "ticks": {
+          "$ref": "#/$defs/el_ticks"
+        },
+        "tick_labels": {
+          "$ref": "#/$defs/el_tick_labels"
+        },
+        "pointer": {
+          "$ref": "#/$defs/el_pointer"
+        },
+        "fill_bar": {
+          "$ref": "#/$defs/el_fill_bar"
+        },
+        "readout": {
+          "$ref": "#/$defs/el_readout"
+        },
+        "group": {
+          "$ref": "#/$defs/el_group"
+        }
+      }
+    },
+    "fail_element": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "x-rule": {
+        "minProperties": "S1",
+        "maxProperties": "S1",
+        "additionalProperties": "B7"
+      },
+      "description": "A primitive of the additive on_fail layer: static primitives only. A value-bound primitive here would draw a value the family's quality rule has removed (B7).",
+      "properties": {
+        "circle": {
+          "$ref": "#/$defs/el_circle"
+        },
+        "rect": {
+          "$ref": "#/$defs/el_rect"
+        },
+        "line": {
+          "$ref": "#/$defs/el_line"
+        },
+        "polyline": {
+          "$ref": "#/$defs/el_polyline"
+        },
+        "polygon": {
+          "$ref": "#/$defs/el_polygon"
+        },
+        "arc": {
+          "$ref": "#/$defs/el_arc"
+        },
+        "text": {
+          "$ref": "#/$defs/el_text"
+        }
+      }
+    },
+    "option": {
+      "description": "One editor-configurable option, in the InstrumentSpec Prop vocabulary. Version 1 has three kinds.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/name"
+            },
+            "label": {
+              "$ref": "#/$defs/label_text"
+            },
+            "kind": {
+              "const": "boolean"
+            },
+            "default": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "kind",
+            "default"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/name"
+            },
+            "label": {
+              "$ref": "#/$defs/label_text"
+            },
+            "kind": {
+              "const": "color"
+            },
+            "default": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^(#[0-9a-fA-F]{6}|[a-z]+\\.[a-z]+)$",
+              "x-rule": {
+                "pattern": "B1"
+              }
+            },
+            "token": {
+              "enum": [
+                "accent",
+                "ink.muted",
+                "ink.primary",
+                "ink.secondary",
+                "line.border",
+                "line.fine",
+                "line.major",
+                "line.minor",
+                "map.road",
+                "map.terrain",
+                "map.water",
+                "nav.course",
+                "nav.ownship",
+                "nav.reference",
+                "state.caution",
+                "state.valid",
+                "state.warning",
+                "surface.base",
+                "surface.raised"
+              ],
+              "x-rule": {
+                "enum": "B1"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "kind",
+            "default"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/name"
+            },
+            "label": {
+              "$ref": "#/$defs/label_text"
+            },
+            "kind": {
+              "const": "fixkey"
+            },
+            "default": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "kind",
+            "default"
+          ]
+        }
+      ]
+    }
+  }
+}
