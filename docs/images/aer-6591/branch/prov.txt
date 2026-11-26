@@ -1,0 +1,2 @@
+side=branch fgw=bfb7e0a pyefis=f95d1e23 arduplane=4.7.3-FIRMWARE_VERSION_TYPE_OFFICIAL start=2026-11-25T15:57:45Z
+end=2026-11-25T15:59:58Z

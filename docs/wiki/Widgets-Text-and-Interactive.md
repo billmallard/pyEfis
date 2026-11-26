@@ -172,6 +172,22 @@ external YAML) or inline fields including 'dbkey:'`.
 | `toggle` | On and off; fires on both. The button and `dbkey` stay in step. |
 | `repeat` | Like `simple`, but repeats while held. |
 
+A button acts on its `dbkey` only while its screen shows. The stock panel
+commands are therefore also data bindings, in `databindings/default.yaml`: baro
++/-, dimmer +/-, the nine trim buttons, heading bug -/sync/+ and CDI source.
+Each runs its button file's command on that button's key (`TSBTN{id}1` to
+`TSBTN{id}11` and `TSBTN{id}27` to `TSBTN{id}33`), on every screen, and a key
+held true repeats with the button's `repeat_delay` and `repeat_interval`. So a
+panel key or a GPIO button that writes the key works whatever screen is up. A
+`simple` or `repeat` button on a bound key leaves the key to the binding, so a
+press acts once while the button shows; touching the button still acts, as
+before. A `toggle` on a bound key keeps the key: the binding is switched off,
+with an error in the log, because a toggle left on would read as a press held
+forever. An install whose `databindings/default.yaml` predates these bindings
+keeps the old behaviour until the file is replaced. A binding's `key` takes
+`{id}` as a button's `dbkey` does; `repeat_delay` and `repeat_interval` (ms) on
+a binding with a `condition` repeat its action while the condition stays true.
+
 ### Conditions
 
 `conditions:` is an ordered list of rules. Each has a `when:` and `actions:`.
@@ -226,6 +242,7 @@ case-sensitive.
 | `change value wrap` | `KEY,delta` | Add to a FIX value, wrapping through its range: `HEADBUG,-1` goes from 0 to 359. |
 | `sync value` | `DEST,SOURCE` | Copy one FIX value to another: `HEADBUG,HEAD`. |
 | `toggle bit` | `KEY` | Invert a boolean FIX value. |
+| `focus` | `KEY` | Give the knob to the value on the showing screen that edits `KEY`, as a touch on it would: `HEADBUG` focuses the HSI's HDG readout or the autopilot panel's HDG box, whichever comes first in the screen file. The HSI's CRS answers for the key it edits now (`NAV1CRS` or `NAV2CRS`). Nothing happens, and any focus stays, if no showing value edits it. `buttons/heading-bug-focus.yaml` (`TSBTN{id}32`) runs `focus: HEADBUG`, and so does the stock binding on that key. |
 | `set instrument units` | `NAMES:command` | `NAMES` is a comma list of FIX keys, unit groups (`Temperature`, `Pressure`, `Altitude`) or `*`; `command` is `toggle` or a unit name (`Pressure:hPa`). |
 | `set egt mode` | `normalize`, `peak`, `lean`, `reset peak` or `normal` | Drive the EGT bars set up for it. See [Engine Monitoring](Engine-Monitoring#leaning-egt-modes). |
 | `set airspeed mode` | empty, or `0`, `1`, `2` | Step the `airspeed_box` through TAS, GS, IAS, or pick one (0 TAS, 1 GS, 2 IAS). |

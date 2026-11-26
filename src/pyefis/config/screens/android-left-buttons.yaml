@@ -47,19 +47,37 @@ ANDROID:
         command: waydroid
         args:
           - show-full-ui
-    - type: include,includes/arcs/vertical/four_high_two_states_preferences_ARC1-8.yaml
+    # CAS marker (AER-6627): the highest active alert level, flashing while
+    # anything is unacknowledged; empty when there is none. Touch to open the
+    # full list. Top of the instrument column, as wide as the arcs below it;
+    # never inside the Android surface.
+    - type: cas_marker
       disabled: BUTTONS
       row: 0
       column: 14.5
       span:
-        rows: 70
+        rows: 5
         columns: 30
-    - type: include,includes/arcs/vertical/four_high_two_states_preferences_ARC1-8.yaml
+    - type: cas_marker
       disabled: not BUTTONS
       row: 0
       column: 0
       span:
-        rows: 70
+        rows: 5
+        columns: 44.5
+    - type: include,includes/arcs/vertical/four_high_two_states_preferences_ARC1-8.yaml
+      disabled: BUTTONS
+      row: 5
+      column: 14.5
+      span:
+        rows: 65
+        columns: 30
+    - type: include,includes/arcs/vertical/four_high_two_states_preferences_ARC1-8.yaml
+      disabled: not BUTTONS
+      row: 5
+      column: 0
+      span:
+        rows: 65
         columns: 44.5
     - type: include,BUTTON_GROUP1
       disabled: BUTTONS

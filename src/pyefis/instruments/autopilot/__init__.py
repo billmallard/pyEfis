@@ -312,7 +312,9 @@ class TargetEditor:
         item.bad = False
         item.fail = False
         item.value = self.clamp(value)
-        item.output_value()
+        # The HDG, VS and IAS boxes' keys (BOX_KEYS; ALT uses AltSelEditor),
+        # which fix-gateway's writer scan cannot follow here (ARCHG2b).
+        item.output_value()  # writes: HEADBUG, VSSEL, IASSEL
 
 
 class TargetBox(QWidget):
@@ -903,6 +905,14 @@ class AutopilotPanel(QWidget):
         finally:
             self._touch_pending = None
         return True
+
+    def edit_focus_key(self, key):
+        """The ``focus`` action (EncoderController.focus_key): take focus on
+        the shown target box that edits ``key``, as a touch on it would."""
+        for which in BOXES:
+            if BOX_KEYS[which] == key and self.box_editable(which):
+                return self._touch_box(which)
+        return False
 
     def _active_box(self):
         if self._edit_box is not None:

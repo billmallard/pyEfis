@@ -7,6 +7,10 @@ said NO POS. Now a LAT or LONG that is old, bad or failed removes the terrain,
 returns the brown attitude ground and annunciates SVS UNAVAIL -- the same state
 as a GL failure.
 
+SVSALT1 (AER-6458): the camera height is TALT, the GPS/EKF MSL height, and
+TALT is gated like LAT/LONG. ALT is indicated altitude and follows the baro
+setting, so it never reaches the SVS pose, and there is no ALT fallback.
+
 Every flag here is driven through the real pyavtools fix item (``item.old =
 True`` emits ``oldChanged``, exactly as the client does when the gateway flags
 the key), never by poking the widget's own state.
@@ -25,7 +29,7 @@ _AMBER = (255, 176, 0)
 
 
 def _ai_with_svs(fix, qtbot):
-    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG"):
+    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "TALT"):
         item = fix.db.get_item(key)
         item.old = False
         item.bad = False
@@ -59,7 +63,7 @@ def _amber_pixels(widget):
     return int(np.count_nonzero((bgra[..., 2] == r) & (bgra[..., 1] == g) & (bgra[..., 0] == b)))
 
 
-@pytest.mark.parametrize("key", ["LAT", "LONG"])
+@pytest.mark.parametrize("key", ["LAT", "LONG", "TALT"])
 @pytest.mark.parametrize("flag", ["old", "bad", "fail"])
 def test_dead_position_removes_terrain_and_annunciates(fix, qtbot, key, flag):
     widget, renderer = _ai_with_svs(fix, qtbot)
@@ -95,7 +99,7 @@ def test_dead_position_removes_terrain_and_annunciates(fix, qtbot, key, flag):
 def test_widget_built_while_position_old_starts_unavailable(fix, qtbot):
     """The flags are read at construction too: a screen built while the GPS is
     already dead must not show terrain before the first flag change arrives."""
-    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG"):
+    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "TALT"):
         fix.db.get_item(key).old = False
     fix.db.get_item("LAT").old = True
     widget = AI()
@@ -112,3 +116,54 @@ def test_dead_position_with_svs_disabled_has_no_annunciation(fix, qtbot):
     renderer.enabled = False
     fix.db.get_item("LAT").old = True
     assert _amber_pixels(widget) == 0
+
+
+def test_svs_camera_height_is_talt_not_alt(fix, qtbot):
+    """TALT and ALT 900 ft apart (a baro setting about 1 inHg off): the SVS
+    camera sits at TALT. A baro change moves ALT and must not move the
+    terrain; a TALT change must."""
+    fix.db.set_value("TALT", 5000.0)
+    fix.db.set_value("ALT", 4100.0)
+    widget, renderer = _ai_with_svs(fix, qtbot)
+    pose = mock.Mock()
+    renderer.make_pose_source.return_value = pose
+    widget._attach_pose_source(renderer)
+
+    assert widget.frame_pose().alt_ft == 5000.0
+    pose.set_altitude.assert_called_once_with(5000.0)
+
+    # The pilot turns the baro knob: ALT moves 900 ft, the camera does not.
+    pose.reset_mock()
+    fix.db.set_value("ALT", 5000.0)
+    assert widget.frame_pose().alt_ft == 5000.0
+    pose.set_altitude.assert_not_called()
+
+    # The GPS height changes: the camera follows it.
+    fix.db.set_value("TALT", 5200.0)
+    assert widget.frame_pose().alt_ft == 5200.0
+    pose.set_altitude.assert_called_once_with(5200.0)
+
+
+def test_no_talt_key_shows_svs_unavail(fix, qtbot):
+    """An install with no TALT writer gets SVS UNAVAIL, not terrain at the
+    baro-corrected ALT (Bill's ruling: no silent fallback)."""
+    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "TALT"):
+        fix.db.get_item(key).old = False
+    real_get_item = fix.db.get_item
+
+    def get_item(key, *a, **kw):
+        if key == "TALT":
+            raise KeyError(key)
+        return real_get_item(key, *a, **kw)
+
+    with mock.patch.object(fix.db, "get_item", side_effect=get_item):
+        widget = AI()
+    qtbot.addWidget(widget)
+    widget.resize(400, 300)
+    widget.show()
+    qtbot.waitExposed(widget)
+    renderer = mock.Mock(enabled=True, ready=True, gl_failed=False)
+    widget._svs_renderer = renderer
+    make_svs_item(renderer, widget).paint(mock.Mock(), None)
+    assert not renderer.draw.called
+    assert _amber_pixels(widget) > 0

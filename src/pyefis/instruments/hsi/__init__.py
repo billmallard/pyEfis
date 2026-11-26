@@ -48,6 +48,9 @@ ROSE_GLOW_WIDTH_RATIO = 0.06
 #: read at close range, the rose is a large disc read at a glance, and the two
 #: do not want the same strength.
 ROSE_SHADOW_ALPHA = 0.45
+#: The grey an old or bad input's symbol takes (HSI-FAIL-001's "grey"), the
+#: map and nav_status's bad / stale grey.
+_DEGRADED_GREY = "#808080"
 #: Knob steps for the HDG / CRS readouts (pyEfis #309): inner ring fine, outer
 #: ring coarse, in degrees.
 EDIT_FINE_DEG = 1
@@ -261,12 +264,24 @@ class HSI(QGraphicsView):
         # Heading-bug source (HEADBUG). Subscribe always (like CDI/GSI); the
         # marker is only drawn when heading_bug_enabled. Guarded so a database
         # without the key can't break construction.
+        # Its quality follows HSI-FAIL-001 (INS5, AER-6588): old or bad greys
+        # the bug and the HDG readout, fail removes the bug and dashes the
+        # readout. An absent key has no bug to draw, so it starts clean.
         self._hdgBug = 0.0
+        self._HdgBugOld = False
+        self._HdgBugBad = False
+        self._HdgBugFail = False
         self.hdg_bug_item = None
         try:
             self.hdgbugdb = fix.db.get_item("HEADBUG")
             self._hdgBug = self.hdgbugdb.value or 0.0
             self.hdgbugdb.valueChanged[float].connect(self.setHdgBug)
+            self.hdgbugdb.oldChanged[bool].connect(self.setHdgBugOld)
+            self.hdgbugdb.badChanged[bool].connect(self.setHdgBugBad)
+            self.hdgbugdb.failChanged[bool].connect(self.setHdgBugFail)
+            self._HdgBugOld = self.hdgbugdb.old
+            self._HdgBugBad = self.hdgbugdb.bad
+            self._HdgBugFail = self.hdgbugdb.fail
         except Exception:
             self.hdgbugdb = None
 
@@ -300,6 +315,11 @@ class HSI(QGraphicsView):
         self._TrackOld = True
         self._TrackBad = True
         self._TrackFail = True
+        # GS quality gates the diamond with TRACKM's (HSI-FAIL-001): a stale or
+        # invalid ground speed cannot vouch for the speed gate.
+        self._GsOld = False
+        self._GsBad = False
+        self._GsFail = False
         self.track_item = None
         try:
             self.trackdb = fix.db.get_item("TRACKM")
@@ -317,6 +337,12 @@ class HSI(QGraphicsView):
             self.gsdb = fix.db.get_item("GS")
             self._gs = self.gsdb.value or 0.0
             self.gsdb.valueChanged[float].connect(self.setGs)
+            self.gsdb.oldChanged[bool].connect(self.setGsOld)
+            self.gsdb.badChanged[bool].connect(self.setGsBad)
+            self.gsdb.failChanged[bool].connect(self.setGsFail)
+            self._GsOld = self.gsdb.old
+            self._GsBad = self.gsdb.bad
+            self._GsFail = self.gsdb.fail
         except Exception:
             self.gsdb = None
         # Rate of turn (ROT, deg/s, + = right) for the turn-rate trend. Starts
@@ -816,6 +842,27 @@ class HSI(QGraphicsView):
             if self.isVisible():
                 self.update()
 
+    def setHdgBugOld(self, old):
+        self._HdgBugOld = old
+        self.update()
+
+    def setHdgBugBad(self, bad):
+        self._HdgBugBad = bad
+        self.update()
+
+    def setHdgBugFail(self, fail):
+        self._HdgBugFail = fail
+        self.update()
+
+    def _hdg_bug_color(self):
+        """The heading bug's colour by HEADBUG quality (HSI-FAIL-001): None on
+        fail (no bug), grey on old or bad, else heading_bug_color."""
+        if self._HdgBugFail:
+            return None
+        if self._HdgBugOld or self._HdgBugBad:
+            return QColor(_DEGRADED_GREY)
+        return QColor(self.heading_bug_color)
+
     def _track_diamond_polygon(self):
         # Small diamond on the rose face near the outer edge, rotated to the GPS
         # ground track (_track). Scene-space like the other markers, so the view
@@ -838,7 +885,9 @@ class HSI(QGraphicsView):
             return False
         if self._TrackOld or self._TrackBad or self._TrackFail:
             return False
-        if self.gsdb is not None and self._gs < self.track_min_speed:
+        if self.gsdb is not None and (
+                self._GsOld or self._GsBad or self._GsFail
+                or self._gs < self.track_min_speed):
             return False
         return True
 
@@ -860,6 +909,18 @@ class HSI(QGraphicsView):
         if value != self._gs:
             self._gs = value
             self._update_track()
+
+    def setGsOld(self, old):
+        self._GsOld = old
+        self._update_track()
+
+    def setGsBad(self, bad):
+        self._GsBad = bad
+        self._update_track()
+
+    def setGsFail(self, fail):
+        self._GsFail = fail
+        self._update_track()
 
     def setTrackOld(self, old):
         self._TrackOld = old
@@ -1121,8 +1182,9 @@ class HSI(QGraphicsView):
         # Bug and track diamond sit on the card at (value - heading): with no
         # valid heading the card is frozen and they would point the wrong way
         # (CERT1e), so they go with the numerals, under the HDG flag.
-        if self.hdg_bug_item is not None and self._heading_valid():
-            _hbc = QColor(self.heading_bug_color)
+        _hbc = self._hdg_bug_color()
+        if self.hdg_bug_item is not None and self._heading_valid() \
+                and _hbc is not None:
             c.setPen(QPen(_hbc))
             c.setBrush(QBrush(_hbc))
             c.drawPolygon(self._hdg_bug_polygon())
@@ -1447,6 +1509,12 @@ class HSI(QGraphicsView):
         elif self._HeadBad:
             hdg, magcol = "", QColor(255, 150, 0)
         cyan = QColor(getattr(self, "heading_bug_color", "#00ffff"))
+        # The selected heading reads like its bug (HSI-FAIL-001): dashes on a
+        # failed HEADBUG, grey on an old or bad one.
+        if getattr(self, "_HdgBugFail", False):
+            sel = "---°"
+        elif getattr(self, "_HdgBugOld", False) or getattr(self, "_HdgBugBad", False):
+            cyan = QColor(_DEGRADED_GREY)
         crscol = self._course_pointer_color()
 
         W = self.width(); H = self.height()
@@ -2329,10 +2397,11 @@ class HSI(QGraphicsView):
             self._draw_arc_course(c, cx, own_y)
 
         # 5. Heading bug + track diamond as band markers (in-sector only).
-        if getattr(self, "heading_bug_enabled", False) and self._heading_valid():
+        _hbc = self._hdg_bug_color()
+        if getattr(self, "heading_bug_enabled", False) and self._heading_valid() \
+                and _hbc is not None:
             if self._arc_in_sector(self._hdgBug):
-                self._draw_arc_band_marker(c, self._hdgBug,
-                                           QColor(self.heading_bug_color), "bug")
+                self._draw_arc_band_marker(c, self._hdgBug, _hbc, "bug")
         if self._track_visible() and self._heading_valid() \
                 and self._arc_in_sector(self._track):
             self._draw_arc_band_marker(c, self._track, QColor(self.track_color), "diamond")
@@ -2685,6 +2754,26 @@ class HSI(QGraphicsView):
                 best = (d, field)
         return best[1] if best else None
 
+    def edit_focus_key(self, key):
+        """The ``focus`` action (EncoderController.focus_key): take focus on
+        the shown readout that edits ``key``, as a touch on it would. CRS
+        answers for the key it edits now, so it follows NAVSRC; the GPS OBS
+        course has no key and cannot be named."""
+        for field in ("hdg", "crs"):
+            if field in self._edit_rects and self._field_editable(field) \
+                    and self._edit_key(field) == key:
+                ctl = self._encoder_controller()
+                if ctl is None:
+                    return False
+                if ctl.focused_instrument() is self and self._edit_field != field:
+                    ctl.release_focus()
+                self._edit_pending = field
+                try:
+                    return ctl.touch_focus(self)
+                finally:
+                    self._edit_pending = None
+        return False
+
     def edit_focus_hit(self, global_pos):
         """EncoderController.focus_hit: is a press on the focused readout? A
         press anywhere else -- including the other readout -- releases focus,
@@ -2770,7 +2859,9 @@ class HSI(QGraphicsView):
         ``value`` assignment alone never leaves pyEfis (pyEfis #294)."""
         item = self._edit_item
         item.value = float(value)
-        item.output_value()
+        # _edit_key's keys, which fix-gateway's writer scan cannot follow
+        # here (ARCHG2b).
+        item.output_value()  # writes: HEADBUG, NAV1CRS, NAV2CRS
         self.update()
 
     def enc_clicked(self):

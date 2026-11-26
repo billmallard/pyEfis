@@ -50,9 +50,8 @@ README beside it has the command.
 **Options outside the tables.** An option the registry does not declare is
 still set on the instrument, and pyEFIS logs a warning that it "is applied but
 may have no effect". Where such an option does work, the reference page says
-so. A few are handled for every instrument: `temperature: true`,
-`pressure: true` and `altitude: true` (unit switching, on the types their
-pages name), and `egt_mode_switching` on vertical bars.
+so. The unit switches (`temperature`, `pressure`, `altitude`) and
+`egt_mode_switching` work only on the types whose tables list them.
 
 **Ganged instruments.** A `ganged_` prefix on a type (`ganged_vertical_bar_gauge`)
 repeats it across groups; the stock screens build their cylinder rows this way.

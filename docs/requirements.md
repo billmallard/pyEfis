@@ -34,7 +34,7 @@ Format: `EFIS-<AREA>-<NNN>`
 ### Synthetic Vision System (SVS)
 
 - **EFIS-SVS-001:** The attitude indicator background shall support an optional Synthetic Vision System (SVS) mode that replaces the solid sky/ground gradient with a 3D terrain representation.
-- **EFIS-SVS-002:** SVS shall use aircraft position (latitude, longitude, altitude) from the FIX database to determine terrain viewpoint.
+- **EFIS-SVS-002:** SVS shall use aircraft position (latitude, longitude, altitude) from the FIX database to determine terrain viewpoint. The altitude is the geometric MSL height `TALT`, not the baro-corrected `ALT` (AI-SVS-002).
 - **EFIS-SVS-003:** SVS shall use aircraft attitude (pitch, roll, heading) from the FIX database to orient the terrain view.
 - **EFIS-SVS-004:** The standard terrain data source shall be NASA SRTMGL3 V003 (3 arc-second / 90 m resolution), distributed as 1°×1° HGT tiles (big-endian signed 16-bit integers, 1201×1201 samples). The full global dataset (14,297 land tiles, ~13.6 GB) fits on a 32 GB microSD card. Higher-resolution sources (e.g., USGS 1/3 arc-second for the US) may be substituted via the terrain provider interface without code changes.
 - **EFIS-SVS-005:** SVS terrain rendering shall apply colour coding to distinguish terrain clearance zones relative to current aircraft altitude: green ≥ 1000 ft clearance, yellow 500–999 ft, red < 500 ft, magenta at or above aircraft altitude. Thresholds shall be configurable.
@@ -75,6 +75,7 @@ Format: `EFIS-<AREA>-<NNN>`
 - **EFIS-WIND-009:** State shall be communicated by colour and content:
   - **Healthy** — white label and value (e.g., `HW 12`).
   - **Bad** (data flagged unreliable) — amber label and an amber `X` in place of the value, hiding the suspect number while flagging the condition.
+  - **Stale** (data flagged old: the source stopped updating) — drawn as Bad (INS5, AER-6588).
   - **Failed** (data unavailable) — dim grey label and `---` in place of the value; the label reverts to the positive-side default (`HW`, `RX`) since sign cannot be trusted.
 - **EFIS-WIND-010:** The wind display shall be independently enable/disable-able via the `WIND_DISPLAY` preference key (default disabled), paralleling the existing `TRIM_CONTROLS` pattern. Disabling it shall not raise errors when `HWIND`/`XWIND` are absent from the FIX database.
 - **EFIS-WIND-011:** When the wind display is enabled but `HWIND`/`XWIND` are not defined in the FIX database (e.g., gateway has not deployed the `wind_components` compute function), the widget shall display the failed state and shall not raise exceptions.

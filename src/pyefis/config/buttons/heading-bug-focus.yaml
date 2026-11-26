@@ -1,0 +1,11 @@
+type: simple
+text: "HDG\nBUG"
+dbkey: TSBTN{id}32
+bg_color: "#101418"
+fg_color: "#00ffff"
+# Momentary: give the knob to the heading bug, as a touch on the HDG readout
+# does (TESS2b). Nothing happens if no value on the showing screen edits it.
+conditions:
+  - when: "CLICKED eq true"
+    actions:
+      - focus: HEADBUG

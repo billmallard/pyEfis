@@ -42,6 +42,8 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `show_units` | Show units | off | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid band; >0 draws a segmented (LED-style) band |
 | `name_location` | Name location | `top` | `top`, `right` | where the name label sits relative to the gauge |
+| `temperature` | Switch temperature units | off | on / off | the Units button switches the readout between deg F and deg C |
+| `pressure` | Switch pressure units | off | on / off | the Units button switches the readout between inHg and hPa |
 | `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
 | `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 | `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
@@ -90,6 +92,8 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
 | `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
+| `temperature` | Switch temperature units | off | on / off | the Units button switches the readout between deg F and deg C |
+| `pressure` | Switch pressure units | off | on / off | the Units button switches the readout between inHg and hPa |
 | `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
 | `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 | `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
@@ -104,6 +108,7 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `encoder_num_8khz_channels` | 8.33 kHz channels | off | on / off | digit entry shows 8.33 kHz channel numbers; use with a knob step of 0.008333333333 |
 | `encoder_num_blink_time_on` | Digit blink on (ms) | `300` |  | how long the digit being set shows in each blink |
 | `encoder_num_blink_time_off` | Digit blink off (ms) | `100` |  | how long the digit being set is hidden in each blink |
+| `egt_mode_switching` | EGT mode buttons | off | on / off | respond to the EGT mode buttons (Normalize, Peak, Lean) |
 
 Values it reads from the FIX item, set in fix-gateway (the aircraft parameters), not on the panel:
 
@@ -118,12 +123,11 @@ Values it reads from the FIX item, set in fix-gateway (the aircraft parameters),
 
 <!-- /generated -->
 
-Only the vertical bar has the EGT modes and the hottest-cylinder ball. Set them
-in YAML:
+Only the vertical bar has the EGT modes and the hottest-cylinder ball.
+`egt_mode_switching` is in the table above; set the rest in YAML:
 
 | Option | Default | What it does |
 |---|---|---|
-| `egt_mode_switching` | off | Respond to the **Set EGT mode** actions. |
 | `normalize_range` | unset | The span the bar covers in Normalize. |
 | `highlight_key` | unset | A FIX key such as `EGTMAX1`; a ball is drawn while this bar's value equals it. |
 
@@ -149,6 +153,8 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
 | `show_units` | Show units | on | on / off | append the FIX key's engineering units to the readout |
 | `segments` | Segments | `0` |  | 0 = solid bar; >0 draws a segmented (LED-style) bar |
+| `temperature` | Switch temperature units | off | on / off | the Units button switches the readout between deg F and deg C |
+| `pressure` | Switch pressure units | off | on / off | the Units button switches the readout between inHg and hPa |
 | `tank` | Tank | unset |  | Bind to a tank from the aircraft page |
 | `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 | `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
@@ -197,6 +203,9 @@ How it reads and flies: [Engine Monitoring](Engine-Monitoring).
 | `decimal_places` | Decimal places | `1` |  | digits after the decimal point in the readout |
 | `font_mask` | Font mask | `000` |  | widest string the readout reserves space for (sizing) |
 | `show_units` | Show units | off | on / off | append the FIX key's engineering units to the readout |
+| `temperature` | Switch temperature units | off | on / off | the Units button switches the readout between deg F and deg C |
+| `pressure` | Switch pressure units | off | on / off | the Units button switches the readout between inHg and hPa |
+| `altitude` | Switch altitude units | off | on / off | the Units button switches the readout between feet and metres |
 | `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 | `encoder_set_key` | Knob writes key | unset | FIX key | FIX key the knob writes; blank = the key this gauge displays |
 | `encoder_multiplier` | Knob step | `1` |  | value change per inner-knob detent |
@@ -233,14 +242,16 @@ the bar and arc gauges turn orange instead.
 
 ## Options every gauge takes in YAML
 
-These are read by all four but are not in the configurator's list. Except
-for the unit switches, pyEFIS applies them and logs that they are undeclared.
+These are read by all four but are not in the configurator's list. pyEFIS
+applies them and logs that they are undeclared.
 
 | Option | Default | What it does |
 |---|---|---|
-| `temperature: true`, `pressure: true` | off | Let the **Units** button switch this gauge between °C and °F, or inHg and hPa. |
-| `altitude: true` | off | The same for ft and m, on `numeric_display` only. |
 | `clipping` | off | Hold the value, and any edit, inside the item's range. |
+
+The unit switches are in each gauge's table above: `temperature` and
+`pressure` on all four, `altitude` on `numeric_display` only. Each works only
+on the types that list it.
 
 The knob options (`encoder_order`, `encoder_set_key`, `encoder_multiplier`,
 `touch_edit` and the rest) are in the configurator; each gauge's table above

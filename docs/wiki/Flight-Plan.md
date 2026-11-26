@@ -65,7 +65,9 @@ starts the missed approach.
    it would go.
 3. Touch **ENT**. The waypoint is added to the end of the plan and sent to the
    engine, and the page goes back to the list. `NO MATCHES` means nothing has
-   that ident; `DUPLICATE FOUND` gives you a list to pick from.
+   that ident; `DUPLICATE FOUND` gives you a list to pick from, each row
+   with the state (or the country) the place is in: `BR ndb TX Depoo`.
+   The **Recent** tab remembers the place you picked, not just its ident.
    `<ident> IS ALREADY THE PREVIOUS FIX` (or `NEXT FIX`) means that fix is
    already right beside the place it would go.
 4. Repeat. Touch **X** to leave the entry page without adding anything.
@@ -82,7 +84,9 @@ reads `DRAFT - NOT LOADED:` and its button, **Flown plan**, goes back. The draft
 ends when the engine loads a change. This needs an engine that publishes
 `FPLLDSEQ`.
 
-Other messages, such as `STORED`, `ROUTE FULL` or an OBS refusal, show in a
+Other messages, such as `STORED`, `ROUTE FULL`, an OBS refusal, a refused
+Activate (`ALREADY TURNED TOWARD FIX: USE DIRECT-TO`) or a change that left no
+leg active (`ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE`), show in a
 strip just above the soft keys: yellow text and border on a dark yellow fill.
 The strip clears after 4 seconds, or at your next tap anywhere. A tap on the
 strip itself only clears it.
@@ -361,6 +365,8 @@ From the bench panel:
 
 A screen button can open the page with the action `flightplan page` (`fpl`,
 `dto`, `proc`, `catalog` or `charts`), or start a Direct-To with `flightplan direct to <ident>`.
+An ident that names more than one place opens the Direct To page on the
+duplicate list instead; pick one and the Direct-To starts.
 
 ### Feeding it
 

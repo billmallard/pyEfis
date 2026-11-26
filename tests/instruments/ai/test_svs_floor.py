@@ -10,8 +10,9 @@ silently; past it, it still lifts and the AI shows an amber SVS HGT. The
 height input is never written back to the bus, and a camera above the floor
 is never moved.
 
-The camera input is whatever feeds ``AI._svs_alt`` (ALT on dev, TALT after
-SVSALT1); these tests set that attribute, so they pin the floor under either.
+The camera input is ``AI._svs_alt``, which SVSALT1 feeds from TALT. Most
+tests set that attribute directly; ``test_the_floor_acts_on_talt_from_the_bus``
+drives TALT (and an ALT that disagrees) through the FIX database end to end.
 ``draw`` is replaced because it needs a GL context; the floor runs before it,
 in ``paint_svs_frame``, and the height ``draw`` receives is the camera height.
 """
@@ -93,7 +94,7 @@ def _rwy_ft(f):
 
 @pytest.fixture
 def ai(fix, qtbot):
-    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG"):
+    for key in ("PITCH", "ROLL", "ALAT", "TAS", "LAT", "LONG", "TALT"):
         item = fix.db.get_item(key)
         item.old = False
         item.bad = False
@@ -135,7 +136,7 @@ def _amber_text(widget):
 
 def test_height_40ft_under_the_runway_puts_the_camera_on_the_runway(
         ai, tmp_path):
-    """AI-SVS-003, DoD 1: the input is 40 ft below the threshold elevation, on the
+    """AI-SVS-004, DoD 1: the input is 40 ft below the threshold elevation, on the
     runway at its threshold. The camera is the runway surface plus the eye
     height, not 40 ft under it."""
     r = _renderer(tmp_path, [_runway()])
@@ -146,7 +147,7 @@ def test_height_40ft_under_the_runway_puts_the_camera_on_the_runway(
 
 def test_height_past_the_band_under_terrain_clamps_and_annunciates(
         ai, tmp_path):
-    """AI-SVS-003, DoD 2: off any runway, the input is past the band below the terrain.
+    """AI-SVS-004, DoD 2: off any runway, the input is past the band below the terrain.
     The camera is still lifted to the terrain, and SVS HGT shows."""
     r = _renderer(tmp_path, [_runway()])
     lat, lon = LAT0 + 0.02, LON0 + 0.02            # well clear of the runway
@@ -198,11 +199,33 @@ def test_a_camera_above_the_floor_is_never_moved(ai, tmp_path, above):
 
 def test_the_floor_writes_no_fix_key(ai, tmp_path, fix):
     r = _renderer(tmp_path, [_runway()])
-    before = {k: fix.db.get_item(k).value for k in ("ALT", "LAT", "LONG")}
+    before = {k: fix.db.get_item(k).value
+              for k in ("ALT", "TALT", "LAT", "LONG")}
     lat, lon = _on_runway(0.0)
     _paint(ai, r, lat, lon, THR1_FT - 200.0)
     assert {k: fix.db.get_item(k).value for k in before} == before
     assert ai._svs_alt == THR1_FT - 200.0      # the widget's input is kept
+
+
+def test_the_floor_acts_on_talt_from_the_bus(ai, tmp_path, fix):
+    """The floor sits under the SVSALT1 input: TALT 40 ft under the runway
+    lifts the camera and, being past the band, tags it, while ALT
+    (baro-corrected, 500 ft above the runway here) is ignored. TALT itself
+    is left as written."""
+    r = _renderer(tmp_path, [_runway()])
+    ai._svs_renderer = r
+    lat, lon = _on_runway(0.0)
+    fix.db.set_value("LAT", lat)
+    fix.db.set_value("LONG", lon)
+    fix.db.set_value("ALT", THR1_FT + 500.0)
+    fix.db.set_value("TALT", THR1_FT - 40.0)
+    assert ai._svs_alt == pytest.approx(THR1_FT - 40.0)
+    make_svs_item(r, ai).paint(mock.Mock(), None)
+    assert r.draw.call_count == 1
+    assert r.draw.call_args.args[5] == pytest.approx(
+        THR1_FT + SVS_EYE_HEIGHT_FT, abs=1e-6)
+    assert r.height_tag is True
+    assert fix.db.get_item("TALT").value == pytest.approx(THR1_FT - 40.0)
 
 
 def test_a_dead_position_drops_the_tag_for_svs_unavail(ai, tmp_path, fix):
