@@ -182,3 +182,15 @@ EMS:
             -
               preferences: BAR27
 
+    # Crew alerting marker (CAS3, CAP-119), as on ems.yaml: the highest active
+    # alert level, flashing while anything is unacknowledged; empty when
+    # there is none. Touch to open the full list. Where the stock file
+    # puts it on the attitude display (the top band, right of the autopilot
+    # label, above the HSI heading box); the attitude display is squashed
+    # here, so the box is too.
+    - type: cas_marker
+      row: 0.5
+      column: 49
+      span:
+        rows: 2.5
+        columns: 26

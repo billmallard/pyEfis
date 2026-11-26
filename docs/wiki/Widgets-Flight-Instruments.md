@@ -165,6 +165,7 @@ FIX keys it reads by default: `ALT`.
 | `vs_bug` | VSSEL bug | off | on / off | on a VS tape, the VSSEL bug while the autopilot reports VS active (on for a VS tape, off for an ALT tape) |
 | `vs_bug_color` | VSSEL bug color | `#00ffff` | colour | colour of the VSSEL bug |
 | `vs_bug_dbkey` | Selected-VS key | `VSSEL` | FIX key | FIX key holding the selected vertical speed (default VSSEL) |
+| `altitude` | Switch altitude units | off | on / off | the Units button switches the readout between feet and metres |
 | `encoder_order` | Knob order | unset | step 1 | place on the screen's knob walk: turning the knob visits instruments in ascending order, and push gives the highlighted one the knob; blank = not on the walk |
 
 <!-- /generated -->
@@ -190,6 +191,7 @@ FIX keys it reads by default: `ALT`.
 | Option | Configurator label | Default | Values | What it does |
 |---|---|---|---|---|
 | `bg_opacity` | Background opacity (%) | `100` | 0 to 100, step 1 | 0 = transparent (show what's behind), 100 = solid |
+| `altitude` | Switch altitude units | off | on / off | the Units button switches the readout between feet and metres |
 
 <!-- /generated -->
 

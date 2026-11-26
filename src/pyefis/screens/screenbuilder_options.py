@@ -78,6 +78,42 @@ funcPressInHg = lambda x: x
 funcAltitudeMeters = lambda x: x / 3.28084
 funcAltitudeFeet = lambda x: x
 
+# The options that switch an instrument's units, by name:
+# (unit group, unit 1, unit 2, conversion 1, conversion 2). An option switches
+# units only on a type whose InstrumentSpec declares it (AER-6586, INS3), so
+# which instruments switch is set by the records in screenbuilder_factory.
+UNIT_SWITCHES = {
+    "temperature": ("Temperature", "\N{DEGREE SIGN}F", "\N{DEGREE SIGN}C",
+                    funcTempF, funcTempC),
+    "pressure": ("Pressure", "inHg", "hPa", funcPressInHg, funcPressHpa),
+    "altitude": ("Altitude", "Ft", "M", funcAltitudeFeet,
+                 funcAltitudeMeters),
+}
+
+# The option that connects a bar to the "set egt mode" action.
+EGT_MODE_OPTION = "egt_mode_switching"
+
+
+def _declared_switch(inst_type, option):
+    """``option`` if it is a switch the type's InstrumentSpec declares, else
+    None.
+
+    A switch is EGT_MODE_OPTION or a key of UNIT_SWITCHES, declared with
+    ``apply="special"``. ``temperature: true`` on a type that does not
+    declare it is an undeclared option, applied by setattr and warned about.
+    Never raises."""
+    if option != EGT_MODE_OPTION and option not in UNIT_SWITCHES:
+        return None
+    try:
+        from pyefis.screens import screenbuilder_factory as _factory
+        spec = _factory.REGISTRY.get(inst_type)
+        prop = spec.prop(option) if spec is not None else None
+    except Exception:
+        return None
+    if prop is None or prop.apply != "special":
+        return None
+    return option
+
 
 def configure_unit_switching(
     instrument, unit_group, unit1, unit2, conversion1, conversion2
@@ -205,11 +241,8 @@ def apply_options(screen, index, config, state=False):
                 )
             continue
 
-        if (
-            "egt_mode_switching" == option
-            and value == True
-            and config["type"] == "vertical_bar_gauge"
-        ):
+        switch = _declared_switch(config.get("type"), option)
+        if switch == EGT_MODE_OPTION and value == True:
             hmi.actions.setEgtMode.connect(instrument.setMode)
             continue
 
@@ -233,61 +266,14 @@ def apply_options(screen, index, config, state=False):
                     screenbuilder_preferences.normalize_font_percent(value))
             continue
 
-        if (
-            "temperature" in option
-            and value == True
-            and ("gauge" in config["type"] or config["type"] == "numeric_display")
-        ):
-            configure_unit_switching(
-                instrument,
-                "Temperature",
-                "\N{DEGREE SIGN}F",
-                "\N{DEGREE SIGN}C",
-                funcTempF,
-                funcTempC,
-            )
+        if switch in UNIT_SWITCHES and value == True:
+            configure_unit_switching(instrument, *UNIT_SWITCHES[switch])
             unit_switching = True
             continue
 
-        elif (
-            "pressure" in option
-            and value == True
-            and ("gauge" in config["type"] or config["type"] == "numeric_display")
-        ):
-            configure_unit_switching(
-                instrument,
-                "Pressure",
-                "inHg",
-                "hPa",
-                funcPressInHg,
-                funcPressHpa,
-            )
-            unit_switching = True
-            continue
-
-        elif (
-            "altitude" in option
-            and value == True
-            and (
-                config["type"]
-                in ["gauge", "numeric_display", "altimeter_tape", "altimeter_dial"]
-            )
-        ):
-            configure_unit_switching(
-                instrument,
-                "Altitude",
-                "Ft",
-                "M",
-                funcAltitudeFeet,
-                funcAltitudeMeters,
-            )
-            unit_switching = True
-            continue
-
-        else:
-            _warn_undeclared_option(config["type"], option)
-            setattr(instrument, option,
-                    _coerce_to_attr_type(instrument, option, value))
+        _warn_undeclared_option(config["type"], option)
+        setattr(instrument, option,
+                _coerce_to_attr_type(instrument, option, value))
 
     # After the loop, so dbkey is set whatever the option order in the YAML.
     if unit_switching:

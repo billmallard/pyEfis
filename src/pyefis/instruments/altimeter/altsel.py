@@ -119,7 +119,9 @@ class AltSelEditor:
         item.bad = False
         item.fail = False
         item.value = self.clamp(value)
-        item.output_value()
+        # The key is the panel's alt_bug_dbkey (ALTSEL unless a panel names
+        # another); fix-gateway's writer scan cannot follow it here (ARCHG2b).
+        item.output_value()  # writes: ALTSEL
 
 
 class AltSelBox(QWidget):
