@@ -124,10 +124,12 @@ def test_attitude_screen_carries_cas(fname):
 
 @pytest.mark.parametrize("fname", ALTERNATIVES)
 def test_alternative_carries_cas_when_its_stock_file_does(fname):
+    # Every stock file preferences.yaml names now carries one (the Android
+    # screens since AER-6627), so there is no stock file left to excuse an
+    # alternative.
     prefs = _preferences()
     stock = REFERENCED[fname]
-    if not _types(stock, prefs) & CAS:
-        pytest.skip(f"{stock} carries no CAS surface either")
+    assert _types(stock, prefs) & CAS, f"{stock} carries no CAS surface"
     assert _types(fname, prefs) & CAS, (
         f"{fname} replaces {stock}, which carries a CAS surface; it has none")
 
@@ -161,3 +163,42 @@ def test_alternative_marker_covers_nothing_the_stock_marker_does_not(fname):
     prefs = _preferences()
     extra = _covered(fname, prefs) - _covered(REFERENCED[fname], prefs)
     assert not extra, f"{fname}: marker covers {sorted(extra)}"
+
+
+ANDROID = ("android.yaml", "android-portrait.yaml", "android-left-buttons.yaml")
+
+
+def _flag_states(prefs, *flags):
+    """A copy of prefs per combination of the named enabled-flags."""
+    import copy
+    import itertools
+    for values in itertools.product((False, True), repeat=len(flags)):
+        p = copy.deepcopy(prefs)
+        p["enabled"].update(zip(flags, values))
+        yield dict(zip(flags, values)), p
+
+
+@pytest.mark.parametrize("fname", ANDROID)
+def test_android_marker_stays_off_the_android_surface(fname):
+    # AER-6627: the weston surface embeds a third-party app (waydroid) that
+    # fills the content area. The marker must sit outside it in every state
+    # the file switches on: DEMO_TESTING_TEXT resizes the surface, BUTTONS
+    # moves the arcs and the marker with them.
+    assert REFERENCED.get(fname) is not None, f"{fname} is not offered"
+    for flags, prefs in _flag_states(_preferences(),
+                                     "DEMO_TESTING_TEXT", "BUTTONS"):
+        markers = surfaces = 0
+        for layout, insts in _screens(fname, prefs).values():
+            w, h = resolver.canvas_size(layout, 1000)
+            placed = resolver.place(layout, insts, w, h)
+            weston = [p for p in placed if p["type"] == "weston"]
+            for m in (p for p in placed if p["type"] == "cas_marker"):
+                markers += 1
+                hit = [s["rect"] for s in weston
+                       if _overlaps(m["rect"], s["rect"])]
+                assert not hit, (
+                    f"{fname} {flags}: marker {m['rect']} covers the "
+                    f"Android surface {hit}")
+            surfaces += len(weston)
+        assert markers == 1, f"{fname} {flags}: {markers} markers, want 1"
+        assert surfaces == 1, f"{fname} {flags}: {surfaces} surfaces, want 1"
