@@ -645,6 +645,30 @@ def _tank_prop():
                 label="Tank", help="Bind to a tank from the aircraft page")
 
 
+# Unit switching (AER-6586, INS3). screenbuilder_options switches an option's
+# units only on a type whose record declares it, so these declarations decide
+# which instruments switch. The readout starts in the first unit named here
+# unless the preferences ``units:`` block names the other.
+_UNIT_SWITCH_LABELS = {
+    "temperature": ("Switch temperature units", "deg F and deg C"),
+    "pressure": ("Switch pressure units", "inHg and hPa"),
+    "altitude": ("Switch altitude units", "feet and metres"),
+}
+
+
+def _unit_switch_prop(name):
+    label, units = _UNIT_SWITCH_LABELS[name]
+    return Prop(name, "boolean", default=False, apply="special", label=label,
+                help=f"the Units button switches the readout between {units}")
+
+
+def _egt_mode_prop():
+    return Prop("egt_mode_switching", "boolean", default=False,
+                apply="special", label="EGT mode buttons",
+                help="respond to the EGT mode buttons (Normalize, Peak, "
+                     "Lean)")
+
+
 _register(InstrumentSpec(
     type="arc_gauge",
     label="Arc Gauge",
@@ -668,6 +692,8 @@ _register(InstrumentSpec(
         Prop("name_location", "enum", default="top", enum=["top", "right"],
              label="Name location",
              help="where the name label sits relative to the gauge"),
+        _unit_switch_prop("temperature"),
+        _unit_switch_prop("pressure"),
         _tank_prop(),
         *_gauge_encoder_props(),
     ],
@@ -786,7 +812,7 @@ _register(InstrumentSpec(
              replace=None: instrument("Altimeter")(screen, font_family=font_family)),
     dbkeys=["ALT"],
     keep_aspect=True,
-    properties=[_bg_opacity_prop()],
+    properties=[_bg_opacity_prop(), _unit_switch_prop("altitude")],
     preview={"value": 3500},
 ))
 
@@ -864,6 +890,7 @@ _register(InstrumentSpec(
              label="Selected-VS key", apply="special",
              help="FIX key holding the selected vertical speed "
                   "(default VSSEL)"),
+        _unit_switch_prop("altitude"),
         _encoder_order_prop(),
     ],
     encoder=EncoderSupport(selectable=True, editable=True, outer_ring=True),
@@ -1066,6 +1093,8 @@ def _bar_gauge_props():
              help="append the FIX key's engineering units to the readout"),
         Prop("segments", "integer", default=0, label="Segments",
              help="0 = solid bar; >0 draws a segmented (LED-style) bar"),
+        _unit_switch_prop("temperature"),
+        _unit_switch_prop("pressure"),
         _tank_prop(),
         *_gauge_encoder_props(),
     ]
@@ -1091,7 +1120,7 @@ _register(InstrumentSpec(
     builder=(lambda screen, config, font_percent=None, font_family=None,
              replace=None: instrument("VerticalBar")(
                  screen, min_size=False, font_family=font_family)),
-    properties=_bar_gauge_props(),
+    properties=[*_bar_gauge_props(), _egt_mode_prop()],
     fix_values=_gauge_fix_values(),
     preview={"value": "72", "fill": 0.72},
     encoder=_GAUGE_KNOB,
@@ -1125,6 +1154,9 @@ _register(InstrumentSpec(
              help="widest string the readout reserves space for (sizing)"),
         Prop("show_units", "boolean", default=False, label="Show units",
              help="append the FIX key's engineering units to the readout"),
+        _unit_switch_prop("temperature"),
+        _unit_switch_prop("pressure"),
+        _unit_switch_prop("altitude"),
         *_gauge_encoder_props(),
     ],
     fix_values=_gauge_fix_values(),
@@ -1468,7 +1500,9 @@ _register(InstrumentSpec(
              enum=["relief", "caution"], label="Terrain mode",
              help="relief = sectional-style hypsometric; caution = the "
                   "same relief with the SVS hazard bands over it: amber "
-                  "and red by clearance below ownship, magenta above"),
+                  "and red by clearance below ownship, magenta above. "
+                  "Needs TALT (GPS MSL height); without it, relief and "
+                  "TERR UNAVAIL"),
         Prop("terrain_palette", "enum", default="clearance",
              enum=["clearance", "subdued", "high_contrast"],
              label="Terrain hazard palette",

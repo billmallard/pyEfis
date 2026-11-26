@@ -84,7 +84,9 @@ reads `DRAFT - NOT LOADED:` and its button, **Flown plan**, goes back. The draft
 ends when the engine loads a change. This needs an engine that publishes
 `FPLLDSEQ`.
 
-Other messages, such as `STORED`, `ROUTE FULL` or an OBS refusal, show in a
+Other messages, such as `STORED`, `ROUTE FULL`, an OBS refusal, a refused
+Activate (`ALREADY TURNED TOWARD FIX: USE DIRECT-TO`) or a change that left no
+leg active (`ACTIVE WAYPOINT REMOVED: NO LEG ACTIVE`), show in a
 strip just above the soft keys: yellow text and border on a dark yellow fill.
 The strip clears after 4 seconds, or at your next tap anywhere. A tap on the
 strip itself only clears it.
