@@ -47,7 +47,10 @@ window, the design's first concern is that a quiet window can never be a failed 
   owner, 2026-11-23). Every screen in the default list but data status and About carries a
   marker, so the shipped panel raises no `CAS NOT SHOWN` and the full list opens from any
   screen. So does each portrait and left-buttons layout of them that `preferences.yaml` or
-  the Legacy page offers (AER-6602); the Android screens, outside the default list, do not.
+  the Legacy page offers (AER-6602), and so do the three Android screens (AER-6627). They
+  are outside the default list, but a builder who adds `SCREEN_ANDROID` flies from them, and
+  the embedded Android app fills the content area. Their marker sits in the instrument
+  column or band beside that surface, never inside it.
 
 ## 3. Data contract
 

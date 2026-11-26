@@ -65,18 +65,28 @@ ANDROID:
       disabled: BUTTONS
       row: 100
       column: 0
-    - type: include,includes/bars/vertical/six_wide_preferences_BAR1-6.yaml
+    # CAS marker (AER-6627): the highest active alert level, flashing while
+    # anything is unacknowledged; empty when there is none. Touch to open the
+    # full list. Centred between the arcs and the bars/radio block; never
+    # inside the Android surface.
+    - type: cas_marker
       row: 60
+      column: 76
+      span:
+        rows: 4
+        columns: 48
+    - type: include,includes/bars/vertical/six_wide_preferences_BAR1-6.yaml
+      row: 64
       column: 0
       display_state: 1
       span:
-        rows: 40
+        rows: 36
         columns: 200
     - type: include,includes/mgl/v16/square-active-radio-display.yaml
-      row: 60
+      row: 64
       column: 0
       span:
-        rows: 40
+        rows: 36
         columns: 200
       display_state: 2
       replace:

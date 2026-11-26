@@ -222,6 +222,56 @@ def test_main_sigusr1_screenshot_armed_normally_off_eglfs(
     assert "SIGUSR1 -> /tmp/pyefis_screenshot.png handler armed" in messages
 
 
+def test_save_screenshot_repaints_the_gl_viewport_after_the_grab(qtbot, tmp_path):
+    # AER-6639: on the Beelink, the grab left the AI's GL viewport to be
+    # composed black at the next repaint of anything over it (a touch on the
+    # HDG readout or the baro box), and a static bus never repainted the AI.
+    # The screenshot must ask every GL widget to repaint once the grab is done.
+    from PyQt6.QtGui import QPixmap
+    from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+    from PyQt6.QtWidgets import QGraphicsView, QWidget
+
+    events = []
+
+    class Viewport(QOpenGLWidget):
+        def update(self):
+            events.append("repaint")
+
+    window = QWidget()
+    qtbot.addWidget(window)
+    ai = QGraphicsView(window)       # the AI's shape: a view on a GL viewport
+    ai.setViewport(Viewport())
+
+    def grab():
+        events.append("grab")
+        pix = QPixmap(4, 4)
+        pix.fill()
+        return pix
+
+    window.grab = grab
+    path = tmp_path / "shot.png"
+
+    assert main_module.save_screenshot(window, str(path)) is True
+    assert path.exists()
+    assert events == ["grab", "repaint"]
+
+
+def test_save_screenshot_of_a_screen_saves_without_repainting(tmp_path):
+    # app.primaryScreen() is the fallback target before the main window
+    # exists; a screen has no widgets to repaint.
+    from PyQt6.QtGui import QPixmap
+
+    pix = QPixmap(4, 4)
+    pix.fill()
+    screen = mock.Mock(spec=["grabWindow"])
+    screen.grabWindow.return_value = pix
+    path = tmp_path / "shot.png"
+
+    assert main_module.save_screenshot(screen, str(path)) is True
+    screen.grabWindow.assert_called_once_with(0)
+    assert path.exists()
+
+
 def test_main_config_search_checks_multiple_paths_before_match(
     monkeypatch, config_files, patched_runtime, tmp_path
 ):

@@ -92,4 +92,6 @@ class IasSelEditor:
         item.bad = False
         item.fail = False
         item.value = float(self.clamp(value))
-        item.output_value()
+        # The key is the panel's ias_bug_dbkey (IASSEL unless a panel names
+        # another); fix-gateway's writer scan cannot follow it here (ARCHG2b).
+        item.output_value()  # writes: IASSEL

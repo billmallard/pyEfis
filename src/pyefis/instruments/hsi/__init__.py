@@ -2859,7 +2859,9 @@ class HSI(QGraphicsView):
         ``value`` assignment alone never leaves pyEfis (pyEfis #294)."""
         item = self._edit_item
         item.value = float(value)
-        item.output_value()
+        # _edit_key's keys, which fix-gateway's writer scan cannot follow
+        # here (ARCHG2b).
+        item.output_value()  # writes: HEADBUG, NAV1CRS, NAV2CRS
         self.update()
 
     def enc_clicked(self):

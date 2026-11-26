@@ -43,9 +43,21 @@ the register's `pyefis` field. The fetched files are cached under
 `~/.cache/pyefis/fix-gateway-<sha>`. Pass `--fixgw DIR` to use a checkout you
 already have; it must be at the pin. A write counts when it is one ARCHG1's
 scan can see: a literal key or a module constant passed to `set_value`/`write`,
-`.value =` on an item fetched with `get_item("KEY")`, or a wrapper function that
-passes its key on. A key held in a variable (`fix.db.set_value(self.key, v)`)
-is not seen, as in fix-gateway.
+`.value =` or `output_value()` on an item fetched with `get_item("KEY")` or from
+a method that returns one (`self._get(key)`), a wrapper function that passes its
+key on, a key built by a name function (`_slot_key(i, name)`), or the `.item` of
+a `bugs.BugBinding("KEY", self)` the module makes. A key held in a variable
+(`fix.db.set_value(self.key, v)`) is not seen, as in fix-gateway.
+
+When an item comes from elsewhere (an editor handed a binding whose key is the
+panel's `alt_bug_dbkey`), say which keys the write reaches, on its line:
+
+```python
+item.output_value()  # writes: ALTSEL
+```
+
+The scan stops with the file and line if the comment is on no write, on a write
+it can already name, or names a key the database does not have (ARCHG2b).
 
 ## When the check fails on your write
 
