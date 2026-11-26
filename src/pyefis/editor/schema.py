@@ -326,6 +326,10 @@ _ACTIONS = [
     {"verb": "toggle bit", "label": "Toggle", "group": "value",
      "arg": {"kind": "fixkey"},
      "help": "flip a boolean FIX key on/off"},
+    {"verb": "focus", "label": "Focus for the knob", "group": "value",
+     "arg": {"kind": "fixkey"},
+     "help": "give the knob to the value on the showing screen that edits "
+             "this key, as a touch on it would (nothing if none shows)"},
     # --- screen navigation ---
     {"verb": "show screen", "label": "Show screen", "group": "screen",
      "arg": {"kind": "screen"}, "help": "jump to a named screen"},

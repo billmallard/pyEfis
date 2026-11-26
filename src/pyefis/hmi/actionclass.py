@@ -63,6 +63,10 @@ class ActionClass(QWidget):
     # tab if it is on a hidden one.
     flightplanWptInfo = pyqtSignal(object)
     flightplanCreateWaypoint = pyqtSignal(object)
+    # Edit focus from outside the glass (TESS2b, AER-6630). The argument is a
+    # FIX key; the visible screen gives knob control to the value that edits
+    # it, as a touch on that value would (EncoderController.focus_key).
+    focusValue = pyqtSignal(object)
 
     def __init__(self):
         super(ActionClass, self).__init__()
@@ -91,6 +95,7 @@ class ActionClass(QWidget):
             "checklist reset": self.checklistReset,
             "flightplan page": self.flightplanPage,
             "flightplan direct to": self.flightplanDirectTo,
+            "focus": self.focusValue,
             "exit": self.doExit,
             "evaluate": eval,
         }
