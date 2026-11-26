@@ -65,9 +65,8 @@ class Altimeter(QWidget):
         self.bg_opacity = 100  # percent (100 = solid, the default)
         self.item = fix.db.get_item("ALT")
         self.item.valueChanged[float].connect(self.setAltimeter)
-        self.item.oldChanged[bool].connect(self.repaint)
-        self.item.badChanged[bool].connect(self.repaint)
-        self.item.failChanged[bool].connect(self.repaint)
+        self._quality = bugs.BugBinding("ALT", self)
+        self._quality.qualityChanged.connect(self.repaint)
 
         self.conversionFunction1 = lambda x: x
         self.conversionFunction2 = lambda x: x
@@ -341,11 +340,9 @@ class Altimeter_Tape(QGraphicsView):
                            "no baro setting box")
             self._baro_item = None
         if self._baro_item is not None:
-            for sig in (self._baro_item.valueChanged[float],
-                        self._baro_item.oldChanged[bool],
-                        self._baro_item.badChanged[bool],
-                        self._baro_item.failChanged[bool]):
-                sig.connect(self._baro_repaint)
+            self._baro_item.valueChanged[float].connect(self._baro_repaint)
+            self._baro_quality = bugs.BugBinding("BARO", self)
+            self._baro_quality.qualityChanged.connect(self._baro_repaint)
             self._baro_item.valueChanged[float].connect(self._baro_value_changed)
         # Selected altitude (pyEfis #310): a touch-selectable ALTSEL box at the
         # top of the tape, and the matching bug on the scale. Like the trend

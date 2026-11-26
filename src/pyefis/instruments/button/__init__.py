@@ -201,9 +201,20 @@ class Button(QWidget):
             #This is a recursive call do nothing
             logger.debug(f"{self._button.text()}:recursive:data={data}:self._button.isChecked({self._button.isChecked()})")
             return
+        elif self._repeat:
+            # Drive the button as a finger would: the press acts once through
+            # buttonToggled and starts the button's own auto-repeat, and the
+            # release stops it.  Acting here as well stepped three times per
+            # pulse (AER-6675).
+            # Physical button would need to only set True while button is pressed, then set to False when released
+            if self._dbkey.value:
+                event = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(0,0), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier);
+            else:
+                event = QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(0,0), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier);
+            QApplication.sendEvent(self._button, event);
         else:
             logger.debug(f"{self._button.text()}:toggled:data={data}:self._button.isChecked({self._button.isChecked()})")
-            if not self._repeat and not self._toggle:
+            if not self._toggle:
                 # Only take action if changing from False to True
                 if not self._dbkey.value: 
                     logger.debug(f"Data is: {data}")
@@ -213,16 +224,8 @@ class Button(QWidget):
                 # Block signal to prevent recursive call
                 with QSignalBlocker(self._dbkey):
                     self._dbkey.value = False
-            self._button.setChecked(self._dbkey.value) 
+            self._button.setChecked(self._dbkey.value)
             self.processConditions(True)
-            if self._repeat:
-                # Send press even while true, send release event when false
-                # Physical button would need to only set True while button is pressed, then set to False when released
-                if self._dbkey.value:
-                    event = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(0,0), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier);
-                else:
-                    event = QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(0,0), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier);
-                QApplication.sendEvent(self._button, event);
 
     def showEvent(self,event):
         self.processConditions()

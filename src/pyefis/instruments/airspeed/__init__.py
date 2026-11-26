@@ -52,9 +52,8 @@ class Airspeed(QWidget):
         self.item = fix.db.get_item("IAS")
         self._airspeed = self.item.value
         self.item.valueChanged[float].connect(self.setAirspeed)
-        self.item.oldChanged[bool].connect(self.repaint)
-        self.item.badChanged[bool].connect(self.repaint)
-        self.item.failChanged[bool].connect(self.repaint)
+        self._quality = bugs.BugBinding("IAS", self)
+        self._quality.qualityChanged.connect(self.repaint)
 
         # V Speeds need to be init before paint
         self.Vs = self.item.get_aux_value("Vs")
@@ -259,9 +258,8 @@ class Airspeed_Tape(QGraphicsView):
             self.tas_item = fix.db.get_item("TAS")
             self._tas = self.tas_item.value
             self.tas_item.valueChanged[float].connect(self._on_tas_changed)
-            for sig in (self.tas_item.oldChanged, self.tas_item.badChanged,
-                        self.tas_item.failChanged):
-                sig[bool].connect(self._on_tas_flag)
+            self._tas_quality = bugs.BugBinding("TAS", self)
+            self._tas_quality.qualityChanged.connect(self._on_tas_flag)
 
         if self.show_trend:
             self._trend_history = []  # list of (monotonic_time, ias) tuples
@@ -813,7 +811,7 @@ class Airspeed_Tape(QGraphicsView):
             return "---"
         return str(int(round(self._tas)))
 
-    def _on_tas_flag(self, b):
+    def _on_tas_flag(self, *_):
         self.viewport().update()
 
     airspeed = property(getAirspeed, setAirspeed)
@@ -857,9 +855,9 @@ class Airspeed_Box(QWidget):
         self.fix_item.valueChanged[float].connect(self.setASData)
         # CERT1d: a flag can change with the value holding steady, so every
         # key's flags repaint the box. IAS's flags matter in TAS mode too.
-        for item in self.fix_items:
-            for sig in (item.oldChanged, item.badChanged, item.failChanged):
-                sig[bool].connect(self._on_flag)
+        self._quality = [bugs.BugBinding(mode, self) for mode in self.modes]
+        for binding in self._quality:
+            binding.qualityChanged.connect(self._on_flag)
 
         self.alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         self.valueAlignment = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -923,7 +921,7 @@ class Airspeed_Box(QWidget):
         self.setASData(self.fix_item.value)
         self.update()
 
-    def _on_flag(self, b):
+    def _on_flag(self, *_):
         self.setASData(self.fix_item.value)
 
     def setASData(self, d):

@@ -39,9 +39,8 @@ class VSI_Dial(QWidget):
         self.maxAngle = 170.0
         self.item = fix.db.get_item("VS")
         self.item.valueChanged[float].connect(self.setROC)
-        self.item.oldChanged[bool].connect(self.repaint)
-        self.item.badChanged[bool].connect(self.repaint)
-        self.item.failChanged[bool].connect(self.repaint)
+        self._quality = bugs.BugBinding("VS", self)
+        self._quality.qualityChanged.connect(self.repaint)
 
     def getRatio(self):
         # Return X for 1:x specifying the ratio for this instrument
@@ -211,9 +210,8 @@ class VSI_PFD(QWidget):
         self._value = 0
         self.item = fix.db.get_item("VS")
         self.item.valueChanged[float].connect(self.setValue)
-        self.item.oldChanged[bool].connect(self.repaint)
-        self.item.badChanged[bool].connect(self.repaint)
-        self.item.failChanged[bool].connect(self.repaint)
+        self._quality = bugs.BugBinding("VS", self)
+        self._quality.qualityChanged.connect(self.repaint)
         # VSSEL bug (AFC4, brief section 5.5 item 5): on the scale while VS is
         # the active autopilot vertical mode on a fresh reading, gone when the
         # autopilot state goes old.
