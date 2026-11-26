@@ -1823,17 +1823,26 @@ class AI(QGraphicsView):
         # A LAT/LONG/TALT that is old, bad or failed removes the terrain too
         # (AER-4243, SVSALT1), so it gets the same annunciation.
         _svs = self._live_svs()
-        if (_svs is not None
-                and getattr(_svs, "enabled", False)
-                and (getattr(_svs, "gl_failed", False)
-                     or not self._svs_geometry_valid())):
+        # SVS HGT (SVSFLOOR1): the renderer lifted the camera more than the
+        # silent band to keep it above the surface it draws, so the height
+        # input disagrees with the terrain or runway data. The terrain stays
+        # drawn; the tag says the picture's height is not the input's.
+        # ``is True``: a stand-in renderer's unset attribute is not a tag.
+        _svs_tag = None
+        if _svs is not None and getattr(_svs, "enabled", False):
+            if (getattr(_svs, "gl_failed", False)
+                    or not self._svs_geometry_valid()):
+                _svs_tag = "SVS UNAVAIL"
+            elif getattr(_svs, "height_tag", False) is True:
+                _svs_tag = "SVS HGT"
+        if _svs_tag is not None:
             p.save()
             _af = QFont(self.font_family, -1, QFont.Weight.Bold)
             _af.setPixelSize(max(12, qRound(self.fontSize * 0.9)))
             p.setFont(_af)
             p.setPen(QPen(QColor(255, 176, 0)))
             p.drawText(QRectF(0, h * 0.18, w, h * 0.12),
-                       Qt.AlignmentFlag.AlignCenter, "SVS UNAVAIL")
+                       Qt.AlignmentFlag.AlignCenter, _svs_tag)
             p.restore()
 
         pen = QPen(Qt.GlobalColor.white)
