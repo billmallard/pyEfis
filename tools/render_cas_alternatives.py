@@ -4,7 +4,8 @@ Builds each portrait and left-buttons screen file whole, through the real
 screen builder (``Screen.init_screen``, shipped preferences, includes
 expanded), with the mock FIX db from ``render_instrument`` and the demo CAS
 list (AP LINK LOST red, unacknowledged), so the marker shows WARNING; it
-flashes, so a grab catches it filled or outlined. Portrait files render at
+flashes, so a grab catches it filled or outlined. A weston (Android) surface
+is drawn as a grey stand-in box. Portrait files render at
 600 x 1024, left-buttons files at 1024 x 600.
 Writes ``<file stem>.png`` per screen file to the output directory. Name
 screen files after OUTDIR to render those instead (``pfd.yaml`` for the stock
@@ -70,6 +71,24 @@ def _settle(app, seconds=1.5):
         time.sleep(0.02)
 
 
+class _SurfaceStandIn(QWidget):
+    """Grey box in place of the weston surface (AER-6627): the real one needs
+    an X server, weston and waydroid. It shows where the Android app sits."""
+
+    def __init__(self, parent=None, wide=None, high=None, **_kwargs):
+        super().__init__(parent)
+
+    def paintEvent(self, _event):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QColor, QPainter
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(90, 90, 90))
+        p.setPen(QColor(220, 220, 220))
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                   "Android surface (stand-in)")
+        p.end()
+
+
 def render(app, fname, outdir):
     from pyefis.screens.screenbuilder import Screen
     prefs = _preferences()
@@ -115,6 +134,8 @@ def main(outdir, files=FILES):
     import pyefis.hmi as hmi
     if hmi.actions is None:
         hmi.initialize({})
+    import pyefis.instruments.weston as weston
+    weston.Weston = _SurfaceStandIn
     for fname in files:
         render(app, fname, outdir)
 
