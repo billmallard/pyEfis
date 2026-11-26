@@ -118,6 +118,22 @@ SEGMENT_FIELDS = (
 )
 KIND_TO_WIRE = {kind: n for n, kind in enumerate(model.SEGMENT_KINDS)}
 
+# EFB4b (AER-6706): the pending-import block fix-gateway's fpl_exchange
+# plugin writes from a ForeFlight .fpl (fix-gateway doc/flightplan_keys.md,
+# "Pending import"). Read and watched when the gateway has it, never probed:
+# an older gateway keeps the bridge available, with nothing to import.
+# FPLIMPDONE is the one key of the block the editor writes.
+IMPORT_SLOT_FIELDS = (("ID", "str", ""), ("LAT", "float", 0.0), ("LON", "float", 0.0),
+                      ("TYPE", "int", 0))
+IMPORT_KEYS = (("FPLIMPCOUNT", "int", 0), ("FPLIMPNAME", "str", ""),
+               ("FPLIMPSEQ", "int", 0), ("FPLIMPDONE", "int", 0))
+# FPLfID holds up to 6 characters (doc/flightplan_keys.md); FPLIMPfID up to
+# 12, a Garmin identifier. Only a user waypoint can be longer than 6, and it
+# is placed by its position, so its ident is a label: it loads cut to 6, with
+# the whole identifier kept as the waypoint's name (ARCH1, AER-6402).
+ROUTE_ID_MAX_LEN = 6
+IMPORT_WATCH_KEYS = ("FPLIMPSEQ", "FPLIMPDONE")
+
 # The FPLfFLAGS bits that are not the role (fly-over, from a coded
 # procedure): carried on Waypoint.flags.
 _ROLE_BITS = vocab.ROLE_BITS
@@ -161,6 +177,15 @@ def route_key_specs():
             ("DTOTYPE", "int", 0), ("FPLCMD", "str", ""), ("FPLCMDACK", "int", 0),
             ("FPLMSG", "str", "")):
         yield key, dtype, blank
+
+
+def import_key_specs():
+    """``(key, dtype, blank)`` for the pending-import block (EFB4), apart
+    from :func:`route_key_specs` because a gateway may not have it."""
+    for n in range(1, MAX_SLOTS + 1):
+        for name, dtype, blank in IMPORT_SLOT_FIELDS:
+            yield f"FPLIMP{n}{name}", dtype, blank
+    yield from IMPORT_KEYS
 
 
 def _probe_keys():
@@ -218,6 +243,23 @@ class ItemValue:
 
 
 @dataclass
+class ImportPoint:
+    id: str
+    lat: float
+    lon: float
+    type: str
+
+
+@dataclass
+class PendingImport:
+    """A plan from an EFB waiting for the pilot (``FPLIMP*``): *seq* is the
+    ``FPLIMPSEQ`` it arrived under, the value Accept and Reject answer."""
+    seq: int
+    name: str
+    points: list[ImportPoint] = field(default_factory=list)
+
+
+@dataclass
 class DirectTo:
     id: str
     lat: float
@@ -258,6 +300,7 @@ class FixBridge:
         self._watchers: list[_KeyedWrite] = []
 
         self.available = self._probe()
+        self.imports_available = self.available and self._probe_imports()
         if self.available:
             self._published_count = int(self._get("FPLCOUNT").value)
             self._published_segcnt = int(self._get("FPLSEGCNT").value)
@@ -268,6 +311,17 @@ class FixBridge:
         try:
             for key in _probe_keys():
                 self._fix.db.get_item(key)
+            return True
+        except KeyError:
+            return False
+
+    def _probe_imports(self) -> bool:
+        try:
+            for key, _, _ in IMPORT_KEYS:
+                self._fix.db.get_item(key)
+            for n in (1, MAX_SLOTS):
+                for name, _, _ in IMPORT_SLOT_FIELDS:
+                    self._fix.db.get_item(f"FPLIMP{n}{name}")
             return True
         except KeyError:
             return False
@@ -468,6 +522,11 @@ class FixBridge:
             self._watch(key, self._get(key))
         for key, item in self._optional_items():
             self._watch(key, item)
+        if self.imports_available:
+            # FPLIMPSEQ is written last by the plugin; FPLIMPDONE by any
+            # display's editor, so an answer on one display clears them all.
+            for key in IMPORT_WATCH_KEYS:
+                self._watch(key, self._get(key))
         for n in range(1, MAX_SLOTS + 1):
             key = _slot_key(n, TURN_FIELD)
             try:
@@ -577,6 +636,44 @@ class FixBridge:
             out[key] = ItemValue(value=item.value, old=item.old, bad=item.bad, fail=item.fail)
         return out
 
+    def import_seq(self) -> int | None:
+        """The ``FPLIMPSEQ`` of the plan waiting for the pilot: set while
+        ``FPLIMPSEQ > 0`` and ``FPLIMPDONE`` differs from it. None when
+        nothing is pending, or the gateway has no import block."""
+        if not self.imports_available:
+            return None
+        try:
+            seq = int(self._get("FPLIMPSEQ").value)
+            done = int(self._get("FPLIMPDONE").value)
+        except (TypeError, ValueError):
+            return None
+        return seq if seq > 0 and done != seq else None
+
+    def read_import(self) -> PendingImport | None:
+        """The pending plan (:meth:`import_seq`), or None. Read whole: a
+        caller that must know the points did not change under it compares
+        two reads (the plugin writes ``FPLIMPSEQ`` last, but a newer upload
+        overwrites the points before it bumps the counter)."""
+        seq = self.import_seq()
+        if seq is None:
+            return None
+        count = max(0, min(int(self._get("FPLIMPCOUNT").value or 0), MAX_SLOTS))
+        points = []
+        for n in range(1, count + 1):
+            ident, lat, lon, typ = (self._get(f"FPLIMP{n}{name}").value
+                                    for name, _, _ in IMPORT_SLOT_FIELDS)
+            points.append(ImportPoint(id=str(ident or ""), lat=float(lat), lon=float(lon),
+                                      type=FPLTYPE_TO_TYPE.get(int(typ), "unknown")))
+        return PendingImport(seq=seq, name=str(self._get("FPLIMPNAME").value or ""),
+                             points=points)
+
+    def finish_import(self, seq: int) -> None:
+        """Answer the pending plan *seq*, accepted or rejected
+        (``FPLIMPDONE = seq``). An accepted plan is committed first, through
+        :meth:`publish`; this only says it has been dealt with."""
+        if self.imports_available:
+            self._set("FPLIMPDONE", int(seq))
+
     def read_direct_to(self) -> DirectTo | None:
         """The staged direct-to point (``DTO*``, Appendix A) -- consumed by
         the map layer (FP6) to draw the activation-point-to-DTO line when
@@ -625,6 +722,22 @@ def route_to_plan(route: RouteBlock) -> model.FlightPlan:
     if route.name != plan.default_name():
         plan.name = route.name
     return plan
+
+
+def import_to_plan(pending: PendingImport) -> model.FlightPlan:
+    """The pending import as the plan Accept commits: one waypoint segment
+    per point, each a TF leg to its fix, the import's name, and source
+    ``efb``. The file carries no altitudes, speeds, airways or procedures,
+    so the plan has none. An ident longer than ``FPLfID`` holds is cut to
+    :data:`ROUTE_ID_MAX_LEN`, and the whole identifier kept as the name."""
+    wps = []
+    for pt in pending.points:
+        wp_type = pt.type if pt.type in model.WAYPOINT_TYPES else "fix"
+        ident = pt.id[:ROUTE_ID_MAX_LEN]
+        wps.append(model.Waypoint(id=ident, type=wp_type, lat=pt.lat, lon=pt.lon,
+                                  name=pt.id if ident != pt.id else ""))
+    return model.FlightPlan(name=pending.name[:model.NAME_MAX_LEN], waypoints=wps,
+                            source="efb")
 
 
 def _segments_from_table(route: RouteBlock, wps):
