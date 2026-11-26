@@ -24,6 +24,7 @@ from pyefis.instruments import edit_focus
 from pyefis.instruments.altimeter import Altimeter_Tape
 from pyefis.instruments.autopilot import AutopilotPanel
 from pyefis.instruments.hsi import HSI
+from pyefis.instruments.map import MovingMap
 from pyefis.screens.screenbuilder import Screen
 
 BINDINGS = "src/pyefis/config/databindings/default.yaml"
@@ -52,7 +53,7 @@ def keys(fix, monkeypatch):
     fix.db.set_value("COURSE", 45.0)
     # Every key a stock binding names, so the bindings load.
     panel = [("TSBTN1%d" % n, "bool", None, None)
-             for n in list(range(1, 12)) + list(range(27, 34)) + [36, 37, 38]]
+             for n in list(range(1, 12)) + list(range(27, 34)) + [36, 37, 38, 39]]
     for key, dtype, lo, hi in [("ENC1", "int", -32768, 32767),
                                ("BTN1", "bool", None, None),
                                ("MAPRANGE", "int", 0, 7)] + panel:
@@ -351,6 +352,109 @@ def test_touch_edit_off_means_the_baro_box_cannot_be_named(baro, qtbot):
     assert screen.encoder_controller.focused_instrument() is None
 
 
+MAP_CFG = {"type": "moving_map", "row": 0, "column": 10,
+           "span": {"rows": 10, "columns": 10},
+           "options": {"range_key": "MAPRANGE",
+                       "range_ladder": "2,10,50,200,500,2000"}}
+
+
+def _map_screen(qtbot, cfg=MAP_CFG):
+    data.fix.db.set_value("MAPRANGE", 1)        # 10 NM on this ladder
+    screen = _screen(qtbot, [cfg])
+    m = _of(screen, MovingMap)
+    # The map wires its range_key after its first paint.
+    m.repaint()
+    qtbot.waitUntil(lambda: bool(getattr(m, "_live_binds", None)), timeout=2000)
+    assert m.range_nm == pytest.approx(10.0)
+    return screen, m
+
+
+def _outer(screen, steps):
+    screen.encoder_controller.outer_changed(steps)
+
+
+def _push(screen):
+    screen.encoder_controller.button_changed(True)
+    screen.encoder_controller.button_changed(False)
+
+
+def test_a_tsbtn139_pulse_gives_the_knob_to_the_map_range(keys, qtbot):
+    # TESS2 (AER-6622), Bill: zoom the map with the Knobster to any range,
+    # not only the ladder's.
+    screen, m = _map_screen(qtbot)
+    _pulse("TSBTN139")
+    assert screen.encoder_controller.focused_instrument() is m
+    assert m._knob_focus
+    assert edit_focus.owner() is screen.encoder_controller
+
+
+def test_the_inner_knob_zooms_smoothly_clockwise_wider(keys, qtbot):
+    screen, m = _map_screen(qtbot)
+    _pulse("TSBTN139")
+    _turn(keys, 1)
+    assert m.range_nm == pytest.approx(12.5)
+    _turn(keys, -2)
+    assert m.range_nm == pytest.approx(8.0)
+    # Clamped to the ladder's span, as a pinch is.
+    _turn(keys, -40)
+    assert m.range_nm == pytest.approx(2.0)
+
+
+def test_the_outer_ring_steps_the_ladder(keys, qtbot):
+    screen, m = _map_screen(qtbot)
+    _pulse("TSBTN139")
+    _turn(keys, 1)                               # 12.5, between rungs
+    _outer(screen, 1)
+    assert m.range_nm == pytest.approx(50.0)
+    _outer(screen, -2)
+    assert m.range_nm == pytest.approx(2.0)
+
+
+def test_the_push_snaps_to_the_nearest_rung_and_keeps_the_knob(keys, qtbot):
+    screen, m = _map_screen(qtbot)
+    _pulse("TSBTN139")
+    _turn(keys, 1)                               # 12.5
+    _push(screen)
+    assert m.range_nm == pytest.approx(10.0)
+    assert screen.encoder_controller.focused_instrument() is m
+
+
+def test_a_knob_zoom_publishes_the_nearest_rung(keys, qtbot):
+    # So RANGE + and - step from the range on the glass.
+    screen, m = _map_screen(qtbot)
+    _pulse("TSBTN139")
+    _turn(keys, 8)                               # 10 x 1.25^8 = 59.6 NM
+    assert keys.db.get_item("MAPRANGE").value == 2   # 50 NM
+
+
+def test_the_map_knob_times_out_like_a_touch(keys, qtbot):
+    screen, m = _map_screen(qtbot)
+    screen.encoder_timeout = 100
+    _pulse("TSBTN139")
+    qtbot.waitUntil(
+        lambda: screen.encoder_controller.focused_instrument() is None,
+        timeout=2000)
+    assert not m._knob_focus
+
+
+def test_a_map_bound_to_another_key_does_not_answer_maprange(keys, qtbot):
+    cfg = dict(MAP_CFG, options=dict(MAP_CFG["options"], range_key="OTHER"))
+    screen = _screen(qtbot, [cfg])
+    hmi.actions.trigger("focus", "MAPRANGE")
+    assert screen.encoder_controller.focused_instrument() is None
+
+
+def test_a_baro_pulse_takes_the_knob_from_the_map(baro, qtbot):
+    screen = _screen(qtbot, [ALT_CFG, dict(MAP_CFG, column=0)])
+    _pulse("TSBTN139")
+    assert screen.encoder_controller.focused_instrument() is \
+        _of(screen, MovingMap)
+    _pulse("TSBTN136")
+    assert screen.encoder_controller.focused_instrument() is \
+        _of(screen, Altimeter_Tape)
+    assert not _of(screen, MovingMap)._knob_focus
+
+
 def test_crs_answers_for_the_key_it_edits_now_and_hdg_takes_over(keys, qtbot):
     screen = _screen(qtbot, [HSI_CFG])
     hsi = _of(screen, HSI)
@@ -381,6 +485,7 @@ def test_focus_times_out_like_a_touch(keys, qtbot):
 @pytest.mark.parametrize("name, dbkey, key", [
     ("heading-bug-focus.yaml", "TSBTN{id}32", "HEADBUG"),
     ("baro-focus.yaml", "TSBTN{id}36", "BARO"),
+    ("map-range-focus.yaml", "TSBTN{id}39", "MAPRANGE"),
 ])
 def test_the_button_file_runs_the_same_action(name, dbkey, key):
     path = os.path.join("src/pyefis/config/buttons", name)

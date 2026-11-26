@@ -8,8 +8,8 @@ import math
 import time
 
 from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import (QBrush, QColor, QFont, QImage, QPainter, QPainterPath,
-                         QPen, QPolygonF)
+from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QPainter,
+                         QPainterPath, QPen, QPolygonF)
 from PyQt6.QtWidgets import QPinchGesture, QWidget
 
 import pyavtools.fix as fix
@@ -23,6 +23,7 @@ from pyefis.flightplan import refusal as fp_refusal
 from pyefis.flightplan import model as fp_model
 from pyefis.flightplan.waypoints import Waypoint
 from pyefis.instruments.ai.camera import M_PER_DEG_LAT
+from pyefis.instruments import edit_focus
 from pyefis.instruments.ai import terrain_shading
 from pyefis.instruments.map import layers as map_layers
 from pyefis.instruments.map import nd as map_nd
@@ -285,6 +286,13 @@ class MovingMap(LiveBindingMixin, QWidget):
         # status chip. Off by default so existing screens are unchanged.
         self.zoom_rail = False
         self.zoom_rail_side = "left"           # or "right"
+        # The knob (TESS2, AER-6622): the ``focus`` action for the range key
+        # gives the map the knob; a touch on the map still pans, so the map
+        # is never focused by touch. touch_edit enrols it with the screen's
+        # EncoderController (and so with the focus action).
+        self.touch_edit = True
+        self._knob_focus = False
+        self._range_text_rect = None           # the chip's "10 NM", as drawn
         self._layers = []
         self._layers_built = False
 
@@ -715,6 +723,71 @@ class MovingMap(LiveBindingMixin, QWidget):
         self.range_nm = next((v for v in reversed(lad)
                               if v < self.range_nm), lad[0])
         self.update()
+
+    # --- the knob (TESS2, AER-6622) ----------------------------------------
+    #: One inner-knob detent zooms by this factor, a mouse-wheel notch's.
+    KNOB_ZOOM_STEP = 1.25
+
+    def edit_focus_key(self, key):
+        """The ``focus`` action (EncoderController.focus_key): take the knob
+        for the range key (``range_key``, else MAPRANGE), as a touch on a
+        value would."""
+        if not self.touch_edit or key != (self.range_key or "MAPRANGE"):
+            return False
+        ctl = self._encoder_controller()
+        return bool(ctl is not None and ctl.touch_focus(self))
+
+    def _encoder_controller(self):
+        w = self.parent()
+        while w is not None:
+            ctl = getattr(w, "encoder_controller", None)
+            if ctl is not None:
+                return ctl
+            w = w.parent()
+        return None
+
+    def enc_selectable(self):
+        return bool(self.touch_edit)
+
+    def enc_highlight(self, onoff):
+        self._knob_focus = bool(onoff)
+        self._frame_dirty = True
+        self.update()
+
+    def enc_select(self):
+        self.enc_highlight(True)
+        return True
+
+    def enc_changed(self, steps):
+        """Inner knob: a smooth zoom, KNOB_ZOOM_STEP a detent. Clockwise
+        (positive) widens the range, as RANGE + does."""
+        self._settle_timer.start(_SETTLE_MS)
+        self.zoom_by(self.KNOB_ZOOM_STEP ** -float(steps))
+        return True
+
+    def enc_outer_changed(self, steps):
+        """Outer ring: one rung of the ladder a detent."""
+        for _ in range(abs(int(steps))):
+            if steps > 0:
+                self.range_up()
+            else:
+                self.range_down()
+        return True
+
+    def enc_clicked(self):
+        """Push: snap to the nearest rung, and keep the knob."""
+        lad = self._ladder()
+        self.range_nm = min(lad, key=lambda v: abs(v - float(self.range_nm)))
+        self.update()
+        return True
+
+    def edit_focus_hit(self, global_pos):
+        """A press on the range text keeps the knob; anywhere else on the map
+        (a pan) or off it releases it."""
+        if self._range_text_rect is None:
+            return False
+        local = self.mapFromGlobal(global_pos.toPoint())
+        return self._range_text_rect.contains(QPointF(local))
 
     def _live_binding_specs(self):
         """Runtime control bindings (control_bindings.md). Each fires only if its
@@ -1541,6 +1614,15 @@ class MovingMap(LiveBindingMixin, QWidget):
         chip = self._status_chip_text(stale)
         p.drawText(QRectF(6, 4, self.width() - 12, f.pixelSize() + 6),
                    Qt.AlignmentFlag.AlignLeft, chip)
+        # The range text the knob edits, for its focus ring and hit test.
+        fm = QFontMetricsF(f)
+        rng = "%s NM" % map_layers.format_range_nm(self.range_nm)
+        self._range_text_rect = QRectF(
+            6, 4 + (f.pixelSize() + 6 - fm.height()) / 2.0,
+            fm.horizontalAdvance(rng), fm.height())
+        if self._knob_focus:
+            edit_focus.draw_edit_marks(p, self._range_text_rect, True,
+                                       bounds=QRectF(self.rect()))
 
         self._paint_zoom_rail(p)
 
