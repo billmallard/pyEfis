@@ -1147,6 +1147,18 @@ class Altimeter_Tape(QGraphicsView):
             self._touch_pending = None
         return True
 
+    def edit_focus_key(self, key):
+        """The ``focus`` action (EncoderController.focus_key): take focus on
+        the shown box that edits ``key``, as a touch on it would. Baro edits
+        BARO; ALTSEL edits the tape's alt_bug_dbkey."""
+        if not self._touch_edit:
+            return False
+        for which in self._edit_boxes():
+            box_key = "BARO" if which == EDIT_BARO else self.alt_bug_dbkey
+            if box_key == key:
+                return self._touch_box(which)
+        return False
+
     def _claim_pending(self):
         if self._touch_pending is not None:
             self._edit_box = self._touch_pending

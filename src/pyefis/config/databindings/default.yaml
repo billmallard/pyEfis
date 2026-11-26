@@ -107,6 +107,22 @@ items:
     condition: True
     action: change value wrap
     args: "NAVSRC, 1"
+  - key: TSBTN{id}36    # buttons/baro-focus.yaml
+    condition: True
+    action: focus
+    args: BARO
+  - key: TSBTN{id}37    # buttons/map-range-down.yaml
+    condition: True
+    action: change value
+    args: "MAPRANGE, -1"
+  - key: TSBTN{id}38    # buttons/map-range-up.yaml
+    condition: True
+    action: change value
+    args: "MAPRANGE, 1"
+  - key: TSBTN{id}39    # buttons/map-range-focus.yaml
+    condition: True
+    action: focus
+    args: MAPRANGE
 
 # These button examples map BTN1 and BTN2 to activating
 # the button of the legacy menu.
