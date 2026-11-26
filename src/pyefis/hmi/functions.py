@@ -37,12 +37,17 @@ def changeValue(arg):
 
 
 # Change a value but wrap within the key's [min, max] range instead of clamping.
-# For circular values like a heading bug, so stepping down through 0 wraps to
-# just below max (e.g. HEADBUG 0 - 1 -> 359).  arg should be "key,delta".
+# arg should be "key,delta" or "key,delta,period".  Without a period the span is
+# max - min, which suits an index key (NAVSRC 0..3 cycles 0, 1, 2).  A circular
+# key declares its circle as the period: HEADBUG is 0.0..359.9 on the bus, so
+# "HEADBUG, -1" alone would land 0 on 358.9; "HEADBUG, -1, 360" lands it on 359.
 def changeValueWrap(arg):
     args = arg.split(",")
     i = fix.db.get_item(args[0].strip())
-    span = i.max - i.min
+    if len(args) > 2:
+        span = float(args[2])
+    else:
+        span = i.max - i.min
     if span <= 0:
         i.value += i.dtype(args[1])
     else:

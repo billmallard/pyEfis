@@ -86,7 +86,7 @@ items:
   - key: TSBTN{id}29    # buttons/heading-bug-down.yaml
     condition: True
     action: change value wrap
-    args: "HEADBUG, -1"
+    args: "HEADBUG, -1, 360"
     repeat_delay: 300
     repeat_interval: 60
   - key: TSBTN{id}30    # buttons/heading-bug-sync.yaml
@@ -96,7 +96,7 @@ items:
   - key: TSBTN{id}31    # buttons/heading-bug-up.yaml
     condition: True
     action: change value wrap
-    args: "HEADBUG, 1"
+    args: "HEADBUG, 1, 360"
     repeat_delay: 300
     repeat_interval: 60
   - key: TSBTN{id}32    # buttons/heading-bug-focus.yaml
