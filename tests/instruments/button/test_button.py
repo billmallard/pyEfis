@@ -198,8 +198,51 @@ def test_repeat_button(fix,mock_parent_widget,qtbot):
     fix.db.get_item("TSBTN13").value = True
     #qtbot.wait(1000)
     fix.db.get_item("TSBTN13").value = False
-    assert round(baro.value,2) >= round(before + 0.03,2)
+    assert round(baro.value,2) == round(before + 0.01,2)
     widget.dataChanged("t","unknown")
+
+def _shown_repeat_button(mock_parent_widget, qtbot):
+    widget = button.Button(mock_parent_widget, config_file="tests/data/buttons/repeat.yaml")
+    qtbot.addWidget(mock_parent_widget)
+    qtbot.addWidget(widget)
+    mock_parent_widget.resize(200,200)
+    mock_parent_widget.show()
+    widget.resize(100,80)
+    widget.show()
+    qtbot.waitExposed(widget)
+    return widget
+
+def test_repeat_button_key_pulse_steps_once(fix,mock_parent_widget,qtbot):
+    # A key no data binding claims (a configurator repeat button wired to a
+    # hardware switch) drives the showing button.  One pulse is one press:
+    # it stepped three times (AER-6675).
+    hmi.initialize({})
+    _shown_repeat_button(mock_parent_widget, qtbot)
+    assert not hmi.data.binds("TSBTN13")
+    baro = fix.db.get_item("BARO")
+    before = baro.value
+    fix.db.set_value("TSBTN13", True)
+    fix.db.set_value("TSBTN13", False)
+    assert baro.value == pytest.approx(before + 0.01)
+    qtbot.wait(700)                      # past repeat_delay (500 ms)
+    assert baro.value == pytest.approx(before + 0.01)
+
+def test_repeat_button_key_held_repeats_and_release_stops(fix,mock_parent_widget,qtbot):
+    hmi.initialize({})
+    widget = _shown_repeat_button(mock_parent_widget, qtbot)
+    baro = fix.db.get_item("BARO")
+    before = baro.value
+    fix.db.set_value("TSBTN13", True)
+    assert baro.value == pytest.approx(before + 0.01)   # the press itself
+    assert widget._button.isDown()
+    qtbot.wait(400)                      # inside repeat_delay (500 ms)
+    assert baro.value == pytest.approx(before + 0.01)
+    qtbot.waitUntil(lambda: baro.value >= before + 0.03 - 1e-9, timeout=2000)
+    fix.db.set_value("TSBTN13", False)
+    assert not widget._button.isDown()
+    held = baro.value
+    qtbot.wait(500)                      # more than two repeat_intervals
+    assert baro.value == held
 
 def test_unknown_button_type(fix,mock_parent_widget,qtbot):
     hmi.initialize({})
