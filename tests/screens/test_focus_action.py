@@ -14,7 +14,7 @@ import threading
 
 import pytest
 import yaml
-from PyQt6.QtCore import QRect, QThread
+from PyQt6.QtCore import QRect, QThread, QTimer
 from PyQt6.QtGui import QPaintEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -30,10 +30,24 @@ from pyefis.screens.screenbuilder import Screen
 BINDINGS = "src/pyefis/config/databindings/default.yaml"
 
 
+# Screens built by _screen in this test, kept alive until teardown.
+_BUILT = []
+
+
 @pytest.fixture(autouse=True)
-def _clean_registry():
+def _clean_registry(qtbot):
+    # qtbot first, so its widget teardown runs after ours.
     edit_focus.set_at_rest_hint(False)
     yield
+    # A moving map repaints from its own frame clock. Stop every timer and
+    # hide each screen while its Python objects are still referenced, or the
+    # clock paints a map whose screen is half collected during qtbot's
+    # teardown (a segfault in CI, AER-6622).
+    while _BUILT:
+        screen = _BUILT.pop()
+        for timer in screen.findChildren(QTimer):
+            timer.stop()
+        screen.hide()
     owner = edit_focus.owner()
     if owner is not None:
         owner.release_focus()
@@ -116,6 +130,7 @@ def _screen(qtbot, instruments, show=True):
             if isinstance(inst, HSI):
                 # Direct, as the HSI tests do: the paint records the readouts.
                 inst.paintEvent(QPaintEvent(QRect(inst.rect())))
+    _BUILT.append(screen)
     return screen
 
 
