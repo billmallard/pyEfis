@@ -17,7 +17,11 @@ every bug repeats lives here; where the bug goes stays with the instrument:
 
 - :class:`BugBinding` -- the guarded FIX subscription and the visibility
   policy (hidden on fail, greyed on old/bad, absent when the key is missing),
-  plus the alert colour while the key's annunciate flag is set.
+  plus the alert colour while the key's annunciate flag is set. The
+  subscription half is not bug-specific: a widget that only needs "repaint
+  when a quality flag moves" binds its key here and keeps its own drawing
+  (INS6, ARCH3 section 4.2 -- the widget specs differ on purpose in how a
+  flag looks, so only the subscription is shared).
 - :func:`tape_bug_path` -- the tape-edge glyph (a notched block, the notch
   pointing at the scale).
 - :func:`clamp_to_span` -- the off-scale policy: a target beyond the visible
@@ -51,32 +55,64 @@ STATE_OK = "ok"
 
 
 class BugBinding(QObject):
-    """One FIX set-point key, subscribed once.
+    """One FIX key, subscribed once.
 
-    Construction never raises: a database without ``key`` logs a warning and
-    leaves :attr:`item` None, so the host instrument still builds. ``changed``
-    fires on any value or quality change."""
+    Construction never raises: a database without ``key`` logs a warning
+    (unless ``warn`` is False, for a caller that logs its own) and leaves
+    :attr:`item` None, so the host instrument still builds.
+
+    Two signals, neither carrying the value (read :attr:`item`):
+
+    - ``changed`` fires on any value, quality or annunciate change;
+    - ``qualityChanged`` fires on an old, bad or fail change only, the
+      "any flag, repaint" subscription most widgets hand-rolled.
+
+    :meth:`unbind` drops every connection this binding made to the item."""
 
     changed = pyqtSignal()
+    qualityChanged = pyqtSignal()
 
-    def __init__(self, key, parent=None):
+    def __init__(self, key, parent=None, warn=True):
         super().__init__(parent)
         self.key = key
         self.item = None
+        self._connections = []
         try:
             self.item = fix.db.get_item(key)
         except KeyError:
-            logger.warning("FIX key %s not in the database; its bug is off", key)
+            if warn:
+                logger.warning("FIX key %s not in the database; its bug is off",
+                               key)
             return
         try:
-            self.item.valueChanged[self.item.dtype].connect(self._emit)
+            value_sig = self.item.valueChanged[self.item.dtype]
         except (KeyError, TypeError):
-            self.item.valueChanged[float].connect(self._emit)
+            value_sig = self.item.valueChanged[float]
+        self._connect(value_sig, self._emit)
         for sig in (self.item.oldChanged, self.item.badChanged,
-                    self.item.failChanged, self.item.annunciateChanged):
-            sig.connect(self._emit)
+                    self.item.failChanged):
+            self._connect(sig, self._emit_quality)
+        self._connect(self.item.annunciateChanged, self._emit)
+
+    def _connect(self, sig, slot):
+        sig.connect(slot)
+        self._connections.append((sig, slot))
+
+    def unbind(self):
+        """Disconnect from the item; neither signal fires again. Safe to call
+        twice, and on a binding whose key was missing."""
+        for sig, slot in self._connections:
+            try:
+                sig.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        self._connections = []
 
     def _emit(self, *_):
+        self.changed.emit()
+
+    def _emit_quality(self, *_):
+        self.qualityChanged.emit()
         self.changed.emit()
 
     @property
