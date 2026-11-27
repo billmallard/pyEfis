@@ -34,7 +34,7 @@ IMPORT = [
 
 
 def _define_import_keys(fix):
-    for key, dtype, blank in fixbridge.import_key_specs():
+    for key, dtype, blank in fixbridge.staging_key_specs():
         base._define(fix, key, dtype, blank)
 
 
@@ -95,35 +95,35 @@ def test_bridge_without_the_import_block_stays_available(fix):
     base._define_all_fp1_keys(fix)
     bridge = fixbridge.FixBridge(fix)
     assert bridge.available is True
-    assert bridge.imports_available is False
-    assert bridge.import_seq() is None
-    assert bridge.read_import() is None
-    bridge.finish_import(3)  # must not raise
+    assert bridge.staging == ()
+    assert bridge.staged_seq() is None
+    assert bridge.read_staged() is None
+    bridge.answer_staged(fixbridge.FPLIMP, 3)  # must not raise
 
 
 def test_bridge_reads_the_pending_import_and_answers_it(fix):
     base._define_all_fp1_keys(fix)
     _define_import_keys(fix)
     bridge = fixbridge.FixBridge(fix)
-    assert bridge.import_seq() is None  # FPLIMPSEQ 0: nothing received
+    assert bridge.staged_seq() is None  # FPLIMPSEQ 0: nothing received
     seq = _upload(fix)
-    pending = bridge.read_import()
+    pending = bridge.read_staged()
     assert pending.seq == seq
     assert pending.name == "KSBA TO KPMD"
     assert [(p.id, p.type) for p in pending.points] == [
         ("KSBA", "airport"), ("FLOUT", "fix"), ("VTU", "vor"), ("BIGBEAR12", "user"),
         ("KPMD", "airport")]
-    bridge.finish_import(seq)
+    bridge.answer_staged(fixbridge.FPLIMP, seq)
     assert _value(fix, "FPLIMPDONE") == seq
-    assert bridge.import_seq() is None
+    assert bridge.staged_seq() is None
 
 
-def test_import_to_plan_cuts_a_long_ident_and_keeps_it_as_the_name(fix):
-    pending = fixbridge.PendingImport(seq=1, name="KSBA TO KPMD", points=[
-        fixbridge.ImportPoint(id=i, lat=lat, lon=lon,
+def test_staged_to_plan_cuts_a_long_ident_and_keeps_it_as_the_name(fix):
+    pending = fixbridge.StagedPlan(block=fixbridge.FPLIMP, seq=1, name="KSBA TO KPMD", points=[
+        fixbridge.StagedPoint(id=i, lat=lat, lon=lon,
                               type=fixbridge.FPLTYPE_TO_TYPE[t])
         for i, lat, lon, t in IMPORT])
-    plan = fixbridge.import_to_plan(pending)
+    plan = fixbridge.staged_to_plan(pending, "efb")
     assert [wp.id for wp in plan.waypoints] == ["KSBA", "FLOUT", "VTU", "BIGBEA", "KPMD"]
     assert plan.waypoints[3].name == "BIGBEAR12"
     assert plan.waypoints[0].name == ""
@@ -157,8 +157,8 @@ def test_review_sheet_lists_the_waypoints_and_the_note(fix, qtbot, monkeypatch):
     texts = refused._painted_text(w, monkeypatch)
     for ident in ("KSBA", "FLOUT", "VTU", "BIGBEA (BIGBEAR12)", "KPMD"):
         assert ident in texts
-    assert flight_plan.OFFER_EFB_NOTE in texts
-    assert "ALTITUDES AND SPEEDS" in flight_plan.OFFER_EFB_NOTE
+    assert flight_plan.STAGED_NOTE in texts
+    assert "ALTITUDES AND SPEEDS" in flight_plan.STAGED_NOTE
     for label in ("Accept", "Reject", "Later"):
         assert label in texts
 
@@ -250,7 +250,7 @@ def test_a_newer_upload_replaces_the_offer_and_closes_the_sheet(fix, qtbot):
     _upload(fix)
     _open_review(w)
     second = _upload(fix, points=IMPORT[:2], name="KSBA TO FLOUT")
-    assert w._offer["key"] == second
+    assert w._offer["key"] == ("FPLIMP", second)
     assert w._offer["plan"].count == 2
     assert not w._offer_open
 
@@ -259,7 +259,7 @@ def test_an_answer_on_another_display_withdraws_the_offer(fix, qtbot):
     w = _flying_with_imports(fix, qtbot)
     imp_seq = _upload(fix)
     _open_review(w)
-    refused._other_display(fix).finish_import(imp_seq)
+    refused._other_display(fix).answer_staged(fixbridge.FPLIMP, imp_seq)
     assert w._offer is None and not w._offer_open
 
 
@@ -271,3 +271,64 @@ def test_read_only_page_offers_but_cannot_accept(fix, qtbot, monkeypatch):
     w.grab()
     assert w._open_offer not in [t[4] for t in w._tap_targets]
     assert w._offer_accept not in [t[4] for t in w._tap_targets]
+
+
+# ---------------------------------------------------------------------------
+# source-neutral (PROV0, AER-6749): any block of the staging shape
+# ---------------------------------------------------------------------------
+def test_a_second_staging_block_is_offered_and_answered_the_same_way(fix, qtbot, monkeypatch):
+    """A block of the same shape under another prefix (FPLX6 plans X-Plane's
+    plan as one) goes through the same offer, Accept and answer, with a
+    prompt that claims no origin when none is configured for it."""
+    other = fixbridge.StagingBlock(prefix="XFPL", count="XFPLCOUNT", name="XFPLNAME",
+                                   seq="XFPLSEQ", done="XFPLDONE")
+    monkeypatch.setattr(fixbridge, "STAGING_BLOCKS", (fixbridge.FPLIMP, other))
+    monkeypatch.setattr(fixbridge, "STAGING_WATCH_KEYS",
+                        frozenset(("FPLIMPSEQ", "FPLIMPDONE", "XFPLSEQ", "XFPLDONE")))
+    monkeypatch.setattr(flight_plan.fp_fixbridge, "STAGING_WATCH_KEYS",
+                        fixbridge.STAGING_WATCH_KEYS)
+    refused._bus(fix)
+    for key, dtype, blank in fixbridge.staging_key_specs(other):
+        base._define(fix, key, dtype, blank)
+    refused._other_display(fix).publish(refused._flown())
+    refused._accept(fix)
+    w = refused._widget(qtbot)
+    assert w._bridge.staging == (other,)  # no FPLIMP block on this gateway
+    for n, (ident, lat, lon, typ) in enumerate(IMPORT[:3], start=1):
+        fix.db.set_value(f"XFPL{n}ID", ident)
+        fix.db.set_value(f"XFPL{n}LAT", lat)
+        fix.db.set_value(f"XFPL{n}LON", lon)
+        fix.db.set_value(f"XFPL{n}TYPE", typ)
+    fix.db.set_value("XFPLCOUNT", 3)
+    fix.db.set_value("XFPLNAME", "SIM PLAN")
+    fix.db.set_value("XFPLSEQ", 4)
+    assert w._offer["key"] == ("XFPL", 4)
+    assert w._offer["title"] == "PLAN RECEIVED: SIM PLAN"
+    seq_before = int(_value(fix, "FPLSEQ"))
+    _open_review(w)
+    _tap(w, w._offer_accept)
+    assert _value(fix, "FPLSEQ") == seq_before + 1
+    assert _bus_route_ids(fix) == ["KSBA", "FLOUT", "VTU"]
+    assert _value(fix, "XFPLDONE") == 4
+    assert w._offer is None
+
+
+def test_an_offer_with_no_bus_block_uses_the_same_accept(fix, qtbot):
+    """RTE2 will offer a pasted route on this prompt: a plan, a title, a
+    note and an answer callback are all the sheet needs."""
+    w = _flying_with_imports(fix, qtbot)
+    answers = []
+    plan = fp_model.FlightPlan(name="PASTED", waypoints=[
+        fp_model.Waypoint(id="KSBA", type="airport", lat=34.43, lon=-119.84),
+        fp_model.Waypoint(id="KSMX", type="airport", lat=34.90, lon=-120.46)])
+    w._set_offer({"key": ("route", 1), "plan": plan, "staged": False,
+                  "title": "ROUTE: PASTED", "note": "CHECK THE ROUTE",
+                  "valid": lambda: True, "answer": answers.append})
+    imp_seq = _upload(fix, points=IMPORT[:2])
+    assert w._offer["key"] == ("route", 1)  # a staged plan waits behind it
+    _open_review(w)
+    _tap(w, w._offer_accept)
+    assert _bus_route_ids(fix) == ["KSBA", "KSMX"]
+    assert answers == [True]
+    # ... and is offered once the pilot's own offer is answered.
+    assert w._offer["key"] == ("FPLIMP", imp_seq)

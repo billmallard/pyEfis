@@ -195,10 +195,24 @@ to 12 characters and a route slot holds 6 (`FPLfID`). Only a user waypoint is
 that long, and it is placed by its position, so it loads cut to 6 with the
 whole identifier kept as the waypoint's name; the sheet shows both
 (`BIGBEA (BIGBEAR12)`). A gateway without the import block offers nothing
-(`FixBridge.imports_available`). On a read-only page (a demo kiosk) the strip
-shows but cannot be answered. `fixbridge.import_to_plan` and the page's
-`_offer` take any `model.FlightPlan`, so a route typed as a string (RTE1) can
-reuse the same sheet.
+(`FixBridge.staging`). On a read-only page (a demo kiosk) the strip shows but
+cannot be answered.
+
+**Accept is source-neutral** (PROV0, AER-6749). `FPLIMP*` is one *staging
+block*: points `<prefix>1..100 ID/LAT/LON/TYPE`, then `COUNT` and `NAME`, then
+`SEQ` last, with `DONE` the editor's answer. `fixbridge.StagingBlock` names
+one, `fixbridge.STAGING_BLOCKS` lists those the bridge reads, and
+`read_staged`, `answer_staged` and `staged_to_plan` work on any of them. A
+further block of the same shape (FPLX6 plans `XFPL*` for X-Plane's plan) is
+one more `StagingBlock`, one more name on the `# writes:` comment in
+`answer_staged`, and a register line in fix-gateway. Only the prompt text
+says where a plan came from (`STAGING_PROMPTS` in the page; `FPLIMP` reads
+"PLAN FROM EFB", since the block carries no origin key). A block with no
+entry there reads "PLAN RECEIVED". The page's offer is a plan, a title, a
+note, a `valid` check and an `answer` callback, so a pasted route (RTE2) can
+use the same sheet with no bus block. A staged plan never displaces an
+offer the pilot made on the page; it waits, and is offered once that one is
+answered.
 
 ### Pages
 

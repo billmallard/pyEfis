@@ -118,21 +118,38 @@ SEGMENT_FIELDS = (
 )
 KIND_TO_WIRE = {kind: n for n, kind in enumerate(model.SEGMENT_KINDS)}
 
-# EFB4b (AER-6706): the pending-import block fix-gateway's fpl_exchange
-# plugin writes from a ForeFlight .fpl (fix-gateway doc/flightplan_keys.md,
-# "Pending import"). Read and watched when the gateway has it, never probed:
-# an older gateway keeps the bridge available, with nothing to import.
-# FPLIMPDONE is the one key of the block the editor writes.
-IMPORT_SLOT_FIELDS = (("ID", "str", ""), ("LAT", "float", 0.0), ("LON", "float", 0.0),
-                      ("TYPE", "int", 0))
-IMPORT_KEYS = (("FPLIMPCOUNT", "int", 0), ("FPLIMPNAME", "str", ""),
-               ("FPLIMPSEQ", "int", 0), ("FPLIMPDONE", "int", 0))
-# FPLfID holds up to 6 characters (doc/flightplan_keys.md); FPLIMPfID up to
-# 12, a Garmin identifier. Only a user waypoint can be longer than 6, and it
-# is placed by its position, so its ident is a label: it loads cut to 6, with
-# the whole identifier kept as the waypoint's name (ARCH1, AER-6402).
+# Staging blocks (EFB4b, AER-6706; PROV0, AER-6749): a plan an outside source
+# has put on the bus beside the route block, waiting for the pilot to accept
+# or reject it. Each block has the same shape: points <prefix>1..100 ID, LAT,
+# LON, TYPE, then <prefix>COUNT and <prefix>NAME, then <prefix>SEQ written
+# last; <prefix>DONE is the SEQ the pilot answered, and the one key of the
+# block the editor writes. A plan is staged while SEQ > 0 and DONE differs
+# from it. Nothing here knows where a block's plan came from: the page's
+# prompt text does. Read and watched when the gateway has a block, never
+# probed: an older gateway keeps the bridge available, with nothing staged.
+@dataclass(frozen=True)
+class StagingBlock:
+    prefix: str
+    count: str
+    name: str
+    seq: str
+    done: str
+
+
+# fix-gateway fpl_exchange's pending import (doc/flightplan_keys.md,
+# "Pending import"). Further blocks of the same shape join STAGING_BLOCKS.
+FPLIMP = StagingBlock(prefix="FPLIMP", count="FPLIMPCOUNT", name="FPLIMPNAME",
+                      seq="FPLIMPSEQ", done="FPLIMPDONE")
+STAGING_BLOCKS = (FPLIMP,)
+STAGING_POINT_FIELDS = (("ID", "str", ""), ("LAT", "float", 0.0), ("LON", "float", 0.0),
+                        ("TYPE", "int", 0))
+# FPLfID holds up to 6 characters (doc/flightplan_keys.md); a staged ident
+# may be longer (FPLIMPfID takes 12). Only a user waypoint is that long, and
+# it is placed by its position, so its ident is a label: it loads cut to 6,
+# with the whole identifier kept as the waypoint's name (ARCH1, AER-6402).
 ROUTE_ID_MAX_LEN = 6
-IMPORT_WATCH_KEYS = ("FPLIMPSEQ", "FPLIMPDONE")
+# The keys whose write can start, replace or withdraw a staged plan.
+STAGING_WATCH_KEYS = frozenset(k for b in STAGING_BLOCKS for k in (b.seq, b.done))
 
 # The FPLfFLAGS bits that are not the role (fly-over, from a coded
 # procedure): carried on Waypoint.flags.
@@ -179,13 +196,14 @@ def route_key_specs():
         yield key, dtype, blank
 
 
-def import_key_specs():
-    """``(key, dtype, blank)`` for the pending-import block (EFB4), apart
-    from :func:`route_key_specs` because a gateway may not have it."""
+def staging_key_specs(block=FPLIMP):
+    """``(key, dtype, blank)`` for one staging block, apart from
+    :func:`route_key_specs` because a gateway may not have it."""
     for n in range(1, MAX_SLOTS + 1):
-        for name, dtype, blank in IMPORT_SLOT_FIELDS:
-            yield f"FPLIMP{n}{name}", dtype, blank
-    yield from IMPORT_KEYS
+        for name, dtype, blank in STAGING_POINT_FIELDS:
+            yield f"{block.prefix}{n}{name}", dtype, blank
+    yield from ((block.count, "int", 0), (block.name, "str", ""),
+                (block.seq, "int", 0), (block.done, "int", 0))
 
 
 def _probe_keys():
@@ -243,7 +261,7 @@ class ItemValue:
 
 
 @dataclass
-class ImportPoint:
+class StagedPoint:
     id: str
     lat: float
     lon: float
@@ -251,12 +269,13 @@ class ImportPoint:
 
 
 @dataclass
-class PendingImport:
-    """A plan from an EFB waiting for the pilot (``FPLIMP*``): *seq* is the
-    ``FPLIMPSEQ`` it arrived under, the value Accept and Reject answer."""
+class StagedPlan:
+    """A plan waiting for the pilot in *block*: *seq* is the block's SEQ it
+    arrived under, the value Accept and Reject answer."""
+    block: StagingBlock
     seq: int
     name: str
-    points: list[ImportPoint] = field(default_factory=list)
+    points: list[StagedPoint] = field(default_factory=list)
 
 
 @dataclass
@@ -300,7 +319,9 @@ class FixBridge:
         self._watchers: list[_KeyedWrite] = []
 
         self.available = self._probe()
-        self.imports_available = self.available and self._probe_imports()
+        # The staging blocks this gateway has.
+        self.staging = tuple(b for b in STAGING_BLOCKS
+                             if self.available and self._probe_staging(b))
         if self.available:
             self._published_count = int(self._get("FPLCOUNT").value)
             self._published_segcnt = int(self._get("FPLSEGCNT").value)
@@ -315,13 +336,13 @@ class FixBridge:
         except KeyError:
             return False
 
-    def _probe_imports(self) -> bool:
+    def _probe_staging(self, block) -> bool:
+        keys = [block.count, block.name, block.seq, block.done]
+        for n in (1, MAX_SLOTS):
+            keys.extend(f"{block.prefix}{n}{name}" for name, _, _ in STAGING_POINT_FIELDS)
         try:
-            for key, _, _ in IMPORT_KEYS:
+            for key in keys:
                 self._fix.db.get_item(key)
-            for n in (1, MAX_SLOTS):
-                for name, _, _ in IMPORT_SLOT_FIELDS:
-                    self._fix.db.get_item(f"FPLIMP{n}{name}")
             return True
         except KeyError:
             return False
@@ -522,10 +543,10 @@ class FixBridge:
             self._watch(key, self._get(key))
         for key, item in self._optional_items():
             self._watch(key, item)
-        if self.imports_available:
-            # FPLIMPSEQ is written last by the plugin; FPLIMPDONE by any
+        for block in self.staging:
+            # SEQ is written last by the block's writer; DONE by any
             # display's editor, so an answer on one display clears them all.
-            for key in IMPORT_WATCH_KEYS:
+            for key in (block.seq, block.done):
                 self._watch(key, self._get(key))
         for n in range(1, MAX_SLOTS + 1):
             key = _slot_key(n, TURN_FIELD)
@@ -636,43 +657,43 @@ class FixBridge:
             out[key] = ItemValue(value=item.value, old=item.old, bad=item.bad, fail=item.fail)
         return out
 
-    def import_seq(self) -> int | None:
-        """The ``FPLIMPSEQ`` of the plan waiting for the pilot: set while
-        ``FPLIMPSEQ > 0`` and ``FPLIMPDONE`` differs from it. None when
-        nothing is pending, or the gateway has no import block."""
-        if not self.imports_available:
+    def staged_seq(self, block=FPLIMP) -> int | None:
+        """The SEQ of the plan waiting in *block*: set while SEQ > 0 and
+        DONE differs from it. None when nothing is staged there, or the
+        gateway has no such block."""
+        if block not in self.staging:
             return None
         try:
-            seq = int(self._get("FPLIMPSEQ").value)
-            done = int(self._get("FPLIMPDONE").value)
+            seq = int(self._get(block.seq).value)
+            done = int(self._get(block.done).value)
         except (TypeError, ValueError):
             return None
         return seq if seq > 0 and done != seq else None
 
-    def read_import(self) -> PendingImport | None:
-        """The pending plan (:meth:`import_seq`), or None. Read whole: a
-        caller that must know the points did not change under it compares
-        two reads (the plugin writes ``FPLIMPSEQ`` last, but a newer upload
-        overwrites the points before it bumps the counter)."""
-        seq = self.import_seq()
+    def read_staged(self, block=FPLIMP) -> StagedPlan | None:
+        """The plan waiting in *block* (:meth:`staged_seq`), or None. Read
+        whole: a caller that must know the points did not change under it
+        compares two reads (SEQ is written last, but a newer plan overwrites
+        the points before it bumps the counter)."""
+        seq = self.staged_seq(block)
         if seq is None:
             return None
-        count = max(0, min(int(self._get("FPLIMPCOUNT").value or 0), MAX_SLOTS))
+        count = max(0, min(int(self._get(block.count).value or 0), MAX_SLOTS))
         points = []
         for n in range(1, count + 1):
-            ident, lat, lon, typ = (self._get(f"FPLIMP{n}{name}").value
-                                    for name, _, _ in IMPORT_SLOT_FIELDS)
-            points.append(ImportPoint(id=str(ident or ""), lat=float(lat), lon=float(lon),
+            ident, lat, lon, typ = (self._get(f"{block.prefix}{n}{name}").value
+                                    for name, _, _ in STAGING_POINT_FIELDS)
+            points.append(StagedPoint(id=str(ident or ""), lat=float(lat), lon=float(lon),
                                       type=FPLTYPE_TO_TYPE.get(int(typ), "unknown")))
-        return PendingImport(seq=seq, name=str(self._get("FPLIMPNAME").value or ""),
-                             points=points)
+        return StagedPlan(block=block, seq=seq, name=str(self._get(block.name).value or ""),
+                          points=points)
 
-    def finish_import(self, seq: int) -> None:
-        """Answer the pending plan *seq*, accepted or rejected
-        (``FPLIMPDONE = seq``). An accepted plan is committed first, through
+    def answer_staged(self, block, seq: int) -> None:
+        """Answer the plan *seq* in *block*, accepted or rejected
+        (DONE = seq). An accepted plan is committed first, through
         :meth:`publish`; this only says it has been dealt with."""
-        if self.imports_available:
-            self._set("FPLIMPDONE", int(seq))
+        if block in self.staging:
+            self._set(block.done, int(seq))  # writes: FPLIMPDONE
 
     def read_direct_to(self) -> DirectTo | None:
         """The staged direct-to point (``DTO*``, Appendix A) -- consumed by
@@ -724,20 +745,21 @@ def route_to_plan(route: RouteBlock) -> model.FlightPlan:
     return plan
 
 
-def import_to_plan(pending: PendingImport) -> model.FlightPlan:
-    """The pending import as the plan Accept commits: one waypoint segment
-    per point, each a TF leg to its fix, the import's name, and source
-    ``efb``. The file carries no altitudes, speeds, airways or procedures,
-    so the plan has none. An ident longer than ``FPLfID`` holds is cut to
+def staged_to_plan(staged: StagedPlan, source: str = "device") -> model.FlightPlan:
+    """The staged plan as the plan Accept commits: one waypoint segment per
+    point, each a TF leg to its fix, the staged name, and *source* (the
+    model's provenance field, which the caller names). A staging block
+    carries no altitudes, speeds, airways or procedures, so the plan has
+    none. An ident longer than ``FPLfID`` holds is cut to
     :data:`ROUTE_ID_MAX_LEN`, and the whole identifier kept as the name."""
     wps = []
-    for pt in pending.points:
+    for pt in staged.points:
         wp_type = pt.type if pt.type in model.WAYPOINT_TYPES else "fix"
         ident = pt.id[:ROUTE_ID_MAX_LEN]
         wps.append(model.Waypoint(id=ident, type=wp_type, lat=pt.lat, lon=pt.lon,
                                   name=pt.id if ident != pt.id else ""))
-    return model.FlightPlan(name=pending.name[:model.NAME_MAX_LEN], waypoints=wps,
-                            source="efb")
+    return model.FlightPlan(name=staged.name[:model.NAME_MAX_LEN], waypoints=wps,
+                            source=source)
 
 
 def _segments_from_table(route: RouteBlock, wps):

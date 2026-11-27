@@ -156,9 +156,19 @@ ROUTE_VERIFY_S = 1.0
 # FPLSEGCNT are written before FPLSEQ and are not watched; a writer that
 # breaks that order is caught by the route_verify_s check.
 _ROUTE_KEY_WRITES = frozenset(("FPLSEQ", "FPLLDSEQ"))
-# The note on a plan offered from an EFB (EFB4b): a Garmin .fpl carries only
-# the fixes (fix-gateway doc/plugins/fpl_exchange.md, "What crosses").
-OFFER_EFB_NOTE = "ALTITUDES AND SPEEDS DID NOT COME ACROSS"
+# The prompt for a plan staged on the bus (EFB4b, PROV0): the only place that
+# says where a staged plan came from. Accept, Reject and the sheet are the
+# same for every staging block (fixbridge.STAGING_BLOCKS). FPLIMP holds a
+# .fpl uploaded to fix-gateway's fpl_exchange, and carries no origin key, so
+# it names the kind of device, not the app; a .fpl carries only the fixes
+# (fix-gateway doc/plugins/fpl_exchange.md, "What crosses"). "source" is the
+# model's provenance field for the accepted plan.
+STAGED_NOTE = "ALTITUDES AND SPEEDS DID NOT COME ACROSS"
+STAGING_PROMPTS = {
+    "FPLIMP": {"title": "PLAN FROM EFB", "note": STAGED_NOTE, "source": "efb"},
+}
+# A block with no entry above still gets a prompt that claims no origin.
+STAGING_PROMPT_DEFAULT = {"title": "PLAN RECEIVED", "note": STAGED_NOTE, "source": "device"}
 
 
 def _no_op():
@@ -326,11 +336,13 @@ class FlightPlan(QWidget):
         # Activate Leg from a far from-fix (FPACT1, AER-5801): the pending
         # {"slot", "from_id", "dist_nm"} the pilot is asked about before ACT.
         self._act_confirm = None
-        # A plan offered for the pilot to accept or reject (EFB4b, AER-6706):
-        # one from an EFB, waiting on the bus as FPLIMP*. A dict -- "key" (its
-        # FPLIMPSEQ), "plan" (the model.FlightPlan Accept commits), "title",
-        # "note", "pending" (the import as read, which Accept checks again)
-        # -- or None. _offer_open is True while its review sheet is up.
+        # A plan offered for the pilot to accept or reject (EFB4b, AER-6706),
+        # whatever its source: a dict -- "key" (what identifies this offer),
+        # "plan" (the model.FlightPlan Accept commits), "title", "note",
+        # "staged" (True when it came from a staging block on the bus),
+        # "valid" (a callable: is it still exactly what the pilot reviewed?)
+        # and "answer" (a callable taking accepted, run after Accept's commit
+        # or on Reject) -- or None. _offer_open is True while the sheet is up.
         self._offer = None
         self._offer_open = False
 
@@ -496,7 +508,7 @@ class FlightPlan(QWidget):
             self._sync_plan_from_bridge()
             self._sync_engine_from_bridge()
             self._bridge.add_listener(self._on_bridge_change, keyed=True)
-            self._sync_import_from_bridge()
+            self._sync_staged_from_bridge()
             msg_item = self._bridge._get("FPLMSG")
             msg_item.valueWrite[msg_item.dtype].connect(self._on_fplmsg)
         self._connect_hmi()
@@ -819,8 +831,8 @@ class FlightPlan(QWidget):
                 and self._bridge.route_key() != self._synced_route_key)
                 or self._route_drifted()):
             self._sync_plan_from_bridge()
-        if key is None or key in fp_fixbridge.IMPORT_WATCH_KEYS:
-            self._sync_import_from_bridge()
+        if key is None or key in fp_fixbridge.STAGING_WATCH_KEYS:
+            self._sync_staged_from_bridge()
         self._sync_engine_from_bridge()
         self.update()
 
@@ -848,35 +860,51 @@ class FlightPlan(QWidget):
         self.update()
 
     # -- a plan offered for acceptance (EFB4b) ------------------------------
-    def _sync_import_from_bridge(self):
-        """Offer the plan waiting on ``FPLIMP*``, or withdraw the offer once
-        it is answered (here or on another display) or replaced by a newer
-        upload. An imported plan never replaces the route by itself: it is
-        only offered, and only Accept commits it."""
-        seq = self._bridge.import_seq()
-        if seq is None:
-            self._offer = None
-            self._offer_open = False
+    def _sync_staged_from_bridge(self):
+        """Offer a plan staged on the bus, or withdraw a staged offer once it
+        is answered (here or on another display) or replaced by a newer one.
+        A staged plan never replaces the route by itself: it is only
+        offered, and only Accept commits it. An offer the pilot made on this
+        page (not staged) is never displaced: a staged plan waits behind it
+        and is offered once it is answered."""
+        current = self._offer
+        if current is not None and not current["staged"]:
             return
-        if self._offer is not None and self._offer["key"] == seq:
-            return
-        pending = self._bridge.read_import()
-        if pending is None or not pending.points:
-            self._offer = None
-            self._offer_open = False
-            return
+        for block in self._bridge.staging:
+            seq = self._bridge.staged_seq(block)
+            if seq is None:
+                continue
+            if current is not None and current["key"] == (block.prefix, seq):
+                return
+            offer = self._staged_offer(block)
+            if offer is not None:
+                self._set_offer(offer)
+                return
+        if current is not None and current["staged"]:
+            self._set_offer(None)
+
+    def _staged_offer(self, block):
+        staged = self._bridge.read_staged(block)
+        if staged is None or not staged.points:
+            return None
+        prompt = STAGING_PROMPTS.get(block.prefix, STAGING_PROMPT_DEFAULT)
         try:
-            plan = fp_fixbridge.import_to_plan(pending)
+            plan = fp_fixbridge.staged_to_plan(staged, prompt["source"])
         except fp_model.FlightPlanError:
-            logger.warning("flight_plan: imported plan %d not offered", seq, exc_info=True)
-            self._offer = None
-            self._offer_open = False
-            return
-        # A newer upload replaces the one under review: the sheet closes, so
+            logger.warning("flight_plan: staged plan %s %d not offered", block.prefix,
+                           staged.seq, exc_info=True)
+            return None
+        bridge = self._bridge
+        return {"key": (block.prefix, staged.seq), "plan": plan, "staged": True,
+                "title": f"{prompt['title']}: {plan.name or plan.default_name()}",
+                "note": prompt["note"],
+                "valid": lambda: bridge.read_staged(block) == staged,
+                "answer": lambda accepted: bridge.answer_staged(block, staged.seq)}
+
+    def _set_offer(self, offer):
+        # A newer offer replaces the one under review: the sheet closes, so
         # the pilot never accepts a list that changed under their finger.
-        self._offer = {"key": seq, "plan": plan, "pending": pending,
-                       "title": f"PLAN FROM EFB: {plan.name or plan.default_name()}",
-                       "note": OFFER_EFB_NOTE}
+        self._offer = offer
         self._offer_open = False
         self._menu_scroll.pop("offer", None)
 
@@ -890,41 +918,35 @@ class FlightPlan(QWidget):
         self._offer_open = False
         self.update()
 
-    def _offer_still_on_bus(self):
-        """True when the import on the bus is still exactly the one the
-        pilot reviewed: same FPLIMPSEQ, same points."""
-        offer = self._offer
-        return offer is not None and self._bridge.read_import() == offer["pending"]
-
     def _offer_accept(self):
         """Accept: the offered plan becomes the route, committed as any edit
-        is (publish, then the engine's answer), then the import is answered."""
+        is (publish, then the engine's answer), then the offer is answered."""
         offer = self._offer
         if offer is None:
             return
-        if not self._offer_still_on_bus():
-            self._offer = None
-            self._sync_import_from_bridge()
+        if not offer["valid"]():
+            self._set_offer(None)
+            self._sync_staged_from_bridge()
             self._message = "PLAN CHANGED - REVIEW AGAIN" if self._offer else ""
             self.update()
             return
-        self._offer = None
-        self._offer_open = False
+        self._set_offer(None)
         self._plan = copy.deepcopy(offer["plan"])
         self._plan_dirty = False
         self._list_scroll = 0.0
         self._commit()
-        self._bridge.finish_import(offer["key"])
+        offer["answer"](True)
+        self._sync_staged_from_bridge()
         self.update()
 
     def _offer_reject(self):
-        """Reject: the import is answered and dropped; the route is untouched."""
+        """Reject: the offer is answered and dropped; the route is untouched."""
         offer = self._offer
         if offer is None:
             return
-        self._offer = None
-        self._offer_open = False
-        self._bridge.finish_import(offer["key"])
+        self._set_offer(None)
+        offer["answer"](False)
+        self._sync_staged_from_bridge()
         self.update()
 
     def _engine_value(self, key, default=None):
@@ -3780,7 +3802,7 @@ class FlightPlan(QWidget):
         banner_h = footer_h if bus and self._suspended_at_map() else 0
         # A refused commit (G61): its strip sits above that one.
         refusal_h = footer_h if bus and self._plan_refused() else 0
-        # A plan offered from an EFB (EFB4b): its strip sits above both.
+        # A plan offered for acceptance (EFB4b): its strip sits above both.
         offer_h = footer_h if bus and self._offer is not None else 0
 
         self._paint_header(p, w, header_h, bus)
@@ -4076,7 +4098,7 @@ class FlightPlan(QWidget):
             self._tap(*btn, action, "soft")
 
     def _paint_offer_banner(self, p, w, bottom, banner_h, tappable):
-        """A plan offered from an EFB (EFB4b): name it above the soft keys,
+        """A plan offered for acceptance (EFB4b): name it above the soft keys,
         with Review under a finger. Not an alert: nothing has changed until
         the pilot accepts it."""
         offer = self._offer
@@ -4175,8 +4197,8 @@ class FlightPlan(QWidget):
             p.setFont(f)
             p.setPen(QPen(QColor("#ffffff")))
             self._draw_type_icon(p, box_x + icx, y + row_h / 2, ir * 0.85, wp.type)
-            # A Garmin identifier longer than a route slot holds loads cut
-            # short; the whole one is shown beside it.
+            # An ident longer than a route slot holds loads cut short; the
+            # whole one is shown beside it.
             label = f"{wp.id} ({wp.name})" if wp.name else wp.id
             p.drawText(QRectF(box_x + lx, y, box_w * 0.58 - lx, row_h),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
