@@ -156,6 +156,24 @@ ROUTE_VERIFY_S = 1.0
 # FPLSEGCNT are written before FPLSEQ and are not watched; a writer that
 # breaks that order is caught by the route_verify_s check.
 _ROUTE_KEY_WRITES = frozenset(("FPLSEQ", "FPLLDSEQ"))
+# The prompt for a plan staged on the bus (EFB4b, PROV0): the only place that
+# says where a staged plan came from. Accept, Reject and the sheet are the
+# same for every staging block (fixbridge.STAGING_BLOCKS). FPLIMP holds a
+# .fpl uploaded to fix-gateway's fpl_exchange, and carries no origin key, so
+# it names the kind of device, not the app; a .fpl carries only the fixes
+# (fix-gateway doc/plugins/fpl_exchange.md, "What crosses"). "source" is the
+# model's provenance field for the accepted plan.
+STAGED_NOTE = "ALTITUDES AND SPEEDS DID NOT COME ACROSS"
+STAGING_PROMPTS = {
+    "FPLIMP": {"title": "PLAN FROM EFB", "note": STAGED_NOTE, "source": "efb"},
+}
+# A block with no entry above still gets a prompt that claims no origin.
+STAGING_PROMPT_DEFAULT = {"title": "PLAN RECEIVED", "note": STAGED_NOTE, "source": "device"}
+
+
+def _no_op():
+    pass
+
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
 
@@ -318,6 +336,15 @@ class FlightPlan(QWidget):
         # Activate Leg from a far from-fix (FPACT1, AER-5801): the pending
         # {"slot", "from_id", "dist_nm"} the pilot is asked about before ACT.
         self._act_confirm = None
+        # A plan offered for the pilot to accept or reject (EFB4b, AER-6706),
+        # whatever its source: a dict -- "key" (what identifies this offer),
+        # "plan" (the model.FlightPlan Accept commits), "title", "note",
+        # "staged" (True when it came from a staging block on the bus),
+        # "valid" (a callable: is it still exactly what the pilot reviewed?)
+        # and "answer" (a callable taking accepted, run after Accept's commit
+        # or on Reject) -- or None. _offer_open is True while the sheet is up.
+        self._offer = None
+        self._offer_open = False
 
         # Airway insertion (PA6, AER-1605): row menu -> pick an airway through
         # the selected fix -> pick an exit fix -> AirwayGraph.expand() inserts
@@ -481,6 +508,7 @@ class FlightPlan(QWidget):
             self._sync_plan_from_bridge()
             self._sync_engine_from_bridge()
             self._bridge.add_listener(self._on_bridge_change, keyed=True)
+            self._sync_staged_from_bridge()
             msg_item = self._bridge._get("FPLMSG")
             msg_item.valueWrite[msg_item.dtype].connect(self._on_fplmsg)
         self._connect_hmi()
@@ -803,6 +831,8 @@ class FlightPlan(QWidget):
                 and self._bridge.route_key() != self._synced_route_key)
                 or self._route_drifted()):
             self._sync_plan_from_bridge()
+        if key is None or key in fp_fixbridge.STAGING_WATCH_KEYS:
+            self._sync_staged_from_bridge()
         self._sync_engine_from_bridge()
         self.update()
 
@@ -827,6 +857,96 @@ class FlightPlan(QWidget):
                                copy.deepcopy(self._plan))
             self._sync_plan_from_bridge()
             self._sync_engine_from_bridge()
+        self.update()
+
+    # -- a plan offered for acceptance (EFB4b) ------------------------------
+    def _sync_staged_from_bridge(self):
+        """Offer a plan staged on the bus, or withdraw a staged offer once it
+        is answered (here or on another display) or replaced by a newer one.
+        A staged plan never replaces the route by itself: it is only
+        offered, and only Accept commits it. An offer the pilot made on this
+        page (not staged) is never displaced: a staged plan waits behind it
+        and is offered once it is answered."""
+        current = self._offer
+        if current is not None and not current["staged"]:
+            return
+        for block in self._bridge.staging:
+            seq = self._bridge.staged_seq(block)
+            if seq is None:
+                continue
+            if current is not None and current["key"] == (block.prefix, seq):
+                return
+            offer = self._staged_offer(block)
+            if offer is not None:
+                self._set_offer(offer)
+                return
+        if current is not None and current["staged"]:
+            self._set_offer(None)
+
+    def _staged_offer(self, block):
+        staged = self._bridge.read_staged(block)
+        if staged is None or not staged.points:
+            return None
+        prompt = STAGING_PROMPTS.get(block.prefix, STAGING_PROMPT_DEFAULT)
+        try:
+            plan = fp_fixbridge.staged_to_plan(staged, prompt["source"])
+        except fp_model.FlightPlanError:
+            logger.warning("flight_plan: staged plan %s %d not offered", block.prefix,
+                           staged.seq, exc_info=True)
+            return None
+        bridge = self._bridge
+        return {"key": (block.prefix, staged.seq), "plan": plan, "staged": True,
+                "title": f"{prompt['title']}: {plan.name or plan.default_name()}",
+                "note": prompt["note"],
+                "valid": lambda: bridge.read_staged(block) == staged,
+                "answer": lambda accepted: bridge.answer_staged(block, staged.seq)}
+
+    def _set_offer(self, offer):
+        # A newer offer replaces the one under review: the sheet closes, so
+        # the pilot never accepts a list that changed under their finger.
+        self._offer = offer
+        self._offer_open = False
+        self._menu_scroll.pop("offer", None)
+
+    def _open_offer(self):
+        if self._offer is not None:
+            self._offer_open = True
+            self.update()
+
+    def _close_offer(self):
+        """Later: the sheet closes and the plan stays offered."""
+        self._offer_open = False
+        self.update()
+
+    def _offer_accept(self):
+        """Accept: the offered plan becomes the route, committed as any edit
+        is (publish, then the engine's answer), then the offer is answered."""
+        offer = self._offer
+        if offer is None:
+            return
+        if not offer["valid"]():
+            self._set_offer(None)
+            self._sync_staged_from_bridge()
+            self._message = "PLAN CHANGED - REVIEW AGAIN" if self._offer else ""
+            self.update()
+            return
+        self._set_offer(None)
+        self._plan = copy.deepcopy(offer["plan"])
+        self._plan_dirty = False
+        self._list_scroll = 0.0
+        self._commit()
+        offer["answer"](True)
+        self._sync_staged_from_bridge()
+        self.update()
+
+    def _offer_reject(self):
+        """Reject: the offer is answered and dropped; the route is untouched."""
+        offer = self._offer
+        if offer is None:
+            return
+        self._set_offer(None)
+        offer["answer"](False)
+        self._sync_staged_from_bridge()
         self.update()
 
     def _engine_value(self, key, default=None):
@@ -3113,7 +3233,7 @@ class FlightPlan(QWidget):
                 self._dto_target is not None, self._seg_menu, self._seg_fixes,
                 self._seg_fix_menu, None if self._proc is None else self._proc["kind"],
                 self._proc_picker, self._act_confirm is not None,
-                self._hold_edit is not None,
+                self._hold_edit is not None, self._offer_open,
                 None if self._charts is None else (self._charts["airport"],
                                                    self._charts["plate"]))
 
@@ -3226,6 +3346,8 @@ class FlightPlan(QWidget):
             self._cancel_dupe_chooser()
         elif self._act_confirm is not None:
             self._act_confirm_no()
+        elif self._offer_open:
+            self._close_offer()
         elif self._row_menu_index is not None:
             self._close_row_menu()
         elif self._seg_menu is not None:
@@ -3680,9 +3802,11 @@ class FlightPlan(QWidget):
         banner_h = footer_h if bus and self._suspended_at_map() else 0
         # A refused commit (G61): its strip sits above that one.
         refusal_h = footer_h if bus and self._plan_refused() else 0
+        # A plan offered for acceptance (EFB4b): its strip sits above both.
+        offer_h = footer_h if bus and self._offer is not None else 0
 
         self._paint_header(p, w, header_h, bus)
-        self._paint_list(p, w, header_h, h - footer_h - banner_h - refusal_h,
+        self._paint_list(p, w, header_h, h - footer_h - banner_h - refusal_h - offer_h,
                          self._row_h_cap(), interactive)
         self._paint_footer(p, w, h - footer_h, footer_h, interactive)
         overlay_open = (self._row_menu_index is not None or self._seg_menu is not None
@@ -3690,7 +3814,8 @@ class FlightPlan(QWidget):
                         or self._wpt_info is not None or self._seg_fix_menu is not None
                         or self._airway_picker is not None
                         or self._act_confirm is not None
-                        or self._hold_edit is not None)
+                        or self._hold_edit is not None
+                        or (self._offer_open and self._offer is not None))
         if overlay_open:
             # The list under an overlay neither scrolls nor takes a press.
             self._list_view = None
@@ -3701,6 +3826,9 @@ class FlightPlan(QWidget):
         if refusal_h:
             self._paint_refusal_banner(p, w, h - footer_h - banner_h, refusal_h,
                                        interactive and not overlay_open)
+        if offer_h:
+            self._paint_offer_banner(p, w, h - footer_h - banner_h - refusal_h, offer_h,
+                                     interactive and not overlay_open)
 
         if self._row_menu_index is not None:
             self._paint_row_menu(p, w, h)
@@ -3728,11 +3856,13 @@ class FlightPlan(QWidget):
             self._paint_hold_editor(p, w, h)
             if self._modal is not None:
                 self._paint_modal(p, w, h)
+        elif self._offer_open and self._offer is not None:
+            self._paint_offer_sheet(p, w, h, interactive)
 
         if self._message:
             # Above the soft keys and any alert strip, never on the header
             # (AER-6156): drawn over the bottom of the list while it is up.
-            self._paint_message_strip(p, w, h - footer_h - banner_h - refusal_h,
+            self._paint_message_strip(p, w, h - footer_h - banner_h - refusal_h - offer_h,
                                       footer_h, self._message)
 
     def _paint_message_strip(self, p, w, bottom, strip_h, text):
@@ -3966,6 +4096,144 @@ class FlightPlan(QWidget):
         p.drawText(QRectF(*btn), Qt.AlignmentFlag.AlignCenter, label)
         if tappable:
             self._tap(*btn, action, "soft")
+
+    def _paint_offer_banner(self, p, w, bottom, banner_h, tappable):
+        """A plan offered for acceptance (EFB4b): name it above the soft keys,
+        with Review under a finger. Not an alert: nothing has changed until
+        the pilot accepts it."""
+        offer = self._offer
+        top = bottom - banner_h
+        p.setBrush(QBrush(QColor("#002830")))
+        p.setPen(QPen(QColor("#00ffff"), 2))
+        p.drawRect(QRectF(1, top, w - 2, banner_h - 1))
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(banner_h * 0.34), 9))
+        p.setFont(f)
+        n = offer["plan"].count
+        p.drawText(QRectF(8, top, w * 0.64 - 8, banner_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                   | Qt.TextFlag.TextWordWrap,
+                   f"{offer['title']}\n{n} WAYPOINT{'S' if n != 1 else ''}")
+        btn = (w * 0.66, top + banner_h * 0.12, w * 0.34 - 6, banner_h * 0.76)
+        p.setBrush(QBrush(QColor("#00ffff")))
+        p.drawRect(QRectF(*btn))
+        p.setPen(QPen(QColor("#000000")))
+        p.drawText(QRectF(*btn), Qt.AlignmentFlag.AlignCenter, "Review")
+        if tappable:
+            self._tap(*btn, self._open_offer, "soft")
+
+    def _offer_scroll_by(self, delta):
+        self._menu_scroll_by("offer", delta)
+
+    def _paint_offer_sheet(self, p, w, h, interactive):
+        """The offered plan, read-only, before the pilot takes it: every
+        fix with its type, the leg distance into it and the total, the note
+        on what did not cross, and Accept / Reject / Later. A tap off the
+        sheet is Later: the soft keys under it must not take a press while
+        it is up, and the plan stays offered."""
+        offer = self._offer
+        plan = offer["plan"]
+        wps = plan.waypoints
+
+        row_h = self._row_h_cap()
+        box_x, box_w = w * 0.04, w * 0.92
+        box_top = h * 0.04
+        box_h = h * 0.92
+        # Both under the backdrop, so the encoder ring holds only the
+        # sheet's own buttons; a tap on a fix row does nothing.
+        self._tap(0, 0, w, h, self._close_offer)
+        self._tap(box_x, box_top, box_w, box_h, _no_op)
+        self._paint_overlay_backdrop(p, w, h)
+        title_h = row_h
+        note_h = row_h * 0.6
+        head_h = row_h * 0.5
+        foot_h = row_h
+        list_top = box_top + title_h + note_h + head_h
+        list_h = box_h - title_h - note_h - head_h - foot_h
+        n = len(wps)
+        fit = max(1, int(list_h // row_h))
+        scrollable = n > fit
+        visible = max(1, fit - 1) if scrollable else n
+        stored_n, offset = self._menu_scroll.get("offer", (n, 0))
+        offset = max(0, min(offset if stored_n == n else 0, n - visible))
+        self._menu_scroll["offer"] = (n, offset)
+
+        p.setPen(QPen(QColor("#00ffff")))
+        p.setBrush(QBrush(QColor("#202020")))
+        p.drawRect(QRectF(box_x, box_top, box_w, box_h))
+
+        f = QFont(self.font_family)
+        f.setPixelSize(self._px(int(row_h * 0.5), 9))
+        bold = QFont(f)
+        bold.setBold(True)
+        small = QFont(f)
+        small.setPixelSize(self._px(int(row_h * 0.36), 8))
+        p.setFont(bold)
+        p.setPen(QPen(QColor("#00ffff")))
+        p.drawText(QRectF(box_x + 12, box_top, box_w - 24, title_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, offer["title"])
+        p.setFont(small)
+        p.setPen(QPen(QColor("#ffaa00")))
+        p.drawText(QRectF(box_x + 12, box_top + title_h, box_w - 24, note_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, offer["note"])
+
+        col_x = [box_x + box_w * f_ for f_ in (0.58, 0.76)]
+        col_w = box_w * 0.18
+        hy = box_top + title_h + note_h
+        ir, icx, lx = self._row_icon_geometry(row_h)
+        p.setPen(QPen(QColor("#9a9a9a")))
+        p.drawText(QRectF(box_x + lx, hy, box_w * 0.3, head_h),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "FIX")
+        for x, label in zip(col_x, ("DIS", "CUM")):
+            p.drawText(QRectF(x, hy, col_w, head_h),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, label)
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(box_x, hy + head_h - 1), QPointF(box_x + box_w, hy + head_h - 1))
+
+        y = list_top
+        for i in range(offset, offset + visible):
+            wp = wps[i]
+            dist = plan.leg(i - 1)[1] if i > 0 else None
+            p.setFont(f)
+            p.setPen(QPen(QColor("#ffffff")))
+            self._draw_type_icon(p, box_x + icx, y + row_h / 2, ir * 0.85, wp.type)
+            # An ident longer than a route slot holds loads cut short; the
+            # whole one is shown beside it.
+            label = f"{wp.id} ({wp.name})" if wp.name else wp.id
+            p.drawText(QRectF(box_x + lx, y, box_w * 0.58 - lx, row_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+            texts = ("", "") if dist is None else (f"{dist:.0f}", f"{plan.cumulative(i):.0f}")
+            for x, text in zip(col_x, texts):
+                p.drawText(QRectF(x, y, col_w, row_h),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
+            y += row_h
+
+        if scrollable:
+            half = box_w / 2
+            can_up, can_down = offset > 0, offset + visible < n
+            for n_, (label, ok, d) in enumerate((("\u25b2", can_up, -visible),
+                                                 ("\u25bc", can_down, visible))):
+                rx = box_x + n_ * half
+                p.setPen(QPen(QColor("#00ffff" if ok else "#505050")))
+                p.drawText(QRectF(rx, y, half, row_h), Qt.AlignmentFlag.AlignCenter, label)
+                if ok:
+                    self._tap(rx, y, half, row_h, (lambda dd=d: self._offer_scroll_by(dd)))
+
+        fy = box_top + box_h - foot_h
+        p.setPen(QPen(QColor("#333333")))
+        p.drawLine(QPointF(box_x, fy), QPointF(box_x + box_w, fy))
+        p.setFont(f)
+        third = box_w / 3
+        for k, (label, color, action) in enumerate((
+                ("Accept", "#80ff80", self._offer_accept),
+                ("Reject", "#ff8080", self._offer_reject),
+                ("Later", "#ffffff", self._close_offer))):
+            rx = box_x + k * third
+            p.setPen(QPen(QColor(color)))
+            p.drawText(QRectF(rx, fy, third, foot_h), Qt.AlignmentFlag.AlignCenter, label)
+            # Read-only (a demo kiosk): the sheet can be closed, not answered.
+            if interactive or k == 2:
+                self._tap(rx, fy, third, foot_h, action)
 
     def _paint_header(self, p, w, header_h, interactive):
         f = QFont(self.font_family)
