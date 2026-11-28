@@ -49,6 +49,8 @@ from PyQt6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
+import pyavtools.fix
+
 log = logging.getLogger(__name__)
 
 # Input keys the gateway is expected to carry, tried in order.  The ping
@@ -146,6 +148,39 @@ def choose_ping_key(db, candidates):
             continue
         return key
     return None
+
+
+# Quality flags on every pyEfis write (NFX1, AER-6833).
+#
+# The Net-FIX client sentence is ``ID;value;abfs``: annunciate, bad, fail,
+# secondary fail (fix-gateway doc/appendix/netfixascii.rst), and that is how
+# the gateway parses it.  The pinned pyavtools DB_Item.output_value sends
+# annunciate, a literal 0 where the server-to-client sentence has old, then
+# bad and fail, so every flag after the first lands one place late: a write
+# with bad set records fail on the gateway, and one with fail set records
+# secfail and clears the gateway's own fail.  pyEfis cannot fix the library
+# (no fork; pyproject.toml pins makerplane/pyAvTools), so it replaces that one
+# method with the spec's order.  Secondary fail is not sent: pyEfis holds no
+# secondary-fail state, so the fourth flag stays 0, as before.
+# test_upstream_output_value_still_misorders pins the library's defect, so a
+# pyavtools bump that fixes it says this override can go.
+
+def _output_value_abfs(self):
+    if self.block_output:
+        # Do not send data we just received (as pyavtools does)
+        self.block_output = False
+        return
+    flags = "".join("1" if f else "0"
+                    for f in (self.annunciate, self.bad, self.fail, False))
+    pyavtools.fix.db.queue_out(
+        "{0};{1};{2}\n".format(self.key, self.value, flags).encode())
+
+
+def use_spec_flag_order():
+    """Make every DB_Item write send its flags in the Net-FIX ``abfs`` order.
+    Call before ``fix.initialize``: the interval outputs bind
+    ``item.output_value`` when the gateway defines each item."""
+    pyavtools.fix.DB_Item.output_value = _output_value_abfs
 
 
 def start(db, config):

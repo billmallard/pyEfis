@@ -91,16 +91,16 @@ def cache_dir(sha):
     return pathlib.Path(base) / "pyefis" / ("fix-gateway-" + sha[:12])
 
 
-def fetch(sha, dest=None):
-    """A sparse, shallow checkout of fix-gateway at `sha`; returns its path."""
+def fetch(sha, dest=None, paths=SPARSE):
+    """A sparse, shallow checkout of `paths` of fix-gateway at `sha`; returns its path."""
     dest = pathlib.Path(dest or cache_dir(sha))
-    if head_of(dest) == sha and all((dest / p.strip("/")).exists() for p in SPARSE):
+    if head_of(dest) == sha and all((dest / p.strip("/")).exists() for p in paths):
         return dest
     dest.mkdir(parents=True, exist_ok=True)
     if not (dest / ".git").exists():
         git("init", "-q", cwd=dest)
         git("remote", "add", "origin", os.environ.get("FIXGW_REMOTE") or REMOTE, cwd=dest)
-    git("sparse-checkout", "set", "--no-cone", *SPARSE, cwd=dest)
+    git("sparse-checkout", "set", "--no-cone", *paths, cwd=dest)
     git("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", sha, cwd=dest)
     git("checkout", "-q", "--detach", "FETCH_HEAD", cwd=dest)
     return dest

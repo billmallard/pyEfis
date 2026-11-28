@@ -73,6 +73,8 @@ def patched_runtime(monkeypatch):
     monkeypatch.setattr(main_module, "QApplication", FakeApp)
     monkeypatch.setattr(main_module.fix, "initialize", mock.Mock())
     monkeypatch.setattr(main_module.fix, "stop", mock.Mock())
+    # The real one patches pyavtools' DB_Item class for the rest of the session.
+    monkeypatch.setattr(main_module.fix_watchdog, "use_spec_flag_order", mock.Mock())
     fake_db = types.SimpleNamespace(get_item=mock.Mock(return_value=version_item))
     monkeypatch.setattr(
         main_module.fix, "db", fake_db, raising=False
@@ -142,6 +144,25 @@ def test_main_with_config_file_runs_startup_and_shutdown(
     main_module.hooks.initialize.assert_called_once_with(config["hooks"])
     main_module.fix.stop.assert_called_once_with()
     patched_runtime.fms.stop.assert_called_once_with()
+
+
+def test_main_sets_the_flag_order_before_the_fix_client_starts(
+    monkeypatch, config_files, patched_runtime
+):
+    # NFX1: the interval outputs bind output_value when the gateway defines
+    # each item, inside fix.initialize, so the override has to come first.
+    config_file, _preferences_file = config_files
+    monkeypatch.setattr(main_module.sys, "argv", ["pyefis", "--config-file", str(config_file)])
+    monkeypatch.setattr(main_module.cfg, "from_yaml", mock.Mock(return_value={"hooks": {}}))
+    order = main_module.fix_watchdog.use_spec_flag_order
+    main_module.fix.initialize.side_effect = lambda config: (
+        None if order.called else pytest.fail("fix.initialize ran before use_spec_flag_order"))
+
+    with pytest.raises(SystemExit):
+        main_module.main()
+
+    order.assert_called_once_with()
+    main_module.fix.initialize.assert_called_once()
 
 
 def test_main_in_kiosk_mode_loads_no_keybindings(
