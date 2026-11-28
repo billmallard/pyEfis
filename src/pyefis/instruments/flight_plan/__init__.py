@@ -62,7 +62,8 @@ from pyefis import display_metrics
 import os
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF
+from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QImage,
+                         QKeySequence, QPainter, QPen, QPolygonF)
 from PyQt6.QtWidgets import QWidget
 
 from pyavtools import fix
@@ -79,6 +80,7 @@ from pyefis.flightplan import plates as fp_plates
 from pyefis.flightplan import proc_load as fp_proc
 from pyefis.flightplan import procedures as fp_procedures
 from pyefis.flightplan import refusal as fp_refusal
+from pyefis.flightplan import route_string as fp_route_string
 from pyefis.flightplan import vocab as fp_vocab
 from pyefis.flightplan import waypoints as fp_waypoints
 from pyefis.instruments.flight_plan import plate_render
@@ -95,6 +97,10 @@ DTO_TABS = ("Waypoint", "FPL", "NRST APT")
 KEYPAD_ROWS = ("ABCDEFG", "HIJKLMN", "OPQRSTU", "VWXYZ01", "23456789")
 KEYPAD_NUMERIC_ROWS = ("789", "456", "123", "0.-", "NSEW")
 KEYPAD_CTRL_ROW = ("BKSP", "CLR", "ENT")
+# A route string (RTE1b) also needs a space between its tokens and the dot
+# of FLOUT5.VTU.
+KEYPAD_ROUTE_ROWS = KEYPAD_ROWS + (" .",)
+ROUTE_MAX_LEN = 200
 
 _STATE_BADGES = {0: "", 1: "LEG", 2: "DIRECT", 3: "SUSP", 4: "OBS"}
 _STATE_SUSP = 3
@@ -169,10 +175,31 @@ STAGING_PROMPTS = {
 }
 # A block with no entry above still gets a prompt that claims no origin.
 STAGING_PROMPT_DEFAULT = {"title": "PLAN RECEIVED", "note": STAGED_NOTE, "source": "device"}
+# A route the pilot typed or pasted on the FPL menu (RTE1b) is offered on the
+# same sheet; a route string carries no altitudes or speeds either.
+ROUTE_TITLE = "ROUTE"
+ROUTE_NOTE = "ALTITUDES AND SPEEDS ARE NOT IN A ROUTE"
 
 
 def _no_op():
     pass
+
+
+class _PickedIndex:
+    """A WaypointIndex whose lookup of an ident the pilot has already
+    disambiguated (RTE1b) returns only the place they picked, so a route
+    string expands again with the DUPLICATE FOUND answers in it."""
+
+    def __init__(self, index, picks):
+        self._index = index
+        self._picks = picks
+
+    def lookup(self, ident, *args, **kwargs):
+        pick = self._picks.get(str(ident or "").upper())
+        return [pick] if pick is not None else self._index.lookup(ident, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._index, name)
 
 # Same orange abstract.py uses for an encoder-selected gauge.
 _ENC_FOCUS_COLOR = "#ffa500"
@@ -345,6 +372,14 @@ class FlightPlan(QWidget):
         # or on Reject) -- or None. _offer_open is True while the sheet is up.
         self._offer = None
         self._offer_open = False
+        # Route-string entry (RTE1b, AER-6785): the route being expanded --
+        # "text" as entered, "runways" (airport -> runway, for a SID or STAR
+        # that needs one), "picks" (ident -> the place chosen where it names
+        # two) and "ident" (the one the DUPLICATE FOUND chooser is answering)
+        # -- or None. _route_runway is the RunwayNeededError the runway
+        # chooser is answering, or None.
+        self._route = None
+        self._route_runway = None
 
         # Airway insertion (PA6, AER-1605): row menu -> pick an airway through
         # the selected fix -> pick an exit fix -> AirwayGraph.expand() inserts
@@ -949,6 +984,97 @@ class FlightPlan(QWidget):
         self._sync_staged_from_bridge()
         self.update()
 
+    # -- a route typed or pasted (RTE1b) ------------------------------------
+    def _menu_route(self, text="", message=""):
+        """Menu Route: enter an ATC route string. It is expanded from the
+        page's own navdata and offered on the Accept/Reject sheet; it never
+        becomes the route by itself."""
+        if kiosk.locked():
+            return
+        self._menu_open = False
+        self._modal_open("ENTER ROUTE", text, False, ROUTE_MAX_LEN, self._route_entered,
+                         rows=KEYPAD_ROUTE_ROWS, message=message)
+
+    def _route_entered(self, text):
+        if not text.strip():
+            self._route = None
+            self.update()
+            return
+        self._route = {"text": text, "runways": {}, "picks": {}, "ident": None}
+        self._route_expand()
+
+    def _route_expand(self):
+        """Expand the route as entered, with every runway and place the
+        pilot has chosen so far. A SID or STAR that needs a runway asks for
+        it; an ident that names two places opens DUPLICATE FOUND; any other
+        refusal reopens the entry with the reason, so the pilot fixes the
+        string rather than typing it again."""
+        r = self._route
+        var = self._bridge.magvar_or_none() if self._bridge.available else None
+        try:
+            hold_speed = float(self.hold_speed_kt)
+        except (TypeError, ValueError):
+            hold_speed = fp_proc.HOLD_SPEED_KT
+        if not math.isfinite(hold_speed) or hold_speed <= 0:
+            hold_speed = fp_proc.HOLD_SPEED_KT
+        try:
+            plan = fp_route_string.expand(
+                r["text"], _PickedIndex(self._ensure_waypoint_index(), r["picks"]),
+                self._ensure_airway_graph(), self._ensure_procedure_index(),
+                runways=r["runways"], magvar=0.0 if var is None else var,
+                hold_speed_kt=hold_speed, resolve_navaid=self._resolve_navaid)
+        except fp_route_string.RunwayNeededError as e:
+            self._route_runway = e
+            self.update()
+            return
+        except fp_route_string.RouteStringError as e:
+            # A pick that did not settle an ident (one that is also an
+            # airway) is not asked again: the refusal says why.
+            open_ = [k for k in e.ambiguous if k not in r["picks"]]
+            if open_:
+                r["ident"] = open_[0]
+                self._entry_message = "DUPLICATE FOUND"
+                self._entry_dupe_choices = list(e.ambiguous[open_[0]])
+                self._entry_nav_index = None
+                self.update()
+                return
+            self._route = None
+            self._menu_route(r["text"], str(e))
+            return
+        self._route = None
+        self._set_offer({"key": ("route", r["text"]), "plan": plan, "staged": False,
+                         "title": f"{ROUTE_TITLE}: {plan.name}", "note": ROUTE_NOTE,
+                         "valid": lambda: True, "answer": lambda accepted: None})
+        # The pilot just asked for it: the sheet opens on it.
+        self._open_offer()
+
+    def _route_choose_runway(self, runway):
+        e = self._route_runway
+        self._route_runway = None
+        if e is None or self._route is None:
+            self.update()
+            return
+        self._route["runways"][e.airport] = runway
+        self._route_expand()
+
+    def _route_cancel_runway(self):
+        """Back out of the runway chooser: to the entry, the text kept."""
+        r = self._route
+        self._route_runway = None
+        self._route = None
+        self._menu_route(r["text"] if r else "")
+
+    def _route_choose_place(self, wp):
+        r = self._route
+        r["picks"][r["ident"]] = wp
+        r["ident"] = None
+        self._route_expand()
+
+    def _route_cancel_place(self):
+        r = self._route
+        self._route = None
+        self._menu_route(r["text"], "TWO PLACES NAMED: " + r["ident"])
+
     def _engine_value(self, key, default=None):
         if self._engine_stale:
             self._engine_stale = False
@@ -1219,10 +1345,16 @@ class FlightPlan(QWidget):
 
     def _choose_duplicate(self, wp):
         self._entry_dupe_choices = None
+        if self._route is not None and self._route["ident"]:
+            self._route_choose_place(wp)
+            return
         self._select_waypoint(wp)
 
     def _cancel_dupe_chooser(self):
         self._entry_dupe_choices = None
+        if self._route is not None and self._route["ident"]:
+            self._route_cancel_place()
+            return
         self.update()
 
     def _select_entry_tab(self, tab):
@@ -2834,9 +2966,33 @@ class FlightPlan(QWidget):
         self.update()
 
     # -- generic modal text/numeric entry (Catalog Copy, user waypoints) -----
-    def _modal_open(self, title, value, numeric, max_len, on_enter):
+    def _modal_open(self, title, value, numeric, max_len, on_enter, rows=None, message=""):
+        """*rows* replaces the keypad's rows (a route needs a space key);
+        *message* is shown under the value until the next key."""
         self._modal = {"title": title, "value": value, "numeric": numeric,
-                        "max_len": max_len, "on_enter": on_enter}
+                        "max_len": max_len, "on_enter": on_enter, "rows": rows,
+                        "message": message}
+        self.update()
+
+    def _modal_spaces(self):
+        """Whether the open modal takes a space (a route string)."""
+        m = self._modal
+        return m is not None and m.get("rows") is not None and " " in "".join(m["rows"])
+
+    def _modal_paste(self, text):
+        """A paste into the open modal: upper case, line breaks as spaces,
+        cut to what it holds. Into a route, a paste is more tokens: it is
+        kept apart from what was already typed."""
+        m = self._modal
+        if m is None:
+            return
+        words = str(text or "").upper().split()
+        if self._modal_spaces():
+            value = " ".join(([m["value"].rstrip()] if m["value"].strip() else []) + words)
+        else:
+            value = m["value"] + "".join(words)
+        m["value"] = value[:m["max_len"]]
+        m["message"] = ""
         self.update()
 
     def _modal_key(self, ch):
@@ -2845,6 +3001,7 @@ class FlightPlan(QWidget):
             return
         if len(m["value"]) < m["max_len"]:
             m["value"] += ch
+        m["message"] = ""
         self.update()
 
     def _modal_backspace(self):
@@ -2852,6 +3009,7 @@ class FlightPlan(QWidget):
         if m is None:
             return
         m["value"] = m["value"][:-1]
+        m["message"] = ""
         self.update()
 
     def _modal_clear(self):
@@ -2859,6 +3017,7 @@ class FlightPlan(QWidget):
         if m is None:
             return
         m["value"] = ""
+        m["message"] = ""
         self.update()
 
     def _modal_enter(self):
@@ -3007,6 +3166,9 @@ class FlightPlan(QWidget):
             return False
         if self._modal is not None:
             return True
+        if self._entry_dupe_choices:
+            # The route's DUPLICATE FOUND (RTE1b) opens over the FPL page.
+            return True
         if self._page == "entry":
             return True
         if self._page == "dto" and self._dto_tab == "Waypoint":
@@ -3091,8 +3253,14 @@ class FlightPlan(QWidget):
             self._keyboard_nav(1)
         elif key == Qt.Key.Key_Tab:
             self._keyboard_tab()
+        elif event.matches(QKeySequence.StandardKey.Paste) and self._modal_spaces():
+            # A route pasted from an EFB or a clearance (RTE1b). Before the
+            # characters: Ctrl+V can carry the text "v".
+            self._modal_paste(QGuiApplication.clipboard().text())
         elif text and (text.isalnum() or text in ".-") and len(text) == 1:
             self._keyboard_char(text.upper())
+        elif text == " " and self._modal_spaces():
+            self._keyboard_char(" ")
         else:
             event.ignore()
             super().keyPressEvent(event)
@@ -3233,7 +3401,7 @@ class FlightPlan(QWidget):
                 self._dto_target is not None, self._seg_menu, self._seg_fixes,
                 self._seg_fix_menu, None if self._proc is None else self._proc["kind"],
                 self._proc_picker, self._act_confirm is not None,
-                self._hold_edit is not None, self._offer_open,
+                self._hold_edit is not None, self._offer_open, self._route_runway is not None,
                 None if self._charts is None else (self._charts["airport"],
                                                    self._charts["plate"]))
 
@@ -3344,6 +3512,8 @@ class FlightPlan(QWidget):
             self._close_hold_editor()
         elif self._entry_dupe_choices:
             self._cancel_dupe_chooser()
+        elif self._route_runway is not None:
+            self._route_cancel_runway()
         elif self._act_confirm is not None:
             self._act_confirm_no()
         elif self._offer_open:
@@ -3815,7 +3985,9 @@ class FlightPlan(QWidget):
                         or self._airway_picker is not None
                         or self._act_confirm is not None
                         or self._hold_edit is not None
-                        or (self._offer_open and self._offer is not None))
+                        or (self._offer_open and self._offer is not None)
+                        or self._modal is not None or self._route_runway is not None
+                        or bool(self._entry_dupe_choices))
         if overlay_open:
             # The list under an overlay neither scrolls nor takes a press.
             self._list_view = None
@@ -3858,6 +4030,13 @@ class FlightPlan(QWidget):
                 self._paint_modal(p, w, h)
         elif self._offer_open and self._offer is not None:
             self._paint_offer_sheet(p, w, h, interactive)
+        elif self._modal is not None:
+            # Route entry (RTE1b), opened from the menu.
+            self._paint_modal(p, w, h)
+        elif self._route_runway is not None:
+            self._paint_route_runway(p, w, h)
+        elif self._entry_dupe_choices:
+            self._paint_dupe_chooser(p, w, h)
 
         if self._message:
             # Above the soft keys and any alert strip, never on the header
@@ -4964,6 +5143,7 @@ class FlightPlan(QWidget):
             return
         susp_label = self._suspend_label()
         items = [
+            ("Route", self._menu_route),
             ("Invert", self._menu_invert),
             ("Store", self._menu_store),
             ("Clear", self._menu_clear_request),
@@ -5646,9 +5826,23 @@ class FlightPlan(QWidget):
         p.setPen(QPen(QColor("#ffffff")))
         p.drawText(QRectF(box_x, box_y + 2, box_w, box_h * 0.1),
                    Qt.AlignmentFlag.AlignCenter, m["title"])
+        value_rect = QRectF(box_x + 8, box_y + box_h * 0.1, box_w - 16, box_h * 0.12)
+        if m.get("rows") is not None:
+            # A route runs long: wrapped, in a font small enough to fit.
+            fv = QFont(f)
+            while fv.pixelSize() > 8 and QFontMetrics(fv).boundingRect(
+                    value_rect.toRect(), Qt.TextFlag.TextWordWrap,
+                    m["value"] or " ").height() > value_rect.height():
+                fv.setPixelSize(fv.pixelSize() - 1)
+            p.setFont(fv)
         p.setPen(QPen(QColor("#00ffff")))
-        p.drawText(QRectF(box_x, box_y + box_h * 0.1, box_w, box_h * 0.12),
-                   Qt.AlignmentFlag.AlignCenter, m["value"] or " ")
+        p.drawText(value_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+                   m["value"] or " ")
+        p.setFont(f)
+        if m.get("message"):
+            p.setPen(QPen(QColor("#ff0000")))
+            p.drawText(QRectF(box_x + 8, box_y + box_h * 0.22, box_w - 16, box_h * 0.06),
+                       Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, m["message"])
 
         cancel_size = box_h * 0.08
         cancel_rect = (box_x, box_y + 2, cancel_size, cancel_size)
@@ -5656,9 +5850,11 @@ class FlightPlan(QWidget):
         p.drawText(QRectF(*cancel_rect), Qt.AlignmentFlag.AlignCenter, "X")
         self._tap(*cancel_rect, self._modal_do_cancel)
 
-        rows = KEYPAD_NUMERIC_ROWS if m["numeric"] else KEYPAD_ROWS
-        kp_top = box_y + box_h * 0.24
-        kp_h = box_h * 0.76
+        rows = m.get("rows") or (KEYPAD_NUMERIC_ROWS if m["numeric"] else KEYPAD_ROWS)
+        # A route's modal makes room for its refusal under the value.
+        kp_frac = 0.28 if m.get("rows") is not None else 0.24
+        kp_top = box_y + box_h * kp_frac
+        kp_h = box_h * (1 - kp_frac)
         n_rows = len(rows) + 1
         row_h = kp_h / n_rows
         fk = QFont(self.font_family)
@@ -5672,7 +5868,8 @@ class FlightPlan(QWidget):
                 p.setPen(QPen(QColor("#333333")))
                 p.drawRect(QRectF(x + 1, y + 1, seg - 2, row_h - 2))
                 p.setPen(QPen(QColor("#ffffff")))
-                p.drawText(QRectF(x, y, seg, row_h), Qt.AlignmentFlag.AlignCenter, ch)
+                p.drawText(QRectF(x, y, seg, row_h), Qt.AlignmentFlag.AlignCenter,
+                           "SPACE" if ch == " " else ch)
                 self._tap(x, y, seg, row_h, (lambda c=ch: self._modal_key(c)))
             y += row_h
         seg = box_w / len(KEYPAD_CTRL_ROW)
@@ -5809,6 +6006,16 @@ class FlightPlan(QWidget):
             p.setPen(QPen(QColor("#00ff00" if label == "ENT" else "#ff8080")))
             p.drawText(QRectF(x, y, seg, row_h), Qt.AlignmentFlag.AlignCenter, label)
             self._tap(x, y, seg, row_h, callbacks[label], "key")
+
+    def _paint_route_runway(self, p, w, h):
+        """A SID or STAR in the route needs a runway (RTE1b): its choices,
+        and the route expands again with the one picked."""
+        self._paint_overlay_backdrop(p, w, h)
+        e = self._route_runway
+        items = [(rw, (lambda r=rw: self._route_choose_runway(r))) for rw in e.choices]
+        self._paint_menu_list(p, w, h, items, self._route_cancel_runway,
+                              scroll_key="route_runway",
+                              title=f"{e.airport} {e.procedure} RUNWAY")
 
     def _paint_dupe_chooser(self, p, w, h):
         self._paint_overlay_backdrop(p, w, h)
