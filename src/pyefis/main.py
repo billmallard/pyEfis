@@ -244,6 +244,8 @@ def main():
         log.setLevel(logging.DEBUG)
     log.info("Starting pyEFIS")
 
+    # NFX1: send each write's quality flags in the Net-FIX order.
+    fix_watchdog.use_spec_flag_order()
     fix.initialize(config)
     pyefis_ver = fix.db.get_item('PYEFIS_VERSION')
 
