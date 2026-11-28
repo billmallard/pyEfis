@@ -253,6 +253,7 @@ long push goes from a chart to the list, then to the flight plan page.
 
 | Item | What it does |
 |---|---|
+| **Route** | Type or paste an ATC route, such as `KSBA FLOUT VTU V485 OHIGH TTE V459 LHS KPMD`, and press **ENT**. It is built from the navigation data on the display, airways and SID/STAR included. A SID or STAR that needs a runway asks which one. An ident that names two places opens **DUPLICATE FOUND**, as on ADD WPT. Anything else that cannot be built (`NOT FOUND: XYZZY`) reopens the entry with your text and the reason, so you fix only that token. The route then opens on the same review sheet as a plan from an EFB: **Accept** makes it the flight plan, **Reject** drops it, **Later** keeps it offered. It never replaces the flight plan by itself. A USB keyboard types spaces into it, and Ctrl+V pastes. |
 | **Invert** | Reverse the plan. |
 | **Store** | Save it to the catalog. |
 | **Clear** | Empty the plan, after a confirmation. |

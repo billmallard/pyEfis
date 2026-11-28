@@ -214,6 +214,24 @@ use the same sheet with no bus block. A staged plan never displaces an
 offer the pilot made on the page; it waits, and is offered once that one is
 answered.
 
+**A route string is offered the same way** (RTE1b, AER-6785). Menu **Route**
+opens the text modal (`ENTER ROUTE`, keypad plus SPACE and `.`; a USB
+keyboard types spaces and pastes with Ctrl+V, a paste joining what is typed
+as more tokens). **ENT** runs `route_string.expand` with the page's own
+WaypointIndex, AirwayGraph and ProcedureIndex, `MAGVAR` from the bus and
+`_resolve_navaid`, as `_proc_assemble` passes them. A `RunwayNeededError`
+opens a chooser of its `choices` (`<airport> <procedure> RUNWAY`) and expands
+again with the pick. Each ident in `RouteStringError.ambiguous` opens the
+existing DUPLICATE FOUND chooser over the FPL page, one at a time; the pick
+is held for that ident (`_PickedIndex`) and the route expands again. A pick
+that does not settle an ident (one that is also an airway) is not asked
+again. Any other refusal, or a cancel from either chooser, reopens the modal
+with the text kept and the reason under it. The expanded plan is offered as
+a page offer (not staged): the sheet opens on it at once, titled
+`ROUTE: <name>` with the note `ALTITUDES AND SPEEDS ARE NOT IN A ROUTE`.
+Accept commits it through `FixBridge.publish` with its airway and procedure
+segments; Reject drops it. No FIX key is added.
+
 ### Pages
 
 - **FPL** (default) — header: route name, `FPLREMDIS`/`FPLREMETE`, a state
@@ -258,7 +276,7 @@ answered.
   (None/IAF/FAF/MAP/MAHP — refused with a message on a second FAF/MAP or a
   MAP before the FAF), Remove. Footer: Add Waypoint (Entry page, append),
   Direct To (the DTO page), PROC (the PROC page, PA7), Catalog (the Catalog
-  page), Menu (Invert, Store,
+  page), Menu (Route (RTE1b, above), Invert, Store,
   Clear, Hold at PPOS (HOLDFIX2, AER-6322: the Hold... editor on a user
   waypoint `PPOS` at the aircraft, inbound on the present track, `TRACKM`
   or else `TRACK` + `MAGVAR`; no valid LAT/LONG is refused with NO GPS
